@@ -45,7 +45,7 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 |---|---|---|
 | `aiperf-clock` | the time seam: `Clock` trait, `SimClock` (int-ns DES heap, `(at_ns, seq_no)` tie-break), `RealClock` (`timerfd`/`AsyncFd`) | `src/clock.rs`, `src/sim_clock.rs`, `src/real_clock.rs` |
 | `loadgen-core` | the dispatch/measure seam + report: `Dispatchable`, `RequestSink<R>`, local-loop `RequestObserver` (no `Send`/`Sync`; optional token classification; terminal usage with optional fields), `TraceCollector`, `TraceSimulationReport` | `src/sink.rs`, `src/collector.rs` |
-| `aiperf-timing` | Clock-native scheduling policy: arrival generators, debt-draining slots, stop bounds, user-centric schedule math, Clock-driven Linear/Exponential/Poisson ramps, warmup-aware seeded cancellation policy, and round-robin URL selection | `src/intervals.rs`, `src/slots.rs`, `src/stop.rs`, `src/user_centric.rs`, `src/ramping.rs`, `src/cancellation.rs`, `src/url_selection.rs` |
+| `aiperf-timing` | Clock-native scheduling + phase policy: arrivals, debt-draining slots, stop bounds, user-centric math, ramps, cancellation, URL selection, and `PhaseLifecycle`/`PhaseObserver`/`PhaseRunner`/`PhaseOrchestrator` with grace/drain/force escalation, seamless overlap, cancellation, and progress snapshots | `src/intervals.rs`, `src/slots.rs`, `src/stop.rs`, `src/user_centric.rs`, `src/ramping.rs`, `src/cancellation.rs`, `src/url_selection.rs`, `src/phase/` |
 | `aiperf-adaptive` | transport-neutral adaptive-control leaf: live concurrency/prefill/rate/users actuators, tumbling windows joining arrival/admit/token/usage/terminal observations, authoritative completion-token OSL/ITL reconciliation, SLA evaluation, step policies, `ramp_until_fail` controller, Clock-paced runtime, schema-v2 artifacts | `src/actuator.rs`, `src/window.rs`, `src/sla.rs`, `src/step.rs`, `src/controller.rs`, `src/runtime.rs`, `src/artifacts.rs` |
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic `SamplingRng` / `DistributionSampler` / `SequenceSampler` seams, cached cumulative weighted distributions, fixed-seed profile canary | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
 | `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline with exact raw/message replay, media, context, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity, never ground truth | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
@@ -55,7 +55,7 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | Graph-IR dataflow over the unified dataset store, firing-gate executor, DES drivers, transport benches, and worker-local native metrics merged once at join | `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf` | CLI: online paced/scheduled/adaptive/accuracy plus ancillary policy and graph mode. Accuracy loads opaque worker-authored problems, sends/reads LLM traffic through the normal Rust path, captures terminal text, batch-grades through the worker, and reports evaluator identity. Every `--json` path emits native v2. | `src/main.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
+| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/accuracy, ancillary policy, and graph mode. Scheduled entry points lower through `phase_runtime` as profiling phases; typed plans expose warmup/seamless multi-phase runs with shared resources and phase-owned ramps. Accuracy keeps inference in Rust and batch-grades through the canonical worker. Every `--json` path emits native v2. | `src/main.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
 `aiperf-dataset`, `aiperf-extensions`, `aiperf-graph`, `aiperf-metrics`, `aiperf-timing`,
@@ -189,11 +189,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   and fixed absolute trace replay are wired through the CLI. Exact `SimClock` and real
   `aiperf-mock-rs` library/CLI tests validate ordering, drain, timing, TTFT, and reply
   splicing; offline engine dispatch still awaits the global co-sim sink.
-- `specs/2026-07-11-aiperf-rust-phase-runner-orchestrator-design.md` — the phase driver
-  above the credit issuer: `PhaseLifecycle` state machine + grace/timeout/drain/
-  force-complete escalation + warmup→profiling seamless overlap; deletes the ZMQ IPC
-  scaffolding (`PhasePublisher`, `TimingManager` service, `wait_for_workers`) for direct
-  `PhaseObserver`/`RequestObserver` trait calls.
+- `specs/2026-07-11-aiperf-rust-phase-runner-orchestrator-design.md` — **built +
+  implementation addendum**: validated lifecycle/config/progress, direct observers,
+  Clock-driven timeout/grace/cancel/drain/force escalation, failure finalization,
+  ordered warmup→profiling execution, seamless overlap, and shared-slot debt drain live
+  in `aiperf-timing::phase`; `aiperf::phase_runtime` connects scheduled workloads,
+  phase-owned ramps, processors, `SimClock`, and real HTTP. Arbitrary phase-list CLI
+  authoring and the Graph-IR phase consumer remain separate composition work.
 - `specs/2026-07-11-aiperf-rust-adaptive-scale-design.md` — **built + addendum**:
   `aiperf-adaptive` implements the actuator/evaluator/step/window/controller traits,
   Python-grounded SLA math with authoritative completion-token OSL/ITL reconciliation,
