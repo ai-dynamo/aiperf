@@ -115,6 +115,12 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   server fallback/auto-disable, histogram estimator, TCP-connect RTT. Addenda: exact
   phase-boundary snapshots supersede scrape reconstruction; telemetry must not make
   the core metrics engine depend on telemetry collectors.
+- `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md` — **overhaul** (not port):
+  one typed `Report` → static `Exporter`s behind a trait; deletes plugin registry / async
+  fan-out / shard-glob / mlflow-wandb subprocess. Breaks genai-perf as default for a **v2
+  native report** (one file; the type-specific-series model from the server-metrics export —
+  metrics-keyed, `distribution`/`scalar`/`counter`/`histogram` stats, labeled `series[]`, no
+  avg-for-scalars lie); genai-perf v1 kept as an opt-in compat sink.
 - `specs/2026-07-10-aiperf-rust-rng-derive-system-design.md` — the hash-derived
   RNG substrate: `blake3(f"{root}:{id}")[:8]`→u64 order-independent seed derivation
   + `HashIdRandomGenerator` (per-`(trace_id, hash_id)` reseed) + `RandomGenerator`
