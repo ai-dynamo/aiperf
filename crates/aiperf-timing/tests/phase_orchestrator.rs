@@ -221,6 +221,34 @@ fn validation_rejects_warmup_after_profiling() {
     );
 }
 
+#[test]
+fn validation_rejects_a_warmup_only_benchmark() {
+    let clock = Rc::new(SimClock::new());
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let observer: Rc<dyn PhaseObserver> = Rc::new(TimelineObserver {
+        clock: clock.clone(),
+        events: events.clone(),
+    });
+    let factory: Rc<dyn PhaseExecutionFactory> = Rc::new(DebtExecutionFactory {
+        clock: clock.clone(),
+        slots: Rc::new(SlotPool::new(0)),
+        events,
+    });
+    let clock_dyn: Rc<dyn Clock> = clock;
+    let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
+        clock_dyn,
+        observer.clone(),
+        factory,
+    ));
+
+    let error =
+        match ClockPhaseOrchestrator::new(vec![warmup_config(false)], runner_factory, observer) {
+            Ok(_) => panic!("warmup-only benchmark was accepted"),
+            Err(error) => error,
+        };
+    assert_eq!(error, PhaseOrchestratorError::ProfilingPhaseRequired);
+}
+
 fn orchestrator(
     clock: Rc<SimClock>,
     seamless: bool,

@@ -252,6 +252,9 @@ fn validate_phase_order(configs: &[PhaseConfig]) -> Result<(), PhaseOrchestrator
             PhaseKind::Warmup => {}
         }
     }
+    if !profiling_seen {
+        return Err(PhaseOrchestratorError::ProfilingPhaseRequired);
+    }
     Ok(())
 }
 
@@ -260,6 +263,8 @@ fn validate_phase_order(configs: &[PhaseConfig]) -> Result<(), PhaseOrchestrator
 pub enum PhaseOrchestratorError {
     /// No phases were configured.
     NoPhases,
+    /// A benchmark cannot consist exclusively of warmup traffic.
+    ProfilingPhaseRequired,
     /// One phase failed local validation.
     InvalidConfig {
         /// Stable phase identifier.
@@ -288,6 +293,9 @@ impl Display for PhaseOrchestratorError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPhases => write!(f, "at least one phase must be configured"),
+            Self::ProfilingPhaseRequired => {
+                write!(f, "at least one profiling phase must be configured")
+            }
             Self::InvalidConfig { phase_id, source } => {
                 write!(f, "invalid configuration for phase {phase_id:?}: {source}")
             }
