@@ -13,6 +13,7 @@ pub mod http;
 pub mod logging;
 pub mod report;
 pub mod run;
+pub mod timing;
 pub mod workload;
 
 #[cfg(test)]
