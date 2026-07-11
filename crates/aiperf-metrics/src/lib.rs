@@ -11,10 +11,12 @@
 pub mod accumulator;
 pub mod accuracy;
 pub mod catalog;
+pub mod counter;
 pub mod derived;
 pub mod ingest;
 pub mod kernel;
 pub mod report;
+pub mod sidecar;
 pub mod store;
 pub mod sweepline;
 pub mod units;
@@ -36,6 +38,7 @@ pub use catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
     PlotMetricDirection, validate_catalog,
 };
+pub use counter::{CounterDelta, boundary_counter_delta};
 pub use derived::{delta_ms, error_adjusted_result, network_adjusted_ms};
 pub use ingest::{HttpTrace, RecordIngest, TokenCounts, UsageMetrics};
 pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_distribution};
@@ -45,6 +48,7 @@ pub use report::{
     ReportDistributionStats, ReportError, ReportRunInfo, ReportScalarStats, ReportStats,
     ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
+pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
 pub use store::{
     CategoryInterner, ColumnStore, ListMetricBackend, NumericColumn, RaggedReplay, RaggedSeries,
 };

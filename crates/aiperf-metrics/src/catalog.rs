@@ -14,6 +14,7 @@ use crate::{MetricValueType, Unit};
 use bitflags::bitflags;
 use petgraph::algo::toposort;
 use petgraph::graphmap::DiGraphMap;
+use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::sync::LazyLock;
@@ -300,7 +301,8 @@ pub enum AggregationKind {
 }
 
 /// Console grouping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MetricConsoleGroup {
     None,
     Default,

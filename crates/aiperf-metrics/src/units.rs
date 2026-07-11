@@ -5,6 +5,8 @@
 
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
+use serde::Serialize;
+
 /// Shape of values emitted by a metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MetricValueType {
@@ -19,7 +21,8 @@ pub enum MetricValueType {
 }
 
 /// Units used by the metrics catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Unit {
     /// Unitless scalar.
     Count,

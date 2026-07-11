@@ -12,7 +12,7 @@ use crate::catalog::{
 };
 use crate::{
     AccumulatorSummary, AccuracyAnalysis, AccuracyRecord, MetricResult, MetricResultData,
-    MetricValue,
+    MetricValue, SidecarMetric, SidecarStats,
 };
 use serde::Serialize as DeriveSerialize;
 use serde::ser::{Serialize, Serializer};
@@ -82,6 +82,28 @@ pub struct ReportCounterStats {
     pub rate: Option<ReportValue>,
 }
 
+/// Histogram boundary-delta statistics supplied by server telemetry.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct ReportHistogramStats {
+    /// Number of phase observations.
+    pub count: u64,
+    /// Sum of phase observations.
+    pub sum: ReportValue,
+    /// Mean observation, when count is positive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg: Option<ReportValue>,
+    /// Observations per second over the authoritative phase window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count_rate: Option<ReportValue>,
+    /// Observation-value sum per second.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sum_rate: Option<ReportValue>,
+    /// Polynomial percentile estimates keyed by `pN`.
+    pub percentiles: BTreeMap<String, ReportValue>,
+    /// Reset-clamped cumulative bucket deltas.
+    pub buckets: BTreeMap<String, u64>,
+}
+
 /// Type-specific statistics serialized without an additional wrapper tag.
 #[derive(Debug, Clone, PartialEq, DeriveSerialize)]
 #[serde(untagged)]
@@ -92,6 +114,8 @@ pub enum ReportStats {
     Scalar(ReportScalarStats),
     /// Counter-shaped statistics.
     Counter(ReportCounterStats),
+    /// Prometheus histogram-shaped statistics.
+    Histogram(ReportHistogramStats),
 }
 
 /// One metric-series timeslice using the same stats shape as its parent.
@@ -356,7 +380,7 @@ impl NativeReport {
 }
 
 fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntry> {
-    summary
+    let mut metrics = summary
         .results()
         .filter_map(|(name, result)| {
             let stats = report_stats(result, summary.result_map())?;
@@ -390,7 +414,103 @@ fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntr
                 },
             ))
         })
-        .collect()
+        .collect::<BTreeMap<_, _>>();
+    for (name, metric) in summary.sidecar_metrics() {
+        metrics
+            .entry(name.clone())
+            .or_insert_with(|| report_sidecar_metric(metric));
+    }
+    metrics
+}
+
+fn report_sidecar_metric(metric: &SidecarMetric) -> MetricEntry {
+    let series = metric
+        .series
+        .iter()
+        .map(|series| MetricSeries {
+            labels: series.labels.clone(),
+            endpoint_url: series.endpoint_url.clone(),
+            stats: report_sidecar_stats(&series.stats),
+            timeslices: series
+                .timeslices
+                .iter()
+                .map(|slice| ReportTimeslice {
+                    start_ns: slice.start_ns,
+                    end_ns: slice.end_ns,
+                    complete: slice.complete,
+                    stats: report_sidecar_stats(&slice.stats),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let metric_type = series
+        .first()
+        .map(|series| stats_type(&series.stats))
+        .unwrap_or("distribution");
+    MetricEntry {
+        metric_type,
+        unit: metric
+            .unit
+            .map_or_else(String::new, |unit| unit.as_str().to_string()),
+        group: console_group_name(metric.console_group),
+        higher_is_better: metric.higher_is_better,
+        series,
+    }
+}
+
+fn report_sidecar_stats(stats: &SidecarStats) -> ReportStats {
+    match stats {
+        SidecarStats::Gauge(stats) => ReportStats::Distribution(report_distribution(stats, false)),
+        SidecarStats::Counter { total, rate } => ReportStats::Counter(ReportCounterStats {
+            total: report_value(*total).unwrap_or(ReportValue::NonFinite),
+            rate: rate.and_then(report_value),
+        }),
+        SidecarStats::Histogram {
+            count,
+            sum,
+            avg,
+            count_rate,
+            sum_rate,
+            percentiles,
+            buckets,
+        } => ReportStats::Histogram(ReportHistogramStats {
+            count: *count,
+            sum: report_value(*sum).unwrap_or(ReportValue::NonFinite),
+            avg: avg.and_then(report_value),
+            count_rate: count_rate.and_then(report_value),
+            sum_rate: sum_rate.and_then(report_value),
+            percentiles: percentiles
+                .iter()
+                .filter_map(|(percentile, value)| {
+                    report_value(*value).map(|value| (format!("p{percentile}"), value))
+                })
+                .collect(),
+            buckets: buckets.clone(),
+        }),
+    }
+}
+
+fn report_distribution(
+    stats: &crate::DistributionStats,
+    adjusted: bool,
+) -> ReportDistributionStats {
+    ReportDistributionStats {
+        count: (stats.count > 0).then_some(stats.count),
+        avg: report_value(stats.avg),
+        min: report_value(stats.min),
+        max: report_value(stats.max),
+        std: stats
+            .std
+            .map(ReportValue::Finite)
+            .or(adjusted.then_some(ReportValue::NonFinite)),
+        percentiles: stats
+            .percentiles
+            .iter()
+            .filter_map(|(percentile, value)| {
+                report_value(*value).map(|value| (format!("p{percentile}"), value))
+            })
+            .collect(),
+    }
 }
 
 fn report_stats(
@@ -400,24 +520,9 @@ fn report_stats(
     match &result.data {
         MetricResultData::Distribution(stats) => {
             let adjusted = result.tag.starts_with("adj_");
-            let percentiles = stats
-                .percentiles
-                .iter()
-                .filter_map(|(percentile, value)| {
-                    report_value(*value).map(|value| (format!("p{percentile}"), value))
-                })
-                .collect();
-            Some(ReportStats::Distribution(ReportDistributionStats {
-                count: (stats.count > 0).then_some(stats.count),
-                avg: report_value(stats.avg),
-                min: report_value(stats.min),
-                max: report_value(stats.max),
-                std: stats
-                    .std
-                    .map(ReportValue::Finite)
-                    .or(adjusted.then_some(ReportValue::NonFinite)),
-                percentiles,
-            }))
+            Some(ReportStats::Distribution(report_distribution(
+                stats, adjusted,
+            )))
         }
         MetricResultData::Scalar { value } => {
             let value = report_value(*value)?;
@@ -459,6 +564,7 @@ fn stats_type(stats: &ReportStats) -> &'static str {
         ReportStats::Distribution(_) => "distribution",
         ReportStats::Scalar(_) => "scalar",
         ReportStats::Counter(_) => "counter",
+        ReportStats::Histogram(_) => "histogram",
     }
 }
 
@@ -479,7 +585,7 @@ fn console_group_name(group: MetricConsoleGroup) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MetricResult, MetricResultData};
+    use crate::{MetricResult, MetricResultData, SidecarMetric, SidecarSeries, SidecarStats, Unit};
 
     #[test]
     fn v2_uses_type_specific_series_and_null_for_non_finite_tail() {
@@ -536,5 +642,39 @@ mod tests {
         assert!(value.get("warmup_metrics").is_none());
         assert!(value.get("accuracy").is_none());
         assert!(value.get("accuracy_records").is_none());
+    }
+
+    #[test]
+    fn v2_retains_labeled_endpoint_histogram_sidecars() {
+        let mut summary = AccumulatorSummary::new();
+        summary.insert_sidecar_metric(
+            "vllm:request_latency_seconds",
+            SidecarMetric::new(
+                Some(Unit::Second),
+                vec![SidecarSeries {
+                    labels: Some(BTreeMap::from([("model".to_string(), "m".to_string())])),
+                    endpoint_url: Some("http://server/metrics".to_string()),
+                    stats: SidecarStats::Histogram {
+                        count: 2,
+                        sum: MetricValue::Finite(0.3),
+                        avg: Some(MetricValue::Finite(0.15)),
+                        count_rate: Some(MetricValue::Finite(2.0)),
+                        sum_rate: Some(MetricValue::Finite(0.3)),
+                        percentiles: BTreeMap::from([(99, MetricValue::Finite(0.2))]),
+                        buckets: BTreeMap::from([("0.1".to_string(), 1), ("+Inf".to_string(), 2)]),
+                    },
+                    timeslices: Vec::new(),
+                }],
+            ),
+        );
+
+        let value = serde_json::to_value(NativeReport::new(&summary, None)).unwrap();
+        let metric = &value["metrics"]["vllm:request_latency_seconds"];
+        assert_eq!(metric["type"], "histogram");
+        assert_eq!(metric["unit"], "sec");
+        assert_eq!(metric["series"][0]["endpoint_url"], "http://server/metrics");
+        assert_eq!(metric["series"][0]["labels"]["model"], "m");
+        assert_eq!(metric["series"][0]["stats"]["percentiles"]["p99"], 0.2);
+        assert_eq!(metric["series"][0]["stats"]["buckets"]["+Inf"], 2);
     }
 }

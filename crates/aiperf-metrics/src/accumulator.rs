@@ -13,6 +13,7 @@ use crate::catalog::{
 };
 use crate::ingest::RecordIngest;
 use crate::kernel::{DistributionStats, linear_distribution, nearest_distribution};
+use crate::sidecar::SidecarMetric;
 use crate::store::{ColumnStore, ListMetricBackend};
 use crate::sweepline::{IclSeries, SweepLineCurves, SweepMetricResult};
 use crate::units::{Unit, UnitConversionError};
@@ -260,6 +261,7 @@ pub struct MetricTimeslice {
 pub struct AccumulatorSummary {
     results: BTreeMap<String, MetricResult>,
     timeslices: Vec<MetricTimeslice>,
+    sidecar_metrics: BTreeMap<String, SidecarMetric>,
 }
 
 impl AccumulatorSummary {
@@ -318,6 +320,24 @@ impl AccumulatorSummary {
     /// Returns chronological non-empty timeslices.
     pub fn timeslices(&self) -> &[MetricTimeslice] {
         &self.timeslices
+    }
+
+    /// Inserts or replaces one domain-neutral telemetry/server metric.
+    pub fn insert_sidecar_metric(&mut self, name: impl Into<String>, metric: SidecarMetric) {
+        self.sidecar_metrics.insert(name.into(), metric);
+    }
+
+    /// Extends the summary with externally accumulated metric series.
+    pub fn extend_sidecar_metrics(
+        &mut self,
+        metrics: impl IntoIterator<Item = (String, SidecarMetric)>,
+    ) {
+        self.sidecar_metrics.extend(metrics);
+    }
+
+    /// Returns side-channel metrics in stable name order.
+    pub fn sidecar_metrics(&self) -> &BTreeMap<String, SidecarMetric> {
+        &self.sidecar_metrics
     }
 }
 
@@ -448,6 +468,7 @@ impl MetricsAccumulator {
         AccumulatorSummary {
             results,
             timeslices,
+            sidecar_metrics: BTreeMap::new(),
         }
     }
 
