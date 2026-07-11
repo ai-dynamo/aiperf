@@ -662,8 +662,8 @@ mod tests {
             "The answer is (A)"
         };
         let body = format!(
-            "data: {{\"choices\":[{{\"delta\":{{\"content\":{answer:?}}},\"finish_reason\":null}}]}}\n\n\
-             data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":4}}}}\n\n\
+            "data: {{\"object\":\"chat.completion.chunk\",\"choices\":[{{\"delta\":{{\"content\":{answer:?}}},\"finish_reason\":null}}]}}\n\n\
+             data: {{\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":4}}}}\n\n\
              data: [DONE]\n\n"
         );
         ([(header::CONTENT_TYPE, "text/event-stream")], body)

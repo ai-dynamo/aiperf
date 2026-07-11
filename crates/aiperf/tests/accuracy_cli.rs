@@ -105,8 +105,8 @@ async fn chat_handler(
     };
     captured.0.lock().unwrap().push(body);
     let stream = format!(
-        "data: {{\"choices\":[{{\"delta\":{{\"content\":{answer:?}}},\"finish_reason\":null}}]}}\n\n\
-         data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":128,\"completion_tokens\":6}}}}\n\n\
+        "data: {{\"object\":\"chat.completion.chunk\",\"choices\":[{{\"delta\":{{\"content\":{answer:?}}},\"finish_reason\":null}}]}}\n\n\
+         data: {{\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{{\"prompt_tokens\":128,\"completion_tokens\":6}}}}\n\n\
          data: [DONE]\n\n"
     );
     ([(header::CONTENT_TYPE, "text/event-stream")], stream)
