@@ -10,13 +10,13 @@ use std::rc::Rc;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 use url::Url;
 
 use aiperf_clock::Clock;
 
 use crate::client::cancellation::{CancelOutcome, race_cancel};
-use crate::client::connection::{Sender, establish};
+use crate::client::connection::{Sender, TimedBody, establish};
 use crate::config::ClientConfig;
 use crate::models::{ErrorDetails, RequestRecord, Response, SseMessage, TextResponse, TraceData};
 use crate::sse::read_sse;
@@ -138,19 +138,23 @@ impl HttpClient {
         for (k, v) in headers {
             builder = builder.header(k.as_str(), v.as_str());
         }
+        // Time when the request body is fully written (end-of-stream), captured
+        // by TimedBody — the real "send complete", distinct from response-headers.
+        let sent_ns = std::rc::Rc::new(std::cell::Cell::new(None));
         let req = builder
-            .body(Full::new(body))
+            .body(TimedBody::new(body, self.clock.clone(), sent_ns.clone()))
             .map_err(|e| ErrorDetails::other(format!("build request: {e}")))?;
 
         trace.request_send_start_ns = Some(self.clock.now_ns());
         let resp = sender.send(req).await?;
-        // Response headers received.
-        let now = self.clock.now_ns();
-        trace.request_send_end_ns = Some(now);
-        trace.request_headers_sent_ns = Some(now);
+        // Response headers received; the body finished writing at `send_end`.
+        let hdr_ns = self.clock.now_ns();
+        let send_end = sent_ns.get().unwrap_or(hdr_ns);
+        trace.request_send_end_ns = Some(send_end);
+        trace.request_headers_sent_ns = Some(send_end);
         trace.request_bytes_total = body_len as u64;
         trace.request_chunks_count = 1;
-        trace.response_headers_received_ns = Some(now);
+        trace.response_headers_received_ns = Some(hdr_ns);
 
         let status = resp.status();
         record.status = Some(status.as_u16());
@@ -280,8 +284,9 @@ impl HttpClient {
         for (k, v) in headers {
             builder = builder.header(k.as_str(), v.as_str());
         }
+        let sent_ns = std::rc::Rc::new(std::cell::Cell::new(None));
         let req = builder
-            .body(Full::new(body))
+            .body(TimedBody::new(body, self.clock.clone(), sent_ns))
             .map_err(|e| ErrorDetails::other(format!("build request: {e}")))?;
 
         let resp = sender.send(req).await?;

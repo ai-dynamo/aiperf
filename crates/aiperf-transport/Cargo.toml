@@ -14,6 +14,7 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync"] }
 hyper = { version = "1.10", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http = "1"
+http-body = "1"
 http-body-util = "0.1"
 tokio-rustls = "0.26"
 rustls = "0.23"

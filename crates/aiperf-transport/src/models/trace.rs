@@ -10,9 +10,12 @@ pub struct TraceData {
     // Connection pool
     pub connection_pool_wait_start_ns: Option<i64>,
     pub connection_pool_wait_end_ns: Option<i64>,
-    // TCP + TLS (TLS folded into the connect span)
+    // TCP connect (pure socket connect)
     pub tcp_connect_start_ns: Option<i64>,
     pub tcp_connect_end_ns: Option<i64>,
+    // TLS handshake (None for cleartext)
+    pub tls_connect_start_ns: Option<i64>,
+    pub tls_connect_end_ns: Option<i64>,
     pub connection_reused_ns: Option<i64>,
     // DNS
     pub dns_lookup_start_ns: Option<i64>,
@@ -56,9 +59,18 @@ impl TraceData {
     pub fn sending(&self) -> Option<i64> {
         diff(self.request_send_start_ns, self.request_send_end_ns)
     }
-    /// TTFB / server processing (k6 http_req_waiting).
+    /// TTFB / server processing (k6 http_req_waiting): send-complete to first
+    /// response body byte (first SSE token for a streaming response).
     pub fn waiting(&self) -> Option<i64> {
         diff(self.request_send_end_ns, self.response_receive_start_ns)
+    }
+    /// Time to first response header: send-complete to response headers
+    /// received. For a streaming LLM this is the server admit + prefill up to
+    /// the response head, before the first token arrives (see [`waiting`]).
+    ///
+    /// [`waiting`]: Self::waiting
+    pub fn time_to_first_header(&self) -> Option<i64> {
+        diff(self.request_send_end_ns, self.response_headers_received_ns)
     }
     /// Response transfer time (k6 http_req_receiving).
     pub fn receiving(&self) -> Option<i64> {
@@ -83,9 +95,19 @@ impl TraceData {
     pub fn dns_lookup(&self) -> Option<i64> {
         diff(self.dns_lookup_start_ns, self.dns_lookup_end_ns)
     }
-    /// TCP+TLS connect time (k6 http_req_connecting).
-    pub fn connecting(&self) -> Option<i64> {
+    /// Pure TCP connect time.
+    pub fn tcp_connect(&self) -> Option<i64> {
         diff(self.tcp_connect_start_ns, self.tcp_connect_end_ns)
+    }
+    /// TLS handshake time (`None` for cleartext).
+    pub fn tls_handshake(&self) -> Option<i64> {
+        diff(self.tls_connect_start_ns, self.tls_connect_end_ns)
+    }
+    /// Total connect time TCP+TLS (k6 http_req_connecting): from the TCP connect
+    /// start to the end of TLS (or of TCP when cleartext).
+    pub fn connecting(&self) -> Option<i64> {
+        let end = self.tls_connect_end_ns.or(self.tcp_connect_end_ns);
+        diff(self.tcp_connect_start_ns, end)
     }
 
     /// Convert to a wall-clock export using an explicit `(clock_ns, wall_ns)`

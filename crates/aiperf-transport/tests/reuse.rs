@@ -5,12 +5,12 @@ use common::MockServer;
 use std::rc::Rc;
 
 use aiperf_transport::RealClock;
-use aiperf_transport::client::connection::Sender;
+use aiperf_transport::client::connection::{Sender, TimedBody};
 use aiperf_transport::client::pool::ConnectionPool;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{ConnectionReuseStrategy, TraceData};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 
 /// Send a real non-streaming chat request over `sender`, drain the body, and
 /// return the HTTP status. Proves the connection actually carries traffic.
@@ -22,13 +22,15 @@ async fn send_chat(sender: &mut Sender, base: &str) -> u16 {
         "messages": [{"role":"user","content":"hi"}]
     });
     let bytes = Bytes::from(serde_json::to_vec(&payload).unwrap());
+    let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+    let sent = Rc::new(std::cell::Cell::new(None));
     let req = hyper::Request::builder()
         .method("POST")
         .uri("/v1/chat/completions")
         .header(hyper::header::HOST, authority)
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
-        .body(Full::new(bytes))
+        .body(TimedBody::new(bytes, clock, sent))
         .unwrap();
     let resp = sender.send(req).await.expect("send over pooled connection");
     let status = resp.status().as_u16();

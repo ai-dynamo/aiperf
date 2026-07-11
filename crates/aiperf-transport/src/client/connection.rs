@@ -8,7 +8,14 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use std::cell::Cell;
+use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use bytes::Bytes;
+use http_body::{Body, Frame, SizeHint};
 use http_body_util::Full;
 use hyper::Response;
 use hyper::body::Incoming;
@@ -22,10 +29,84 @@ use crate::client::resolver::resolve;
 use crate::config::{ClientConfig, apply_socket_opts};
 use crate::models::{ErrorDetails, ErrorKind, HttpVersion, TraceData};
 
+/// A local (`!Send`) executor: drives the connection future on the current
+/// thread via `spawn_local`. Used for the HTTP/2 connection so that neither the
+/// IO nor the request body must be `Send` (the crate is `Rc`-based / `!Send`).
+#[derive(Clone)]
+pub struct LocalExec;
+
+impl<F> hyper::rt::Executor<F> for LocalExec
+where
+    F: Future + 'static,
+{
+    fn execute(&self, fut: F) {
+        tokio::task::spawn_local(async move {
+            let _ = fut.await;
+        });
+    }
+}
+
+/// Request body that records — via the [`Clock`] — the instant it is fully
+/// written (end-of-stream), into a shared cell. This is the "send complete"
+/// hook: hyper's `send_request().await` resolves at *response headers*, so the
+/// only way to time when the request body finished being handed to the
+/// transport is to observe the body stream reaching its end.
+pub struct TimedBody {
+    inner: Full<Bytes>,
+    clock: Rc<dyn Clock>,
+    sent_ns: Rc<Cell<Option<i64>>>,
+}
+
+impl TimedBody {
+    pub fn new(bytes: Bytes, clock: Rc<dyn Clock>, sent_ns: Rc<Cell<Option<i64>>>) -> Self {
+        Self {
+            inner: Full::new(bytes),
+            clock,
+            sent_ns,
+        }
+    }
+}
+
+impl Body for TimedBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        let this = self.get_mut();
+        let r = Pin::new(&mut this.inner).poll_frame(cx);
+        // Stamp the "send complete" instant once the body is fully handed to the
+        // encoder: either an explicit end-of-stream, or the last data frame
+        // (hyper skips the trailing `None` poll when `is_end_stream` is already
+        // true, e.g. for a single-frame `Full` body).
+        if this.sent_ns.get().is_none() {
+            let done = match &r {
+                Poll::Ready(None) => true,
+                Poll::Ready(Some(Ok(_))) => this.inner.is_end_stream(),
+                _ => false,
+            };
+            if done {
+                this.sent_ns.set(Some(this.clock.now_ns()));
+            }
+        }
+        r
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
 /// A protocol-specific request sender.
 pub enum Sender {
-    H1(hyper::client::conn::http1::SendRequest<Full<Bytes>>),
-    H2(hyper::client::conn::http2::SendRequest<Full<Bytes>>),
+    H1(hyper::client::conn::http1::SendRequest<TimedBody>),
+    H2(hyper::client::conn::http2::SendRequest<TimedBody>),
 }
 
 impl Sender {
@@ -55,7 +136,7 @@ impl Sender {
     }
     pub async fn send(
         &mut self,
-        req: hyper::Request<Full<Bytes>>,
+        req: hyper::Request<TimedBody>,
     ) -> Result<Response<Incoming>, ErrorDetails> {
         let r = match self {
             Sender::H1(s) => s.send_request(req).await,
@@ -127,6 +208,7 @@ pub async fn establish(
     let tcp = TcpStream::connect(remote)
         .await
         .map_err(ErrorDetails::from)?;
+    trace.tcp_connect_end_ns = Some(clock.now_ns());
     let local = tcp.local_addr().map_err(ErrorDetails::from)?;
     // Apply low-latency socket options through a borrowed socket2 ref.
     {
@@ -149,16 +231,16 @@ pub async fn establish(
                     message: format!("tls name: {e}"),
                 }
             })?;
+        trace.tls_connect_start_ns = Some(clock.now_ns());
         let tls = connector
             .connect(server_name, tcp)
             .await
             .map_err(ErrorDetails::from)?;
+        trace.tls_connect_end_ns = Some(clock.now_ns());
         let alpn_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
-        trace.tcp_connect_end_ns = Some(clock.now_ns());
         let use_h2 = force_h2 || (alpn_h2 && !force_h1);
         handshake(TokioIo::new(tls), use_h2, clock.clone()).await?
     } else {
-        trace.tcp_connect_end_ns = Some(clock.now_ns());
         let use_h2 = force_h2; // cleartext: h2 only via prior-knowledge
         handshake(TokioIo::new(tcp), use_h2, clock.clone()).await?
     };
@@ -173,17 +255,16 @@ pub async fn establish(
 
 async fn handshake<I>(io: I, use_h2: bool, _clock: Rc<dyn Clock>) -> Result<Sender, ErrorDetails>
 where
-    I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+    I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
 {
     if use_h2 {
-        let (sender, conn) =
-            hyper::client::conn::http2::handshake(hyper_util::rt::TokioExecutor::new(), io)
-                .await
-                .map_err(|e| ErrorDetails {
-                    kind: ErrorKind::Connect,
-                    code: None,
-                    message: format!("h2 handshake: {e}"),
-                })?;
+        let (sender, conn) = hyper::client::conn::http2::handshake(LocalExec, io)
+            .await
+            .map_err(|e| ErrorDetails {
+                kind: ErrorKind::Connect,
+                code: None,
+                message: format!("h2 handshake: {e}"),
+            })?;
         tokio::task::spawn_local(async move {
             let _ = conn.await;
         });

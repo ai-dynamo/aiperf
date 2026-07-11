@@ -37,8 +37,20 @@ fn print_trace(i: usize, status: Option<u16>, t: &TraceData) {
         ms(t.connecting())
     );
     println!(
+        "  http_req_tcp        (tcp connect)    : {}",
+        ms(t.tcp_connect())
+    );
+    println!(
+        "  http_req_tls        (tls handshake)  : {}",
+        ms(t.tls_handshake())
+    );
+    println!(
         "  http_req_sending    (request write)  : {}",
         ms(t.sending())
+    );
+    println!(
+        "  http_req_ttfh       (to first header): {}",
+        ms(t.time_to_first_header())
     );
     println!(
         "  http_req_waiting    (ttfb)           : {}",
