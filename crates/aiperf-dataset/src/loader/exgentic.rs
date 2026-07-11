@@ -378,6 +378,11 @@ fn parse_span(session_id: &str, span_index: usize, value: &Value) -> Result<Opti
                 })
         })
         .transpose()?;
+    let observed_output_tokens = u32::try_from(output_tokens).map_err(|_| {
+        DatasetError::Validation(format!(
+            "Exgentic session {session_id:?} span {span_index} output token count exceeds u32"
+        ))
+    })?;
     let mut messages = normalize_system(attributes.get("gen_ai.system_instructions"))?;
     messages.extend(normalize_messages(
         attributes.get("gen_ai.input.messages").ok_or_else(|| {
@@ -393,7 +398,7 @@ fn parse_span(session_id: &str, span_index: usize, value: &Value) -> Result<Opti
         end_ms,
         span_index,
         input_tokens,
-        max_tokens: requested.unwrap_or(output_tokens as u32),
+        max_tokens: requested.unwrap_or(observed_output_tokens),
         messages,
         tools,
         extra_body,
@@ -775,5 +780,25 @@ mod tests {
         assert!(conversation.turns[0].tools.is_some());
         assert!(conversation.turns[0].extra_headers.is_some());
         assert_eq!(conversation.turns[0].input_tokens, 10);
+    }
+
+    #[test]
+    fn rejects_output_lengths_that_cannot_be_represented_on_the_wire() {
+        let output_tokens = u64::from(u32::MAX) + 1;
+        let span = json!({
+            "type":"llm_call",
+            "start_time":"2026-01-01T00:00:00Z",
+            "end_time":"2026-01-01T00:00:01Z",
+            "attributes":{
+                "gen_ai.usage.input_tokens":1,
+                "gen_ai.usage.output_tokens":output_tokens,
+                "gen_ai.input.messages":[{
+                    "role":"user",
+                    "parts":[{"type":"text","content":"q"}]
+                }]
+            }
+        });
+        let error = parse_span("session", 0, &span).unwrap_err();
+        assert!(error.to_string().contains("output token count exceeds u32"));
     }
 }
