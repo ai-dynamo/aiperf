@@ -18,6 +18,7 @@ dependencies = [
  "aiperf-clock",
  "aiperf-core",
  "aiperf-graph",
+ "aiperf-timing",
  "aiperf-transport",
  "anyhow",
  "async-trait",
@@ -26,8 +27,6 @@ dependencies = [
  "clap",
  "loadgen-core",
  "mimalloc",
- "rand",
- "rand_distr",
  "serde_json",
  "tokio",
  "tracing",
@@ -75,6 +74,15 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "aiperf-timing"
+version = "0.0.0"
+dependencies = [
+ "rand",
+ "rand_distr",
+ "tokio",
 ]
 
 [[package]]

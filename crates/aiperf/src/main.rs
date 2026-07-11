@@ -19,8 +19,8 @@ use std::path::PathBuf;
 
 use aiperf::report::{print_report_table, write_report_json};
 use aiperf::run::run_paced;
-use aiperf::timing::{ArrivalPattern, StopConfig};
 use aiperf::workload::SkeletonWorkload;
+use aiperf_timing::{ArrivalPattern, StopConfig};
 use clap::Parser;
 
 // A high-churn benchmark allocator: the graph executor + streaming client

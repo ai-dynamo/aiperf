@@ -40,15 +40,17 @@ Thread-per-core, `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
 |---|---|---|
 | `aiperf-clock` | the time seam: `Clock` trait, `SimClock` (int-ns DES heap, `(at_ns, seq_no)` tie-break), `RealClock` (`timerfd`/`AsyncFd`) | `src/clock.rs`, `src/sim_clock.rs`, `src/real_clock.rs` |
 | `loadgen-core` | the dispatch/measure seam + report: `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `TraceCollector`, `TraceSimulationReport` | `src/sink.rs`, `src/collector.rs` |
+| `aiperf-timing` | the clock-native scheduling-policy leaf (time injected as ns): `IntervalGenerator` (arrival distributions), `SlotPool` (debt-drain concurrency admission), `StopCondition`/`StopChecker` (run bounds), `plan_user_centric`; shared by the online CLI and the graph path so policy can't drift | `src/intervals.rs`, `src/slots.rs`, `src/stop.rs`, `src/user_centric.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | the Graph-IR dataflow engine: content-addressed segments, splice materialization, firing-gate executor, DES `drive_sim`/`drive_real`, throughput benches | `src/runtime.rs`, `src/executor.rs`, `src/segment.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
 | `aiperf` | the CLI binary: `--mode online` (default) and `--mode graph`, mimalloc, reporting | `src/main.rs`, `src/run.rs`, `src/workload.rs`, `src/report.rs` |
 
-Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`, `aiperf-transport`,
-`aiperf-clock`, `loadgen-core`}; `aiperf-graph` → {`aiperf-core`,
-`aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-core` →
-`loadgen-core`; `aiperf-transport` → `aiperf-clock`.
+Deps: `aiperf` → {`aiperf-core`, `aiperf-graph`, `aiperf-timing`,
+`aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-graph` →
+{`aiperf-core`, `aiperf-transport`, `aiperf-clock`, `loadgen-core`};
+`aiperf-core` → `loadgen-core`; `aiperf-transport` → `aiperf-clock`.
+`aiperf-timing` is a leaf (the graph path is its designed second consumer).
 
 ## "Which file answers…" quick map
 

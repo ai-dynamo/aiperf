@@ -28,10 +28,11 @@ use aiperf_core::observer::CollectorObserver;
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use loadgen_core::sink::{RequestObserver, RequestSink};
 
-use crate::http::TransportSink;
-use crate::timing::{
+use aiperf_timing::{
     ArrivalPattern, RunState, SlotPool, StopChecker, StopConfig, make_interval_generator,
 };
+
+use crate::http::TransportSink;
 use crate::workload::SkeletonWorkload;
 
 /// Run a closed-loop concurrency-`concurrency` benchmark of `workload` against
