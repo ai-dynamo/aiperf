@@ -17,7 +17,8 @@ use bytes::Bytes;
 use serde_json::Value;
 
 use aiperf_endpoints::{
-    Endpoint, EndpointConfig, ParsedResponse, RequestContentType, ResponseData, ServerResponse,
+    Endpoint, EndpointConfig, EndpointResult, EndpointType, ParsedResponse, RequestContentType,
+    ResponseData, ServerResponse,
 };
 use aiperf_metrics::HttpTrace;
 use aiperf_transport::models::{ErrorKind, RequestConfig, RequestRecord, Response, SseMessage};
@@ -159,20 +160,20 @@ impl TransportSink {
             let Some(server_response) = endpoint_response(response) else {
                 continue;
             };
-            let parsed =
-                match endpoint.parse_response_with_config(&server_response, endpoint_config) {
-                    Ok(parsed) => parsed,
-                    Err(error) => {
-                        tracing::warn!(
-                            uuid = %uuid,
-                            endpoint = ?endpoint.metadata().endpoint_type,
-                            error = %error,
-                            "endpoint response parsing failed"
-                        );
-                        parse_failed = true;
-                        continue;
-                    }
-                };
+            let parsed = match parse_endpoint_response(endpoint, endpoint_config, &server_response)
+            {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    tracing::warn!(
+                        uuid = %uuid,
+                        endpoint = ?endpoint.metadata().endpoint_type,
+                        error = %error,
+                        "endpoint response parsing failed"
+                    );
+                    parse_failed = true;
+                    continue;
+                }
+            };
             let Some(parsed) = parsed else { continue };
             parsed_any = true;
             absorb_usage(&parsed, &mut prompt_tokens, &mut completion_tokens);
@@ -350,13 +351,52 @@ fn meaningful_token_frame(
     }
     sse_endpoint_response(message)
         .and_then(|response| {
-            endpoint
-                .parse_response_with_config(&response, endpoint_config)
+            parse_endpoint_response(endpoint, endpoint_config, &response)
                 .ok()
                 .flatten()
         })
         .and_then(|parsed| parsed.data)
         .is_some_and(|data| !data.get_text().is_empty())
+}
+
+fn parse_endpoint_response(
+    endpoint: &dyn Endpoint,
+    endpoint_config: &EndpointConfig,
+    response: &ServerResponse,
+) -> EndpointResult<Option<ParsedResponse>> {
+    let parsed = endpoint.parse_response_with_config(response, endpoint_config)?;
+    if parsed.is_some() || endpoint.metadata().endpoint_type != EndpointType::Chat {
+        return Ok(parsed);
+    }
+    let Some(mut object) = response.json.as_ref().and_then(Value::as_object).cloned() else {
+        return Ok(None);
+    };
+    if object.contains_key("object") || !object.contains_key("choices") {
+        return Ok(None);
+    }
+
+    // Older OpenAI-compatible mocks omitted `object` while retaining a valid
+    // `choices` envelope. Keep the endpoint adapter itself source-strict and
+    // normalize only this established wire-compatibility shape at dispatch.
+    object.insert(
+        "object".into(),
+        Value::String(
+            if endpoint_config.streaming {
+                "chat.completion.chunk"
+            } else {
+                "chat.completion"
+            }
+            .into(),
+        ),
+    );
+    endpoint.parse_response_with_config(
+        &ServerResponse {
+            perf_ns: response.perf_ns,
+            json: Some(Value::Object(object)),
+            raw: response.raw.clone(),
+        },
+        endpoint_config,
+    )
 }
 
 fn endpoint_response(response: &Response) -> Option<ServerResponse> {
@@ -475,7 +515,7 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_endpoints::{HuggingFaceGenerateEndpoint, ImageGenerationEndpoint};
+    use aiperf_endpoints::{ChatEndpoint, HuggingFaceGenerateEndpoint, ImageGenerationEndpoint};
 
     #[test]
     fn endpoint_sse_filter_uses_the_selected_dialect() {
@@ -497,6 +537,11 @@ mod tests {
             &config,
             &image
         ));
+
+        config.endpoint_type = EndpointType::Chat;
+        let legacy_chat =
+            SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"compat"}}]}"#, 12);
+        assert!(meaningful_token_frame(&ChatEndpoint, &config, &legacy_chat));
     }
 
     #[test]
