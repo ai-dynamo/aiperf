@@ -1633,6 +1633,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mt_bench_keeps_every_prompt_as_a_prefix_chained_turn() {
+        let dataset = build(
+            Arc::new(MtBenchDatasetLoader),
+            Arc::new(MtBenchComposer),
+            json!([
+                {"prompt":["first user turn", "second user turn"]},
+                {"prompt":[]}
+            ]),
+            Map::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dataset.conversations().len(), 1);
+        let turns = &dataset.conversations()[0].turns;
+        assert_eq!(turns.len(), 2);
+        let first = turns[0].content[0].handles[0];
+        let second = turns[1].content[0].handles[0];
+        assert_eq!(
+            dataset.segments().segment(second).unwrap().parent,
+            Some(first)
+        );
+    }
+
+    #[tokio::test]
+    async fn spec_bench_defaults_to_first_turn_and_supports_full_conversations() {
+        let source = json!([{"turns":["first", "second", "third"]}]);
+        let single = build(
+            Arc::new(SpecBenchDatasetLoader),
+            Arc::new(SpecBenchComposer),
+            source.clone(),
+            Map::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(single.conversations()[0].turns.len(), 1);
+
+        let mut options = Map::new();
+        options.insert("multi_turn".into(), Value::Bool(true));
+        let multi = build(
+            Arc::new(SpecBenchDatasetLoader),
+            Arc::new(SpecBenchComposer),
+            source,
+            options,
+        )
+        .await
+        .unwrap();
+        assert_eq!(multi.conversations()[0].turns.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn mmvu_formats_choices_and_requires_video_content() {
+        let dataset = build(
+            Arc::new(MmvuDatasetLoader),
+            Arc::new(MmvuComposer),
+            json!([
+                {
+                    "question":"Which option?",
+                    "choices":{"A":"alpha", "B":"beta"},
+                    "video":{"url":"https://example.com/video.mp4"}
+                },
+                {"question":"no media", "choices":{"A":"skip"}}
+            ]),
+            Map::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dataset.conversations().len(), 1);
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.content.len(), 2);
+        let text = dataset.segments().get(turn.content[0].handles[0]).unwrap();
+        assert!(
+            matches!(text, crate::Payload::Text { bytes, .. } if bytes == "Which option? A.alpha B.beta")
+        );
+        let video = dataset.segments().get(turn.content[1].handles[0]).unwrap();
+        assert!(
+            matches!(video, crate::Payload::Media { kind: MediaKind::Video, bytes } if bytes == "https://example.com/video.mp4")
+        );
+    }
+
+    #[tokio::test]
+    async fn speed_bench_preserves_session_roles_and_category_filtering() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let mut options = Map::new();
+        options.insert("category".into(), Value::String("coding".into()));
+        let dataset = build(
+            Arc::new(SpeedBenchDatasetLoader),
+            Arc::new(SpeedBenchComposer),
+            json!([
+                {
+                    "question_id":id,
+                    "category":"coding",
+                    "messages":[
+                        {"role":"user", "content":"write code"},
+                        {"role":"assistant", "content":"authored response"}
+                    ]
+                },
+                {
+                    "question_id":"fedcba9876543210fedcba9876543210",
+                    "category":"math",
+                    "messages":[{"role":"user", "content":"skip me"}]
+                }
+            ]),
+            options,
+        )
+        .await
+        .unwrap();
+        assert_eq!(dataset.conversations().len(), 1);
+        assert_eq!(dataset.conversations()[0].session_id.as_str(), id);
+        let turns = &dataset.conversations()[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].role.as_ref().unwrap().as_str(), "user");
+        assert_eq!(turns[1].role.as_ref().unwrap().as_str(), "assistant");
+    }
+
+    #[tokio::test]
     async fn pinned_hugging_face_source_resolves_commit_and_never_uses_rows_api() {
         let commit = "0123456789abcdef0123456789abcdef01234567";
         let fetcher = Arc::new(MockRevisionFetcher {

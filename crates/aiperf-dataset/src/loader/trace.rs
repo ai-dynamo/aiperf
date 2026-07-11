@@ -1181,6 +1181,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn burst_gpt_parses_csv_skips_invalid_rows_and_converts_seconds() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("burst.csv");
+        std::fs::write(
+            &path,
+            "Timestamp,Request tokens,Response tokens,Model\n1.5,4,3,gpt\nbad,row,data,gpt\n2.0,0,2,gpt\n",
+        )
+        .unwrap();
+        let dataset = build(
+            Arc::new(BurstGptTraceDatasetLoader),
+            Arc::new(BurstGptTraceComposer),
+            DatasetSource::Path(path),
+        )
+        .await;
+        assert_eq!(dataset.conversations().len(), 1);
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.timestamp_ms, Some(1500.0));
+        assert_eq!(turn.input_tokens, 4);
+        assert_eq!(turn.max_tokens, Some(3));
+        assert_eq!(
+            dataset
+                .segments()
+                .get(turn.content[0].handles[0])
+                .unwrap()
+                .token_count(),
+            Some(4)
+        );
+    }
+
+    #[tokio::test]
     async fn sagemaker_decodes_base64_zero_aligns_and_keeps_messages() {
         let request = r#"{"messages":[{"role":"user","content":"hello"}],"max_tokens":9}"#;
         let response = r#"{"usage":{"prompt_tokens":4}}"#;
