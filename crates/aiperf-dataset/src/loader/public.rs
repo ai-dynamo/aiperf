@@ -28,7 +28,7 @@ use crate::loader::{
     DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow, RowOrigin, jsonl_rows,
 };
 use crate::model::{
-    AccuracyGroundTruth, ContentGroup, Conversation, CorrelationId, MediaKind, SessionId, Turn,
+    AccuracyAssociation, ContentGroup, Conversation, CorrelationId, MediaKind, SessionId, Turn,
 };
 use crate::segment::{Role, SegmentPool};
 use crate::tokenizer::TextTokenizer;
@@ -106,7 +106,7 @@ macro_rules! public_loader {
 }
 
 public_loader!(AccuracyDatasetLoader, "accuracy", |value: &Value| {
-    value.get("ground_truth").is_some() && value.get("task").is_some()
+    value.get("prompt").is_some() && value.get("task").is_some()
 });
 public_loader!(ShareGptDatasetLoader, "sharegpt", |value: &Value| {
     value.get("conversations").is_some_and(Value::is_array)
@@ -154,7 +154,6 @@ impl Composer for AccuracyComposer {
         for row in rows {
             let object = require_object(&row.value, &row.origin)?;
             let prompt = required_string(object, "prompt", &row.origin)?;
-            let ground_truth = required_string(object, "ground_truth", &row.origin)?;
             let task = required_string(object, "task", &row.origin)?;
             let session_id = object
                 .get("session_id")
@@ -239,9 +238,8 @@ impl Composer for AccuracyComposer {
             finalizer.finalize_turn(&mut turn)?;
             let mut conversation = Conversation::new(session_id);
             conversation.turns.push(turn);
-            conversation.accuracy = Some(AccuracyGroundTruth {
+            conversation.accuracy = Some(AccuracyAssociation {
                 correlation_id,
-                ground_truth: ground_truth.to_string(),
                 task: task.to_string(),
             });
             conversations.push(conversation);
@@ -1742,7 +1740,7 @@ mod tests {
         let dataset = build(
             Arc::new(AccuracyDatasetLoader),
             Arc::new(AccuracyComposer),
-            json!([{"prompt":"Q?","ground_truth":"A","task":"math","correlation_id":"problem-1","metadata":{"generation_size":5},"extra_body":{"temperature":0.2,"stop":["Q:"]}}]),
+            json!([{"prompt":"Q?","task":"math","correlation_id":"problem-1","metadata":{"generation_size":5},"extra_body":{"temperature":0.2,"stop":["Q:"]}}]),
             options,
         ).await.unwrap();
         let conversation = &dataset.conversations()[0];
@@ -1766,7 +1764,7 @@ mod tests {
         let error = build(
             Arc::new(AccuracyDatasetLoader),
             Arc::new(AccuracyComposer),
-            json!([{"prompt":"Q?","ground_truth":"A","task":"math","extra_body":[]}]),
+            json!([{"prompt":"Q?","task":"math","extra_body":[]}]),
             Map::new(),
         )
         .await

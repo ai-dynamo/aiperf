@@ -71,7 +71,7 @@ string_id!(
     BranchId
 );
 string_id!(
-    /// Stable response-to-ground-truth association identifier.
+    /// Stable opaque response-to-evaluator association identifier.
     CorrelationId
 );
 
@@ -197,13 +197,11 @@ pub struct ContentGroup {
     pub handles: SmallVec<[Handle; 1]>,
 }
 
-/// Ground truth and real correlation identity for an accuracy conversation.
+/// Opaque evaluator identity for an accuracy conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AccuracyGroundTruth {
+pub struct AccuracyAssociation {
     /// Stable identity propagated into the dispatched request and grading record.
     pub correlation_id: CorrelationId,
-    /// Expected answer or serialized reference result.
-    pub ground_truth: String,
     /// Benchmark sub-task name.
     pub task: String,
 }
@@ -332,8 +330,8 @@ pub struct Conversation {
     pub user_context: Option<Handle>,
     /// Conversation-specific context behavior; absent inherits dataset default.
     pub context_mode: Option<ConversationContextMode>,
-    /// Accuracy association and ground truth.
-    pub accuracy: Option<AccuracyGroundTruth>,
+    /// Opaque association used to return completed text to an external evaluator.
+    pub accuracy: Option<AccuracyAssociation>,
     /// DAG topology and lineage.
     pub dag: Option<DagMetadata>,
 }
@@ -396,8 +394,8 @@ pub struct ConversationMetadata {
     pub turns: Vec<TurnMetadata>,
     /// Conversation-specific context behavior.
     pub context_mode: Option<ConversationContextMode>,
-    /// Accuracy ground truth and correlation identity.
-    pub accuracy: Option<AccuracyGroundTruth>,
+    /// Opaque external-evaluator association.
+    pub accuracy: Option<AccuracyAssociation>,
     /// DAG topology and lineage.
     pub dag: Option<DagMetadata>,
 }
@@ -415,9 +413,8 @@ mod tests {
             audio_duration_seconds: Some(1.25),
             ..Turn::default()
         });
-        conversation.accuracy = Some(AccuracyGroundTruth {
+        conversation.accuracy = Some(AccuracyAssociation {
             correlation_id: CorrelationId::from("corr-1"),
-            ground_truth: "A".into(),
             task: "math".into(),
         });
         conversation.dag = Some(DagMetadata {

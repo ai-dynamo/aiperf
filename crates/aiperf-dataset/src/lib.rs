@@ -50,7 +50,7 @@ pub use materialize::{
 };
 pub use media::{InlineMediaResolver, MediaResolver};
 pub use model::{
-    AccuracyGroundTruth, BranchId, ContentGroup, Conversation, ConversationBranch,
+    AccuracyAssociation, BranchId, ContentGroup, Conversation, ConversationBranch,
     ConversationBranchMode, ConversationContextMode, ConversationMetadata, CorrelationId,
     DagMetadata, DispatchTiming, MediaKind, ModelId, NodeId, PrerequisiteKind, SessionId, Turn,
     TurnMetadata, TurnPrerequisite,
