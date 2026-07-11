@@ -83,10 +83,42 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   hyper transport (→ `aiperf-transport`).
 - `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — one
   content-addressed store for datasets + graph (designed).
+- `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
+  every load mode (rate/concurrency/user-centric/fixed-schedule/adaptive/DAG)
+  reduces to one dispatch verb on the clock-scheduled graph executor; strategies
+  become `Workload` schedule generators. 28 seams as traits; deletes
+  `BranchOrchestrator` + most of `CreditCounter`; specs the OFFLINE dynosim path.
+  Grounded in a line-by-line read of all 37 `timing/` files.
 - `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — the `Scheduler`
-  that restores credit *policy* (designed, not built).
+  that restores credit *policy*. **Superseded by the unified-graph-runtime design.**
+- `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of the
+  five large unspec'd bodies (sweep-line metrics + columnar accumulator, endpoint/
+  exporter zoo, config-v2 algorithms, timing depth, telemetry) + scope decisions.
 - `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — accuracy as an
   accumulator + analyzer pair (designed).
+- `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — the
+  **new-code** metrics engine: `aiperf-metrics` leaf crate (columnar accumulator +
+  sweep-line time-weighted curves + percentile/derived kernels + phase windowing +
+  genai-perf `Reporter`). Carries the scars (sweep tie-break/FP-snap, decode `−1`,
+  ICL `nextafter`, ddof split, `adj_*` `+inf`/nearest, phase-tag mask), deletes the
+  ZMQ/plugin/dual-path complexity; realizes the unified-runtime `Collector`/`Reporter`
+  seams. Designed, not built.
+- `specs/2026-07-10-aiperf-rust-metric-catalog-appendix.md` — the ~120-metric
+  `MetricSpec` catalog over the engine above (tag/unit/type/flags/formula per metric +
+  the per-metric scars: ITL `osl<2`, TTFO first-non-reasoning, osl-mismatch `min()` cap,
+  absent-vs-0, zero-error trap, injected-metric pattern). Appendix to the metrics spec.
+- `specs/2026-07-10-aiperf-rust-telemetry-accumulators-design.md` — GPU / server-metrics
+  / network-RTT as side-channel `Accumulator`s: shared counter-delta engine (baseline +
+  reset-clamp), `FINAL_SCRAPE_GRACE_NS`, DCGM table + efficiency rollups, server routing/
+  fallback/auto-disable SM + vLLM/SGLang atlas, the polynomial histogram estimator
+  (arXiv 2504.00001), TCP-connect RTT calibration. Does NOT port the ZMQ NaN-taint.
+- `specs/2026-07-10-aiperf-rust-rng-derive-system-design.md` — the hash-derived
+  RNG substrate: `blake3(f"{root}:{id}")[:8]`→u64 order-independent seed derivation
+  + `HashIdRandomGenerator` (per-`(trace_id, hash_id)` reseed) + `RandomGenerator`
+  contract; ruling: NO cross-language byte parity — one deterministic PRNG (`Pcg64`)
+  + `rand_distr` with faithful distribution/edge-case semantics; internal
+  reproducibility + order-independence (lock-free per-thread, alloc-free reseed).
+  New leaf crate `aiperf-rng` (designed, not built).
 - `specs/2026-07-09-graph-ir-rust-port-design.md` — byte-exact Graph-IR port
   (partly built in `aiperf-graph`).
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
