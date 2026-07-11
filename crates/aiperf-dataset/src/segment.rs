@@ -360,12 +360,14 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
                 hasher.update(&token.to_le_bytes());
             }
         }
-        Payload::Text { role, bytes, .. } => {
+        Payload::Text { role, tokens, .. } => {
             hasher.update(b"text-only\0");
             hash_parent(&mut hasher, parent);
             hasher.update(role.as_str().as_bytes());
             hasher.update(b"\0");
-            hasher.update(bytes);
+            for token in tokens {
+                hasher.update(&token.to_le_bytes());
+            }
         }
         Payload::Raw { wire } => {
             hasher.update(b"raw\0");
@@ -456,6 +458,24 @@ mod tests {
         for (index, id) in ids.iter().enumerate() {
             assert!(!ids[..index].contains(id));
         }
+    }
+
+    #[test]
+    fn text_identity_is_token_keyed_after_composition() {
+        let mut pool = SegmentPool::new();
+        let first = pool
+            .intern_text(None, "user", Bytes::from_static(b"first wire"), [7, 9])
+            .unwrap();
+        let equivalent_tokens = pool
+            .intern_text(None, "user", Bytes::from_static(b"alternate wire"), [7, 9])
+            .unwrap();
+        let different_tokens = pool
+            .intern_text(None, "user", Bytes::from_static(b"first wire"), [7, 10])
+            .unwrap();
+
+        assert_eq!(first, equivalent_tokens);
+        assert_ne!(first, different_tokens);
+        assert_eq!(pool.len(), 2);
     }
 
     #[test]
