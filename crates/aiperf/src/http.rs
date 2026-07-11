@@ -470,6 +470,7 @@ impl TurnDispatcher for TransportSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let is_final_turn = turn.is_final_turn();
+        let endpoint_aware = turn.request_body.is_some();
         let endpoint = turn.endpoint.clone();
         let mut endpoint_config = turn.endpoint_config.clone();
         endpoint_config.streaming = turn.streaming;
@@ -487,30 +488,35 @@ impl TurnDispatcher for TransportSink {
         } else {
             None
         };
-        let result = self
-            .dispatch_endpoint_collect_with_hooks(
-                HttpRequest {
-                    uuid: turn.uuid,
-                    input_length: turn.input_length,
-                    max_output_tokens: turn.max_output_tokens,
-                    prompt_text: None,
-                    request_body,
-                    request_body_bytes: turn.request_body,
-                    headers: turn.request_headers,
-                    parameters: turn.request_parameters,
-                    endpoint_path: turn.endpoint_path,
-                    streaming: turn.streaming,
-                    x_correlation_id: Some(turn.request_correlation_id),
-                    is_final_turn,
-                    cancel_after_ns: turn.cancel_after_ns,
-                    url_index: turn.url_index,
-                },
+        let request = HttpRequest {
+            uuid: turn.uuid,
+            input_length: turn.input_length,
+            max_output_tokens: turn.max_output_tokens,
+            prompt_text: None,
+            request_body,
+            request_body_bytes: turn.request_body,
+            headers: turn.request_headers,
+            parameters: turn.request_parameters,
+            endpoint_path: turn.endpoint_path,
+            streaming: turn.streaming,
+            x_correlation_id: Some(turn.request_correlation_id),
+            is_final_turn,
+            cancel_after_ns: turn.cancel_after_ns,
+            url_index: turn.url_index,
+        };
+        let result = if endpoint_aware {
+            self.dispatch_endpoint_collect_with_hooks(
+                request,
                 endpoint.as_ref(),
                 &endpoint_config,
                 observer,
                 on_first_token,
             )
-            .await?;
+            .await?
+        } else {
+            self.dispatch_collect_with_hooks(request, observer, on_first_token)
+                .await?
+        };
         Ok(TurnDispatchOutcome {
             start_ns: result.start_ns,
             end_ns: result.end_ns,
