@@ -22,6 +22,7 @@ pub mod http;
 pub mod logging;
 pub mod metrics;
 pub mod multiturn;
+pub mod phase_runtime;
 pub mod report;
 pub mod run;
 pub mod scheduled;

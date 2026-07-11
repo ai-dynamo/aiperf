@@ -103,6 +103,23 @@ pub trait TurnRecordProcessor {
     async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()>;
 }
 
+/// Synchronous per-turn lifecycle seam for phase/accounting policy.
+///
+/// Issuance is observed before the dispatch task is spawned, preserving the
+/// freeze-before-return protocol even when a workload finishes scheduling
+/// before that task receives its first poll. First-token and terminal calls run
+/// on the same local dispatch task. Implementations must not block or await.
+pub trait TurnLifecycleObserver {
+    /// Observe one accepted turn before asynchronous backend dispatch begins.
+    fn on_issue(&self, turn: &TurnToSend);
+
+    /// Observe the first meaningful token for an active request.
+    fn on_first_token(&self, uuid: Uuid);
+
+    /// Observe terminal dispatch, including synthesized failure outcomes.
+    fn on_terminal(&self, turn: &TurnToSend, outcome: &TurnDispatchOutcome);
+}
+
 /// One turn's expected and observed timing, all offsets relative to run start.
 #[derive(Clone, Debug, Serialize)]
 pub struct TurnTimingRecord {
@@ -298,6 +315,7 @@ pub struct ScheduledRuntime {
     url_selector: RefCell<Option<Box<dyn UrlSelector>>>,
     session_url_indices: RefCell<FxHashMap<String, u32>>,
     record_processors: RefCell<Vec<Rc<dyn TurnRecordProcessor>>>,
+    turn_lifecycle_observer: RefCell<Option<Rc<dyn TurnLifecycleObserver>>>,
     record_processor_tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
     record_processor_errors: RefCell<Vec<String>>,
 }
@@ -371,6 +389,7 @@ impl ScheduledRuntime {
             url_selector: RefCell::new(None),
             session_url_indices: RefCell::new(FxHashMap::default()),
             record_processors: RefCell::new(Vec::new()),
+            turn_lifecycle_observer: RefCell::new(None),
             record_processor_tasks: RefCell::new(Vec::new()),
             record_processor_errors: RefCell::new(Vec::new()),
         })
@@ -379,6 +398,11 @@ impl ScheduledRuntime {
     /// Attach a terminal record processor before workload execution begins.
     pub fn add_record_processor(&self, processor: Rc<dyn TurnRecordProcessor>) {
         self.record_processors.borrow_mut().push(processor);
+    }
+
+    /// Attach one synchronous lifecycle observer before workload execution.
+    pub fn set_turn_lifecycle_observer(&self, observer: Rc<dyn TurnLifecycleObserver>) {
+        *self.turn_lifecycle_observer.borrow_mut() = Some(observer);
     }
 
     fn spawn_record_processing(
@@ -539,6 +563,11 @@ impl ScheduledRuntime {
                 .copied()
         });
 
+        let turn_lifecycle_observer = self.turn_lifecycle_observer.borrow().clone();
+        if let Some(observer) = &turn_lifecycle_observer {
+            observer.on_issue(&turn);
+        }
+
         let (credit_id, final_credit) = self.counter.borrow_mut().increment_sent(&turn, &self.stop);
         let issued_ns = self.clock.now_ns();
         let session_num = {
@@ -587,6 +616,9 @@ impl ScheduledRuntime {
                 recorder
                     .borrow_mut()
                     .first_token(record_index, clock.now_ns(), start_ns, ttft_ns);
+                if let Some(observer) = &turn_lifecycle_observer {
+                    observer.on_first_token(turn.uuid);
+                }
             };
 
             let outcome = match runtime
@@ -616,6 +648,9 @@ impl ScheduledRuntime {
                     }
                 }
             };
+            if let Some(observer) = runtime.turn_lifecycle_observer.borrow().as_ref() {
+                observer.on_terminal(&turn, &outcome);
+            }
             runtime
                 .recorder
                 .borrow_mut()
