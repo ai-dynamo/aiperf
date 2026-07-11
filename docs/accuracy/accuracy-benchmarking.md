@@ -208,8 +208,12 @@ aiperf profile my-model --url http://localhost:8000 \
 |---|---|---|
 | `multiple_choice` | A/B/C/D match against gold letter (lighteval `ExactMatches`). | MMLU |
 | `math` | Extract last `\boxed{...}`, fall back to "answer is X" / last number. Apply trt-llm `strip_string` normalization, then compare via `math_equal` (lowercase string → numeric `isclose` → symbolic equivalence via sympy + latex2sympy2-extended). | AIME |
-| `exact_match` | Stub. | (unused) |
-| `code_execution` | Stub. | (unused) |
+| `exact_match` | Strict, case-sensitive `pred.strip() == gold.strip()` parity with DeepEval. | HellaSwag, BigBench-Hard |
+| `code_execution` | Extract the final Python code block and run Lighteval's sandboxed `codegen_metrics` against public and private tests; correct only at pass@1=1. | LiveCodeBench |
+| `lighteval_expr` | Lighteval expression extraction for gold and expression/boxed-LaTeX extraction for predictions. | AIME 2024, AIME 2025 |
+| `lighteval_latex` | Lighteval boxed-LaTeX gold extraction with expression/boxed-LaTeX prediction extraction. | MATH-500 |
+| `lighteval_gpqa` | Lighteval native-letter index extraction for A/B/C/D. | GPQA-Diamond |
+| `lighteval_gsm8k` | Lighteval-compatible `#### <number>` gold extraction plus generated-response numeric extraction. | GSM8K |
 
 The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/aime/`):
 
@@ -217,7 +221,7 @@ The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/
     - The contents of the **last** `\boxed{...}` in the response (canonical MATH/AIME format).
     - The tail of an "the answer is X" / "answer: X" / "final answer X" phrase, recursively re-parsed for boxed/numeric content.
     - The last numeric literal in the response.
-2. **Normalize** both prediction and gold via the recipe's `strip_string`: linebreaks/spacing/quote-style braces collapsed, `\dfrac`/`\tfrac` → `\frac`, `\left`/`\right` removed, `\text{...}` unwrapped, MathQA-derived unit tokens dropped, infinity/percent/months/dollar-sign normalization, trailing `.0` decimals trimmed, simple `a/b` rewritten as `\frac{a}{b}`.
+2. **Normalize** both prediction and gold via the recipe's `strip_string`: linebreaks/spacing/quote-style braces collapsed, written English numbers converted with the pinned `word2number` dependency, `\dfrac`/`\tfrac` → `\frac`, `\left`/`\right` removed, `\text{...}` unwrapped, MathQA-derived unit tokens dropped, infinity/percent/months/dollar-sign normalization, trailing `.0` decimals trimmed, simple `a/b` rewritten as `\frac{a}{b}`.
 3. **Compare** with `math_equal` (lowercase string equality → choice-prefix unwrap → numerical `isclose` (abs_tol=1e-4) with percentage variants → brace/paren strip + lowercase compare → equation-form rewrite (`f(x) = y` ↔ `y`) → symbolic equivalence via `sympy.parsing.sympy_parser.parse_expr` and `latex2sympy2_extended.latex2sympy`).
 
 Symbolic equivalence (e.g. `\sqrt{2}` ↔ `2^{1/2}`, `\frac{1}{3}` ↔ `0.333333`, `1,2,3` ↔ `3,2,1`) requires the `[accuracy]` install:
