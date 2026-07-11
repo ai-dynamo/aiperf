@@ -4,10 +4,10 @@
 //! Online HTTP dispatch over the `aiperf-transport` (hyper) client.
 //!
 //! [`TransportSink`] implements `loadgen_core`'s [`RequestSink`] using the
-//! Rust-native `aiperf-transport` client (hyper + the `aiperf-clock` `Clock`),
-//! replacing the former reqwest sink. It is single-threaded (`!Send`, `Rc`-based)
-//! and driven on a `LocalSet`; admit/token times are stamped from the same clock
-//! origin the run loop uses for arrival, so all events share one timeline.
+//! Rust-native `aiperf-transport` client (hyper + the `aiperf-clock` `Clock`). It
+//! is single-threaded (`!Send`, `Rc`-based) and driven on a `LocalSet`;
+//! admit/token times are stamped from the same clock origin the run loop uses for
+//! arrival, so all events share one timeline.
 
 use std::rc::Rc;
 

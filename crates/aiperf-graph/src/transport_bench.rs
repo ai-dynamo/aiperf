@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Transport-backed throughput benchmark for graph-IR mode.
 //!
-//! Same Graph-IR E2E path as [`crate::bench`] (thread-per-core workers, each a
-//! `current_thread` runtime + `LocalSet` running `concurrency` trace lanes), but
-//! HTTP dispatch runs on the Rust-native [`aiperf_transport`] client instead of
-//! reqwest. Each serial lane keeps one reused connection:
+//! Graph-IR E2E path with thread-per-core workers (each a `current_thread`
+//! runtime + `LocalSet` running `concurrency` trace lanes); HTTP dispatch runs
+//! on the Rust-native [`aiperf_transport`] client. The multi-turn workload
+//! scaffolding (segment pool, [`BenchConfig`], server resolution) is shared with
+//! [`crate::bench`]. Each serial lane keeps one reused connection:
 //!
 //! * default: **HTTP/1.1 keep-alive** (fastest for serial lanes — no per-stream
 //!   hpack/flow-control overhead);

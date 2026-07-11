@@ -3,10 +3,11 @@
 
 //! Rust-native AIPerf CLI (slim).
 //!
-//! The shared HTTP client + measurement layer lives in [`aiperf_core`] (wire
-//! types, streaming sink, collector observer); the Graph-IR engine lives in
-//! `aiperf_graph`. This crate is just the CLI surface: workload shaping
-//! ([`workload`]), the online run loop ([`run`]), and reporting ([`report`]).
+//! Measurement wire types + the collector observer live in [`aiperf_core`]; the
+//! Graph-IR engine lives in `aiperf_graph`. This crate owns the CLI surface: the
+//! online HTTP sink over `aiperf-transport` ([`http`]), workload shaping
+//! ([`workload`]), the online run loop ([`run`]), reporting ([`report`]), and
+//! logging setup ([`logging`]).
 
 pub mod http;
 pub mod logging;

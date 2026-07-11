@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! A [`GraphSink`] backed by the Rust-native [`aiperf_transport`] HTTP client
-//! (hyper + the `aiperf-clock` `Clock`), instead of the reqwest-based
-//! `aiperf_core::http_sink::HttpSink`.
+//! (hyper + the `aiperf-clock` `Clock`).
 //!
 //! This is the graph dataflow's live dispatch path: it streams real OpenAI
 //! chat-completions over HTTP to the target server (Dynamo frontend / the
 //! `aiperf-mock-rs` mock / a real inference server), parses the SSE deltas into
 //! assistant text + per-token arrival times, and feeds the shared
-//! [`RequestObserver`] the same measurement events as `HttpChatSink`.
+//! [`RequestObserver`] the measurement events.
 
 use std::rc::Rc;
 use std::sync::Arc;
