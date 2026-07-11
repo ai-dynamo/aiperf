@@ -353,3 +353,68 @@ verbatim; let the Rust histogram store accept per-scrape bucket sets. (This is t
 3. **Prometheus-text parser** — a small hand-rolled parser vs a crate. Lean hand-rolled (the
    `_total` strip, `_created`/`_uptime` skip, OpenMetrics-vs-classic routing, and the label-dedup
    are all custom anyway).
+
+---
+
+## Addendum — 2026-07-10: phase-boundary snapshots supersede scrape-then-reconstruct windowing
+
+**Supersedes §1's read-time windowing, §2.1/§2.3's `FINAL_SCRAPE_GRACE_NS` + append-only
+store, and the "two masking conventions" — for COUNTERS.** The body ports the Python
+telemetry *windowing* faithfully, but that machinery is **accidental complexity of the
+multiprocess/async-timer model, not an earned-in-blood algorithm**. It exists only because
+the Python collector scrapes on its own timer, in its own process, decoupled from the
+benchmark's phase transitions, and must therefore reconstruct — after the fact, from
+timestamps — which samples belong to which phase.
+
+Single-process AIPerf-Rust owns the clock **and** the phase lifecycle, so it queries
+telemetry *at the moments it controls* instead of scraping blindly and reconstructing.
+
+### The primary mechanism: phase-boundary barriers
+The runtime, at each transition it owns (warmup→profiling start; profiling end), issues a
+synchronous **telemetry barrier**: force one scrape of every collector and capture the
+counter values as that phase's **baseline** (at start) / **final** (at end). Per-phase
+counter delta = `max(final − baseline, 0.0)` — the **reset-clamp stays** (a GPU/server can
+still restart mid-run). This **deletes**:
+
+- **`FINAL_SCRAPE_GRACE_NS`** — the grace window existed only to catch a trailing async
+  scrape landing after `requests_end_ns`; a forced scrape *at* phase end captures the exact
+  end counter. Gone.
+- **Pre-window baseline reconstruction** (`searchsorted` for the sample before `start_ns`)
+  — the phase-start snapshot *is* the baseline, known exactly, not guessed. Gone.
+- **The two masking conventions + `query_time_range` for counters** — the phase→samples
+  mapping is exact by construction (the phase told the collector when to snapshot). Gone.
+
+### The secondary mechanism: continuous gauges over authoritative windows
+Gauges (power/utilization/temperature) need a *distribution* over the phase (avg/percentiles),
+so they are still sampled on a cadence *during* the phase. But the window bounds are the
+**authoritative phase-boundary timestamps the runtime owns** — "samples with `t ∈
+[phase_start, phase_end]`", exact bounds, no grace/baseline/coarse-clock fudge. `ddof=1`
+stats over that window (unchanged from the body).
+
+### What stays earned-in-blood (process-independent — keep exactly)
+The reset-clamp arithmetic; the DCGM field/unit/scale table + counter set + MEGAJOULE→J; the
+server routing/`/prometheus/metrics`-fallback/terminal-auto-disable state machine; the
+vLLM/SGLang atlas + unit inference; the polynomial histogram estimator; the network-RTT
+calibration. These are facts about what the hardware/server *emit*, not artifacts of the
+transport.
+
+### Why strictly better, and the one cost
+Phase attribution becomes exact and cheap; energy-per-phase is a clean `end − start` with no
+window-widening heuristic; and the "which samples are warmup vs profiling" question — which
+the metrics-engine spec solves for *request records* via phase tags (records are tagged at
+dispatch) — never arises for *telemetry*, because telemetry is **snapshotted at the boundary,
+not tagged-and-reconstructed**. The one cost is a ~ms forced-scrape round-trip added to each
+phase transition (a deliberate barrier), trivially worth deleting the reconstruction layer.
+
+**Design driver, generalized:** in the single-process, clock-owning architecture, *the
+benchmark decides WHEN telemetry is queried relative to phases.* Any telemetry design that
+scrapes on a blind timer and reconstructs phase membership from timestamps is carrying a
+multiprocess scar. Snapshot at the boundaries you control.
+
+### Knock-on for the metrics engine spec (no change needed there)
+With authoritative phase boundaries, a phase's `observation_duration` is the exact
+`phase_end − phase_start`, not a reconstructed window — a sharpening, not a change. The
+metrics-engine spec's **phase-tag-authoritative mask for request records stays correct**
+(records ARE phase-tagged at dispatch; masking by the tag is exact and simplest). Only
+*telemetry's* time-based attribution moves to boundary snapshots — because telemetry samples,
+unlike request records, are not phase-tagged at their source.
