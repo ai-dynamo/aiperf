@@ -4,24 +4,16 @@
 //! `M`) the graph executor fires each node through. A `GraphSink<M>` impl owns
 //! that dialect's body encoding + reply parsing:
 //!
-//! * `HttpChatSink` — OpenAI chat over HTTP via `dynamo_aiperf::HttpSink`
-//!   (→ Dynamo frontend → mocker/GPUs), feeding the shared `TraceCollector`.
 //! * `EchoSink<M>` — serverless test double for any dialect.
 //!
+//! The live over-the-wire sink is [`crate::transport_sink::TransportChatSink`].
 //! A future Anthropic / Responses endpoint is a new `WireMessage` + a new
 //! `GraphSink` impl; nothing else in the graph changes.
 
-use std::sync::Arc;
-
 use anyhow::Result;
 use async_trait::async_trait;
-use uuid::Uuid;
 
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::RequestObserver;
-
-use crate::wire::{OpenAiChatMessage, WireMessage};
-use aiperf_core::http_sink::{ChatMessage, HttpSink};
+use crate::wire::WireMessage;
 
 /// A captured reply — the value a node writes onto its output channel for its
 /// successors to splice. Generic over the dialect message `M`.
@@ -61,66 +53,6 @@ pub trait GraphSink<M: WireMessage> {
         max_tokens: Option<usize>,
         on_first_token: &dyn Fn(),
     ) -> Result<GraphReply<M>>;
-}
-
-/// Live OpenAI-chat sink: streams chat-completions over HTTP, feeds the collector.
-pub struct HttpChatSink {
-    http: Arc<HttpSink>,
-    observer: Arc<dyn RequestObserver>,
-    default_max_tokens: usize,
-}
-
-impl HttpChatSink {
-    pub fn new(
-        http: Arc<HttpSink>,
-        observer: Arc<dyn RequestObserver>,
-        default_max_tokens: usize,
-    ) -> Self {
-        HttpChatSink {
-            http,
-            observer,
-            default_max_tokens,
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl GraphSink<OpenAiChatMessage> for HttpChatSink {
-    async fn dispatch(
-        &self,
-        _node_id: &str,
-        messages: Vec<OpenAiChatMessage>,
-        max_tokens: Option<usize>,
-        on_first_token: &dyn Fn(),
-    ) -> Result<GraphReply<OpenAiChatMessage>> {
-        let chat: Vec<ChatMessage> = messages
-            .into_iter()
-            .map(|m| ChatMessage {
-                role: m.role,
-                content: m.content,
-            })
-            .collect();
-        let uuid = Uuid::new_v4();
-        let outcome = self
-            .http
-            .stream_chat_cb(
-                uuid,
-                &chat,
-                max_tokens.unwrap_or(self.default_max_tokens),
-                on_first_token,
-            )
-            .await?;
-        // Feed the shared collector (same events RequestSink::dispatch emits).
-        self.observer.on_admit(uuid, outcome.admit_ms, 0);
-        for at in &outcome.token_times {
-            self.observer.on_token(uuid, *at);
-        }
-        self.observer.on_terminal(uuid, outcome.terminal);
-        Ok(match outcome.terminal {
-            ReplayTerminalStatus::Completed => GraphReply::from_text(outcome.content),
-            _ => GraphReply::failed(),
-        })
-    }
 }
 
 /// Serverless test double for any dialect: echoes the last message's debug form.

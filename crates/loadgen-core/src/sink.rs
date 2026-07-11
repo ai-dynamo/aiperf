@@ -62,9 +62,13 @@ pub trait Dispatchable: Send + Sync {
 /// emitting `obs.on_terminal(..)`.
 ///
 /// `R` is the transport-native request; a sink is implemented once per
-/// transport (e.g. `impl RequestSink<HttpRequest> for HttpSink`).
-#[async_trait::async_trait]
-pub trait RequestSink<R: Dispatchable>: Send + Sync {
+/// transport (e.g. `impl RequestSink<HttpRequest> for TransportSink`).
+///
+/// `?Send`: the sink is driven on a single-threaded `LocalSet` (the hyper
+/// transport is `!Send`, holding `Rc<dyn Clock>`), so neither the sink nor its
+/// dispatch future is required to be `Send`.
+#[async_trait::async_trait(?Send)]
+pub trait RequestSink<R: Dispatchable> {
     /// Dispatch `req`, awaiting terminal completion.
     async fn dispatch(&self, req: R, obs: &dyn RequestObserver) -> anyhow::Result<()>;
 }
@@ -107,7 +111,7 @@ mod tests {
     }
 
     struct EchoSink;
-    #[async_trait::async_trait]
+    #[async_trait::async_trait(?Send)]
     impl RequestSink<TinyRequest> for EchoSink {
         async fn dispatch(
             &self,

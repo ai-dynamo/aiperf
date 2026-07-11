@@ -1,41 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Throughput benchmark for graph-IR mode with **real segments**.
+//! Shared graph-workload scaffolding for the throughput benchmarks.
 //!
 //! Builds a multi-turn conversation as a content-addressed segment pool
 //! (system + growing user turns, prefix-chained so the static prefix dedups
-//! across every trace instance), then fans out many trace instances across all
-//! cores (thread-per-core: `workers` OS threads, each a `current_thread` tokio
-//! runtime + `LocalSet` running `concurrency` traces at once). Each node's
-//! prompt is materialized from the segment store + spliced predecessor replies,
-//! dispatched over HTTP to `aiperf-mock-rs --fast`, and measured through the
-//! shared `TraceCollector` via the batched `submit` (one lock per request —
-//! lock-free token accumulation, the same hot-path shape the driven path uses).
+//! across every trace instance) and the per-node ISL map. The actual
+//! benchmark driver lives in [`crate::transport_bench`]; this module only
+//! provides the workload builder + server-list helpers it consumes.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 
-use anyhow::Result;
-use async_trait::async_trait;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use uuid::Uuid;
-
-use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
-
-use crate::executor::{ExecutorFlags, TraceExecutor};
-use crate::materialize::SegmentItemsMaterializer;
-use crate::model::{GraphRecord, TraceRecord};
-use crate::runtime::Handle;
-use crate::segment::{SegmentPool, SegmentStore};
-use crate::sink::{GraphReply, GraphSink};
+use crate::model::GraphRecord;
+use crate::segment::SegmentPool;
 use crate::wire::OpenAiChatMessage as Msg;
-use aiperf_clock::real_clock::RealClock;
-use aiperf_core::http_sink::{ChatMessage, HttpSink};
-use aiperf_core::observer::CollectorObserver;
 
 /// Benchmark configuration.
 pub struct BenchConfig {
@@ -60,66 +37,6 @@ pub struct BenchConfig {
     /// Global cap on concurrent requests in the prefill phase (dispatched but
     /// not yet first-token). `None` = unbounded.
     pub prefill_concurrency: Option<usize>,
-}
-
-/// Metered OpenAI-chat sink: streams over HTTP and records one batched `submit`
-/// per request (per-node ISL precomputed, so there is zero hot-path tokenization).
-struct MeteredSink {
-    http: Arc<HttpSink>,
-    obs: Arc<CollectorObserver>,
-    isl_by_node: HashMap<String, usize>,
-    max_tokens: usize,
-    /// Global request-concurrency cap (held for the whole request).
-    request_sem: Option<Arc<Semaphore>>,
-    /// Global prefill-phase cap (held from dispatch until first token).
-    prefill_sem: Option<Arc<Semaphore>>,
-}
-
-#[async_trait(?Send)]
-impl GraphSink<Msg> for MeteredSink {
-    async fn dispatch(
-        &self,
-        node_id: &str,
-        messages: Vec<Msg>,
-        max_tokens: Option<usize>,
-        on_first_token: &dyn Fn(),
-    ) -> Result<GraphReply<Msg>> {
-        // Request-level cap: hold a permit for the whole request. Acquired
-        // before `arrival_ms` so slot-wait is queueing, not request latency.
-        let _req_permit: Option<OwnedSemaphorePermit> = match &self.request_sem {
-            Some(sem) => Some(sem.clone().acquire_owned().await?),
-            None => None,
-        };
-        // Prefill-phase cap: hold a permit until the first token arrives.
-        let prefill_permit: RefCell<Option<OwnedSemaphorePermit>> =
-            RefCell::new(match &self.prefill_sem {
-                Some(sem) => Some(sem.clone().acquire_owned().await?),
-                None => None,
-            });
-
-        let arrival_ms = self.obs.now_ms();
-        let uuid = Uuid::new_v4();
-        let chat: Vec<ChatMessage> = messages
-            .into_iter()
-            .map(|m| ChatMessage {
-                role: m.role,
-                content: m.content,
-            })
-            .collect();
-        let mot = max_tokens.unwrap_or(self.max_tokens);
-        // Release the prefill permit at the first token (prefill -> decode).
-        let on_ft = || {
-            prefill_permit.borrow_mut().take();
-            on_first_token();
-        };
-        let outcome = self.http.stream_chat_cb(uuid, &chat, mot, on_ft).await?;
-        let isl = self.isl_by_node.get(node_id).copied().unwrap_or(1);
-        self.obs.submit(uuid, arrival_ms, isl, mot, &outcome);
-        Ok(match outcome.terminal {
-            ReplayTerminalStatus::Completed => GraphReply::from_text(outcome.content),
-            _ => GraphReply::failed(),
-        })
-    }
 }
 
 /// A rough token estimate for a static segment's content (no tokenizer needed on
@@ -206,162 +123,5 @@ pub(crate) fn resolve_servers(base_urls: &[String]) -> Vec<String> {
         vec![DEFAULT_BASE_URL.to_string()]
     } else {
         base_urls.to_vec()
-    }
-}
-
-/// Run the benchmark and return the aggregated report + elapsed seconds.
-pub fn run_bench(cfg: BenchConfig) -> (TraceSimulationReport, f64) {
-    crate::syslimits::raise_fd_limit();
-    let (pool, graph, isl_by_node) = build_workload(cfg.turns);
-    let graph = Arc::new(graph);
-    let pool = Arc::new(pool);
-    let isl = Arc::new(isl_by_node);
-
-    let start = Instant::now();
-    let obs = Arc::new(CollectorObserver::new(start, false));
-    let next = Arc::new(AtomicUsize::new(0));
-
-    // Global caps shared across every worker thread/lane. 0 or None = unbounded.
-    let request_sem = cfg
-        .request_concurrency
-        .filter(|&n| n > 0)
-        .map(|n| Arc::new(Semaphore::new(n)));
-    let prefill_sem = cfg
-        .prefill_concurrency
-        .filter(|&n| n > 0)
-        .map(|n| Arc::new(Semaphore::new(n)));
-
-    let servers = resolve_servers(&cfg.base_urls);
-    std::thread::scope(|scope| {
-        for widx in 0..cfg.workers.max(1) {
-            let (graph, pool, isl, obs, next) = (
-                graph.clone(),
-                pool.clone(),
-                isl.clone(),
-                obs.clone(),
-                next.clone(),
-            );
-            let base_url = servers[widx % servers.len()].clone();
-            let model = cfg.model.clone();
-            let (turns, instances, concurrency, max_tokens) =
-                (cfg.turns, cfg.instances, cfg.concurrency, cfg.max_tokens);
-            let (request_sem, prefill_sem) = (request_sem.clone(), prefill_sem.clone());
-            scope.spawn(move || {
-                worker(
-                    &graph,
-                    &pool,
-                    &isl,
-                    &obs,
-                    &next,
-                    &base_url,
-                    &model,
-                    start,
-                    turns,
-                    instances,
-                    concurrency,
-                    max_tokens,
-                    request_sem,
-                    prefill_sem,
-                );
-            });
-        }
-    });
-
-    let wall_ms = start.elapsed().as_secs_f64() * 1000.0;
-    let report = obs.finish(wall_ms);
-    (report, start.elapsed().as_secs_f64())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn worker(
-    graph: &Arc<GraphRecord>,
-    pool: &Arc<SegmentPool<Msg>>,
-    isl: &Arc<HashMap<String, usize>>,
-    obs: &Arc<CollectorObserver>,
-    next: &Arc<AtomicUsize>,
-    base_url: &str,
-    model: &str,
-    start: Instant,
-    _turns: usize,
-    instances: usize,
-    concurrency: usize,
-    max_tokens: usize,
-    request_sem: Option<Arc<Semaphore>>,
-    prefill_sem: Option<Arc<Semaphore>>,
-) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("worker runtime");
-    let local = tokio::task::LocalSet::new();
-
-    // Per-worker shared HTTP client + metered sink + materializer (all cheap to clone).
-    let http = Arc::new(HttpSink::new(
-        base_url.to_string(),
-        model.to_string(),
-        start,
-    ));
-    let sink: Rc<dyn GraphSink<Msg>> = Rc::new(MeteredSink {
-        http,
-        obs: obs.clone(),
-        isl_by_node: (**isl).clone(),
-        max_tokens,
-        request_sem,
-        prefill_sem,
-    });
-    let store: Rc<dyn SegmentStore<Msg>> = {
-        let pool = (**pool).clone();
-        Rc::new(pool)
-    };
-    let materializer = Rc::new(SegmentItemsMaterializer::new(store));
-
-    local.block_on(&rt, async {
-        let mut lanes = Vec::with_capacity(concurrency);
-        for _ in 0..concurrency.max(1) {
-            lanes.push(run_lane(
-                graph.clone(),
-                materializer.clone(),
-                sink.clone(),
-                next.clone(),
-                instances,
-            ));
-        }
-        futures::future::join_all(lanes).await;
-    });
-}
-
-async fn run_lane(
-    graph: Arc<GraphRecord>,
-    materializer: Rc<SegmentItemsMaterializer<Msg>>,
-    sink: Rc<dyn GraphSink<Msg>>,
-    next: Arc<AtomicUsize>,
-    instances: usize,
-) {
-    let graph_rc: Rc<GraphRecord> = Rc::new((*graph).clone());
-    loop {
-        let i = next.fetch_add(1, Ordering::Relaxed);
-        if i >= instances {
-            break;
-        }
-        let handle = Handle::new(RealClock::new());
-        let exec = match TraceExecutor::new(
-            graph_rc.clone(),
-            materializer.clone(),
-            sink.clone(),
-            handle.clone(),
-            ExecutorFlags::default(),
-        ) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let trace = TraceRecord {
-            id: format!("t{i}"),
-            graph_ref: None,
-            initial_state: Default::default(),
-        };
-        if let Ok(ctx) = exec.build_context(trace) {
-            exec.schedule_entries(&ctx);
-            handle.wait_idle().await;
-        }
     }
 }

@@ -112,7 +112,7 @@ fn message_id(msg: &Value) -> Option<&Value> {
 /// Append writer values; replace prior messages whose `id` matches a new message.
 ///
 /// Maintains an `id -> index` map keyed by each id's canonical JSON form
-/// (see [`id_key`]), so every lookup and update is O(1): a new message whose
+/// (see `id_key`), so every lookup and update is O(1): a new message whose
 /// `id` matches an existing one overwrites in place (last write to that id
 /// wins, keeping the original position), otherwise it appends in encounter
 /// order. Building the result is therefore O(n) in the total message count.

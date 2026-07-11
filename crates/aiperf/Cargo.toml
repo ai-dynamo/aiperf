@@ -19,13 +19,13 @@ path = "src/main.rs"
 [dependencies]
 aiperf-core = { path = "../aiperf-core" }
 aiperf-graph = { path = "../aiperf-graph" }
+aiperf-transport = { path = "../aiperf-transport" }
+aiperf-clock.workspace = true
 loadgen-core.workspace = true
 mimalloc = "0.1"
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
-futures.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

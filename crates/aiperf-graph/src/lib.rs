@@ -33,6 +33,3 @@ pub mod transport_bench;
 pub mod transport_sink;
 pub mod validate;
 pub mod wire;
-
-#[cfg(test)]
-mod test_util;

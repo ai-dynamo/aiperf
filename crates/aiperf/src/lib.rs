@@ -8,6 +8,7 @@
 //! `aiperf_graph`. This crate is just the CLI surface: workload shaping
 //! ([`workload`]), the online run loop ([`run`]), and reporting ([`report`]).
 
+pub mod http;
 pub mod report;
 pub mod run;
 pub mod workload;

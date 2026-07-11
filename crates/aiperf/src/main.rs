@@ -91,9 +91,6 @@ struct Cli {
     /// Optional prefill concurrency override (graph).
     #[arg(long)]
     prefill_concurrency: Option<usize>,
-    /// Use the reqwest backend instead of aiperf-transport (graph).
-    #[arg(long)]
-    reqwest: bool,
     /// Force HTTP/1.1 (graph; accepted for compatibility).
     #[arg(long)]
     http1: bool,
@@ -128,8 +125,13 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
         input_tokens: isl,
         output_tokens: osl,
     };
-    let rt = tokio::runtime::Runtime::new()?;
-    let report = rt.block_on(run(base_url, model, workload, concurrency))?;
+    // The online sink is `!Send` (hyper transport over `Rc<dyn Clock>`), so drive
+    // the run on a current-thread runtime + LocalSet.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let local = tokio::task::LocalSet::new();
+    let report = local.block_on(&rt, run(base_url, model, workload, concurrency))?;
     print_report_table(&report);
     if let Some(path) = &cli.json {
         write_report_json(&report, path)?;
@@ -142,7 +144,6 @@ fn run_online_mode(cli: &Cli) -> anyhow::Result<()> {
 struct GraphParams {
     cfg: aiperf_graph::bench::BenchConfig,
     base_url: String,
-    use_reqwest: bool,
     http2: bool,
     conns: usize,
 }
@@ -178,9 +179,6 @@ fn parse_graph_config(cli: &Cli) -> GraphParams {
     let instances: usize = cli.instances.unwrap_or(DEFAULT_INSTANCES);
     let request_concurrency: Option<usize> = cli.request_concurrency;
     let prefill_concurrency: Option<usize> = cli.prefill_concurrency;
-    // Backend: aiperf-transport (default) or reqwest (--reqwest). For the
-    // transport, h2c prior-knowledge is the default; --http1 forces HTTP/1.1.
-    let use_reqwest = cli.reqwest;
     // Transport default is HTTP/1.1 keep-alive: for serial per-lane requests it
     // outperforms h2c (no per-stream hpack/flow-control overhead). --http2 opts
     // into h2c prior-knowledge (multiplexed pool).
@@ -206,7 +204,6 @@ fn parse_graph_config(cli: &Cli) -> GraphParams {
     GraphParams {
         cfg,
         base_url,
-        use_reqwest,
         http2,
         conns,
     }
@@ -235,27 +232,16 @@ fn print_graph_summary(s: &GraphSummary, backend: &str) {
 }
 
 fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
-    use aiperf_graph::bench::run_bench;
     use aiperf_graph::transport_bench::run_transport_bench;
 
     let GraphParams {
         cfg,
         base_url,
-        use_reqwest,
         http2,
         conns,
     } = parse_graph_config(cli);
 
-    let backend = if use_reqwest {
-        "reqwest"
-    } else {
-        "aiperf-transport"
-    };
-    if use_reqwest && http2 {
-        // reqwest build_client() opts into h2c prior-knowledge via GRAPH_HTTP2.
-        // SAFETY: single-threaded startup, before any worker thread spawns.
-        unsafe { std::env::set_var("GRAPH_HTTP2", "1") };
-    }
+    let backend = "aiperf-transport";
 
     eprintln!(
         "aiperf --mode graph: backend={backend} base={base_url} turns={} \
@@ -269,36 +255,21 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
         cfg.workers * cfg.concurrency,
     );
 
-    let total_requests = cfg.instances.saturating_mul(cfg.turns);
-    let summary = if use_reqwest {
-        let (report, secs) = run_bench(cfg);
-        let rps = total_requests as f64 / secs;
-        GraphSummary {
-            rps,
-            p50: report.latency.ttft.median_ms,
-            p90: report.latency.ttft.p90_ms,
-            p99: report.latency.ttft.p99_ms,
-            mean: report.latency.ttft.mean_ms,
-            secs,
-            extra: format!("requests={total_requests}"),
-        }
-    } else {
-        let r = run_transport_bench(cfg, http2, conns);
-        GraphSummary {
-            rps: r.rps(),
-            p50: r.ttft_p50_ms,
-            p90: r.ttft_p90_ms,
-            p99: r.ttft_p99_ms,
-            mean: r.ttft_mean_ms,
-            secs: r.wall_secs,
-            extra: format!(
-                "completed={} errors={} output_tokens={} output_tok/s={:.0}",
-                r.completed,
-                r.errors,
-                r.output_tokens,
-                r.output_tps()
-            ),
-        }
+    let r = run_transport_bench(cfg, http2, conns);
+    let summary = GraphSummary {
+        rps: r.rps(),
+        p50: r.ttft_p50_ms,
+        p90: r.ttft_p90_ms,
+        p99: r.ttft_p99_ms,
+        mean: r.ttft_mean_ms,
+        secs: r.wall_secs,
+        extra: format!(
+            "completed={} errors={} output_tokens={} output_tok/s={:.0}",
+            r.completed,
+            r.errors,
+            r.output_tokens,
+            r.output_tps()
+        ),
     };
 
     print_graph_summary(&summary, backend);

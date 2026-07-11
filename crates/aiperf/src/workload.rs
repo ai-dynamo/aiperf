@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 
-use aiperf_core::http_sink::HttpRequest;
+use crate::http::HttpRequest;
 
 /// A synthetic workload: `num_requests` chat requests of approximately
 /// `input_tokens` prompt length, each asking for `output_tokens` output.
