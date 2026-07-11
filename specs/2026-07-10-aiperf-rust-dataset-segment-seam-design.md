@@ -332,3 +332,16 @@ This addendum completes the dataset/segment seam itself. The in-process offline 
 sink and execution of authored DAG branch policy are owned by their separate companion
 specifications; dataset storage, validation, sampling, and materialization already
 remain clock/backend-neutral for those consumers.
+
+## Addendum — 2026-07-11 (opaque external-evaluator association)
+
+The accuracy ground-truth storage described in §4 and the earlier implementation
+addendum is superseded by the canonical Python/Lighteval evaluator boundary.
+Rust dataset metadata must not carry an expected answer or hidden test payload.
+
+`Conversation::accuracy` now contains only `AccuracyAssociation {
+correlation_id, task }`. The correlation ID is the evaluator's opaque problem ID
+and is propagated through ordinary request materialization so completed text can
+be returned without positional matching. Prompt/messages and generation controls
+remain normal segment-backed turn data. Ground truth stays inside the evaluator
+worker and is never part of the Rust evaluator protocol or dataset metadata.

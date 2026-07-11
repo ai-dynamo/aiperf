@@ -227,3 +227,48 @@ row-independent benchmark preflight, unified tokenizer/segment lowering,
 typed per-problem native-v2 records, performance joins, console output, and the
 inherited accuracy-summary CSV are wired end to end. Telemetry-backed energy
 joins remain dormant until telemetry producers exist.
+
+## Addendum — 2026-07-11 (canonical Python/Lighteval evaluator boundary)
+
+This addendum supersedes every preceding claim that benchmark preparation,
+answer extraction, symbolic comparison, hidden-test decoding/execution, or
+grading should be implemented natively in Rust. Those semantics are too easy to
+duplicate incorrectly and must have one canonical owner.
+
+The implemented boundary is:
+
+- Rust owns scheduling, admission, endpoint materialization, inference-server
+  HTTP/SSE I/O, response parsing, timing, performance metrics, accuracy
+  accumulation, analysis, and reporting.
+- One lightweight, long-lived Python worker owns canonical benchmark/dataset
+  preparation, prompts, generation settings, private test material, Lighteval
+  task execution, and scoring.
+- Rust launches and supervises the worker with `tokio::process::Command` and
+  exchanges correlated, versioned JSONL over stdin/stdout. Worker diagnostics
+  use stderr exclusively. The protocol operations are `hello`, `load`,
+  `next_problems`, `grade_batch`, and `shutdown`.
+- Problem IDs are opaque. Rust receives only IDs, task labels, prompts/messages,
+  and generation controls; the worker receives terminal response text only
+  after the ordinary Rust transport reaches terminal. Expected answers and
+  private tests never cross the protocol in either direction. Protocol v1
+  rejects undeclared response fields, and prompt messages are exactly
+  `{role, content}` rather than an open-ended map.
+- Grading is batched after the scheduler/transport drain. A worker crash,
+  protocol violation, or evaluator exception is an infrastructure error that
+  aborts report construction; it is never converted into an incorrect model
+  answer. Inference transport failures remain explicit failed records in the
+  accuracy denominator, but their captured partial or empty response text is
+  still scored by the worker; Rust never fabricates a grading result.
+- The native-v2 report records protocol/worker/Python/package versions, worker
+  source and dependency-lock SHA-256, optional immutable container digest,
+  canonical grader name, and dataset repository/subset/revision/splits/task
+  version.
+
+`aiperf-accuracy` is consequently only the `AccuracyEvaluator` trait, protocol
+DTOs, and supervised `PythonEvaluator` implementation. The Rust-native
+benchmark catalog, prompt builders, graders, symbolic math, code executor,
+accuracy registry, and manual Hugging Face dataset HTTP/cache client are
+deleted. `aiperf::accuracy::AccuracyRecordProcessor` only captures terminal text
+and timestamps through the generic `TurnRecordProcessor` seam; it cannot grade
+or dispatch. The existing `aiperf-metrics` accumulator/analyzer remains the
+trusted Rust owner of aggregation over canonical worker results.

@@ -241,3 +241,18 @@ values assembled before runtimes and worker threads start.
 6. CLI tests prove dataset and accuracy paths receive the aggregate rather than
    constructing private built-in registries.
 7. `cargo fmt`, focused crate tests, workspace tests, and clippy remain green.
+
+## Addendum — 2026-07-11 (accuracy is a process seam, not a Rust registry)
+
+The accuracy benchmark/grader categories in this design are superseded. Canonical
+dataset preparation, prompt construction, private tests, and grading now belong
+to one pinned Python/Lighteval worker behind the directly injected
+`AccuracyEvaluator` stdio trait. Keeping Rust benchmark or grader factories in
+`AiperfRegistry` would recreate the duplicated semantics this boundary removes.
+
+The built `aiperf-extensions` aggregate now composes dataset formats, sampler
+factories, and endpoint dialects only. Its dependency on `aiperf-accuracy` and
+its `AccuracyRegistry` accessors/error variant are deleted. External evaluator
+implementations are selected by constructing/injecting an `AccuracyEvaluator`,
+just as clocks and transports are constructor-injected seams rather than
+runtime-name registry entries.
