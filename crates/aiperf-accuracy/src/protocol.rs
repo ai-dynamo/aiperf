@@ -131,14 +131,12 @@ pub struct EvaluatorLoadResult {
 
 /// One OpenAI-compatible message prepared by the evaluator.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluatorMessage {
     /// Message role.
     pub role: String,
     /// Text or structured OpenAI-compatible message content.
     pub content: Value,
-    /// Forward-compatible message fields.
-    #[serde(default, flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 /// Generation controls authored by the canonical task.

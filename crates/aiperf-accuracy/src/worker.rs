@@ -683,4 +683,22 @@ for line in sys.stdin:
         assert!(matches!(error, EvaluatorWorkerError::Json(_)));
         assert!(error.to_string().contains("unknown field `ground_truth`"));
     }
+
+    #[tokio::test]
+    async fn problem_rejects_private_fields_inside_prompt_messages() {
+        let script = FAKE_WORKER.replace(
+            "{'role': 'user', 'content': 'Question?'}",
+            "{'role': 'user', 'content': 'Question?', 'private_tests': ['secret']}",
+        );
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(&script))
+            .await
+            .unwrap();
+        evaluator
+            .load("fixture", &EvaluatorLoadConfig::default())
+            .await
+            .unwrap();
+        let error = evaluator.next_problems(0, 1).await.unwrap_err();
+        assert!(matches!(error, EvaluatorWorkerError::Json(_)));
+        assert!(error.to_string().contains("unknown field `private_tests`"));
+    }
 }

@@ -716,7 +716,6 @@ mod tests {
             messages: vec![EvaluatorMessage {
                 role: "user".to_string(),
                 content: Value::String(prompt.to_string()),
-                extra: BTreeMap::new(),
             }],
             generation: EvaluatorGenerationConfig {
                 max_tokens: 16,
