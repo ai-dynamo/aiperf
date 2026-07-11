@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
+use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{HttpVersion, RequestConfig, Response};
@@ -103,13 +104,12 @@ impl RequestSink<HttpRequest> for TransportSink {
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
 
-        let payload = serde_json::json!({
-            "model": self.model,
-            "stream": true,
-            "stream_options": {"include_usage": true},
-            "max_tokens": req.max_output_tokens,
-            "messages": [{"role": "user", "content": req.prompt_text.unwrap_or_default()}],
-        });
+        let prompt = req.prompt_text.unwrap_or_default();
+        let payload = chat_request_body(
+            &self.model,
+            &[("user", prompt.as_str())],
+            req.max_output_tokens,
+        );
 
         let cfg = RequestConfig::new(&self.url);
         let rec = self

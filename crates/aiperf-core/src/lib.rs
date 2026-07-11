@@ -10,5 +10,6 @@
 //! [`sse::ChatChunk`]. Extracted so both can build on it without a dependency
 //! cycle.
 
+pub mod chat;
 pub mod observer;
 pub mod sse;

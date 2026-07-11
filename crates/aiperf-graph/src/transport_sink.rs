@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
+use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{HttpVersion, RequestConfig, Response};
@@ -93,16 +94,15 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
 
-        let payload = serde_json::json!({
-            "model": self.model,
-            "stream": true,
-            "stream_options": {"include_usage": true},
-            "max_tokens": max_tokens.unwrap_or(self.default_max_tokens),
-            "messages": messages
-                .iter()
-                .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
-                .collect::<Vec<_>>(),
-        });
+        let msgs: Vec<(&str, &str)> = messages
+            .iter()
+            .map(|m| (m.role.as_str(), m.content.as_str()))
+            .collect();
+        let payload = chat_request_body(
+            &self.model,
+            &msgs,
+            max_tokens.unwrap_or(self.default_max_tokens),
+        );
 
         let cfg = RequestConfig::new(&self.url);
         // The transport fires this at the first SSE message (first observed

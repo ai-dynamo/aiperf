@@ -113,8 +113,9 @@ fn percentile(sorted: &[f32], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    let idx = ((p / 100.0) * (sorted.len() as f64 - 1.0)).round() as usize;
-    sorted[idx.min(sorted.len() - 1)] as f64
+    // One shared nearest-rank definition (loadgen-core owns the stats math).
+    let idx = loadgen_core::collector::percentile_rank(sorted.len(), p);
+    sorted[idx] as f64
 }
 
 /// A per-lane metered sink over [`aiperf_transport`]. Holds one (usually cloned,

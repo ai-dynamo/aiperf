@@ -167,14 +167,6 @@ impl Clock for SimClock {
         }
     }
 
-    fn next_event_time(&self) -> Option<i64> {
-        SimClock::next_event_time(self)
-    }
-
-    fn advance_to(&self, ns: i64) {
-        SimClock::advance_to(self, ns)
-    }
-
     fn is_virtual(&self) -> bool {
         true
     }

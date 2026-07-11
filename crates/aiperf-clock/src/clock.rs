@@ -25,17 +25,11 @@ pub trait Clock {
     /// Non-positive durations resolve after a single task yield.
     fn sleep(self: Rc<Self>, duration_ns: i64) -> Pin<Box<dyn Future<Output = ()>>>;
 
-    /// Virtual clocks only: the deadline the sim driver should fast-forward to —
-    /// `max(earliest scheduled deadline, now)`, so an already-due sleeper yields
-    /// `now` rather than a past time. Real clocks return `None` (time flows on
-    /// its own via the OS/reactor).
-    fn next_event_time(&self) -> Option<i64> {
-        None
-    }
-
-    /// Virtual clocks only: advance to `ns`, waking crossed sleepers. No-op for
-    /// real clocks.
-    fn advance_to(&self, _ns: i64) {}
+    // Virtual-time control (fast-forward to the next event, advance-and-wake) is
+    // intentionally NOT on this trait: it is meaningful only for `SimClock` and
+    // is driven by `drive_sim` through the concrete `Rc<SimClock>`, via
+    // `SimClock`'s inherent `next_event_time`/`advance_to` methods. Keeping it off
+    // the trait avoids no-op stubs on `RealClock`.
 
     /// True when this clock needs the sim idle-pump driver (the downstream
     /// `drive_sim` pump); false when it drives via tokio's reactor (the

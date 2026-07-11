@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Client-owned OpenAI chat-completion SSE types + a minimal line decoder.
+//! Client-owned OpenAI chat-completion SSE chunk types.
 //!
 //! AIPerf owns its wire layer (a stable external spec), so it can benchmark any
 //! OpenAI-compatible server without depending on a specific server's internal
 //! protocol types. These structs deserialize the streaming chunk shape; unknown
-//! fields are ignored by serde.
+//! fields are ignored by serde. SSE byte-framing (splitting the stream into
+//! `data:` events) lives in the transport layer; callers deserialize the `data`
+//! payload straight into [`ChatChunk`].
 
 use serde::Deserialize;
 
@@ -75,58 +77,33 @@ pub struct Usage {
     pub completion_tokens: u32,
 }
 
-/// One decoded SSE line.
-pub enum SseEvent {
-    /// A chat-completion chunk payload (boxed; the struct is large).
-    Data(Box<ChatChunk>),
-    /// The terminal `[DONE]` sentinel.
-    Done,
-    /// A comment, blank, or otherwise-ignored line.
-    Other,
-}
-
-/// Parse a single SSE line into an [`SseEvent`].
-///
-/// Handles `data:` payloads and the `[DONE]` sentinel; comment (`:`), blank,
-/// and `event:`/`id:` lines return [`SseEvent::Other`], as does a payload that
-/// fails to deserialize.
-pub fn parse_sse_line(line: &str) -> SseEvent {
-    let line = line.trim_end();
-    let Some(rest) = line.strip_prefix("data:") else {
-        return SseEvent::Other;
-    };
-    let payload = rest.trim();
-    if payload == "[DONE]" {
-        return SseEvent::Done;
-    }
-    match serde_json::from_str::<ChatChunk>(payload) {
-        Ok(chunk) => SseEvent::Data(Box::new(chunk)),
-        Err(_) => SseEvent::Other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn parses_done_sentinel() {
-        assert!(matches!(parse_sse_line("data: [DONE]"), SseEvent::Done));
+    fn parse(payload: &str) -> ChatChunk {
+        serde_json::from_str::<ChatChunk>(payload).expect("valid chunk")
     }
 
     #[test]
-    fn parses_chat_delta() {
-        let line = r#"data: {"id":"x","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#;
-        match parse_sse_line(line) {
-            SseEvent::Data(chunk) => {
-                assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hi"));
-            }
-            _ => panic!("expected Data"),
-        }
+    fn delta_text_concatenates_content_and_reasoning() {
+        let chunk = parse(
+            r#"{"choices":[{"index":0,"delta":{"content":"hi","reasoning_content":" think"}}]}"#,
+        );
+        assert_eq!(chunk.delta_text(), "hi think");
     }
 
     #[test]
-    fn ignores_comment_line() {
-        assert!(matches!(parse_sse_line(": ping"), SseEvent::Other));
+    fn role_only_chunk_has_empty_delta_text() {
+        let chunk = parse(r#"{"choices":[{"index":0,"delta":{"role":"assistant"}}]}"#);
+        assert!(chunk.delta_text().is_empty());
+    }
+
+    #[test]
+    fn usage_chunk_parses_authoritative_counts() {
+        let chunk = parse(r#"{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#);
+        let usage = chunk.usage.expect("usage present");
+        assert_eq!(usage.prompt_tokens, 7);
+        assert_eq!(usage.completion_tokens, 3);
     }
 }
