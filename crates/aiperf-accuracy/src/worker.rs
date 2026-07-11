@@ -147,7 +147,7 @@ pub trait AccuracyEvaluator {
         limit: usize,
     ) -> Result<EvaluatorProblemPage, EvaluatorWorkerError>;
 
-    /// Grade completed Rust inference responses in one canonical batch.
+    /// Grade terminal Rust inference responses in one canonical batch.
     async fn grade_batch(
         &mut self,
         items: &[EvaluatorGradeItem],

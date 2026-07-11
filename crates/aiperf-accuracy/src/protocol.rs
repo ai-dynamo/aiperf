@@ -191,12 +191,12 @@ pub struct EvaluatorProblemPage {
     pub done: bool,
 }
 
-/// Completed Rust inference response submitted for canonical grading.
+/// Terminal Rust inference response submitted for canonical grading.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluatorGradeItem {
     /// Opaque problem identifier.
     pub problem_id: ProblemId,
-    /// Complete parsed model response text.
+    /// Parsed model response text captured at terminal, possibly partial or empty.
     pub response: String,
 }
 
