@@ -158,3 +158,28 @@ else (thread-per-core, `Rc`/`RefCell`, sim/wall clock) is unchanged.
 | Arrival patterns | `IntervalGen` trait (Poisson/Gamma/Constant/Burst) |
 | Agentic warmup→profiling handoff | `PhaseRunner` state machine |
 | Phase as record dimension | `Scheduler.phase` stamped on every record |
+
+---
+
+## Addendum — 2026-07-10 (superseded)
+
+This sketch is **superseded by `2026-07-10-unified-graph-runtime-design.md`**. That
+later spec — grounded in a line-by-line read of all 37 files in `src/aiperf/timing/`
+— keeps every policy this sketch names but changes the *shape*: instead of a bespoke
+single-threaded `Scheduler` loop, the policy is realized on the shared graph-IR
+executor as trait compositions:
+
+- the `Scheduler`'s issue-loop → a `Workload` **schedule generator** (the executor
+  drives; strategies no longer own a dispatch loop);
+- session/prefill slots → `SlotPool` (with the debt-drain on capacity decrease this
+  sketch omitted);
+- absolute-schedule rate pacing + continuation-priority → `RatePool` (priority
+  `WaitQueue`);
+- arrival patterns → `IntervalGenerator`; think-time / `max(now,·)` / fixed-schedule
+  timestamps → the `Gate` edge-delay arithmetic;
+- warmup→profiling handoff, stop-condition chain, cancel-drain teardown → the
+  `StopCondition` chain + phase lifecycle described there;
+- the adaptive controller (which this sketch did not cover) → a `Controller` seam.
+
+The original text below is retained as lineage; where it conflicts with the unified
+design, the unified design governs.
