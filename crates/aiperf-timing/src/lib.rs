@@ -17,9 +17,11 @@
 //! - [`ramping`] — clock-driven value ramps ([`RampStrategy`] / [`RampDriver`]),
 //! - [`cancellation`] — per-request disconnect decisions ([`CancellationPolicy`]),
 //! - [`url_selection`] — endpoint selection ([`UrlSelector`]).
+//! - [`phase`] — lifecycle, progress, execution, and multi-phase orchestration.
 
 pub mod cancellation;
 pub mod intervals;
+pub mod phase;
 pub mod ramping;
 pub mod slots;
 pub mod stop;
@@ -28,6 +30,13 @@ pub mod user_centric;
 
 pub use cancellation::{BernoulliFixedDelay, CancellationPolicy, CancellationPolicyError, Phase};
 pub use intervals::{ArrivalPattern, IntervalGenerator, make_interval_generator};
+pub use phase::{
+    ConsolePhaseObserver, GracePeriod, NoopPhaseObserver, PhaseBranchStats, PhaseCompletionReason,
+    PhaseConfig, PhaseConfigError, PhaseEvent, PhaseEventKind, PhaseKind, PhaseLifecycle,
+    PhaseLifecycleError, PhaseLifecycleSnapshot, PhaseObserver, PhaseProgress,
+    PhaseProgressCounters, PhaseProgressError, PhaseReturn, PhaseReturnOutcome, PhaseSend,
+    PhaseSendOutcome, PhaseState, PhaseStats, RecordingPhaseObserver,
+};
 pub use ramping::{
     ExponentialRamp, LinearRamp, PoissonRamp, RampConfigError, RampDriver, RampHandle,
     RampStrategy, RampTaskError, RamperConfig,
