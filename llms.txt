@@ -97,7 +97,7 @@ Rust sends every LLM request and parses every response through its normal transp
 ```bash
 AIPERF_ACCURACY_PYTHON=/path/to/pinned/agentic/python \
 cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
-  --agentic-benchmark harbor/swebench@REVISION \
+  --agentic-benchmark swe-bench/swe-bench-verified@REVISION \
   --agentic-task-concurrency 4 --concurrency 16 \
   --agentic-max-episodes 100 --json out.json
 ```
@@ -129,6 +129,10 @@ cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
   [--timing-json timing.json] [--json out.json]
 
 # Absolute trace replay; the first trace timestamp is the default schedule zero.
+Harbor's canonical source forms are accepted unchanged: Hub
+`org/name@ref`, legacy `name@version` (for example `bfcl@1.0`), and an existing
+local task-directory path. Hub tags are reported as resolved content hashes;
+legacy versions are frozen before Harbor enumerates their tasks.
 cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
   --fixed-schedule --input-file trace.jsonl \
   [--input-format mooncake_trace] [--tokenizer builtin] \
@@ -254,8 +258,10 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Lighteval runs are wired. The stateful `AgenticEvaluator`, pinned Harbor 0.18
   callback adapter, generic normal-pipeline `AgenticWorkload`, agentic CLI, and
   typed native-v2 reporting are built with exact provenance. Loopback CLI and a
-  live Harbor registry/Docker/packaged-verifier canary are proven. SWE-bench-
-  specific and cross-family canaries remain.
+  live Harbor registry/Docker/packaged-verifier canary are proven. Hub packages,
+  legacy registry datasets (including BFCL), and local directories resolve
+  through Harbor's own `DatasetConfig`; SWE-bench-specific and cross-family
+  canaries remain.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,

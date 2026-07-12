@@ -394,3 +394,22 @@ This proves the generic packaged Harbor path through a real sandbox and
 verifier. It does not yet prove a SWE-bench task or the cross-family benchmark
 matrix; those named canaries remain required before claiming the broader
 agentic-evaluation objective complete.
+
+## Addendum — 2026-07-11 (canonical Harbor source resolution)
+
+The preceding package-only wording is superseded. The pinned Harbor 0.18
+worker now accepts all three source forms owned by Harbor's public
+`DatasetConfig`: content-addressed Hub packages as `org/name@ref`, legacy
+registry datasets as `name@version`, and existing local task directories.
+Hub refs are resolved to and reported as immutable dataset `sha256:` content
+hashes. An omitted legacy version is resolved by Harbor's registry policy and
+then written back into `DatasetConfig` before the ordered task list is fetched,
+so task enumeration cannot silently move to a different version.
+
+This is a generic source adapter, not a benchmark port. In particular,
+`bfcl@1.0` resolves through Harbor to the canonical 3,641-task BFCL dataset and
+its Harbor-authored task configs; AIPerf does not decode functions, implement a
+tool loop, or score calls. Pinned-worker tests cover package, explicit/default
+legacy, and local resolution, and a live registry probe freezes BFCL 1.0's
+first opaque episode. A real BFCL sandbox/verifier run and the broader
+cross-family canary matrix remain required.

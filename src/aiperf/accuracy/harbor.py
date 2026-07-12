@@ -8,10 +8,19 @@ terminal execution, trajectories, and task verifiers. Its model backend is
 replaced by :mod:`aiperf.accuracy.harbor_agent`, whose only operation is to
 publish a callback event for Rust inference.
 
-No benchmark-specific scorer is reproduced here. Consequently every versioned
-Harbor task package—including SWE-bench, Terminal-Bench, BFCL, tau-bench,
-OSWorld, GAIA, and future registry datasets—uses its packaged environment and
-verifier unchanged.
+No benchmark-specific scorer is reproduced here. Hub packages, legacy Harbor
+registry datasets, and local task directories all resolve through Harbor's own
+``DatasetConfig`` and retain their packaged environment and verifier unchanged.
+
+Dataset source handling is source-grounded in Harbor 0.18.0 at commit
+``4e256b94b43bb8acefd9714b81913fd8bcf1df5c``:
+
+* ``src/harbor/models/job/config.py:21-241`` defines local, package, and legacy
+  registry dataset resolution and task filtering;
+* ``src/harbor/cli/download.py:92-128,276-323`` defines ``org/name@ref`` versus
+  legacy ``name@version`` syntax; and
+* ``src/harbor/registry/client/package.py:14-54`` resolves Hub tags to immutable
+  dataset and task content hashes.
 """
 
 from __future__ import annotations
@@ -21,6 +30,7 @@ import hashlib
 import importlib.metadata
 import math
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +87,17 @@ _ENVIRONMENTS = {
 }
 
 
+@dataclass(frozen=True)
+class _ResolvedHarborDataset:
+    """One Harbor-owned task list with immutable source provenance."""
+
+    name: str
+    provider: str
+    repository: str
+    revision: str
+    task_configs: list[Any]
+
+
 class HarborHarness(AgenticHarness):
     """Run versioned Harbor tasks with Rust-backed Terminus-2 inference."""
 
@@ -84,6 +105,8 @@ class HarborHarness(AgenticHarness):
         self,
         *,
         dataset_name: str,
+        dataset_provider: str,
+        dataset_repository: str,
         dataset_revision: str,
         task_configs: list[Any],
         model_name: str,
@@ -133,9 +156,9 @@ class HarborHarness(AgenticHarness):
             "harness_version": _HARBOR_VERSION,
             "harness_source_sha256": _harbor_source_digest(),
             "dataset": {
-                "provider": "harbor package registry",
+                "provider": dataset_provider,
                 "benchmark": dataset_name,
-                "repository": dataset_name,
+                "repository": dataset_repository,
                 "revision": dataset_revision,
                 "evaluation_splits": ["tasks"],
             },
@@ -154,49 +177,15 @@ class HarborHarness(AgenticHarness):
         """Resolve one immutable Harbor dataset and freeze its ordered task list."""
         _require_harbor()
         config = _validate_config(authored_config)
-        from harbor.models.job.config import DatasetConfig
 
         dataset_name = require_identifier(dataset, "agentic dataset")
-        max_episodes = config.get("max_episodes")
-        task_names = config.get("task_names")
-        overwrite = bool(config.get("overwrite", False))
-        dataset_path = Path(dataset_name).expanduser()
-        if dataset_path.exists():
-            dataset_config = DatasetConfig(
-                path=dataset_path,
-                task_names=task_names,
-                n_tasks=max_episodes,
-                overwrite=overwrite,
-            )
-            dataset_revision = _directory_digest(dataset_path)
-            canonical_name = dataset_path.resolve().as_posix()
-        else:
-            package_name, separator, ref = dataset_name.partition("@")
-            if "/" not in package_name:
-                raise ValueError(
-                    "agentic dataset must be a Harbor package org/name[@revision] "
-                    "or an existing local dataset directory"
-                )
-            dataset_config = DatasetConfig(
-                name=package_name,
-                ref=ref if separator else "latest",
-                task_names=task_names,
-                n_tasks=max_episodes,
-                overwrite=overwrite,
-            )
-            canonical_name = package_name
-            dataset_revision = ""
-        task_configs = await dataset_config.get_task_configs()
-        if not task_configs:
-            raise ValueError(f"Harbor dataset {dataset_name!r} resolved no tasks")
-        if not dataset_revision:
-            dataset_revision = require_identifier(
-                dataset_config.ref, "resolved Harbor dataset revision"
-            )
+        resolved = await _resolve_harbor_dataset(dataset_name, config)
         return cls(
-            dataset_name=canonical_name,
-            dataset_revision=dataset_revision,
-            task_configs=task_configs,
+            dataset_name=resolved.name,
+            dataset_provider=resolved.provider,
+            dataset_repository=resolved.repository,
+            dataset_revision=resolved.revision,
+            task_configs=resolved.task_configs,
             model_name=require_identifier(model_name, "model"),
             config=config,
         )
@@ -393,6 +382,77 @@ async def create_harbor_harness(
     return await HarborHarness.create(dataset, model_name, config)
 
 
+async def _resolve_harbor_dataset(
+    dataset_name: str, config: dict[str, Any]
+) -> _ResolvedHarborDataset:
+    """Resolve every supported source through Harbor's canonical dataset API."""
+    from harbor.models.job.config import DatasetConfig
+
+    common = {
+        "task_names": config.get("task_names"),
+        "n_tasks": config.get("max_episodes"),
+        "overwrite": bool(config.get("overwrite", False)),
+    }
+    dataset_path = Path(dataset_name).expanduser()
+    if dataset_path.exists():
+        canonical_path = dataset_path.resolve()
+        dataset_config = DatasetConfig(path=canonical_path, **common)
+        task_configs = await dataset_config.get_task_configs()
+        resolved = _ResolvedHarborDataset(
+            name=canonical_path.as_posix(),
+            provider="Harbor local task directory",
+            repository=canonical_path.as_posix(),
+            revision=f"sha256:{_directory_digest(canonical_path)}",
+            task_configs=task_configs,
+        )
+    else:
+        name, separator, authored_ref = dataset_name.partition("@")
+        name = require_identifier(name, "Harbor dataset name")
+        if separator and not authored_ref:
+            raise ValueError("Harbor dataset revision after '@' must not be empty")
+        if "/" in name:
+            dataset_config = DatasetConfig(
+                name=name,
+                ref=authored_ref if separator else "latest",
+                **common,
+            )
+            task_configs = await dataset_config.get_task_configs()
+            revision = _require_sha256_revision(
+                dataset_config.ref, "resolved Harbor Hub dataset revision"
+            )
+            resolved = _ResolvedHarborDataset(
+                name=name,
+                provider="Harbor Hub package registry",
+                repository=name,
+                revision=revision,
+                task_configs=task_configs,
+            )
+        else:
+            # Resolve an omitted legacy version first, then pin DatasetConfig to
+            # that exact version before it enumerates tasks. Harbor remains the
+            # sole owner of version ordering and Git/local TaskConfig creation.
+            from harbor.registry.client.factory import RegistryClientFactory
+
+            client = RegistryClientFactory.create()
+            requested = f"{name}@{authored_ref}" if separator else name
+            metadata = await client.get_dataset_metadata(requested)
+            revision = require_identifier(
+                metadata.version, "resolved Harbor legacy dataset version"
+            )
+            dataset_config = DatasetConfig(name=name, version=revision, **common)
+            task_configs = await dataset_config.get_task_configs()
+            resolved = _ResolvedHarborDataset(
+                name=name,
+                provider="Harbor legacy registry",
+                repository=name,
+                revision=revision,
+                task_configs=task_configs,
+            )
+    if not resolved.task_configs:
+        raise ValueError(f"Harbor dataset {dataset_name!r} resolved no tasks")
+    return resolved
+
+
 def _validate_config(authored: Any) -> dict[str, Any]:
     if authored is None:
         authored = {}
@@ -551,6 +611,19 @@ def _directory_digest(root: Path) -> str:
         digest.update(len(payload).to_bytes(8, "big"))
         digest.update(payload)
     return digest.hexdigest()
+
+
+def _require_sha256_revision(value: Any, field_name: str) -> str:
+    revision = require_identifier(value, field_name)
+    prefix = "sha256:"
+    payload = revision.removeprefix(prefix)
+    if (
+        not revision.startswith(prefix)
+        or len(payload) != 64
+        or any(character not in "0123456789abcdef" for character in payload)
+    ):
+        raise ValueError(f"{field_name} must be an immutable sha256 digest")
+    return revision
 
 
 def _harbor_source_digest() -> str:
