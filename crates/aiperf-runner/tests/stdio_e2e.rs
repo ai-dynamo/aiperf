@@ -1252,7 +1252,16 @@ async fn stdio_child_uses_python_grading_but_rust_dispatches_every_accuracy_requ
         worker_dir.path().join("fixture_accuracy_worker.py"),
         r#"
 import json
+import os
 import sys
+
+ARTIFACT_DIR = os.environ["FIXTURE_ARTIFACT_DIR"]
+load_count = 0
+page_count = 0
+
+def assert_unmaterialized(operation):
+    if os.path.exists(ARTIFACT_DIR):
+        raise RuntimeError(f"artifact root existed during {operation}")
 
 PROBLEMS = [
     {
@@ -1275,6 +1284,7 @@ for line in sys.stdin:
     request = json.loads(line)
     op = request["op"]
     if op == "hello":
+        assert_unmaterialized(op)
         result = {
             "protocol": 1,
             "worker_version": "fixture-1",
@@ -1287,6 +1297,10 @@ for line in sys.stdin:
             "capabilities": ["load", "next_problems", "grade_batch", "grader_override", "shutdown"],
         }
     elif op == "load":
+        assert_unmaterialized(op)
+        load_count += 1
+        if load_count != 1:
+            raise RuntimeError(f"load called {load_count} times")
         result = {
             "benchmark": request["benchmark"],
             "problem_count": len(PROBLEMS),
@@ -1302,10 +1316,16 @@ for line in sys.stdin:
             "grader": request.get("grader") or "fixture-python-grader",
         }
     elif op == "next_problems":
+        assert_unmaterialized(op)
+        page_count += 1
         start = request["offset"]
         end = min(start + request["limit"], len(PROBLEMS))
         result = {"items": PROBLEMS[start:end], "next_offset": end, "done": end == len(PROBLEMS)}
     elif op == "grade_batch":
+        if not os.path.isdir(ARTIFACT_DIR):
+            raise RuntimeError("artifact root absent during grading")
+        if load_count != 1 or page_count != 1:
+            raise RuntimeError(f"unexpected lifecycle load={load_count} pages={page_count}")
         result = {"items": [
             {
                 "problem_id": item["problem_id"],
@@ -1319,6 +1339,8 @@ for line in sys.stdin:
             for item in request["items"]
         ]}
     elif op == "shutdown":
+        if load_count != 1 or page_count != 1:
+            raise RuntimeError(f"unexpected shutdown lifecycle load={load_count} pages={page_count}")
         result = {"shutdown": True}
     else:
         raise RuntimeError(op)
@@ -1336,13 +1358,15 @@ for line in sys.stdin:
     let python = String::from_utf8(python.stdout).unwrap().trim().to_string();
     assert!(std::path::Path::new(&python).is_absolute());
 
-    let artifacts = tempfile::tempdir().unwrap();
+    let artifact_parent = tempfile::tempdir().unwrap();
+    let artifacts = artifact_parent.path().join("run-artifacts");
+    assert!(!artifacts.exists());
     let request = serde_json::json!({
         "protocol_version": 1,
         "run": {
             "benchmark_id": "accuracy-stdio-e2e",
             "random_seed": 17,
-            "artifact_dir": artifacts.path(),
+            "artifact_dir": artifacts,
             "models": {"items": [{"name": "mock-model"}]},
             "endpoint": {
                 "urls": [format!("http://{address}/v1/chat/completions")],
@@ -1373,9 +1397,11 @@ for line in sys.stdin:
     let bytes = serde_json::to_vec(&request).unwrap();
     let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
     let python_path = worker_dir.path().to_path_buf();
+    let artifact_path = artifacts.clone();
     let output = tokio::task::spawn_blocking(move || {
         let mut child = Command::new(binary)
             .env("PYTHONPATH", python_path)
+            .env("FIXTURE_ARTIFACT_DIR", artifact_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1394,8 +1420,7 @@ for line in sys.stdin:
         String::from_utf8_lossy(&output.stderr),
     );
     let report: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(artifacts.path().join("native-v2.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&std::fs::read(artifacts.join("native-v2.json")).unwrap()).unwrap();
     assert_eq!(report["run"]["mode"], "accuracy");
     assert_eq!(
         report["metrics"]["request_count"]["series"][0]["stats"]["total"],
@@ -1417,4 +1442,153 @@ for line in sys.stdin:
         report["evaluator"]["dataset"]["revision"],
         "fixture-revision"
     );
+}
+
+#[test]
+fn static_accuracy_dataset_failure_shuts_down_before_creating_artifacts() {
+    let worker_dir = tempfile::tempdir().unwrap();
+    let shutdown_marker = worker_dir.path().join("shutdown.json");
+    std::fs::write(
+        worker_dir.path().join("fixture_invalid_accuracy_worker.py"),
+        r#"
+import json
+import os
+import sys
+
+artifact_dir = os.environ["FIXTURE_ARTIFACT_DIR"]
+shutdown_marker = os.environ["FIXTURE_SHUTDOWN_MARKER"]
+load_count = 0
+page_count = 0
+
+for line in sys.stdin:
+    request = json.loads(line)
+    op = request["op"]
+    if os.path.exists(artifact_dir):
+        raise RuntimeError(f"artifact root existed during {op}")
+    if op == "hello":
+        result = {
+            "protocol": 1,
+            "worker_version": "invalid-fixture-1",
+            "python_version": sys.version.split()[0],
+            "python_executable": sys.executable,
+            "packages": {"fixture-evaluator": "1"},
+            "worker_source_sha256": "c" * 64,
+            "dependency_lock_sha256": "d" * 64,
+            "container_digest": None,
+            "capabilities": ["load", "next_problems", "grade_batch", "grader_override", "shutdown"],
+        }
+    elif op == "load":
+        load_count += 1
+        result = {
+            "benchmark": request["benchmark"],
+            "problem_count": 1,
+            "dataset": {
+                "provider": "fixture",
+                "benchmark": request["benchmark"],
+                "repository": "fixture/repository",
+                "subset": "default",
+                "revision": "fixture-revision",
+                "evaluation_splits": ["test"],
+                "task_version": 1,
+            },
+            "grader": request.get("grader") or "fixture-grader",
+        }
+    elif op == "next_problems":
+        page_count += 1
+        result = {
+            "items": [{
+                "problem_id": "invalid-0",
+                "task": "fixture-task",
+                "prompt": "invalid fixture",
+                "messages": [],
+                "generation": {"max_tokens": 1, "temperature": 0.0, "top_p": 1.0, "stop": []},
+            }],
+            "next_offset": 1,
+            "done": True,
+        }
+    elif op == "grade_batch":
+        raise RuntimeError("grading must not run after dataset composition failure")
+    elif op == "shutdown":
+        with open(shutdown_marker, "w", encoding="utf-8") as marker:
+            json.dump({"loads": load_count, "pages": page_count}, marker)
+        result = {"shutdown": True}
+    else:
+        raise RuntimeError(op)
+    print(json.dumps({"id": request["id"], "ok": True, "result": result}), flush=True)
+    if op == "shutdown":
+        break
+"#,
+    )
+    .unwrap();
+    let python = Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap().trim().to_string();
+    assert!(std::path::Path::new(&python).is_absolute());
+
+    let artifact_parent = tempfile::tempdir().unwrap();
+    let artifacts = artifact_parent.path().join("never-created");
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "invalid-accuracy-preparation",
+            "artifact_dir": artifacts,
+            "models": {"items": [{"name": "mock-model"}]},
+            "endpoint": {
+                "urls": ["http://127.0.0.1:1/v1/chat/completions"],
+                "type": "chat",
+                "streaming": true
+            },
+            "dataset": {
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": {"value": 1.0}, "osl": {"value": 1.0}}
+            },
+            "phases": [{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": 1,
+                "concurrency": 1
+            }],
+            "accuracy": {
+                "benchmark": "invalid-fixture",
+                "python_executable": python,
+                "worker_module": "fixture_invalid_accuracy_worker"
+            }
+        }
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+        .env("PYTHONPATH", worker_dir.path())
+        .env("FIXTURE_ARTIFACT_DIR", &artifacts)
+        .env("FIXTURE_SHUTDOWN_MARKER", &shutdown_marker)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(serde_json::to_string(&request).unwrap().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let terminal: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(terminal["success"], false);
+    assert!(
+        terminal["error"]
+            .as_str()
+            .unwrap()
+            .contains("has no messages"),
+        "{terminal}"
+    );
+    assert!(!artifacts.exists());
+    let shutdown: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(shutdown_marker).unwrap()).unwrap();
+    assert_eq!(shutdown, serde_json::json!({"loads": 1, "pages": 1}));
 }

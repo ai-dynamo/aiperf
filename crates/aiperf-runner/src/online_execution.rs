@@ -30,10 +30,12 @@ use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeGraphInputPlan,
     NativePreparedEndpointPlan, NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec,
-    distribution, execute_native_plan_with_factories, load_tokenizer,
+    NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
+    StaticAccuracyEvaluatorProcessSpec, distribution, execute_native_plan_with_factories,
+    load_tokenizer,
 };
 use crate::graph_execution::NativeRunnerGraphPlacementFactory;
-use crate::protocol::{AccuracySpec, ArtifactSpec, DistributionSpec, PhaseSpec, TokenizerSpec};
+use crate::protocol::{ArtifactSpec, DistributionSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
     GraphWorkloadConfigV2, OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
@@ -62,9 +64,28 @@ pub fn register_online_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result
 pub fn register_online_http_static_accuracy_pair(
     builder: &mut RunnerRegistryBuilder,
 ) -> Result<()> {
+    register_online_http_static_accuracy_pair_with_factories(
+        builder,
+        Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+        Arc::new(NativeStaticAccuracyEvaluatorFactory),
+    )
+}
+
+/// Register static accuracy with distribution-selected preparation factories.
+///
+/// Both factories are retained by the pair adapter and used exactly once when
+/// an authored run becomes its prepared operation. This is the compile-time
+/// extension point for non-Hugging-Face tokenizer stores or non-local
+/// evaluator processes.
+pub fn register_online_http_static_accuracy_pair_with_factories(
+    builder: &mut RunnerRegistryBuilder,
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+    evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
+) -> Result<()> {
     builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
         OnlineStaticAccuracyAdapter {
-            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+            tokenizers,
+            evaluator_factory,
         },
     ))))
 }
@@ -232,6 +253,7 @@ impl fmt::Debug for OnlineGraphAdapter {
 #[derive(Clone)]
 struct OnlineStaticAccuracyAdapter {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+    evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 }
 
 impl fmt::Debug for OnlineStaticAccuracyAdapter {
@@ -353,7 +375,13 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
             workload.as_ref(),
             self.workload_id(),
         )?;
-        let plan = lower_static_accuracy(run, context, workload, self.tokenizers.as_ref())?;
+        let plan = lower_static_accuracy(
+            run,
+            context,
+            workload,
+            self.tokenizers.as_ref(),
+            self.evaluator_factory.clone(),
+        )?;
         Ok(Box::new(NativePlanHarness {
             plan,
             graph_inputs: context.graph_inputs_handle(),
@@ -720,16 +748,22 @@ impl StaticAccuracyConfigV2 {
         Ok(config)
     }
 
-    fn lower(self) -> AccuracySpec {
-        AccuracySpec {
+    fn lower(
+        self,
+        evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
+    ) -> NativeStaticAccuracyPlan {
+        NativeStaticAccuracyPlan {
             benchmark: self.benchmark,
             tasks: self.tasks,
             n_shots: self.n_shots,
             enable_cot: self.enable_cot,
             grader: self.grader,
             system_prompt: self.system_prompt,
-            python_executable: self.python_executable,
-            worker_module: self.worker_module,
+            process: StaticAccuracyEvaluatorProcessSpec {
+                python_executable: self.python_executable,
+                worker_module: self.worker_module,
+            },
+            evaluator_factory,
         }
     }
 }
@@ -888,7 +922,6 @@ fn lower_scheduled(
         NativeDatasetPlan::PreparedLinear(dataset),
         tokenizer,
         &workload.phases,
-        None,
         NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
     )
 }
@@ -908,7 +941,6 @@ fn lower_graph(
         NativeDatasetPlan::Graph(Box::new(dataset)),
         tokenizer,
         &workload.phases,
-        None,
         NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
     )
 }
@@ -918,16 +950,16 @@ fn lower_static_accuracy(
     context: &RunnerRunContext,
     workload: &StaticAccuracyWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
+    evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 ) -> Result<NativeRunPlan> {
-    let accuracy = StaticAccuracyConfigV2::decode(&workload.accuracy)?.lower();
+    let accuracy = StaticAccuracyConfigV2::decode(&workload.accuracy)?.lower(evaluator_factory);
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     build_common_plan(
         run,
         workload.worker_count,
-        NativeDatasetPlan::Evaluator,
+        NativeDatasetPlan::StaticAccuracy(accuracy),
         tokenizer,
         &workload.phases,
-        Some(accuracy),
         NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
     )
 }
@@ -939,7 +971,6 @@ fn build_common_plan(
     dataset: NativeDatasetPlan,
     tokenizer: TokenizerSpec,
     phases: &[PhaseSpec],
-    accuracy: Option<AccuracySpec>,
     endpoint: NativeEndpointPlan,
 ) -> Result<NativeRunPlan> {
     Ok(NativeRunPlan {
@@ -960,7 +991,6 @@ fn build_common_plan(
                 outputs_path: run.artifacts.outputs_path.clone(),
                 trace: run.artifacts.trace,
             },
-            accuracy,
             gpu_telemetry: None,
             network_latency: None,
             server_metrics: None,
@@ -1114,6 +1144,18 @@ mod tests {
 
     use super::*;
 
+    struct NeverEvaluatorFactory;
+
+    #[async_trait(?Send)]
+    impl StaticAccuracyEvaluatorFactory for NeverEvaluatorFactory {
+        async fn spawn(
+            &self,
+            _process: &StaticAccuracyEvaluatorProcessSpec,
+        ) -> Result<Box<dyn aiperf_accuracy::AccuracyEvaluator>> {
+            panic!("config lowering must retain, not invoke, the selected evaluator factory")
+        }
+    }
+
     #[derive(Default)]
     struct FixtureFetcher {
         urls: Mutex<Vec<String>>,
@@ -1179,6 +1221,30 @@ mod tests {
                 .to_string()
                 .contains("presentation policy")
         );
+    }
+
+    #[test]
+    fn static_accuracy_lowers_directly_with_selected_evaluator_factory() {
+        let raw = RawValue::from_string(
+            serde_json::json!({
+                "benchmark": "fixture",
+                "tasks": ["task-a"],
+                "python_executable": if cfg!(windows) { "C:\\python.exe" } else { "/usr/bin/python3" },
+                "worker_module": "fixture.worker"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let factory: Arc<dyn StaticAccuracyEvaluatorFactory> = Arc::new(NeverEvaluatorFactory);
+
+        let plan = StaticAccuracyConfigV2::decode(&raw)
+            .unwrap()
+            .lower(factory.clone());
+
+        assert_eq!(plan.benchmark, "fixture");
+        assert_eq!(plan.tasks.as_deref().unwrap(), ["task-a"]);
+        assert_eq!(plan.process.worker_module, "fixture.worker");
+        assert!(Arc::ptr_eq(&plan.evaluator_factory, &factory));
     }
 
     #[test]
