@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 import orjson
+import pytest
 
 from aiperf.common.models import NetworkLatencySample
 from aiperf.common.models.record_models import MetricRecordInfo, RawRecordInfo
@@ -172,6 +173,30 @@ class _ConnectionHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _OTLPSinkHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    exports: list[bytes] = []
+    lock = threading.Lock()
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        if self.path != "/v1/metrics":
+            self.send_error(404)
+            return
+        with self.lock:
+            self.exports.append(body)
+        response = b"{}"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
 class _ServerMetricsHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     primary_scrapes = 0
@@ -231,6 +256,153 @@ class _ServerMetricsHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         pass
+
+
+def test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
+    tmp_path: Path,
+) -> None:
+    metrics_service_pb2 = pytest.importorskip(
+        "opentelemetry.proto.collector.metrics.v1.metrics_service_pb2"
+    )
+    export_request_type = metrics_service_pb2.ExportMetricsServiceRequest
+
+    _AdaptiveChatHandler.active = 0
+    _AdaptiveChatHandler.peak = 0
+    _OTLPSinkHandler.exports = []
+    inference_server = ThreadingHTTPServer(("127.0.0.1", 0), _AdaptiveChatHandler)
+    otlp_server = ThreadingHTTPServer(("127.0.0.1", 0), _OTLPSinkHandler)
+    inference_thread = threading.Thread(
+        target=inference_server.serve_forever, daemon=True
+    )
+    otlp_thread = threading.Thread(target=otlp_server.serve_forever, daemon=True)
+    inference_thread.start()
+    otlp_thread.start()
+    try:
+        inference_port = inference_server.server_address[1]
+        otlp_port = otlp_server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [
+                            f"http://127.0.0.1:{inference_port}/v1/chat/completions"
+                        ],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 80,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 80,
+                        "concurrency": 2,
+                    },
+                    "artifacts": {"dir": str(tmp_path), "records": False},
+                    "otel": {
+                        "metrics_url": f"http://127.0.0.1:{otlp_port}",
+                        "custom_resource_attributes": {
+                            "team": "native-e2e",
+                            "path": "rust-stdio-python",
+                        },
+                    },
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="python-rust-live-otel-e2e",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="native-live-otel",
+            random_seed=43,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+        result_holder: dict[str, object] = {}
+
+        def execute() -> None:
+            result_holder["result"] = RustSubprocessExecutor(
+                tmp_path, binary=binary
+            ).execute_sync(run)
+
+        with mock.patch.dict(
+            os.environ,
+            {"AIPERF_OTEL_FLUSH_INTERVAL_SECONDS": "0.1"},
+        ):
+            runner_thread = threading.Thread(target=execute)
+            runner_thread.start()
+            deadline = time.monotonic() + 60.0
+            export_arrived_mid_run = False
+            while time.monotonic() < deadline:
+                with _OTLPSinkHandler.lock:
+                    has_export = bool(_OTLPSinkHandler.exports)
+                if has_export:
+                    export_arrived_mid_run = runner_thread.is_alive()
+                    break
+                if not runner_thread.is_alive():
+                    break
+                time.sleep(0.01)
+            runner_thread.join(timeout=120)
+
+        assert not runner_thread.is_alive(), "native runner did not terminate"
+        result = result_holder["result"]
+        assert result.success, result.error
+        assert export_arrived_mid_run, (
+            "OTLP received no Rust-owned metrics before the native child completed"
+        )
+        assert result.summary_metrics["request_count"].avg == 80.0
+        assert not (tmp_path / "profile_export.jsonl").exists()
+
+        with _OTLPSinkHandler.lock:
+            payloads = list(_OTLPSinkHandler.exports)
+        exports = []
+        for payload in payloads:
+            request = export_request_type()
+            request.ParseFromString(payload)
+            exports.append(request)
+        assert exports
+
+        resource_attributes: dict[str, str] = {}
+        metric_names: set[str] = set()
+        histogram_points = 0
+        for request in exports:
+            for resource_metrics in request.resource_metrics:
+                for attribute in resource_metrics.resource.attributes:
+                    field = attribute.value.WhichOneof("value")
+                    if field is not None:
+                        resource_attributes[attribute.key] = str(
+                            getattr(attribute.value, field)
+                        )
+                for scope_metrics in resource_metrics.scope_metrics:
+                    for metric in scope_metrics.metrics:
+                        metric_names.add(metric.name)
+                        if metric.HasField("histogram"):
+                            histogram_points += len(metric.histogram.data_points)
+
+        assert resource_attributes["service.name"] == "aiperf"
+        assert resource_attributes["aiperf.benchmark.id"] == "python-rust-live-otel-e2e"
+        assert resource_attributes["team"] == "native-e2e"
+        assert resource_attributes["path"] == "rust-stdio-python"
+        assert "aiperf.timing.requests.sent" in metric_names
+        assert any(
+            name.startswith("aiperf.") or name.startswith("gen_ai.")
+            for name in metric_names
+        )
+        assert histogram_points > 0
+    finally:
+        inference_server.shutdown()
+        inference_server.server_close()
+        inference_thread.join(timeout=5)
+        otlp_server.shutdown()
+        otlp_server.server_close()
+        otlp_thread.join(timeout=5)
 
 
 def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries(
@@ -397,9 +569,7 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -
                         "concurrency": 2,
                     },
                     "artifacts": {"dir": str(tmp_path)},
-                    "gpu_telemetry": {
-                        "urls": [f"http://127.0.0.1:{port}/metrics"]
-                    },
+                    "gpu_telemetry": {"urls": [f"http://127.0.0.1:{port}/metrics"]},
                     "server_metrics": {"enabled": False},
                     "runtime": {"ui": "none"},
                 }
@@ -431,9 +601,7 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -
         compatibility = orjson.loads(
             (tmp_path / "profile_export_aiperf.json").read_bytes()
         )
-        endpoint = compatibility["telemetry_data"]["endpoints"][
-            f"127.0.0.1:{port}"
-        ]
+        endpoint = compatibility["telemetry_data"]["endpoints"][f"127.0.0.1:{port}"]
         gpu = endpoint["gpus"]["gpu_0"]
         assert gpu["gpu_uuid"] == "GPU-python-e2e"
         assert gpu["metrics"]["gpu_power_usage"]["avg"] == 250.0
@@ -1055,9 +1223,7 @@ def test_config_v2_controls_native_connection_reuse(tmp_path: Path) -> None:
                     "benchmark": {
                         "models": ["mock-model"],
                         "endpoint": {
-                            "urls": [
-                                f"http://127.0.0.1:{port}/v1/chat/completions"
-                            ],
+                            "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
                             "streaming": False,
                             "use_server_token_count": True,
                             "connection_reuse": strategy,
@@ -1089,7 +1255,9 @@ def test_config_v2_controls_native_connection_reuse(tmp_path: Path) -> None:
             )
             start = len(_ConnectionHandler.peer_ports)
 
-            result = RustSubprocessExecutor(artifact_dir, binary=binary).execute_sync(run)
+            result = RustSubprocessExecutor(artifact_dir, binary=binary).execute_sync(
+                run
+            )
 
             assert result.success, result.error
             rows = [

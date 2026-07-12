@@ -174,6 +174,20 @@ pub(crate) fn write_records_jsonl(
         .with_context(|| format!("flushing record export {}", path.display()))
 }
 
+/// Serialize one terminal record through the canonical compatibility shape.
+///
+/// Live extension workers consume this exact object while the post-run JSONL
+/// writer above consumes the same private row builder. This keeps streaming
+/// and persisted records on one Rust-owned metric projection.
+pub(crate) fn record_json_value(
+    captured: &CapturedRecord,
+    config: &MetricsConfig,
+    include_trace: bool,
+) -> Result<Value> {
+    serde_json::to_value(record_row(captured, config, include_trace))
+        .context("serializing live native metric record")
+}
+
 /// Write Python-compatible raw request/response records in dispatch order.
 ///
 /// The request payload is serialized through [`RawValue`], which validates the

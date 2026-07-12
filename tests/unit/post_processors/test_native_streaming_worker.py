@@ -102,7 +102,7 @@ def test_builds_real_config_v2_run_for_the_canonical_processor(tmp_path: Path) -
     assert run.benchmark_id == "native-stream-test"
     assert run.cfg.get_model_names() == ["mock-model"]
     assert str(run.cfg.endpoint.type) == "chat"
-    assert run.cfg.otel.metrics_url == "http://127.0.0.1:4318"
+    assert run.cfg.otel.metrics_url == "http://127.0.0.1:4318/v1/metrics"
     assert run.cfg.otel.custom_resource_attributes == {"team": "inference"}
     assert run.cfg.mlflow.tracking_uri == "http://127.0.0.1:5000"
     assert run.cfg.mlflow.tags_dict == {"source": "rust"}

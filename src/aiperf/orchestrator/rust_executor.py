@@ -274,6 +274,15 @@ def _require_request_capabilities(
                 "server_metrics_formats",
                 format_name,
             )
+    live_streaming = run.get("live_streaming")
+    if live_streaming is not None:
+        if not isinstance(live_streaming, dict):
+            raise ValueError("native run live_streaming must be an object")
+        _require_capability(
+            capabilities,
+            "run_features",
+            "python_live_streaming",
+        )
 
 
 def _require_capability(

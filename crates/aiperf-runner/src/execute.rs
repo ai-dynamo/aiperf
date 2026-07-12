@@ -81,6 +81,7 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::gpu_telemetry::GpuTelemetryRun;
+use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
 use crate::protocol::{
     AccuracySpec, AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec,
@@ -220,6 +221,24 @@ fn validate_request(request: &RunRequest) -> Result<()> {
             "server metrics parquet_wire_path must be present exactly when Parquet is selected"
         );
     }
+    if let Some(spec) = &request.run.live_streaming {
+        ensure!(
+            spec.python_executable.is_absolute(),
+            "live streaming python_executable must be absolute"
+        );
+        ensure!(
+            !spec.worker_module.trim().is_empty(),
+            "live streaming worker_module cannot be empty"
+        );
+        ensure!(
+            spec.buffer_capacity > 0,
+            "live streaming buffer_capacity must be positive"
+        );
+        ensure!(
+            spec.otel.metrics_url.is_some() || spec.mlflow.tracking_uri.is_some(),
+            "live streaming requires an OTel or MLflow destination"
+        );
+    }
     Ok(())
 }
 
@@ -236,8 +255,35 @@ struct PreparedAccuracy<'a> {
 }
 
 async fn execute_native(request: RunRequest) -> Result<NativeReport> {
+    let mut live_streaming = if request.run.live_streaming.is_some() {
+        match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
+            .await
+        {
+            Ok(worker) => Some(worker),
+            Err(error) => {
+                eprintln!("live telemetry extension failed to start: {error:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let live_sink = live_streaming.as_ref().map(PythonLiveStreamingRun::sink);
+    let result = execute_native_with_accuracy(request, live_sink).await;
+    if let Some(worker) = live_streaming.take()
+        && let Err(error) = worker.shutdown().await
+    {
+        eprintln!("live telemetry extension failed to shut down cleanly: {error:#}");
+    }
+    result
+}
+
+async fn execute_native_with_accuracy(
+    request: RunRequest,
+    live_sink: Option<Rc<dyn LiveResultsSink>>,
+) -> Result<NativeReport> {
     let Some(spec) = request.run.accuracy.clone() else {
-        return execute_native_inner(request, None).await;
+        return execute_native_inner(request, None, live_sink).await;
     };
     ensure!(
         spec.python_executable.is_absolute(),
@@ -260,6 +306,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
             evaluator: &mut evaluator,
             spec,
         }),
+        live_sink,
     )
     .await;
     let shutdown = evaluator.shutdown().await;
@@ -276,6 +323,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
 async fn execute_native_inner(
     request: RunRequest,
     accuracy: Option<AccuracyWorkerRun<'_>>,
+    live_sink: Option<Rc<dyn LiveResultsSink>>,
 ) -> Result<NativeReport> {
     let registry = AiperfRegistry::builtin()?;
     let rng_root = RngRoot::new(request.run.random_seed);
@@ -699,6 +747,7 @@ async fn execute_native_inner(
             capture: capture.clone(),
             phase: metrics_phase(phase)?,
             has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+            live_sink: live_sink.clone(),
         });
         let mut record_processors = vec![record_processor];
         if phase.common().name == "profiling"
@@ -736,7 +785,11 @@ async fn execute_native_inner(
         plans.push(plan);
     }
 
-    let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
+    let observer: Rc<dyn PhaseObserver> = if let Some(sink) = live_sink {
+        live_phase_observer(sink, clock.clone())
+    } else {
+        Rc::new(NoopPhaseObserver)
+    };
     let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
     phased
         .reports
@@ -2087,6 +2140,28 @@ impl RunCapture {
         Ok(())
     }
 
+    fn snapshot(&self, credit: &IssuedCredit) -> Result<CapturedRecord> {
+        let mut ingest = self
+            .observer
+            .snapshot_record(credit.turn.uuid, credit.id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "terminal request {} was absent from native metric capture",
+                    credit.turn.uuid
+                )
+            })?;
+        if ingest.admit_ns.is_some() {
+            ingest.admit_ns = Some(credit.issued_ns.saturating_sub(self.origin_ns));
+        }
+        Ok(CapturedRecord {
+            uuid: credit.turn.uuid,
+            x_correlation_id: credit.turn.x_correlation_id.clone(),
+            response_text: self.response_text.borrow().get(&credit.turn.uuid).cloned(),
+            raw: None,
+            ingest,
+        })
+    }
+
     fn finish(&self, issued_times: &HashMap<Uuid, i64>) -> Result<Vec<CapturedRecord>> {
         let collection = self.observer.finish_with_records();
         let identities = self.identities.borrow();
@@ -2128,6 +2203,7 @@ struct CapturePhaseProcessor {
     capture: Rc<RunCapture>,
     phase: MetricsPhase,
     has_credit_timestamp: bool,
+    live_sink: Option<Rc<dyn LiveResultsSink>>,
 }
 
 #[async_trait(?Send)]
@@ -2135,6 +2211,9 @@ impl TurnRecordProcessor for CapturePhaseProcessor {
     async fn process(&self, credit: &IssuedCredit, _outcome: &TurnDispatchOutcome) -> Result<()> {
         self.capture
             .label(credit, self.phase, self.has_credit_timestamp);
+        if let Some(sink) = &self.live_sink {
+            sink.emit_record(&self.capture.snapshot(credit)?);
+        }
         Ok(())
     }
 }

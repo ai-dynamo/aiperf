@@ -67,6 +67,12 @@ fn capabilities_are_a_single_versioned_json_line() {
             .unwrap()
             .contains(&serde_json::json!("server_metrics"))
     );
+    assert!(
+        capabilities["run_features"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("python_live_streaming"))
+    );
     assert_eq!(
         capabilities["server_metrics_formats"],
         serde_json::json!(["json", "csv", "jsonl", "parquet"])

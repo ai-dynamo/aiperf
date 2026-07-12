@@ -148,6 +148,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "http_transport_policy",
             "network_latency",
             "server_metrics",
+            "python_live_streaming",
         ],
         "telemetry_source_types": ["dcgm"],
         "server_metrics_formats": ["json", "csv", "jsonl", "parquet"],
@@ -172,6 +173,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "gpu_telemetry": {"sources": [{"type": "dcgm"}]},
             "network_latency": {"mean_rtt_ns": 2_500_000},
             "server_metrics": {"formats": ["json", "parquet"]},
+            "live_streaming": {},
         }
     }
 
@@ -191,6 +193,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("run_features", "http_transport_policy"),
         ("run_features", "network_latency"),
         ("run_features", "server_metrics"),
+        ("run_features", "python_live_streaming"),
         ("telemetry_source_types", "dcgm"),
         ("server_metrics_formats", "json"),
         ("server_metrics_formats", "parquet"),

@@ -186,16 +186,12 @@ impl ServerMetricsRun {
 
     /// Write Python-compatible slim scrape records.
     pub(crate) fn write_slim_jsonl(&self, path: &Path) -> Result<()> {
-        JsonlServerMetricsArtifactSink.write(path, &self.state.accumulator.borrow().records(), true)
+        JsonlServerMetricsArtifactSink.write(path, self.state.accumulator.borrow().records(), true)
     }
 
     /// Write full records used only by Python's canonical Parquet renderer.
     pub(crate) fn write_parquet_wire_jsonl(&self, path: &Path) -> Result<()> {
-        JsonlServerMetricsArtifactSink.write(
-            path,
-            &self.state.accumulator.borrow().records(),
-            false,
-        )
+        JsonlServerMetricsArtifactSink.write(path, self.state.accumulator.borrow().records(), false)
     }
 }
 
@@ -319,7 +315,8 @@ impl ServerMetricsPhaseSidecar {
             return Ok(());
         }
         self.stop.notify_one();
-        if let Some(task) = self.task.borrow_mut().take()
+        let task = self.task.borrow_mut().take();
+        if let Some(task) = task
             && let Err(error) = task.await
         {
             eprintln!("server metrics cadence task failed: {error}");

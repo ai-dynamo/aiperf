@@ -147,6 +147,47 @@ def test_projects_server_metrics_urls_formats_and_native_artifact_handoffs(
     assert "server_metrics" not in build_run_request(run)["run"]
 
 
+def test_projects_otel_and_live_mlflow_into_python_extension_wire(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.otel.metrics_url = "http://otel:4318"
+    run.cfg.otel.stream_timing_enabled = False
+    run.cfg.otel.custom_resource_attributes = {"team": "inference"}
+    run.cfg.otel.gen_ai_provider = "nvidia"
+    run.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+    run.cfg.mlflow.experiment = "native"
+    run.cfg.mlflow.run_name = "cell"
+    run.cfg.mlflow.tags = {"source": "rust"}
+    run.cfg.mlflow.parent_run_id = "parent"
+    run.cfg.mlflow.artifact_globs = ["*.json"]
+
+    streaming = build_run_request(run)["run"]["live_streaming"]
+
+    assert streaming == {
+        "python_executable": str(Path(sys.executable).absolute()),
+        "worker_module": "aiperf.post_processors.native_streaming_worker",
+        "buffer_capacity": 10_000,
+        "otel": {
+            "metrics_url": "http://otel:4318/v1/metrics",
+            "stream_metrics_enabled": True,
+            "stream_timing_enabled": False,
+            "custom_resource_attributes": {"team": "inference"},
+            "gen_ai_provider": "nvidia",
+        },
+        "mlflow": {
+            "tracking_uri": "http://mlflow:5000",
+            "experiment": "native",
+            "run_name": "cell",
+            "tags": {"source": "rust"},
+            "parent_run_id": "parent",
+            "artifact_globs": ["*.json"],
+        },
+    }
+
+    run.cfg.otel.metrics_url = None
+    run.cfg.mlflow.tracking_uri = None
+    assert "live_streaming" not in build_run_request(run)["run"]
+
+
 def test_projects_gpu_telemetry_defaults_custom_urls_and_disable(tmp_path) -> None:
     run = _run(tmp_path)
     run.cfg.gpu_telemetry.urls = [

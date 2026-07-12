@@ -10,6 +10,7 @@
 
 pub mod execute;
 mod gpu_telemetry;
+mod live_streaming;
 mod network_latency;
 pub mod protocol;
 mod records;

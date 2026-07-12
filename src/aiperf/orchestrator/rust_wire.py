@@ -173,6 +173,9 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     server_metrics = _server_metrics(run)
     if server_metrics is not None:
         run_wire["server_metrics"] = server_metrics
+    live_streaming = _live_streaming(run)
+    if live_streaming is not None:
+        run_wire["live_streaming"] = live_streaming
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
 
 
@@ -320,6 +323,45 @@ def _server_metrics(run: BenchmarkRun) -> dict[str, Any] | None:
     if "parquet" in formats:
         result["parquet_wire_path"] = str(SERVER_METRICS_PARQUET_WIRE_PATH)
     return result
+
+
+def _live_streaming(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Lower OTel/live-MLflow into the supervised Python extension ABI."""
+    config = run.cfg
+    if not config.otel.collector_enabled and not config.mlflow.enabled:
+        return None
+
+    from aiperf.common.environment import Environment
+    from aiperf.config.otel import normalize_otel_metrics_url
+
+    metrics_url = normalize_otel_metrics_url(config.otel.metrics_url)
+
+    return {
+        "python_executable": _python_executable(),
+        "worker_module": "aiperf.post_processors.native_streaming_worker",
+        "buffer_capacity": Environment.OTEL.MAX_BUFFERED_RECORDS,
+        "otel": {
+            "metrics_url": metrics_url,
+            "stream_metrics_enabled": config.otel.stream_metrics_enabled,
+            "stream_timing_enabled": config.otel.stream_timing_enabled,
+            "custom_resource_attributes": dict(config.otel.custom_resource_attributes),
+            "gen_ai_provider": config.otel.gen_ai_provider,
+        },
+        "mlflow": {
+            "tracking_uri": config.mlflow.tracking_uri,
+            "experiment": config.mlflow.experiment,
+            "run_name": config.mlflow.run_name,
+            "tags": (
+                dict(config.mlflow.tags) if config.mlflow.tags is not None else None
+            ),
+            "parent_run_id": config.mlflow.parent_run_id,
+            "artifact_globs": (
+                list(config.mlflow.artifact_globs)
+                if config.mlflow.artifact_globs is not None
+                else None
+            ),
+        },
+    }
 
 
 def _normalize_dcgm_url(url: str) -> str:

@@ -14,10 +14,10 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 import orjson
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from aiperf.common.models import CreditPhaseStats
 from aiperf.common.models.record_models import MetricRecordInfo
@@ -85,13 +85,18 @@ class NativeGracePeriod(_StrictModel):
     kind: Literal["disabled", "finite", "infinite"]
     duration_ns: int | None = Field(default=None, ge=0)
 
+    @model_validator(mode="after")
+    def validate_shape(self) -> Self:
+        if self.kind == "finite" and self.duration_ns is None:
+            raise ValueError("finite grace period omitted duration_ns")
+        if self.kind != "finite" and self.duration_ns is not None:
+            raise ValueError(f"{self.kind} grace period cannot define duration_ns")
+        return self
+
     def seconds(self) -> float | None:
         if self.kind == "finite":
-            if self.duration_ns is None:
-                raise ValueError("finite grace period omitted duration_ns")
+            assert self.duration_ns is not None
             return self.duration_ns / 1_000_000_000
-        if self.duration_ns is not None:
-            raise ValueError(f"{self.kind} grace period cannot define duration_ns")
         return 0.0 if self.kind == "disabled" else None
 
 
@@ -234,7 +239,7 @@ def _metric_data(event: MetricRecordEvent) -> Any:
 
 def _phase_data(event: PhaseStatsEvent) -> NativeCreditPhaseStats:
     stats = event.stats
-    return NativeCreditPhaseStats(
+    result = NativeCreditPhaseStats(
         phase=stats.kind,
         start_ns=stats.start_ns,
         sent_end_ns=stats.sent_end_ns,
@@ -267,6 +272,11 @@ def _phase_data(event: PhaseStatsEvent) -> NativeCreditPhaseStats:
         grace_period_timeout_triggered=stats.grace_period_timeout_triggered,
         was_cancelled=stats.was_cancelled,
     )
+    if result.in_flight_requests != stats.in_flight_requests:
+        raise ValueError("native phase in-flight request count is inconsistent")
+    if result.in_flight_sessions != stats.in_flight_sessions:
+        raise ValueError("native phase in-flight session count is inconsistent")
+    return result
 
 
 async def _readline() -> bytes:

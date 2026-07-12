@@ -77,6 +77,7 @@ impl RunnerCapabilities {
             phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
             run_features: &[
                 "gpu_telemetry",
+                "python_live_streaming",
                 "outputs_json",
                 "python_accuracy_evaluator",
                 "raw_records",
@@ -153,6 +154,72 @@ pub struct RunSpec {
     /// Optional phase-bounded inference-server Prometheus collection.
     #[serde(default)]
     pub server_metrics: Option<ServerMetricsSpec>,
+    /// Optional live OTel/MLflow results extension supervised by Rust.
+    #[serde(default)]
+    pub live_streaming: Option<LiveStreamingSpec>,
+}
+
+/// Canonical Python live-results extension configuration.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveStreamingSpec {
+    /// Absolute interpreter selected by the Python Config-v2 parent.
+    pub python_executable: PathBuf,
+    /// Importable strict-stdio worker module.
+    #[serde(default = "default_live_streaming_worker_module")]
+    pub worker_module: String,
+    /// Bounded Rust-to-Python queue capacity with drop-oldest overflow.
+    pub buffer_capacity: usize,
+    /// Canonical OpenTelemetry streaming settings.
+    pub otel: OTelStreamingSpec,
+    /// Canonical live-MLflow settings.
+    pub mlflow: MLflowStreamingSpec,
+}
+
+fn default_live_streaming_worker_module() -> String {
+    "aiperf.post_processors.native_streaming_worker".to_string()
+}
+
+/// OpenTelemetry settings forwarded to the canonical Python processor.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OTelStreamingSpec {
+    /// OTLP/HTTP metrics endpoint.
+    #[serde(default)]
+    pub metrics_url: Option<String>,
+    /// Emit terminal request metric records.
+    pub stream_metrics_enabled: bool,
+    /// Emit phase lifecycle and progress records.
+    pub stream_timing_enabled: bool,
+    /// User-authored OTel resource attributes.
+    #[serde(default)]
+    pub custom_resource_attributes: BTreeMap<String, String>,
+    /// Optional GenAI semantic-convention provider override.
+    #[serde(default)]
+    pub gen_ai_provider: Option<String>,
+}
+
+/// Live MLflow settings forwarded to the canonical Python fanout.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MLflowStreamingSpec {
+    /// MLflow tracking server URI.
+    #[serde(default)]
+    pub tracking_uri: Option<String>,
+    /// Experiment name.
+    pub experiment: String,
+    /// Optional run name.
+    #[serde(default)]
+    pub run_name: Option<String>,
+    /// Optional run tags.
+    #[serde(default)]
+    pub tags: Option<BTreeMap<String, String>>,
+    /// Optional parent run identity.
+    #[serde(default)]
+    pub parent_run_id: Option<String>,
+    /// Optional post-run artifact selection retained in fanout metadata.
+    #[serde(default)]
+    pub artifact_globs: Option<Vec<String>>,
 }
 
 /// Canonical evaluator configuration for an accuracy-enabled native run.
