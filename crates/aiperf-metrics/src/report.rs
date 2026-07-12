@@ -649,6 +649,47 @@ impl ReportDynamoRunInfo {
     }
 }
 
+/// Exact local adapter-policy identity for one proxy-enabled evaluation run.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct ReportEvaluationCompatibilityInfo {
+    /// Sorted frozen compatibility-dialect factory IDs.
+    pub dialect_ids: Vec<String>,
+    /// SHA-256 of exact dialect IDs, allowed routes, effective adapters, and grant limits.
+    pub descriptor_sha256: String,
+}
+
+impl ReportEvaluationCompatibilityInfo {
+    /// Validate and freeze one proxy-enabled evaluation compatibility identity.
+    pub fn new(
+        mut dialect_ids: Vec<String>,
+        descriptor_sha256: impl Into<String>,
+    ) -> Result<Self, ReportProvenanceError> {
+        if dialect_ids.is_empty() {
+            return Err(ReportProvenanceError::new(
+                "evaluation compatibility dialect IDs cannot be empty",
+            ));
+        }
+        dialect_ids.sort();
+        for dialect in &dialect_ids {
+            validate_component_id(dialect, "evaluation compatibility dialect ID")?;
+        }
+        if dialect_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(ReportProvenanceError::new(
+                "evaluation compatibility dialect IDs must be unique",
+            ));
+        }
+        let descriptor_sha256 = descriptor_sha256.into();
+        validate_lowercase_sha256(
+            &descriptor_sha256,
+            "evaluation compatibility descriptor SHA-256",
+        )?;
+        Ok(Self {
+            dialect_ids,
+            descriptor_sha256,
+        })
+    }
+}
+
 /// Optional typed facts returned by one backend/workload pair.
 ///
 /// The pair owns only these mode-specific facts. Common executable, registry,
@@ -661,6 +702,9 @@ pub struct ReportPairRunFacts {
     /// Dynamo topology, capacity, and exact metric-parity evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dynamo: Option<ReportDynamoRunInfo>,
+    /// Exact local compatibility policy for a proxy-enabled evaluator run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluation_compatibility: Option<ReportEvaluationCompatibilityInfo>,
 }
 
 impl ReportPairRunFacts {
@@ -678,6 +722,15 @@ impl ReportPairRunFacts {
     /// Attach Dynamo offline facts.
     pub fn with_dynamo(mut self, dynamo: ReportDynamoRunInfo) -> Self {
         self.dynamo = Some(dynamo);
+        self
+    }
+
+    /// Attach exact evaluator compatibility policy identity.
+    pub fn with_evaluation_compatibility(
+        mut self,
+        compatibility: ReportEvaluationCompatibilityInfo,
+    ) -> Self {
+        self.evaluation_compatibility = Some(compatibility);
         self
     }
 }
@@ -771,6 +824,19 @@ fn validate_component_id(value: &str, field: &str) -> Result<(), ReportProvenanc
     {
         return Err(ReportProvenanceError::new(format!(
             "{field} must match [a-z][a-z0-9_]*"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_lowercase_sha256(value: &str, field: &str) -> Result<(), ReportProvenanceError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ReportProvenanceError::new(format!(
+            "{field} must contain exactly 64 lowercase hexadecimal digits"
         )));
     }
     Ok(())
@@ -1999,7 +2065,14 @@ mod tests {
         .with_capacity(capacity);
         let facts = ReportPairRunFacts::new()
             .with_graph(graph)
-            .with_dynamo(dynamo);
+            .with_dynamo(dynamo)
+            .with_evaluation_compatibility(
+                ReportEvaluationCompatibilityInfo::new(
+                    vec!["openai_chat_completions".into()],
+                    "d".repeat(64),
+                )
+                .unwrap(),
+            );
         let report = NativeReport::new(&AccumulatorSummary::new(), None)
             .finalize_run(provenance, facts)
             .unwrap();
@@ -2024,6 +2097,14 @@ mod tests {
         );
         assert_eq!(run["dynamo"]["parity"]["shared_fields"], 74);
         assert_eq!(run["dynamo"]["capacity"]["prefill_worker_seconds"], 2.5);
+        assert_eq!(
+            run["evaluation_compatibility"]["dialect_ids"],
+            serde_json::json!(["openai_chat_completions"])
+        );
+        assert_eq!(
+            run["evaluation_compatibility"]["descriptor_sha256"],
+            "d".repeat(64)
+        );
         assert_eq!(
             report.run.provenance().unwrap().distribution_id,
             format!("blake3:{}", "a".repeat(64))
@@ -2086,6 +2167,24 @@ mod tests {
                 .unwrap()
                 .with_outcome(ReportGraphOutcomeInfo::new(1, 1, 1))
                 .is_err()
+        );
+        assert!(ReportEvaluationCompatibilityInfo::new(Vec::new(), "a".repeat(64)).is_err());
+        assert!(
+            ReportEvaluationCompatibilityInfo::new(
+                vec![
+                    "openai_chat_completions".into(),
+                    "openai_chat_completions".into()
+                ],
+                "a".repeat(64),
+            )
+            .is_err()
+        );
+        assert!(
+            ReportEvaluationCompatibilityInfo::new(
+                vec!["openai_chat_completions".into()],
+                "not-a-digest",
+            )
+            .is_err()
         );
     }
 
