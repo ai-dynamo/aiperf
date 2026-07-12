@@ -13,6 +13,7 @@ pub mod artifacts;
 pub mod canonical;
 pub mod isolation;
 pub mod lifecycle;
+pub mod metadata_projection;
 pub mod provider;
 pub mod provider_protocol;
 pub mod score_projection;
@@ -38,6 +39,12 @@ pub use isolation::{
     Sha256LaunchAttestor,
 };
 pub use lifecycle::{EvaluationLifecycle, EvaluationLifecycleState};
+pub use metadata_projection::{
+    FrozenPublicEvaluationMetadataPolicy, PUBLIC_EVALUATION_METADATA_SCHEMA_V1,
+    PublicAggregateMetadataProjection, PublicAggregateMetadataRule, PublicCaseMetadataProjection,
+    PublicCaseMetadataRule, PublicEvaluationMetadataProjector, PublicMetadataProjectionError,
+    PublicNumericMetricRule,
+};
 pub use provider::{
     EvaluationDistributionDescriptor, EvaluationOperationDescriptor, EvaluationProvider,
     EvaluationProviderDescriptor, EvaluationProviderError, EvaluationProviderFactory,
