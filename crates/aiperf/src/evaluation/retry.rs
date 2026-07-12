@@ -21,6 +21,7 @@ use serde_json::Value;
 use tokio::sync::Notify;
 
 use super::ledger::{HostTerminalClass, OperationLedger};
+use crate::scheduled::DispatchCancellation;
 
 /// Cancellation latch shared by queue, dispatch, streaming, and backoff.
 #[derive(Debug, Clone, Default)]
@@ -53,6 +54,16 @@ impl OperationCancellation {
             }
             notified.await;
         }
+    }
+}
+
+impl DispatchCancellation for OperationCancellation {
+    fn is_cancelled(&self) -> bool {
+        OperationCancellation::is_cancelled(self)
+    }
+
+    fn cancelled(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>> {
+        Box::pin(OperationCancellation::cancelled(self))
     }
 }
 

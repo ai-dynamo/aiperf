@@ -55,6 +55,21 @@ pub type CompletionHandler =
 /// `src/aiperf/credit/callback_handler.py:454-485`.
 pub type FirstTokenHandler = Box<dyn Fn(i64) + 'static>;
 
+/// Replaceable cancellation latch for one admitted dispatch.
+///
+/// The issuer selects this future against the ordinary backend dispatch. A
+/// cancellation winner drops that dispatch future, emits exactly one cancelled
+/// observer terminal, and still invokes the normal completion callback. This
+/// keeps evaluator, proxy, phase, and future cancellation sources outside the
+/// transport-neutral [`TurnDispatcher`] seam.
+pub trait DispatchCancellation {
+    /// Whether cancellation was requested before dispatch received its first poll.
+    fn is_cancelled(&self) -> bool;
+
+    /// Wait until cancellation is requested.
+    fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + '_>>;
+}
+
 /// Optional external admission gate layered above ordinary stop conditions.
 /// Adaptive-scale implements this seam so a terminal controller immediately
 /// blocks root and continuation issuance while in-flight dispatches drain.
@@ -580,12 +595,35 @@ impl ScheduledRuntime {
         user_id: Option<u64>,
         on_complete: CompletionHandler,
     ) -> bool {
-        self.issue_turn_with_hooks(
+        self.issue_turn_with_hooks_and_cancellation(
             turn,
             scheduled_ns,
             user_id,
             Box::new(|_ttft_ns| {}),
             on_complete,
+            None,
+        )
+    }
+
+    /// Issue one turn with an externally triggered cancellation latch.
+    ///
+    /// The callback runs exactly once whether cancellation wins before
+    /// dispatch, during streaming, or loses the race to a normal terminal.
+    pub fn issue_turn_cancellable(
+        self: &Rc<Self>,
+        turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        on_complete: CompletionHandler,
+        cancellation: Rc<dyn DispatchCancellation>,
+    ) -> bool {
+        self.issue_turn_with_hooks_and_cancellation(
+            turn,
+            scheduled_ns,
+            user_id,
+            Box::new(|_ttft_ns| {}),
+            on_complete,
+            Some(cancellation),
         )
     }
 
@@ -600,11 +638,32 @@ impl ScheduledRuntime {
     #[allow(clippy::too_many_arguments)]
     pub fn issue_turn_with_hooks(
         self: &Rc<Self>,
+        turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        on_first_token: FirstTokenHandler,
+        on_complete: CompletionHandler,
+    ) -> bool {
+        self.issue_turn_with_hooks_and_cancellation(
+            turn,
+            scheduled_ns,
+            user_id,
+            on_first_token,
+            on_complete,
+            None,
+        )
+    }
+
+    /// Issue one turn with first-token, terminal, and external cancellation hooks.
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_turn_with_hooks_and_cancellation(
+        self: &Rc<Self>,
         mut turn: TurnToSend,
         scheduled_ns: i64,
         user_id: Option<u64>,
         on_first_token: FirstTokenHandler,
         on_complete: CompletionHandler,
+        cancellation: Option<Rc<dyn DispatchCancellation>>,
     ) -> bool {
         let new_session = turn.turn_index == 0;
         if !self.can_issue(new_session) {
@@ -698,13 +757,50 @@ impl ScheduledRuntime {
                 on_first_token(ttft_ns);
             };
 
-            let outcome = match runtime
-                .dispatcher
-                .dispatch_turn(turn.clone(), runtime.observer.as_ref(), &first_token)
-                .await
-            {
-                Ok(outcome) => outcome,
-                Err(error) => {
+            let dispatch = runtime.dispatcher.dispatch_turn(
+                turn.clone(),
+                runtime.observer.as_ref(),
+                &first_token,
+            );
+            tokio::pin!(dispatch);
+            let dispatch_result = match cancellation {
+                Some(cancellation) if cancellation.is_cancelled() => None,
+                Some(cancellation) => {
+                    let cancelled = cancellation.cancelled();
+                    tokio::pin!(cancelled);
+                    tokio::select! {
+                        biased;
+                        result = &mut dispatch => Some(result),
+                        _ = &mut cancelled => None,
+                    }
+                }
+                None => Some(dispatch.await),
+            };
+            let outcome = match dispatch_result {
+                None => {
+                    runtime
+                        .observer
+                        .on_terminal(turn.uuid, ReplayTerminalStatus::Canceled);
+                    let now = runtime.clock.now_ns();
+                    TurnDispatchOutcome {
+                        start_ns: issued_ns,
+                        end_ns: now,
+                        terminal: ReplayTerminalStatus::Canceled,
+                        response_text: String::new(),
+                        model_response: ModelResponseMetadata {
+                            error_kind: Some("dispatch_cancelled".to_string()),
+                            error_message: Some(
+                                "dispatch cancelled by the owning workload".to_string(),
+                            ),
+                            ..ModelResponseMetadata::default()
+                        },
+                        prompt_tokens: None,
+                        completion_tokens: None,
+                        http: HttpTrace::default(),
+                    }
+                }
+                Some(Ok(outcome)) => outcome,
+                Some(Err(error)) => {
                     tracing::warn!(
                         uuid = %turn.uuid,
                         error = %error,
@@ -747,8 +843,13 @@ impl ScheduledRuntime {
                     http: outcome.http,
                 },
             );
-            let processor_credit = credit.clone();
-            let processor_outcome = outcome.clone();
+            let processor_input = (!runtime.record_processors.borrow().is_empty()).then(|| {
+                (
+                    credit.clone(),
+                    outcome.clone(),
+                    turn.request_correlation_id.clone(),
+                )
+            });
             if credit.is_final_turn() {
                 runtime
                     .session_url_indices
@@ -759,12 +860,14 @@ impl ScheduledRuntime {
             // Return the credit/release admission before downstream processing.
             // The detached local task also keeps grading latency out of the
             // scheduler's dispatch-drain boundary and performance wall time.
-            runtime.spawn_record_processing(
-                processor_credit,
-                processor_outcome,
-                turn.uuid,
-                turn.request_correlation_id.clone(),
-            );
+            if let Some((processor_credit, processor_outcome, correlation_id)) = processor_input {
+                runtime.spawn_record_processing(
+                    processor_credit,
+                    processor_outcome,
+                    turn.uuid,
+                    correlation_id,
+                );
+            }
         }));
 
         if final_credit {
@@ -817,12 +920,26 @@ impl ScheduledRuntime {
         strategy: impl Into<String>,
         user_control: Option<UserControlSnapshot>,
     ) -> ScheduledRunReport {
-        let wall_ms = (self.clock.now_ns() - self.start_ns) as f64 / 1_000_000.0;
+        self.finish_at(self.clock.now_ns(), strategy, user_control)
+    }
+
+    /// Freeze the collector at a previously captured absolute clock boundary.
+    ///
+    /// A virtual-time backend can capture this after its last live event, exit
+    /// the Tokio `LocalSet`, and perform the aggregate/report reduction later
+    /// without changing the run's effective wall time or terminal fallbacks.
+    pub fn finish_at(
+        &self,
+        end_ns: i64,
+        strategy: impl Into<String>,
+        user_control: Option<UserControlSnapshot>,
+    ) -> ScheduledRunReport {
+        let wall_ms = end_ns.saturating_sub(self.start_ns) as f64 / 1_000_000.0;
         let turns = self.recorder.borrow().records.clone();
         ScheduledRunReport {
             strategy: strategy.into(),
             performance: self.collector.finish(wall_ms),
-            native_metrics: self.native_metrics.finish(),
+            native_metrics: self.native_metrics.finish_at(end_ns),
             schedule_timing: ScheduleTimingAnalysis::from_records(&turns),
             turns,
             user_control,
