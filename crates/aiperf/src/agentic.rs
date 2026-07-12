@@ -26,7 +26,7 @@ use aiperf_dataset::{
     AccuracyComposer, BuiltinEndpointResolver, ComposeConfig, Composer, ConversationContextMode,
     Dataset, EndpointResolver, RawRow, RowOrigin, SegmentPool, TextTokenizer,
 };
-use aiperf_endpoints::EndpointConfig;
+use aiperf_endpoints::{EndpointConfig, PreparedEndpointTable};
 use aiperf_metrics::{
     AgenticEpisodeReport, AgenticEpisodeReportOutcome, AgenticEvaluationReport,
     AgenticEvaluationSummary, AgenticEvaluatorReportInfo, AgenticRewardSummary,
@@ -44,7 +44,10 @@ use tokio::sync::mpsc;
 use crate::agentic_gateway::{
     AgenticAuxiliaryInferenceRequest, AgenticInferenceGateway, AgenticInferencePurpose,
 };
-use crate::multiturn::{ConversationSource, NativeDatasetConversationSource, TurnToSend};
+use crate::multiturn::{
+    ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference,
+    PreparedEndpointTableResolver, PreparedTurnEndpointResolver, TurnToSend,
+};
 use crate::scheduled::{ScheduledRuntime, TurnDispatchOutcome, Workload};
 
 const EPISODE_PAGE_SIZE: usize = 256;
@@ -70,8 +73,17 @@ pub trait AgenticTurnBuilder {
 pub struct DatasetAgenticTurnBuilder {
     model: String,
     tokenizer: Arc<dyn TextTokenizer>,
-    endpoint_config: EndpointConfig,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
+    endpoint: DatasetAgenticEndpoint,
+}
+
+enum DatasetAgenticEndpoint {
+    Legacy(Arc<LegacyDatasetAgenticEndpoint>),
+    Prepared(Rc<dyn PreparedTurnEndpointResolver>),
+}
+
+struct LegacyDatasetAgenticEndpoint {
+    config: EndpointConfig,
+    resolver: Arc<dyn EndpointResolver>,
 }
 
 impl DatasetAgenticTurnBuilder {
@@ -101,8 +113,30 @@ impl DatasetAgenticTurnBuilder {
         Ok(Self {
             model,
             tokenizer,
-            endpoint_config: endpoint_config.validate()?,
-            endpoint_resolver,
+            endpoint: DatasetAgenticEndpoint::Legacy(Arc::new(LegacyDatasetAgenticEndpoint {
+                config: endpoint_config.validate()?,
+                resolver: endpoint_resolver,
+            })),
+        })
+    }
+
+    /// Build a lowerer through one directly prepared open endpoint binding.
+    pub fn prepared(
+        model: impl Into<String>,
+        tokenizer: Arc<dyn TextTokenizer>,
+        table: Rc<PreparedEndpointTable>,
+        reference: PreparedEndpointReference,
+    ) -> Result<Self> {
+        let model = model.into();
+        ensure!(!model.trim().is_empty(), "agentic model must not be empty");
+        // Construction validates the key/ID/table agreement before any
+        // evaluator-authored call can enter the scheduler.
+        let resolver: Rc<dyn PreparedTurnEndpointResolver> =
+            Rc::new(PreparedEndpointTableResolver::single(table, reference)?);
+        Ok(Self {
+            model,
+            tokenizer,
+            endpoint: DatasetAgenticEndpoint::Prepared(resolver),
         })
     }
 }
@@ -121,13 +155,25 @@ impl AgenticTurnBuilder for DatasetAgenticTurnBuilder {
             "sequential",
             ConversationContextMode::MessageArrayWithResponses,
         )?;
-        let source = NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
-            dataset,
-            &self.model,
-            call.generation.max_tokens,
-            self.endpoint_config.clone(),
-            self.endpoint_resolver.clone(),
-        )?;
+        let source = match &self.endpoint {
+            DatasetAgenticEndpoint::Legacy(endpoint) => {
+                NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
+                    dataset,
+                    &self.model,
+                    call.generation.max_tokens,
+                    endpoint.config.clone(),
+                    endpoint.resolver.clone(),
+                )?
+            }
+            DatasetAgenticEndpoint::Prepared(resolver) => {
+                NativeDatasetConversationSource::sequential_with_prepared_resolver(
+                    dataset,
+                    &self.model,
+                    call.generation.max_tokens,
+                    resolver.clone(),
+                )?
+            }
+        };
         let session =
             source.session_for(call.call_id.as_str(), call.episode_id.as_str().to_string())?;
         let turn = session.build_first_turn(Some(1))?;
@@ -391,15 +437,47 @@ impl AgenticWorkload {
         let mut effective_config = config.clone();
         let auxiliary_requests = if let Some(gateway) = inference_gateway.as_mut() {
             effective_config.inference_gateway = Some(gateway.evaluator_config().clone());
-            Some(gateway.take_requests()?)
+            match gateway.take_requests() {
+                Ok(requests) => Some(requests),
+                Err(error) => {
+                    return Err(unwind_failed_preparation(
+                        evaluator.as_mut(),
+                        &mut inference_gateway,
+                        error,
+                    )
+                    .await);
+                }
+            }
         } else {
             None
         };
-        let identity = evaluator
+        let identity = match evaluator
             .load_agentic(dataset, model, &effective_config)
             .await
-            .with_context(|| format!("canonical agentic evaluator failed to load {dataset:?}"))?;
-        let episodes = load_agentic_episodes(evaluator.as_mut(), identity.episode_count).await?;
+            .with_context(|| format!("canonical agentic evaluator failed to load {dataset:?}"))
+        {
+            Ok(identity) => identity,
+            Err(error) => {
+                return Err(unwind_failed_preparation(
+                    evaluator.as_mut(),
+                    &mut inference_gateway,
+                    error,
+                )
+                .await);
+            }
+        };
+        let episodes = match load_agentic_episodes(evaluator.as_mut(), identity.episode_count).await
+        {
+            Ok(episodes) => episodes,
+            Err(error) => {
+                return Err(unwind_failed_preparation(
+                    evaluator.as_mut(),
+                    &mut inference_gateway,
+                    error,
+                )
+                .await);
+            }
+        };
         Ok(Rc::new(Self {
             evaluator: RefCell::new(Some(evaluator)),
             identity,
@@ -840,6 +918,33 @@ impl AgenticWorkload {
         } else {
             Ok(outstanding.remove(&call.call_id))
         }
+    }
+}
+
+async fn unwind_failed_preparation(
+    evaluator: &mut dyn AgenticEvaluator,
+    gateway: &mut Option<Box<dyn AgenticInferenceGateway>>,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let evaluator_shutdown = evaluator.shutdown().await;
+    let gateway_shutdown = match gateway.as_mut() {
+        Some(gateway) => gateway.shutdown().await,
+        None => Ok(()),
+    };
+    let mut details = Vec::new();
+    if let Err(shutdown) = evaluator_shutdown {
+        details.push(format!("evaluator shutdown failed: {shutdown}"));
+    }
+    if let Err(shutdown) = gateway_shutdown {
+        details.push(format!("gateway shutdown failed: {shutdown:#}"));
+    }
+    if details.is_empty() {
+        error
+    } else {
+        error.context(format!(
+            "agentic preparation cleanup also failed: {}",
+            details.join("; ")
+        ))
     }
 }
 

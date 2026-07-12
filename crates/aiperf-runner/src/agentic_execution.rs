@@ -31,7 +31,9 @@ use aiperf::agentic::{
 use aiperf::agentic_gateway::{
     AgenticInferenceGateway, HttpAgenticInferenceGateway, resolve_advertised_host,
 };
-use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConfig};
+use aiperf::http::{
+    HttpTurnExecutionBackend, PreparedEndpointReference, PreparedHttpTurn, TransportSinkConfig,
+};
 use aiperf::multiturn::TurnToSend;
 use aiperf::report::write_native_report_json;
 use aiperf::scheduled::{TurnDispatchOutcome, TurnDispatcher, Workload, run_scheduled_workload};
@@ -39,11 +41,10 @@ use aiperf_accuracy::{
     AgenticEvaluator, AgenticEvaluatorLoadConfig, PythonEvaluator, WorkerProcessConfig,
 };
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_dataset::{
-    DatasetError, EndpointResolver as DatasetEndpointResolver, HuggingFaceTokenizer, TextTokenizer,
-    TiktokenEncoding, TiktokenTokenizer,
+use aiperf_dataset::{HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer};
+use aiperf_endpoints::{
+    EndpointId, EndpointKey, EndpointRegistry, Modality, PreparedEndpointTable, RawEndpointConfig,
 };
-use aiperf_endpoints::{Endpoint, EndpointConfig, EndpointId, Modality, RawEndpointConfig};
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_timing::StopConfig;
 use aiperf_transport_http::config::ClientConfig;
@@ -54,6 +55,10 @@ use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
+use crate::online_execution::{
+    NativeOnlineTokenizerSourceResolver, OnlineTokenizerSourceResolver, lower_authored_tokenizer,
+    validate_authored_tokenizer,
+};
 use crate::protocol::{PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
@@ -62,7 +67,8 @@ use crate::registry::{
     RunnerWorkloadFactory, ValidatedBackendConfig, ValidatedWorkloadConfig, WorkloadRequirements,
 };
 use crate::turn_execution::{
-    HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
+    HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
+    NativeHttpExecutionBackendFactory,
 };
 
 static AGENTIC_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
@@ -150,9 +156,8 @@ pub struct AgenticWorkloadConfigV2 {
     pub worker_count: usize,
     /// Opaque canonical provider dataset, including its immutable revision.
     pub dataset: String,
-    /// Tokenizer used only for Rust request accounting/materialization.
-    #[serde(default)]
-    pub tokenizer: TokenizerSpec,
+    /// Authored tokenizer acquisition policy resolved during pair preparation.
+    pub tokenizer: Box<RawValue>,
     /// Exactly one profiling concurrency phase; no outer timing policy applies.
     pub phases: Vec<PhaseSpec>,
     /// Supervised evaluator process command.
@@ -204,7 +209,7 @@ impl fmt::Debug for AgenticWorkloadConfigV2 {
             .debug_struct("AgenticWorkloadConfigV2")
             .field("worker_count", &self.worker_count)
             .field("dataset", &self.dataset)
-            .field("tokenizer", &self.tokenizer.name)
+            .field("tokenizer", &self.tokenizer.get())
             .field("phase_count", &self.phases.len())
             .field("model_concurrency", &self.model_concurrency().ok())
             .field("evaluator", &self.evaluator)
@@ -250,14 +255,7 @@ impl AgenticWorkloadConfigV2 {
                 "agentic evaluator environment key {key:?} is invalid"
             );
         }
-        ensure!(
-            !self.tokenizer.name.trim().is_empty(),
-            "agentic tokenizer name must not be empty"
-        );
-        ensure!(
-            !self.tokenizer.apply_chat_template,
-            "agentic apply_chat_template is not yet represented by the dynamic turn builder"
-        );
+        validate_authored_tokenizer(&self.tokenizer)?;
         ensure!(
             self.task_concurrency > 0,
             "agentic task_concurrency must be positive"
@@ -432,11 +430,21 @@ pub fn register_agentic_workload(builder: &mut RunnerRegistryBuilder) -> Result<
 
 /// Register the executable `online_http + agentic` pair adapter.
 pub fn register_agentic_online_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_pair(Arc::new(AgenticOnlinePairFactory))
+    builder.register_pair(Arc::new(AgenticOnlinePairFactory {
+        tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+    }))
 }
 
-#[derive(Clone, Copy, Debug)]
-struct AgenticOnlinePairFactory;
+#[derive(Clone)]
+struct AgenticOnlinePairFactory {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+}
+
+impl fmt::Debug for AgenticOnlinePairFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("AgenticOnlinePairFactory")
+    }
+}
 
 impl RunnerPairFactory for AgenticOnlinePairFactory {
     fn backend_id(&self) -> &'static str {
@@ -487,12 +495,14 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         self.validate_run(run, context, backend.as_ref(), workload.as_ref())?;
         let workload = validated_agentic_workload(workload.as_ref())?.clone();
+        let tokenizer = lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
         let endpoint = context.default_endpoint_profile()?;
         let spec = AgenticOnlineExecutionSpec {
             benchmark_id: run.identity.benchmark_id.clone(),
             artifact_target: run.artifact_target.clone(),
             model: run.models.items[0].name.clone(),
             workload,
+            tokenizer,
             endpoint: AgenticOnlineEndpointSpec {
                 endpoint_id: endpoint.endpoint_id.clone(),
                 config: endpoint.config.clone(),
@@ -551,11 +561,6 @@ fn validate_agentic_authored_run(
         "agentic endpoint {:?} must consume text and produce streaming tokens",
         descriptor.id
     );
-    context
-        .product_registry()
-        .endpoints()
-        .legacy_endpoint(&endpoint.endpoint_id)
-        .context("agentic dynamic turns require a legacy endpoint adapter")?;
     ensure!(
         endpoint.config.wait_for_model_timeout <= 0.0,
         "agentic protocol-v2 execution does not yet implement endpoint readiness probes"
@@ -630,6 +635,8 @@ pub struct AgenticOnlineExecutionSpec {
     pub model: String,
     /// Strict factory-owned workload config.
     pub workload: AgenticWorkloadConfigV2,
+    /// Fully resolved local or built-in tokenizer source.
+    pub tokenizer: TokenizerSpec,
     /// Selected endpoint profile and HTTP policy.
     pub endpoint: AgenticOnlineEndpointSpec,
 }
@@ -648,6 +655,14 @@ impl AgenticOnlineExecutionSpec {
         ensure!(
             !self.model.trim().is_empty(),
             "agentic model must not be empty"
+        );
+        ensure!(
+            !self.tokenizer.name.trim().is_empty(),
+            "agentic resolved tokenizer name must not be empty"
+        );
+        ensure!(
+            !self.tokenizer.apply_chat_template,
+            "agentic apply_chat_template is not yet represented by the dynamic turn builder"
         );
         ensure!(
             !self.endpoint.config.urls.is_empty(),
@@ -873,22 +888,11 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
 ) -> Result<AgenticRunReport> {
     spec.validate()?;
     let tokenizer = tokenizer_factory
-        .build(&spec.workload.tokenizer.name)
+        .build(&spec.tokenizer.name)
         .context("loading agentic tokenizer")?;
     let endpoint = prepare_agentic_endpoint(registry, &spec.endpoint)?;
     let model_concurrency = spec.workload.model_concurrency()?;
     let evaluator_config = spec.workload.evaluator_config(&spec.artifact_target)?;
-
-    // Registry, tokenizer, endpoint, and every authored invariant are frozen
-    // before the run target exists. The canonical provider needs its output
-    // directory while loading tasks, so artifact creation is the last local
-    // preparation step before worker startup.
-    std::fs::create_dir_all(&spec.artifact_target).with_context(|| {
-        format!(
-            "creating agentic artifact target {}",
-            spec.artifact_target.display()
-        )
-    })?;
 
     let mut evaluator = evaluator_factory.spawn(&spec.workload.evaluator).await?;
     if !evaluator.supports_agentic() {
@@ -930,11 +934,11 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
             };
         }
     };
-    let turn_builder: Rc<dyn AgenticTurnBuilder> = Rc::new(DatasetAgenticTurnBuilder::new(
+    let turn_builder: Rc<dyn AgenticTurnBuilder> = Rc::new(DatasetAgenticTurnBuilder::prepared(
         spec.model.clone(),
         tokenizer,
-        endpoint.config,
-        endpoint.resolver,
+        endpoint.table.clone(),
+        endpoint.reference.clone(),
     )?);
     let workload = AgenticWorkload::prepare_with_gateway(
         evaluator,
@@ -952,22 +956,43 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
     // endpoint/backend state are frozen.
     let real_clock_anchor = RealClockAnchor::now();
     let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
-    let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
+    let execution_backend = match backend_factory.build(HttpExecutionBackendConfig {
         workers: spec.workload.worker_count,
         coordinator_clock: clock.clone(),
         real_clock_anchor,
         base_urls: endpoint.urls,
         model: spec.model.clone(),
         transport: endpoint.transport,
-    })?;
+        prepared_endpoints: Some(endpoint.table_factory),
+    }) {
+        Ok(backend) => backend,
+        Err(error) => {
+            let worker_shutdown = workload.shutdown().await;
+            return combine_run_shutdown(Err(error), Ok(()), worker_shutdown);
+        }
+    };
+
+    // Evaluator negotiation, provider/task loading, gateway binding, endpoint
+    // preparation, tokenizer acquisition, and every execution worker are now
+    // frozen. Only a runnable benchmark is allowed to create its artifact root.
+    if let Err(error) = std::fs::create_dir_all(&spec.artifact_target).with_context(|| {
+        format!(
+            "creating agentic artifact target {}",
+            spec.artifact_target.display()
+        )
+    }) {
+        let backend_shutdown = execution_backend.shutdown();
+        let worker_shutdown = workload.shutdown().await;
+        return combine_run_shutdown(Err(error), backend_shutdown, worker_shutdown);
+    }
     let start_ns = clock.now_ns();
-    execution_backend.set_run_origin(start_ns)?;
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(AgenticDispatcher {
         execution_backend: execution_backend.clone(),
         model: spec.model.clone(),
     });
     let scheduled_workload: Rc<dyn Workload> = workload.clone();
     let run_result = async {
+        execution_backend.set_run_origin(start_ns)?;
         let scheduled = run_scheduled_workload(
             scheduled_workload,
             clock,
@@ -1024,10 +1049,44 @@ fn combine_run_shutdown<T>(run: Result<T>, backend: Result<()>, worker: Result<(
 }
 
 struct PreparedAgenticEndpoint {
-    config: EndpointConfig,
-    resolver: Arc<dyn DatasetEndpointResolver>,
+    table: Rc<PreparedEndpointTable>,
+    reference: PreparedEndpointReference,
+    table_factory: Arc<dyn HttpPreparedEndpointTableFactory>,
     urls: Vec<String>,
     transport: TransportSinkConfig,
+}
+
+#[derive(Clone)]
+struct AgenticPreparedEndpointTableFactory {
+    registry: EndpointRegistry,
+    endpoint_id: EndpointId,
+    config: RawEndpointConfig,
+}
+
+impl fmt::Debug for AgenticPreparedEndpointTableFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AgenticPreparedEndpointTableFactory")
+            .field("endpoint_id", &self.endpoint_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl HttpPreparedEndpointTableFactory for AgenticPreparedEndpointTableFactory {
+    fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
+        let endpoint = self
+            .registry
+            .prepare(&self.endpoint_id, self.config.clone())
+            .context("preparing worker-local agentic endpoint profile")?;
+        ensure_agentic_endpoint(endpoint.descriptor())?;
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint)?;
+        ensure!(
+            key == EndpointKey::from_index(0),
+            "single agentic endpoint must occupy dense key zero"
+        );
+        Ok(table)
+    }
 }
 
 fn prepare_agentic_endpoint(
@@ -1039,32 +1098,36 @@ fn prepare_agentic_endpoint(
         .resolve_factory(&spec.endpoint_id)
         .context("resolving agentic endpoint factory")?;
     let descriptor = factory.descriptor();
-    ensure!(
-        descriptor.produces_tokens && descriptor.input_modalities.contains(&Modality::Text),
-        "agentic endpoint {:?} must consume text and produce tokens",
-        descriptor.id
-    );
+    ensure_agentic_endpoint(descriptor)?;
+    let canonical_endpoint_id = EndpointId::new(descriptor.id)
+        .context("validating canonical agentic endpoint descriptor ID")?;
     let mut raw = spec.config.clone();
     raw.streaming = true;
     raw.use_server_token_count = true;
     raw.use_legacy_max_tokens = true;
-    let prepared = registry
-        .endpoints()
-        .prepare(&spec.endpoint_id, raw)
-        .context("preparing agentic endpoint profile")?;
+    let table_factory = Arc::new(AgenticPreparedEndpointTableFactory {
+        registry: registry.endpoints().clone(),
+        endpoint_id: spec.endpoint_id.clone(),
+        config: raw,
+    });
+    let table = Rc::new(table_factory.prepare_worker()?);
+    let reference = PreparedEndpointReference {
+        key: EndpointKey::from_index(0),
+        endpoint_id: canonical_endpoint_id,
+    };
+    let prepared = table.get(reference.key)?;
+    ensure!(
+        prepared.descriptor().id == reference.endpoint_id.as_str(),
+        "agentic prepared endpoint key resolved to {:?}, expected {:?}",
+        prepared.descriptor().id,
+        reference.endpoint_id.as_str()
+    );
     let effective_raw = prepared.config().to_raw();
     ensure!(
         effective_raw.streaming,
         "agentic endpoint {:?} does not support streaming semantic responses",
         descriptor.id
     );
-    let endpoint = registry
-        .endpoints()
-        .legacy_endpoint(&spec.endpoint_id)
-        .context("agentic dynamic turns require the selected endpoint's compatibility adapter")?;
-    let legacy = EndpointConfig::from_raw(endpoint.metadata().endpoint_type, effective_raw.clone())
-        .validate()
-        .context("validating agentic endpoint compatibility policy")?;
     let urls = effective_raw.urls.clone();
     ensure!(!urls.is_empty(), "agentic endpoint has no URL");
     let timeout_ns = seconds_to_ns(effective_raw.timeout_seconds)?;
@@ -1081,16 +1144,24 @@ fn prepare_agentic_endpoint(
         connection_reuse: spec.connection_reuse,
         session_header: spec.session_header.clone(),
     };
-    let resolver: Arc<dyn DatasetEndpointResolver> = Arc::new(SelectedEndpointResolver {
-        id: spec.endpoint_id.clone(),
-        endpoint,
-    });
     Ok(PreparedAgenticEndpoint {
-        config: legacy,
-        resolver,
+        table,
+        reference,
+        table_factory,
         urls,
         transport,
     })
+}
+
+fn ensure_agentic_endpoint(descriptor: &aiperf_endpoints::EndpointDescriptor) -> Result<()> {
+    ensure!(
+        descriptor.produces_tokens
+            && descriptor.supports_streaming
+            && descriptor.input_modalities.contains(&Modality::Text),
+        "agentic endpoint {:?} must consume text and produce streaming tokens",
+        descriptor.id
+    );
+    Ok(())
 }
 
 fn seconds_to_ns(seconds: f64) -> Result<i64> {
@@ -1099,35 +1170,6 @@ fn seconds_to_ns(seconds: f64) -> Result<i64> {
         "agentic endpoint timeout must be finite, non-negative, and representable in nanoseconds"
     );
     Ok((seconds * 1_000_000_000.0).round_ties_even() as i64)
-}
-
-#[derive(Clone)]
-struct SelectedEndpointResolver {
-    id: EndpointId,
-    endpoint: Arc<dyn Endpoint>,
-}
-
-impl DatasetEndpointResolver for SelectedEndpointResolver {
-    fn resolve(&self, name: Option<&str>) -> aiperf_dataset::Result<Arc<dyn Endpoint>> {
-        if let Some(name) = name {
-            let authored = EndpointId::new(name)
-                .map_err(|error| DatasetError::Validation(error.to_string()))?;
-            if authored != self.id {
-                return Err(DatasetError::Validation(format!(
-                    "agentic call selected endpoint {authored:?}, but the prepared profile is {:?}",
-                    self.id
-                )));
-            }
-        }
-        Ok(self.endpoint.clone())
-    }
-
-    fn resolve_type(
-        &self,
-        _endpoint_type: aiperf_endpoints::EndpointType,
-    ) -> aiperf_dataset::Result<Arc<dyn Endpoint>> {
-        Ok(self.endpoint.clone())
-    }
 }
 
 struct AgenticDispatcher {
@@ -1161,6 +1203,8 @@ impl TurnDispatcher for AgenticDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use serde_json::json;
 
     use super::*;
@@ -1250,6 +1294,46 @@ mod tests {
         assert_eq!(
             requirements.backend_features,
             BTreeSet::from(["http".into()])
+        );
+    }
+
+    #[derive(Default)]
+    struct RecordingTokenizerResolver {
+        request: Mutex<Option<(String, String, bool)>>,
+    }
+
+    impl OnlineTokenizerSourceResolver for RecordingTokenizerResolver {
+        fn resolve(&self, name: &str, revision: &str, trust_remote_code: bool) -> Result<String> {
+            *self.request.lock().unwrap() =
+                Some((name.to_owned(), revision.to_owned(), trust_remote_code));
+            Ok("/cache/tokenizers/resolved-commit".into())
+        }
+    }
+
+    #[test]
+    fn agentic_tokenizer_is_resolved_during_pair_preparation() {
+        let mut config = valid_config();
+        config.tokenizer = RawValue::from_string(
+            serde_json::to_string(&json!({
+                "name": "fixture/remote-tokenizer",
+                "revision": "0123456789abcdef0123456789abcdef01234567",
+                "trust_remote_code": false,
+                "apply_chat_template": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        config.validate().unwrap();
+        let resolver = RecordingTokenizerResolver::default();
+        let resolved = lower_authored_tokenizer(&config.tokenizer, &resolver).unwrap();
+        assert_eq!(resolved.name, "/cache/tokenizers/resolved-commit");
+        assert_eq!(
+            resolver.request.into_inner().unwrap(),
+            Some((
+                "fixture/remote-tokenizer".into(),
+                "0123456789abcdef0123456789abcdef01234567".into(),
+                false
+            ))
         );
     }
 }

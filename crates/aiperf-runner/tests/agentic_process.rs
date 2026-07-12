@@ -3,7 +3,7 @@
 
 //! Process proof for canonical worker + Rust gateway + the one HTTP dispatcher.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -14,7 +14,12 @@ use std::thread::JoinHandle;
 
 use aiperf::http::{HttpTurnDispatchResult, HttpTurnExecutionBackend, PreparedHttpTurn};
 use aiperf::multiturn::TurnToSend;
-use aiperf_endpoints::{EndpointId, RawEndpointConfig};
+use aiperf_endpoints::{
+    ChatEndpoint, EffectiveEndpointConfig, EndpointDescriptor, EndpointFactory, EndpointId,
+    EndpointResult, ExtractedPayload, Modality, ParsedResponse, PreparedEndpoint, PreparedRequest,
+    RawEndpointConfig, ReadinessPolicy, RequestRecord as EndpointRequestRecord, ServerResponse,
+    StatelessEndpointFactory, Turn,
+};
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_runner::agentic_execution::{
     AgenticOnlineEndpointSpec, AgenticOnlineExecutionSpec, AgenticWorkloadConfigV2,
@@ -37,6 +42,7 @@ use tempfile::TempDir;
 
 const PROCESS_EVALUATOR: &str = r#"
 import json
+import os
 import sys
 import threading
 import urllib.parse
@@ -45,6 +51,7 @@ import urllib.request
 episodes = [
     {"episode_id": "episode-scored", "task": "fixture.scored-zero", "source": "fixture/agentic"},
     {"episode_id": "episode-infra", "task": "fixture.infrastructure", "source": "fixture/agentic"},
+    {"episode_id": "episode-cancelled", "task": "fixture.cancelled", "source": "fixture/agentic"},
 ]
 events = []
 results = {}
@@ -149,6 +156,9 @@ for line in sys.stdin:
         assert request["dataset"] == "fixture/agentic@locked"
         assert request["model"] == "primary-model"
         assert request["config"]["task_concurrency"] == 2
+        expected_absent = os.environ.get("AIPERF_EXPECT_ARTIFACT_ABSENT")
+        if expected_absent:
+            assert not os.path.exists(expected_absent), expected_absent
         gateway = request["config"]["inference_gateway"]
         assert gateway["base_url"].startswith("http://127.0.0.1:")
         result = {
@@ -160,7 +170,7 @@ for line in sys.stdin:
             "agent_version": "1.0.0",
             "environment": "fixture",
             "verifier": "fixture canonical verifier",
-            "episode_count": 2,
+            "episode_count": 3,
             "primary_reward": "reward",
         }
     elif operation == "next_episodes":
@@ -186,7 +196,7 @@ for line in sys.stdin:
             if item["episode_id"] == "episode-scored":
                 auxiliary_thread = threading.Thread(target=auxiliary_calls, daemon=True)
                 auxiliary_thread.start()
-            else:
+            elif item["episode_id"] == "episode-infra":
                 terminal = {
                     "episode_id": "episode-infra",
                     "task": "fixture.infrastructure",
@@ -203,6 +213,23 @@ for line in sys.stdin:
                 }
                 results["episode-infra"] = terminal
                 append_event({"kind": "episode_completed", "result": terminal})
+            else:
+                terminal = {
+                    "episode_id": "episode-cancelled",
+                    "task": "fixture.cancelled",
+                    "outcome": "cancelled",
+                    "rewards": {},
+                    "duration_seconds": 0.05,
+                    "model_calls": 1,
+                    "prompt_tokens": 7,
+                    "completion_tokens": 3,
+                    "cached_tokens": 2,
+                    "error_kind": "CancelledByScheduler",
+                    "error_message": "fixture cancellation",
+                    "artifact_path": "fixture/cancelled",
+                }
+                results["episode-cancelled"] = terminal
+                append_event({"kind": "episode_completed", "result": terminal})
         result = {"accepted": accepted}
     elif operation == "cancel_episodes":
         result = {"cancelled": request["episode_ids"]}
@@ -218,6 +245,91 @@ for line in sys.stdin:
     if operation == "shutdown":
         break
 "#;
+
+static PREPARED_ONLY_AGENTIC_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "fixture_agentic",
+    aliases: &["fixture_agentic_alias"],
+    description: "prepared-only agentic process fixture",
+    endpoint_path: Some("/v1/chat/completions"),
+    streaming_path: Some("/v1/chat/completions"),
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "Fixture LLM Metrics",
+    service_kind: "fixture-llm",
+};
+
+#[derive(Clone, Copy, Debug)]
+struct PreparedOnlyAgenticEndpointFactory;
+
+impl EndpointFactory for PreparedOnlyAgenticEndpointFactory {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &PREPARED_ONLY_AGENTIC_DESCRIPTOR
+    }
+
+    fn prepare(
+        &self,
+        config: EffectiveEndpointConfig,
+    ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
+        let inner = StatelessEndpointFactory::new(ChatEndpoint).prepare(config)?;
+        Ok(Box::new(PreparedOnlyAgenticEndpoint { inner }))
+    }
+}
+
+#[derive(Debug)]
+struct PreparedOnlyAgenticEndpoint {
+    inner: Box<dyn PreparedEndpoint>,
+}
+
+impl PreparedEndpoint for PreparedOnlyAgenticEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &PREPARED_ONLY_AGENTIC_DESCRIPTOR
+    }
+
+    fn config(&self) -> &EffectiveEndpointConfig {
+        self.inner.config()
+    }
+
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+        self.inner.format_payload(request)
+    }
+
+    fn headers(&self) -> &BTreeMap<String, String> {
+        self.inner.headers()
+    }
+
+    fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
+        self.inner.readiness_policy(model)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        self.inner.parse_response(response)
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        self.inner.extract_payload_inputs(body)
+    }
+
+    fn extract_response_data(
+        &self,
+        record: &EndpointRequestRecord,
+    ) -> EndpointResult<Vec<ParsedResponse>> {
+        self.inner.extract_response_data(record)
+    }
+
+    fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>> {
+        self.inner.build_assistant_turn(record)
+    }
+
+    fn captures_assistant_turn(&self) -> bool {
+        self.inner.captures_assistant_turn()
+    }
+}
 
 #[derive(Clone, Default)]
 struct Captured(Arc<Mutex<Vec<Value>>>);
@@ -323,12 +435,17 @@ impl Drop for MockServer {
 #[derive(Clone, Default)]
 struct CountingRegistryFactory {
     builds: Arc<AtomicUsize>,
+    prepared_only_agentic: bool,
 }
 
 impl AiperfRegistryFactory for CountingRegistryFactory {
     fn build(&self) -> std::result::Result<AiperfRegistry, aiperf_extensions::ExtensionError> {
         self.builds.fetch_add(1, Ordering::Relaxed);
-        BuiltinAiperfRegistryFactory.build()
+        let mut registry = BuiltinAiperfRegistryFactory.build()?;
+        if self.prepared_only_agentic {
+            registry.register_endpoint_factory(PreparedOnlyAgenticEndpointFactory)?;
+        }
+        Ok(registry)
     }
 }
 
@@ -336,6 +453,7 @@ impl AiperfRegistryFactory for CountingRegistryFactory {
 struct CountingBackendFactory {
     builds: Arc<AtomicUsize>,
     turns: Arc<AtomicUsize>,
+    expected_absent: Option<PathBuf>,
 }
 
 impl HttpExecutionBackendFactory for CountingBackendFactory {
@@ -343,6 +461,13 @@ impl HttpExecutionBackendFactory for CountingBackendFactory {
         &self,
         config: HttpExecutionBackendConfig,
     ) -> Result<Rc<dyn HttpTurnExecutionBackend>> {
+        if let Some(path) = &self.expected_absent {
+            assert!(
+                !path.exists(),
+                "artifact target existed before HTTP worker preparation: {}",
+                path.display()
+            );
+        }
         self.builds.fetch_add(1, Ordering::Relaxed);
         let inner = NativeHttpExecutionBackendFactory.build(config)?;
         Ok(Rc::new(CountingBackend {
@@ -449,6 +574,7 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
     let root = TempDir::new().unwrap();
     write_worker(&root);
     let python = python_executable();
+    let artifact_target = root.path().join("run");
     let workload: AgenticWorkloadConfigV2 = serde_json::from_value(json!({
         "worker_count": 2,
         "dataset": "fixture/agentic@locked",
@@ -462,7 +588,10 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
         "evaluator": {
             "python_executable": python,
             "worker_module": "fixture_agentic.worker",
-            "environment": {"PYTHONPATH": root.path()}
+            "environment": {
+                "PYTHONPATH": root.path(),
+                "AIPERF_EXPECT_ARTIFACT_ABSENT": artifact_target.clone()
+            }
         },
         "task_concurrency": 2,
         "environment": "fixture",
@@ -472,15 +601,22 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
         "inference_gateway_host": "127.0.0.1"
     }))
     .unwrap();
-    let registry = CountingRegistryFactory::default();
-    let backend = CountingBackendFactory::default();
+    let registry = CountingRegistryFactory {
+        prepared_only_agentic: true,
+        ..CountingRegistryFactory::default()
+    };
+    let backend = CountingBackendFactory {
+        expected_absent: Some(artifact_target.clone()),
+        ..CountingBackendFactory::default()
+    };
     let spec = AgenticOnlineExecutionSpec {
         benchmark_id: "agentic-process-proof".to_string(),
-        artifact_target: root.path().join("run"),
+        artifact_target,
         model: "primary-model".to_string(),
         workload,
+        tokenizer: Default::default(),
         endpoint: AgenticOnlineEndpointSpec {
-            endpoint_id: EndpointId::new("chat_completions").unwrap(),
+            endpoint_id: EndpointId::new("fixture_agentic_alias").unwrap(),
             config: RawEndpointConfig {
                 urls: vec![server.base_url.clone()],
                 streaming: true,
@@ -504,19 +640,23 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
     assert!(outcome.report_path.is_file());
     assert_eq!(registry.builds.load(Ordering::Relaxed), 1);
     assert_eq!(backend.builds.load(Ordering::Relaxed), 1);
-    assert_eq!(backend.turns.load(Ordering::Relaxed), 4);
-    assert_eq!(outcome.report.evaluation.summary.episode_count, 2);
+    assert_eq!(backend.turns.load(Ordering::Relaxed), 5);
+    assert_eq!(outcome.report.evaluation.summary.episode_count, 3);
     assert_eq!(outcome.report.evaluation.summary.completed_count, 1);
     assert_eq!(
         outcome.report.evaluation.summary.infrastructure_error_count,
         1
     );
-    assert_eq!(outcome.report.evaluation.summary.model_calls, 4);
-    assert_eq!(outcome.report.evaluation.summary.primary_model_calls, 2);
+    assert_eq!(outcome.report.evaluation.summary.cancelled_count, 1);
+    assert_eq!(outcome.report.evaluation.summary.model_calls, 5);
+    assert_eq!(outcome.report.evaluation.summary.primary_model_calls, 3);
     assert_eq!(outcome.report.evaluation.summary.auxiliary_model_calls, 2);
     assert_eq!(outcome.report.evaluation.summary.environment_model_calls, 1);
     assert_eq!(outcome.report.evaluation.summary.verifier_model_calls, 1);
     assert_eq!(outcome.report.evaluation.summary.primary_score, Some(0.0));
+    let reward = &outcome.report.evaluation.summary.rewards["reward"];
+    assert_eq!(reward.n, 1);
+    assert_eq!(reward.avg, 0.0);
 
     let report_bytes = std::fs::read(&outcome.report_path).unwrap();
     let report: Value = serde_json::from_slice(&report_bytes).unwrap();
@@ -527,8 +667,13 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
         report["agentic"]["records"][1]["outcome"],
         "infrastructure_error"
     );
+    assert_eq!(report["agentic"]["records"][2]["outcome"], "cancelled");
     assert_eq!(
         report["errors"][0]["type"],
+        "AgenticCancelled:CancelledByScheduler"
+    );
+    assert_eq!(
+        report["errors"][1]["type"],
         "AgenticInfrastructure:SandboxStartup"
     );
     let metric_requests = report["metrics"]["request_count"]["series"]
@@ -537,11 +682,11 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
         .iter()
         .map(|series| series["stats"]["total"].as_f64().unwrap())
         .sum::<f64>();
-    assert_eq!(metric_requests, 4.0);
+    assert_eq!(metric_requests, 5.0);
     assert!(!String::from_utf8_lossy(&report_bytes).contains("api_key"));
 
     let requests = server.captured.0.lock().unwrap();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 5);
     assert!(requests.iter().all(|body| body["stream"] == true));
     assert!(
         requests
@@ -618,7 +763,10 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
                 "evaluator": {
                     "python_executable": python,
                     "worker_module": "fixture_agentic.worker",
-                    "environment": {"PYTHONPATH": root.path()}
+                    "environment": {
+                        "PYTHONPATH": root.path(),
+                        "AIPERF_EXPECT_ARTIFACT_ABSENT": artifact_target.clone()
+                    }
                 },
                 "task_concurrency": 2,
                 "environment": "fixture",
@@ -661,6 +809,13 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
     let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
     assert_eq!(report["schema_version"], "2.0");
     assert_eq!(report["run"]["mode"], "agentic_accuracy");
-    assert_eq!(report["agentic"]["summary"]["episode_count"], 2);
-    assert_eq!(server.captured.0.lock().unwrap().len(), 4);
+    assert_eq!(report["agentic"]["summary"]["episode_count"], 3);
+    assert_eq!(report["agentic"]["summary"]["completed_count"], 1);
+    assert_eq!(
+        report["agentic"]["summary"]["infrastructure_error_count"],
+        1
+    );
+    assert_eq!(report["agentic"]["summary"]["cancelled_count"], 1);
+    assert_eq!(report["agentic"]["summary"]["rewards"]["reward"]["n"], 1);
+    assert_eq!(server.captured.0.lock().unwrap().len(), 5);
 }
