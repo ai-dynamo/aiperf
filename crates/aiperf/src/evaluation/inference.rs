@@ -9,31 +9,36 @@
 //! [`ScheduledRuntime`]. It therefore shares endpoint formatting, transport,
 //! cancellation, metrics, and usage reconciliation with ordinary workloads.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_accuracy::HostOperationUsage;
+use aiperf_accuracy::{HostOperationUsage, STOCK_EVALUATION_OPERATION_SCHEMAS};
 use aiperf_dataset::{
     AccuracyAssociation, ContentGroup, Conversation, ConversationContextMode, CorrelationId,
     Dataset, MediaKind, ModelId, Role, SegmentPool, TextTokenizer, Turn,
 };
 use aiperf_endpoints::PreparedEndpointTable;
+use aiperf_endpoints::{ParsedResponse, ResponseData};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use serde_json::{Map, Value, json};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use super::host::{
-    EvaluationRoute, HostExecutionEventSink, HostExecutionTerminal, HostOperationEnvelope,
-    HostOperationExecutor, RegisteredOperationId,
+    EvaluationRoute, HostExecutionDelta, HostExecutionEventSink, HostExecutionTerminal,
+    HostExecutorRegistryBuilder, HostExecutorRuntime, HostOperationDescriptor,
+    HostOperationEnvelope, HostOperationExecutor, HostOperationExecutorFactory,
+    HostOperationFamily, HostOperationSchemaValidator, RegisteredOperationId,
 };
 use super::ledger::HostTerminalClass;
 use super::retry::OperationCancellation;
 use crate::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference, TurnToSend,
 };
+use crate::scheduled::TurnResponseObserver;
 use crate::scheduled::{ScheduledRuntime, TurnDispatchOutcome};
 
 /// One logical route paired with its worker-local prepared endpoint binding.
@@ -76,6 +81,13 @@ impl PreparedEvaluationRoute {
 
 /// Replaceable semantic-operation to normal-turn materializer.
 pub trait EvaluationInferenceMaterializer {
+    /// Validate that a route has one worker-local binding for this operation.
+    fn validate_route(
+        &self,
+        route: &EvaluationRoute,
+        operation_id: &RegisteredOperationId,
+    ) -> Result<()>;
+
     /// Build one transport-ready ordinary scheduled turn without sending it.
     fn materialize(&self, operation: &HostOperationEnvelope) -> Result<TurnToSend>;
 }
@@ -119,6 +131,26 @@ impl DatasetEvaluationInferenceMaterializer {
 }
 
 impl EvaluationInferenceMaterializer for DatasetEvaluationInferenceMaterializer {
+    fn validate_route(
+        &self,
+        route: &EvaluationRoute,
+        operation_id: &RegisteredOperationId,
+    ) -> Result<()> {
+        let prepared = self.route(&route.service_id)?;
+        ensure!(
+            &prepared.route == route,
+            "prepared evaluation route identity changed after registry freeze"
+        );
+        ensure!(
+            route
+                .endpoint_capabilities
+                .contains(operation_endpoint_capability(operation_id.as_str())?),
+            "route {:?} cannot execute operation {operation_id}",
+            route.service_id
+        );
+        Ok(())
+    }
+
     fn materialize(&self, operation: &HostOperationEnvelope) -> Result<TurnToSend> {
         let route = self.route(&operation.service_id)?;
         let parsed = ParsedInferenceOperation::parse(operation)?;
@@ -463,10 +495,476 @@ fn collect_text(value: &Value, key: Option<&str>, output: &mut Vec<String>) {
     }
 }
 
+fn stock_operation_schema(
+    operation_id: &str,
+) -> Result<&'static aiperf_accuracy::StockEvaluationOperationSchema> {
+    STOCK_EVALUATION_OPERATION_SCHEMAS
+        .iter()
+        .find(|schema| schema.operation_id == operation_id)
+        .ok_or_else(|| anyhow!("no canonical evaluator schema for operation {operation_id:?}"))
+}
+
+fn operation_endpoint_capability(operation_id: &str) -> Result<&'static str> {
+    Ok(stock_operation_schema(operation_id)?.endpoint_capability)
+}
+
+struct InferenceOperationValidator {
+    operation_id: RegisteredOperationId,
+}
+
+impl HostOperationSchemaValidator for InferenceOperationValidator {
+    fn validate_request(&self, payload: &Value) -> Result<()> {
+        validate_inference_request(self.operation_id.as_str(), payload)
+    }
+
+    fn validate_stream(&self, payload: &Value) -> Result<()> {
+        validate_inference_stream(self.operation_id.as_str(), payload)
+    }
+
+    fn validate_response(&self, payload: &Value) -> Result<()> {
+        validate_inference_response(self.operation_id.as_str(), payload)
+    }
+}
+
+/// Factory for one canonical model operation over the normal scheduler.
+pub struct ScheduledInferenceHostExecutorFactory {
+    descriptor: HostOperationDescriptor,
+    validator: InferenceOperationValidator,
+    materializer: Rc<dyn EvaluationInferenceMaterializer>,
+}
+
+impl ScheduledInferenceHostExecutorFactory {
+    /// Bind one exact stock operation schema to a prepared-route materializer.
+    pub fn new(
+        operation_id: RegisteredOperationId,
+        materializer: Rc<dyn EvaluationInferenceMaterializer>,
+    ) -> Result<Self> {
+        let schema = stock_operation_schema(operation_id.as_str())?;
+        let endpoint_capability = schema.endpoint_capability.to_string();
+        Ok(Self {
+            descriptor: HostOperationDescriptor {
+                operation_id: operation_id.clone(),
+                family: HostOperationFamily::new("inference")?,
+                request_schema_fingerprint: schema.request_schema_sha256.to_string(),
+                response_schema_fingerprint: schema.response_schema_sha256.to_string(),
+                stream_schema_fingerprint: schema
+                    .true_streaming
+                    .then(|| schema.canonical_stream_schema_sha256.to_string()),
+                true_streaming: schema.true_streaming,
+                max_request_bytes: 8 * 1024 * 1024,
+                max_response_bytes: 8 * 1024 * 1024,
+                endpoint_capabilities: BTreeSet::from([endpoint_capability]),
+            },
+            validator: InferenceOperationValidator { operation_id },
+            materializer,
+        })
+    }
+}
+
+impl HostOperationExecutorFactory for ScheduledInferenceHostExecutorFactory {
+    fn descriptor(&self) -> &HostOperationDescriptor {
+        &self.descriptor
+    }
+
+    fn validator(&self) -> &dyn HostOperationSchemaValidator {
+        &self.validator
+    }
+
+    fn prepare(
+        &self,
+        runtime: &HostExecutorRuntime,
+        route: &EvaluationRoute,
+    ) -> Result<Rc<dyn HostOperationExecutor>> {
+        self.materializer
+            .validate_route(route, &self.descriptor.operation_id)?;
+        Ok(Rc::new(ScheduledInferenceHostExecutor::new_for_operation(
+            runtime.require_scheduled()?,
+            self.materializer.clone(),
+            self.descriptor.operation_id.clone(),
+        )))
+    }
+}
+
+/// Register every linked canonical model operation against one materializer.
+pub fn register_scheduled_inference_host_executors(
+    builder: &mut HostExecutorRegistryBuilder,
+    materializer: Rc<dyn EvaluationInferenceMaterializer>,
+) -> Result<()> {
+    for schema in STOCK_EVALUATION_OPERATION_SCHEMAS {
+        builder.register(Rc::new(ScheduledInferenceHostExecutorFactory::new(
+            RegisteredOperationId::new(schema.operation_id)?,
+            materializer.clone(),
+        )?))?;
+    }
+    Ok(())
+}
+
+fn validate_inference_request(operation_id: &str, payload: &Value) -> Result<()> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| anyhow!("{operation_id} request must be an object"))?;
+    reject_transport_authority(object)?;
+    match operation_id {
+        "model.generate" => {
+            require_only_fields(
+                object,
+                &[
+                    "messages",
+                    "generation",
+                    "tools",
+                    "tool_choice",
+                    "response_format",
+                    "parameters",
+                ],
+                operation_id,
+            )?;
+            validate_messages(required_array(object, "messages")?)?;
+            validate_generation(object.get("generation"))?;
+            validate_optional_array(object, "tools")?;
+            validate_parameters(object.get("parameters"))?;
+        }
+        "model.complete" => {
+            require_only_fields(
+                object,
+                &["prompt", "generation", "parameters"],
+                operation_id,
+            )?;
+            string_or_string_array(
+                object
+                    .get("prompt")
+                    .ok_or_else(|| anyhow!("model.complete requires prompt"))?,
+                "prompt",
+            )?;
+            validate_generation(object.get("generation"))?;
+            validate_parameters(object.get("parameters"))?;
+        }
+        "model.responses" => {
+            require_only_fields(
+                object,
+                &["input", "instructions", "generation", "tools", "parameters"],
+                operation_id,
+            )?;
+            validate_messages(required_array(object, "input")?)?;
+            if let Some(instructions) = object.get("instructions") {
+                ensure!(instructions.is_string(), "instructions must be a string");
+            }
+            validate_generation(object.get("generation"))?;
+            validate_optional_array(object, "tools")?;
+            validate_parameters(object.get("parameters"))?;
+        }
+        "model.embed" => {
+            require_only_fields(object, &["input", "parameters"], operation_id)?;
+            string_or_string_array(
+                object
+                    .get("input")
+                    .ok_or_else(|| anyhow!("model.embed requires input"))?,
+                "input",
+            )?;
+            if let Some(parameters) = object.get("parameters") {
+                let parameters = parameters
+                    .as_object()
+                    .ok_or_else(|| anyhow!("parameters must be an object"))?;
+                require_only_fields(
+                    parameters,
+                    &["dimensions", "encoding_format"],
+                    "model.embed parameters",
+                )?;
+                if let Some(dimensions) = parameters.get("dimensions") {
+                    ensure!(
+                        dimensions.as_u64().is_some_and(|value| value > 0),
+                        "dimensions must be positive"
+                    );
+                }
+                if let Some(format) = parameters.get("encoding_format") {
+                    ensure!(
+                        format.as_str() == Some("float"),
+                        "encoding_format must be float"
+                    );
+                }
+            }
+        }
+        _ => return Err(anyhow!("unsupported inference operation {operation_id:?}")),
+    }
+    Ok(())
+}
+
+fn validate_inference_stream(operation_id: &str, payload: &Value) -> Result<()> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| anyhow!("{operation_id} stream event must be an object"))?;
+    match operation_id {
+        "model.generate" => {
+            require_only_fields(object, &["choice_index", "delta"], "model.generate stream")?;
+            ensure!(
+                object.get("choice_index").and_then(Value::as_u64).is_some(),
+                "choice_index must be non-negative"
+            );
+            validate_message(
+                object
+                    .get("delta")
+                    .ok_or_else(|| anyhow!("model.generate stream requires delta"))?,
+            )
+        }
+        "model.complete" => {
+            require_only_fields(object, &["choice_index", "text"], "model.complete stream")?;
+            ensure!(
+                object.get("choice_index").and_then(Value::as_u64).is_some(),
+                "choice_index must be non-negative"
+            );
+            ensure!(
+                object.get("text").is_some_and(Value::is_string),
+                "stream text must be a string"
+            );
+            Ok(())
+        }
+        "model.responses" => {
+            require_only_fields(object, &["event_type", "item"], "model.responses stream")?;
+            ensure!(
+                object
+                    .get("event_type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty()),
+                "event_type must be non-empty"
+            );
+            ensure!(
+                object.contains_key("item"),
+                "responses stream requires item"
+            );
+            Ok(())
+        }
+        "model.embed" => Err(anyhow!("model.embed does not support streaming")),
+        _ => Err(anyhow!("unsupported inference operation {operation_id:?}")),
+    }
+}
+
+fn validate_inference_response(operation_id: &str, payload: &Value) -> Result<()> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| anyhow!("{operation_id} response must be an object"))?;
+    match operation_id {
+        "model.generate" => {
+            require_only_fields(object, &["choices", "usage"], operation_id)?;
+            let choices = required_array(object, "choices")?;
+            ensure!(
+                !choices.is_empty(),
+                "model.generate choices must not be empty"
+            );
+            for choice in choices {
+                let choice = choice
+                    .as_object()
+                    .ok_or_else(|| anyhow!("generate choice must be an object"))?;
+                require_only_fields(
+                    choice,
+                    &["message", "stop_reason", "finish_reason", "logprobs"],
+                    "generate choice",
+                )?;
+                validate_message(
+                    choice
+                        .get("message")
+                        .ok_or_else(|| anyhow!("generate choice requires message"))?,
+                )?;
+                ensure!(
+                    choice.get("stop_reason").is_some_and(Value::is_string),
+                    "generate choice requires stop_reason"
+                );
+            }
+            validate_usage(object.get("usage"))
+        }
+        "model.complete" => {
+            require_only_fields(object, &["choices", "usage"], operation_id)?;
+            let choices = required_array(object, "choices")?;
+            ensure!(
+                !choices.is_empty(),
+                "model.complete choices must not be empty"
+            );
+            for choice in choices {
+                let choice = choice
+                    .as_object()
+                    .ok_or_else(|| anyhow!("completion choice must be an object"))?;
+                require_only_fields(
+                    choice,
+                    &["text", "finish_reason", "logprobs"],
+                    "completion choice",
+                )?;
+                ensure!(
+                    choice.get("text").is_some_and(Value::is_string),
+                    "completion choice requires text"
+                );
+                ensure!(
+                    choice.get("finish_reason").is_some_and(Value::is_string),
+                    "completion choice requires finish_reason"
+                );
+            }
+            validate_usage(object.get("usage"))
+        }
+        "model.responses" => {
+            require_only_fields(object, &["output", "usage", "status"], operation_id)?;
+            validate_messages(required_array(object, "output")?)?;
+            ensure!(
+                matches!(
+                    object.get("status").and_then(Value::as_str),
+                    Some("completed" | "incomplete" | "failed")
+                ),
+                "invalid responses status"
+            );
+            validate_usage(object.get("usage"))
+        }
+        "model.embed" => {
+            require_only_fields(object, &["embeddings", "usage"], operation_id)?;
+            let embeddings = required_array(object, "embeddings")?;
+            for embedding in embeddings {
+                ensure!(
+                    embedding
+                        .as_array()
+                        .is_some_and(|values| values.iter().all(Value::is_number)),
+                    "embedding must contain numeric values"
+                );
+            }
+            validate_usage(object.get("usage"))
+        }
+        _ => Err(anyhow!("unsupported inference operation {operation_id:?}")),
+    }
+}
+
+fn require_only_fields(object: &Map<String, Value>, allowed: &[&str], context: &str) -> Result<()> {
+    for field in object.keys() {
+        ensure!(
+            allowed.contains(&field.as_str()),
+            "{context} contains unknown field {field:?}"
+        );
+    }
+    Ok(())
+}
+
+fn validate_generation(value: Option<&Value>) -> Result<()> {
+    let generation = value
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("generation must be an object"))?;
+    require_only_fields(
+        generation,
+        &["max_tokens", "temperature", "top_p", "stop"],
+        "generation",
+    )?;
+    ensure!(
+        generation
+            .get("max_tokens")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value > 0 && u32::try_from(value).is_ok()),
+        "generation.max_tokens must be a positive u32"
+    );
+    for field in ["temperature", "top_p"] {
+        if let Some(value) = generation.get(field) {
+            ensure!(value.is_number(), "generation.{field} must be numeric");
+        }
+    }
+    if let Some(stop) = generation.get("stop") {
+        ensure!(
+            stop.is_string()
+                || stop
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(Value::is_string)),
+            "generation.stop must be a string or string array"
+        );
+    }
+    Ok(())
+}
+
+fn validate_parameters(value: Option<&Value>) -> Result<()> {
+    let Some(value) = value else { return Ok(()) };
+    let parameters = value
+        .as_object()
+        .ok_or_else(|| anyhow!("parameters must be an object"))?;
+    require_only_fields(
+        parameters,
+        &[
+            "best_of",
+            "frequency_penalty",
+            "presence_penalty",
+            "logit_bias",
+            "seed",
+            "top_k",
+            "num_choices",
+            "logprobs",
+            "top_logprobs",
+            "parallel_tool_calls",
+            "internal_tools",
+            "max_tool_output",
+            "reasoning_effort",
+            "reasoning_tokens",
+            "reasoning_summary",
+            "reasoning_history",
+        ],
+        "parameters",
+    )
+}
+
+fn validate_optional_array(object: &Map<String, Value>, field: &str) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        ensure!(value.is_array(), "{field} must be an array");
+    }
+    Ok(())
+}
+
+fn validate_messages(messages: &[Value]) -> Result<()> {
+    ensure!(!messages.is_empty(), "messages must not be empty");
+    for message in messages {
+        validate_message(message)?;
+    }
+    Ok(())
+}
+
+fn validate_message(message: &Value) -> Result<()> {
+    let message = message
+        .as_object()
+        .ok_or_else(|| anyhow!("message must be an object"))?;
+    require_only_fields(
+        message,
+        &["role", "content", "name", "tool_call_id", "tool_calls"],
+        "message",
+    )?;
+    ensure!(
+        matches!(
+            message.get("role").and_then(Value::as_str),
+            Some("system" | "developer" | "user" | "assistant" | "tool")
+        ),
+        "message role is invalid"
+    );
+    let content = message
+        .get("content")
+        .ok_or_else(|| anyhow!("message requires content"))?;
+    ensure!(
+        content.is_string() || content.is_array(),
+        "message content must be text or content blocks"
+    );
+    Ok(())
+}
+
+fn validate_usage(value: Option<&Value>) -> Result<()> {
+    let usage = value
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("response usage must be an object"))?;
+    require_only_fields(
+        usage,
+        &[
+            "prompt_tokens",
+            "completion_tokens",
+            "reasoning_tokens",
+            "cached_tokens",
+        ],
+        "usage",
+    )?;
+    ensure!(
+        usage.values().all(|value| value.as_u64().is_some()),
+        "usage values must be non-negative integers"
+    );
+    Ok(())
+}
+
 /// Inference executor backed by one ordinary [`ScheduledRuntime`].
 pub struct ScheduledInferenceHostExecutor {
     runtime: Rc<ScheduledRuntime>,
     materializer: Rc<dyn EvaluationInferenceMaterializer>,
+    operation_id: RegisteredOperationId,
 }
 
 impl ScheduledInferenceHostExecutor {
@@ -475,9 +973,23 @@ impl ScheduledInferenceHostExecutor {
         runtime: Rc<ScheduledRuntime>,
         materializer: Rc<dyn EvaluationInferenceMaterializer>,
     ) -> Self {
+        Self::new_for_operation(
+            runtime,
+            materializer,
+            RegisteredOperationId::new("model.generate").expect("built-in operation ID is valid"),
+        )
+    }
+
+    /// Compose a scheduler/materializer for one exact semantic operation.
+    pub fn new_for_operation(
+        runtime: Rc<ScheduledRuntime>,
+        materializer: Rc<dyn EvaluationInferenceMaterializer>,
+        operation_id: RegisteredOperationId,
+    ) -> Self {
         Self {
             runtime,
             materializer,
+            operation_id,
         }
     }
 }
@@ -487,64 +999,222 @@ impl HostOperationExecutor for ScheduledInferenceHostExecutor {
     async fn execute(
         &self,
         operation: &HostOperationEnvelope,
-        _events: &dyn HostExecutionEventSink,
+        events: &dyn HostExecutionEventSink,
         cancellation: OperationCancellation,
     ) -> Result<HostExecutionTerminal> {
+        ensure!(
+            operation.semantic_operation_id == self.operation_id,
+            "prepared inference executor received operation {}, expected {}",
+            operation.semantic_operation_id,
+            self.operation_id
+        );
         let turn = self.materializer.materialize(operation)?;
         let (terminal_tx, terminal_rx) = oneshot::channel();
-        let issued = self.runtime.issue_turn_cancellable(
+        let completion = Box::new(move |_credit, outcome| {
+            Box::pin(async move {
+                let _ = terminal_tx.send(outcome);
+            }) as crate::scheduled::CompletionTask
+        });
+        if !operation.stream {
+            let issued = self.runtime.issue_turn_cancellable(
+                turn,
+                self.runtime.now_ns(),
+                None,
+                completion,
+                Rc::new(cancellation),
+            );
+            ensure!(
+                issued,
+                "Rust scheduling policy rejected evaluator inference"
+            );
+            let outcome = terminal_rx
+                .await
+                .context("scheduled evaluator inference lost its terminal callback")?;
+            return normalized_terminal(outcome, &self.operation_id);
+        }
+
+        ensure!(
+            self.runtime.supports_response_streaming(),
+            "selected inference backend cannot provide true streaming"
+        );
+        let (response_tx, mut response_rx) = mpsc::channel(64);
+        let response_failure = Rc::new(RefCell::new(None));
+        let response_observer = Rc::new(InferenceResponseObserver {
+            sender: response_tx,
+            cancellation: cancellation.clone(),
+            failure: response_failure.clone(),
+        });
+        let issued = self.runtime.issue_turn_streaming_cancellable(
             turn,
             self.runtime.now_ns(),
             None,
-            Box::new(move |_credit, outcome| {
-                Box::pin(async move {
-                    let _ = terminal_tx.send(outcome);
-                })
-            }),
-            Rc::new(cancellation),
+            response_observer,
+            completion,
+            Rc::new(cancellation.clone()),
         );
         ensure!(
             issued,
             "Rust scheduling policy rejected evaluator inference"
         );
-        let outcome = terminal_rx
-            .await
-            .context("scheduled evaluator inference lost its terminal callback")?;
-        Ok(normalized_terminal(outcome))
+        let mut ordinal = 0usize;
+        tokio::pin!(terminal_rx);
+        let outcome = loop {
+            tokio::select! {
+                terminal = &mut terminal_rx => {
+                    let outcome = terminal.context("scheduled evaluator inference lost its terminal callback")?;
+                    while let Ok(response) = response_rx.try_recv() {
+                        publish_stream_response(
+                            self.operation_id.as_str(),
+                            response,
+                            events,
+                            &mut ordinal,
+                        ).await?;
+                    }
+                    break outcome;
+                }
+                response = response_rx.recv() => {
+                    if let Some(response) = response {
+                        publish_stream_response(
+                            self.operation_id.as_str(),
+                            response,
+                            events,
+                            &mut ordinal,
+                        ).await?;
+                    }
+                }
+            }
+        };
+        if let Some(failure) = response_failure.borrow_mut().take() {
+            return Err(anyhow!(failure));
+        }
+        normalized_terminal(outcome, &self.operation_id)
     }
 }
 
-fn normalized_terminal(outcome: TurnDispatchOutcome) -> HostExecutionTerminal {
+struct InferenceResponseObserver {
+    sender: mpsc::Sender<ParsedResponse>,
+    cancellation: OperationCancellation,
+    failure: Rc<RefCell<Option<String>>>,
+}
+
+impl TurnResponseObserver for InferenceResponseObserver {
+    fn on_response(&self, response: ParsedResponse) {
+        if let Err(error) = self.sender.try_send(response) {
+            let message = match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    "bounded evaluator streaming response queue is full"
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    "evaluator streaming response consumer closed"
+                }
+            };
+            self.failure
+                .borrow_mut()
+                .get_or_insert_with(|| message.into());
+            self.cancellation.cancel();
+        }
+    }
+}
+
+async fn publish_stream_response(
+    operation_id: &str,
+    response: ParsedResponse,
+    events: &dyn HostExecutionEventSink,
+    ordinal: &mut usize,
+) -> Result<()> {
+    let Some(payload) = normalize_stream_response(operation_id, response)? else {
+        return Ok(());
+    };
+    events
+        .publish(HostExecutionDelta {
+            ordinal: *ordinal,
+            payload,
+        })
+        .await?;
+    *ordinal = ordinal
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("evaluator stream ordinal overflow"))?;
+    Ok(())
+}
+
+fn normalize_stream_response(
+    operation_id: &str,
+    response: ParsedResponse,
+) -> Result<Option<Value>> {
+    let Some(data) = response.data else {
+        return Ok(None);
+    };
+    let payload = match operation_id {
+        "model.generate" => {
+            let content = match data {
+                ResponseData::Text { text } => Value::String(text),
+                ResponseData::Reasoning { content, reasoning } => {
+                    let mut blocks = vec![json!({"type":"reasoning","reasoning":reasoning})];
+                    if let Some(content) = content {
+                        blocks.push(json!({"type":"text","text":content}));
+                    }
+                    Value::Array(blocks)
+                }
+                ResponseData::ToolCall {
+                    tool_call_text,
+                    content,
+                } => Value::String(content.unwrap_or(tool_call_text)),
+                other => {
+                    return Err(anyhow!(
+                        "model.generate received incompatible stream data {other:?}"
+                    ));
+                }
+            };
+            json!({
+                "choice_index": 0,
+                "delta": {"role":"assistant","content":content},
+            })
+        }
+        "model.complete" => json!({"choice_index":0,"text":data.get_text()}),
+        "model.responses" => json!({
+            "event_type": match data {
+                ResponseData::Text { .. } => "response.output_text.delta",
+                ResponseData::Reasoning { .. } => "response.reasoning.delta",
+                ResponseData::ToolCall { .. } => "response.function_call_arguments.delta",
+                _ => "response.output_item.delta",
+            },
+            "item": serde_json::to_value(data)?,
+        }),
+        "model.embed" => return Err(anyhow!("model.embed emitted an incremental response")),
+        _ => return Err(anyhow!("no stream normalizer for {operation_id:?}")),
+    };
+    Ok(Some(payload))
+}
+
+fn normalized_terminal(
+    outcome: TurnDispatchOutcome,
+    operation_id: &RegisteredOperationId,
+) -> Result<HostExecutionTerminal> {
     let class = match outcome.terminal {
         ReplayTerminalStatus::Completed => HostTerminalClass::Completed,
         ReplayTerminalStatus::Canceled => HostTerminalClass::Cancelled,
         ReplayTerminalStatus::Rejected => HostTerminalClass::Rejected,
         ReplayTerminalStatus::Failed => HostTerminalClass::Failed,
     };
-    HostExecutionTerminal {
-        class,
-        payload: json!({
+    let payload = if class == HostTerminalClass::Completed {
+        normalize_completed_response(operation_id.as_str(), &outcome)?
+    } else {
+        json!({
             "status": match class {
-                HostTerminalClass::Completed => "completed",
+                HostTerminalClass::Completed => unreachable!("handled above"),
                 HostTerminalClass::Failed => "failed",
                 HostTerminalClass::Rejected => "rejected",
                 HostTerminalClass::Cancelled => "cancelled",
             },
-            "content": outcome.model_response.content.or_else(|| (!outcome.response_text.is_empty()).then_some(outcome.response_text)),
-            "reasoning": outcome.model_response.reasoning,
-            "assistant_message": outcome.model_response.assistant_message,
-            "response_id": outcome.model_response.response_id,
-            "finish_reason": outcome.model_response.finish_reason,
-            "usage": {
-                "prompt_tokens": outcome.prompt_tokens,
-                "completion_tokens": outcome.completion_tokens,
-                "cached_tokens": outcome.model_response.cached_prompt_tokens,
-            },
-            "error": outcome.model_response.error_kind.map(|kind| json!({
+            "error": outcome.model_response.error_kind.as_ref().map(|kind| json!({
                 "kind": kind,
                 "message": outcome.model_response.error_message,
             })),
-        }),
+        })
+    };
+    Ok(HostExecutionTerminal {
+        class,
+        payload,
         usage: HostOperationUsage {
             prompt_tokens: outcome.prompt_tokens,
             completion_tokens: outcome.completion_tokens,
@@ -552,6 +1222,294 @@ fn normalized_terminal(outcome: TurnDispatchOutcome) -> HostExecutionTerminal {
             cached_tokens: outcome.model_response.cached_prompt_tokens,
         },
         retryable: false,
+    })
+}
+
+fn normalize_completed_response(
+    operation_id: &str,
+    outcome: &TurnDispatchOutcome,
+) -> Result<Value> {
+    let usage = normalized_usage(outcome);
+    match operation_id {
+        "model.generate" => Ok(json!({
+            "choices": normalized_generate_choices(outcome)?,
+            "usage": usage,
+        })),
+        "model.complete" => Ok(json!({
+            "choices": normalized_completion_choices(outcome)?,
+            "usage": usage,
+        })),
+        "model.responses" => Ok(json!({
+            "output": normalized_responses_output(outcome)?,
+            "usage": usage,
+            "status": "completed",
+        })),
+        "model.embed" => Ok(json!({
+            "embeddings": normalized_embeddings(outcome)?,
+            "usage": usage,
+        })),
+        _ => Err(anyhow!("no terminal normalizer for {operation_id:?}")),
+    }
+}
+
+fn normalized_usage(outcome: &TurnDispatchOutcome) -> Value {
+    let mut usage = Map::new();
+    if let Some(value) = outcome.prompt_tokens {
+        usage.insert("prompt_tokens".into(), Value::from(value));
+    }
+    if let Some(value) = outcome.completion_tokens {
+        usage.insert("completion_tokens".into(), Value::from(value));
+    }
+    if let Some(value) = outcome.model_response.cached_prompt_tokens {
+        usage.insert("cached_tokens".into(), Value::from(value));
+    }
+    let reasoning_tokens = outcome
+        .model_response
+        .wire_responses
+        .iter()
+        .rev()
+        .find_map(|value| {
+            value
+                .pointer("/usage/completion_tokens_details/reasoning_tokens")
+                .or_else(|| value.pointer("/usage/output_tokens_details/reasoning_tokens"))
+                .or_else(|| value.pointer("/usage/reasoning_tokens"))
+                .and_then(Value::as_u64)
+        });
+    if let Some(value) = reasoning_tokens {
+        usage.insert("reasoning_tokens".into(), Value::from(value));
+    }
+    Value::Object(usage)
+}
+
+fn normalized_generate_choices(outcome: &TurnDispatchOutcome) -> Result<Vec<Value>> {
+    if let Some(choices) = outcome
+        .model_response
+        .wire_responses
+        .iter()
+        .rev()
+        .find_map(|value| value.get("choices").and_then(Value::as_array))
+        .filter(|choices| choices.iter().any(|choice| choice.get("message").is_some()))
+    {
+        return choices
+            .iter()
+            .map(|choice| {
+                let message = choice
+                    .get("message")
+                    .ok_or_else(|| anyhow!("generate choice omitted message"))?;
+                let finish = choice
+                    .get("finish_reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let mut normalized = Map::from_iter([
+                    ("message".into(), normalize_message(message)?),
+                    (
+                        "stop_reason".into(),
+                        Value::String(stop_reason(finish).into()),
+                    ),
+                ]);
+                if let Some(value) = choice.get("finish_reason") {
+                    normalized.insert("finish_reason".into(), value.clone());
+                }
+                if let Some(value) = choice.get("logprobs") {
+                    normalized.insert("logprobs".into(), value.clone());
+                }
+                Ok(Value::Object(normalized))
+            })
+            .collect();
+    }
+
+    let message = outcome
+        .model_response
+        .assistant_message
+        .as_ref()
+        .map(normalize_message)
+        .transpose()?
+        .unwrap_or_else(|| {
+            json!({
+                "role": "assistant",
+                "content": outcome.model_response.content.clone().unwrap_or_else(|| outcome.response_text.clone()),
+            })
+        });
+    let finish = outcome
+        .model_response
+        .finish_reason
+        .as_deref()
+        .unwrap_or("unknown");
+    Ok(vec![json!({
+        "message": message,
+        "stop_reason": stop_reason(finish),
+        "finish_reason": finish,
+    })])
+}
+
+fn normalized_completion_choices(outcome: &TurnDispatchOutcome) -> Result<Vec<Value>> {
+    if let Some(choices) = outcome
+        .model_response
+        .wire_responses
+        .iter()
+        .rev()
+        .find_map(|value| value.get("choices").and_then(Value::as_array))
+        .filter(|choices| choices.iter().any(|choice| choice.get("text").is_some()))
+    {
+        return choices
+            .iter()
+            .map(|choice| {
+                let mut normalized = Map::from_iter([
+                    (
+                        "text".into(),
+                        Value::String(
+                            choice
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .into(),
+                        ),
+                    ),
+                    (
+                        "finish_reason".into(),
+                        Value::String(
+                            choice
+                                .get("finish_reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                                .into(),
+                        ),
+                    ),
+                ]);
+                if let Some(value) = choice.get("logprobs") {
+                    normalized.insert("logprobs".into(), value.clone());
+                }
+                Ok(Value::Object(normalized))
+            })
+            .collect();
+    }
+    Ok(vec![json!({
+        "text": outcome.model_response.content.clone().unwrap_or_else(|| outcome.response_text.clone()),
+        "finish_reason": outcome.model_response.finish_reason.as_deref().unwrap_or("unknown"),
+    })])
+}
+
+fn normalized_responses_output(outcome: &TurnDispatchOutcome) -> Result<Vec<Value>> {
+    if let Some(output) = outcome
+        .model_response
+        .wire_responses
+        .iter()
+        .rev()
+        .find_map(|value| value.get("output").and_then(Value::as_array))
+    {
+        let messages = output
+            .iter()
+            .filter(|item| {
+                item.get("type").and_then(Value::as_str) == Some("message")
+                    || item.get("role").is_some()
+            })
+            .map(normalize_responses_message)
+            .collect::<Result<Vec<_>>>()?;
+        if !messages.is_empty() {
+            return Ok(messages);
+        }
+    }
+    let message = outcome
+        .model_response
+        .assistant_message
+        .as_ref()
+        .map(normalize_message)
+        .transpose()?
+        .unwrap_or_else(|| {
+            json!({
+                "role":"assistant",
+                "content": outcome.model_response.content.clone().unwrap_or_else(|| outcome.response_text.clone()),
+            })
+        });
+    Ok(vec![message])
+}
+
+fn normalized_embeddings(outcome: &TurnDispatchOutcome) -> Result<Vec<Value>> {
+    for value in outcome.model_response.wire_responses.iter().rev() {
+        if let Some(embeddings) = value.get("embeddings").and_then(Value::as_array) {
+            return Ok(embeddings.clone());
+        }
+        if let Some(data) = value.get("data").and_then(Value::as_array) {
+            let embeddings = data
+                .iter()
+                .map(|item| {
+                    item.get("embedding")
+                        .cloned()
+                        .ok_or_else(|| anyhow!("embedding response item omitted embedding"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if !embeddings.is_empty() {
+                return Ok(embeddings);
+            }
+        }
+    }
+    Err(anyhow!("completed embedding response contained no vectors"))
+}
+
+fn normalize_responses_message(value: &Value) -> Result<Value> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow!("Responses output message must be an object"))?;
+    let role = object
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("assistant");
+    let content = object.get("content").cloned().unwrap_or_default();
+    let content = match content {
+        Value::Array(blocks) => Value::Array(
+            blocks
+                .into_iter()
+                .filter_map(|block| {
+                    let kind = block.get("type").and_then(Value::as_str);
+                    let text = block.get("text").and_then(Value::as_str)?;
+                    matches!(kind, Some("output_text" | "input_text" | "text"))
+                        .then(|| json!({"type":"text","text":text}))
+                })
+                .collect(),
+        ),
+        other => other,
+    };
+    normalize_message(&json!({"role":role,"content":content}))
+}
+
+fn normalize_message(value: &Value) -> Result<Value> {
+    let source = value
+        .as_object()
+        .ok_or_else(|| anyhow!("normalized model message must be an object"))?;
+    let role = source
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("assistant");
+    let mut message = Map::new();
+    message.insert("role".into(), Value::String(role.into()));
+    let content = source
+        .get("content")
+        .cloned()
+        .unwrap_or(Value::String(String::new()));
+    message.insert(
+        "content".into(),
+        if content.is_null() {
+            Value::String(String::new())
+        } else {
+            content
+        },
+    );
+    for field in ["name", "tool_call_id", "tool_calls"] {
+        if let Some(value) = source.get(field) {
+            message.insert(field.into(), value.clone());
+        }
+    }
+    Ok(Value::Object(message))
+}
+
+fn stop_reason(value: &str) -> &'static str {
+    match value {
+        "stop" | "end_turn" | "stop_sequence" => "stop",
+        "length" | "max_tokens" => "max_tokens",
+        "model_length" => "model_length",
+        "tool_calls" | "tool_use" => "tool_calls",
+        "content_filter" => "content_filter",
+        _ => "unknown",
     }
 }
 
@@ -763,5 +1721,158 @@ mod tests {
         let mut embedding = operation("embeddings", "model.embed", json!({"input":"hello"}));
         embedding.stream = true;
         assert!(materializer.materialize(&embedding).is_err());
+    }
+
+    #[test]
+    fn registered_factories_pin_exact_provider_schema_triplets() {
+        let materializer: Rc<dyn EvaluationInferenceMaterializer> = Rc::new(materializer());
+        let mut builder = HostExecutorRegistryBuilder::default();
+        register_scheduled_inference_host_executors(&mut builder, materializer).unwrap();
+        let registry = builder.freeze().unwrap();
+        let descriptors = registry.descriptors().collect::<Vec<_>>();
+        assert_eq!(descriptors.len(), STOCK_EVALUATION_OPERATION_SCHEMAS.len());
+        for schema in STOCK_EVALUATION_OPERATION_SCHEMAS {
+            let descriptor = descriptors
+                .iter()
+                .find(|descriptor| descriptor.operation_id.as_str() == schema.operation_id)
+                .unwrap();
+            assert_eq!(
+                descriptor.request_schema_fingerprint,
+                schema.request_schema_sha256
+            );
+            assert_eq!(
+                descriptor.response_schema_fingerprint,
+                schema.response_schema_sha256
+            );
+            assert_eq!(
+                descriptor.stream_schema_fingerprint.as_deref(),
+                schema
+                    .true_streaming
+                    .then_some(schema.canonical_stream_schema_sha256)
+            );
+            assert_eq!(
+                descriptor.endpoint_capabilities,
+                BTreeSet::from([schema.endpoint_capability.to_string()])
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_schema_validators_reject_unknown_authority_and_bad_terminals() {
+        let materializer: Rc<dyn EvaluationInferenceMaterializer> = Rc::new(materializer());
+        let factory = ScheduledInferenceHostExecutorFactory::new(
+            RegisteredOperationId::new("model.generate").unwrap(),
+            materializer,
+        )
+        .unwrap();
+        factory
+            .validator()
+            .validate_request(&json!({
+                "messages":[{"role":"user","content":"hello"}],
+                "generation":{"max_tokens":8},
+                "parameters":{"seed":7,"reasoning_effort":"low"}
+            }))
+            .unwrap();
+        assert!(
+            factory
+                .validator()
+                .validate_request(&json!({
+                    "messages":[{"role":"user","content":"hello"}],
+                    "generation":{"max_tokens":8},
+                    "base_url":"https://forbidden.invalid"
+                }))
+                .is_err()
+        );
+        factory
+            .validator()
+            .validate_response(&json!({
+                "choices":[{
+                    "message":{"role":"assistant","content":"ok"},
+                    "stop_reason":"stop",
+                    "finish_reason":"stop"
+                }],
+                "usage":{"prompt_tokens":3,"completion_tokens":1}
+            }))
+            .unwrap();
+        assert!(
+            factory
+                .validator()
+                .validate_response(&json!({
+                    "choices":[],
+                    "usage":{"completion_tokens":1}
+                }))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn terminal_normalizers_preserve_choices_logprobs_embeddings_and_usage() {
+        let generated = normalized_terminal(
+            TurnDispatchOutcome {
+                start_ns: 1,
+                end_ns: 2,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: "ignored".into(),
+                model_response: crate::scheduled::ModelResponseMetadata {
+                    wire_responses: vec![json!({
+                        "choices":[
+                            {"message":{"role":"assistant","content":"one"},"finish_reason":"stop","logprobs":{"tokens":[1]}},
+                            {"message":{"role":"assistant","content":"two"},"finish_reason":"length","logprobs":null}
+                        ],
+                        "usage":{"completion_tokens_details":{"reasoning_tokens":2}}
+                    })],
+                    ..Default::default()
+                },
+                prompt_tokens: Some(4),
+                completion_tokens: Some(3),
+                http: Default::default(),
+            },
+            &RegisteredOperationId::new("model.generate").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(generated.payload["choices"].as_array().unwrap().len(), 2);
+        assert_eq!(generated.payload["choices"][1]["stop_reason"], "max_tokens");
+        assert_eq!(generated.payload["usage"]["reasoning_tokens"], 2);
+
+        let embedded = normalized_terminal(
+            TurnDispatchOutcome {
+                start_ns: 1,
+                end_ns: 2,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: String::new(),
+                model_response: crate::scheduled::ModelResponseMetadata {
+                    wire_responses: vec![json!({
+                        "data":[{"embedding":[0.1,0.2]},{"embedding":[0.3]}],
+                        "usage":{"prompt_tokens":2}
+                    })],
+                    ..Default::default()
+                },
+                prompt_tokens: Some(2),
+                completion_tokens: None,
+                http: Default::default(),
+            },
+            &RegisteredOperationId::new("model.embed").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(embedded.payload["embeddings"][0], json!([0.1, 0.2]));
+    }
+
+    #[test]
+    fn normalized_stream_frames_are_typed_and_never_raw_sse() {
+        let response = ParsedResponse {
+            perf_ns: 7,
+            data: Some(ResponseData::Reasoning {
+                content: Some("answer".into()),
+                reasoning: "think".into(),
+            }),
+            usage: None,
+            sources: None,
+        };
+        let payload = normalize_stream_response("model.generate", response)
+            .unwrap()
+            .unwrap();
+        assert_eq!(payload["choice_index"], 0);
+        assert_eq!(payload["delta"]["content"][0]["type"], "reasoning");
+        assert!(!payload.to_string().contains("data:"));
     }
 }

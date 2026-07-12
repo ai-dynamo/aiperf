@@ -30,7 +30,7 @@ use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
 
-use crate::scheduled::ModelResponseMetadata;
+use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
 
 use super::{
     HttpCollectedDispatch, HttpDispatchResult, HttpRequest, TransportSink, absorb_transport_error,
@@ -118,19 +118,25 @@ impl TransportSink {
         endpoint_config: &EndpointConfig,
         obs: &dyn RequestObserver,
         on_first_token: impl FnMut(i64),
+        responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<HttpCollectedDispatch> {
         let endpoint = LegacyEndpointAdapter {
             endpoint,
             config: endpoint_config,
         };
-        let binding =
-            MetadataHttpEndpointBinding::new(endpoint.endpoint, endpoint.config, &self.base_urls);
+        let binding = MetadataHttpEndpointBinding::new(
+            endpoint.endpoint,
+            endpoint.config,
+            &self.base_urls,
+            &self.model,
+        );
         self.dispatch_runtime_endpoint_collect_record_with_hooks(
             req,
             &endpoint,
             &binding,
             obs,
             on_first_token,
+            responses,
         )
         .await
     }
@@ -142,8 +148,10 @@ impl TransportSink {
         endpoint: &dyn PreparedEndpoint,
         obs: &dyn RequestObserver,
         on_first_token: impl FnMut(i64),
+        responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<HttpCollectedDispatch> {
-        let binding = MetadataHttpEndpointBinding::from_prepared(endpoint, &self.base_urls);
+        let binding =
+            MetadataHttpEndpointBinding::from_prepared(endpoint, &self.base_urls, &self.model);
         let endpoint = WorkerPreparedEndpointAdapter(endpoint);
         self.dispatch_runtime_endpoint_collect_record_with_hooks(
             req,
@@ -151,6 +159,7 @@ impl TransportSink {
             &binding,
             obs,
             on_first_token,
+            responses,
         )
         .await
     }
@@ -162,6 +171,7 @@ impl TransportSink {
         binding: &B,
         obs: &dyn RequestObserver,
         mut on_first_token: impl FnMut(i64),
+        responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<HttpCollectedDispatch>
     where
         A: RuntimeEndpointAdapter + ?Sized,
@@ -233,7 +243,15 @@ impl TransportSink {
 
         let first_token_released = Cell::new(false);
         let mut first_response_filter = |ttft_ns, response: &ServerResponse| {
-            if !meaningful_endpoint_response(endpoint, response) {
+            let parsed = parse_endpoint_response(endpoint, response).ok().flatten();
+            if let (Some(responses), Some(parsed)) = (responses, parsed.as_ref())
+                && parsed.data.is_some()
+            {
+                responses.on_response(parsed.clone());
+            }
+            if !parsed.and_then(|parsed| parsed.data).is_some_and(|data| {
+                endpoint.descriptor().produces_tokens && !data.get_text().is_empty()
+            }) {
                 return false;
             }
             if !first_token_released.replace(true) {
@@ -261,6 +279,7 @@ impl TransportSink {
                 continue;
             };
             if let Some(value) = &server_response.json {
+                model_response.wire_responses.push(value.clone());
                 absorb_wire_response_metadata(value, &mut model_response);
             }
             let parsed = match parse_endpoint_response(endpoint, &server_response) {
@@ -384,6 +403,7 @@ impl TransportSink {
     }
 }
 
+#[cfg(test)]
 fn meaningful_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
     endpoint: &A,
     response: &ServerResponse,

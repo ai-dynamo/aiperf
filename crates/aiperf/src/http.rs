@@ -45,7 +45,9 @@ use serde_json::Value;
 
 pub use crate::multiturn::PreparedEndpointReference;
 use crate::multiturn::{LegacyTurnEndpointBinding, TurnEndpoint, TurnToSend};
-use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
+use crate::scheduled::{
+    ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher, TurnResponseObserver,
+};
 
 mod endpoint_dispatch;
 
@@ -126,7 +128,7 @@ impl fmt::Debug for HttpRequest {
 }
 
 /// Version of the trusted execution-command wire.
-pub const HTTP_EXECUTION_COMMAND_VERSION: u32 = 1;
+pub const HTTP_EXECUTION_COMMAND_VERSION: u32 = 2;
 
 /// Data-only HTTP request carried across an execution-placement boundary.
 ///
@@ -295,6 +297,8 @@ pub struct HttpTurnDispatchResult {
 pub struct PreparedHttpTurn {
     /// Transport-ready request fields.
     pub request: HttpRequest,
+    /// Effective model selected for this turn.
+    pub model: String,
     /// Worker-resolved endpoint binding selected during preparation.
     pub endpoint: PreparedHttpEndpoint,
     /// Whether the request came from the endpoint-aware dataset seam.
@@ -306,6 +310,7 @@ impl fmt::Debug for PreparedHttpTurn {
         formatter
             .debug_struct("PreparedHttpTurn")
             .field("request", &self.request)
+            .field("model", &self.model)
             .field("endpoint", &self.endpoint)
             .field("endpoint_aware", &self.endpoint_aware)
             .finish()
@@ -349,6 +354,8 @@ pub struct PreparedHttpTurnWire {
     pub version: u32,
     /// Transport-ready request data.
     pub request: HttpRequestWire,
+    /// Effective model selected for this turn.
+    pub model: String,
     /// Stable endpoint selection. Prepared bindings carry an open ID and dense
     /// key; legacy commands retain their compatibility configuration.
     pub endpoint: PreparedHttpEndpointWire,
@@ -366,6 +373,7 @@ impl fmt::Debug for PreparedHttpTurnWire {
             .debug_struct("PreparedHttpTurnWire")
             .field("version", &self.version)
             .field("request", &self.request)
+            .field("model", &self.model)
             .field("endpoint", &self.endpoint)
             .field(
                 "endpoint_header_names",
@@ -391,6 +399,10 @@ impl PreparedHttpTurn {
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
         let endpoint_aware = turn.request_body.is_some();
+        let model = turn
+            .effective_model
+            .clone()
+            .unwrap_or_else(|| model.to_string());
         let endpoint = match turn.endpoint {
             TurnEndpoint::Legacy(binding) => {
                 if binding.config.streaming == turn.streaming {
@@ -412,7 +424,7 @@ impl PreparedHttpTurn {
                 .iter()
                 .map(|message| (message.role.as_str(), message.content.as_str()))
                 .collect::<Vec<_>>();
-            Some(chat_request_body(model, &messages, turn.max_output_tokens))
+            Some(chat_request_body(&model, &messages, turn.max_output_tokens))
         } else {
             None
         };
@@ -433,6 +445,7 @@ impl PreparedHttpTurn {
                 cancel_after_ns: turn.cancel_after_ns,
                 url_index: turn.url_index,
             },
+            model,
             endpoint,
             endpoint_aware,
         }
@@ -459,6 +472,7 @@ impl PreparedHttpTurn {
         PreparedHttpTurnWire {
             version: HTTP_EXECUTION_COMMAND_VERSION,
             request: self.request.into(),
+            model: self.model,
             endpoint,
             endpoint_headers,
             endpoint_api_key,
@@ -499,6 +513,7 @@ impl PreparedHttpTurnWire {
         };
         Ok(PreparedHttpTurn {
             request: self.request.into(),
+            model: self.model,
             endpoint,
             endpoint_aware: self.endpoint_aware,
         })
@@ -847,6 +862,9 @@ impl TransportSink {
                         continue;
                     }
                     let Some(data) = msg.data() else { continue };
+                    if let Ok(value) = serde_json::from_str::<Value>(data) {
+                        model_response.wire_responses.push(value);
+                    }
                     let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
                         continue;
                     };
@@ -870,6 +888,7 @@ impl TransportSink {
                 Response::Text(response) => {
                     done = true;
                     if let Some(value) = response.json() {
+                        model_response.wire_responses.push(value.clone());
                         let parsed = parse_non_streaming_response(&value);
                         response_text.push_str(&parsed.0);
                         prompt_tokens = parsed.1;
@@ -1161,6 +1180,10 @@ impl HttpRequestDispatcher for TransportSink {
 
 #[async_trait(?Send)]
 impl TurnDispatcher for TransportSink {
+    fn supports_response_streaming(&self) -> bool {
+        true
+    }
+
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: self
@@ -1181,6 +1204,19 @@ impl TurnDispatcher for TransportSink {
     ) -> Result<TurnDispatchOutcome> {
         Ok(self
             .dispatch_turn_collect_record(turn, observer, on_first_token)
+            .await?
+            .outcome)
+    }
+
+    async fn dispatch_turn_streaming(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<TurnDispatchOutcome> {
+        Ok(self
+            .dispatch_turn_collect_record_streaming(turn, observer, on_first_token, responses)
             .await?
             .outcome)
     }
@@ -1226,6 +1262,25 @@ impl TransportSink {
             .await
     }
 
+    /// Dispatch one scheduled turn while publishing live endpoint-normalized
+    /// response frames before terminal completion.
+    pub async fn dispatch_turn_collect_record_streaming(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<HttpTurnDispatchResult> {
+        let turn = PreparedHttpTurn::from_turn(turn, &self.model);
+        self.dispatch_prepared_turn_collect_record_with_response_observer(
+            turn,
+            observer,
+            on_first_token,
+            Some(responses),
+        )
+        .await
+    }
+
     /// Execute an owned scheduler-free HTTP command and retain the exact wire
     /// exchange. Execution-placement adapters use this method on their local
     /// worker reactor while the ordinary direct path calls it in place.
@@ -1235,8 +1290,25 @@ impl TransportSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult> {
+        self.dispatch_prepared_turn_collect_record_with_response_observer(
+            turn,
+            observer,
+            on_first_token,
+            None,
+        )
+        .await
+    }
+
+    async fn dispatch_prepared_turn_collect_record_with_response_observer(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
+    ) -> Result<HttpTurnDispatchResult> {
         let PreparedHttpTurn {
             request,
+            model: _,
             endpoint,
             endpoint_aware,
         } = turn;
@@ -1249,6 +1321,7 @@ impl TransportSink {
                         &binding.config,
                         observer,
                         on_first_token,
+                        responses,
                     )
                     .await?
                 }
@@ -1272,11 +1345,16 @@ impl TransportSink {
                         endpoint,
                         observer,
                         on_first_token,
+                        responses,
                     )
                     .await?
                 }
             }
         } else {
+            anyhow::ensure!(
+                responses.is_none(),
+                "true response streaming requires a prepared endpoint binding"
+            );
             self.dispatch_collect_record_with_hooks(request, observer, on_first_token)
                 .await?
         };
@@ -1402,6 +1480,7 @@ mod tests {
                 cancel_after_ns: Some(9),
                 url_index: Some(2),
             },
+            model: "fixture-model".into(),
             endpoint: PreparedHttpEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
                 endpoint: BuiltinEndpointResolver::default()
                     .resolve_type(EndpointType::Messages)
@@ -1428,6 +1507,7 @@ mod tests {
             Some(br#"{"messages":[]}"#.as_slice())
         );
         assert_eq!(rehydrated.request.headers["x-api-key"], request_secret);
+        assert_eq!(rehydrated.model, "fixture-model");
         let PreparedHttpEndpoint::Legacy(binding) = rehydrated.endpoint else {
             panic!("legacy wire must rehydrate a legacy endpoint")
         };
@@ -1460,6 +1540,7 @@ mod tests {
                 cancel_after_ns: None,
                 url_index: None,
             },
+            model: "fixture-model".into(),
             endpoint: PreparedHttpEndpointWire::Legacy(Box::default()),
             endpoint_headers: BTreeMap::new(),
             endpoint_api_key: None,
@@ -1495,6 +1576,7 @@ mod tests {
                 cancel_after_ns: None,
                 url_index: None,
             },
+            model: "fixture-model".into(),
             endpoint: PreparedHttpEndpointWire::Prepared(reference),
             endpoint_headers: BTreeMap::new(),
             endpoint_api_key: None,

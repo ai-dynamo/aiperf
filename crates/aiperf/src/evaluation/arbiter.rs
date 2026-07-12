@@ -142,6 +142,26 @@ where
         queue.into_iter().collect()
     }
 
+    /// Remove one queued operation from a specific unit.
+    ///
+    /// This is the provider-requested cancellation path for work that has not
+    /// reached a route executor. The remaining FIFO order and cross-unit ready
+    /// ring are unchanged.
+    pub fn remove_where(&mut self, unit: &K, mut predicate: impl FnMut(&T) -> bool) -> Option<T> {
+        let queue = self.queues.get_mut(unit)?;
+        let position = queue.iter().position(&mut predicate)?;
+        let operation = queue.remove(position)?;
+        self.len = self
+            .len
+            .checked_sub(1)
+            .expect("removed evaluator operation must be counted");
+        if queue.is_empty() {
+            self.queues.remove(unit);
+            self.ready_units.retain(|candidate| candidate != unit);
+        }
+        Some(operation)
+    }
+
     /// Drain every queued operation in the same fair order as admission.
     pub fn drain(&mut self) -> Vec<(K, T)> {
         let mut operations = Vec::with_capacity(self.len);
@@ -258,6 +278,21 @@ mod tests {
             queue.drain(),
             vec![("a", 1), ("b", 10), ("a", 2), ("b", 11), ("a", 3)]
         );
+        queue.validate().unwrap();
+    }
+
+    #[test]
+    fn targeted_queued_cancellation_preserves_fifo_and_ready_ring() {
+        let mut queue = FairOperationArbiter::new(FairQueueLimits::new(16, 8).unwrap());
+        queue.push("a", ("a-1", 1)).unwrap();
+        queue.push("b", ("b-1", 10)).unwrap();
+        queue.push("a", ("a-2", 2)).unwrap();
+        assert_eq!(
+            queue.remove_where(&"a", |(id, _)| *id == "a-1"),
+            Some(("a-1", 1))
+        );
+        assert_eq!(queue.pop(), Some(("a", ("a-2", 2))));
+        assert_eq!(queue.pop(), Some(("b", ("b-1", 10))));
         queue.validate().unwrap();
     }
 }

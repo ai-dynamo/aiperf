@@ -22,6 +22,7 @@ use std::rc::Rc;
 
 use aiperf_clock::Clock;
 use aiperf_core::observer::CollectorObserver;
+use aiperf_endpoints::ParsedResponse;
 use aiperf_metrics::{AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsConfig};
 use aiperf_timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
@@ -70,6 +71,16 @@ pub trait DispatchCancellation {
     fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + '_>>;
 }
 
+/// Synchronous endpoint-normalized response-frame consumer.
+///
+/// HTTP invokes this callback on the local reactor as each decoded SSE event
+/// arrives. Implementations must perform only bounded non-blocking work, such
+/// as `try_send` into a Rust-owned channel. Raw SSE bytes never cross this seam.
+pub trait TurnResponseObserver {
+    /// Observe one endpoint-parsed response frame in arrival order.
+    fn on_response(&self, response: ParsedResponse);
+}
+
 /// Optional external admission gate layered above ordinary stop conditions.
 /// Adaptive-scale implements this seam so a terminal controller immediately
 /// blocks root and continuation issuance while in-flight dispatches drain.
@@ -103,6 +114,10 @@ pub struct ModelResponseMetadata {
     pub error_kind: Option<String>,
     /// Human-readable transport/provider failure detail.
     pub error_message: Option<String>,
+    /// Decoded endpoint response frames retained inside Rust for operation-
+    /// specific normalization. These values are never forwarded as raw SSE and
+    /// must not enter diagnostics or public artifacts.
+    pub wire_responses: Vec<Value>,
 }
 
 /// Terminal result returned by a [`TurnDispatcher`].
@@ -134,6 +149,11 @@ pub struct TurnDispatchOutcome {
 /// fixed-schedule policy stays unchanged.
 #[async_trait(?Send)]
 pub trait TurnDispatcher {
+    /// Whether this backend can emit endpoint-normalized frames before terminal.
+    fn supports_response_streaming(&self) -> bool {
+        false
+    }
+
     /// Resolve report dimensions using the same backend selection that dispatch
     /// will apply. Alternate backends may omit dimensions explicitly.
     fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
@@ -148,6 +168,22 @@ pub trait TurnDispatcher {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome>;
+
+    /// Dispatch while emitting live endpoint-normalized response frames.
+    ///
+    /// Terminal-only backends inherit a fail-closed default instead of
+    /// silently buffering a requested stream.
+    async fn dispatch_turn_streaming(
+        &self,
+        _turn: TurnToSend,
+        _observer: &dyn RequestObserver,
+        _on_first_token: &dyn Fn(i64),
+        _responses: &dyn TurnResponseObserver,
+    ) -> Result<TurnDispatchOutcome> {
+        Err(anyhow!(
+            "selected turn dispatcher does not support true response streaming"
+        ))
+    }
 }
 
 /// Post-dispatch record-processing seam shared by ordinary workloads.
@@ -627,6 +663,38 @@ impl ScheduledRuntime {
         )
     }
 
+    /// Issue one turn with live endpoint-normalized response frames and an
+    /// externally triggered cancellation latch.
+    ///
+    /// Returns `false` when ordinary issuance policy rejects the turn. A
+    /// dispatcher that cannot provide true incremental frames fails the
+    /// admitted turn through its normal terminal callback.
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_turn_streaming_cancellable(
+        self: &Rc<Self>,
+        turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        responses: Rc<dyn TurnResponseObserver>,
+        on_complete: CompletionHandler,
+        cancellation: Rc<dyn DispatchCancellation>,
+    ) -> bool {
+        self.issue_turn_internal(
+            turn,
+            scheduled_ns,
+            user_id,
+            Box::new(|_ttft_ns| {}),
+            on_complete,
+            Some(cancellation),
+            Some(responses),
+        )
+    }
+
+    /// Whether the injected backend supports true incremental response frames.
+    pub fn supports_response_streaming(&self) -> bool {
+        self.dispatcher.supports_response_streaming()
+    }
+
     /// Issue `turn` with both first-token and terminal lifecycle callbacks.
     ///
     /// `on_first_token` runs synchronously on the local dispatch task when the
@@ -658,12 +726,34 @@ impl ScheduledRuntime {
     #[allow(clippy::too_many_arguments)]
     pub fn issue_turn_with_hooks_and_cancellation(
         self: &Rc<Self>,
+        turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        on_first_token: FirstTokenHandler,
+        on_complete: CompletionHandler,
+        cancellation: Option<Rc<dyn DispatchCancellation>>,
+    ) -> bool {
+        self.issue_turn_internal(
+            turn,
+            scheduled_ns,
+            user_id,
+            on_first_token,
+            on_complete,
+            cancellation,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn issue_turn_internal(
+        self: &Rc<Self>,
         mut turn: TurnToSend,
         scheduled_ns: i64,
         user_id: Option<u64>,
         on_first_token: FirstTokenHandler,
         on_complete: CompletionHandler,
         cancellation: Option<Rc<dyn DispatchCancellation>>,
+        responses: Option<Rc<dyn TurnResponseObserver>>,
     ) -> bool {
         let new_session = turn.turn_index == 0;
         if !self.can_issue(new_session) {
@@ -714,9 +804,17 @@ impl ScheduledRuntime {
                 session_num
             }
         };
+        let record_index = self.recorder.borrow_mut().begin(
+            &turn,
+            user_id,
+            self.start_ns,
+            scheduled_ns,
+            issued_ns,
+        );
         self.native_metrics.register_metadata(
             turn.uuid,
             RequestMetricMetadata {
+                request_index: Some(record_index),
                 session_num: Some(session_num),
                 turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
                 conversation_id: Some(turn.conversation_id.clone()),
@@ -726,13 +824,6 @@ impl ScheduledRuntime {
                 dimensions: self.dispatcher.inference_dimensions(&turn),
                 ..RequestMetricMetadata::default()
             },
-        );
-        let record_index = self.recorder.borrow_mut().begin(
-            &turn,
-            user_id,
-            self.start_ns,
-            scheduled_ns,
-            issued_ns,
         );
         self.observer.on_arrival(
             turn.uuid,
@@ -757,11 +848,24 @@ impl ScheduledRuntime {
                 on_first_token(ttft_ns);
             };
 
-            let dispatch = runtime.dispatcher.dispatch_turn(
-                turn.clone(),
-                runtime.observer.as_ref(),
-                &first_token,
-            );
+            let dispatch = async {
+                if let Some(responses) = responses.as_deref() {
+                    runtime
+                        .dispatcher
+                        .dispatch_turn_streaming(
+                            turn.clone(),
+                            runtime.observer.as_ref(),
+                            &first_token,
+                            responses,
+                        )
+                        .await
+                } else {
+                    runtime
+                        .dispatcher
+                        .dispatch_turn(turn.clone(), runtime.observer.as_ref(), &first_token)
+                        .await
+                }
+            };
             tokio::pin!(dispatch);
             let dispatch_result = match cancellation {
                 Some(cancellation) if cancellation.is_cancelled() => None,
@@ -935,7 +1039,7 @@ impl ScheduledRuntime {
         user_control: Option<UserControlSnapshot>,
     ) -> ScheduledRunReport {
         let wall_ms = end_ns.saturating_sub(self.start_ns) as f64 / 1_000_000.0;
-        let turns = self.recorder.borrow().records.clone();
+        let turns = std::mem::take(&mut self.recorder.borrow_mut().records);
         ScheduledRunReport {
             strategy: strategy.into(),
             performance: self.collector.finish(wall_ms),
