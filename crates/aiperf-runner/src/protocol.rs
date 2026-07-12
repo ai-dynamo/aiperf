@@ -78,6 +78,7 @@ impl RunnerCapabilities {
                 "outputs_json",
                 "python_accuracy_evaluator",
                 "raw_records",
+                "http_transport_policy",
             ],
             telemetry_source_types: &["dcgm", "python"],
             runner_version: env!("CARGO_PKG_VERSION"),
@@ -395,6 +396,15 @@ pub struct EndpointSpec {
     /// Request-level timeout in seconds.
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: f64,
+    /// HTTP connection reuse/lease strategy.
+    #[serde(default)]
+    pub connection_reuse: aiperf_transport::models::ConnectionReuseStrategy,
+    /// Optional request-body content type after Config-v2 normalization.
+    #[serde(default)]
+    pub request_content_type: Option<aiperf_endpoints::RequestContentType>,
+    /// Download completed video bytes after the polling lifecycle.
+    #[serde(default)]
+    pub download_video_content: bool,
     /// Custom template body.
     #[serde(default)]
     pub template: Option<String>,

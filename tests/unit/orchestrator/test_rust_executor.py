@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import orjson
 import pytest
@@ -81,6 +82,22 @@ def test_capabilities_surface_process_failure(monkeypatch) -> None:
         rust_executor._load_capabilities(Path("runner"))
 
 
+def test_missing_terminal_surfaces_exit_and_redacted_stderr() -> None:
+    with pytest.raises(ValueError) as raised:
+        rust_executor._parse_terminal(
+            b"",
+            SimpleNamespace(benchmark_id="run"),
+            returncode=-6,
+            stderr=b"Authorization: Bearer runner-secret\nstack overflow",
+        )
+
+    message = str(raised.value)
+    assert "child exit code -6" in message
+    assert "stack overflow" in message
+    assert "runner-secret" not in message
+    assert "<redacted>" in message
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -124,12 +141,13 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "outputs_json",
             "python_accuracy_evaluator",
             "raw_records",
+            "http_transport_policy",
         ],
         "telemetry_source_types": ["dcgm"],
     }
     request = {
         "run": {
-            "endpoint": {"type": "chat"},
+            "endpoint": {"type": "chat", "timeout_seconds": 10.0},
             "dataset": {"type": "synthetic"},
             "phases": [
                 {
@@ -161,6 +179,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("run_features", "python_accuracy_evaluator"),
         ("run_features", "gpu_telemetry"),
         ("run_features", "raw_records"),
+        ("run_features", "http_transport_policy"),
         ("telemetry_source_types", "dcgm"),
     ):
         narrowed = {name: list(values) for name, values in capabilities.items()}

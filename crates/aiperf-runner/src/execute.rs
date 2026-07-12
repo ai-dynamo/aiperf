@@ -21,7 +21,7 @@ use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf::http::TransportSink;
+use aiperf::http::{TransportSink, TransportSinkConfig};
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
     ConversationSource, EndpointInputTokenCounter, InputTokenCounter, IssuedCredit,
@@ -70,6 +70,8 @@ use aiperf_timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
+use aiperf_transport::config::ClientConfig;
+use aiperf_transport::models::HttpVersion;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -332,18 +334,30 @@ async fn execute_native_inner(
         metrics_config.clone(),
         request.run.artifacts.raw_path.is_some(),
     ));
-    let transport = TransportSink::new_multi(
+    let request_timeout_ns = seconds_to_ns(request.run.endpoint.timeout_seconds)?;
+    let transport = TransportSink::new_multi_configured(
         clock.clone(),
         start_ns,
         &request.run.endpoint.urls,
         primary_model.clone(),
-        request.run.endpoint.http2,
+        TransportSinkConfig {
+            client: ClientConfig {
+                http_version: if request.run.endpoint.http2 {
+                    HttpVersion::Http2PriorKnowledge
+                } else {
+                    HttpVersion::Auto
+                },
+                total_timeout_ns: (request_timeout_ns > 0).then_some(request_timeout_ns),
+                ..ClientConfig::default()
+            },
+            connection_reuse: request.run.endpoint.connection_reuse,
+            session_header: request.run.endpoint.session_header.clone(),
+        },
     )?;
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
         transport,
         headers: request.run.endpoint.headers.clone(),
         api_key: request.run.endpoint.api_key.clone(),
-        session_header: request.run.endpoint.session_header.clone(),
         capture: capture.clone(),
     });
 
@@ -1252,7 +1266,9 @@ fn endpoint_config(spec: &EndpointSpec) -> Result<EndpointConfig> {
         streaming: spec.streaming,
         template: spec.template.clone(),
         response_field: spec.response_field.clone(),
+        request_content_type: spec.request_content_type,
         timeout_seconds: spec.timeout_seconds,
+        download_video_content: spec.download_video_content,
         use_legacy_max_tokens: spec.use_legacy_max_tokens,
         use_server_token_count: spec.use_server_token_count,
         extra: (!spec.extra.is_empty()).then(|| spec.extra.clone()),
@@ -2006,7 +2022,6 @@ struct ConfiguredDispatcher {
     transport: TransportSink,
     headers: BTreeMap<String, String>,
     api_key: Option<String>,
-    session_header: Option<String>,
     capture: Rc<RunCapture>,
 }
 
@@ -2027,10 +2042,6 @@ impl TurnDispatcher for ConfiguredDispatcher {
             turn.request_headers
                 .entry("Authorization".into())
                 .or_insert_with(|| format!("Bearer {api_key}"));
-        }
-        if let Some(header) = &self.session_header {
-            turn.request_headers
-                .insert(header.clone(), turn.request_correlation_id.clone());
         }
         let uuid = turn.uuid;
         self.capture.begin(&turn);

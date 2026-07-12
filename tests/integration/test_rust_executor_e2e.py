@@ -27,6 +27,22 @@ _SSE = b"".join(
     ]
 )
 
+_NON_STREAMING = orjson.dumps(
+    {
+        "id": "connection-proof",
+        "object": "chat.completion",
+        "model": "m",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "a"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 8, "completion_tokens": 1},
+    }
+)
+
 _SHAREGPT = orjson.dumps(
     [
         {
@@ -130,6 +146,26 @@ class _AdaptiveChatHandler(BaseHTTPRequestHandler):
         finally:
             with self.lock:
                 type(self).active -= 1
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+class _ConnectionHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    peer_ports: list[int] = []
+    lock = threading.Lock()
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        with self.lock:
+            self.peer_ports.append(self.client_address[1])
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(_NON_STREAMING)))
+        self.end_headers()
+        self.wfile.write(_NON_STREAMING)
 
     def log_message(self, format: str, *args: object) -> None:
         pass
@@ -239,6 +275,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
                         "use_server_token_count": True,
                         "api_key": "config-v2-raw-secret",
                         "headers": {"X-Custom-Tracking": "config-v2-trace"},
+                        "session_header": "X-Session-ID",
                     },
                     "dataset": {
                         "type": "synthetic",
@@ -298,6 +335,11 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert all(
             row["request_headers"]["Authorization"] == "<redacted>"
             and row["request_headers"]["X-Custom-Tracking"] == "config-v2-trace"
+            and row["request_headers"]["X-Session-ID"]
+            == row["metadata"]["x_correlation_id"]
+            and "X-Correlation-ID" not in row["request_headers"]
+            and row["request_headers"]["X-Request-ID"]
+            == row["metadata"]["x_request_id"]
             and row["status"] == 200
             and row["response_headers"]["content-type"] == "text/event-stream"
             and len(row["responses"]) == 3
@@ -649,6 +691,153 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         # so setup can consume part of the authored 51 ms interval. The real
         # process proof must still show paced dispatch rather than a burst.
         assert 15_000_000 <= start_delta_ns <= 250_000_000
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_config_v2_controls_native_connection_reuse(tmp_path: Path) -> None:
+    _ConnectionHandler.peer_ports.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ConnectionHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+        observed: dict[str, list[bool]] = {}
+        peer_ports: dict[str, list[int]] = {}
+        for strategy in ("pooled", "never"):
+            artifact_dir = tmp_path / strategy
+            envelope = AIPerfConfig.model_validate(
+                {
+                    "benchmark": {
+                        "models": ["mock-model"],
+                        "endpoint": {
+                            "urls": [
+                                f"http://127.0.0.1:{port}/v1/chat/completions"
+                            ],
+                            "streaming": False,
+                            "use_server_token_count": True,
+                            "connection_reuse": strategy,
+                        },
+                        "dataset": {
+                            "type": "synthetic",
+                            "entries": 3,
+                            "isl": 8,
+                            "osl": 1,
+                        },
+                        "profiling": {
+                            "type": "concurrency",
+                            "requests": 3,
+                            "concurrency": 1,
+                        },
+                        "artifacts": {"dir": str(artifact_dir), "trace": True},
+                        "gpu_telemetry": {"enabled": False},
+                        "server_metrics": {"enabled": False},
+                        "runtime": {"ui": "none"},
+                    }
+                }
+            )
+            run = BenchmarkRun(
+                benchmark_id=f"connection-{strategy}",
+                cfg=envelope.benchmark,
+                artifact_dir=artifact_dir,
+                label=strategy,
+                random_seed=41,
+            )
+            start = len(_ConnectionHandler.peer_ports)
+
+            result = RustSubprocessExecutor(artifact_dir, binary=binary).execute_sync(run)
+
+            assert result.success, result.error
+            rows = [
+                orjson.loads(line)
+                for line in (artifact_dir / "profile_export.jsonl")
+                .read_bytes()
+                .splitlines()
+            ]
+            observed[strategy] = [
+                row["trace_data"]["connection_reused"] for row in rows
+            ]
+            peer_ports[strategy] = _ConnectionHandler.peer_ports[start:]
+
+        assert observed["pooled"] == [False, True, True]
+        assert len(set(peer_ports["pooled"])) == 1
+        assert observed["never"] == [False, False, False]
+        assert len(set(peer_ports["never"])) == 3
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_config_v2_enforces_one_native_end_to_end_request_timeout(
+    tmp_path: Path,
+) -> None:
+    _AdaptiveChatHandler.active = 0
+    _AdaptiveChatHandler.peak = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AdaptiveChatHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                        "timeout": 0.01,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 1,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                    },
+                    "artifacts": {"dir": str(tmp_path), "raw": True},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="native-total-timeout",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="timeout",
+            random_seed=43,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+
+        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+
+        assert not result.success
+        assert result.error == "All 1 requests failed"
+        rows = [
+            orjson.loads(line)
+            for line in (tmp_path / "profile_export_raw.jsonl")
+            .read_bytes()
+            .splitlines()
+        ]
+        assert len(rows) == 1
+        assert rows[0]["responses"] == []
+        assert rows[0]["error"] == {
+            "code": None,
+            "type": "TimeoutError",
+            "message": "request timeout after 10000000ns",
+        }
     finally:
         server.shutdown()
         server.server_close()

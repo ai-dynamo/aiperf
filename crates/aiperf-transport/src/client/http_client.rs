@@ -337,9 +337,48 @@ impl HttpClient {
         body_len: usize,
         completion: Rc<SendCompletion>,
     ) -> Result<(), ErrorDetails> {
+        self.dispatch_with_method_and_completion_timeout(
+            method,
+            sender,
+            url,
+            headers,
+            body,
+            streaming,
+            trace,
+            record,
+            first_token_filter,
+            body_len,
+            completion,
+            self.cfg.request_timeout_ns,
+        )
+        .await
+    }
+
+    /// Dispatch with a caller-supplied remaining request budget.
+    ///
+    /// [`HttpTransport`](crate::transport::http_transport::HttpTransport) uses
+    /// this after connection acquisition so Config-v2's one absolute timeout
+    /// cannot restart for the response phase. Other callers retain the
+    /// client-wide `request_timeout_ns` through
+    /// [`dispatch_with_method_and_completion`](Self::dispatch_with_method_and_completion).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn dispatch_with_method_and_completion_timeout(
+        &self,
+        method: Method,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        streaming: bool,
+        trace: &mut TraceData,
+        record: &mut RequestRecord,
+        first_token_filter: &mut impl FnMut(i64, &SseMessage) -> bool,
+        body_len: usize,
+        completion: Rc<SendCompletion>,
+        timeout_ns: Option<i64>,
+    ) -> Result<(), ErrorDetails> {
         // A zero/None request timeout means "no deadline" — `with_timeout` takes
         // the un-raced path so the high-throughput dispatch stays overhead-free.
-        let timeout_ns = self.cfg.request_timeout_ns;
         with_timeout(
             self.clock.clone(),
             timeout_ns,

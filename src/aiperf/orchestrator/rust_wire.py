@@ -61,6 +61,8 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
         "use_legacy_max_tokens": endpoint.use_legacy_max_tokens,
         "use_server_token_count": endpoint.use_server_token_count,
         "timeout_seconds": endpoint.timeout,
+        "connection_reuse": str(endpoint.connection_reuse),
+        "download_video_content": endpoint.download_video_content,
         "extra": dict(endpoint.extra),
         "headers": dict(endpoint.headers),
         "http2": False,
@@ -68,6 +70,11 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     _set_optional(endpoint_wire, "path", endpoint.path)
     _set_optional(endpoint_wire, "api_key", endpoint.api_key)
     _set_optional(endpoint_wire, "session_header", endpoint.session_header)
+    if endpoint.request_content_type is not None:
+        endpoint_wire["request_content_type"] = {
+            "application/json": "application_json",
+            "multipart/form-data": "multipart_form_data",
+        }[str(endpoint.request_content_type)]
     if endpoint.template is not None:
         endpoint_wire["template"] = endpoint.template.body
         endpoint_wire["response_field"] = endpoint.template.response_field

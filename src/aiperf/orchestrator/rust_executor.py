@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import orjson
 
+from aiperf.common.redact import redact_string
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.native_report import (
@@ -67,7 +68,12 @@ class RustSubprocessExecutor(RunExecutor):
                 capture_output=True,
                 check=False,
             )
-            terminal = _parse_terminal(completed.stdout, run)
+            terminal = _parse_terminal(
+                completed.stdout,
+                run,
+                returncode=completed.returncode,
+                stderr=completed.stderr,
+            )
             if completed.returncode != 0 or not terminal["success"]:
                 return _failure(completed, terminal, run)
             report_path = _validated_report_path(terminal, run.artifact_dir)
@@ -194,6 +200,21 @@ def _require_request_capabilities(
         raise ValueError("native run artifacts must be an object")
 
     _require_capability(capabilities, "endpoint_types", endpoint["type"])
+    if any(
+        field in endpoint
+        for field in (
+            "timeout_seconds",
+            "connection_reuse",
+            "request_content_type",
+            "download_video_content",
+            "session_header",
+        )
+    ):
+        _require_capability(
+            capabilities,
+            "run_features",
+            "http_transport_policy",
+        )
     _require_capability(capabilities, "dataset_types", dataset["type"])
     for index, phase in enumerate(phases):
         if not isinstance(phase, dict) or not isinstance(phase.get("type"), str):
@@ -244,12 +265,21 @@ def _require_capability(
         )
 
 
-def _parse_terminal(stdout: bytes, run: BenchmarkRun) -> dict[str, Any]:
+def _parse_terminal(
+    stdout: bytes,
+    run: BenchmarkRun,
+    *,
+    returncode: int | None = None,
+    stderr: bytes = b"",
+) -> dict[str, Any]:
     lines = [line for line in stdout.splitlines() if line.strip()]
     if len(lines) != 1:
+        diagnostic = redact_string(stderr.decode(errors="replace")).strip()
+        process = "" if returncode is None else f"; child exit code {returncode}"
+        detail = "" if not diagnostic else f"; stderr: {diagnostic}"
         raise ValueError(
             "native runner must write exactly one terminal JSON line to stdout; "
-            f"received {len(lines)} non-empty lines"
+            f"received {len(lines)} non-empty lines{process}{detail}"
         )
     try:
         terminal = orjson.loads(lines[0])

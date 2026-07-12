@@ -28,7 +28,8 @@ use aiperf_core::sse::ChatChunk;
 use aiperf_metrics::HttpTrace;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{
-    ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord, Response, SseMessage,
+    ConnectionReuseStrategy, ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord,
+    Response, SseMessage,
 };
 use aiperf_transport::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -138,6 +139,21 @@ pub struct HttpTurnDispatchResult {
     pub record: RequestRecord,
 }
 
+/// Construction policy for one online HTTP sink.
+///
+/// The client config owns Clock-enforced transport deadlines and protocol
+/// selection; reuse and affinity remain per-request policies applied when a
+/// materialized turn becomes a [`RequestConfig`].
+#[derive(Clone, Debug, Default)]
+pub struct TransportSinkConfig {
+    /// Low-level HTTP client policy.
+    pub client: ClientConfig,
+    /// Connection pooling/lease strategy.
+    pub connection_reuse: ConnectionReuseStrategy,
+    /// Optional replacement for the default `X-Correlation-ID` header.
+    pub session_header: Option<String>,
+}
+
 impl Dispatchable for HttpRequest {
     fn uuid(&self) -> Uuid {
         self.uuid
@@ -160,6 +176,7 @@ pub struct TransportSink {
     base_urls: Vec<String>,
     model: String,
     start_ns: i64,
+    connection_reuse: ConnectionReuseStrategy,
 }
 
 impl TransportSink {
@@ -187,13 +204,7 @@ impl TransportSink {
         model: impl Into<String>,
         http2: bool,
     ) -> Result<Self> {
-        if base_urls.is_empty() {
-            anyhow::bail!("at least one base URL is required");
-        }
-        if base_urls.len() > u32::MAX as usize {
-            anyhow::bail!("base URL count exceeds the u32 request-index representation");
-        }
-        let cfg = ClientConfig {
+        let client = ClientConfig {
             http_version: if http2 {
                 HttpVersion::Http2PriorKnowledge
             } else {
@@ -201,7 +212,44 @@ impl TransportSink {
             },
             ..ClientConfig::default()
         };
-        let transport = HttpTransport::new(clock.clone(), cfg);
+        Self::new_multi_configured(
+            clock,
+            start_ns,
+            base_urls,
+            model,
+            TransportSinkConfig {
+                client,
+                ..TransportSinkConfig::default()
+            },
+        )
+    }
+
+    /// Build a sink with explicit deadline, reuse, protocol, and session-header
+    /// policy supplied by a resolved benchmark configuration.
+    pub fn new_multi_configured(
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        base_urls: &[String],
+        model: impl Into<String>,
+        config: TransportSinkConfig,
+    ) -> Result<Self> {
+        if base_urls.is_empty() {
+            anyhow::bail!("at least one base URL is required");
+        }
+        if base_urls.len() > u32::MAX as usize {
+            anyhow::bail!("base URL count exceeds the u32 request-index representation");
+        }
+        if config
+            .session_header
+            .as_ref()
+            .is_some_and(|header| header.trim().is_empty())
+        {
+            anyhow::bail!("session header must be non-empty when configured");
+        }
+        let mut transport = HttpTransport::new(clock.clone(), config.client);
+        if let Some(header) = config.session_header {
+            transport = transport.with_session_header(header);
+        }
         let base_urls = base_urls
             .iter()
             .map(|base_url| base_url.trim_end_matches('/').to_string())
@@ -217,6 +265,7 @@ impl TransportSink {
             base_urls,
             model: model.into(),
             start_ns,
+            connection_reuse: config.connection_reuse,
         })
     }
 
@@ -319,8 +368,10 @@ impl TransportSink {
         cfg.headers = headers;
         cfg.params = parameters;
         cfg.correlation_id = x_correlation_id;
+        cfg.request_id = Some(uuid.to_string());
         cfg.is_final_turn = is_final_turn;
         cfg.cancel_after_ns = cancel_after_ns;
+        cfg.reuse = self.connection_reuse;
         let first_token_released = Cell::new(false);
         let rec = self
             .transport

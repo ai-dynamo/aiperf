@@ -116,8 +116,10 @@ impl TransportSink {
         request_config.headers = headers;
         request_config.params = parameters;
         request_config.correlation_id = x_correlation_id;
+        request_config.request_id = Some(uuid.to_string());
         request_config.is_final_turn = is_final_turn;
         request_config.cancel_after_ns = cancel_after_ns;
+        request_config.reuse = self.connection_reuse;
 
         let first_token_released = Cell::new(false);
         let record = if endpoint.metadata().requires_polling {

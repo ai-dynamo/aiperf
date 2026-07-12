@@ -13,12 +13,19 @@ from aiperf.config.accuracy import AccuracyConfig
 from aiperf.orchestrator.rust_wire import RustWireError, build_run_request
 
 
-def _run(tmp_path: Path, *, dataset: dict | None = None, phases: list | None = None):
+def _run(
+    tmp_path: Path,
+    *,
+    dataset: dict | None = None,
+    phases: list | None = None,
+    endpoint: dict | None = None,
+):
     envelope = AIPerfConfig.model_validate(
         {
             "benchmark": {
                 "models": ["mock-model"],
-                "endpoint": {
+                "endpoint": endpoint
+                or {
                     "urls": ["http://127.0.0.1:8000/v1/chat/completions"],
                     "streaming": True,
                 },
@@ -183,6 +190,30 @@ def test_projects_outputs_json_into_the_native_results_layer(tmp_path) -> None:
     projected = build_run_request(run)["run"]
 
     assert projected["artifacts"]["outputs_path"] == "outputs.json"
+
+
+def test_projects_complete_transport_and_endpoint_body_policy(tmp_path) -> None:
+    projected = build_run_request(
+        _run(
+            tmp_path,
+            endpoint={
+                "urls": ["http://127.0.0.1:8000/v1/images/edits"],
+                "type": "image_edit",
+                "streaming": False,
+                "timeout": 0.25,
+                "connection_reuse": "never",
+                "request_content_type": "multipart/form-data",
+                "download_video_content": True,
+                "session_header": "X-Session-ID",
+            },
+        )
+    )["run"]["endpoint"]
+
+    assert projected["timeout_seconds"] == 0.25
+    assert projected["connection_reuse"] == "never"
+    assert projected["request_content_type"] == "multipart_form_data"
+    assert projected["download_video_content"] is True
+    assert projected["session_header"] == "X-Session-ID"
 
 
 def test_projects_raw_records_as_a_distinct_native_artifact(tmp_path) -> None:

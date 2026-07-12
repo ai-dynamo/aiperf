@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use aiperf_transport::RealClock;
 use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ConnectionReuseStrategy, RequestConfig};
+use aiperf_transport::models::{ConnectionReuseStrategy, ErrorKind, RequestConfig};
 use aiperf_transport::transport::http_transport::HttpTransport;
 
 fn payload() -> serde_json::Value {
@@ -115,5 +115,34 @@ fn facade_sticky_reuse_reuses_connection_across_turns() {
             "post-release turn reconnects"
         );
         assert!(tr3.tcp_connect_start_ns.is_some());
+    });
+}
+
+#[test]
+fn total_timeout_bounds_connect_send_and_response_as_one_request() {
+    run_local(async {
+        let Some(mock) = MockServer::spawn(&["--ttft", "500"]).await else {
+            return;
+        };
+        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let transport = HttpTransport::new(
+            clock,
+            ClientConfig {
+                total_timeout_ns: Some(20_000_000),
+                ..ClientConfig::default()
+            },
+        );
+        let config = RequestConfig::new(format!("{}/v1/chat/completions", mock.base_url));
+
+        let record = transport
+            .send_request(&config, payload(), true, |_| {})
+            .await;
+
+        let error = record
+            .error
+            .expect("slow response must hit the total timeout");
+        assert_eq!(error.kind, ErrorKind::Timeout);
+        assert_eq!(error.message, "request timeout after 20000000ns");
+        assert_eq!(record.status, Some(200));
     });
 }

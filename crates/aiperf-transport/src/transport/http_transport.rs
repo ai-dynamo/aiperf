@@ -32,7 +32,10 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    pub fn new(clock: Rc<dyn Clock>, cfg: ClientConfig) -> Self {
+    pub fn new(clock: Rc<dyn Clock>, mut cfg: ClientConfig) -> Self {
+        if let Some(total) = positive_timeout(cfg.total_timeout_ns) {
+            cfg.connect_timeout_ns = minimum_timeout(cfg.connect_timeout_ns, Some(total));
+        }
         Self {
             client: HttpClient::new(clock.clone(), cfg.clone()),
             client_cfg: cfg,
@@ -195,6 +198,8 @@ impl HttpTransport {
         let body_len = body.len();
         let reuse = cfg.reuse;
         let corr = cfg.correlation_id.as_deref();
+        let total_timeout_ns = positive_timeout(self.client_cfg.total_timeout_ns);
+        let deadline_ns = total_timeout_ns.map(|timeout| start_ns.saturating_add(timeout));
 
         let mut trace = TraceData::default();
         let send_completion = Rc::new(SendCompletion::new());
@@ -214,9 +219,12 @@ impl HttpTransport {
                     &mut trace,
                 )
                 .await?;
+            let remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
+            let dispatch_timeout_ns =
+                minimum_timeout(self.client_cfg.request_timeout_ns, remaining_ns);
             let res = self
                 .client
-                .dispatch_with_method_and_completion(
+                .dispatch_with_method_and_completion_timeout(
                     method,
                     &mut sender,
                     &url,
@@ -228,6 +236,7 @@ impl HttpTransport {
                     &mut first_token_filter,
                     body_len,
                     completion_for_dispatch,
+                    dispatch_timeout_ns,
                 )
                 .await;
             // On success, decide whether the connection is returned to the pool.
@@ -284,7 +293,17 @@ impl HttpTransport {
             None => dispatch.await,
         };
 
-        if let Err(e) = result {
+        if let Err(mut e) = result {
+            if e.kind == crate::models::ErrorKind::Timeout
+                && let Some(total) = total_timeout_ns
+            {
+                e.message = format!("request timeout after {total}ns");
+            }
+            if e.kind == crate::models::ErrorKind::Timeout
+                && let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) = (reuse, corr)
+            {
+                self.pool.release(c);
+            }
             trace.error_timestamp_ns = Some(self.clock.now_ns());
             record.error = Some(e);
         }
@@ -292,4 +311,31 @@ impl HttpTransport {
         record.trace = Some(trace);
         record
     }
+}
+
+fn positive_timeout(timeout_ns: Option<i64>) -> Option<i64> {
+    timeout_ns.filter(|timeout| *timeout > 0)
+}
+
+fn minimum_timeout(first: Option<i64>, second: Option<i64>) -> Option<i64> {
+    match (positive_timeout(first), positive_timeout(second)) {
+        (Some(first), Some(second)) => Some(first.min(second)),
+        (Some(timeout), None) | (None, Some(timeout)) => Some(timeout),
+        (None, None) => None,
+    }
+}
+
+fn remaining_timeout(deadline_ns: Option<i64>, now_ns: i64) -> Result<Option<i64>, ErrorDetails> {
+    let Some(deadline_ns) = deadline_ns else {
+        return Ok(None);
+    };
+    let remaining = deadline_ns.saturating_sub(now_ns);
+    if remaining <= 0 {
+        return Err(ErrorDetails {
+            kind: crate::models::ErrorKind::Timeout,
+            code: None,
+            message: "request deadline elapsed before HTTP dispatch".to_string(),
+        });
+    }
+    Ok(Some(remaining))
 }

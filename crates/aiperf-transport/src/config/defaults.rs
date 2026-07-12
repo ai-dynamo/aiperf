@@ -10,8 +10,10 @@ use crate::models::HttpVersion;
 /// `connect_timeout_ns` is enforced in `client::connection::establish` (races
 /// the DNS/TCP/TLS/handshake phase against a Clock timer) and `request_timeout_ns`
 /// is enforced in `client::http_client::HttpClient::dispatch` (races the
-/// send + response phase). For both, `None` or a non-positive value means "no
-/// deadline".
+/// send + response phase). `total_timeout_ns` wraps connection acquisition,
+/// send, and the complete response lifecycle with one deadline, matching
+/// Config-v2's endpoint request timeout. For all three, `None` or a non-positive
+/// value means "no deadline".
 ///
 /// NOTE: `keepalive_ns` is accepted but NOT enforced: it is meant to bound the
 /// idle lifetime of a pooled connection, but `client::pool::ConnectionPool`
@@ -25,6 +27,8 @@ use crate::models::HttpVersion;
 pub struct ClientConfig {
     pub connect_timeout_ns: Option<i64>,
     pub request_timeout_ns: Option<i64>,
+    /// One end-to-end request deadline including connection establishment.
+    pub total_timeout_ns: Option<i64>,
     pub ssl_verify: bool,
     pub http_version: HttpVersion,
     pub keepalive_ns: Option<i64>,
@@ -39,6 +43,7 @@ impl Default for ClientConfig {
         Self {
             connect_timeout_ns: None,
             request_timeout_ns: None,
+            total_timeout_ns: None,
             ssl_verify: true,
             http_version: HttpVersion::Auto,
             keepalive_ns: None,
@@ -76,5 +81,6 @@ mod tests {
         assert_eq!(c.http_version, HttpVersion::Auto);
         assert_eq!(c.connect_timeout_ns, None);
         assert_eq!(c.request_timeout_ns, None);
+        assert_eq!(c.total_timeout_ns, None);
     }
 }
