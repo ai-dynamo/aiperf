@@ -136,8 +136,13 @@ pub(crate) fn parse_document(
     let mut descriptors = Vec::new();
     let mut samples = Vec::new();
     let mut exemplar_count = 0_usize;
-    for (index, line) in content_lines.iter().enumerate() {
+    for (index, source_line) in content_lines.iter().enumerate() {
         let line_number = index + 1;
+        let line = if format == ExpositionFormat::PrometheusText004 {
+            source_line.trim_matches(|character| matches!(character, ' ' | '\t'))
+        } else {
+            source_line
+        };
         if line.is_empty() {
             if format == ExpositionFormat::PrometheusText004 {
                 continue;
@@ -198,71 +203,69 @@ fn parse_descriptor(
     line: &str,
     limits: &ParseLimits,
 ) -> Result<Option<ParsedDescriptor>, ParseError> {
-    let (kind, rest) = if let Some(rest) = line.strip_prefix("# HELP ") {
-        ("HELP", rest)
-    } else if let Some(rest) = line.strip_prefix("# TYPE ") {
-        ("TYPE", rest)
-    } else if format == ExpositionFormat::OpenMetricsText100 {
-        if let Some(rest) = line.strip_prefix("# UNIT ") {
-            ("UNIT", rest)
-        } else {
-            if line.starts_with("# HELP")
-                || line.starts_with("# TYPE")
-                || line.starts_with("# UNIT")
-                || line.starts_with("# EOF")
-            {
-                return Err(ParseError::line(
-                    line_number,
-                    1,
-                    ParseErrorKind::Metadata,
-                    "malformed OpenMetrics metadata directive",
-                ));
+    let directive = match format {
+        ExpositionFormat::PrometheusText004 => prometheus_directive(line_number, line)?,
+        ExpositionFormat::OpenMetricsText100 => {
+            if let Some(rest) = line.strip_prefix("# HELP ") {
+                Some(("HELP", rest))
+            } else if let Some(rest) = line.strip_prefix("# TYPE ") {
+                Some(("TYPE", rest))
+            } else if let Some(rest) = line.strip_prefix("# UNIT ") {
+                Some(("UNIT", rest))
+            } else {
+                if line.starts_with("# HELP")
+                    || line.starts_with("# TYPE")
+                    || line.starts_with("# UNIT")
+                    || line.starts_with("# EOF")
+                {
+                    return Err(ParseError::line(
+                        line_number,
+                        1,
+                        ParseErrorKind::Metadata,
+                        "malformed OpenMetrics metadata directive",
+                    ));
+                }
+                None
             }
-            return Ok(None);
         }
-    } else {
-        if line.starts_with("# HELP") || line.starts_with("# TYPE") {
+    };
+    let Some((kind, rest)) = directive else {
+        return Ok(None);
+    };
+
+    let separator = rest.bytes().position(is_horizontal_space);
+    let (family, raw_value, value_column) = match separator {
+        Some(separator) => {
+            let mut value_start = separator;
+            let bytes = rest.as_bytes();
+            skip_horizontal_space(bytes, &mut value_start);
+            (&rest[..separator], &rest[value_start..], value_start + 1)
+        }
+        None if format == ExpositionFormat::PrometheusText004 && kind == "HELP" => {
+            (rest, "", rest.len() + 1)
+        }
+        None => {
             return Err(ParseError::line(
                 line_number,
                 1,
                 ParseErrorKind::Metadata,
-                "malformed Prometheus metadata directive",
+                format!("{kind} directive is missing its value separator"),
             ));
         }
-        return Ok(None);
     };
-
-    let Some(separator) = rest.find(' ') else {
-        return Err(ParseError::line(
-            line_number,
-            1,
-            ParseErrorKind::Metadata,
-            format!("{kind} directive is missing its value separator"),
-        ));
-    };
-    let family = &rest[..separator];
-    let raw_value = &rest[separator + 1..];
     validate_metric_name(line_number, family, limits)?;
-    if raw_value.len() > limits.max_metadata_value_bytes {
-        return Err(ParseError::line(
-            line_number,
-            separator + 2,
-            ParseErrorKind::LimitExceeded(LimitKind::MetadataValueBytes),
-            "metadata value exceeds max_metadata_value_bytes",
-        ));
-    }
     let descriptor_kind = match kind {
-        "HELP" => DescriptorKind::Help(decode_escaped(
-            format,
-            line_number,
-            separator + 2,
-            raw_value,
-        )?),
+        "HELP" => {
+            let value = decode_escaped(format, line_number, value_column, raw_value)?;
+            check_metadata_limit(line_number, value_column, &value, limits)?;
+            DescriptorKind::Help(value)
+        }
         "TYPE" => {
+            check_metadata_limit(line_number, value_column, raw_value, limits)?;
             if raw_value.is_empty() || raw_value.bytes().any(is_horizontal_space) {
                 return Err(ParseError::line(
                     line_number,
-                    separator + 2,
+                    value_column,
                     ParseErrorKind::Metadata,
                     "TYPE must contain exactly one type token",
                 ));
@@ -289,7 +292,7 @@ fn parse_descriptor(
             if !valid {
                 return Err(ParseError::line(
                     line_number,
-                    separator + 2,
+                    value_column,
                     ParseErrorKind::Metadata,
                     format!("unsupported {format} TYPE token {raw_value:?}"),
                 ));
@@ -297,10 +300,11 @@ fn parse_descriptor(
             DescriptorKind::Type(raw_value.to_string())
         }
         "UNIT" => {
+            check_metadata_limit(line_number, value_column, raw_value, limits)?;
             if !raw_value.bytes().all(is_metric_name_char) {
                 return Err(ParseError::line(
                     line_number,
-                    separator + 2,
+                    value_column,
                     ParseErrorKind::Metadata,
                     "UNIT contains a character outside the metric-name alphabet",
                 ));
@@ -314,6 +318,60 @@ fn parse_descriptor(
         family: family.to_string(),
         kind: descriptor_kind,
     }))
+}
+
+fn prometheus_directive(
+    line_number: usize,
+    line: &str,
+) -> Result<Option<(&'static str, &str)>, ParseError> {
+    let bytes = line.as_bytes();
+    let mut cursor = 1_usize;
+    skip_horizontal_space(bytes, &mut cursor);
+    let keyword_start = cursor;
+    while cursor < bytes.len() && !is_horizontal_space(bytes[cursor]) {
+        cursor += 1;
+    }
+    let keyword = &line[keyword_start..cursor];
+    let kind = match keyword {
+        "HELP" => "HELP",
+        "TYPE" => "TYPE",
+        _ => return Ok(None),
+    };
+    if cursor == bytes.len() {
+        return Err(ParseError::line(
+            line_number,
+            1,
+            ParseErrorKind::Metadata,
+            format!("{kind} directive is missing its metric name"),
+        ));
+    }
+    skip_horizontal_space(bytes, &mut cursor);
+    if cursor == bytes.len() {
+        return Err(ParseError::line(
+            line_number,
+            1,
+            ParseErrorKind::Metadata,
+            format!("{kind} directive is missing its metric name"),
+        ));
+    }
+    Ok(Some((kind, &line[cursor..])))
+}
+
+fn check_metadata_limit(
+    line_number: usize,
+    column: usize,
+    decoded_value: &str,
+    limits: &ParseLimits,
+) -> Result<(), ParseError> {
+    if decoded_value.len() > limits.max_metadata_value_bytes {
+        return Err(ParseError::line(
+            line_number,
+            column,
+            ParseErrorKind::LimitExceeded(LimitKind::MetadataValueBytes),
+            "decoded metadata value exceeds max_metadata_value_bytes",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_sample(
@@ -540,11 +598,17 @@ fn parse_label_set(
     let bytes = line.as_bytes();
     *cursor += 1;
     let mut labels = BTreeMap::new();
+    if format == ExpositionFormat::PrometheusText004 {
+        skip_horizontal_space(bytes, cursor);
+    }
     if bytes.get(*cursor) == Some(&b'}') {
         *cursor += 1;
         return Ok(labels);
     }
     loop {
+        if format == ExpositionFormat::PrometheusText004 {
+            skip_horizontal_space(bytes, cursor);
+        }
         let start = *cursor;
         if bytes
             .get(*cursor)
@@ -570,15 +634,30 @@ fn parse_label_set(
                 "label name exceeds max_label_name_bytes",
             ));
         }
-        if bytes.get(*cursor) != Some(&b'=') || bytes.get(*cursor + 1) != Some(&b'\"') {
+        if format == ExpositionFormat::PrometheusText004 {
+            skip_horizontal_space(bytes, cursor);
+        }
+        if bytes.get(*cursor) != Some(&b'=') {
             return Err(ParseError::line(
                 line_number,
                 *cursor + 1,
                 ParseErrorKind::Label,
-                "label name must be followed by =\"",
+                "label name must be followed by =",
             ));
         }
-        *cursor += 2;
+        *cursor += 1;
+        if format == ExpositionFormat::PrometheusText004 {
+            skip_horizontal_space(bytes, cursor);
+        }
+        if bytes.get(*cursor) != Some(&b'\"') {
+            return Err(ParseError::line(
+                line_number,
+                *cursor + 1,
+                ParseErrorKind::Label,
+                "label value must begin with a double quote",
+            ));
+        }
+        *cursor += 1;
         let value = parse_quoted_value(format, line_number, line, cursor)?;
         if value.len() > limits.max_label_value_bytes {
             return Err(ParseError::line(
@@ -613,8 +692,20 @@ fn parse_label_set(
                 "label set exceeds its configured label-count limit",
             ));
         }
+        if format == ExpositionFormat::PrometheusText004 {
+            skip_horizontal_space(bytes, cursor);
+        }
         match bytes.get(*cursor) {
-            Some(b',') => *cursor += 1,
+            Some(b',') => {
+                *cursor += 1;
+                if format == ExpositionFormat::PrometheusText004 {
+                    skip_horizontal_space(bytes, cursor);
+                    if bytes.get(*cursor) == Some(&b'}') {
+                        *cursor += 1;
+                        break;
+                    }
+                }
+            }
             Some(b'}') => {
                 *cursor += 1;
                 break;

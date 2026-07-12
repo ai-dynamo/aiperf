@@ -397,13 +397,14 @@ fn validate_exemplar_owner(sample: &ParsedSample, role: WireSampleRole) -> Resul
         ));
     }
     if let Some(exemplar) = &sample.exemplar
-        && (exemplar.value.kind != NumberKind::Finite || exemplar.value.finite_value.is_none())
+        && exemplar.value.kind == NumberKind::Finite
+        && exemplar.value.finite_value.is_none()
     {
         return Err(ParseError::line(
             sample.line,
             1,
             ParseErrorKind::Exemplar,
-            "exemplar value must have a finite binary64 projection",
+            "finite exemplar value must have a binary64 projection",
         ));
     }
     Ok(())
@@ -927,15 +928,26 @@ fn assemble_histogram(
         if upper_bound.kind == NumberKind::NaN {
             return Err(semantic_error(wire.line, "histogram bound must not be NaN"));
         }
-        if let Some(exemplar) = &wire.exemplar
-            && number_cmp(&exemplar.value, &upper_bound) == Some(Ordering::Greater)
-        {
-            return Err(ParseError::line(
-                wire.line,
-                1,
-                ParseErrorKind::Exemplar,
-                "histogram exemplar exceeds its bucket upper bound",
-            ));
+        if let Some(exemplar) = &wire.exemplar {
+            match number_cmp(&exemplar.value, &upper_bound) {
+                Some(Ordering::Less | Ordering::Equal) => {}
+                Some(Ordering::Greater) => {
+                    return Err(ParseError::line(
+                        wire.line,
+                        1,
+                        ParseErrorKind::Exemplar,
+                        "histogram exemplar exceeds its bucket upper bound",
+                    ));
+                }
+                None => {
+                    return Err(ParseError::line(
+                        wire.line,
+                        1,
+                        ParseErrorKind::Exemplar,
+                        "histogram exemplar must be numerically comparable to its bucket bound",
+                    ));
+                }
+            }
         }
         buckets.push(HistogramBucket {
             upper_bound_lexeme: lexeme.clone(),

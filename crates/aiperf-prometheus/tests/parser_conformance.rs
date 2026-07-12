@@ -380,6 +380,27 @@ fn semantic_role_matrix_rejects_invalid_points_atomically() {
 }
 
 #[test]
+fn counter_nonfinite_exemplars_remain_tagged_while_bucket_nan_is_rejected() {
+    let counter = parse(
+        ExpositionFormat::OpenMetricsText100,
+        "# TYPE requests counter\nrequests_total 1 # {trace=\"terminal\"} +Inf\n# EOF\n",
+    )
+    .unwrap();
+    let point = &counter.family("requests").unwrap().metrics[0].points[0];
+    assert_eq!(
+        point.wire_samples[0].exemplar.as_ref().unwrap().value.kind,
+        NumberKind::PositiveInfinity
+    );
+
+    let bucket_error = parse(
+        ExpositionFormat::OpenMetricsText100,
+        "# TYPE latency histogram\nlatency_bucket{le=\"+Inf\"} 1 # {} NaN\n# EOF\n",
+    )
+    .unwrap_err();
+    assert_eq!(bucket_error.kind, ParseErrorKind::Exemplar);
+}
+
+#[test]
 fn metadata_interleaving_collisions_and_timestamp_violations_are_typed() {
     let duplicate = parse(
         ExpositionFormat::OpenMetricsText100,
@@ -504,6 +525,128 @@ fn configured_bounds_fail_before_any_partial_document_escapes() {
         bucket_error.kind,
         ParseErrorKind::LimitExceeded(LimitKind::BucketsPerPoint)
     );
+
+    let bounded_cases = [
+        (
+            ParseLimits {
+                max_metric_name_bytes: 1,
+                ..ParseLimits::default()
+            },
+            "long 1\n",
+            LimitKind::MetricNameBytes,
+        ),
+        (
+            ParseLimits {
+                max_label_name_bytes: 1,
+                ..ParseLimits::default()
+            },
+            "a{long=\"1\"} 1\n",
+            LimitKind::LabelNameBytes,
+        ),
+        (
+            ParseLimits {
+                max_label_value_bytes: 1,
+                ..ParseLimits::default()
+            },
+            "a{x=\"long\"} 1\n",
+            LimitKind::LabelValueBytes,
+        ),
+        (
+            ParseLimits {
+                max_metadata_value_bytes: 1,
+                ..ParseLimits::default()
+            },
+            "# HELP a long\na 1\n",
+            LimitKind::MetadataValueBytes,
+        ),
+        (
+            ParseLimits {
+                max_numeric_lexeme_bytes: 1,
+                ..ParseLimits::default()
+            },
+            "a 10\n",
+            LimitKind::NumericLexemeBytes,
+        ),
+        (
+            ParseLimits {
+                max_metrics: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a gauge\na{x=\"1\"} 1\na{x=\"2\"} 2\n",
+            LimitKind::Metrics,
+        ),
+        (
+            ParseLimits {
+                max_metric_points: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a gauge\na{x=\"1\"} 1\na{x=\"1\"} 2\n",
+            LimitKind::MetricPoints,
+        ),
+    ];
+    for (limits, body, kind) in bounded_cases {
+        let error = parser
+            .parse(
+                ExpositionFormat::PrometheusText004,
+                body.as_bytes(),
+                &limits,
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ParseErrorKind::LimitExceeded(kind));
+    }
+
+    let openmetrics_bounds = [
+        (
+            ParseLimits {
+                max_quantiles_per_point: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a summary\na{quantile=\"0.5\"} 1\na{quantile=\"0.9\"} 2\n# EOF\n",
+            LimitKind::QuantilesPerPoint,
+        ),
+        (
+            ParseLimits {
+                max_states_per_point: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a stateset\na{a=\"off\"} 0\na{a=\"on\"} 1\n# EOF\n",
+            LimitKind::StatesPerPoint,
+        ),
+        (
+            ParseLimits {
+                max_exemplars: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a counter\na_total{x=\"1\"} 1 # {trace=\"a\"} 1\na_total{x=\"2\"} 2 # {trace=\"b\"} 2\n# EOF\n",
+            LimitKind::Exemplars,
+        ),
+        (
+            ParseLimits {
+                max_exemplar_labels: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a counter\na_total 1 # {a=\"1\",b=\"2\"} 1\n# EOF\n",
+            LimitKind::ExemplarLabels,
+        ),
+        (
+            ParseLimits {
+                max_exemplar_label_codepoints: 1,
+                ..ParseLimits::default()
+            },
+            "# TYPE a counter\na_total 1 # {trace=\"x\"} 1\n# EOF\n",
+            LimitKind::ExemplarLabelCodepoints,
+        ),
+    ];
+    for (limits, body, kind) in openmetrics_bounds {
+        let error = parser
+            .parse(
+                ExpositionFormat::OpenMetricsText100,
+                body.as_bytes(),
+                &limits,
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ParseErrorKind::LimitExceeded(kind));
+    }
 }
 
 #[test]
@@ -573,6 +716,28 @@ fn tachometer_quoted_label_truncation_is_regressed() {
     assert_eq!(
         metric.labels["model_name"],
         "meta-llama/Llama-3.1-8B, revision=\"prod\", path=C:\\models"
+    );
+}
+
+#[test]
+fn classic_whitespace_and_trailing_label_comma_follow_text_004() {
+    let exposition = parse(
+        ExpositionFormat::PrometheusText004,
+        "  #\tHELP\tvalue\tcomma label  \n  # HELPful is only a comment\n  value{ first = \"a,b\" , second=\"c\", }  3  \t\n",
+    )
+    .unwrap();
+    let metric = &exposition.family("value").unwrap().metrics[0];
+    assert_eq!(metric.labels["first"], "a,b");
+    assert_eq!(metric.labels["second"], "c");
+    assert_eq!(
+        exposition
+            .family("value")
+            .unwrap()
+            .help
+            .as_ref()
+            .unwrap()
+            .value,
+        "comma label"
     );
 }
 
