@@ -36,7 +36,7 @@ GREEN/full verification commands and exact results:
     - `npm test`: `12 passed, 99 tests passed`
 
 commit hash(es):
-- pending
+- `6f40d5327`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
