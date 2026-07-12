@@ -72,6 +72,7 @@ use uuid::Uuid;
 use crate::protocol::{
     EvaluationCapabilityInventory, EvaluationDistributionCapability,
     EvaluationHostOperationCapability, EvaluationProviderCapability,
+    EvaluationUnavailableCapability, EvaluationUnavailableReasonCode,
     SupportedEvaluationCombination,
 };
 use crate::protocol_v2::RunnerComponentId;
@@ -381,13 +382,39 @@ pub fn build_evaluation_capability_inventory<'a>(
     resources.sort();
     resources.dedup();
 
+    // Known-but-inexecutable selections are reported with a closed, path-free
+    // reason code only. The redacted diagnostic strings the registry keeps for
+    // `validate` errors can name deployment roots and never cross into
+    // capabilities. On the compiled-supported platform an inexecutable stock
+    // distribution failed exact-content source-root/isolation attestation, which
+    // this layer folds into `ProviderRootsUnavailable`; an unsupported build
+    // target reports `UnsupportedPlatform` uniformly.
+    let unavailable_reason_code = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        EvaluationUnavailableReasonCode::ProviderRootsUnavailable
+    } else {
+        EvaluationUnavailableReasonCode::UnsupportedPlatform
+    };
     let mut provider_capabilities = Vec::with_capacity(providers.len());
     let mut supported_combinations = Vec::new();
+    let mut unavailable = Vec::new();
     for descriptor in providers.descriptors() {
         descriptor
             .validate()
             .map_err(|error| anyhow!(error.to_string()))?;
         let available_distributions = providers.available_distributions(&descriptor.provider_id);
+        let available_ids = available_distributions
+            .iter()
+            .map(|distribution| distribution.distribution_id.as_str())
+            .collect::<BTreeSet<_>>();
+        for declared in &descriptor.distributions {
+            if !available_ids.contains(declared.distribution_id.as_str()) {
+                unavailable.push(EvaluationUnavailableCapability {
+                    provider: descriptor.provider_id.as_str().to_owned(),
+                    distribution: declared.distribution_id.as_str().to_owned(),
+                    reason_code: unavailable_reason_code,
+                });
+            }
+        }
         if available_distributions.is_empty() {
             continue;
         }
@@ -448,7 +475,7 @@ pub fn build_evaluation_capability_inventory<'a>(
             distributions,
         });
         if executable_pair && !operations.is_empty() {
-            for distribution in available_distributions {
+            for distribution in &available_distributions {
                 supported_combinations.push(SupportedEvaluationCombination {
                     backend: "online_http".to_owned(),
                     workload: EVALUATION_WORKLOAD_DESCRIPTOR.id.to_owned(),
@@ -459,12 +486,25 @@ pub fn build_evaluation_capability_inventory<'a>(
                     isolation_profile_id: isolation_profile_id.to_owned(),
                 });
             }
+        } else if !executable_pair {
+            // Roots resolved for these distributions, but the exact image does
+            // not advertise the executable `online_http + evaluation` pair.
+            for distribution in &available_distributions {
+                unavailable.push(EvaluationUnavailableCapability {
+                    provider: descriptor.provider_id.as_str().to_owned(),
+                    distribution: distribution.distribution_id.as_str().to_owned(),
+                    reason_code: unavailable_reason_code,
+                });
+            }
         }
     }
+    unavailable.sort();
+    unavailable.dedup();
     Ok(EvaluationCapabilityInventory {
         providers: provider_capabilities,
         host_operations: host_operation_capabilities,
         supported_combinations,
+        unavailable,
     })
 }
 

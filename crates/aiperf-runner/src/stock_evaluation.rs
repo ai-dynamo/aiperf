@@ -64,8 +64,12 @@ const STAGING_ENVIRONMENT_DIRECTORIES: &[&str] = &[
 /// Python environment already containing the runner; no authored path crosses
 /// this seam.
 trait StockClosureSourceResolver: fmt::Debug + Send + Sync {
-    fn python_runtime_root(&self, resolver: &PythonRuntimeResolver) -> Result<PathBuf>;
-    fn system_root(&self, resolver: &SystemRootResolver) -> Result<PathBuf>;
+    fn python_runtime_root(
+        &self,
+        resolver: &PythonRuntimeResolver,
+        files: &[LogicalFile],
+    ) -> Result<PathBuf>;
+    fn system_root(&self, resolver: &SystemRootResolver, files: &[LogicalFile]) -> Result<PathBuf>;
     fn site_package_roots(&self) -> Result<Vec<PathBuf>>;
 }
 
@@ -73,61 +77,60 @@ trait StockClosureSourceResolver: fmt::Debug + Send + Sync {
 struct EnvironmentStockClosureSourceResolver;
 
 impl StockClosureSourceResolver for EnvironmentStockClosureSourceResolver {
-    fn python_runtime_root(&self, resolver: &PythonRuntimeResolver) -> Result<PathBuf> {
+    fn python_runtime_root(
+        &self,
+        resolver: &PythonRuntimeResolver,
+        files: &[LogicalFile],
+    ) -> Result<PathBuf> {
         validate_python_identity(
             &resolver.implementation,
             &resolver.version,
             &resolver.abi,
             &resolver.platform,
         )?;
-        let relative = strict_relative_path(
+        strict_relative_path(
             &resolver.executable_relative_path,
             "python executable_relative_path",
         )?;
-        let mut roots = Vec::new();
-        for executable in python_executable_candidates()? {
-            if let Ok(canonical) = executable.canonicalize()
-                && let Some(root) = canonical.parent().and_then(Path::parent)
-            {
-                roots.push(root.to_path_buf());
-            }
-        }
-        roots.sort();
-        roots.dedup();
-        let mut matches = Vec::new();
-        for root in roots {
-            let executable = root.join(&relative);
-            if verify_regular_file_digest(&executable, &resolver.executable_sha256).is_ok() {
-                matches.push(root);
-            }
-        }
         ensure!(
-            matches.len() == 1,
-            "pinned evaluator CPython runtime resolved to {} roots",
-            matches.len()
+            files.iter().any(|file| {
+                file.source_relative_path == resolver.executable_relative_path
+                    && file.artifact_content_sha256 == resolver.executable_sha256
+                    && file.executable
+            }),
+            "pinned evaluator CPython executable is absent from its logical closure"
         );
-        Ok(matches.remove(0))
+        select_unique_content_root(
+            &provider_environment_roots()?,
+            files,
+            "pinned evaluator CPython runtime",
+        )
     }
 
-    fn system_root(&self, resolver: &SystemRootResolver) -> Result<PathBuf> {
+    fn system_root(&self, resolver: &SystemRootResolver, files: &[LogicalFile]) -> Result<PathBuf> {
         ensure!(
             cfg!(all(target_os = "linux", target_arch = "x86_64")) && resolver.platform == PLATFORM,
             "stock evaluator system closure requires {PLATFORM}"
         );
-        Ok(PathBuf::from("/"))
+        select_unique_content_root(
+            &provider_environment_roots()?,
+            files,
+            "pinned evaluator system closure",
+        )
     }
 
     fn site_package_roots(&self) -> Result<Vec<PathBuf>> {
         let mut roots = Vec::new();
         for environment in provider_environment_roots()? {
-            let candidate = environment.join(SITE_PACKAGES_RELATIVE);
-            if candidate.is_dir() {
-                roots.push(candidate.canonicalize().with_context(|| {
-                    format!(
-                        "canonicalizing evaluator site-packages {}",
-                        candidate.display()
-                    )
-                })?);
+            let relative = strict_relative_path(
+                SITE_PACKAGES_RELATIVE,
+                "evaluator site-packages relative path",
+            )?;
+            let candidate = environment.join(&relative);
+            match std::fs::symlink_metadata(&candidate) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error).context("inspecting evaluator site-packages"),
+                Ok(_) => roots.push(verified_directory_under(&environment, &relative)?),
             }
         }
         roots.sort();
@@ -140,13 +143,60 @@ impl StockClosureSourceResolver for EnvironmentStockClosureSourceResolver {
     }
 }
 
-fn python_executable_candidates() -> Result<Vec<PathBuf>> {
-    let mut candidates = Vec::new();
-    for environment in provider_environment_roots()? {
-        candidates.push(environment.join("bin/python3.12"));
-        candidates.push(environment.join("bin/python"));
+fn select_unique_content_root(
+    roots: &[PathBuf],
+    files: &[LogicalFile],
+    label: &str,
+) -> Result<PathBuf> {
+    ensure!(!files.is_empty(), "{label} has no required files");
+    let mut matches = roots
+        .iter()
+        .filter(|root| logical_files_match(root, files))
+        .cloned()
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "{label} resolved to {} exact-content roots",
+        matches.len()
+    );
+    Ok(matches.remove(0))
+}
+
+fn logical_files_match(root: &Path, files: &[LogicalFile]) -> bool {
+    files.iter().all(|file| {
+        let Ok(relative) = strict_relative_path(&file.source_relative_path, "closure source path")
+        else {
+            return false;
+        };
+        let Ok(source) = verified_source_path(&root.join(&relative), &file.artifact_content_sha256)
+        else {
+            return false;
+        };
+        is_executable(&source).is_ok_and(|executable| executable == file.executable)
+    })
+}
+
+fn verified_directory_under(root: &Path, relative: &Path) -> Result<PathBuf> {
+    let root_metadata =
+        std::fs::symlink_metadata(root).context("inspecting evaluator source root")?;
+    ensure!(
+        root_metadata.file_type().is_dir() && !root_metadata.file_type().is_symlink(),
+        "evaluator source root is not a real directory"
+    );
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            bail!("evaluator source relative path is not canonical");
+        };
+        current.push(component);
+        let metadata =
+            std::fs::symlink_metadata(&current).context("inspecting evaluator source directory")?;
+        ensure!(
+            metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+            "evaluator source directory is not a real directory"
+        );
     }
-    Ok(candidates)
+    Ok(current)
 }
 
 fn provider_environment_roots() -> Result<Vec<PathBuf>> {
@@ -158,18 +208,23 @@ fn provider_environment_roots() -> Result<Vec<PathBuf>> {
             root.is_absolute(),
             "{PROVIDER_ROOTS_ENV} entries must be absolute"
         );
+        let metadata =
+            std::fs::symlink_metadata(&root).context("inspecting provider environment root")?;
+        ensure!(
+            metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+            "provider environment root is not a real directory"
+        );
         let root = root
             .canonicalize()
-            .with_context(|| format!("canonicalizing provider environment {}", root.display()))?;
-        ensure!(
-            root.is_dir(),
-            "provider environment root is not a directory"
-        );
+            .context("canonicalizing provider environment root")?;
         roots.push(root);
     }
     roots.sort();
     roots.dedup();
-    ensure!(!roots.is_empty(), "{PROVIDER_ROOTS_ENV} cannot be empty");
+    ensure!(
+        roots.len() == 4,
+        "{PROVIDER_ROOTS_ENV} must contain exactly four distinct deployment-owned roots"
+    );
     Ok(roots)
 }
 
@@ -1696,9 +1751,11 @@ impl ResolvedLaunchClosure {
                 .ok_or_else(|| anyhow!("missing shared closure {closure_id:?}"))?;
             let source_root = match &closure.resolver {
                 SharedClosureResolver::PythonRuntimeRoot(runtime) => {
-                    resolver.python_runtime_root(runtime)?
+                    resolver.python_runtime_root(runtime, &closure.files)?
                 }
-                SharedClosureResolver::SystemRoot(system) => resolver.system_root(system)?,
+                SharedClosureResolver::SystemRoot(system) => {
+                    resolver.system_root(system, &closure.files)?
+                }
             };
             for file in &closure.files {
                 let source = source_root.join(strict_relative_path(

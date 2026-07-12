@@ -33,7 +33,8 @@ use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::{EvaluationCapabilityInventory, PhaseSpec};
 use crate::protocol_v2::{
-    AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunResourceV2, RunnerComponentId,
+    AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
+    RunnerComponentId, RunnerFailureStageV2,
 };
 use crate::sidecar_input::PreparedSidecarInputs;
 
@@ -162,6 +163,9 @@ impl Default for ResourceRequirementsV2 {
 pub trait ValidatedBackendConfig: Debug + Send + Sync {
     /// Return the concrete startup-only value for a registered pair factory.
     fn as_any(&self) -> &dyn Any;
+
+    /// Consume the erased startup value for a pair that owns its preparation.
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
 }
 
 impl<T> ValidatedBackendConfig for T
@@ -171,12 +175,19 @@ where
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
 }
 
 /// Type-erased, strictly validated workload configuration.
 pub trait ValidatedWorkloadConfig: Debug + Send + Sync {
     /// Return the concrete startup-only value for a registered pair factory.
     fn as_any(&self) -> &dyn Any;
+
+    /// Consume the erased startup value for a pair that owns its preparation.
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
 }
 
 impl<T> ValidatedWorkloadConfig for T
@@ -184,6 +195,10 @@ where
     T: Any + Debug + Send + Sync,
 {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
         self
     }
 }
@@ -219,6 +234,112 @@ pub trait PreparedReportCommit: Debug {
     /// native report has been atomically persisted.
     fn commit(self: Box<Self>) -> Result<()>;
 }
+
+/// Typed prepared-operation failure with a coordinator-visible lifecycle stage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedRunFailure {
+    /// Stable failed stage.
+    pub stage: RunnerFailureStageV2,
+    /// Stable lowercase-snake-case diagnostic code.
+    pub code: String,
+    /// Secret-safe failure detail.
+    pub message: String,
+    /// Non-authoritative evidence that the coordinator may expose on failure.
+    pub diagnostic_artifacts: Vec<RunDiagnosticArtifactV2>,
+}
+
+impl PreparedRunFailure {
+    /// Construct a validated failure that must not produce a native report path.
+    pub fn new(
+        stage: RunnerFailureStageV2,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<Self> {
+        let code = code.into();
+        let message = message.into();
+        ensure!(
+            !code.is_empty()
+                && code.trim() == code
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
+            "prepared run failure code must be lowercase snake case"
+        );
+        ensure!(
+            !message.trim().is_empty(),
+            "prepared run failure message cannot be empty"
+        );
+        Ok(Self {
+            stage,
+            code,
+            message,
+            diagnostic_artifacts: Vec::new(),
+        })
+    }
+
+    /// Reporting-policy failure after execution produced only a diagnostic artifact.
+    pub fn reporting(code: impl Into<String>, message: impl Into<String>) -> Result<Self> {
+        Self::new(RunnerFailureStageV2::Reporting, code, message)
+    }
+
+    /// Attach already-persisted, content-addressed diagnostic evidence.
+    pub fn with_diagnostic_artifacts(
+        mut self,
+        mut artifacts: Vec<RunDiagnosticArtifactV2>,
+    ) -> Result<Self> {
+        for artifact in &artifacts {
+            let kind = artifact.kind.as_str();
+            ensure!(
+                !kind.is_empty()
+                    && kind.trim() == kind
+                    && kind.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    }),
+                "diagnostic artifact kind must be lowercase snake case"
+            );
+            ensure!(
+                artifact.relative_path.is_relative()
+                    && artifact
+                        .relative_path
+                        .components()
+                        .all(|component| matches!(component, std::path::Component::Normal(_))),
+                "diagnostic artifact path must be a normalized relative path"
+            );
+            ensure!(
+                artifact.relative_path != std::path::Path::new("native-v2.json"),
+                "diagnostic artifact cannot name the authoritative native report"
+            );
+            let digest = artifact.content_hash.as_str();
+            ensure!(
+                digest.len() == "blake3:".len() + 64
+                    && digest.starts_with("blake3:")
+                    && digest["blake3:".len()..]
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+                "diagnostic artifact hash must be a tagged lowercase BLAKE3 digest"
+            );
+        }
+        artifacts.sort_by(|left, right| {
+            (&left.kind, &left.relative_path).cmp(&(&right.kind, &right.relative_path))
+        });
+        ensure!(
+            artifacts.windows(2).all(|pair| {
+                pair[0].kind != pair[1].kind || pair[0].relative_path != pair[1].relative_path
+            }),
+            "diagnostic artifacts must have unique kind/path identities"
+        );
+        self.diagnostic_artifacts = artifacts;
+        Ok(self)
+    }
+}
+
+impl std::fmt::Display for PreparedRunFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for PreparedRunFailure {}
 
 /// Result returned after one prepared pair executes successfully.
 #[derive(Debug)]
@@ -395,7 +516,8 @@ impl RunnerRegistryBuilder {
                 && self
                     .evaluation_capabilities
                     .supported_combinations
-                    .is_empty(),
+                    .is_empty()
+                && self.evaluation_capabilities.unavailable.is_empty(),
             "runner evaluation capability inventory was configured twice"
         );
         self.evaluation_capabilities = capabilities;
@@ -754,6 +876,8 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // base build prevents capability code from growing mode string branches.
     crate::agentic_execution::register_agentic_workload(builder)?;
     crate::agentic_execution::register_agentic_online_pair(builder)?;
+    crate::telemetry_execution::register_telemetry_watch_workload(builder)?;
+    crate::telemetry_operation::register_online_http_telemetry_watch_pair(builder)?;
     crate::online_execution::register_online_http_pairs(builder)?;
     crate::online_execution::register_online_http_scheduled_pair(builder)?;
     crate::online_execution::register_online_http_static_accuracy_pair(builder)?;
@@ -792,12 +916,26 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
 
 /// Strict validated config owned by the built-in `online_http` backend.
 ///
-/// Endpoint profiles and transport policy are run-level inputs, so the backend
-/// currently owns an intentionally empty object. New backend-owned fields must
-/// be added here and therefore fail closed on older runners.
-#[derive(Debug, Deserialize)]
+/// Endpoint profiles own inference transport policy. The optional client block
+/// is accepted only when a workload requests the isolated control-plane HTTP
+/// capability, so no backend field can become inert on ordinary inference or
+/// source-free archive synchronization paths.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct OnlineHttpBackendConfigV2 {}
+pub struct OnlineHttpBackendConfigV2 {
+    /// Backend-wide ceilings inherited by every control-plane source handle.
+    #[serde(default)]
+    pub client: OnlineHttpControlClientConfigV2,
+}
+
+/// Strict backend ceiling for isolated control-plane HTTP.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OnlineHttpControlClientConfigV2 {
+    /// Maximum DNS/TCP/TLS/HTTP-handshake lifetime for any source.
+    #[serde(default)]
+    pub connect_timeout_ns: Option<i64>,
+}
 
 /// Strict validated config owned by the built-in `online_grpc` backend.
 ///
@@ -960,6 +1098,7 @@ pub struct ValidatedEndpointProfileV2 {
 /// invoke a built-in registry factory or independently decode endpoint policy.
 #[derive(Clone)]
 pub struct RunnerRunContext {
+    distribution_id: String,
     product_registry: Arc<AiperfRegistry>,
     execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
@@ -973,6 +1112,7 @@ impl Debug for RunnerRunContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RunnerRunContext")
+            .field("distribution_id", &self.distribution_id)
             .field("execution_factories", &self.execution_factories)
             .field(
                 "sidecar_inputs",
@@ -993,6 +1133,7 @@ impl Debug for RunnerRunContext {
 impl RunnerRunContext {
     /// Freeze one validated profile collection beside the process registry.
     pub fn new(
+        distribution_id: impl Into<String>,
         product_registry: Arc<AiperfRegistry>,
         execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
@@ -1010,7 +1151,18 @@ impl RunnerRunContext {
                 "duplicate validated endpoint profile ID {profile_id:?}"
             );
         }
+        let distribution_id = distribution_id.into();
+        ensure!(
+            distribution_id
+                .strip_prefix("blake3:")
+                .is_some_and(|value| value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())),
+            "runner context distribution ID must be blake3 plus 64 lowercase hexadecimal digits"
+        );
         Ok(Self {
+            distribution_id,
             product_registry,
             execution_factories,
             graph_inputs,
@@ -1019,6 +1171,11 @@ impl RunnerRunContext {
             endpoint_profiles: Arc::new(profiles),
             endpoint_profile_indexes: Arc::new(endpoint_profile_indexes),
         })
+    }
+
+    /// Exact executable distribution identity validated by the coordinator.
+    pub fn distribution_id(&self) -> &str {
+        &self.distribution_id
     }
 
     /// Borrow the single frozen product registry composed by the coordinator.
@@ -1306,7 +1463,7 @@ pub static ONLINE_HTTP_BACKEND_DESCRIPTOR: RunnerBackendDescriptor = RunnerBacke
     description: "Clock-injected native HTTP transport over a real clock",
     clock: RunnerClockKind::Real,
     semantic_responses: true,
-    features: &["h1", "h2c", "http", "tls", "uds"],
+    features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
 };
 
 /// Built-in online gRPC backend descriptor.
@@ -1357,12 +1514,23 @@ impl RunnerBackendFactory for OnlineHttpBackendFactoryV2 {
     fn validate(
         &self,
         authored: &RawValue,
-        _requirements: &WorkloadRequirements,
+        requirements: &WorkloadRequirements,
     ) -> Result<Box<dyn ValidatedBackendConfig>> {
-        Ok(Box::new(strict_decode::<OnlineHttpBackendConfigV2>(
-            authored,
-            "online_http backend config",
-        )?))
+        let config =
+            strict_decode::<OnlineHttpBackendConfigV2>(authored, "online_http backend config")?;
+        ensure!(
+            config
+                .client
+                .connect_timeout_ns
+                .is_none_or(|timeout| timeout > 0),
+            "online_http control client connect_timeout_ns must be positive"
+        );
+        ensure!(
+            requirements.backend_features.contains("control_plane_http")
+                || config.client == OnlineHttpControlClientConfigV2::default(),
+            "online_http client config is forbidden when the workload does not request control_plane_http"
+        );
+        Ok(Box::new(config))
     }
 }
 
@@ -1810,6 +1978,7 @@ mod tests {
             session_header: None,
         };
         let context = RunnerRunContext::new(
+            format!("blake3:{}", "a".repeat(64)),
             Arc::new(AiperfRegistry::builtin().unwrap()),
             crate::execution_factories::native_execution_factories(),
             Arc::new(crate::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
@@ -1914,6 +2083,33 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_backend_timeout_is_positive_and_never_inert() {
+        let factory = OnlineHttpBackendFactoryV2;
+        let control_requirements = WorkloadRequirements {
+            backend_features: BTreeSet::from(["control_plane_http".to_owned()]),
+            ..WorkloadRequirements::inference()
+        };
+        let valid = RawValue::from_string(
+            serde_json::json!({"client": {"connect_timeout_ns": 50_000_000_i64}}).to_string(),
+        )
+        .unwrap();
+        assert!(factory.validate(&valid, &control_requirements).is_ok());
+
+        let invalid = RawValue::from_string(
+            serde_json::json!({"client": {"connect_timeout_ns": 0}}).to_string(),
+        )
+        .unwrap();
+        assert!(factory.validate(&invalid, &control_requirements).is_err());
+
+        let ordinary_requirements = WorkloadRequirements::inference();
+        let inert = RawValue::from_string(
+            serde_json::json!({"client": {"connect_timeout_ns": 50_000_000_i64}}).to_string(),
+        )
+        .unwrap();
+        assert!(factory.validate(&inert, &ordinary_requirements).is_err());
+    }
+
+    #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
         let evaluation_available = !registry
@@ -1932,7 +2128,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_backends
         );
-        let mut expected_workloads = vec!["agentic", "graph", "scheduled", "static_accuracy"];
+        let mut expected_workloads = vec![
+            "agentic",
+            "graph",
+            "scheduled",
+            "static_accuracy",
+            "telemetry_watch",
+        ];
         if evaluation_available {
             expected_workloads.insert(1, "evaluation");
         }
@@ -1953,6 +2155,7 @@ mod tests {
             ("online_http", "graph"),
             ("online_http", "scheduled"),
             ("online_http", "static_accuracy"),
+            ("online_http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynamo-offline"))]
         let mut expected_supported = vec![
@@ -1961,6 +2164,7 @@ mod tests {
             ("online_http", "graph"),
             ("online_http", "scheduled"),
             ("online_http", "static_accuracy"),
+            ("online_http", "telemetry_watch"),
         ];
         if evaluation_available {
             let index = expected_supported
@@ -1975,19 +2179,23 @@ mod tests {
             ("dynamo_offline", "scheduled"),
             ("online_grpc", "graph"),
             ("online_grpc", "scheduled"),
+            ("online_grpc", "telemetry_watch"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),
             ("online_http", "static_accuracy"),
+            ("online_http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynamo-offline"))]
         let mut expected_static = vec![
             ("online_grpc", "graph"),
             ("online_grpc", "scheduled"),
+            ("online_grpc", "telemetry_watch"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),
             ("online_http", "static_accuracy"),
+            ("online_http", "telemetry_watch"),
         ];
         if evaluation_available {
             let index = expected_static
@@ -2025,5 +2233,49 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("unknown field `unknown`"), "{error}");
+    }
+
+    #[test]
+    fn prepared_failure_accepts_only_safe_non_report_diagnostics() {
+        let artifact = RunDiagnosticArtifactV2 {
+            kind: "archive_failure_diagnostic".to_owned(),
+            relative_path: "archive-failure-diagnostic.json".into(),
+            content_hash: format!("blake3:{}", "a".repeat(64)),
+        };
+        let failure = PreparedRunFailure::reporting("archive_failed", "archive failed")
+            .unwrap()
+            .with_diagnostic_artifacts(vec![artifact.clone()])
+            .unwrap();
+        assert_eq!(failure.diagnostic_artifacts, vec![artifact]);
+
+        for invalid in [
+            RunDiagnosticArtifactV2 {
+                kind: "ArchiveFailure".to_owned(),
+                relative_path: "diagnostic.json".into(),
+                content_hash: format!("blake3:{}", "a".repeat(64)),
+            },
+            RunDiagnosticArtifactV2 {
+                kind: "archive_failure".to_owned(),
+                relative_path: "../diagnostic.json".into(),
+                content_hash: format!("blake3:{}", "a".repeat(64)),
+            },
+            RunDiagnosticArtifactV2 {
+                kind: "archive_failure".to_owned(),
+                relative_path: "native-v2.json".into(),
+                content_hash: format!("blake3:{}", "a".repeat(64)),
+            },
+            RunDiagnosticArtifactV2 {
+                kind: "archive_failure".to_owned(),
+                relative_path: "diagnostic.json".into(),
+                content_hash: "sha256:wrong".to_owned(),
+            },
+        ] {
+            assert!(
+                PreparedRunFailure::reporting("archive_failed", "archive failed")
+                    .unwrap()
+                    .with_diagnostic_artifacts(vec![invalid])
+                    .is_err()
+            );
+        }
     }
 }

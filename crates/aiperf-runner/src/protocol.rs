@@ -49,6 +49,9 @@ pub struct RunnerCapabilities {
     pub evaluation_host_operations: Vec<EvaluationHostOperationCapability>,
     /// Fully executable backend/workload/provider/distribution combinations.
     pub supported_evaluation_combinations: Vec<SupportedEvaluationCombination>,
+    /// Known stock provider/distribution selections that this exact image
+    /// cannot execute, expressed only with closed path-free reason codes.
+    pub evaluation_unavailable: Vec<EvaluationUnavailableCapability>,
     /// Dataset variants accepted by the current protocol.
     pub dataset_types: &'static [&'static str],
     /// Phase variants accepted by the current protocol.
@@ -119,6 +122,7 @@ impl RunnerCapabilities {
             evaluation_providers: evaluation.providers,
             evaluation_host_operations: evaluation.host_operations,
             supported_evaluation_combinations: evaluation.supported_combinations,
+            evaluation_unavailable: evaluation.unavailable,
             dataset_types: &["synthetic", "file", "public"],
             phase_types: &[
                 "concurrency",
@@ -234,6 +238,33 @@ pub struct SupportedEvaluationCombination {
     pub isolation_profile_id: String,
 }
 
+/// Closed, secret-free reason why one known evaluator distribution is absent
+/// from the executable capability combinations.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationUnavailableReasonCode {
+    /// The deployment supplied no complete exact-content source-root closure.
+    ProviderRootsUnavailable,
+    /// The compiled host OS/architecture cannot execute the stock closure.
+    UnsupportedPlatform,
+    /// The mandatory process-tree isolation implementation did not attest.
+    IsolationUnavailable,
+}
+
+/// One known provider/distribution selection unavailable in this exact image.
+///
+/// Deliberately no detail string exists: capabilities must never publish host
+/// paths, environment contents, package errors, or other deployment secrets.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EvaluationUnavailableCapability {
+    /// Exact provider factory ID.
+    pub provider: String,
+    /// Exact immutable launch distribution ID.
+    pub distribution: String,
+    /// Closed machine-readable unavailability reason.
+    pub reason_code: EvaluationUnavailableReasonCode,
+}
+
 /// Evaluator capability inputs composed from the same frozen registries used
 /// for strict validation and execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -244,6 +275,9 @@ pub struct EvaluationCapabilityInventory {
     pub host_operations: Vec<EvaluationHostOperationCapability>,
     /// Exact executable combinations.
     pub supported_combinations: Vec<SupportedEvaluationCombination>,
+    /// Known selections omitted from executable combinations with stable,
+    /// path-free reason codes.
+    pub unavailable: Vec<EvaluationUnavailableCapability>,
 }
 
 /// One complete single-run request read from stdin.
@@ -900,6 +934,44 @@ impl RunTerminal {
             error_kind: Some(error_kind.into()),
             error: Some(error.into()),
             runner_version: env!("CARGO_PKG_VERSION"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EvaluationUnavailableCapability, EvaluationUnavailableReasonCode};
+
+    #[test]
+    fn evaluation_unavailability_serializes_only_closed_reason_codes() {
+        for (reason_code, expected) in [
+            (
+                EvaluationUnavailableReasonCode::ProviderRootsUnavailable,
+                "provider_roots_unavailable",
+            ),
+            (
+                EvaluationUnavailableReasonCode::UnsupportedPlatform,
+                "unsupported_platform",
+            ),
+            (
+                EvaluationUnavailableReasonCode::IsolationUnavailable,
+                "isolation_unavailable",
+            ),
+        ] {
+            let value = serde_json::to_value(EvaluationUnavailableCapability {
+                provider: "provider".to_owned(),
+                distribution: "distribution".to_owned(),
+                reason_code,
+            })
+            .unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({
+                    "provider": "provider",
+                    "distribution": "distribution",
+                    "reason_code": expected,
+                })
+            );
         }
     }
 }
