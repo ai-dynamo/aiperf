@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use aiperf_accuracy::{
     ArtifactVisibility, CanonicalJson, CaseOutcomeKind, EvaluationCaseId, EvaluationCaseTemplateId,
     EvaluationFinishCandidate, PublicScoreProjectionPolicy, SealedEvaluationArtifacts, is_sha256,
-    redact_diagnostic, validate_no_secret_control_value,
+    validate_no_secret_control_value,
 };
 use aiperf_metrics::{
     EvaluationAggregateMetricReport, EvaluationArtifactReport, EvaluationCaseErrorReport,
@@ -172,11 +172,11 @@ pub fn build_evaluation_report(
                         stage: error.stage.to_string(),
                         kind: error.error_kind.clone(),
                         retryable: error.retryable,
-                        message: redact_diagnostic(&error.message),
+                        message: "Evaluator provider reported an infrastructure error".to_string(),
                     }),
                 )
             }
-            CaseOutcomeKind::Cancelled { stage, reason } => {
+            CaseOutcomeKind::Cancelled { stage, reason: _ } => {
                 cancelled_count += 1;
                 (
                     EvaluationCaseOutcomeKind::Cancelled,
@@ -187,7 +187,7 @@ pub fn build_evaluation_report(
                         stage: stage.to_string(),
                         kind: "cancelled".to_string(),
                         retryable: false,
-                        message: redact_diagnostic(reason),
+                        message: "Evaluation was cancelled".to_string(),
                     }),
                 )
             }
@@ -592,7 +592,7 @@ mod tests {
                             EvaluationStage::new("verifier").unwrap(),
                             "verifier_failure",
                             false,
-                            "fixture failed",
+                            "HIDDEN_EXPECTED_ANSWER_INFRA_SENTINEL",
                         )
                         .unwrap(),
                     },
@@ -602,7 +602,7 @@ mod tests {
                     case_id: EvaluationCaseId::new("case-cancelled").unwrap(),
                     outcome: CaseOutcomeKind::Cancelled {
                         stage: EvaluationStage::new("solving").unwrap(),
-                        reason: "run cancelled".to_string(),
+                        reason: "HIDDEN_PRIVATE_TEST_CANCEL_SENTINEL".to_string(),
                     },
                     artifact_refs: Vec::new(),
                 },
@@ -736,6 +736,9 @@ mod tests {
             report.artifacts[0].normalized_result_sha256,
             Some("0".repeat(64))
         );
+        let encoded = serde_json::to_string(&report).unwrap();
+        assert!(!encoded.contains("HIDDEN_EXPECTED_ANSWER_INFRA_SENTINEL"));
+        assert!(!encoded.contains("HIDDEN_PRIVATE_TEST_CANCEL_SENTINEL"));
     }
 
     #[test]
