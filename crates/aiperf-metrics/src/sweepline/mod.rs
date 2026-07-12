@@ -21,7 +21,8 @@ pub use kv_cache::{
 };
 pub use stats::{
     ClippedSegment, SweepLineStats, build_clipped_segments, compute_active_weighted_stats,
-    compute_time_weighted_stats,
+    compute_divided_active_weighted_stats, compute_divided_time_weighted_stats,
+    compute_divided_weighted_stats, compute_time_weighted_stats,
 };
 
 /// Nanoseconds per second, used to convert token/ns curves at the report boundary.
@@ -447,10 +448,6 @@ pub struct SweepLineCurves {
     pub prefill_concurrency: StepFn,
     /// Combined prefill and decode throughput in tokens/ns.
     pub total_throughput: StepFn,
-    /// Decode throughput per active user in tokens/ns/user.
-    pub decode_throughput_per_user: StepFn,
-    /// Prefill throughput per active user in tokens/ns/user.
-    pub prefill_throughput_per_user: StepFn,
     /// KV-cache tokens held across active requests.
     pub tokens_in_flight: StepFn,
 }
@@ -596,8 +593,6 @@ impl SweepLineCurves {
                 compute_tokens_in_flight(),
             )
         };
-        let decode_throughput_per_user = decode_throughput.divide(&decode_concurrency);
-        let prefill_throughput_per_user = prefill_throughput.divide(&prefill_concurrency);
         Self {
             concurrency,
             decode_throughput,
@@ -605,8 +600,6 @@ impl SweepLineCurves {
             decode_concurrency,
             prefill_concurrency,
             total_throughput,
-            decode_throughput_per_user,
-            prefill_throughput_per_user,
             tokens_in_flight,
         }
     }
@@ -617,42 +610,87 @@ impl SweepLineCurves {
         window_start_ns: f64,
         window_end_ns: f64,
     ) -> Vec<SweepMetricResult> {
-        let effective = EFFECTIVE_METRIC_SPECS;
-        let curves = [
-            &self.concurrency,
+        // Effective and active per-user statistics share ratio boundaries and value
+        // ordering, so each pair is computed once without retaining a ratio curve.
+        let decode_per_user = compute_divided_weighted_stats(
             &self.decode_throughput,
-            &self.prefill_throughput,
             &self.decode_concurrency,
+            window_start_ns,
+            window_end_ns,
+        );
+        let prefill_per_user = compute_divided_weighted_stats(
+            &self.prefill_throughput,
             &self.prefill_concurrency,
-            &self.total_throughput,
-            &self.decode_throughput_per_user,
-            &self.prefill_throughput_per_user,
-            &self.tokens_in_flight,
-        ];
-        let active_specs = ACTIVE_METRIC_SPECS;
-        let active = [
-            (
-                active_specs[0],
+            window_start_ns,
+            window_end_ns,
+        );
+        let compute_effective = || {
+            let mut results = Vec::with_capacity(EFFECTIVE_METRIC_SPECS.len());
+            for (spec, curve) in EFFECTIVE_METRIC_SPECS[..6].iter().copied().zip([
+                &self.concurrency,
                 &self.decode_throughput,
-                &self.decode_concurrency,
-            ),
-            (
-                active_specs[1],
                 &self.prefill_throughput,
-                &self.prefill_concurrency,
-            ),
-            (
-                active_specs[2],
-                &self.decode_throughput_per_user,
                 &self.decode_concurrency,
-            ),
-            (
-                active_specs[3],
-                &self.prefill_throughput_per_user,
                 &self.prefill_concurrency,
-            ),
-            (active_specs[4], &self.total_throughput, &self.concurrency),
-        ];
+                &self.total_throughput,
+            ]) {
+                results.push(SweepMetricResult::from_stats(
+                    spec,
+                    compute_time_weighted_stats(curve, window_start_ns, window_end_ns),
+                ));
+            }
+            results.push(SweepMetricResult::from_stats(
+                EFFECTIVE_METRIC_SPECS[6],
+                decode_per_user.0,
+            ));
+            results.push(SweepMetricResult::from_stats(
+                EFFECTIVE_METRIC_SPECS[7],
+                prefill_per_user.0,
+            ));
+            results.push(SweepMetricResult::from_stats(
+                EFFECTIVE_METRIC_SPECS[8],
+                compute_time_weighted_stats(&self.tokens_in_flight, window_start_ns, window_end_ns),
+            ));
+            results
+        };
+        let compute_active = || {
+            let mut results = Vec::with_capacity(ACTIVE_METRIC_SPECS.len());
+            for (spec, rate, mask) in [
+                (
+                    ACTIVE_METRIC_SPECS[0],
+                    &self.decode_throughput,
+                    &self.decode_concurrency,
+                ),
+                (
+                    ACTIVE_METRIC_SPECS[1],
+                    &self.prefill_throughput,
+                    &self.prefill_concurrency,
+                ),
+            ] {
+                results.push(SweepMetricResult::from_stats(
+                    spec,
+                    compute_active_weighted_stats(rate, mask, window_start_ns, window_end_ns),
+                ));
+            }
+            results.push(SweepMetricResult::from_stats(
+                ACTIVE_METRIC_SPECS[2],
+                decode_per_user.1,
+            ));
+            results.push(SweepMetricResult::from_stats(
+                ACTIVE_METRIC_SPECS[3],
+                prefill_per_user.1,
+            ));
+            results.push(SweepMetricResult::from_stats(
+                ACTIVE_METRIC_SPECS[4],
+                compute_active_weighted_stats(
+                    &self.total_throughput,
+                    &self.concurrency,
+                    window_start_ns,
+                    window_end_ns,
+                ),
+            ));
+            results
+        };
         if self
             .tokens_in_flight
             .len()
@@ -660,52 +698,12 @@ impl SweepLineCurves {
             >= PARALLEL_SWEEP_MIN_ROWS
             && rayon::current_num_threads() > 1
         {
-            let (mut effective, active) = rayon::join(
-                || {
-                    effective
-                        .into_iter()
-                        .zip(curves)
-                        .map(|(spec, curve)| {
-                            SweepMetricResult::from_stats(
-                                spec,
-                                compute_time_weighted_stats(curve, window_start_ns, window_end_ns),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                },
-                || {
-                    active
-                        .into_iter()
-                        .map(|(spec, rate, mask)| {
-                            SweepMetricResult::from_stats(
-                                spec,
-                                compute_active_weighted_stats(
-                                    rate,
-                                    mask,
-                                    window_start_ns,
-                                    window_end_ns,
-                                ),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                },
-            );
+            let (mut effective, active) = rayon::join(compute_effective, compute_active);
             effective.extend(active);
             return effective;
         }
-        let mut results = Vec::with_capacity(14);
-        for (spec, curve) in effective.into_iter().zip(curves) {
-            results.push(SweepMetricResult::from_stats(
-                spec,
-                compute_time_weighted_stats(curve, window_start_ns, window_end_ns),
-            ));
-        }
-        for (spec, rate, mask) in active {
-            results.push(SweepMetricResult::from_stats(
-                spec,
-                compute_active_weighted_stats(rate, mask, window_start_ns, window_end_ns),
-            ));
-        }
+        let mut results = compute_effective();
+        results.extend(compute_active());
         results
     }
 }
