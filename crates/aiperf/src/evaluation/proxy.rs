@@ -20,19 +20,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::fs;
+use std::future::Future;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context as TaskContext, Poll};
+#[cfg(test)]
 use std::time::Duration;
 
 use aiperf_accuracy::{
     CanonicalJson, EvaluationCaseId, HostOperationEvent, HostOperationRequest, HostResponseMode,
     ScopedProxyBinding, ScopedProxyGrant, validate_no_secret_control_value,
 };
+use aiperf_clock::Clock;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use axum::extract::{ConnectInfo, Request, State};
@@ -42,7 +46,8 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
 use axum::routing::post;
 use axum::{Router, serve};
-use futures::stream;
+use futures::StreamExt;
+use futures::stream::{self, FuturesUnordered};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -67,7 +72,131 @@ const MAX_PROXY_BODY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROXY_AGGREGATE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAX_PROXY_STREAM_EVENTS: u64 = 10_000_000;
 const MAX_PROXY_LIFETIME_MS: u64 = 24 * 60 * 60 * 1_000;
-const PROXY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const PROXY_ACCEPT_BACKOFF_NS: i64 = 1_000_000_000;
+const PROXY_SHUTDOWN_TIMEOUT_NS: i64 = 5_000_000_000;
+const PROXY_TIMING_QUEUE_CAPACITY: usize = 16;
+
+/// Send-safe timing policy used by the network-serving proxy task.
+///
+/// The production implementation is a bounded request bridge to the local
+/// thread's injected [`Clock`], preserving virtual-clock and real-clock
+/// behavior without making `Clock` or its `Rc` graph cross threads.
+pub trait ProxyTimingPolicy: Send + Sync {
+    /// Sleep through the owning Clock; `false` means the driver was revoked.
+    fn sleep_ns(&self, duration_ns: i64) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
+}
+
+struct ProxyClockSleepRequest {
+    duration_ns: i64,
+    completed: oneshot::Sender<()>,
+}
+
+#[derive(Debug)]
+struct ClockProxyTimingPolicy {
+    sender: mpsc::Sender<ProxyClockSleepRequest>,
+}
+
+impl ProxyTimingPolicy for ClockProxyTimingPolicy {
+    fn sleep_ns(&self, duration_ns: i64) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        Box::pin(async move {
+            let (completed, receiver) = oneshot::channel();
+            if self
+                .sender
+                .send(ProxyClockSleepRequest {
+                    duration_ns,
+                    completed,
+                })
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            receiver.await.is_ok()
+        })
+    }
+}
+
+struct ClockProxyTimingDriver {
+    clock: Rc<dyn Clock>,
+    receiver: mpsc::Receiver<ProxyClockSleepRequest>,
+}
+
+impl ClockProxyTimingDriver {
+    async fn run(mut self) {
+        let mut receiver_open = true;
+        let mut sleepers = FuturesUnordered::new();
+        loop {
+            tokio::select! {
+                request = self.receiver.recv(), if receiver_open => match request {
+                    Some(request) => {
+                        let clock = self.clock.clone();
+                        sleepers.push(async move {
+                            clock.sleep(request.duration_ns).await;
+                            let _ = request.completed.send(());
+                        });
+                    }
+                    None => receiver_open = false,
+                },
+                Some(()) = sleepers.next(), if !sleepers.is_empty() => {}
+                else => break,
+            }
+        }
+    }
+}
+
+/// Owned proxy timing bridge and its local Clock driver.
+pub struct ProxyTimingRuntime {
+    policy: Arc<dyn ProxyTimingPolicy>,
+    driver: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for ProxyTimingRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProxyTimingRuntime")
+            .field("driver", &self.driver.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProxyTimingRuntime {
+    /// Spawn a local bounded timing driver over the run's injected Clock.
+    ///
+    /// This must be called inside the thread-per-core `LocalSet` that owns the
+    /// evaluation runtime.
+    pub fn from_clock(clock: Rc<dyn Clock>) -> Self {
+        let (sender, receiver) = mpsc::channel(PROXY_TIMING_QUEUE_CAPACITY);
+        let policy: Arc<dyn ProxyTimingPolicy> = Arc::new(ClockProxyTimingPolicy { sender });
+        let driver = tokio::task::spawn_local(ClockProxyTimingDriver { clock, receiver }.run());
+        Self {
+            policy,
+            driver: Some(driver),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn yielding() -> Self {
+        #[derive(Debug)]
+        struct YieldingPolicy;
+
+        impl ProxyTimingPolicy for YieldingPolicy {
+            fn sleep_ns(
+                &self,
+                _duration_ns: i64,
+            ) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+                Box::pin(async {
+                    tokio::task::yield_now().await;
+                    true
+                })
+            }
+        }
+
+        Self {
+            policy: Arc::new(YieldingPolicy),
+            driver: None,
+        }
+    }
+}
 
 /// Registered local compatibility dialect over the shared typed host boundary.
 pub trait CompatibilityProxyDialect: Send + Sync {
@@ -369,15 +498,33 @@ impl ProxyRejection {
     }
 }
 
-#[derive(Debug)]
 struct BoundedUnixListener {
     listener: UnixListener,
     permits: Arc<Semaphore>,
+    timing: Arc<dyn ProxyTimingPolicy>,
+}
+
+impl std::fmt::Debug for BoundedUnixListener {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BoundedUnixListener")
+            .field("local_addr", &self.listener.local_addr())
+            .field("available_permits", &self.permits.available_permits())
+            .finish_non_exhaustive()
+    }
 }
 
 impl BoundedUnixListener {
-    fn new(listener: UnixListener, permits: Arc<Semaphore>) -> Self {
-        Self { listener, permits }
+    fn new(
+        listener: UnixListener,
+        permits: Arc<Semaphore>,
+        timing: Arc<dyn ProxyTimingPolicy>,
+    ) -> Self {
+        Self {
+            listener,
+            permits,
+            timing,
+        }
     }
 }
 
@@ -455,7 +602,9 @@ impl axum::serve::Listener for BoundedUnixListener {
                 Err(error) => {
                     drop(permit);
                     tracing::error!(%error, "evaluator proxy accept failed; backing off");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    if !self.timing.sleep_ns(PROXY_ACCEPT_BACKOFF_NS).await {
+                        tokio::task::yield_now().await;
+                    }
                 }
             }
         }
@@ -1679,6 +1828,8 @@ pub struct EvaluatorCompatibilityProxy {
     runtime: Arc<ProxyGrantRuntime>,
     connection_permits: Arc<Semaphore>,
     connection_capacity: usize,
+    timing: Arc<dyn ProxyTimingPolicy>,
+    timing_driver: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     shutdown: watch::Sender<bool>,
     task: tokio::sync::Mutex<Option<JoinHandle<std::io::Result<()>>>>,
 }
@@ -1703,6 +1854,9 @@ impl Drop for EvaluatorCompatibilityProxy {
         let _ = self.shutdown.send(true);
         if let Some(task) = self.task.get_mut().take() {
             task.abort();
+        }
+        if let Some(driver) = self.timing_driver.get_mut().take() {
+            driver.abort();
         }
         let _ = fs::remove_file(&self.socket_path);
     }
@@ -1735,21 +1889,34 @@ impl CompatibilityProxyIngress for EvaluatorCompatibilityProxy {
         self.runtime.revoke();
         let _ = self.shutdown.send(true);
         let join_result = if let Some(mut task) = self.task.lock().await.take() {
-            match tokio::time::timeout(PROXY_SHUTDOWN_TIMEOUT, &mut task).await {
-                Ok(result) => result
+            let deadline = self.timing.sleep_ns(PROXY_SHUTDOWN_TIMEOUT_NS);
+            tokio::pin!(deadline);
+            tokio::select! {
+                biased;
+                result = &mut task => result
                     .context("joining evaluator compatibility proxy")?
                     .context("serving evaluator compatibility proxy"),
-                Err(_) => {
+                clock_available = &mut deadline => {
                     task.abort();
                     let _ = task.await;
-                    Err(anyhow!(
-                        "evaluator compatibility proxy exceeded its bounded shutdown deadline"
-                    ))
+                    if clock_available {
+                        Err(anyhow!(
+                            "evaluator compatibility proxy exceeded its bounded shutdown deadline"
+                        ))
+                    } else {
+                        Err(anyhow!(
+                            "evaluator compatibility proxy Clock timing driver stopped during shutdown"
+                        ))
+                    }
                 }
             }
         } else {
             Ok(())
         };
+        if let Some(driver) = self.timing_driver.lock().await.take() {
+            driver.abort();
+            let _ = driver.await;
+        }
         match fs::remove_file(&self.socket_path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1765,6 +1932,7 @@ pub async fn start_evaluator_compatibility_proxy(
     grant_started_ns: i64,
     process_scope: Arc<dyn ProxyProcessScopeAuthorizer>,
     dialects: CompatibilityProxyDialectRegistry,
+    timing: ProxyTimingRuntime,
 ) -> Result<(EvaluatorCompatibilityProxy, ProxyOperationReceiver)> {
     validate_proxy_binding(&binding)?;
     validate_dialect_grants(&binding.grant, &dialects)?;
@@ -1792,7 +1960,11 @@ pub async fn start_evaluator_compatibility_proxy(
     )
     .context("proxy connection capacity exceeds usize")?;
     let connection_permits = Arc::new(Semaphore::new(connection_capacity));
-    let listener = BoundedUnixListener::new(listener, Arc::clone(&connection_permits));
+    let listener = BoundedUnixListener::new(
+        listener,
+        Arc::clone(&connection_permits),
+        Arc::clone(&timing.policy),
+    );
     let event_capacity = usize::try_from(binding.grant.max_stream_events.clamp(2, 1024))
         .context("proxy stream-event capacity exceeds usize")?;
     let (sender, receiver) = mpsc::channel(capacity);
@@ -1837,6 +2009,8 @@ pub async fn start_evaluator_compatibility_proxy(
             runtime: Arc::clone(&runtime),
             connection_permits,
             connection_capacity,
+            timing: timing.policy,
+            timing_driver: tokio::sync::Mutex::new(timing.driver),
             shutdown,
             task: tokio::sync::Mutex::new(Some(task)),
         },
@@ -2317,11 +2491,78 @@ mod tests {
         HostOperationTerminal, HostOperationUsage, LogicalCallId, LogicalServiceId,
         OperationPurpose, ScopedProxySecret, SemanticAttemptId, SemanticOperationId,
     };
+    use aiperf_clock::{RealClock, SimClock};
+    use aiperf_graph::runtime::drive_sim;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
     use super::*;
     use crate::evaluation::ledger::{HostTerminalClass, OperationLedger, OperationRegistration};
+
+    #[test]
+    fn proxy_timing_runtime_uses_exact_virtual_clock_sleep() {
+        const SLEEP_NS: i64 = 7_321;
+
+        let clock = Rc::new(SimClock::new());
+        let clock_for_run = Rc::clone(&clock);
+        let outcome = drive_sim(Rc::clone(&clock), move |_handle| async move {
+            let mut timing = ProxyTimingRuntime::from_clock(clock_for_run.clone());
+            assert!(timing.policy.sleep_ns(SLEEP_NS).await);
+            assert_eq!(clock_for_run.now_ns(), SLEEP_NS);
+
+            let driver = timing.driver.take().unwrap();
+            drop(timing);
+            driver.await.unwrap();
+        });
+
+        assert!(!outcome.deadlocked);
+        assert_eq!(clock.now_ns(), SLEEP_NS);
+    }
+
+    #[test]
+    fn proxy_timing_runtime_keeps_concurrent_deadlines_on_one_clock_origin() {
+        const FIRST_NS: i64 = 7_000;
+        const SECOND_NS: i64 = 11_000;
+
+        let clock = Rc::new(SimClock::new());
+        let clock_for_run = Rc::clone(&clock);
+        let outcome = drive_sim(Rc::clone(&clock), move |_handle| async move {
+            let mut timing = ProxyTimingRuntime::from_clock(clock_for_run.clone());
+            let (first, second) = tokio::join!(
+                timing.policy.sleep_ns(FIRST_NS),
+                timing.policy.sleep_ns(SECOND_NS),
+            );
+            assert!(first && second);
+            assert_eq!(clock_for_run.now_ns(), SECOND_NS);
+
+            let driver = timing.driver.take().unwrap();
+            drop(timing);
+            driver.await.unwrap();
+        });
+
+        assert!(!outcome.deadlocked);
+        assert_eq!(clock.now_ns(), SECOND_NS);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn proxy_timing_runtime_uses_real_clock_sleep() {
+        const SLEEP_NS: i64 = 100_000;
+
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let clock = RealClock::new();
+                let started_ns = clock.now_ns();
+                let mut timing = ProxyTimingRuntime::from_clock(clock.clone());
+
+                assert!(timing.policy.sleep_ns(SLEEP_NS).await);
+                assert!(clock.now_ns() - started_ns >= SLEEP_NS);
+
+                let driver = timing.driver.take().unwrap();
+                drop(timing);
+                driver.await.unwrap();
+            })
+            .await;
+    }
 
     fn grant(scope: &str) -> ScopedProxyGrant {
         ScopedProxyGrant {
@@ -2789,6 +3030,7 @@ mod tests {
             0,
             authorizer,
             CompatibilityProxyDialectRegistry::default(),
+            ProxyTimingRuntime::yielding(),
         )
         .await
         .unwrap();
@@ -2838,6 +3080,7 @@ mod tests {
             0,
             authorizer,
             CompatibilityProxyDialectRegistry::default(),
+            ProxyTimingRuntime::yielding(),
         )
         .await
         .unwrap();
@@ -2921,6 +3164,7 @@ mod tests {
             0,
             authorizer,
             CompatibilityProxyDialectRegistry::default(),
+            ProxyTimingRuntime::yielding(),
         )
         .await
         .unwrap();
@@ -2999,6 +3243,7 @@ mod tests {
             0,
             authorizer,
             CompatibilityProxyDialectRegistry::default(),
+            ProxyTimingRuntime::yielding(),
         )
         .await
         .unwrap();
@@ -3041,6 +3286,7 @@ mod tests {
             0,
             authorizer,
             CompatibilityProxyDialectRegistry::default(),
+            ProxyTimingRuntime::yielding(),
         )
         .await
         .unwrap();
@@ -3168,6 +3414,7 @@ mod tests {
             0,
             authorizer,
             CompatibilityProxyDialectRegistry::default(),
+            ProxyTimingRuntime::yielding(),
         )
         .await
         .unwrap();
@@ -3235,10 +3482,15 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, mut ingress) =
-            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer, openai_dialects())
-                .await
-                .unwrap();
+        let (proxy, mut ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            openai_dialects(),
+            ProxyTimingRuntime::yielding(),
+        )
+        .await
+        .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -3364,10 +3616,15 @@ asyncio.run(main())
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, mut ingress) =
-            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer, openai_dialects())
-                .await
-                .unwrap();
+        let (proxy, mut ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            openai_dialects(),
+            ProxyTimingRuntime::yielding(),
+        )
+        .await
+        .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
