@@ -1278,7 +1278,7 @@ mod tests {
         let mut value = serde_json::to_value(json!({
             "worker_count": 1,
             "dataset": "fixture",
-            "tokenizer": {},
+            "tokenizer": {"name": "builtin"},
             "phases": [{
                 "type": "concurrency",
                 "name": "profiling",
@@ -1307,7 +1307,7 @@ mod tests {
             serde_json::to_string(&json!({
                 "worker_count": 1,
                 "dataset": "fixture",
-                "tokenizer": {},
+                "tokenizer": {"name": "builtin"},
                 "phases": [{
                     "type": "concurrency",
                     "name": "profiling",
