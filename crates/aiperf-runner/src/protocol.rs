@@ -21,6 +21,8 @@ pub struct RunnerCapabilities {
     pub protocol_versions: &'static [u32],
     /// Native report schema written after a successful run.
     pub report_schema_version: &'static str,
+    /// Endpoint dialects accepted by the native formatter/parser registry.
+    pub endpoint_types: &'static [&'static str],
     /// Dataset variants accepted by the current protocol.
     pub dataset_types: &'static [&'static str],
     /// Phase variants accepted by the current protocol.
@@ -40,6 +42,25 @@ impl RunnerCapabilities {
             event: "runner_capabilities",
             protocol_versions: &[RUNNER_PROTOCOL_VERSION],
             report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
+            endpoint_types: &[
+                "chat",
+                "completions",
+                "responses",
+                "embeddings",
+                "chat_embeddings",
+                "nim_embeddings",
+                "cohere_rankings",
+                "hf_tei_rankings",
+                "nim_rankings",
+                "huggingface_generate",
+                "image_generation",
+                "image_edit",
+                "video_generation",
+                "image_retrieval",
+                "solido_rag",
+                "raw",
+                "template",
+            ],
             dataset_types: &["synthetic", "file", "public"],
             phase_types: &[
                 "concurrency",

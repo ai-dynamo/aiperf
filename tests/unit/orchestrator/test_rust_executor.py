@@ -28,8 +28,11 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
         "event": "runner_capabilities",
         "protocol_versions": [1],
         "report_schema_version": "2.0",
+        "endpoint_types": ["chat"],
         "dataset_types": ["synthetic"],
         "phase_types": ["concurrency"],
+        "phase_features": [],
+        "run_features": [],
         "runner_version": "0.0.0",
     }
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -52,6 +55,11 @@ def test_capabilities_reject_incompatible_runner(
         "event": "runner_capabilities",
         "protocol_versions": [1],
         "report_schema_version": "2.0",
+        "endpoint_types": [],
+        "dataset_types": [],
+        "phase_types": [],
+        "phase_features": [],
+        "run_features": [],
     }
     response[field] = value
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -69,3 +77,76 @@ def test_capabilities_surface_process_failure(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="exit 2.*runner diagnostic"):
         rust_executor._load_capabilities(Path("runner"))
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "endpoint_types",
+        "dataset_types",
+        "phase_types",
+        "phase_features",
+        "run_features",
+    ],
+)
+def test_capabilities_require_every_typed_feature_inventory(
+    monkeypatch, field: str
+) -> None:
+    response = {
+        "event": "runner_capabilities",
+        "protocol_versions": [1],
+        "report_schema_version": "2.0",
+        "endpoint_types": [],
+        "dataset_types": [],
+        "phase_types": [],
+        "phase_features": [],
+        "run_features": [],
+    }
+    response.pop(field)
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
+
+    with pytest.raises(ValueError, match=field):
+        rust_executor._load_capabilities(Path("runner"))
+
+
+def test_request_capabilities_cover_every_nested_native_variant() -> None:
+    capabilities = {
+        "endpoint_types": ["chat"],
+        "dataset_types": ["synthetic"],
+        "phase_types": ["concurrency"],
+        "phase_features": ["adaptive_scale", "ramps", "request_cancellation"],
+        "run_features": ["outputs_json", "python_accuracy_evaluator"],
+    }
+    request = {
+        "run": {
+            "endpoint": {"type": "chat"},
+            "dataset": {"type": "synthetic"},
+            "phases": [
+                {
+                    "type": "concurrency",
+                    "adaptive_scale": {},
+                    "concurrency_ramp": {},
+                    "cancellation": {},
+                }
+            ],
+            "artifacts": {"outputs_path": "outputs.json"},
+            "accuracy": {},
+        }
+    }
+
+    rust_executor._require_request_capabilities(capabilities, request)
+
+    for field, value in (
+        ("endpoint_types", "chat"),
+        ("dataset_types", "synthetic"),
+        ("phase_types", "concurrency"),
+        ("phase_features", "adaptive_scale"),
+        ("phase_features", "ramps"),
+        ("phase_features", "request_cancellation"),
+        ("run_features", "outputs_json"),
+        ("run_features", "python_accuracy_evaluator"),
+    ):
+        narrowed = {name: list(values) for name, values in capabilities.items()}
+        narrowed[field].remove(value)
+        with pytest.raises(RuntimeError, match=rf"{field}\.{value}"):
+            rust_executor._require_request_capabilities(narrowed, request)

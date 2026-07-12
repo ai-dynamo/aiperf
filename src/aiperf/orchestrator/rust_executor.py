@@ -56,6 +56,7 @@ class RustSubprocessExecutor(RunExecutor):
         try:
             self._resolve_run(run)
             request = build_run_request(run)
+            _require_request_capabilities(self.capabilities, request)
             completed = subprocess.run(
                 [str(self.binary)],
                 input=orjson.dumps(request),
@@ -147,7 +148,75 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
             f"aiperf-runner report schema {schema!r} is incompatible; "
             f"expected {_NATIVE_REPORT_SCHEMA_VERSION!r}"
         )
+    for field in (
+        "endpoint_types",
+        "dataset_types",
+        "phase_types",
+        "phase_features",
+        "run_features",
+    ):
+        values = capabilities.get(field)
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) and value for value in values
+        ):
+            raise ValueError(
+                f"aiperf-runner capability {field} must be an array of non-empty strings"
+            )
     return capabilities
+
+
+def _require_request_capabilities(
+    capabilities: dict[str, Any], request: dict[str, Any]
+) -> None:
+    """Fail before launch when a resolved run exceeds the child contract."""
+    run = request.get("run")
+    if not isinstance(run, dict):
+        raise ValueError("native run request omitted its run object")
+
+    endpoint = run.get("endpoint")
+    dataset = run.get("dataset")
+    phases = run.get("phases")
+    artifacts = run.get("artifacts", {})
+    if not isinstance(endpoint, dict) or not isinstance(endpoint.get("type"), str):
+        raise ValueError("native run request omitted endpoint.type")
+    if not isinstance(dataset, dict) or not isinstance(dataset.get("type"), str):
+        raise ValueError("native run request omitted dataset.type")
+    if not isinstance(phases, list) or not phases:
+        raise ValueError("native run request must contain at least one phase")
+    if not isinstance(artifacts, dict):
+        raise ValueError("native run artifacts must be an object")
+
+    _require_capability(capabilities, "endpoint_types", endpoint["type"])
+    _require_capability(capabilities, "dataset_types", dataset["type"])
+    for index, phase in enumerate(phases):
+        if not isinstance(phase, dict) or not isinstance(phase.get("type"), str):
+            raise ValueError(f"native run phase {index} omitted type")
+        _require_capability(capabilities, "phase_types", phase["type"])
+        if "adaptive_scale" in phase:
+            _require_capability(capabilities, "phase_features", "adaptive_scale")
+        if any(
+            field in phase
+            for field in ("concurrency_ramp", "prefill_ramp", "rate_ramp")
+        ):
+            _require_capability(capabilities, "phase_features", "ramps")
+        if "cancellation" in phase:
+            _require_capability(capabilities, "phase_features", "request_cancellation")
+
+    if "accuracy" in run:
+        _require_capability(capabilities, "run_features", "python_accuracy_evaluator")
+    if "outputs_path" in artifacts:
+        _require_capability(capabilities, "run_features", "outputs_json")
+
+
+def _require_capability(
+    capabilities: dict[str, Any], field: str, required: str
+) -> None:
+    advertised = capabilities[field]
+    if required not in advertised:
+        raise RuntimeError(
+            f"aiperf-runner does not support {field}.{required}; "
+            f"advertised {advertised!r}"
+        )
 
 
 def _parse_terminal(stdout: bytes, run: BenchmarkRun) -> dict[str, Any]:
