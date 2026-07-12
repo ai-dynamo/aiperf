@@ -98,10 +98,15 @@ def _workload_config() -> dict:
             "provider_options": {"opaque": [1, 2, 3]},
         },
         "routes": {
-            "primary": {"model": "candidate", "endpoint_profile": "default"},
+            "primary": {
+                "model": "candidate",
+                "endpoint_profile": "default",
+                "purpose": "primary",
+            },
             "judge": {
                 "model": "judge",
                 "endpoint_profile": "judge_anthropic",
+                "purpose": "judge",
             },
         },
         "resources": {
@@ -140,13 +145,16 @@ def test_evaluation_projection_is_first_class_multi_route_and_provider_opaque(
         }
         & authored["workload"]["config"].keys()
     )
-    assert [profile["id"] for profile in authored["endpoints"]["profiles"]] == [
+    assert [
+        profile["id"] for profile in authored["resources"]["endpoints"]["profiles"]
+    ] == [
         "default",
         "judge_anthropic",
     ]
     assert authored["workload"]["config"]["routes"]["judge"] == {
         "model": "judge",
         "endpoint_profile": "judge_anthropic",
+        "purpose": "judge",
     }
     provider_wire = orjson.dumps(authored["workload"])
     assert b"outer-candidate-secret" not in provider_wire
@@ -270,6 +278,7 @@ benchmark:
         judge:
           model: judge
           endpointProfile: judge_anthropic
+          purpose: judge
       resources: {{}}
       unitConcurrency: 3
 """
@@ -291,6 +300,8 @@ benchmark:
     assert workload["config"]["routes"]["judge"]["endpoint_profile"] == (
         "judge_anthropic"
     )
+    assert workload["config"]["routes"]["candidate"]["purpose"] == "primary"
+    assert workload["config"]["routes"]["judge"]["purpose"] == "judge"
 
 
 def _evaluation_capabilities() -> dict:
@@ -371,13 +382,16 @@ def _evaluation_request(distribution: str) -> dict:
                         "primary": {
                             "model": "candidate",
                             "endpoint_profile": "default",
+                            "purpose": "primary",
                         }
                     },
                     "resources": {},
                     "unit_concurrency": 1,
                 },
             },
-            "endpoints": {"profiles": [{"id": "default", "type": "chat"}]},
+            "resources": {
+                "endpoints": {"profiles": [{"id": "default", "type": "chat"}]}
+            },
         },
     }
 

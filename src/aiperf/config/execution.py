@@ -114,6 +114,15 @@ class EvaluationRouteConfig(BaseConfig):
         str,
         Field(min_length=1, description="Run-local endpoint profile reference."),
     ]
+    purpose: Annotated[
+        RunnerComponentId,
+        Field(
+            description=(
+                "Provider-plan purpose that this logical service is allowed to serve. "
+                "Auxiliary routes must set this explicitly."
+            )
+        ),
+    ] = "primary"
 
     @field_validator("model", "endpoint_profile")
     @classmethod
