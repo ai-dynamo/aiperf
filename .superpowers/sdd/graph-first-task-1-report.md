@@ -42,6 +42,7 @@ commit hash(es):
 - `0ab1c12a8`
 - `dcc387cce`
 - `789041ff0`
+- `13b2b8036`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
@@ -196,7 +197,7 @@ GREEN:
   - `npm test`: `12 passed test files, 115 passed tests`
 
 final flavor fix commit hash(es):
-- pending
+- `13b2b8036`
 
 concerns:
 - none identified.
