@@ -225,6 +225,7 @@ pub struct SupervisedEvaluationProvider {
     limits: EvaluatorProtocolLimits,
     next_request_id: u64,
     proxy: Option<crate::provider_protocol::ScopedProxyBinding>,
+    host_binding: crate::provider_protocol::EvaluationHostBinding,
     plan_request: Option<EvaluationPlanRequest>,
     plan: Option<EvaluationPlan>,
     frozen_identity: Option<EvaluationIdentity>,
@@ -349,6 +350,7 @@ impl SupervisedEvaluationProvider {
             limits: context.protocol_limits,
             next_request_id: 1,
             proxy: context.proxy.clone(),
+            host_binding: context.host_binding.clone(),
             plan_request: None,
             plan: None,
             frozen_identity: None,
@@ -513,6 +515,7 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
                 id,
                 assets: assets.to_vec(),
                 proxy: self.proxy.clone(),
+                host_binding: Box::new(self.host_binding.clone()),
             })
             .await?;
         let identity = result.identity;
@@ -525,6 +528,7 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
             || identity.config_schema_sha256 != plan_request.config_schema_sha256
             || identity.resolved_config_sha256
                 != plan_request.provider_config.normalized_result_sha256()
+            || !self.host_binding.matches(&identity)
         {
             return Err(EvaluationProviderError::FactoryMismatch(
                 "bound evaluation identity drifted from worker/schema/config evidence".to_string(),
@@ -1151,6 +1155,17 @@ for line in reader:
             session_id: EvaluationSessionId::new("fixture-session").unwrap(),
             staging_dir: base.clone(),
             proxy: None,
+            host_binding: crate::provider_protocol::EvaluationHostBinding {
+                host: crate::provider_protocol::EvaluationHostIdentity {
+                    runner_sha256: "6".repeat(64),
+                    capability_inventory_sha256: "7".repeat(64),
+                    schema_inventory_sha256: "8".repeat(64),
+                    isolation_proof_sha256: "9".repeat(64),
+                },
+                route_map_sha256: "a".repeat(64),
+                prepared_endpoints_sha256: "b".repeat(64),
+                sandbox_sha256: None,
+            },
             protocol_limits: EvaluatorProtocolLimits::default(),
             launch_nonce: "launch-nonce-fixture-0123456789abcdef".to_string(),
         };

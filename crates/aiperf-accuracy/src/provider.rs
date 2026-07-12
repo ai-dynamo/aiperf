@@ -17,9 +17,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::canonical::{
-    CANONICAL_JSON_CODEC, CanonicalJson, is_sha256, sha256_hex, validate_no_secret_control_value,
-};
+use crate::canonical::{CanonicalJson, is_sha256, sha256_hex, validate_no_secret_control_value};
 use crate::provider_protocol::{
     EVALUATOR_WORKER_PROTOCOL_V2, EvaluationDistributionId, EvaluationEventBatch,
     EvaluationExecutionGranularity, EvaluationFinishCandidate, EvaluationIdentity, EvaluationPlan,
@@ -50,6 +48,78 @@ pub struct EvaluationOperationDescriptor {
     /// Endpoint capability labels required by an executable adapter.
     pub endpoint_capabilities: Vec<String>,
 }
+
+/// Cross-language canonical schema digests for one stock inference operation.
+///
+/// These values are computed from the exact canonical schema components in
+/// `src/aiperf/accuracy/evaluation/operation_schemas.py:15-409`. A terminal-only
+/// operation still pins its canonical null-stream schema here while its public
+/// descriptor advertises no true-streaming adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StockEvaluationOperationSchema {
+    /// Open semantic operation ID.
+    pub operation_id: &'static str,
+    /// Canonical request JSON Schema SHA-256.
+    pub request_schema_sha256: &'static str,
+    /// Canonical response JSON Schema SHA-256.
+    pub response_schema_sha256: &'static str,
+    /// Canonical stream JSON Schema SHA-256, including a null schema for terminal-only operations.
+    pub canonical_stream_schema_sha256: &'static str,
+    /// Whether the stock host contract permits true incremental events.
+    pub true_streaming: bool,
+    /// Endpoint capability required by the operation adapter.
+    pub endpoint_capability: &'static str,
+    /// Canonical modality inventory.
+    pub modalities: &'static [&'static str],
+}
+
+/// Exact stock operation schemas shared with the evaluator-provider workers.
+pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] = &[
+    StockEvaluationOperationSchema {
+        operation_id: "model.generate",
+        request_schema_sha256: "c2f30f5396f4af6e44025d80294b2685916492c23dd730cd1e2a6ebdb6ae5d21",
+        response_schema_sha256: "6c8d726e5a0c05a22de946ce2495d6a4bcf3b3b7bb7a48e5c39bad07ff954ca0",
+        canonical_stream_schema_sha256: "84a861ea0a983368cd48e6db2fa4ac71b8219d7685065718859f0bfc4ea49206",
+        true_streaming: true,
+        endpoint_capability: "chat",
+        modalities: &[
+            "audio",
+            "document",
+            "image",
+            "structured",
+            "text",
+            "tool",
+            "video",
+        ],
+    },
+    StockEvaluationOperationSchema {
+        operation_id: "model.complete",
+        request_schema_sha256: "a2b90611bd9bef0849c7e9472820124432d0b68578a9c6d403fda7e7ea108901",
+        response_schema_sha256: "274926adc0a1d6944d77b28882965e80e528bc7724da6aee075381b22d37af68",
+        canonical_stream_schema_sha256: "c1b02dc133d9bed9f61fee3b434a9bb59dc0f0d834ad09715c9af549be1ab9f4",
+        true_streaming: true,
+        endpoint_capability: "completion",
+        modalities: &["text"],
+    },
+    StockEvaluationOperationSchema {
+        operation_id: "model.responses",
+        request_schema_sha256: "ecfbf3cb2741066d555df42e01c4c3c68d37c3674d818116feeaf8fdead2d5b3",
+        response_schema_sha256: "b1702513240975373a50c2720a9f1d39df8e2466560fe90174e63a0d631cd3e7",
+        canonical_stream_schema_sha256: "800695bec0f214e79c9eb0b469ce020fc2931167126cb0d4e0ca7cce2d2f262e",
+        true_streaming: true,
+        endpoint_capability: "responses",
+        modalities: &["document", "image", "structured", "text", "tool"],
+    },
+    StockEvaluationOperationSchema {
+        operation_id: "model.embed",
+        request_schema_sha256: "d46a1567b54ffeb888fbecbb451e8f2790b846e5928e339bf7afeedd4be34f86",
+        response_schema_sha256: "ddea46c3ffba13ff7b860ad0d6c6277c19a2f51b71adbc0cef76c0d8fd2c6bc1",
+        canonical_stream_schema_sha256: "bcde375ebd4cbacf651311181173836b169d5a360c6ac158c6a2cdaf49be3f61",
+        true_streaming: false,
+        endpoint_capability: "embedding",
+        modalities: &["embedding", "text"],
+    },
+];
 
 impl EvaluationOperationDescriptor {
     fn validate(&self) -> Result<(), ProviderRegistryError> {
@@ -410,6 +480,8 @@ pub struct ProviderLaunchContext {
     pub staging_dir: PathBuf,
     /// Optional scoped local compatibility proxy.
     pub proxy: Option<ScopedProxyBinding>,
+    /// Rust-owned host/route identity copied into the frozen evaluation identity.
+    pub host_binding: crate::provider_protocol::EvaluationHostBinding,
     /// Hard evaluator protocol bounds.
     pub protocol_limits: EvaluatorProtocolLimits,
     /// Rust-minted nonce binding `hello` to this exact launch.
@@ -420,6 +492,9 @@ impl ProviderLaunchContext {
     /// Validate the contained launch context before process creation.
     pub fn validate(&self) -> Result<(), ProviderRegistryError> {
         self.protocol_limits.validate()?;
+        self.host_binding
+            .validate()
+            .map_err(|error| ProviderRegistryError::InvalidLaunch(error.to_string()))?;
         if !self.staging_dir.is_absolute()
             || self.launch_nonce.len() < 32
             || self.launch_nonce.len() > 512
@@ -1003,40 +1078,28 @@ fn stock_descriptor(
     execution_granularities: Vec<EvaluationExecutionGranularity>,
     scheduling_modes: Vec<EvaluationSchedulingMode>,
 ) -> Result<EvaluationProviderDescriptor, ProviderRegistryError> {
-    let operations = [
-        ("model.generate", true),
-        ("model.complete", true),
-        ("model.responses", true),
-        ("model.embed", false),
-        ("sandbox.create", false),
-        ("sandbox.execute", true),
-        ("sandbox.destroy", false),
-        ("process.start", false),
-        ("process.interact", true),
-        ("process.stop", false),
-        ("resource.invoke", true),
-    ]
-    .into_iter()
-    .map(|(operation, streaming)| {
-        let operation_id = SemanticOperationId::new(operation)
-            .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
-        let schema_seed = format!("{CANONICAL_JSON_CODEC}:{operation}:v1");
-        Ok(EvaluationOperationDescriptor {
-            operation_id,
-            input_schema_sha256: sha256_hex(format!("{schema_seed}:input").as_bytes()),
-            output_schema_sha256: sha256_hex(format!("{schema_seed}:output").as_bytes()),
-            stream_schema_sha256: streaming
-                .then(|| sha256_hex(format!("{schema_seed}:stream").as_bytes())),
-            reports_usage: operation.starts_with("model."),
-            modalities: if operation == "model.embed" {
-                vec!["text".to_string(), "embedding".to_string()]
-            } else {
-                vec!["text".to_string(), "structured".to_string()]
-            },
-            endpoint_capabilities: vec![operation.to_string()],
+    let operations = STOCK_EVALUATION_OPERATION_SCHEMAS
+        .iter()
+        .map(|schema| {
+            let operation_id = SemanticOperationId::new(schema.operation_id)
+                .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
+            Ok(EvaluationOperationDescriptor {
+                operation_id,
+                input_schema_sha256: schema.request_schema_sha256.to_string(),
+                output_schema_sha256: schema.response_schema_sha256.to_string(),
+                stream_schema_sha256: schema
+                    .true_streaming
+                    .then(|| schema.canonical_stream_schema_sha256.to_string()),
+                reports_usage: true,
+                modalities: schema
+                    .modalities
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect(),
+                endpoint_capabilities: vec![schema.endpoint_capability.to_string()],
+            })
         })
-    })
-    .collect::<Result<Vec<_>, ProviderRegistryError>>()?;
+        .collect::<Result<Vec<_>, ProviderRegistryError>>()?;
     let descriptor = EvaluationProviderDescriptor {
         provider_id: EvaluationProviderId::new(provider)
             .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?,
@@ -1294,5 +1357,88 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["nemo_evaluator", "openbench"]
         );
+    }
+
+    #[test]
+    fn stock_providers_share_exact_worker_schema_digests() {
+        let nemo = NemoEvaluatorProviderFactory::new(
+            vec![distribution("nemo-locked")],
+            Arc::new(NeverLaunch),
+        )
+        .unwrap();
+        let openbench = OpenBenchProviderFactory::new(
+            vec![distribution("openbench-locked")],
+            Arc::new(NeverLaunch),
+        )
+        .unwrap();
+        assert_eq!(
+            nemo.descriptor().operations,
+            openbench.descriptor().operations
+        );
+        assert_eq!(nemo.descriptor().operations.len(), 4);
+        assert!(
+            nemo.descriptor()
+                .operations
+                .iter()
+                .all(|operation| operation.operation_id.as_str().starts_with("model."))
+        );
+        let embed = nemo
+            .descriptor()
+            .operations
+            .iter()
+            .find(|operation| operation.operation_id.as_str() == "model.embed")
+            .unwrap();
+        assert_eq!(
+            embed.input_schema_sha256,
+            "d46a1567b54ffeb888fbecbb451e8f2790b846e5928e339bf7afeedd4be34f86"
+        );
+        assert_eq!(
+            embed.output_schema_sha256,
+            "ddea46c3ffba13ff7b860ad0d6c6277c19a2f51b71adbc0cef76c0d8fd2c6bc1"
+        );
+        assert_eq!(embed.stream_schema_sha256, None);
+        assert_eq!(
+            STOCK_EVALUATION_OPERATION_SCHEMAS[3].canonical_stream_schema_sha256,
+            "bcde375ebd4cbacf651311181173836b169d5a360c6ac158c6a2cdaf49be3f61"
+        );
+    }
+
+    #[test]
+    fn registry_rejects_cross_provider_schema_drift_for_same_operation_id() {
+        let nemo: Arc<dyn EvaluationProviderFactory> = Arc::new(
+            NemoEvaluatorProviderFactory::new(
+                vec![distribution("nemo-locked")],
+                Arc::new(NeverLaunch),
+            )
+            .unwrap(),
+        );
+        let openbench = OpenBenchProviderFactory::new(
+            vec![distribution("openbench-locked")],
+            Arc::new(NeverLaunch),
+        )
+        .unwrap();
+        let mut descriptor = openbench.descriptor().clone();
+        descriptor.provider_id = EvaluationProviderId::new("schema-drift-fixture").unwrap();
+        descriptor.operations[0].input_schema_sha256 = "f".repeat(64);
+        let conflicting: Arc<dyn EvaluationProviderFactory> = Arc::new(
+            RegisteredProviderFactory::new(
+                descriptor,
+                Arc::new(OpenBenchConfigValidator),
+                Arc::new(NeverLaunch),
+            )
+            .unwrap(),
+        );
+        let mut builder = EvaluationProviderRegistryBuilder::new();
+        builder.register(nemo).unwrap();
+        builder.register(conflicting).unwrap();
+        let error = match builder.freeze() {
+            Ok(_) => panic!("registry accepted cross-provider schema drift"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            ProviderRegistryError::ConflictingOperationSchema(operation)
+                if operation == "model.generate"
+        ));
     }
 }

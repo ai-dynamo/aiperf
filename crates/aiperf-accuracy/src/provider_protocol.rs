@@ -567,6 +567,59 @@ pub struct EvaluationHostIdentity {
     pub isolation_proof_sha256: String,
 }
 
+/// Rust-authored host/route identity supplied during immutable asset binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationHostBinding {
+    /// Rust runner/capability/schema/isolation identity.
+    pub host: EvaluationHostIdentity,
+    /// Secret-free logical route map digest.
+    pub route_map_sha256: String,
+    /// Prepared endpoint identity inventory digest.
+    pub prepared_endpoints_sha256: String,
+    /// Optional sandbox image/config digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_sha256: Option<String>,
+}
+
+impl EvaluationHostBinding {
+    /// Validate every Rust-owned identity component is immutable.
+    pub fn validate(&self) -> Result<(), EvaluationProtocolError> {
+        for digest in [
+            self.host.runner_sha256.as_str(),
+            self.host.capability_inventory_sha256.as_str(),
+            self.host.schema_inventory_sha256.as_str(),
+            self.host.isolation_proof_sha256.as_str(),
+            self.route_map_sha256.as_str(),
+            self.prepared_endpoints_sha256.as_str(),
+        ] {
+            if !is_sha256(digest) {
+                return Err(EvaluationProtocolError::new(
+                    "Rust evaluation host binding contained a mutable or invalid digest",
+                ));
+            }
+        }
+        if self
+            .sandbox_sha256
+            .as_deref()
+            .is_some_and(|digest| !is_sha256(digest))
+        {
+            return Err(EvaluationProtocolError::new(
+                "Rust evaluation host binding sandbox digest was invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Prove the provider-returned identity preserved every Rust-owned fact.
+    pub fn matches(&self, identity: &EvaluationIdentity) -> bool {
+        self.host == identity.host
+            && self.route_map_sha256 == identity.route_map_sha256
+            && self.prepared_endpoints_sha256 == identity.prepared_endpoints_sha256
+            && self.sandbox_sha256 == identity.sandbox_sha256
+    }
+}
+
 /// Complete frozen evaluation identity graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1542,6 +1595,7 @@ pub(crate) enum EvaluatorWorkerRequest {
         assets: Vec<ResolvedEvaluationAsset>,
         #[serde(skip_serializing_if = "Option::is_none")]
         proxy: Option<ScopedProxyBinding>,
+        host_binding: Box<EvaluationHostBinding>,
     },
     NextUnits {
         id: u64,

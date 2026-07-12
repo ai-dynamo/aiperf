@@ -43,7 +43,8 @@ pub use provider::{
     EvaluationProviderLauncher, EvaluationProviderRegistry, EvaluationProviderRegistryBuilder,
     EvaluatorIsolationRequirements, EvaluatorProtocolLimits, NemoEvaluatorProviderFactory,
     OpenBenchProviderFactory, ProviderConfigValidator, ProviderLaunchContext,
-    ProviderRegistryError, ValidatedProviderConfig,
+    ProviderRegistryError, STOCK_EVALUATION_OPERATION_SCHEMAS, StockEvaluationOperationSchema,
+    ValidatedProviderConfig,
 };
 pub use provider_protocol::{
     AggregateMetric, AggregationPolicy, ArtifactRef, ArtifactVisibility, CaseOutcome,
@@ -51,7 +52,7 @@ pub use provider_protocol::{
     EvaluationArtifactManifestEntry, EvaluationAssetRequirement, EvaluationCaseId,
     EvaluationCaseOccurrenceDescriptor, EvaluationCaseTemplateDescriptor, EvaluationDistributionId,
     EvaluationError, EvaluationEvent, EvaluationEventBatch, EvaluationExecutionGranularity,
-    EvaluationFinishCandidate, EvaluationHostIdentity, EvaluationIdentity,
+    EvaluationFinishCandidate, EvaluationHostBinding, EvaluationHostIdentity, EvaluationIdentity,
     EvaluationIdentityComponent, EvaluationPhaseId, EvaluationPlan, EvaluationPlanRequest,
     EvaluationProgress, EvaluationProtocolError, EvaluationProviderId, EvaluationQueueCredits,
     EvaluationSchedulingMode, EvaluationSessionId, EvaluationStage, EvaluationUnitId,
