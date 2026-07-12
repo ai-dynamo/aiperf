@@ -10,7 +10,7 @@
 //! exact CSR list replay ports `src/aiperf/metrics/ragged_series.py:13-107`.
 
 use crate::catalog::MetricTag;
-use crate::ingest::{HttpTrace, RecordIngest, UsageMetrics};
+use crate::ingest::{HttpTrace, InferenceDimensions, RecordIngest, UsageMetrics};
 use crate::value::MetricValue;
 use crate::window::{ExportContext, Phase};
 use rustc_hash::FxHashMap;
@@ -351,16 +351,19 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     start_ns: Vec<f64>,
     end_ns: Vec<f64>,
     generation_start_ns: Vec<f64>,
+    observed_output_sequence_length: Vec<f64>,
     session_nums: Vec<u64>,
     turn_indices: Vec<u32>,
     phase_codes: Vec<u32>,
     correlation_codes: Vec<u32>,
+    dimension_codes: Vec<u32>,
     worker_codes: Vec<Option<u32>>,
     conversation_codes: Vec<Option<u32>>,
     errored: Vec<bool>,
     canceled: Vec<bool>,
     phases: CategoryInterner<Phase>,
     correlations: CategoryInterner<String>,
+    dimensions: CategoryInterner<InferenceDimensions>,
     workers: CategoryInterner<String>,
     conversations: CategoryInterner<String>,
     numeric: FxHashMap<MetricTag, NumericColumn>,
@@ -373,16 +376,19 @@ impl<B: ListMetricBackend> Default for ColumnStore<B> {
             start_ns: Vec::new(),
             end_ns: Vec::new(),
             generation_start_ns: Vec::new(),
+            observed_output_sequence_length: Vec::new(),
             session_nums: Vec::new(),
             turn_indices: Vec::new(),
             phase_codes: Vec::new(),
             correlation_codes: Vec::new(),
+            dimension_codes: Vec::new(),
             worker_codes: Vec::new(),
             conversation_codes: Vec::new(),
             errored: Vec::new(),
             canceled: Vec::new(),
             phases: CategoryInterner::default(),
             correlations: CategoryInterner::default(),
+            dimensions: CategoryInterner::default(),
             workers: CategoryInterner::default(),
             conversations: CategoryInterner::default(),
             numeric: FxHashMap::default(),
@@ -423,6 +429,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             self.end_ns.push(other.end_ns[row]);
             self.generation_start_ns
                 .push(other.generation_start_ns[row]);
+            self.observed_output_sequence_length
+                .push(other.observed_output_sequence_length[row]);
             self.session_nums.push(other.session_nums[row]);
             self.turn_indices.push(other.turn_indices[row]);
 
@@ -439,6 +447,13 @@ impl<B: ListMetricBackend> ColumnStore<B> {
                 .expect("correlation codes must resolve");
             self.correlation_codes
                 .push(self.correlations.intern(correlation));
+            let dimensions = other
+                .dimensions
+                .value(other.dimension_codes[row])
+                .cloned()
+                .expect("inference dimension codes must resolve");
+            self.dimension_codes
+                .push(self.dimensions.intern(dimensions));
             self.worker_codes.push(other.worker_codes[row].map(|code| {
                 let worker = other
                     .workers
@@ -510,6 +525,18 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         &self.generation_start_ns
     }
 
+    /// Returns locally observed OSL before endpoint-usage reconciliation.
+    ///
+    /// This private measurement plane preserves the client/server discrepancy
+    /// diagnostic after the public OSL column becomes authoritative server
+    /// usage. It is never used to fabricate token-arrival timestamps.
+    pub fn observed_output_sequence_length(&self, row: usize) -> Option<f64> {
+        self.observed_output_sequence_length
+            .get(row)
+            .copied()
+            .filter(|value| value.is_finite())
+    }
+
     /// Returns session sequence numbers by row.
     pub fn session_nums(&self) -> &[u64] {
         &self.session_nums
@@ -568,6 +595,11 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     /// Returns correlation ids in first-appearance order.
     pub fn correlation_ids(&self) -> &[String] {
         self.correlations.values()
+    }
+
+    /// Returns model/endpoint dimension pairs in first-appearance order.
+    pub fn inference_dimensions(&self) -> &[InferenceDimensions] {
+        self.dimensions.values()
     }
 
     /// Returns worker ids in first-appearance order.
@@ -665,6 +697,15 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             .collect()
     }
 
+    /// Selects rows for one exact model/endpoint pair.
+    pub fn mask_for_inference_dimensions(&self, dimensions: &InferenceDimensions) -> Vec<bool> {
+        let expected = self.dimensions.code(dimensions);
+        self.dimension_codes
+            .iter()
+            .map(|code| Some(*code) == expected)
+            .collect()
+    }
+
     /// Selects all rows belonging to one session number.
     pub fn mask_for_session(&self, session_num: u64) -> Vec<bool> {
         self.session_nums
@@ -705,12 +746,20 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.end_ns.push(record.end_ns as f64);
         self.generation_start_ns
             .push(record.first_token_ns.map_or(f64::NAN, |value| value as f64));
+        self.observed_output_sequence_length.push(
+            record
+                .tokens
+                .output_sequence_length()
+                .map_or(f64::NAN, |value| value as f64),
+        );
         self.session_nums.push(record.session_num);
         self.turn_indices.push(record.turn_index);
         let phase = self.phases.intern(record.phase);
         self.phase_codes.push(phase);
         let correlation = self.correlations.intern(record.correlation_id.clone());
         self.correlation_codes.push(correlation);
+        let dimensions = self.dimensions.intern(record.dimensions.clone());
+        self.dimension_codes.push(dimensions);
         self.worker_codes.push(
             record
                 .worker_id
@@ -762,16 +811,41 @@ impl<B: ListMetricBackend> ColumnStore<B> {
                     .first_output_token_ns
                     .map(|timestamp| timestamp - record.start_ns),
             );
+            // Python's server-count path reads every token field from one final
+            // usage object, treats completion_tokens as OSL, and subtracts
+            // reasoning only for the visible-output count
+            // (`src/aiperf/records/inference_result_parser.py:431-501`, pinned by
+            // `tests/unit/records/test_inference_result_parser.py:289-410`). Keep
+            // the observed count in its private column for discrepancy reporting,
+            // but make endpoint usage authoritative wherever it exists.
+            let output_sequence_length = record
+                .usage
+                .completion_tokens
+                .or_else(|| record.tokens.output_sequence_length());
+            self.set_optional_u64(row, MetricTag::OutputSequenceLength, output_sequence_length);
+            self.set_optional_u64(row, MetricTag::InputSequenceLength, record.tokens.input);
+            let reasoning_tokens = record
+                .usage
+                .reasoning_tokens
+                .or(record.tokens.reasoning)
+                .unwrap_or(0);
+            let output_tokens = record
+                .usage
+                .completion_tokens
+                .map(|completion| completion.saturating_sub(reasoning_tokens))
+                .or(record.tokens.output);
+            if output_tokens.is_some_and(|tokens| tokens > 0) {
+                self.set_optional_u64(row, MetricTag::OutputTokenCount, output_tokens);
+            }
             self.set_optional_u64(
                 row,
-                MetricTag::OutputSequenceLength,
-                record.tokens.output_sequence_length(),
+                MetricTag::ReasoningTokenCount,
+                record.usage.reasoning_tokens.or(record.tokens.reasoning),
             );
-            self.set_optional_u64(row, MetricTag::InputSequenceLength, record.tokens.input);
-            if record.tokens.output.is_some_and(|tokens| tokens > 0) {
-                self.set_optional_u64(row, MetricTag::OutputTokenCount, record.tokens.output);
-            }
-            self.set_optional_u64(row, MetricTag::ReasoningTokenCount, record.tokens.reasoning);
+            // ICL remains an observed content-chunk metric. Endpoint usage may
+            // change OSL/TPOT/throughput but never pads this timestamp vector;
+            // this preserves Python's adjacent-content-response definition at
+            // `src/aiperf/metrics/types/inter_chunk_latency_metric.py:40-74`.
             let icl = record
                 .inter_chunk_latencies_ns()
                 .into_iter()
@@ -998,6 +1072,10 @@ mod tests {
         first.turn_index = 0;
         first.worker_id = Some("worker-b".to_string());
         first.conversation_id = Some("conversation-1".to_string());
+        first.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint-b/v1/chat/completions".to_string()),
+            model: Some("model-b".to_string()),
+        };
         let mut second = RecordIngest::minimal(40, 60, Phase::Profiling);
         second.session_num = 7;
         second.turn_index = 1;
@@ -1012,6 +1090,11 @@ mod tests {
         assert_eq!(store.turn_indices(), &[0, 1, 0]);
         assert_eq!(store.worker_ids(), &["worker-b", "worker-a"]);
         assert_eq!(store.conversation_ids(), &["conversation-1"]);
+        assert_eq!(store.inference_dimensions()[0], first.dimensions);
+        assert_eq!(
+            store.mask_for_inference_dimensions(&first.dimensions),
+            vec![true, false, false]
+        );
         assert_eq!(store.mask_for_session(7), vec![true, true, false]);
         assert_eq!(store.mask_for_turn(1), vec![false, true, false]);
         assert_eq!(store.mask_for_worker("worker-a"), vec![false, true, false]);
@@ -1046,6 +1129,10 @@ mod tests {
         let mut right = ColumnStore::new();
         let mut right_record = RecordIngest::minimal(40, 70, Phase::Profiling);
         right_record.worker_id = Some("worker-1".to_string());
+        right_record.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint-a/v1/chat/completions".to_string()),
+            model: Some("model-a".to_string()),
+        };
         right_record.turn_index = 2;
         right_record.token_arrival_ns = vec![50, 55, 63];
         right.push_record(&right_record);
@@ -1053,6 +1140,10 @@ mod tests {
         left.append_store(&right);
         assert_eq!(left.row_count(), 2);
         assert_eq!(left.mask_for_worker("worker-1"), vec![false, true]);
+        assert_eq!(
+            left.mask_for_inference_dimensions(&right_record.dimensions),
+            vec![false, true]
+        );
         assert_eq!(left.turn_indices(), &[0, 2]);
         assert!(left.numeric_tags().all(|tag| {
             left.numeric_column(tag)

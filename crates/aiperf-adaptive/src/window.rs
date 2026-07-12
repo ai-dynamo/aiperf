@@ -287,6 +287,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(3),
                 completion_tokens: Some(5),
+                ..ObservedUsage::default()
             },
         );
         sampler.on_arrival(spanning, 40);

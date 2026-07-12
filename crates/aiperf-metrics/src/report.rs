@@ -135,9 +135,9 @@ pub struct ReportTimeslice {
 /// One labeled series for a metric.
 #[derive(Debug, Clone, PartialEq, DeriveSerialize)]
 pub struct MetricSeries {
-    /// Optional label set; inference metrics currently emit null.
+    /// Stable label set; inference metrics label the selected model when known.
     pub labels: Option<BTreeMap<String, String>>,
-    /// Optional source endpoint for telemetry/server series.
+    /// Selected inference endpoint or telemetry source endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint_url: Option<String>,
     /// Type-appropriate overall statistics.
@@ -685,19 +685,7 @@ fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntr
         .filter_map(|(name, result)| {
             let stats = report_stats(result, summary.result_map())?;
             let spec = result.source_tag.and_then(spec_for)?;
-            let timeslices = summary
-                .timeslices()
-                .iter()
-                .filter_map(|timeslice| {
-                    let slice_result = timeslice.metrics.get(name)?;
-                    Some(ReportTimeslice {
-                        start_ns: timeslice.start_ns,
-                        end_ns: timeslice.end_ns,
-                        complete: timeslice.complete.unwrap_or(true),
-                        stats: report_stats(slice_result, &timeslice.metrics)?,
-                    })
-                })
-                .collect();
+            let series = report_inference_series(summary, name, stats.clone());
             Some((
                 name.to_string(),
                 MetricEntry {
@@ -705,12 +693,7 @@ fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntr
                     unit: result.unit.clone(),
                     group: console_group_name(spec.console_group),
                     higher_is_better: spec.flags.contains(MetricFlags::LARGER_IS_BETTER),
-                    series: vec![MetricSeries {
-                        labels: None,
-                        endpoint_url: None,
-                        stats,
-                        timeslices,
-                    }],
+                    series,
                 },
             ))
         })
@@ -721,6 +704,59 @@ fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntr
             .or_insert_with(|| report_sidecar_metric(metric));
     }
     metrics
+}
+
+fn report_inference_series(
+    summary: &AccumulatorSummary,
+    name: &str,
+    aggregate_stats: ReportStats,
+) -> Vec<MetricSeries> {
+    let series = summary
+        .inference_series()
+        .iter()
+        .filter_map(|inference| {
+            let result = inference.result_by_name(name)?;
+            let stats = report_stats(result, inference.result_map())?;
+            let dimensions = inference.dimensions();
+            let labels = dimensions
+                .model
+                .as_ref()
+                .map(|model| BTreeMap::from([("model".to_string(), model.clone())]));
+            Some(MetricSeries {
+                labels,
+                endpoint_url: dimensions.endpoint_url.clone(),
+                stats,
+                timeslices: report_inference_timeslices(inference.timeslices(), name),
+            })
+        })
+        .collect::<Vec<_>>();
+    if !series.is_empty() {
+        return series;
+    }
+    vec![MetricSeries {
+        labels: None,
+        endpoint_url: None,
+        stats: aggregate_stats,
+        timeslices: report_inference_timeslices(summary.timeslices(), name),
+    }]
+}
+
+fn report_inference_timeslices(
+    timeslices: &[crate::MetricTimeslice],
+    name: &str,
+) -> Vec<ReportTimeslice> {
+    timeslices
+        .iter()
+        .filter_map(|timeslice| {
+            let slice_result = timeslice.metrics.get(name)?;
+            Some(ReportTimeslice {
+                start_ns: timeslice.start_ns,
+                end_ns: timeslice.end_ns,
+                complete: timeslice.complete.unwrap_or(true),
+                stats: report_stats(slice_result, &timeslice.metrics)?,
+            })
+        })
+        .collect()
 }
 
 fn build_sidecar_map(metrics: &BTreeMap<String, SidecarMetric>) -> BTreeMap<String, MetricEntry> {
@@ -892,7 +928,10 @@ fn console_group_name(group: MetricConsoleGroup) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MetricResult, MetricResultData, SidecarMetric, SidecarSeries, SidecarStats, Unit};
+    use crate::{
+        InferenceDimensions, MetricResult, MetricResultData, MetricsAccumulator, MetricsConfig,
+        Phase, RecordIngest, SidecarMetric, SidecarSeries, SidecarStats, Unit,
+    };
 
     #[test]
     fn v2_uses_type_specific_series_and_null_for_non_finite_tail() {
@@ -983,5 +1022,40 @@ mod tests {
         assert_eq!(metric["series"][0]["labels"]["model"], "m");
         assert_eq!(metric["series"][0]["stats"]["percentiles"]["p99"], 0.2);
         assert_eq!(metric["series"][0]["stats"]["buckets"]["+Inf"], 2);
+    }
+
+    #[test]
+    fn v2_inference_series_are_endpoint_model_sorted_with_owned_timeslices() {
+        let mut accumulator = MetricsAccumulator::with_config(MetricsConfig {
+            slice_duration_ns: Some(1_000_000_000),
+            ..MetricsConfig::default()
+        });
+        let mut endpoint_z = RecordIngest::minimal(100_000_000, 200_000_000, Phase::Profiling);
+        endpoint_z.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint-z/v1/chat/completions".to_string()),
+            model: Some("model-b".to_string()),
+        };
+        let mut endpoint_a = RecordIngest::minimal(300_000_000, 500_000_000, Phase::Profiling);
+        endpoint_a.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint-a/v1/chat/completions".to_string()),
+            model: Some("model-a".to_string()),
+        };
+        // Deliberately ingest reverse lexical order: report ordering is a value
+        // contract, not an insertion/worker completion accident.
+        accumulator.process_record(&endpoint_z);
+        accumulator.process_record(&endpoint_a);
+
+        let report = NativeReport::new(&accumulator.summarize(), None);
+        let serialized = serde_json::to_string_pretty(&report.metrics["request_count"]).unwrap();
+        assert_eq!(
+            serialized,
+            include_str!("../tests/golden/native_v2_inference_series.json").trim_end()
+        );
+        let value = serde_json::to_value(report).unwrap();
+        let latency = &value["metrics"]["request_latency"]["series"];
+        assert_eq!(latency[0]["stats"]["avg"], 200.0);
+        assert_eq!(latency[1]["stats"]["avg"], 100.0);
+        assert_eq!(latency[0]["timeslices"][0]["stats"]["avg"], 200.0);
+        assert_eq!(latency[1]["timeslices"][0]["stats"]["avg"], 100.0);
     }
 }

@@ -164,6 +164,93 @@ fn write_jsonl(path: &std::path::Path, rows: &[serde_json::Value]) {
 }
 
 #[test]
+fn canonical_report_file_is_byte_exact_with_the_shared_dynamo_harness() {
+    let unique = std::process::id();
+    let trace_path =
+        std::env::temp_dir().join(format!("aiperf-canonical-byte-parity-{unique}.jsonl"));
+    let report_path =
+        std::env::temp_dir().join(format!("aiperf-canonical-byte-parity-{unique}.json"));
+    let rows = (0..64)
+        .map(|_| {
+            serde_json::json!({
+                "timestamp": 0.0,
+                "input_length": 8,
+                "output_length": 2,
+                "hash_ids": [1]
+            })
+        })
+        .collect::<Vec<_>>();
+    write_jsonl(&trace_path, &rows);
+
+    let output = Command::new(binary())
+        .arg("--offline")
+        .arg("--trace-file")
+        .arg(&trace_path)
+        .args([
+            "--trace-format",
+            "mooncake",
+            "--trace-block-size",
+            "8",
+            "--replay-concurrency",
+            "4",
+            "--offline-topology",
+            "aggregated",
+            "--offline-workers",
+            "1",
+            "--offline-router",
+            "round-robin",
+            "--extra-engine-args",
+            "{}",
+        ])
+        .arg("--report-json")
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let direct = dynamo_mocker::replay::simulate_offline_trace_files(
+        dynamo_mocker::replay::OfflineTraceReplayConfig {
+            engines: dynamo_mocker::replay::OfflineTraceReplayEngines::Aggregated {
+                args: dynamo_mocker::common::protocols::MockEngineArgs::default(),
+                num_workers: 1,
+            },
+            router_config: None,
+            prefill_load_estimator: None,
+            trace_files: vec![trace_path.clone()],
+            trace_block_size: Some(8),
+            replay_concurrency: Some(4),
+            router_mode: dynamo_mocker::replay::ReplayRouterMode::RoundRobin,
+            arrival_speedup_ratio: 1.0,
+            trace_format: dynamo_mocker::loadgen::TraceFileFormat::Mooncake,
+            trace_shared_prefix_ratio: 0.0,
+            trace_num_prefix_groups: 0,
+            record_per_request: false,
+            max_sim_time_ms: None,
+            sla: dynamo_mocker::replay::SlaThresholds::default(),
+        },
+    )
+    .unwrap();
+    let direct = aiperf::dynamo_offline::canonicalize_offline_report(direct);
+    let value = serde_json::to_value(direct).unwrap();
+    let sorted = value
+        .as_object()
+        .unwrap()
+        .iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut expected = serde_json::to_string_pretty(&sorted).unwrap();
+    expected.push('\n');
+    let actual = std::fs::read(&report_path).unwrap();
+
+    std::fs::remove_file(trace_path).unwrap();
+    std::fs::remove_file(report_path).unwrap();
+    assert_eq!(actual, expected.as_bytes());
+}
+
+#[test]
 fn every_canonical_trace_format_runs_natively_through_aiperf() {
     let unique = std::process::id();
     let cases = [

@@ -11,7 +11,7 @@ use crate::catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
     spec_for, validate_catalog,
 };
-use crate::ingest::RecordIngest;
+use crate::ingest::{InferenceDimensions, RecordIngest};
 use crate::kernel::{DistributionStats, linear_distribution, nearest_distribution};
 use crate::sidecar::SidecarMetric;
 use crate::store::{ColumnStore, ListMetricBackend};
@@ -21,7 +21,7 @@ use crate::value::MetricValue;
 use crate::window::ExportContext;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
@@ -256,11 +256,46 @@ pub struct MetricTimeslice {
     pub metrics: BTreeMap<String, MetricResult>,
 }
 
+/// One model/endpoint-specific inference metric series.
+///
+/// Series retain the same result and timeslice types as the aggregate summary;
+/// only the row mask differs. Dimensions are value-sorted before construction,
+/// so worker merge order cannot perturb report ordering.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InferenceMetricSeriesSummary {
+    dimensions: InferenceDimensions,
+    results: BTreeMap<String, MetricResult>,
+    timeslices: Vec<MetricTimeslice>,
+}
+
+impl InferenceMetricSeriesSummary {
+    /// Returns the exact model/endpoint pair for this series.
+    pub fn dimensions(&self) -> &InferenceDimensions {
+        &self.dimensions
+    }
+
+    /// Returns one result by stable metric name.
+    pub fn result_by_name(&self, tag: &str) -> Option<&MetricResult> {
+        self.results.get(tag)
+    }
+
+    /// Returns all results as a stable ordered map.
+    pub fn result_map(&self) -> &BTreeMap<String, MetricResult> {
+        &self.results
+    }
+
+    /// Returns chronological non-empty timeslices for this dimension pair.
+    pub fn timeslices(&self) -> &[MetricTimeslice] {
+        &self.timeslices
+    }
+}
+
 /// Full summary produced by [`MetricsAccumulator`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct AccumulatorSummary {
     results: BTreeMap<String, MetricResult>,
     timeslices: Vec<MetricTimeslice>,
+    inference_series: Vec<InferenceMetricSeriesSummary>,
     sidecar_metrics: BTreeMap<String, SidecarMetric>,
 }
 
@@ -320,6 +355,11 @@ impl AccumulatorSummary {
     /// Returns chronological non-empty timeslices.
     pub fn timeslices(&self) -> &[MetricTimeslice] {
         &self.timeslices
+    }
+
+    /// Returns inference series sorted by endpoint URL and then model.
+    pub fn inference_series(&self) -> &[InferenceMetricSeriesSummary] {
+        &self.inference_series
     }
 
     /// Inserts or replaces one domain-neutral telemetry/server metric.
@@ -465,11 +505,78 @@ impl MetricsAccumulator {
             context.end_ns.map(|value| value as f64),
         );
         let timeslices = self.compute_timeslices(&mask, &curves);
+        let inference_series = self.compute_inference_series(&mask, context);
         AccumulatorSummary {
             results,
             timeslices,
+            inference_series,
             sidecar_metrics: BTreeMap::new(),
         }
+    }
+
+    fn compute_inference_series(
+        &self,
+        base_mask: &[bool],
+        context: &ExportContext,
+    ) -> Vec<InferenceMetricSeriesSummary> {
+        // Python's accumulator stores categorical metadata separately from
+        // numeric metrics and exposes exact masks for grouped analysis
+        // (`src/aiperf/metrics/accumulator.py:144-169` and
+        // `src/aiperf/metrics/column_store.py:216-263`). Native reports apply
+        // that same masking seam to the request's selected model/endpoint pair.
+        let dimensions = self
+            .store
+            .inference_dimensions()
+            .iter()
+            .filter(|dimensions| {
+                self.store
+                    .mask_for_inference_dimensions(dimensions)
+                    .iter()
+                    .zip(base_mask)
+                    .any(|(dimension, base)| *dimension && *base)
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+
+        dimensions
+            .into_iter()
+            .filter_map(|dimensions| {
+                let dimension_mask = self.store.mask_for_inference_dimensions(&dimensions);
+                let mask = base_mask
+                    .iter()
+                    .zip(dimension_mask)
+                    .map(|(base, dimension)| *base && dimension)
+                    .collect::<Vec<_>>();
+                let mut results = self.compute_result_map(&mask, context.start_ns, context.end_ns);
+                self.remove_unpartitioned_results(&mut results);
+                let curves = self.compute_sweep_curves(&mask);
+                self.inject_sweep_results(
+                    &mut results,
+                    &curves,
+                    context.start_ns.map(|value| value as f64),
+                    context.end_ns.map(|value| value as f64),
+                );
+                let mut timeslices = self.compute_timeslices(&mask, &curves);
+                for timeslice in &mut timeslices {
+                    self.remove_unpartitioned_results(&mut timeslice.metrics);
+                }
+                (!results.is_empty()).then_some(InferenceMetricSeriesSummary {
+                    dimensions,
+                    results,
+                    timeslices,
+                })
+            })
+            .collect()
+    }
+
+    fn remove_unpartitioned_results(&self, results: &mut BTreeMap<String, MetricResult>) {
+        // Externally injected scalars describe the run/phase as a whole. Copying
+        // total GPU energy, for example, into every endpoint/model series would
+        // imply a partition the telemetry producer never measured.
+        for tag in self.injected_scalars.keys() {
+            results.remove(tag.as_str());
+        }
+        results.remove(MetricTag::NetworkRtt.as_str());
     }
 
     fn compute_record_metrics(&mut self, row: usize) {
@@ -592,7 +699,7 @@ impl MetricsAccumulator {
         );
         let completion = percent_difference(
             self.store.metric_f64(row, MetricTag::UsageCompletionTokens),
-            self.store.metric_f64(row, MetricTag::OutputSequenceLength),
+            self.store.observed_output_sequence_length(row),
         );
         let reasoning = percent_difference(
             self.store.metric_f64(row, MetricTag::UsageReasoningTokens),
@@ -1285,6 +1392,71 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_completion_usage_reconciles_token_metrics_without_padding_icl() {
+        let mut record = successful_record(1_000_000_000, 1_100_000_000);
+        // Three observed chunks yield two exact ICL samples and a locally
+        // tokenized OSL of ten. One endpoint usage object is authoritative for
+        // twenty completion tokens, four of which are reasoning tokens.
+        record.usage.completion_tokens = Some(20);
+        record.usage.reasoning_tokens = Some(4);
+
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&record);
+        let summary = accumulator.summarize();
+
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalOutputSequenceLength),
+            Some(20.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalOutputTokens),
+            Some(16.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalReasoningTokens),
+            Some(4.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::OutputTokenThroughput),
+            Some(200.0)
+        );
+        let itl_ms = summary
+            .result(MetricTag::InterTokenLatency)
+            .unwrap()
+            .distribution()
+            .unwrap()
+            .avg
+            .as_f64()
+            .unwrap();
+        assert!((itl_ms - 80.0 / 19.0).abs() < 1e-12);
+        assert_eq!(
+            summary
+                .result(MetricTag::E2eOutputTokenThroughput)
+                .unwrap()
+                .distribution()
+                .unwrap()
+                .avg,
+            MetricValue::Finite(200.0)
+        );
+        assert_eq!(
+            summary
+                .result(MetricTag::UsageCompletionTokensDiffPct)
+                .unwrap()
+                .distribution()
+                .unwrap()
+                .avg,
+            MetricValue::Finite(100.0),
+            "usage discrepancy must retain the pre-reconciliation local count"
+        );
+        let icl = accumulator
+            .column_store()
+            .inter_chunk_latency_replay()
+            .unwrap();
+        assert_eq!(icl.values, &[10_000_000.0, 10_000_000.0]);
+        assert_eq!(icl.record_indices, &[0, 0]);
+    }
+
+    #[test]
     fn explicit_window_overrides_rate_denominator() {
         let mut accumulator = MetricsAccumulator::new();
         accumulator.process_record(&successful_record(1_000_000_000, 1_100_000_000));
@@ -1456,10 +1628,18 @@ mod tests {
 
     #[test]
     fn per_worker_merge_matches_single_accumulator_ingest_order() {
-        let first = successful_record(1_000_000_000, 1_100_000_000);
+        let mut first = successful_record(1_000_000_000, 1_100_000_000);
+        first.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint-z/v1/chat/completions".to_string()),
+            model: Some("model-b".to_string()),
+        };
         let mut second = successful_record(1_200_000_000, 1_350_000_000);
         second.worker_id = Some("worker-1".to_string());
         second.turn_index = 1;
+        second.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint-a/v1/chat/completions".to_string()),
+            model: Some("model-a".to_string()),
+        };
 
         let mut direct = MetricsAccumulator::new();
         direct.process_record(&first);
@@ -1476,6 +1656,67 @@ mod tests {
             left.column_store().mask_for_worker("worker-1"),
             vec![false, true]
         );
+        let summary = left.summarize();
+        assert_eq!(summary.inference_series().len(), 2);
+        assert_eq!(
+            summary.inference_series()[0]
+                .dimensions()
+                .endpoint_url
+                .as_deref(),
+            Some("https://endpoint-a/v1/chat/completions")
+        );
+        assert_eq!(
+            summary.inference_series()[1]
+                .dimensions()
+                .endpoint_url
+                .as_deref(),
+            Some("https://endpoint-z/v1/chat/completions")
+        );
+        assert!(summary.inference_series().iter().all(|series| {
+            series
+                .result_by_name(MetricTag::RequestCount.as_str())
+                .and_then(MetricResult::finite_value)
+                == Some(1.0)
+        }));
+    }
+
+    #[test]
+    fn model_endpoint_series_own_timeslices_and_stable_per_series_rates() {
+        let mut accumulator = MetricsAccumulator::with_config(MetricsConfig {
+            slice_duration_ns: Some(1_000_000_000),
+            ..MetricsConfig::default()
+        });
+        let mut first = successful_record(1_000_000_000, 1_100_000_000);
+        first.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint/v1/chat/completions".to_string()),
+            model: Some("model-a".to_string()),
+        };
+        let mut second = successful_record(1_200_000_000, 1_400_000_000);
+        second.dimensions = InferenceDimensions {
+            endpoint_url: Some("https://endpoint/v1/chat/completions".to_string()),
+            model: Some("model-b".to_string()),
+        };
+        accumulator.process_record(&first);
+        accumulator.process_record(&second);
+
+        let summary = accumulator.summarize();
+        assert_eq!(summary.inference_series().len(), 2);
+        for series in summary.inference_series() {
+            assert_eq!(series.timeslices().len(), 1);
+            assert_eq!(
+                series
+                    .result_by_name(MetricTag::RequestCount.as_str())
+                    .and_then(MetricResult::finite_value),
+                Some(1.0)
+            );
+            assert_eq!(
+                series.timeslices()[0]
+                    .metrics
+                    .get(MetricTag::RequestCount.as_str())
+                    .and_then(MetricResult::finite_value),
+                Some(1.0)
+            );
+        }
     }
 
     #[test]

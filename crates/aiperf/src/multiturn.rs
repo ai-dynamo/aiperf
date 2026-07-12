@@ -656,6 +656,7 @@ impl LegacySessionBackend {
 
         Ok(TurnToSend {
             uuid: Uuid::new_v4(),
+            effective_model: None,
             conversation_id: owner.conversation_id.clone(),
             x_correlation_id: owner.x_correlation_id.clone(),
             request_correlation_id: owner.x_correlation_id.clone(),
@@ -730,6 +731,8 @@ impl SampledSession {
 pub struct TurnToSend {
     /// Stable request id used by measurement observers.
     pub uuid: Uuid,
+    /// Effective wire model when dataset materialization selected or overrode it.
+    pub effective_model: Option<String>,
     /// Template identifier.
     pub conversation_id: String,
     /// Runtime session identifier.
@@ -1020,7 +1023,12 @@ impl NativeSessionBackend {
         let mut session = self.session.borrow_mut();
         session.advance_to(turn_index)?;
         let endpoint_name = session.endpoint_override()?.map(str::to_string);
-        let endpoint = self.endpoint_resolver.resolve(endpoint_name.as_deref())?;
+        let endpoint = match endpoint_name.as_deref() {
+            Some(name) => self.endpoint_resolver.resolve(Some(name))?,
+            None => self
+                .endpoint_resolver
+                .resolve_type(self.model_endpoint.endpoint.endpoint_type)?,
+        };
         let mut model_endpoint = self.model_endpoint.clone();
         let endpoint_metadata = endpoint.metadata();
         model_endpoint.endpoint.endpoint_type = endpoint_metadata.endpoint_type;
@@ -1056,6 +1064,7 @@ impl NativeSessionBackend {
             .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
         Ok(TurnToSend {
             uuid: Uuid::new_v4(),
+            effective_model: Some(materialized.model),
             conversation_id: owner.conversation_id.clone(),
             x_correlation_id: owner.x_correlation_id.clone(),
             request_correlation_id,

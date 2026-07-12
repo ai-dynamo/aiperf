@@ -15,7 +15,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
 use std::future::Future;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -36,21 +36,25 @@ use aiperf_graph::segment::SegmentStore;
 use aiperf_graph::sink::{GraphReply, GraphSink};
 use aiperf_graph::transport_bench::GraphRpsReport;
 use aiperf_graph::wire::OpenAiChatMessage as GraphMessage;
-use aiperf_metrics::{AccumulatorSummary, HttpTrace, MetricTag, MetricsConfig};
+use aiperf_metrics::{
+    AccumulatorSummary, HttpTrace, InferenceDimensions, MetricTag, MetricsConfig,
+};
 use aiperf_timing::{ArrivalPattern, Phase, StopConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use dynamo_mocker::common::protocols::{DirectRequest, MockEngineArgs};
+use dynamo_mocker::common::protocols::{DirectRequest, MockEngineArgs, WorkerType};
 use dynamo_mocker::loadgen::{
     AgenticTrace, DynamoRequestTrace, EngineEvent, SteppableAgg, SteppableDisagg, SteppableReplay,
     Trace, TraceFileFormat, WorkloadDriver,
 };
 use dynamo_mocker::replay::{
-    ReplayKvEventVisibility, ReplayKvRouterConfig, ReplayPrefillLoadEstimator, ReplayRouterMode,
-    ReplayTerminalStatus as DynamoTerminalStatus, SlaThresholds as DynamoSlaThresholds,
+    OfflineDisaggReplayConfig, OfflineTraceReplayConfig as DynamoTraceReplayConfig,
+    OfflineTraceReplayEngines, ReplayKvEventVisibility, ReplayKvRouterConfig,
+    ReplayPrefillLoadEstimator, ReplayRouterMode, ReplayTerminalStatus as DynamoTerminalStatus,
+    SlaThresholds as DynamoSlaThresholds, TraceDistributionStats as DynamoDistributionStats,
     TraceSimulationReport as DynamoSimulationReport, generate_trace_worker_artifacts_offline,
-    generate_trace_worker_artifacts_offline_with_kv_event_visibility,
+    generate_trace_worker_artifacts_offline_with_kv_event_visibility, simulate_offline_trace_files,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
@@ -455,8 +459,11 @@ impl OfflineEngineConfig {
                 )?,
             )),
             (None, None) => {
-                let shared = self.engine_args()?;
-                Ok((shared.clone(), shared))
+                let mut prefill = self.engine_args()?;
+                let mut decode = prefill.clone();
+                prefill.worker_type = WorkerType::Prefill;
+                decode.worker_type = WorkerType::Decode;
+                Ok((prefill, decode))
             }
             _ => anyhow::bail!(
                 "disaggregated offline mode requires both --prefill-engine-args and --decode-engine-args"
@@ -748,7 +755,14 @@ pub fn write_dynamo_report_json(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating Dynamo report directory {}", parent.display()))?;
     }
-    let payload = serde_json::to_string_pretty(report).context("serializing Dynamo report")?;
+    let value = serde_json::to_value(report).context("serializing Dynamo report")?;
+    let object = value
+        .as_object()
+        .context("Dynamo report did not serialize as a JSON object")?;
+    let sorted = object.iter().collect::<BTreeMap<_, _>>();
+    let mut payload =
+        serde_json::to_string_pretty(&sorted).context("serializing sorted Dynamo report")?;
+    payload.push('\n');
     std::fs::write(path, payload)
         .with_context(|| format!("writing Dynamo report {}", path.display()))?;
     Ok(())
@@ -1294,6 +1308,7 @@ impl DynamoOfflineSink {
                         ObservedUsage {
                             prompt_tokens: Some(prompt_tokens),
                             completion_tokens: Some(completion_tokens),
+                            ..ObservedUsage::default()
                         },
                     );
                     observer.on_terminal(uuid, terminal);
@@ -1369,6 +1384,13 @@ impl DynamoOfflineSink {
 
 #[async_trait(?Send)]
 impl HttpRequestDispatcher for DynamoOfflineSink {
+    fn inference_dimensions(&self, _request: &HttpRequest) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: Some("dynamo://offline".to_string()),
+            model: Some(self.model.clone()),
+        }
+    }
+
     async fn dispatch_collect(
         &self,
         request: HttpRequest,
@@ -1382,6 +1404,16 @@ impl HttpRequestDispatcher for DynamoOfflineSink {
 
 #[async_trait(?Send)]
 impl TurnDispatcher for DynamoOfflineSink {
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: Some("dynamo://offline".to_string()),
+            model: turn
+                .effective_model
+                .clone()
+                .or_else(|| Some(self.model.clone())),
+        }
+    }
+
     async fn dispatch_turn(
         &self,
         turn: TurnToSend,
@@ -1759,6 +1791,158 @@ struct TraceClientState {
     admitted: bool,
 }
 
+const OFFLINE_REPORT_DECIMAL_SCALE: f64 = 1_000_000_000.0;
+
+fn canonicalize_offline_float(value: &mut f64) {
+    if !value.is_finite() {
+        return;
+    }
+    let scaled = *value * OFFLINE_REPORT_DECIMAL_SCALE;
+    if scaled.is_finite() {
+        *value = scaled.round() / OFFLINE_REPORT_DECIMAL_SCALE;
+    }
+    if *value == 0.0 {
+        *value = 0.0;
+    }
+}
+
+fn canonicalize_offline_distribution(distribution: &mut DynamoDistributionStats) {
+    canonicalize_offline_float(&mut distribution.mean_ms);
+    canonicalize_offline_float(&mut distribution.min_ms);
+    canonicalize_offline_float(&mut distribution.max_ms);
+    canonicalize_offline_float(&mut distribution.median_ms);
+    canonicalize_offline_float(&mut distribution.p75_ms);
+    canonicalize_offline_float(&mut distribution.p90_ms);
+    canonicalize_offline_float(&mut distribution.p95_ms);
+    canonicalize_offline_float(&mut distribution.p99_ms);
+    canonicalize_offline_float(&mut distribution.std_ms);
+}
+
+/// Normalize only the frontend report boundary for reproducible offline JSON.
+///
+/// Dynamo remains the sole simulation and aggregation implementation. Offline
+/// host execution time is measured externally, while the serialized report
+/// uses the simulated duration. Nanosecond-scale decimal normalization removes
+/// floating reduction-order noise without changing routing or mocker behavior.
+pub fn canonicalize_offline_report(mut report: DynamoSimulationReport) -> DynamoSimulationReport {
+    report.throughput.wall_time_ms = report.throughput.duration_ms;
+    canonicalize_offline_float(&mut report.throughput.duration_ms);
+    canonicalize_offline_float(&mut report.throughput.wall_time_ms);
+    canonicalize_offline_float(&mut report.throughput.request_throughput_rps);
+    canonicalize_offline_float(&mut report.throughput.input_throughput_tok_s);
+    canonicalize_offline_float(&mut report.throughput.output_throughput_tok_s);
+    canonicalize_offline_float(&mut report.throughput.total_throughput_tok_s);
+    canonicalize_offline_float(&mut report.throughput.prefill_worker_seconds);
+    canonicalize_offline_float(&mut report.throughput.decode_worker_seconds);
+    canonicalize_offline_float(&mut report.throughput.gpu_hours);
+    canonicalize_offline_float(&mut report.prefix_cache_reused_ratio);
+    canonicalize_offline_float(&mut report.first_admission_prefix_cache_reused_ratio);
+    canonicalize_offline_distribution(&mut report.latency.ttft);
+    canonicalize_offline_distribution(&mut report.latency.ttst);
+    canonicalize_offline_distribution(&mut report.latency.tpot);
+    canonicalize_offline_distribution(&mut report.latency.itl.distribution);
+    canonicalize_offline_float(&mut report.latency.itl.max_ms);
+    canonicalize_offline_distribution(&mut report.latency.e2e);
+    canonicalize_offline_distribution(&mut report.latency.output_token_throughput_per_user);
+    if let Some(goodput) = &mut report.goodput {
+        canonicalize_offline_float(&mut goodput.request_throughput_rps);
+        canonicalize_offline_float(&mut goodput.output_throughput_tok_s);
+    }
+    report
+}
+
+/// Run canonical trace replay through the exact static Dynamo harness used by
+/// `python -m dynamo.replay`.
+///
+/// This path intentionally owns no AIPerf observer, compatibility collector,
+/// or native-metrics column store. Frontends lower configuration into Dynamo's
+/// shared [`DynamoTraceReplayConfig`], so scheduler events, floating-point time,
+/// aggregation order, and report finalization execute once in the owning crate.
+pub fn run_canonical_trace_offline(
+    engine_config: OfflineEngineConfig,
+    trace_config: OfflineTraceConfig,
+) -> Result<DynamoSimulationReport> {
+    let router_config = engine_config.replay_router_config()?;
+    let requested_router_mode: ReplayRouterMode = engine_config.router_mode.into();
+    let (engines, prefill_load_estimator, router_mode) = match engine_config.topology {
+        OfflineTopology::Single => {
+            let (args, estimator) =
+                OfflineEngineConfig::configure_aic(engine_config.engine_args()?)?;
+            let estimator =
+                engine_config.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
+            (
+                OfflineTraceReplayEngines::Aggregated {
+                    args,
+                    num_workers: 1,
+                },
+                estimator,
+                ReplayRouterMode::RoundRobin,
+            )
+        }
+        OfflineTopology::Aggregated => {
+            anyhow::ensure!(
+                engine_config.workers > 0,
+                "offline aggregate workers must be positive"
+            );
+            let (args, estimator) =
+                OfflineEngineConfig::configure_aic(engine_config.engine_args()?)?;
+            let estimator =
+                engine_config.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
+            (
+                OfflineTraceReplayEngines::Aggregated {
+                    args,
+                    num_workers: engine_config.workers,
+                },
+                estimator,
+                requested_router_mode,
+            )
+        }
+        OfflineTopology::Disaggregated => {
+            anyhow::ensure!(
+                engine_config.prefill_workers > 0,
+                "offline prefill workers must be positive"
+            );
+            anyhow::ensure!(
+                engine_config.decode_workers > 0,
+                "offline decode workers must be positive"
+            );
+            let (prefill_args, decode_args) = engine_config.disaggregated_engine_args()?;
+            let (prefill_args, estimator) = OfflineEngineConfig::configure_aic(prefill_args)?;
+            let (decode_args, _) = OfflineEngineConfig::configure_aic(decode_args)?;
+            let estimator =
+                engine_config.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
+            (
+                OfflineTraceReplayEngines::Disaggregated(OfflineDisaggReplayConfig {
+                    prefill_args,
+                    decode_args,
+                    num_prefill_workers: engine_config.prefill_workers,
+                    num_decode_workers: engine_config.decode_workers,
+                }),
+                estimator,
+                requested_router_mode,
+            )
+        }
+    };
+
+    let report = simulate_offline_trace_files(DynamoTraceReplayConfig {
+        engines,
+        router_config,
+        prefill_load_estimator,
+        trace_files: trace_config.paths,
+        trace_block_size: trace_config.trace_block_size,
+        replay_concurrency: trace_config.replay_concurrency,
+        router_mode,
+        arrival_speedup_ratio: trace_config.arrival_speedup_ratio,
+        trace_format: trace_config.format.into(),
+        trace_shared_prefix_ratio: trace_config.shared_prefix_ratio,
+        trace_num_prefix_groups: trace_config.num_prefix_groups,
+        record_per_request: engine_config.capture_per_request,
+        max_sim_time_ms: trace_config.max_sim_time_ms,
+        sla: engine_config.sla,
+    })?;
+    Ok(canonicalize_offline_report(report))
+}
+
 /// Replay any canonical Dynamo trace format through AIPerf's native observer
 /// and report stack while the steppable mocker owns scheduling/KV semantics.
 pub fn run_trace_offline(
@@ -1818,6 +2002,10 @@ pub fn run_trace_offline(
                     conversation_id: Some(ready.session_id),
                     turn_index: u32::try_from(ready.turn_index).unwrap_or(u32::MAX),
                     correlation_id: ready.replay_key,
+                    dimensions: InferenceDimensions {
+                        endpoint_url: Some("dynamo://offline".to_string()),
+                        model: None,
+                    },
                     ..RequestMetricMetadata::default()
                 },
             );
@@ -1888,6 +2076,7 @@ pub fn run_trace_offline(
                     ObservedUsage {
                         prompt_tokens: Some(client.prompt_tokens),
                         completion_tokens: Some(completion_tokens),
+                        ..ObservedUsage::default()
                     },
                 );
                 observer.on_terminal(event.uuid, terminal);
@@ -1977,6 +2166,10 @@ impl GraphSink<GraphMessage> for DynamoGraphSink {
             RequestMetricMetadata {
                 correlation_id: Some(uuid.to_string()),
                 conversation_id: Some(node_id.to_string()),
+                dimensions: InferenceDimensions {
+                    endpoint_url: Some("dynamo://offline".to_string()),
+                    model: Some(self.backend.model.clone()),
+                },
                 ..RequestMetricMetadata::default()
             },
         );

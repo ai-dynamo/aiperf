@@ -11,6 +11,12 @@ use serde::Serialize;
 
 use loadgen_core::collector::{TraceDistributionStats, TraceSimulationReport};
 
+#[cfg(feature = "dynamo-offline")]
+use dynamo_mocker::replay::{
+    TraceDistributionStats as DynamoTraceDistributionStats,
+    TraceSimulationReport as DynamoTraceSimulationReport,
+};
+
 use crate::accuracy::AccuracyRunReport;
 use crate::scheduled::ScheduledRunReport;
 
@@ -46,6 +52,64 @@ pub fn print_report_table(report: &TraceSimulationReport) {
     println!("{}", metric_row("Inter Token Latency", &l.itl.distribution));
     println!("{}", metric_row("Time per Output Token", &l.tpot));
     println!("{}", metric_row("Request Latency (e2e)", &l.e2e));
+    println!("{}", "-".repeat(TABLE_RULE_WIDTH));
+    println!(
+        "Requests        : {} total, {} completed, {} errors ({:.1}% error rate)",
+        c.num_requests,
+        c.completed_requests,
+        errors,
+        if c.num_requests > 0 {
+            100.0 * errors as f64 / c.num_requests as f64
+        } else {
+            0.0
+        },
+    );
+    println!(
+        "Input tokens    : {} ({:.1} tok/s)",
+        c.total_input_tokens, t.input_throughput_tok_s,
+    );
+    println!(
+        "Output tokens   : {} ({:.1} tok/s)",
+        c.total_output_tokens, t.output_throughput_tok_s,
+    );
+    println!(
+        "Throughput      : {:.2} req/s, {:.1} tok/s total",
+        t.request_throughput_rps, t.total_throughput_tok_s,
+    );
+    println!("Wall time       : {:.1} ms", t.wall_time_ms);
+}
+
+#[cfg(feature = "dynamo-offline")]
+fn dynamo_metric_row(name: &str, d: &DynamoTraceDistributionStats) -> String {
+    format!(
+        "{name:<26} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>10.3}",
+        d.mean_ms, d.min_ms, d.median_ms, d.p90_ms, d.p95_ms, d.p99_ms,
+    )
+}
+
+/// Print Dynamo's canonical offline report with the same console layout as an
+/// ordinary AIPerf compatibility report.
+#[cfg(feature = "dynamo-offline")]
+pub fn print_dynamo_report_table(report: &DynamoTraceSimulationReport) {
+    let c = &report.request_counts;
+    let t = &report.throughput;
+    let l = &report.latency;
+    let errors = c.num_requests.saturating_sub(c.completed_requests);
+
+    println!();
+    println!(
+        "{:<26} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Latency (ms)", "avg", "min", "p50", "p90", "p95", "p99",
+    );
+    println!("{}", "-".repeat(TABLE_RULE_WIDTH));
+    println!("{}", dynamo_metric_row("Time to First Token", &l.ttft));
+    println!("{}", dynamo_metric_row("Time to Second Token", &l.ttst));
+    println!(
+        "{}",
+        dynamo_metric_row("Inter Token Latency", &l.itl.distribution)
+    );
+    println!("{}", dynamo_metric_row("Time per Output Token", &l.tpot));
+    println!("{}", dynamo_metric_row("Request Latency (e2e)", &l.e2e));
     println!("{}", "-".repeat(TABLE_RULE_WIDTH));
     println!(
         "Requests        : {} total, {} completed, {} errors ({:.1}% error rate)",

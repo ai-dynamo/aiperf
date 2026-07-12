@@ -36,6 +36,16 @@ pub struct ObservedUsage {
     pub prompt_tokens: Option<usize>,
     /// Completion-token count, when the endpoint returned it.
     pub completion_tokens: Option<usize>,
+    /// Explicit provider total, when reported.
+    pub total_tokens: Option<usize>,
+    /// Provider-reported reasoning-token count.
+    pub reasoning_tokens: Option<usize>,
+    /// Prompt tokens served from a cache.
+    pub prompt_cache_read_tokens: Option<usize>,
+    /// Prompt tokens written into a cache.
+    pub prompt_cache_write_tokens: Option<usize>,
+    /// Explicit prompt cache misses, when reported separately.
+    pub prompt_cache_miss_tokens: Option<usize>,
 }
 
 /// Endpoint-specific modality facts that feed native metrics without exposing

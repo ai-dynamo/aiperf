@@ -1,0 +1,50 @@
+{
+  "type": "counter",
+  "unit": "requests",
+  "group": "default",
+  "higher_is_better": true,
+  "series": [
+    {
+      "labels": {
+        "model": "model-a"
+      },
+      "endpoint_url": "https://endpoint-a/v1/chat/completions",
+      "stats": {
+        "total": 1.0,
+        "rate": 5.0
+      },
+      "timeslices": [
+        {
+          "start_ns": 300000000,
+          "end_ns": 500000000,
+          "complete": false,
+          "stats": {
+            "total": 1.0,
+            "rate": 5.0
+          }
+        }
+      ]
+    },
+    {
+      "labels": {
+        "model": "model-b"
+      },
+      "endpoint_url": "https://endpoint-z/v1/chat/completions",
+      "stats": {
+        "total": 1.0,
+        "rate": 10.0
+      },
+      "timeslices": [
+        {
+          "start_ns": 100000000,
+          "end_ns": 200000000,
+          "complete": false,
+          "stats": {
+            "total": 1.0,
+            "rate": 10.0
+          }
+        }
+      ]
+    }
+  ]
+}

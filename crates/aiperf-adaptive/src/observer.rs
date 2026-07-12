@@ -154,6 +154,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(1),
                 completion_tokens: Some(1),
+                ..ObservedUsage::default()
             },
         );
         clock.advance_to(2_000_000);

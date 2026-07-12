@@ -16,6 +16,7 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -25,7 +26,8 @@ use uuid::Uuid;
 use aiperf_clock::Clock;
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
-use aiperf_metrics::HttpTrace;
+use aiperf_endpoints::{Endpoint, EndpointConfig};
+use aiperf_metrics::{HttpTrace, InferenceDimensions};
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{
     ConnectionReuseStrategy, ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord,
@@ -139,6 +141,101 @@ pub struct HttpTurnDispatchResult {
     pub record: RequestRecord,
 }
 
+/// Owned execution command handed from the single logical dispatcher to an
+/// injected HTTP execution backend.
+///
+/// The scheduling-only [`TurnToSend`] retains an `Rc` session backend so that
+/// continuations can be materialized locally. This projection deliberately
+/// removes that scheduler state: every remaining field is owned and `Send`, and
+/// the endpoint's stable wire identity lives in
+/// [`EndpointConfig::endpoint_type`]. A cross-process backend can transmit the
+/// data fields and re-resolve the stateless endpoint adapter on the far side;
+/// local backends retain the already-resolved adapter allocation.
+#[derive(Clone, Debug)]
+pub struct PreparedHttpTurn {
+    /// Transport-ready request fields.
+    pub request: HttpRequest,
+    /// Stateless endpoint adapter selected during dataset materialization.
+    pub endpoint: Arc<dyn Endpoint>,
+    /// Effective response parser and wire-lifecycle configuration.
+    pub endpoint_config: EndpointConfig,
+    /// Whether the request came from the endpoint-aware dataset seam.
+    pub endpoint_aware: bool,
+}
+
+impl PreparedHttpTurn {
+    /// Remove scheduler-local session state and build one owned HTTP command.
+    pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
+        let is_final_turn = turn.is_final_turn();
+        let endpoint_aware = turn.request_body.is_some();
+        let mut endpoint_config = turn.endpoint_config;
+        endpoint_config.streaming = turn.streaming;
+        let request_body = if turn.request_body.is_none() {
+            let messages = turn
+                .messages
+                .iter()
+                .map(|message| (message.role.as_str(), message.content.as_str()))
+                .collect::<Vec<_>>();
+            Some(chat_request_body(model, &messages, turn.max_output_tokens))
+        } else {
+            None
+        };
+        Self {
+            request: HttpRequest {
+                uuid: turn.uuid,
+                input_length: turn.input_length,
+                max_output_tokens: turn.max_output_tokens,
+                prompt_text: None,
+                request_body,
+                request_body_bytes: turn.request_body,
+                headers: turn.request_headers,
+                parameters: turn.request_parameters,
+                endpoint_path: turn.endpoint_path,
+                streaming: turn.streaming,
+                x_correlation_id: Some(turn.request_correlation_id),
+                is_final_turn,
+                cancel_after_ns: turn.cancel_after_ns,
+                url_index: turn.url_index,
+            },
+            endpoint: turn.endpoint,
+            endpoint_config,
+            endpoint_aware,
+        }
+    }
+}
+
+/// Pluggable execution placement behind the one logical turn dispatcher.
+///
+/// Implementations may execute on the caller's reactor, a thread-per-core
+/// local pool, or a remote transport such as ZMQ. Scheduling, phase policy,
+/// admission, adaptive control, and record capture remain above this seam and
+/// therefore do not change when execution placement changes.
+#[async_trait(?Send)]
+pub trait HttpTurnExecutionBackend {
+    /// Set the shared run origin after backend startup and before dispatch.
+    fn set_run_origin(&self, start_ns: i64) -> Result<()>;
+
+    /// Resolve labels using the same endpoint/model selection as execution.
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
+
+    /// Execute one prepared request and replay its observations into the local
+    /// dispatcher observer. `on_first_token` must be delivered promptly because
+    /// it releases prefill admission before terminal completion.
+    async fn execute_turn(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpTurnDispatchResult>;
+
+    /// Drain backend-owned execution resources after all dispatched turns have
+    /// reached terminal. In-process direct execution owns no extra resources;
+    /// thread pools and remote clients override this lifecycle hook.
+    fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// Construction policy for one online HTTP sink.
 ///
 /// The client config owns Clock-enforced transport deadlines and protocol
@@ -161,6 +258,11 @@ pub struct TransportSinkConfig {
 /// control, observers, and report construction do not branch on a backend.
 #[async_trait(?Send)]
 pub trait HttpRequestDispatcher: RequestSink<HttpRequest> {
+    /// Resolve report dimensions using the same endpoint selection as dispatch.
+    fn inference_dimensions(&self, _request: &HttpRequest) -> InferenceDimensions {
+        InferenceDimensions::default()
+    }
+
     /// Dispatch one request, retain its terminal response facts, and invoke
     /// `on_first_token` exactly once with TTFT in nanoseconds.
     async fn dispatch_collect(
@@ -192,7 +294,7 @@ pub struct TransportSink {
     urls: Vec<String>,
     base_urls: Vec<String>,
     model: String,
-    start_ns: i64,
+    start_ns: Cell<i64>,
     connection_reuse: ConnectionReuseStrategy,
 }
 
@@ -281,13 +383,43 @@ impl TransportSink {
             urls,
             base_urls,
             model: model.into(),
-            start_ns,
+            start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
         })
     }
 
     fn ms(&self, ns: i64) -> f64 {
-        (ns - self.start_ns) as f64 / 1_000_000.0
+        (ns - self.start_ns.get()) as f64 / 1_000_000.0
+    }
+
+    /// Set the benchmark origin after execution resources have finished
+    /// starting. This keeps backend startup outside phase timing.
+    pub fn set_run_origin(&self, start_ns: i64) {
+        self.start_ns.set(start_ns);
+    }
+
+    fn selected_url(&self, url_index: Option<u32>, endpoint_path: Option<&str>) -> Result<String> {
+        let selected_index = url_index.unwrap_or(0) as usize;
+        let selected_url = self.urls.get(selected_index).ok_or_else(|| {
+            anyhow::anyhow!(
+                "URL index {selected_index} is out of range for {} configured endpoints",
+                self.urls.len()
+            )
+        })?;
+        match endpoint_path {
+            None => Ok(selected_url.clone()),
+            Some(path) if path.starts_with('/') => Ok(format!(
+                "{}{}",
+                self.base_urls
+                    .get(selected_index)
+                    .expect("base/default URL vectors have equal length"),
+                path
+            )),
+            Some(url) if url::Url::parse(url).is_ok() => Ok(url.to_string()),
+            Some(value) => {
+                anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
+            }
+        }
     }
 
     /// Dispatch `req`, invoking `on_first_token` once when the transport observes
@@ -360,27 +492,7 @@ impl TransportSink {
         };
         let request_payload = body.clone();
 
-        let selected_index = url_index.unwrap_or(0) as usize;
-        let selected_url = self.urls.get(selected_index).ok_or_else(|| {
-            anyhow::anyhow!(
-                "URL index {selected_index} is out of range for {} configured endpoints",
-                self.urls.len()
-            )
-        })?;
-        let selected_url = match endpoint_path.as_deref() {
-            None => selected_url.clone(),
-            Some(path) if path.starts_with('/') => format!(
-                "{}{}",
-                self.base_urls
-                    .get(selected_index)
-                    .expect("base/default URL vectors have equal length"),
-                path
-            ),
-            Some(url) if url::Url::parse(url).is_ok() => url.to_string(),
-            Some(value) => {
-                anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
-            }
-        };
+        let selected_url = self.selected_url(url_index, endpoint_path.as_deref())?;
         let mut cfg = RequestConfig::new(selected_url);
         cfg.headers = headers;
         cfg.params = parameters;
@@ -484,6 +596,7 @@ impl TransportSink {
             ObservedUsage {
                 prompt_tokens: prompt_tokens.map(|value| value as usize),
                 completion_tokens: completion_tokens.map(|value| value as usize),
+                ..ObservedUsage::default()
             },
         );
         obs.on_terminal(uuid, terminal);
@@ -714,6 +827,15 @@ impl RequestSink<HttpRequest> for TransportSink {
 
 #[async_trait(?Send)]
 impl HttpRequestDispatcher for TransportSink {
+    fn inference_dimensions(&self, request: &HttpRequest) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: self
+                .selected_url(request.url_index, request.endpoint_path.as_deref())
+                .ok(),
+            model: Some(self.model.clone()),
+        }
+    }
+
     async fn dispatch_collect(
         &self,
         req: HttpRequest,
@@ -727,6 +849,18 @@ impl HttpRequestDispatcher for TransportSink {
 
 #[async_trait(?Send)]
 impl TurnDispatcher for TransportSink {
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
+        InferenceDimensions {
+            endpoint_url: self
+                .selected_url(turn.url_index, turn.endpoint_path.as_deref())
+                .ok(),
+            model: turn
+                .effective_model
+                .clone()
+                .or_else(|| Some(self.model.clone())),
+        }
+    }
+
     async fn dispatch_turn(
         &self,
         turn: TurnToSend,
@@ -737,6 +871,28 @@ impl TurnDispatcher for TransportSink {
             .dispatch_turn_collect_record(turn, observer, on_first_token)
             .await?
             .outcome)
+    }
+}
+
+#[async_trait(?Send)]
+impl HttpTurnExecutionBackend for TransportSink {
+    fn set_run_origin(&self, start_ns: i64) -> Result<()> {
+        TransportSink::set_run_origin(self, start_ns);
+        Ok(())
+    }
+
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
+        <Self as TurnDispatcher>::inference_dimensions(self, turn)
+    }
+
+    async fn execute_turn(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpTurnDispatchResult> {
+        self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
+            .await
     }
 }
 
@@ -753,41 +909,26 @@ impl TransportSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult> {
-        let is_final_turn = turn.is_final_turn();
-        let endpoint_aware = turn.request_body.is_some();
-        let endpoint = turn.endpoint.clone();
-        let mut endpoint_config = turn.endpoint_config.clone();
-        endpoint_config.streaming = turn.streaming;
-        let request_body = if turn.request_body.is_none() {
-            let messages = turn
-                .messages
-                .iter()
-                .map(|message| (message.role.as_str(), message.content.as_str()))
-                .collect::<Vec<_>>();
-            Some(chat_request_body(
-                &self.model,
-                &messages,
-                turn.max_output_tokens,
-            ))
-        } else {
-            None
-        };
-        let request = HttpRequest {
-            uuid: turn.uuid,
-            input_length: turn.input_length,
-            max_output_tokens: turn.max_output_tokens,
-            prompt_text: None,
-            request_body,
-            request_body_bytes: turn.request_body,
-            headers: turn.request_headers,
-            parameters: turn.request_parameters,
-            endpoint_path: turn.endpoint_path,
-            streaming: turn.streaming,
-            x_correlation_id: Some(turn.request_correlation_id),
-            is_final_turn,
-            cancel_after_ns: turn.cancel_after_ns,
-            url_index: turn.url_index,
-        };
+        let turn = PreparedHttpTurn::from_turn(turn, &self.model);
+        self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
+            .await
+    }
+
+    /// Execute an owned scheduler-free HTTP command and retain the exact wire
+    /// exchange. Execution-placement adapters use this method on their local
+    /// worker reactor while the ordinary direct path calls it in place.
+    pub async fn dispatch_prepared_turn_collect_record(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpTurnDispatchResult> {
+        let PreparedHttpTurn {
+            request,
+            endpoint,
+            endpoint_config,
+            endpoint_aware,
+        } = turn;
         let collected = if endpoint_aware {
             self.dispatch_endpoint_collect_record_with_hooks(
                 request,
@@ -885,6 +1026,12 @@ mod tests {
         assert!(is_meaningful_chat_token(&reasoning));
     }
 
+    #[test]
+    fn prepared_turn_is_send_between_reactor_threads() {
+        fn assert_send<T: Send>() {}
+        assert_send::<PreparedHttpTurn>();
+    }
+
     #[tokio::test]
     async fn transport_retries_first_token_filter_past_role_only_chunk() {
         let local = tokio::task::LocalSet::new();
@@ -963,6 +1110,7 @@ mod tests {
                     &[ObservedUsage {
                         prompt_tokens: result.prompt_tokens.map(|value| value as usize),
                         completion_tokens: result.completion_tokens.map(|value| value as usize),
+                        ..ObservedUsage::default()
                     }]
                 );
                 let first_observed_token_ms = observer.tokens.lock().unwrap()[0];

@@ -10,6 +10,22 @@
 use crate::catalog::MetricTag;
 use crate::value::MetricValue;
 use crate::window::Phase;
+use serde::Serialize;
+
+/// Stable model and selected-endpoint dimensions for one inference request.
+///
+/// Python keeps the configured model list and endpoint URL list as independent
+/// dimensions (`src/aiperf/common/models/model_endpoint_info.py:29-69`). The
+/// native collector additionally retains the *selected* pair per request so a
+/// multi-model or multi-endpoint run can emit honest labeled series instead of
+/// folding every request into one unlabeled aggregate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub struct InferenceDimensions {
+    /// Fully resolved endpoint URL selected for the request.
+    pub endpoint_url: Option<String>,
+    /// Model carried by the dispatched request.
+    pub model: Option<String>,
+}
 
 /// Token counts attached to a completed request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -107,6 +123,8 @@ pub struct RecordIngest {
     pub worker_id: Option<String>,
     /// Optional conversation identity for multi-turn analysis.
     pub conversation_id: Option<String>,
+    /// Model and selected endpoint used by this request.
+    pub dimensions: InferenceDimensions,
     /// Record phase.
     pub phase: Phase,
     /// Request start timestamp in nanoseconds.
@@ -154,6 +172,7 @@ impl RecordIngest {
             turn_index: 0,
             worker_id: None,
             conversation_id: None,
+            dimensions: InferenceDimensions::default(),
             phase,
             start_ns,
             end_ns,

@@ -43,7 +43,8 @@ use aiperf_clock::real_clock::RealClock;
 use aiperf_core::sse::ChatChunk;
 use aiperf_dataset::{Overrides, build_message_body_from_wires};
 use aiperf_metrics::{
-    AccumulatorSummary, MetricsAccumulator, Phase, RecordIngest, TokenCounts, UsageMetrics,
+    AccumulatorSummary, InferenceDimensions, MetricsAccumulator, Phase, RecordIngest, TokenCounts,
+    UsageMetrics,
 };
 use aiperf_timing::{RunState, StopChecker, StopConfig};
 use aiperf_transport::client::connection::{Sender, establish};
@@ -259,6 +260,10 @@ impl GraphSink<Msg> for TransportMeteredSink {
                 .unwrap_or(0),
             worker_id: Some(self.worker_id.clone()),
             conversation_id: None,
+            dimensions: InferenceDimensions {
+                endpoint_url: Some(self.url.to_string()),
+                model: Some(self.model.clone()),
+            },
             phase: Phase::Profiling,
             start_ns: req_start,
             end_ns: response_end,

@@ -35,13 +35,15 @@ use aiperf::ancillary::{AncillaryTimingConfig, parse_base_urls};
 use aiperf::dynamo_offline::{
     OfflineAicConfig, OfflineEngineConfig, OfflineKvEventVisibility, OfflineMetricParity,
     OfflineRouterMode, OfflineTopology, OfflineTraceConfig, OfflineTraceFormat,
-    run_fixed_schedule_offline_with_ancillary, run_graph_offline, run_paced_offline,
-    run_request_rate_offline_with_adaptive_and_ancillary, run_trace_offline,
+    run_canonical_trace_offline, run_fixed_schedule_offline_with_ancillary, run_graph_offline,
+    run_paced_offline, run_request_rate_offline_with_adaptive_and_ancillary, run_trace_offline,
     run_user_centric_offline_with_adaptive_and_ancillary, write_dynamo_per_request_jsonl,
     write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
 use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
+#[cfg(feature = "dynamo-offline")]
+use aiperf::report::print_dynamo_report_table;
 use aiperf::report::{
     print_accuracy_table, print_agentic_table, print_report_table, write_accuracy_summary_csv,
     write_native_report_json, write_scheduled_report_json,
@@ -1379,7 +1381,6 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
             num_prefix_groups: cli.trace_num_prefix_groups,
             max_sim_time_ms,
         };
-        let report = run_trace_offline(engine_config.clone(), trace_config.clone())?;
         if let Some(path) = &cli.worker_artifacts_json {
             let visibility = match cli.kv_event_visibility.as_deref() {
                 Some("pass-start") | Some("pass_start") => {
@@ -1393,6 +1394,14 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
             };
             write_dynamo_worker_artifacts_json(&engine_config, &trace_config, visibility, path)?;
         }
+        if cli.json.is_none() {
+            let report = run_canonical_trace_offline(engine_config, trace_config)?;
+            emit_offline_dynamo_artifacts(cli, &report)?;
+            print_dynamo_report_table(&report);
+            return Ok(());
+        }
+
+        let report = run_trace_offline(engine_config, trace_config)?;
         emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
         log_offline_metric_parity(report.parity);
         print_report_table(&report.aiperf.performance);

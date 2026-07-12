@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use aiperf_endpoints::{
     Endpoint, EndpointConfig, EndpointResult, EndpointType, ParsedResponse, RequestContentType,
-    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
+    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
 use aiperf_metrics::HttpTrace;
 use aiperf_transport::models::{ErrorKind, RequestConfig, RequestRecord, Response, SseMessage};
@@ -165,8 +165,7 @@ impl TransportSink {
         let mut parse_failed = false;
         let mut response_text = String::new();
         let mut model_response = ModelResponseMetadata::default();
-        let mut prompt_tokens = None;
-        let mut completion_tokens = None;
+        let mut observed_usage = ObservedUsage::default();
         for response in &record.responses {
             let Some(server_response) = endpoint_response(response) else {
                 continue;
@@ -190,7 +189,7 @@ impl TransportSink {
             };
             let Some(parsed) = parsed else { continue };
             parsed_any = true;
-            absorb_usage(&parsed, &mut prompt_tokens, &mut completion_tokens);
+            absorb_usage(&parsed, &mut observed_usage);
             let Some(data) = parsed.data.as_ref() else {
                 continue;
             };
@@ -210,7 +209,7 @@ impl TransportSink {
             }
         }
 
-        if endpoint.metadata().endpoint_type == EndpointType::Chat {
+        if endpoint.captures_assistant_turn() {
             let endpoint_record = EndpointRequestRecord {
                 responses: record
                     .responses
@@ -266,15 +265,16 @@ impl TransportSink {
             terminal = ?terminal,
             "classified endpoint dispatch"
         );
-        obs.on_usage(
-            uuid,
-            ObservedUsage {
-                prompt_tokens: prompt_tokens.map(|value| value as usize),
-                completion_tokens: completion_tokens.map(|value| value as usize),
-            },
-        );
+        obs.on_usage(uuid, observed_usage);
         obs.on_endpoint_metrics(uuid, endpoint_metrics);
         obs.on_terminal(uuid, terminal);
+
+        let prompt_tokens = observed_usage
+            .prompt_tokens
+            .and_then(|value| u32::try_from(value).ok());
+        let completion_tokens = observed_usage
+            .completion_tokens
+            .and_then(|value| u32::try_from(value).ok());
 
         let result = HttpDispatchResult {
             start_ns: record.start_ns,
@@ -555,29 +555,41 @@ fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMe
         .or(metrics.video_peak_memory_mb);
 }
 
-fn absorb_usage(
-    parsed: &ParsedResponse,
-    prompt_tokens: &mut Option<u32>,
-    completion_tokens: &mut Option<u32>,
-) {
+fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
     let Some(usage) = parsed.usage.as_ref() else {
         return;
     };
-    if let Some(value) = usage_count(usage, &["prompt_tokens", "input_tokens"]) {
-        *prompt_tokens = Some(value);
-    }
-    if let Some(value) = usage_count(usage, &["completion_tokens", "output_tokens"]) {
-        *completion_tokens = Some(value);
-    }
-}
-
-fn usage_count(usage: &Value, names: &[&str]) -> Option<u32> {
-    names.iter().find_map(|name| {
-        usage
-            .get(*name)
-            .and_then(Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-    })
+    let Some(usage) = UsageView::from_value(usage) else {
+        return;
+    };
+    observed.prompt_tokens = usage
+        .prompt_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.prompt_tokens);
+    observed.completion_tokens = usage
+        .completion_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.completion_tokens);
+    observed.total_tokens = usage
+        .total_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.total_tokens);
+    observed.reasoning_tokens = usage
+        .reasoning_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.reasoning_tokens);
+    observed.prompt_cache_read_tokens = usage
+        .prompt_cache_read_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.prompt_cache_read_tokens);
+    observed.prompt_cache_write_tokens = usage
+        .prompt_cache_write_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.prompt_cache_write_tokens);
+    observed.prompt_cache_miss_tokens = usage
+        .prompt_cache_miss_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.prompt_cache_miss_tokens);
 }
 
 fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64> {
@@ -658,10 +670,26 @@ mod tests {
             usage: Some(serde_json::json!({"input_tokens":3,"output_tokens":5})),
             sources: None,
         };
-        let mut prompt = None;
-        let mut completion = None;
-        absorb_usage(&parsed, &mut prompt, &mut completion);
-        assert_eq!((prompt, completion), (Some(3), Some(5)));
+        let mut observed = ObservedUsage::default();
+        absorb_usage(&parsed, &mut observed);
+        assert_eq!(observed.prompt_tokens, Some(3));
+        assert_eq!(observed.completion_tokens, Some(5));
+
+        let parsed = ParsedResponse {
+            perf_ns: 2,
+            data: None,
+            usage: Some(serde_json::json!({
+                "input_tokens": 3,
+                "cache_read_input_tokens": 7,
+                "cache_creation_input_tokens": 2,
+                "output_tokens": 5
+            })),
+            sources: None,
+        };
+        absorb_usage(&parsed, &mut observed);
+        assert_eq!(observed.prompt_tokens, Some(12));
+        assert_eq!(observed.prompt_cache_read_tokens, Some(7));
+        assert_eq!(observed.prompt_cache_write_tokens, Some(2));
         assert_eq!(seconds_to_ns(0.5, "interval").unwrap(), 500_000_000);
         assert!(seconds_to_ns(f64::INFINITY, "timeout").is_err());
     }

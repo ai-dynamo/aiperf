@@ -24,8 +24,8 @@ pub mod value;
 pub mod window;
 
 pub use accumulator::{
-    Accumulator, AccumulatorSummary, MetricResult, MetricResultData, MetricTimeslice,
-    MetricsAccumulator, MetricsConfig, MetricsMergeError, SloThreshold,
+    Accumulator, AccumulatorSummary, InferenceMetricSeriesSummary, MetricResult, MetricResultData,
+    MetricTimeslice, MetricsAccumulator, MetricsConfig, MetricsMergeError, SloThreshold,
 };
 pub use accuracy::{
     ACCURACY_RECORD_TYPE, AccumulatorType, AccuracyAccumulator, AccuracyAnalysis, AccuracyAtLoad,
@@ -40,7 +40,7 @@ pub use catalog::{
 };
 pub use counter::{CounterDelta, boundary_counter_delta};
 pub use derived::{delta_ms, error_adjusted_result, network_adjusted_ms};
-pub use ingest::{HttpTrace, RecordIngest, TokenCounts, UsageMetrics};
+pub use ingest::{HttpTrace, InferenceDimensions, RecordIngest, TokenCounts, UsageMetrics};
 pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_distribution};
 pub use report::{
     AgenticEpisodeReport, AgenticEpisodeReportOutcome, AgenticEvaluationReport,

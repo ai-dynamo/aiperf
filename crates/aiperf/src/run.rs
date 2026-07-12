@@ -589,11 +589,13 @@ pub(crate) async fn run_paced_with_backend(
             u32::try_from(selector.next_index())
                 .expect("validated endpoint selector index must fit u32")
         });
+        let dimensions = sink.inference_dimensions(&req);
         native_metrics.register_metadata(
             req.uuid,
             RequestMetricMetadata {
                 session_num: Some(state.sent_sessions),
                 correlation_id: Some(req.uuid.to_string()),
+                dimensions,
                 ..RequestMetricMetadata::default()
             },
         );

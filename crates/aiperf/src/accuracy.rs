@@ -29,9 +29,9 @@ use aiperf_dataset::{
 };
 use aiperf_metrics::{
     AccumulatorSummary, AccumulatorType, AccuracyAccumulator, AccuracyAnalysis, AccuracyRecord,
-    AccuracyResultsAnalyzer, AnalyzerRunner, AnalyzerType, CorrelationId,
-    EvaluatorDatasetReportInfo, EvaluatorReportInfo, ExportContext, GradingResult, NativeReport,
-    Phase, ReportError, ReportRunInfo, RunOutcome, SummaryContext, TaskId,
+    AccuracyResultsAnalyzer, AnalyzerRunner, AnalyzerType, CorrelationId, EnergyEfficiencySummary,
+    EvaluatorDatasetReportInfo, EvaluatorReportInfo, ExportContext, GradingResult, MetricTag,
+    NativeReport, Phase, ReportError, ReportRunInfo, RunOutcome, SummaryContext, TaskId,
 };
 use aiperf_rng::RngRoot;
 use anyhow::Context;
@@ -666,6 +666,17 @@ pub async fn grade_accuracy_responses(
     let mut summary_context = SummaryContext::new();
     summary_context.insert_accumulator(AccumulatorType::Accuracy, accuracy_summary);
     summary_context.insert_accumulator(AccumulatorType::MetricResults, native_summary.clone());
+    // Python owns total-GPU-energy production as an externally injected metric
+    // (`src/aiperf/metrics/types/power_efficiency_metrics.py:43-67`). When the
+    // native telemetry sidecar has attached that same joule scalar to the metric
+    // summary, expose it through the analyzer's existing optional energy seam;
+    // accuracy must not scrape or independently recompute telemetry.
+    if let Some(total_energy_j) = native_summary.finite_value(MetricTag::TotalGpuEnergy) {
+        summary_context.insert_accumulator(
+            AccumulatorType::GpuTelemetry,
+            EnergyEfficiencySummary { total_energy_j },
+        );
+    }
     let mut analyzers = AnalyzerRunner::new();
     analyzers.push(AccuracyResultsAnalyzer);
     analyzers.run(&mut summary_context)?;
@@ -997,7 +1008,10 @@ mod tests {
         local
             .run_until(async {
                 let mut evaluator = evaluator(false);
-                let (dataset, processor, scheduled) = dispatch_fixture(&mut evaluator).await;
+                let (dataset, processor, mut scheduled) = dispatch_fixture(&mut evaluator).await;
+                scheduled
+                    .native_metrics
+                    .insert_finite(MetricTag::TotalGpuEnergy, 3_600_000.0);
                 let report = grade_and_finalize_accuracy_report(
                     "fixture-model",
                     scheduled,
@@ -1012,10 +1026,12 @@ mod tests {
                 assert_eq!(report.accuracy.summary.overall.n, 2);
                 assert_eq!(report.accuracy.summary.overall.correct_count, 1);
                 assert_eq!(report.accuracy.summary.overall.accuracy, Some(0.5));
+                assert_eq!(report.accuracy.correct_answers_per_kwh, Some(1.0));
                 assert_eq!(evaluator.responses.len(), 2);
                 assert!(report.failures.is_empty());
                 let native = serde_json::to_value(&report.native_report).unwrap();
                 assert_eq!(native["evaluator"]["worker_version"], "fixture-worker");
+                assert_eq!(native["accuracy"]["correct_answers_per_kwh"], 1.0);
                 assert_eq!(
                     native["evaluator"]["dataset"]["revision"],
                     "fixture-revision"

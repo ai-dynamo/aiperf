@@ -13,8 +13,8 @@ use std::rc::Rc;
 
 use aiperf_clock::Clock;
 use aiperf_metrics::{
-    AccumulatorSummary, HttpTrace, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
-    TokenCounts, UsageMetrics,
+    AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
+    RecordIngest, TokenCounts, UsageMetrics,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
@@ -36,6 +36,8 @@ pub struct RequestMetricMetadata {
     pub worker_id: Option<String>,
     /// Conversation identity for multi-turn series.
     pub conversation_id: Option<String>,
+    /// Model and fully resolved endpoint selected for this request.
+    pub dimensions: InferenceDimensions,
     /// External request correlation id.
     pub correlation_id: Option<String>,
     /// Source audio duration for ASR real-time-factor metrics.
@@ -53,6 +55,7 @@ impl Default for RequestMetricMetadata {
             turn_index: 0,
             worker_id: None,
             conversation_id: None,
+            dimensions: InferenceDimensions::default(),
             correlation_id: None,
             audio_duration_s: None,
             has_credit_timestamp: true,
@@ -88,6 +91,7 @@ struct PendingRequest {
     reasoning_tokens: u64,
     first_output_token_ns: Option<i64>,
     endpoint_metrics: ObservedEndpointMetrics,
+    observed_usage: ObservedUsage,
     terminal: Option<ReplayTerminalStatus>,
     metadata: RequestMetricMetadata,
 }
@@ -233,8 +237,15 @@ impl PendingRequest {
             .or(self.terminal_ns)
             .unwrap_or(finish_ns);
         let terminal = self.terminal.unwrap_or(ReplayTerminalStatus::Failed);
-        let completion_tokens = self.response.completion_tokens;
-        let prompt_tokens = self.response.prompt_tokens;
+        let completion_tokens = self.response.completion_tokens.or_else(|| {
+            self.observed_usage
+                .completion_tokens
+                .map(|value| value as u64)
+        });
+        let prompt_tokens = self
+            .response
+            .prompt_tokens
+            .or_else(|| self.observed_usage.prompt_tokens.map(|value| value as u64));
         RecordIngest {
             correlation_id: self
                 .metadata
@@ -244,6 +255,7 @@ impl PendingRequest {
             turn_index: self.metadata.turn_index,
             worker_id: self.metadata.worker_id,
             conversation_id: self.metadata.conversation_id,
+            dimensions: self.metadata.dimensions,
             phase: self.metadata.phase,
             start_ns,
             end_ns,
@@ -269,9 +281,31 @@ impl PendingRequest {
             usage: UsageMetrics {
                 prompt_tokens,
                 completion_tokens,
-                total_tokens: prompt_tokens
-                    .zip(completion_tokens)
-                    .map(|(prompt, completion)| prompt.saturating_add(completion)),
+                total_tokens: self
+                    .observed_usage
+                    .total_tokens
+                    .map(|value| value as u64)
+                    .or_else(|| {
+                        prompt_tokens
+                            .zip(completion_tokens)
+                            .map(|(prompt, completion)| prompt.saturating_add(completion))
+                    }),
+                reasoning_tokens: self
+                    .observed_usage
+                    .reasoning_tokens
+                    .map(|value| value as u64),
+                prompt_cache_read_tokens: self
+                    .observed_usage
+                    .prompt_cache_read_tokens
+                    .map(|value| value as u64),
+                prompt_cache_write_tokens: self
+                    .observed_usage
+                    .prompt_cache_write_tokens
+                    .map(|value| value as u64),
+                prompt_cache_miss_tokens: self
+                    .observed_usage
+                    .prompt_cache_miss_tokens
+                    .map(|value| value as u64),
                 ..UsageMetrics::default()
             },
             http: self.response.http,
@@ -312,6 +346,7 @@ impl RequestObserver for NativeMetricsObserver {
                 reasoning_tokens: 0,
                 first_output_token_ns: None,
                 endpoint_metrics: ObservedEndpointMetrics::default(),
+                observed_usage: ObservedUsage::default(),
                 terminal: None,
                 metadata,
             },
@@ -348,6 +383,7 @@ impl RequestObserver for NativeMetricsObserver {
         if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
             request.response.prompt_tokens = usage.prompt_tokens.map(|value| value as u64);
             request.response.completion_tokens = usage.completion_tokens.map(|value| value as u64);
+            request.observed_usage = usage;
         }
     }
 
@@ -458,6 +494,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(8),
                 completion_tokens: Some(2),
+                ..ObservedUsage::default()
             },
         );
         observer.on_endpoint_metrics(
@@ -560,5 +597,60 @@ mod tests {
 
         let collection = observer.finish_with_records();
         assert_eq!(collection.records, vec![snapshot]);
+    }
+
+    #[test]
+    fn observer_keeps_chunk_facts_but_uses_usage_for_labeled_token_metrics() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(9);
+        observer.register_metadata(
+            uuid,
+            RequestMetricMetadata {
+                dimensions: InferenceDimensions {
+                    endpoint_url: Some("https://endpoint/v1/chat/completions".to_string()),
+                    model: Some("model-a".to_string()),
+                },
+                ..RequestMetricMetadata::default()
+            },
+        );
+        observer.on_arrival(uuid, 0.0, 8, 5);
+        observer.on_admit(uuid, 0.0, 0);
+        observer.on_token(uuid, 10.0);
+        observer.on_token(uuid, 20.0);
+        observer.on_usage(
+            uuid,
+            ObservedUsage {
+                prompt_tokens: Some(8),
+                completion_tokens: Some(5),
+                ..ObservedUsage::default()
+            },
+        );
+        clock.advance_to(100_000_000);
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        let collection = observer.finish_with_records();
+        assert_eq!(collection.records[0].token_arrival_ns.len(), 2);
+        assert_eq!(collection.records[0].tokens.output, Some(2));
+        assert_eq!(collection.records[0].usage.completion_tokens, Some(5));
+        assert_eq!(
+            collection
+                .summary
+                .finite_value(MetricTag::TotalOutputSequenceLength),
+            Some(5.0)
+        );
+        assert_eq!(collection.summary.inference_series().len(), 1);
+        assert_eq!(
+            collection.summary.inference_series()[0]
+                .dimensions()
+                .model
+                .as_deref(),
+            Some("model-a")
+        );
+        let icl = collection
+            .summary
+            .result(MetricTag::InterChunkLatency)
+            .unwrap();
+        assert_eq!(icl.distribution().unwrap().count, 1);
     }
 }

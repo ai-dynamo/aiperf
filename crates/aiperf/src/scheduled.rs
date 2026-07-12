@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use aiperf_clock::Clock;
 use aiperf_core::observer::CollectorObserver;
-use aiperf_metrics::{AccumulatorSummary, HttpTrace, MetricsConfig};
+use aiperf_metrics::{AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsConfig};
 use aiperf_timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -119,6 +119,12 @@ pub struct TurnDispatchOutcome {
 /// fixed-schedule policy stays unchanged.
 #[async_trait(?Send)]
 pub trait TurnDispatcher {
+    /// Resolve report dimensions using the same backend selection that dispatch
+    /// will apply. Alternate backends may omit dimensions explicitly.
+    fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
+        InferenceDimensions::default()
+    }
+
     /// Dispatch one fully materialized turn. `on_first_token` receives the
     /// backend's TTFT delta in nanoseconds exactly once when a token arrives.
     async fn dispatch_turn(
@@ -658,6 +664,7 @@ impl ScheduledRuntime {
                 correlation_id: Some(turn.request_correlation_id.clone()),
                 audio_duration_s: turn.audio_duration_seconds,
                 has_credit_timestamp: self.credit_latency_enabled.get(),
+                dimensions: self.dispatcher.inference_dimensions(&turn),
                 ..RequestMetricMetadata::default()
             },
         );
