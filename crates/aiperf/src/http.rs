@@ -1135,6 +1135,7 @@ fn absorb_non_streaming_content(value: &Value, metadata: &mut ModelResponseMetad
 pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelResponseMetadata) {
     if let Some(response_id) = value
         .get("id")
+        .or_else(|| value.get("request_id"))
         .or_else(|| value.pointer("/response/id"))
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
@@ -1620,6 +1621,21 @@ mod tests {
         assert!(!is_meaningful_chat_token(&usage));
         assert!(is_meaningful_chat_token(&content));
         assert!(is_meaningful_chat_token(&reasoning));
+    }
+
+    #[test]
+    fn vllm_request_id_and_finish_reason_enter_normalized_metadata() {
+        let mut metadata = ModelResponseMetadata::default();
+        absorb_wire_response_metadata(
+            &serde_json::json!({
+                "request_id": "vllm-request-1",
+                "choices": [{"finish_reason": "stop"}]
+            }),
+            &mut metadata,
+        );
+
+        assert_eq!(metadata.response_id.as_deref(), Some("vllm-request-1"));
+        assert_eq!(metadata.finish_reason.as_deref(), Some("stop"));
     }
 
     #[test]
