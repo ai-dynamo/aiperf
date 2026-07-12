@@ -27,7 +27,7 @@ use aiperf_dataset::{
     SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
 use aiperf_endpoints::{
-    ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointId, EndpointKey,
+    ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointId, EndpointKey, EndpointType,
     Media as EndpointMedia, ModelEndpoint, PreparedEndpoint, PreparedEndpointTable,
     Turn as EndpointTurn,
 };
@@ -38,6 +38,7 @@ use aiperf_timing::{RunState, StopConfig};
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use loadgen_core::collector::ReplayTerminalStatus;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -70,6 +71,15 @@ pub trait InputTokenCounter: Send + Sync {
         authored_input_tokens: u64,
     ) -> Result<u64> {
         Ok(authored_input_tokens)
+    }
+
+    /// Whether immutable first turns may reuse a previously computed count.
+    ///
+    /// Stateful or externally backed counters keep the conservative default.
+    /// Deterministic body/tokenizer policies opt in so repeated dataset samples
+    /// do not rerun tokenization for byte-identical static prompts.
+    fn caches_static_first_turns(&self) -> bool {
+        false
     }
 }
 
@@ -192,6 +202,10 @@ impl InputTokenCounter for EndpointInputTokenCounter {
             endpoint.extract_payload_inputs(&body),
             authored_input_tokens,
         )
+    }
+
+    fn caches_static_first_turns(&self) -> bool {
+        true
     }
 }
 
@@ -1292,6 +1306,20 @@ struct LegacyNativeSessionEndpoint {
     endpoint_resolver: Arc<dyn EndpointResolver>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum StaticInputCountEndpoint {
+    Legacy(EndpointType),
+    Prepared(EndpointKey),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct StaticInputCountKey {
+    template_index: usize,
+    endpoint: StaticInputCountEndpoint,
+}
+
+type StaticInputCountCache = Rc<RefCell<FxHashMap<StaticInputCountKey, u64>>>;
+
 impl fmt::Debug for NativeSessionEndpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1317,11 +1345,13 @@ impl fmt::Debug for NativeSessionEndpoint {
 #[derive(Clone)]
 struct NativeSessionBackend {
     session: RefCell<NativeConversationSession>,
+    template_index: usize,
     metadata: ConversationMetadata,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
+    static_input_count_cache: StaticInputCountCache,
     segments: Arc<dyn SegmentStore>,
     default_output_tokens: usize,
 }
@@ -1460,15 +1490,32 @@ impl NativeSessionBackend {
             .turns
             .get(turn_index)
             .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
+        let static_count_key = (turn_index == 0
+            && self.input_token_counter.caches_static_first_turns())
+        .then(|| StaticInputCountKey {
+            template_index: self.template_index,
+            endpoint: match &turn_endpoint {
+                TurnEndpoint::Legacy(binding) => {
+                    StaticInputCountEndpoint::Legacy(binding.endpoint.metadata().endpoint_type)
+                }
+                TurnEndpoint::Prepared(reference) => {
+                    StaticInputCountEndpoint::Prepared(reference.key)
+                }
+            },
+        });
         let input_tokens = if timing.trace_hash_ids.is_some()
             || materialized.raw_token_ids.is_some()
         {
             u64::try_from(timing.input_length)
                 .map_err(|_| anyhow!("authored trace input count exceeds u64"))?
+        } else if let Some(cached) = static_count_key
+            .and_then(|key| self.static_input_count_cache.borrow().get(&key).copied())
+        {
+            cached
         } else {
-            match prepared_endpoint {
+            let counted = match &prepared_endpoint {
                 Some((_, endpoint)) => self.input_token_counter.count_prepared_input_tokens(
-                    endpoint,
+                    *endpoint,
                     &materialized.body,
                     materialized.input_tokens,
                 )?,
@@ -1482,7 +1529,13 @@ impl NativeSessionBackend {
                         unreachable!("prepared endpoint retained above for token counting")
                     }
                 },
+            };
+            if let Some(key) = static_count_key {
+                self.static_input_count_cache
+                    .borrow_mut()
+                    .insert(key, counted);
             }
+            counted
         };
         let input_length = usize::try_from(input_tokens)
             .map_err(|_| anyhow!("materialized input token count exceeds usize"))?;
@@ -1540,6 +1593,7 @@ pub struct NativeDatasetConversationSource {
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
+    static_input_count_cache: StaticInputCountCache,
     default_output_tokens: usize,
 }
 
@@ -1873,6 +1927,7 @@ impl NativeDatasetConversationSource {
             materializer,
             response_tokenizer,
             input_token_counter: Arc::new(AuthoredInputTokenCounter),
+            static_input_count_cache: Rc::new(RefCell::new(FxHashMap::default())),
             default_output_tokens,
         })
     }
@@ -1880,6 +1935,7 @@ impl NativeDatasetConversationSource {
     /// Replace authored input lengths with an injected materialized-body policy.
     pub fn with_input_token_counter(mut self, counter: Arc<dyn InputTokenCounter>) -> Self {
         self.input_token_counter = counter;
+        self.static_input_count_cache.borrow_mut().clear();
         self
     }
 
@@ -1918,11 +1974,13 @@ impl NativeDatasetConversationSource {
         let x_correlation_id = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let backend = NativeSessionBackend {
             session: RefCell::new(NativeConversationSession::new(self.dataset.clone(), id)?),
+            template_index: metadata_index,
             metadata,
             endpoint: self.endpoint.clone(),
             materializer: self.materializer.clone(),
             response_tokenizer: self.response_tokenizer.clone(),
             input_token_counter: self.input_token_counter.clone(),
+            static_input_count_cache: self.static_input_count_cache.clone(),
             segments: self.dataset.segments().clone(),
             default_output_tokens: self.default_output_tokens,
         };
@@ -2067,6 +2125,8 @@ impl CreditCounter {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use aiperf_dataset::{ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
     use aiperf_rng::RngRoot;
     use serde_json::json;
@@ -2074,6 +2134,37 @@ mod tests {
     use super::*;
 
     struct FixedTemplateTokenizer;
+
+    #[derive(Default)]
+    struct CountingStaticInputTokenCounter {
+        calls: AtomicUsize,
+    }
+
+    impl InputTokenCounter for CountingStaticInputTokenCounter {
+        fn count_input_tokens(
+            &self,
+            _endpoint: &dyn Endpoint,
+            _body: &[u8],
+            authored_input_tokens: u64,
+        ) -> Result<u64> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(authored_input_tokens.saturating_sub(1))
+        }
+
+        fn count_prepared_input_tokens(
+            &self,
+            _endpoint: &dyn PreparedEndpoint,
+            _body: &[u8],
+            authored_input_tokens: u64,
+        ) -> Result<u64> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(authored_input_tokens.saturating_sub(1))
+        }
+
+        fn caches_static_first_turns(&self) -> bool {
+            true
+        }
+    }
 
     impl TextTokenizer for FixedTemplateTokenizer {
         fn encode(&self, text: &str) -> aiperf_dataset::Result<Vec<u32>> {
@@ -2452,6 +2543,7 @@ mod tests {
             .unwrap();
         let mut table = PreparedEndpointTable::new();
         let key = table.push(endpoint).unwrap();
+        let counter = Arc::new(CountingStaticInputTokenCounter::default());
         let mut source = NativeDatasetConversationSource::sequential_with_prepared_endpoint(
             dataset,
             "prepared-model",
@@ -2462,9 +2554,11 @@ mod tests {
                 endpoint_id: endpoint_id.clone(),
             },
         )
-        .unwrap();
+        .unwrap()
+        .with_input_token_counter(counter.clone());
 
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
+        let repeated = source.next(None).unwrap().build_first_turn(None).unwrap();
 
         let TurnEndpoint::Prepared(reference) = turn.endpoint else {
             panic!("prepared source constructed a legacy endpoint turn")
@@ -2475,6 +2569,8 @@ mod tests {
         assert_eq!(body["model"], "prepared-model");
         assert_eq!(body["messages"][0]["content"], "hello");
         assert_eq!(body["stream"], true);
+        assert_eq!(turn.input_length, repeated.input_length);
+        assert_eq!(counter.calls.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]

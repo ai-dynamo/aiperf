@@ -66,6 +66,16 @@ struct SchedulerState {
     all_cancelled: Notify,
 }
 
+struct TaskCountGuard {
+    state: Rc<SchedulerState>,
+}
+
+impl Drop for TaskCountGuard {
+    fn drop(&mut self) {
+        self.state.finish_task();
+    }
+}
+
 impl SchedulerState {
     fn start_task(&self) {
         self.tasks.set(self.tasks.get() + 1);
@@ -116,6 +126,9 @@ impl ClockTaskScheduler {
         let state = self.state.clone();
         let abort_epoch = state.abort_epoch.get();
         tokio::task::spawn_local(async move {
+            let _task_count = TaskCountGuard {
+                state: state.clone(),
+            };
             let cancelled = state.all_cancelled.notified();
             tokio::pin!(cancelled);
             cancelled.as_mut().enable();
@@ -126,7 +139,6 @@ impl ClockTaskScheduler {
                     _ = &mut cancelled => {}
                 }
             }
-            state.finish_task();
         });
     }
 
@@ -320,5 +332,22 @@ mod tests {
 
         assert_eq!(*log.borrow(), vec!["started"]);
         assert_eq!(clock.now_ns(), 0);
+    }
+
+    #[test]
+    fn panicking_task_releases_idle_accounting() {
+        let clock = Rc::new(SimClock::new());
+        let clock_for_body = clock.clone();
+
+        let outcome = drive_sim(clock, move |_handle| async move {
+            let scheduler = ClockTaskScheduler::new(clock_for_body);
+            scheduler.execute_async(Box::pin(async move {
+                panic!("fixture scheduler task panic");
+            }));
+            scheduler.wait_idle().await;
+            assert_eq!(scheduler.task_count(), 0);
+        });
+
+        assert!(!outcome.deadlocked);
     }
 }
