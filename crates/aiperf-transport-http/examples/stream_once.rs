@@ -1,13 +1,13 @@
-// crates/aiperf-transport/examples/stream_once.rs
+// crates/aiperf-transport-http/examples/stream_once.rs
 //! Minimal driver: one streaming chat request against a server, printing the
 //! record. Usage: aiperf-mock-rs --no-tokenizer & then run with BASE_URL set.
 
 use std::rc::Rc;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::RequestConfig;
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::RequestConfig;
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 
 fn main() {
     let base = std::env::var("BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
@@ -17,7 +17,7 @@ fn main() {
         .unwrap();
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async {
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let t = HttpTransport::new(clock, ClientConfig::default());
         let cfg = RequestConfig::new(format!("{base}/v1/chat/completions"));
         let payload = serde_json::json!({

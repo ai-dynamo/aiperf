@@ -1,4 +1,4 @@
-// crates/aiperf-transport/tests/common/mod.rs
+// crates/aiperf-transport-http/tests/common/mod.rs
 //! Spawns the external `aiperf-mock-rs` binary for integration tests.
 #![allow(dead_code)]
 

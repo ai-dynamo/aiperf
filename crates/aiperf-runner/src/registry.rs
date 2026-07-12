@@ -17,12 +17,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use aiperf_transport::models::ConnectionReuseStrategy;
+use aiperf_extensions::AiperfRegistry;
+use aiperf_transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
+use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunnerComponentId};
 
 /// Clock family supplied by one prepared backend.
@@ -170,6 +172,18 @@ pub trait RunnerPairFactory: Debug + Send + Sync {
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()>;
 
+    /// Check run-level invariants against the already validated product
+    /// registry and endpoint profiles without performing external IO.
+    fn validate_run(
+        &self,
+        _run: &AuthoredRunSpecV2,
+        _context: &RunnerRunContext,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        self.validate_pair(backend, workload)
+    }
+
     /// Complete pair-specific preparation after all static validation passes.
     fn prepare(
         &self,
@@ -177,6 +191,22 @@ pub trait RunnerPairFactory: Debug + Send + Sync {
         backend: Box<dyn ValidatedBackendConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>>;
+
+    /// Prepare with the coordinator-owned frozen product registry and
+    /// normalized endpoint profiles.
+    ///
+    /// Existing context-free adapters retain the default. Online adapters
+    /// override this hook so every pair consumes the one registry composed by
+    /// the process coordinator instead of building a private registry.
+    fn prepare_with_context(
+        &self,
+        run: &AuthoredRunSpecV2,
+        _context: &RunnerRunContext,
+        backend: Box<dyn ValidatedBackendConfig>,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        self.prepare(run, backend, workload)
+    }
 }
 
 /// Fully validated component selection retained between validation and prepare.
@@ -389,6 +419,22 @@ impl RunnerRegistry {
         })
     }
 
+    /// Apply pair-owned run-level validation after component configs and
+    /// endpoint profiles have been strictly decoded.
+    pub fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        selection: &ValidatedRunnerSelection,
+    ) -> Result<()> {
+        selection.pair.validate_run(
+            run,
+            context,
+            selection.backend.as_ref(),
+            selection.workload.as_ref(),
+        )
+    }
+
     /// Prepare one previously validated selection without repeating lookup or
     /// central backend/workload branching.
     pub fn prepare(
@@ -399,6 +445,19 @@ impl RunnerRegistry {
         selection
             .pair
             .prepare(run, selection.backend, selection.workload)
+    }
+
+    /// Prepare through the coordinator-owned product registry and normalized
+    /// endpoint-profile context.
+    pub fn prepare_with_context(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        selection: ValidatedRunnerSelection,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        selection
+            .pair
+            .prepare_with_context(run, context, selection.backend, selection.workload)
     }
 }
 
@@ -523,6 +582,10 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // validation, or dispatch. Keeping the composition function even in the
     // base build prevents capability code from growing mode string branches.
     crate::agentic_execution::register_agentic_workload(builder)?;
+    crate::agentic_execution::register_agentic_online_pair(builder)?;
+    crate::online_execution::register_online_http_pairs(builder)?;
+    #[cfg(feature = "dynamo-offline")]
+    crate::offline_execution::register_dynamo_offline_backend(builder)?;
     Ok(())
 }
 
@@ -536,7 +599,7 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
 pub struct OnlineHttpBackendConfigV2 {}
 
 /// Strict built-in scheduled-workload authored config.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduledWorkloadConfigV2 {
     /// Number of local execution workers.
@@ -546,11 +609,21 @@ pub struct ScheduledWorkloadConfigV2 {
     /// Tokenizer-factory-owned authored object.
     pub tokenizer: Box<RawValue>,
     /// Phase-factory-owned authored objects.
-    pub phases: Vec<Box<RawValue>>,
+    pub phases: Vec<PhaseSpec>,
+}
+
+impl Debug for ScheduledWorkloadConfigV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ScheduledWorkloadConfigV2")
+            .field("worker_count", &self.worker_count)
+            .field("phase_count", &self.phases.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Strict built-in direct Graph-IR workload authored config.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GraphWorkloadConfigV2 {
     /// Number of whole-trace placement workers.
@@ -560,11 +633,21 @@ pub struct GraphWorkloadConfigV2 {
     /// Tokenizer-factory-owned authored object.
     pub tokenizer: Box<RawValue>,
     /// Ordered graph phase policy objects.
-    pub phases: Vec<Box<RawValue>>,
+    pub phases: Vec<PhaseSpec>,
+}
+
+impl Debug for GraphWorkloadConfigV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GraphWorkloadConfigV2")
+            .field("worker_count", &self.worker_count)
+            .field("phase_count", &self.phases.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Strict built-in static-accuracy workload authored config.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StaticAccuracyWorkloadConfigV2 {
     /// Number of local inference workers.
@@ -574,9 +657,19 @@ pub struct StaticAccuracyWorkloadConfigV2 {
     /// Tokenizer-factory-owned authored object.
     pub tokenizer: Box<RawValue>,
     /// Ordered scheduled inference phase objects.
-    pub phases: Vec<Box<RawValue>>,
+    pub phases: Vec<PhaseSpec>,
     /// Canonical evaluator-owned authored accuracy object.
     pub accuracy: Box<RawValue>,
+}
+
+impl Debug for StaticAccuracyWorkloadConfigV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StaticAccuracyWorkloadConfigV2")
+            .field("worker_count", &self.worker_count)
+            .field("phase_count", &self.phases.len())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Deserialize)]
@@ -626,19 +719,110 @@ struct EndpointProfileConfigV2 {
     http2: bool,
 }
 
-/// One statically validated endpoint profile identity.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One statically validated endpoint profile and its normalized policy.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedEndpointProfileV2 {
     /// Run-local profile name referenced by workload inputs.
     pub profile_id: String,
     /// Canonical endpoint dialect selected from the frozen registry.
     pub endpoint_id: EndpointId,
+    /// Identity-free endpoint policy after descriptor/factory normalization.
+    pub config: RawEndpointConfig,
     /// Authored HTTP connection reuse policy.
     pub connection_reuse: ConnectionReuseStrategy,
     /// Whether cleartext HTTP/2 prior knowledge was requested.
     pub http2: bool,
     /// Optional authored session-affinity header name.
     pub session_header: Option<String>,
+}
+
+/// Coordinator-owned immutable context shared by static pair validation and
+/// complete execution preparation.
+///
+/// One fresh runner process builds exactly one [`AiperfRegistry`]. Pair
+/// adapters clone this cheap handle into their prepared operation; they never
+/// invoke a built-in registry factory or independently decode endpoint policy.
+#[derive(Clone)]
+pub struct RunnerRunContext {
+    product_registry: Arc<AiperfRegistry>,
+    endpoint_profiles: Arc<BTreeMap<String, ValidatedEndpointProfileV2>>,
+}
+
+impl Debug for RunnerRunContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RunnerRunContext")
+            .field(
+                "endpoint_profiles",
+                &self.endpoint_profiles.keys().collect::<Vec<_>>(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl RunnerRunContext {
+    /// Freeze one validated profile collection beside the process registry.
+    pub fn new(
+        product_registry: Arc<AiperfRegistry>,
+        profiles: Vec<ValidatedEndpointProfileV2>,
+    ) -> Result<Self> {
+        let mut endpoint_profiles = BTreeMap::new();
+        for profile in profiles {
+            let profile_id = profile.profile_id.clone();
+            ensure!(
+                endpoint_profiles
+                    .insert(profile_id.clone(), profile)
+                    .is_none(),
+                "duplicate validated endpoint profile ID {profile_id:?}"
+            );
+        }
+        ensure!(
+            !endpoint_profiles.is_empty(),
+            "runner context requires at least one endpoint profile"
+        );
+        Ok(Self {
+            product_registry,
+            endpoint_profiles: Arc::new(endpoint_profiles),
+        })
+    }
+
+    /// Borrow the single frozen product registry composed by the coordinator.
+    pub fn product_registry(&self) -> &AiperfRegistry {
+        self.product_registry.as_ref()
+    }
+
+    /// Clone the cheap shared registry handle into a prepared operation.
+    pub fn product_registry_handle(&self) -> Arc<AiperfRegistry> {
+        self.product_registry.clone()
+    }
+
+    /// Resolve a run-local endpoint profile without reparsing authored JSON.
+    pub fn endpoint_profile(&self, profile_id: &str) -> Result<&ValidatedEndpointProfileV2> {
+        self.endpoint_profiles.get(profile_id).ok_or_else(|| {
+            anyhow!(
+                "endpoint profile {profile_id:?} is not defined; available: {}",
+                self.endpoint_profiles
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+    }
+
+    /// Resolve the conventional profile injected by the Python projection.
+    pub fn default_endpoint_profile(&self) -> Result<&ValidatedEndpointProfileV2> {
+        self.endpoint_profile("default")
+    }
+
+    /// Iterate normalized profiles in deterministic profile-ID order.
+    pub fn endpoint_profiles(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&str, &ValidatedEndpointProfileV2)> {
+        self.endpoint_profiles
+            .iter()
+            .map(|(name, profile)| (name.as_str(), profile))
+    }
 }
 
 /// Strictly decode and statically validate every authored endpoint profile
@@ -712,6 +896,7 @@ pub fn validate_endpoint_profiles_v2(
         validated.push(ValidatedEndpointProfileV2 {
             profile_id: config.id,
             endpoint_id: canonical_id,
+            config: prepared.config().to_raw(),
             connection_reuse: config.connection_reuse,
             http2: config.http2,
             session_header: config.session_header,
@@ -893,7 +1078,7 @@ fn validate_common_workload(
     worker_count: usize,
     dataset: &RawValue,
     tokenizer: &RawValue,
-    phases: &[Box<RawValue>],
+    phases: &[PhaseSpec],
 ) -> Result<()> {
     ensure!(worker_count > 0, "workload worker_count must be positive");
     let dataset = raw_object(dataset, "workload dataset")?;
@@ -908,22 +1093,14 @@ fn validate_common_workload(
     ensure!(!phases.is_empty(), "workload phases cannot be empty");
     let mut names = BTreeSet::new();
     for (index, phase) in phases.iter().enumerate() {
-        let phase = raw_object(phase, &format!("workload phase {index}"))?;
-        let name = phase
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| anyhow!("workload phase {index}.name must be a non-empty string"))?;
+        let name = phase.common().name.as_str();
+        ensure!(
+            !name.trim().is_empty(),
+            "workload phase {index}.name must be a non-empty string"
+        );
         ensure!(
             names.insert(name.to_owned()),
             "duplicate workload phase name {name:?}"
-        );
-        ensure!(
-            phase
-                .get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty()),
-            "workload phase {index}.type must be a non-empty string"
         );
     }
     Ok(())
@@ -1173,13 +1350,17 @@ mod tests {
     #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
+        #[cfg(feature = "dynamo-offline")]
+        let expected_backends = vec!["dynamo_offline", "online_http"];
+        #[cfg(not(feature = "dynamo-offline"))]
+        let expected_backends = vec!["online_http"];
         assert_eq!(
             registry
                 .backend_descriptors()
                 .into_iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            vec!["online_http"]
+            expected_backends
         );
         assert_eq!(
             registry
@@ -1189,16 +1370,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["agentic", "graph", "scheduled", "static_accuracy"]
         );
-        assert_eq!(registry.supported_pairs(), Vec::<(&str, &str)>::new());
-        assert_eq!(
-            registry.statically_compatible_pairs(),
-            vec![
-                ("online_http", "agentic"),
-                ("online_http", "graph"),
-                ("online_http", "scheduled"),
-                ("online_http", "static_accuracy"),
-            ]
-        );
+        #[cfg(feature = "dynamo-offline")]
+        let expected_supported = vec![
+            ("dynamo_offline", "graph"),
+            ("dynamo_offline", "scheduled"),
+            ("online_http", "agentic"),
+            ("online_http", "graph"),
+        ];
+        #[cfg(not(feature = "dynamo-offline"))]
+        let expected_supported = vec![("online_http", "agentic"), ("online_http", "graph")];
+        #[cfg(feature = "dynamo-offline")]
+        let expected_static = vec![
+            ("dynamo_offline", "graph"),
+            ("dynamo_offline", "scheduled"),
+            ("online_http", "agentic"),
+            ("online_http", "graph"),
+            ("online_http", "scheduled"),
+            ("online_http", "static_accuracy"),
+        ];
+        #[cfg(not(feature = "dynamo-offline"))]
+        let expected_static = vec![
+            ("online_http", "agentic"),
+            ("online_http", "graph"),
+            ("online_http", "scheduled"),
+            ("online_http", "static_accuracy"),
+        ];
+        assert_eq!(registry.supported_pairs(), expected_supported);
+        assert_eq!(registry.statically_compatible_pairs(), expected_static);
     }
 
     #[test]
@@ -1211,7 +1409,12 @@ mod tests {
                 "worker_count": 1,
                 "dataset": {"type": "synthetic"},
                 "tokenizer": {"name": "builtin"},
-                "phases": [{"name": "profiling", "type": "concurrency"}],
+                "phases": [{
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "exclude_from_results": false,
+                    "concurrency": 1
+                }],
                 "unknown": true
             }),
         );

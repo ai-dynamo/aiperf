@@ -14,9 +14,9 @@ use aiperf::multiturn::{ConversationDataset, DatasetConversationSource};
 use aiperf::run::run_fixed_schedule_online_with_ancillary;
 use aiperf_clock::{Clock, RealClock};
 use aiperf_core::observer::CollectorObserver;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ErrorKind, RequestConfig};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ErrorKind, RequestConfig};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use axum::{
     Router, body::Bytes, extract::State, http::header, response::IntoResponse, routing::post,
 };

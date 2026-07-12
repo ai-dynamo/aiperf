@@ -12,7 +12,7 @@ description = "Unified content-addressed dataset, segment store, loaders, and ma
 aiperf-endpoints = { path = "../aiperf-endpoints" }
 aiperf-clock.workspace = true
 aiperf-rng.workspace = true
-aiperf-transport.workspace = true
+aiperf-transport-http.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 blake3.workspace = true

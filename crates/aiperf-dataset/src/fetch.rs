@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use aiperf_clock::{Clock, RealClock};
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{RequestConfig, Response};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{RequestConfig, Response};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use bytes::Bytes;
 

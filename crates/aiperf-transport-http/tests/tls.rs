@@ -10,10 +10,10 @@ use std::convert::Infallible;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ErrorKind, HttpVersion, RequestConfig};
-use aiperf_transport::transport::http_transport::HttpTransport;
-use aiperf_transport::{Clock, RealClock};
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ErrorKind, HttpVersion, RequestConfig};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf_transport_http::{Clock, RealClock};
 use bytes::Bytes;
 use common::run_local;
 use http_body_util::Full;

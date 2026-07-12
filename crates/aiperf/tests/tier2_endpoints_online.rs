@@ -20,10 +20,10 @@ use aiperf_dataset::{
 use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_metrics::MetricTag;
 use aiperf_rng::RngRoot;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ErrorKind, RequestConfig};
-use aiperf_transport::transport::http_transport::HttpTransport;
-use aiperf_transport::transport::polling::{
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ErrorKind, RequestConfig};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf_transport_http::transport::polling::{
     JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
 };
 use axum::body::Bytes;

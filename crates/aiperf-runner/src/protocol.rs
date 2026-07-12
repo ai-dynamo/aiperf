@@ -591,7 +591,7 @@ pub struct EndpointSpec {
     pub timeout_seconds: f64,
     /// HTTP connection reuse/lease strategy.
     #[serde(default)]
-    pub connection_reuse: aiperf_transport::models::ConnectionReuseStrategy,
+    pub connection_reuse: aiperf_transport_http::models::ConnectionReuseStrategy,
     /// Optional request-body content type after Config-v2 normalization.
     #[serde(default)]
     pub request_content_type: Option<aiperf_endpoints::RequestContentType>,

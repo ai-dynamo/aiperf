@@ -15,8 +15,8 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
 use aiperf_clock::Clock;
-use aiperf_transport::models::{RequestConfig, Response};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::models::{RequestConfig, Response};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use url::Url;
 
@@ -371,7 +371,7 @@ fn redact_url(endpoint_url: &str) -> String {
 mod tests {
     use super::*;
     use aiperf_clock::RealClock;
-    use aiperf_transport::config::ClientConfig;
+    use aiperf_transport_http::config::ClientConfig;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::task::{JoinHandle, LocalSet};

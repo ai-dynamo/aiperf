@@ -5,7 +5,7 @@
 //!
 //! The observer is a pure recorder — it does not own a clock. Callers supply
 //! millisecond timestamps drawn from one shared time source (the live HTTP
-//! path uses the `aiperf-transport` `Clock`), so arrival, admit, and token
+//! path uses the `aiperf-transport-http` `Clock`), so arrival, admit, and token
 //! events all sit on the same timeline.
 
 use std::cell::RefCell;

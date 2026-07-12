@@ -45,7 +45,7 @@ aiperf-endpoints.workspace = true
 aiperf-graph = { path = "../aiperf-graph" }
 aiperf-metrics.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
-aiperf-transport = { path = "../aiperf-transport" }
+aiperf-transport-http = { path = "../aiperf-transport-http" }
 aiperf-clock.workspace = true
 aiperf-rng.workspace = true
 loadgen-core.workspace = true

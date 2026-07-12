@@ -7,7 +7,7 @@
 //! Graph-IR engine lives in `aiperf_graph`; the clock-native scheduling policy
 //! (arrivals, slots, stop conditions, ramps, cancellation, and URL selection)
 //! lives in shared [`aiperf_timing`]. This library owns runtime composition used
-//! by `aiperf-runner`: the online HTTP sink over `aiperf-transport` ([`http`]),
+//! by `aiperf-runner`: the online HTTP sink over `aiperf-transport-http` ([`http`]),
 //! ancillary policy wiring ([`ancillary`]), phased scheduled execution
 //! ([`phase_runtime`]), workload shaping ([`workload`]), the online run loop
 //! ([`run`]), reporting ([`report`]), and canonical accuracy/agentic execution

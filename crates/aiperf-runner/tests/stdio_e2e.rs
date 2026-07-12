@@ -390,7 +390,7 @@ async fn stdio_child_runs_http_and_commits_native_report() {
         row["metadata"]["benchmark_phase"] == "profiling"
             && row["metrics"]["request_latency"]["value"].is_number()
             && row["metrics"]["time_to_first_token"]["value"].is_number()
-            && row["trace_data"]["trace_type"] == "aiperf-transport"
+            && row["trace_data"]["trace_type"] == "aiperf-transport-http"
     }));
     let raw_records =
         std::fs::read_to_string(artifacts.path().join("profile_export_raw.jsonl")).unwrap();
@@ -414,10 +414,11 @@ async fn stdio_child_runs_http_and_commits_native_report() {
     let outputs: serde_json::Value =
         serde_json::from_slice(&std::fs::read(artifacts.path().join("outputs.json")).unwrap())
             .unwrap();
-    assert_eq!(outputs["schema_version"], "1.0");
+    assert_eq!(outputs["schema_version"], "1.1");
     assert_eq!(outputs["data"].as_array().unwrap().len(), 4);
     assert!(outputs["data"].as_array().unwrap().iter().all(|row| {
         row["response_text"] == "a"
+            && row["reasoning_text"].is_null()
             && row["metrics"]["output_token_count"] == 1.0
             && row["metrics"]["output_sequence_length"] == 1.0
             && row["metrics"]["request_latency"].is_number()
@@ -542,7 +543,8 @@ async fn stdio_child_sends_anthropic_messages_byte_exactly() {
         &std::fs::read(artifacts.path().join("anthropic-outputs.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(outputs["data"][0]["response_text"], "whyanswer");
+    assert_eq!(outputs["data"][0]["response_text"], "answer");
+    assert_eq!(outputs["data"][0]["reasoning_text"], "why");
     assert_eq!(outputs["data"][0]["metrics"]["output_token_count"], 1.0);
     assert_eq!(outputs["data"][0]["metrics"]["output_sequence_length"], 2.0);
 }
@@ -699,7 +701,8 @@ async fn stdio_child_sends_non_streaming_anthropic_message_json() {
     let outputs: serde_json::Value =
         serde_json::from_slice(&std::fs::read(artifacts.path().join("outputs.json")).unwrap())
             .unwrap();
-    assert_eq!(outputs["data"][0]["response_text"], "whyanswer");
+    assert_eq!(outputs["data"][0]["response_text"], "answer");
+    assert_eq!(outputs["data"][0]["reasoning_text"], "why");
     assert_eq!(outputs["data"][0]["metrics"]["output_sequence_length"], 2.0);
 }
 

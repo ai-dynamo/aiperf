@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Online HTTP dispatch over the `aiperf-transport` (hyper) client.
+//! Online HTTP dispatch over the `aiperf-transport-http` (hyper) client.
 //!
 //! [`TransportSink`] implements `loadgen_core`'s [`RequestSink`] using the
-//! Rust-native `aiperf-transport` client (hyper + the `aiperf-clock` `Clock`). It
+//! Rust-native `aiperf-transport-http` client (hyper + the `aiperf-clock` `Clock`). It
 //! is single-threaded (`!Send`, `Rc`-based) and driven on a `LocalSet`;
 //! admit/token times are stamped from the same clock origin the run loop uses for
 //! arrival, so all events share one timeline.
@@ -28,14 +28,14 @@ use aiperf_clock::Clock;
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
 use aiperf_dataset::EndpointResolver;
-use aiperf_endpoints::{Endpoint, EndpointConfig};
+use aiperf_endpoints::{Endpoint, EndpointConfig, EndpointId, EndpointKey, PreparedEndpointTable};
 use aiperf_metrics::{HttpTrace, InferenceDimensions};
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{
     ConnectionReuseStrategy, ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord,
     Response, SseMessage,
 };
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     Dispatchable, ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink,
@@ -294,10 +294,8 @@ pub struct HttpTurnDispatchResult {
 pub struct PreparedHttpTurn {
     /// Transport-ready request fields.
     pub request: HttpRequest,
-    /// Stateless endpoint adapter selected during dataset materialization.
-    pub endpoint: Arc<dyn Endpoint>,
-    /// Effective response parser and wire-lifecycle configuration.
-    pub endpoint_config: EndpointConfig,
+    /// Worker-resolved endpoint binding selected during preparation.
+    pub endpoint: PreparedHttpEndpoint,
     /// Whether the request came from the endpoint-aware dataset seam.
     pub endpoint_aware: bool,
 }
@@ -307,10 +305,52 @@ impl fmt::Debug for PreparedHttpTurn {
         formatter
             .debug_struct("PreparedHttpTurn")
             .field("request", &self.request)
-            .field("endpoint", &self.endpoint.metadata().endpoint_type)
-            .field("endpoint_config", &self.endpoint_config)
+            .field("endpoint", &self.endpoint)
             .field("endpoint_aware", &self.endpoint_aware)
             .finish()
+    }
+}
+
+/// Copyable open endpoint identity carried from the coordinator to a worker.
+///
+/// Every worker prepares profiles in the same deterministic order. The dense
+/// key selects the hot-path binding, while the canonical ID detects a mismatched
+/// remote registry before any request is sent.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PreparedEndpointReference {
+    /// Worker-local dense table key.
+    pub key: EndpointKey,
+    /// Canonical open endpoint identity expected at that key.
+    pub endpoint_id: EndpointId,
+}
+
+/// Endpoint selection retained by one scheduler-free HTTP command.
+#[derive(Clone)]
+pub enum PreparedHttpEndpoint {
+    /// Protocol-v1 compatibility adapter.
+    Legacy {
+        /// Stateless legacy endpoint implementation.
+        endpoint: Arc<dyn Endpoint>,
+        /// Closed compatibility configuration.
+        config: Box<EndpointConfig>,
+    },
+    /// Protocol-v2 worker-local prepared binding.
+    Prepared(PreparedEndpointReference),
+}
+
+impl fmt::Debug for PreparedHttpEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Legacy { endpoint, config } => formatter
+                .debug_struct("LegacyEndpoint")
+                .field("endpoint", &endpoint.metadata().endpoint_type)
+                .field("config", config)
+                .finish(),
+            Self::Prepared(reference) => formatter
+                .debug_tuple("PreparedEndpoint")
+                .field(reference)
+                .finish(),
+        }
     }
 }
 
@@ -330,8 +370,9 @@ pub struct PreparedHttpTurnWire {
     pub version: u32,
     /// Transport-ready request data.
     pub request: HttpRequestWire,
-    /// Non-secret endpoint configuration and stable endpoint identity.
-    pub endpoint_config: EndpointConfig,
+    /// Stable endpoint selection. Prepared bindings carry an open ID and dense
+    /// key; legacy commands retain their compatibility configuration.
+    pub endpoint: PreparedHttpEndpointWire,
     /// Endpoint-level headers omitted by artifact-safe config serialization.
     pub endpoint_headers: BTreeMap<String, String>,
     /// Endpoint API key omitted by artifact-safe config serialization.
@@ -346,7 +387,7 @@ impl fmt::Debug for PreparedHttpTurnWire {
             .debug_struct("PreparedHttpTurnWire")
             .field("version", &self.version)
             .field("request", &self.request)
-            .field("endpoint_config", &self.endpoint_config)
+            .field("endpoint", &self.endpoint)
             .field(
                 "endpoint_header_names",
                 &self.endpoint_headers.keys().collect::<Vec<_>>(),
@@ -355,6 +396,15 @@ impl fmt::Debug for PreparedHttpTurnWire {
             .field("endpoint_aware", &self.endpoint_aware)
             .finish()
     }
+}
+
+/// Data-only endpoint selection for an authenticated execution channel.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum PreparedHttpEndpointWire {
+    /// Protocol-v1 closed compatibility configuration.
+    Legacy(Box<EndpointConfig>),
+    /// Protocol-v2 open endpoint identity and worker-local dense key.
+    Prepared(PreparedEndpointReference),
 }
 
 impl PreparedHttpTurn {
@@ -391,20 +441,35 @@ impl PreparedHttpTurn {
                 cancel_after_ns: turn.cancel_after_ns,
                 url_index: turn.url_index,
             },
-            endpoint: turn.endpoint,
-            endpoint_config,
+            endpoint: PreparedHttpEndpoint::Legacy {
+                endpoint: turn.endpoint,
+                config: Box::new(endpoint_config),
+            },
             endpoint_aware,
         }
     }
 
     /// Project this local command into the stable data-only execution wire.
     pub fn into_wire(self) -> PreparedHttpTurnWire {
-        let endpoint_headers = self.endpoint_config.headers.clone();
-        let endpoint_api_key = self.endpoint_config.api_key.clone();
+        let (endpoint, endpoint_headers, endpoint_api_key) = match self.endpoint {
+            PreparedHttpEndpoint::Legacy {
+                endpoint: _,
+                config,
+            } => {
+                let headers = config.headers.clone();
+                let api_key = config.api_key.clone();
+                (PreparedHttpEndpointWire::Legacy(config), headers, api_key)
+            }
+            PreparedHttpEndpoint::Prepared(reference) => (
+                PreparedHttpEndpointWire::Prepared(reference),
+                BTreeMap::new(),
+                None,
+            ),
+        };
         PreparedHttpTurnWire {
             version: HTTP_EXECUTION_COMMAND_VERSION,
             request: self.request.into(),
-            endpoint_config: self.endpoint_config,
+            endpoint,
             endpoint_headers,
             endpoint_api_key,
             endpoint_aware: self.endpoint_aware,
@@ -424,14 +489,24 @@ impl PreparedHttpTurnWire {
             self.version,
             HTTP_EXECUTION_COMMAND_VERSION,
         );
-        let mut endpoint_config = self.endpoint_config;
-        endpoint_config.headers = self.endpoint_headers;
-        endpoint_config.api_key = self.endpoint_api_key;
-        let endpoint = endpoint_resolver.resolve_type(endpoint_config.endpoint_type)?;
+        let endpoint = match self.endpoint {
+            PreparedHttpEndpointWire::Legacy(mut config) => {
+                config.headers = self.endpoint_headers;
+                config.api_key = self.endpoint_api_key;
+                let endpoint = endpoint_resolver.resolve_type(config.endpoint_type)?;
+                PreparedHttpEndpoint::Legacy { endpoint, config }
+            }
+            PreparedHttpEndpointWire::Prepared(reference) => {
+                anyhow::ensure!(
+                    self.endpoint_headers.is_empty() && self.endpoint_api_key.is_none(),
+                    "prepared endpoint command must not duplicate profile credentials"
+                );
+                PreparedHttpEndpoint::Prepared(reference)
+            }
+        };
         Ok(PreparedHttpTurn {
             request: self.request.into(),
             endpoint,
-            endpoint_config,
             endpoint_aware: self.endpoint_aware,
         })
     }
@@ -518,7 +593,7 @@ impl Dispatchable for HttpRequest {
     }
 }
 
-/// Live OpenAI-chat sink over [`aiperf_transport`]. Shares the caller's clock and
+/// Live OpenAI-chat sink over [`aiperf_transport_http`]. Shares the caller's clock and
 /// origin (`start_ns`) so admit/token timestamps sit on the same timeline as the
 /// run loop's arrival events.
 pub struct TransportSink {
@@ -529,6 +604,7 @@ pub struct TransportSink {
     model: String,
     start_ns: Cell<i64>,
     connection_reuse: ConnectionReuseStrategy,
+    prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
 }
 
 impl TransportSink {
@@ -618,7 +694,17 @@ impl TransportSink {
             model: model.into(),
             start_ns: Cell::new(start_ns),
             connection_reuse: config.connection_reuse,
+            prepared_endpoints: None,
         })
+    }
+
+    /// Install worker-local prepared endpoint bindings.
+    ///
+    /// Execution commands carry only dense keys and canonical IDs; endpoint
+    /// configuration and credentials remain in this worker-owned table.
+    pub fn with_prepared_endpoints(mut self, endpoints: Rc<PreparedEndpointTable>) -> Self {
+        self.prepared_endpoints = Some(endpoints);
+        self
     }
 
     fn ms(&self, ns: i64) -> f64 {
@@ -1159,18 +1245,44 @@ impl TransportSink {
         let PreparedHttpTurn {
             request,
             endpoint,
-            endpoint_config,
             endpoint_aware,
         } = turn;
         let collected = if endpoint_aware {
-            self.dispatch_endpoint_collect_record_with_hooks(
-                request,
-                endpoint.as_ref(),
-                &endpoint_config,
-                observer,
-                on_first_token,
-            )
-            .await?
+            match endpoint {
+                PreparedHttpEndpoint::Legacy { endpoint, config } => {
+                    self.dispatch_endpoint_collect_record_with_hooks(
+                        request,
+                        endpoint.as_ref(),
+                        &config,
+                        observer,
+                        on_first_token,
+                    )
+                    .await?
+                }
+                PreparedHttpEndpoint::Prepared(reference) => {
+                    let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "HTTP worker received prepared endpoint key {} without a prepared table",
+                            reference.key.index()
+                        )
+                    })?;
+                    let endpoint = table.get(reference.key)?;
+                    anyhow::ensure!(
+                        endpoint.descriptor().id == reference.endpoint_id.as_str(),
+                        "prepared endpoint key {} resolved to {:?}, expected {:?}",
+                        reference.key.index(),
+                        endpoint.descriptor().id,
+                        reference.endpoint_id.as_str()
+                    );
+                    self.dispatch_prepared_endpoint_collect_record_with_hooks(
+                        request,
+                        endpoint,
+                        observer,
+                        on_first_token,
+                    )
+                    .await?
+                }
+            }
         } else {
             self.dispatch_collect_record_with_hooks(request, observer, on_first_token)
                 .await?
@@ -1297,10 +1409,12 @@ mod tests {
                 cancel_after_ns: Some(9),
                 url_index: Some(2),
             },
-            endpoint: BuiltinEndpointResolver::default()
-                .resolve_type(EndpointType::Messages)
-                .unwrap(),
-            endpoint_config,
+            endpoint: PreparedHttpEndpoint::Legacy {
+                endpoint: BuiltinEndpointResolver::default()
+                    .resolve_type(EndpointType::Messages)
+                    .unwrap(),
+                config: Box::new(endpoint_config),
+            },
             endpoint_aware: true,
         };
 
@@ -1321,18 +1435,12 @@ mod tests {
             Some(br#"{"messages":[]}"#.as_slice())
         );
         assert_eq!(rehydrated.request.headers["x-api-key"], request_secret);
-        assert_eq!(
-            rehydrated.endpoint_config.api_key.as_deref(),
-            Some(endpoint_secret)
-        );
-        assert_eq!(
-            rehydrated.endpoint_config.headers["anthropic-beta"],
-            "secret-beta"
-        );
-        assert_eq!(
-            rehydrated.endpoint.metadata().endpoint_type,
-            EndpointType::Messages
-        );
+        let PreparedHttpEndpoint::Legacy { endpoint, config } = rehydrated.endpoint else {
+            panic!("legacy wire must rehydrate a legacy endpoint")
+        };
+        assert_eq!(config.api_key.as_deref(), Some(endpoint_secret));
+        assert_eq!(config.headers["anthropic-beta"], "secret-beta");
+        assert_eq!(endpoint.metadata().endpoint_type, EndpointType::Messages);
         assert!(rehydrated.endpoint_aware);
     }
 
@@ -1356,7 +1464,7 @@ mod tests {
                 cancel_after_ns: None,
                 url_index: None,
             },
-            endpoint_config: EndpointConfig::default(),
+            endpoint: PreparedHttpEndpointWire::Legacy(Box::new(EndpointConfig::default())),
             endpoint_headers: BTreeMap::new(),
             endpoint_api_key: None,
             endpoint_aware: false,
@@ -1365,6 +1473,47 @@ mod tests {
             .into_prepared(&BuiltinEndpointResolver::default())
             .unwrap_err();
         assert!(error.to_string().contains("version"));
+    }
+
+    #[test]
+    fn prepared_turn_wire_preserves_open_endpoint_identity_and_dense_key() {
+        let reference = PreparedEndpointReference {
+            key: EndpointKey::from_index(7),
+            endpoint_id: EndpointId::new("chat").unwrap(),
+        };
+        let wire = PreparedHttpTurnWire {
+            version: HTTP_EXECUTION_COMMAND_VERSION,
+            request: HttpRequestWire {
+                uuid: Uuid::nil(),
+                input_length: 1,
+                max_output_tokens: 1,
+                prompt_text: None,
+                request_body: None,
+                request_body_bytes: None,
+                headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                endpoint_path: None,
+                streaming: true,
+                x_correlation_id: None,
+                is_final_turn: true,
+                cancel_after_ns: None,
+                url_index: None,
+            },
+            endpoint: PreparedHttpEndpointWire::Prepared(reference),
+            endpoint_headers: BTreeMap::new(),
+            endpoint_api_key: None,
+            endpoint_aware: true,
+        };
+        let encoded = serde_json::to_vec(&wire).unwrap();
+        let decoded: PreparedHttpTurnWire = serde_json::from_slice(&encoded).unwrap();
+        let prepared = decoded
+            .into_prepared(&BuiltinEndpointResolver::default())
+            .unwrap();
+        let PreparedHttpEndpoint::Prepared(reference) = prepared.endpoint else {
+            panic!("prepared endpoint wire must not resolve through a legacy adapter")
+        };
+        assert_eq!(reference.key.index(), 7);
+        assert_eq!(reference.endpoint_id.as_str(), "chat");
     }
 
     #[tokio::test]

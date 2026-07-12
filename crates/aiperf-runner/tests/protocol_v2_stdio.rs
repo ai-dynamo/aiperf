@@ -48,7 +48,12 @@ fn request(operation: &str, distribution_id: &str) -> Value {
                 "worker_count": 1,
                 "dataset": {"type": "synthetic", "entries": 1},
                 "tokenizer": {"name": "builtin"},
-                "phases": [{"name": "profiling", "type": "concurrency"}]
+                "phases": [{
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "exclude_from_results": false,
+                    "concurrency": 1
+                }]
             }},
             "metrics": {},
             "artifacts": {},
@@ -117,6 +122,13 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
             .unwrap()
             .contains(&json!(["online_http", "scheduled"])),
         "protocol-v1 reachability must not masquerade as protocol-v2 execution support"
+    );
+    assert!(
+        capabilities["supported_pairs"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(["online_http", "agentic"])),
+        "the registered agentic pair must be product-reachable"
     );
 }
 

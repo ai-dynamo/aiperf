@@ -1,4 +1,4 @@
-// crates/aiperf-transport/tests/no_direct_time.rs
+// crates/aiperf-transport-http/tests/no_direct_time.rs
 //! Enforces the Global Constraint: no direct time access in `src/`.
 
 use std::fs;

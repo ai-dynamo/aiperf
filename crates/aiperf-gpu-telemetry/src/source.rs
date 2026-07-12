@@ -14,8 +14,8 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
 use aiperf_clock::Clock;
-use aiperf_transport::models::{RequestConfig, Response};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::models::{RequestConfig, Response};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use url::Url;
 

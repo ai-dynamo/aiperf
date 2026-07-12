@@ -5,16 +5,16 @@ mod common;
 
 use std::rc::Rc;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ErrorKind, RequestConfig, RequestRecord};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ErrorKind, RequestConfig, RequestRecord};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use common::{MockServer, run_local};
 
 async fn cancelled_request(cancel_after_ns: i64) -> Option<RequestRecord> {
     // Keep the SSE stream open so both the zero- and positive-delay timers win.
     let mock = MockServer::spawn(&["--ttft", "500", "--itl", "500"]).await?;
-    let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+    let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
     let transport = HttpTransport::new(clock, ClientConfig::default());
     let config = RequestConfig::new(format!("{}/v1/chat/completions", mock.base_url))
         .cancel_after_ns(cancel_after_ns);

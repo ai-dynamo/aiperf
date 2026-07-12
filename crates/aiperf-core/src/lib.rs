@@ -5,7 +5,7 @@
 //!
 //! Owns the OpenAI SSE wire types ([`sse`]) and the [`observer`] that funnels
 //! measurements into `loadgen_core`'s `TraceCollector`. Live HTTP dispatch is
-//! done over the `aiperf-transport` (hyper) client by the sinks in the `aiperf`
+//! done over the `aiperf-transport-http` (hyper) client by the sinks in the `aiperf`
 //! CLI and the `aiperf-graph` engine, which parse SSE deltas via
 //! [`sse::ChatChunk`]. Extracted so both can build on it without a dependency
 //! cycle.

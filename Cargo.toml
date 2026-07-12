@@ -22,7 +22,7 @@ aiperf-metrics = { path = "crates/aiperf-metrics" }
 aiperf-network-latency = { path = "crates/aiperf-network-latency" }
 aiperf-server-metrics = { path = "crates/aiperf-server-metrics" }
 aiperf-rng = { path = "crates/aiperf-rng" }
-aiperf-transport = { path = "crates/aiperf-transport" }
+aiperf-transport-http = { path = "crates/aiperf-transport-http" }
 
 # external (shared versions)
 anyhow = "1"

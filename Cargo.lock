@@ -60,7 +60,7 @@ dependencies = [
  "aiperf-metrics",
  "aiperf-rng",
  "aiperf-timing",
- "aiperf-transport",
+ "aiperf-transport-http",
  "anyhow",
  "async-trait",
  "axum",
@@ -127,7 +127,7 @@ dependencies = [
  "aiperf-clock",
  "aiperf-endpoints",
  "aiperf-rng",
- "aiperf-transport",
+ "aiperf-transport-http",
  "async-trait",
  "base64 0.22.1",
  "blake3",
@@ -174,7 +174,7 @@ version = "0.0.0"
 dependencies = [
  "aiperf-clock",
  "aiperf-metrics",
- "aiperf-transport",
+ "aiperf-transport-http",
  "async-trait",
  "serde",
  "serde_json",
@@ -192,7 +192,7 @@ dependencies = [
  "aiperf-metrics",
  "aiperf-rng",
  "aiperf-timing",
- "aiperf-transport",
+ "aiperf-transport-http",
  "anyhow",
  "async-trait",
  "bytes",
@@ -259,7 +259,7 @@ dependencies = [
  "aiperf-rng",
  "aiperf-server-metrics",
  "aiperf-timing",
- "aiperf-transport",
+ "aiperf-transport-http",
  "anyhow",
  "async-trait",
  "axum",
@@ -272,6 +272,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -281,7 +282,7 @@ version = "0.0.0"
 dependencies = [
  "aiperf-clock",
  "aiperf-metrics",
- "aiperf-transport",
+ "aiperf-transport-http",
  "async-trait",
  "regex",
  "serde",
@@ -302,10 +303,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aiperf-transport"
+name = "aiperf-transport-http"
 version = "0.0.0"
 dependencies = [
  "aiperf-clock",
+ "aiperf-endpoints",
  "async-trait",
  "base64 0.22.1",
  "bytes",

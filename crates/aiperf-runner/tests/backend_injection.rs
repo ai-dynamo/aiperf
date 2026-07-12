@@ -17,7 +17,7 @@ use aiperf_runner::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, RunRequest,
     execute_run_with_backend_factory,
 };
-use aiperf_transport::models::RequestRecord;
+use aiperf_transport_http::models::RequestRecord;
 use anyhow::{Result, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;

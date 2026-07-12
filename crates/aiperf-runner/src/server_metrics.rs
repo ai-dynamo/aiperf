@@ -27,8 +27,8 @@ use aiperf_server_metrics::{
     ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,
     ServerMetricsScrapeOutcome, ServerMetricsSource, ServerMetricsSummary,
 };
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value, json};
 use tokio::sync::Notify;

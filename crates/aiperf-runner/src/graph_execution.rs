@@ -15,13 +15,17 @@ use std::rc::Rc;
 use std::sync::{Arc, mpsc};
 
 use aiperf::http::{
-    HttpRequest, HttpRequestDispatcher, PreparedHttpTurn, TransportSink, TransportSinkConfig,
+    HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
+    PreparedHttpTurn, TransportSink, TransportSinkConfig,
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::InputTokenCounter;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_dataset::{EndpointResolver, Handle, Payload, SegmentStore};
-use aiperf_endpoints::{CreditPhase, EndpointConfig, ModelEndpoint, RequestInfo, Turn};
+use aiperf_endpoints::{
+    CreditPhase, EndpointConfig, EndpointId, EndpointKey, EndpointRegistry, ModelEndpoint,
+    PreparedEndpointTable, PreparedRequest, RequestInfo, Turn,
+};
 use aiperf_graph::errors::TraceError;
 use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
 use aiperf_graph::materialize::SegmentItemsMaterializer;
@@ -38,7 +42,9 @@ use aiperf_graph::wire::OpenAiChatMessage;
 use aiperf_metrics::{InferenceDimensions, MetricsConfig, Phase};
 use aiperf_rng::RngRoot;
 use aiperf_timing::{BernoulliFixedDelay, SlotPool};
-use anyhow::{Context, Result, anyhow};
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::HttpVersion;
+use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -46,7 +52,8 @@ use loadgen_core::sink::RequestObserver;
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::records::{CapturedHttpExchange, CapturedRecord};
+use crate::execute::NativePreparedEndpointPlan;
+use crate::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -80,18 +87,417 @@ impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
     }
 }
 
+/// Startup seam that prepares one endpoint dispatcher per graph worker.
+///
+/// Native HTTP prepares local transports and endpoint bindings. A future
+/// remote placement can implement this contract with the same data-only
+/// [`PreparedHttpTurn`] identity without changing graph scheduling.
+pub(crate) trait RunnerGraphEndpointRuntimeFactory: Send + Sync {
+    /// Prepare one worker-local dispatcher before any trace is admitted.
+    fn prepare_worker(
+        &self,
+        clock: Rc<dyn Clock>,
+        run_origin_ns: i64,
+        model: &str,
+    ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>>;
+}
+
+pub(crate) trait RunnerGraphEndpointRuntime {
+    fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch>;
+}
+
+pub(crate) struct GraphEndpointRequest {
+    selector: Option<String>,
+    model: String,
+    turn: Turn,
+    streaming: bool,
+    authored_input_tokens: u64,
+    max_output_tokens: usize,
+    extra_headers: BTreeMap<String, String>,
+    parameters: BTreeMap<String, String>,
+    trace_id: String,
+    is_final_turn: bool,
+    cancel_after_ns: Option<i64>,
+    session_num: u64,
+    phase: Phase,
+}
+
+pub(crate) struct GraphEndpointDispatch {
+    transport: Rc<TransportSink>,
+    request: HttpRequest,
+    endpoint: PreparedHttpEndpoint,
+    input_tokens: u64,
+}
+
+/// Protocol-v1 compatibility factory for graph endpoint dispatch.
+pub(crate) struct LegacyRunnerGraphEndpointRuntimeFactory {
+    base_urls: Vec<String>,
+    transport: TransportSinkConfig,
+    endpoint: EndpointConfig,
+    endpoint_resolver: Arc<dyn EndpointResolver>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+}
+
+impl LegacyRunnerGraphEndpointRuntimeFactory {
+    /// Retain the historical dialect-selection behavior for protocol v1.
+    pub(crate) fn new(
+        base_urls: Vec<String>,
+        transport: TransportSinkConfig,
+        endpoint: EndpointConfig,
+        endpoint_resolver: Arc<dyn EndpointResolver>,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+    ) -> Self {
+        Self {
+            base_urls,
+            transport,
+            endpoint,
+            endpoint_resolver,
+            input_token_counter,
+        }
+    }
+}
+
+impl RunnerGraphEndpointRuntimeFactory for LegacyRunnerGraphEndpointRuntimeFactory {
+    fn prepare_worker(
+        &self,
+        clock: Rc<dyn Clock>,
+        run_origin_ns: i64,
+        model: &str,
+    ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>> {
+        let transport = TransportSink::new_multi_configured(
+            clock,
+            run_origin_ns,
+            &self.base_urls,
+            model,
+            self.transport.clone(),
+        )?;
+        Ok(Rc::new(LegacyRunnerGraphEndpointRuntime {
+            transport: Rc::new(transport),
+            base_url_count: self.base_urls.len(),
+            endpoint: self.endpoint.clone(),
+            endpoint_resolver: self.endpoint_resolver.clone(),
+            input_token_counter: self.input_token_counter.clone(),
+        }))
+    }
+}
+
+struct LegacyRunnerGraphEndpointRuntime {
+    transport: Rc<TransportSink>,
+    base_url_count: usize,
+    endpoint: EndpointConfig,
+    endpoint_resolver: Arc<dyn EndpointResolver>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+}
+
+impl RunnerGraphEndpointRuntime for LegacyRunnerGraphEndpointRuntime {
+    fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
+        let endpoint = self.endpoint_resolver.resolve(input.selector.as_deref())?;
+        let mut endpoint_config = self.endpoint.clone();
+        endpoint_config.endpoint_type = endpoint.metadata().endpoint_type;
+        endpoint_config.streaming = input.streaming && endpoint.metadata().supports_streaming;
+        let request_info = RequestInfo {
+            model_endpoint: ModelEndpoint {
+                primary_model_name: input.model.clone(),
+                endpoint: endpoint_config.clone(),
+            },
+            turns: vec![input.turn],
+            system_message: None,
+            user_context_message: None,
+            credit_phase: credit_phase(input.phase),
+            x_request_id: None,
+            x_correlation_id: Some(input.trace_id.clone()),
+            conversation_id: Some(input.trace_id.clone()),
+        };
+        let payload = Bytes::from(serde_json::to_vec(
+            &endpoint.format_payload(&request_info)?,
+        )?);
+        let input_tokens = self.input_token_counter.count_input_tokens(
+            endpoint.as_ref(),
+            &payload,
+            input.authored_input_tokens,
+        )?;
+        let mut headers = endpoint.format_headers(&endpoint_config);
+        headers.extend(input.extra_headers);
+        let endpoint_path = endpoint_config.path.clone().or_else(|| {
+            if endpoint_config.streaming {
+                endpoint.metadata().streaming_path
+            } else {
+                None
+            }
+            .or(endpoint.metadata().endpoint_path)
+            .map(str::to_string)
+        });
+        let request = HttpRequest {
+            uuid: Uuid::new_v4(),
+            input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
+            max_output_tokens: input.max_output_tokens,
+            prompt_text: None,
+            request_body: None,
+            request_body_bytes: Some(payload),
+            headers,
+            parameters: input.parameters,
+            endpoint_path,
+            streaming: endpoint_config.streaming,
+            x_correlation_id: Some(input.trace_id),
+            is_final_turn: input.is_final_turn,
+            cancel_after_ns: input.cancel_after_ns,
+            url_index: Some(session_url_index(input.session_num, self.base_url_count)),
+        };
+        Ok(GraphEndpointDispatch {
+            transport: self.transport.clone(),
+            request,
+            endpoint: PreparedHttpEndpoint::Legacy {
+                endpoint,
+                config: Box::new(endpoint_config),
+            },
+            input_tokens,
+        })
+    }
+}
+
+/// Protocol-v2 factory that prepares open endpoint profiles directly through
+/// the frozen endpoint registry on every graph worker.
+pub(crate) struct PreparedRunnerGraphEndpointRuntimeFactory {
+    registry: EndpointRegistry,
+    plan: NativePreparedEndpointPlan,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+}
+
+impl PreparedRunnerGraphEndpointRuntimeFactory {
+    /// Bind one normalized profile plan to the process's frozen registry.
+    pub(crate) fn new(
+        registry: EndpointRegistry,
+        plan: NativePreparedEndpointPlan,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+    ) -> Self {
+        Self {
+            registry,
+            plan,
+            input_token_counter,
+        }
+    }
+}
+
+impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
+    fn prepare_worker(
+        &self,
+        clock: Rc<dyn Clock>,
+        run_origin_ns: i64,
+        model: &str,
+    ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>> {
+        let mut table = PreparedEndpointTable::new();
+        let mut staged = Vec::with_capacity(self.plan.profiles.len());
+        for profile in &self.plan.profiles {
+            let mut keys = [EndpointKey::from_index(0); 2];
+            for streaming in [false, true] {
+                let mut config = profile.config.clone();
+                config.streaming = streaming;
+                let endpoint = self
+                    .registry
+                    .prepare(&profile.endpoint_id, config)
+                    .with_context(|| {
+                        format!("preparing endpoint profile {:?}", profile.profile_id)
+                    })?;
+                keys[usize::from(streaming)] = table.push(endpoint)?;
+            }
+            let timeout_ns = endpoint_timeout_ns(profile.config.timeout_seconds)?;
+            let transport = TransportSink::new_multi_configured(
+                clock.clone(),
+                run_origin_ns,
+                &profile.config.urls,
+                model,
+                TransportSinkConfig {
+                    client: ClientConfig {
+                        http_version: if profile.http2 {
+                            HttpVersion::Http2PriorKnowledge
+                        } else {
+                            HttpVersion::Auto
+                        },
+                        total_timeout_ns: timeout_ns,
+                        ..ClientConfig::default()
+                    },
+                    connection_reuse: profile.connection_reuse,
+                    session_header: profile.session_header.clone(),
+                },
+            )?;
+            staged.push((
+                profile.profile_id.clone(),
+                PreparedGraphProfile {
+                    endpoint_id: profile.endpoint_id.clone(),
+                    keys,
+                    transport,
+                    url_count: profile.config.urls.len(),
+                },
+            ));
+        }
+        let table = Rc::new(table);
+        let profiles = staged
+            .into_iter()
+            .map(|(profile_id, profile)| {
+                (
+                    profile_id,
+                    PreparedGraphProfileRuntime {
+                        endpoint_id: profile.endpoint_id,
+                        keys: profile.keys,
+                        transport: Rc::new(
+                            profile.transport.with_prepared_endpoints(table.clone()),
+                        ),
+                        url_count: profile.url_count,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        ensure!(
+            profiles.contains_key(&self.plan.default_profile_id),
+            "default endpoint profile {:?} was not prepared",
+            self.plan.default_profile_id
+        );
+        Ok(Rc::new(PreparedRunnerGraphEndpointRuntime {
+            table,
+            profiles,
+            default_profile_id: self.plan.default_profile_id.clone(),
+            input_token_counter: self.input_token_counter.clone(),
+        }))
+    }
+}
+
+struct PreparedGraphProfile {
+    endpoint_id: EndpointId,
+    keys: [EndpointKey; 2],
+    transport: TransportSink,
+    url_count: usize,
+}
+
+struct PreparedGraphProfileRuntime {
+    endpoint_id: EndpointId,
+    keys: [EndpointKey; 2],
+    transport: Rc<TransportSink>,
+    url_count: usize,
+}
+
+struct PreparedRunnerGraphEndpointRuntime {
+    table: Rc<PreparedEndpointTable>,
+    profiles: BTreeMap<String, PreparedGraphProfileRuntime>,
+    default_profile_id: String,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+}
+
+impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
+    fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
+        let profile_id = input
+            .selector
+            .as_deref()
+            .unwrap_or(&self.default_profile_id);
+        let profile = self.profiles.get(profile_id).ok_or_else(|| {
+            anyhow!(
+                "graph node selects unknown endpoint profile {profile_id:?}; prepared profiles: {}",
+                self.profiles
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+        let key = profile.keys[usize::from(input.streaming)];
+        let endpoint = self.table.get(key)?;
+        ensure!(
+            endpoint.descriptor().id == profile.endpoint_id.as_str(),
+            "prepared endpoint key {} resolved to {:?}, expected {:?}",
+            key.index(),
+            endpoint.descriptor().id,
+            profile.endpoint_id.as_str()
+        );
+        let turns = [input.turn];
+        let request_info = PreparedRequest::new(
+            &input.model,
+            &turns,
+            None,
+            None,
+            credit_phase(input.phase),
+            None,
+            Some(&input.trace_id),
+            Some(&input.trace_id),
+        );
+        let payload = Bytes::from(serde_json::to_vec(
+            &endpoint.format_payload(&request_info)?,
+        )?);
+        let input_tokens = self.input_token_counter.count_prepared_input_tokens(
+            endpoint,
+            &payload,
+            input.authored_input_tokens,
+        )?;
+        let mut headers = endpoint.headers().clone();
+        headers.extend(input.extra_headers);
+        let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {
+            if endpoint.config().streaming() {
+                endpoint.descriptor().streaming_path
+            } else {
+                None
+            }
+            .or(endpoint.descriptor().endpoint_path)
+            .map(str::to_owned)
+        });
+        let request = HttpRequest {
+            uuid: Uuid::new_v4(),
+            input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
+            max_output_tokens: input.max_output_tokens,
+            prompt_text: None,
+            request_body: None,
+            request_body_bytes: Some(payload),
+            headers,
+            parameters: input.parameters,
+            endpoint_path,
+            streaming: endpoint.config().streaming(),
+            x_correlation_id: Some(input.trace_id),
+            is_final_turn: input.is_final_turn,
+            cancel_after_ns: input.cancel_after_ns,
+            url_index: Some(session_url_index(input.session_num, profile.url_count)),
+        };
+        Ok(GraphEndpointDispatch {
+            transport: profile.transport.clone(),
+            request,
+            endpoint: PreparedHttpEndpoint::Prepared(PreparedEndpointReference {
+                key,
+                endpoint_id: profile.endpoint_id.clone(),
+            }),
+            input_tokens,
+        })
+    }
+}
+
+fn endpoint_timeout_ns(seconds: f64) -> Result<Option<i64>> {
+    ensure!(
+        seconds.is_finite() && seconds >= 0.0,
+        "endpoint timeout must be finite and non-negative"
+    );
+    let nanos = seconds * 1_000_000_000.0;
+    ensure!(
+        nanos <= i64::MAX as f64,
+        "endpoint timeout exceeds the i64 nanosecond range"
+    );
+    Ok((nanos > 0.0).then_some(nanos.round_ties_even() as i64))
+}
+
+fn session_url_index(session_num: u64, url_count: usize) -> u32 {
+    debug_assert!(url_count > 0);
+    u32::try_from(session_num % url_count as u64).unwrap_or(0)
+}
+
+fn credit_phase(phase: Phase) -> CreditPhase {
+    match phase {
+        Phase::Warmup => CreditPhase::Warmup,
+        Phase::Profiling => CreditPhase::Profiling,
+    }
+}
+
 /// Immutable inputs shared by every worker-local graph backend.
 pub(crate) struct RunnerGraphBackendFactoryConfig {
     pub(crate) real_clock_anchor: RealClockAnchor,
     pub(crate) run_origin_ns: i64,
-    pub(crate) base_urls: Vec<String>,
     pub(crate) model: String,
     pub(crate) default_max_tokens: usize,
-    pub(crate) transport: TransportSinkConfig,
-    pub(crate) endpoint: EndpointConfig,
-    pub(crate) endpoint_resolver: Arc<dyn EndpointResolver>,
+    pub(crate) endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
     pub(crate) segments: Arc<dyn SegmentStore>,
-    pub(crate) input_token_counter: Arc<dyn InputTokenCounter>,
     pub(crate) metrics: MetricsConfig,
     pub(crate) phase: Phase,
     pub(crate) prefill_concurrency: Option<usize>,
@@ -126,14 +532,11 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
         worker_id: usize,
     ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
         let clock: Rc<dyn Clock> = RealClock::from_anchor(self.config.real_clock_anchor);
-        let transport = TransportSink::new_multi_configured(
-            clock.clone(),
-            self.config.run_origin_ns,
-            &self.config.base_urls,
-            self.config.model.clone(),
-            self.config.transport.clone(),
-        )
-        .map_err(|error| GraphPlacementError(error.to_string()))?;
+        let endpoint_runtime = self
+            .config
+            .endpoint_runtime_factory
+            .prepare_worker(clock.clone(), self.config.run_origin_ns, &self.config.model)
+            .map_err(|error| GraphPlacementError(error.to_string()))?;
 
         let mut policies = Vec::<Rc<dyn NodeDispatchPolicy>>::new();
         if let Some(limit) = self.config.prefill_concurrency {
@@ -164,16 +567,12 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
 
         Ok(Rc::new(RunnerGraphWorkerBackend {
             clock,
-            transport: Rc::new(transport),
+            endpoint_runtime,
             materializer: Rc::new(SegmentItemsMaterializer::new(self.config.segments.clone())),
-            endpoint: self.config.endpoint.clone(),
-            endpoint_resolver: self.config.endpoint_resolver.clone(),
             segments: self.config.segments.clone(),
-            input_token_counter: self.config.input_token_counter.clone(),
             metrics: self.config.metrics.clone(),
             phase: self.config.phase,
             worker_id,
-            base_url_count: self.config.base_urls.len(),
             model: self.config.model.clone(),
             default_max_tokens: self.config.default_max_tokens,
             run_origin_ns: self.config.run_origin_ns,
@@ -187,16 +586,12 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
 
 struct RunnerGraphWorkerBackend {
     clock: Rc<dyn Clock>,
-    transport: Rc<TransportSink>,
+    endpoint_runtime: Rc<dyn RunnerGraphEndpointRuntime>,
     materializer: Rc<SegmentItemsMaterializer>,
-    endpoint: EndpointConfig,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
     segments: Arc<dyn SegmentStore>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
     metrics: MetricsConfig,
     phase: Phase,
     worker_id: usize,
-    base_url_count: usize,
     model: String,
     default_max_tokens: usize,
     run_origin_ns: i64,
@@ -215,7 +610,6 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
             .checked_shl(48)
             .unwrap_or(0)
             .saturating_add(local_session);
-        let url_index = u32::try_from(session_num % self.base_url_count as u64).unwrap_or(0);
         let terminal_nodes = terminal_graph_nodes(&plan);
         let observer = Rc::new(NativeMetricsObserver::new(
             self.clock.clone(),
@@ -224,18 +618,14 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
         ));
         let sink = Rc::new(RunnerGraphSink {
             clock: self.clock.clone(),
-            transport: self.transport.clone(),
+            endpoint_runtime: self.endpoint_runtime.clone(),
             trace_id: plan.trace.id.clone(),
             nodes: plan.graph.nodes.clone().into_iter().collect(),
-            endpoint: self.endpoint.clone(),
-            endpoint_resolver: self.endpoint_resolver.clone(),
             segments: self.segments.clone(),
-            input_token_counter: self.input_token_counter.clone(),
             observer,
             phase: self.phase,
             worker_id: self.worker_id,
             session_num,
-            url_index,
             model: self.model.clone(),
             default_max_tokens: self.default_max_tokens,
             run_origin_ns: self.run_origin_ns,
@@ -266,18 +656,14 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
 
 struct RunnerGraphSink {
     clock: Rc<dyn Clock>,
-    transport: Rc<TransportSink>,
+    endpoint_runtime: Rc<dyn RunnerGraphEndpointRuntime>,
     trace_id: String,
     nodes: HashMap<String, LlmNode>,
-    endpoint: EndpointConfig,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
     segments: Arc<dyn SegmentStore>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
     observer: Rc<NativeMetricsObserver>,
     phase: Phase,
     worker_id: usize,
     session_num: u64,
-    url_index: u32,
     model: String,
     default_max_tokens: usize,
     run_origin_ns: i64,
@@ -288,7 +674,7 @@ struct RunnerGraphSink {
 }
 
 struct PendingGraphCapture {
-    response_text: Option<String>,
+    output: CapturedModelOutput,
     raw: Option<CapturedHttpExchange>,
 }
 
@@ -323,11 +709,6 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
             .nodes
             .get(node_id)
             .ok_or_else(|| anyhow!("graph node {node_id:?} has no execution metadata"))?;
-        let endpoint_name = metadata_string(node, "endpoint");
-        let endpoint = self.endpoint_resolver.resolve(endpoint_name)?;
-        let mut endpoint_config = self.endpoint.clone();
-        endpoint_config.endpoint_type = endpoint.metadata().endpoint_type;
-        endpoint_config.streaming = node.streaming && endpoint.metadata().supports_streaming;
         let model = metadata_string(node, "model")
             .map(str::to_string)
             .unwrap_or_else(|| self.model.clone());
@@ -352,62 +733,31 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
             extra_body: self.raw_object(node, "extra_body_handle")?,
             ..Turn::default()
         };
-        let request_info = RequestInfo {
-            model_endpoint: ModelEndpoint {
-                primary_model_name: model.clone(),
-                endpoint: endpoint_config.clone(),
-            },
-            turns: vec![turn],
-            system_message: None,
-            user_context_message: None,
-            credit_phase: match self.phase {
-                Phase::Warmup => CreditPhase::Warmup,
-                Phase::Profiling => CreditPhase::Profiling,
-            },
-            x_request_id: None,
-            x_correlation_id: Some(self.trace_id.clone()),
-            conversation_id: Some(self.trace_id.clone()),
-        };
-        let payload = endpoint.format_payload(&request_info)?;
-        let payload = Bytes::from(serde_json::to_vec(&payload)?);
-        let authored_input_tokens = metadata_u64(node, "input_tokens").unwrap_or(0);
-        let input_tokens = self.input_token_counter.count_input_tokens(
-            endpoint.as_ref(),
-            &payload,
-            authored_input_tokens,
-        )?;
         let max_output_tokens = max_tokens.unwrap_or(self.default_max_tokens);
-        let uuid = Uuid::new_v4();
-        let mut headers = endpoint.format_headers(&endpoint_config);
-        headers.extend(self.raw_string_map(node, "extra_headers_handle")?);
-        let parameters = self.raw_string_map(node, "request_parameters_handle")?;
-        let endpoint_path = endpoint_config.path.clone().or_else(|| {
-            if endpoint_config.streaming {
-                endpoint.metadata().streaming_path
-            } else {
-                None
-            }
-            .or(endpoint.metadata().endpoint_path)
-            .map(str::to_string)
-        });
-        let request = HttpRequest {
-            uuid,
-            input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
+        let dispatch = self.endpoint_runtime.materialize(GraphEndpointRequest {
+            selector: metadata_string(node, "endpoint").map(str::to_owned),
+            model,
+            turn,
+            streaming: node.streaming,
+            authored_input_tokens: metadata_u64(node, "input_tokens").unwrap_or(0),
             max_output_tokens,
-            prompt_text: None,
-            request_body: None,
-            request_body_bytes: Some(payload.clone()),
-            headers,
-            parameters,
-            endpoint_path,
-            streaming: endpoint_config.streaming,
-            x_correlation_id: Some(self.trace_id.clone()),
+            extra_headers: self.raw_string_map(node, "extra_headers_handle")?,
+            parameters: self.raw_string_map(node, "request_parameters_handle")?,
+            trace_id: self.trace_id.clone(),
             is_final_turn: self.terminal_nodes.contains(node_id),
             cancel_after_ns: options.cancel_after_ns,
-            url_index: Some(self.url_index),
-        };
+            session_num: self.session_num,
+            phase: self.phase,
+        })?;
+        let GraphEndpointDispatch {
+            transport,
+            request,
+            endpoint,
+            input_tokens,
+        } = dispatch;
+        let uuid = request.uuid;
         let dimensions: InferenceDimensions =
-            HttpRequestDispatcher::inference_dimensions(self.transport.as_ref(), &request);
+            HttpRequestDispatcher::inference_dimensions(transport.as_ref(), &request);
         self.observer.register_metadata(
             uuid,
             RequestMetricMetadata {
@@ -436,13 +786,11 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
             usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens,
         );
-        let collected = self
-            .transport
+        let collected = transport
             .dispatch_prepared_turn_collect_record(
                 PreparedHttpTurn {
                     request,
                     endpoint,
-                    endpoint_config,
                     endpoint_aware: true,
                 },
                 self.observer.as_ref(),
@@ -463,8 +811,11 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         self.captures.borrow_mut().insert(
             uuid,
             PendingGraphCapture {
-                response_text: (!outcome.response_text.is_empty())
-                    .then(|| outcome.response_text.clone()),
+                output: CapturedModelOutput::from_parts(
+                    &outcome.response_text,
+                    outcome.model_response.content.as_deref(),
+                    outcome.model_response.reasoning.as_deref(),
+                ),
                 raw: self.raw_enabled.then_some(CapturedHttpExchange {
                     request_payload: collected.request_payload.to_vec(),
                     record: collected.record,
@@ -498,13 +849,13 @@ impl RunnerGraphSink {
             .zip(order)
             .map(|(ingest, uuid)| {
                 let capture = captures.remove(&uuid).unwrap_or(PendingGraphCapture {
-                    response_text: None,
+                    output: CapturedModelOutput::default(),
                     raw: None,
                 });
                 CapturedRecord {
                     uuid,
                     x_correlation_id: self.trace_id.clone(),
-                    response_text: capture.response_text,
+                    output: capture.output,
                     raw: capture.raw,
                     ingest,
                 }
@@ -594,4 +945,98 @@ fn metadata_string<'a>(node: &'a LlmNode, name: &str) -> Option<&'a str> {
 
 fn metadata_u64(node: &LlmNode, name: &str) -> Option<u64> {
     node.metadata.get(name).and_then(Value::as_u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aiperf::multiturn::AuthoredInputTokenCounter;
+    use aiperf_clock::SimClock;
+    use aiperf_endpoints::{
+        ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
+        EndpointRegistryBuilder, EndpointResult, PreparedEndpoint, RawEndpointConfig,
+        StatelessEndpointFactory,
+    };
+    use aiperf_transport_http::models::ConnectionReuseStrategy;
+
+    #[derive(Debug)]
+    struct PreparedOnlyChatFactory;
+
+    impl EndpointFactory for PreparedOnlyChatFactory {
+        fn descriptor(&self) -> &'static EndpointDescriptor {
+            Endpoint::descriptor(&ChatEndpoint)
+        }
+
+        fn prepare(
+            &self,
+            config: EffectiveEndpointConfig,
+        ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
+            EndpointFactory::prepare(&StatelessEndpointFactory::new(ChatEndpoint), config)
+        }
+    }
+
+    #[test]
+    fn prepared_graph_runtime_does_not_require_a_legacy_endpoint_adapter() {
+        let mut registry = EndpointRegistryBuilder::new();
+        registry.register_factory(PreparedOnlyChatFactory).unwrap();
+        let registry = registry.freeze();
+        assert!(
+            registry
+                .legacy_endpoint(&EndpointId::new("chat").unwrap())
+                .is_err()
+        );
+
+        let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
+            registry,
+            NativePreparedEndpointPlan {
+                default_profile_id: "default".into(),
+                profiles: vec![crate::execute::NativePreparedEndpointProfile {
+                    profile_id: "default".into(),
+                    endpoint_id: EndpointId::new("chat").unwrap(),
+                    config: RawEndpointConfig {
+                        urls: vec!["http://127.0.0.1:1".into()],
+                        streaming: true,
+                        ..RawEndpointConfig::default()
+                    },
+                    connection_reuse: ConnectionReuseStrategy::Pooled,
+                    http2: false,
+                    session_header: None,
+                }],
+            },
+            Arc::new(AuthoredInputTokenCounter),
+        );
+        let runtime = factory
+            .prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
+            .unwrap();
+        let dispatch = runtime
+            .materialize(GraphEndpointRequest {
+                selector: None,
+                model: "fixture-model".into(),
+                turn: Turn {
+                    raw_messages: Some(vec![serde_json::json!({
+                        "role": "user",
+                        "content": "hello"
+                    })]),
+                    max_tokens: Some(1),
+                    ..Turn::default()
+                },
+                streaming: true,
+                authored_input_tokens: 4,
+                max_output_tokens: 1,
+                extra_headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                trace_id: "trace-1".into(),
+                is_final_turn: true,
+                cancel_after_ns: None,
+                session_num: 0,
+                phase: Phase::Profiling,
+            })
+            .unwrap();
+        assert_eq!(dispatch.input_tokens, 4);
+        let PreparedHttpEndpoint::Prepared(reference) = dispatch.endpoint else {
+            panic!("protocol-v2 graph dispatch must retain a prepared endpoint reference")
+        };
+        assert_eq!(reference.endpoint_id.as_str(), "chat");
+        assert_eq!(reference.key.index(), 1);
+    }
 }

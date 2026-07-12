@@ -17,7 +17,7 @@ use std::path::Path;
 use aiperf_metrics::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
 };
-use aiperf_transport::models::{
+use aiperf_transport_http::models::{
     ErrorKind, RequestRecord, Response, SseFieldName, SseMessage, TextResponse,
 };
 use anyhow::{Context, Result};
@@ -30,9 +30,41 @@ use uuid::Uuid;
 pub(crate) struct CapturedRecord {
     pub(crate) uuid: Uuid,
     pub(crate) x_correlation_id: String,
-    pub(crate) response_text: Option<String>,
+    pub(crate) output: CapturedModelOutput,
     pub(crate) raw: Option<CapturedHttpExchange>,
     pub(crate) ingest: RecordIngest,
+}
+
+/// Endpoint-normalized text retained for processed-output artifacts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CapturedModelOutput {
+    /// User-visible assistant content, excluding provider reasoning.
+    pub(crate) response_text: Option<String>,
+    /// Provider-emitted reasoning content, when exposed separately.
+    pub(crate) reasoning_text: Option<String>,
+}
+
+impl CapturedModelOutput {
+    /// Preserve the structured endpoint split, falling back to the legacy flat
+    /// text only for backends that do not expose normalized visible content.
+    pub(crate) fn from_parts(
+        flattened_text: &str,
+        visible_text: Option<&str>,
+        reasoning_text: Option<&str>,
+    ) -> Self {
+        let response_text = match visible_text {
+            Some(text) => non_empty_text(text),
+            None => non_empty_text(flattened_text),
+        };
+        Self {
+            response_text,
+            reasoning_text: reasoning_text.and_then(non_empty_text),
+        }
+    }
+}
+
+fn non_empty_text(text: &str) -> Option<String> {
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 /// Exact HTTP facts retained only when Config v2 requests raw artifacts.
@@ -139,6 +171,7 @@ struct OutputRow<'a> {
     request_end_ns: i64,
     metrics: BTreeMap<&'static str, f64>,
     response_text: Option<&'a str>,
+    reasoning_text: Option<&'a str>,
 }
 
 const OUTPUT_METRICS: &[&str] = &[
@@ -193,7 +226,7 @@ pub(crate) fn record_json_value(
 /// The request payload is serialized through [`RawValue`], which validates the
 /// one-time captured JSON while preserving its original bytes verbatim in the
 /// enclosing JSONL object. The response side comes from the terminal
-/// `aiperf-transport` record, so no SSE frame, status, response header, or
+/// `aiperf-transport-http` record, so no SSE frame, status, response header, or
 /// structured transport error is reconstructed from aggregate metrics.
 pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Result<()> {
     if let Some(parent) = path.parent() {
@@ -227,12 +260,13 @@ pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -
         .with_context(|| format!("flushing raw record export {}", path.display()))
 }
 
-/// Write profiling response text and the legacy selected metric values.
+/// Write profiling response and reasoning text with selected metric values.
 ///
 /// This collapses Python's per-processor fragment/aggregation implementation
 /// (`src/aiperf/post_processors/outputs_json_record_processor.py:83-108` and
 /// `src/aiperf/exporters/outputs_json_exporter.py:58-100`) into one post-run
-/// write because the native runner already owns every finalized record.
+/// write because the native runner already owns every finalized record. Schema
+/// 1.1 keeps provider reasoning separate from user-visible response text.
 pub(crate) fn write_outputs_json(
     path: &Path,
     records: &[CapturedRecord],
@@ -270,7 +304,8 @@ pub(crate) fn write_outputs_json(
                 request_start_ns: captured.ingest.start_ns,
                 request_end_ns: captured.ingest.end_ns,
                 metrics,
-                response_text: captured.response_text.as_deref(),
+                response_text: captured.output.response_text.as_deref(),
+                reasoning_text: captured.output.reasoning_text.as_deref(),
             }
         })
         .collect::<Vec<_>>();
@@ -282,7 +317,7 @@ pub(crate) fn write_outputs_json(
     serde_json::to_writer_pretty(
         &mut writer,
         &OutputsDocument {
-            schema_version: "1.0",
+            schema_version: "1.1",
             data: rows,
         },
     )
@@ -443,7 +478,7 @@ fn text_response_value(response: &TextResponse) -> Value {
     })
 }
 
-fn error_value(error: &aiperf_transport::models::ErrorDetails) -> Value {
+fn error_value(error: &aiperf_transport_http::models::ErrorDetails) -> Value {
     json!({
         "code": error.code,
         "type": match error.kind {
@@ -504,7 +539,7 @@ fn record_metrics(
 
 fn trace_value(record: &RecordIngest) -> Value {
     json!({
-        "trace_type": "aiperf-transport",
+        "trace_type": "aiperf-transport-http",
         "stream_setup_ns": record.http.stream_setup_ns,
         "blocked_ns": record.http.blocked_ns,
         "dns_lookup_ns": record.http.dns_lookup_ns,
@@ -527,6 +562,21 @@ mod tests {
     use aiperf_metrics::{Phase, TokenCounts};
 
     #[test]
+    fn captured_output_prefers_structured_visible_and_reasoning_text() {
+        let split = CapturedModelOutput::from_parts("whyanswer", Some("answer"), Some("why"));
+        assert_eq!(split.response_text.as_deref(), Some("answer"));
+        assert_eq!(split.reasoning_text.as_deref(), Some("why"));
+
+        let reasoning_only = CapturedModelOutput::from_parts("why", Some(""), Some("why"));
+        assert_eq!(reasoning_only.response_text, None);
+        assert_eq!(reasoning_only.reasoning_text.as_deref(), Some("why"));
+
+        let legacy = CapturedModelOutput::from_parts("answer", None, None);
+        assert_eq!(legacy.response_text.as_deref(), Some("answer"));
+        assert_eq!(legacy.reasoning_text, None);
+    }
+
+    #[test]
     fn jsonl_uses_native_record_metrics_and_legacy_metadata_shape() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("profile_export.jsonl");
@@ -542,7 +592,7 @@ mod tests {
         let captured = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
-            response_text: Some("hello".into()),
+            output: CapturedModelOutput::from_parts("hello", None, None),
             raw: None,
             ingest,
         };
@@ -578,14 +628,18 @@ mod tests {
                 CapturedRecord {
                     uuid: Uuid::from_u128(2),
                     x_correlation_id: "session-2".into(),
-                    response_text: Some("answer".into()),
+                    output: CapturedModelOutput::from_parts(
+                        "whyanswer",
+                        Some("answer"),
+                        Some("why"),
+                    ),
                     raw: None,
                     ingest: profiling,
                 },
                 CapturedRecord {
                     uuid: Uuid::from_u128(1),
                     x_correlation_id: "session-1".into(),
-                    response_text: Some("warmup".into()),
+                    output: CapturedModelOutput::from_parts("warmup", None, None),
                     raw: None,
                     ingest: warmup,
                 },
@@ -595,12 +649,13 @@ mod tests {
         .unwrap();
 
         let document: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        assert_eq!(document["schema_version"], "1.0");
+        assert_eq!(document["schema_version"], "1.1");
         assert_eq!(document["data"].as_array().unwrap().len(), 1);
         assert_eq!(document["data"][0]["session_num"], 2);
         assert_eq!(document["data"][0]["turn_index"], 1);
         assert_eq!(document["data"][0]["conversation_id"], "conversation-2");
         assert_eq!(document["data"][0]["response_text"], "answer");
+        assert_eq!(document["data"][0]["reasoning_text"], "why");
         assert_eq!(document["data"][0]["metrics"]["request_latency"], 10.0);
         assert_eq!(document["data"][0]["metrics"]["output_token_count"], 3.0);
         assert!(
@@ -637,7 +692,7 @@ mod tests {
         let captured = CapturedRecord {
             uuid: Uuid::from_u128(9),
             x_correlation_id: "session-9".into(),
-            response_text: Some("hi".into()),
+            output: CapturedModelOutput::from_parts("hi", None, None),
             raw: Some(CapturedHttpExchange {
                 request_payload: payload.clone(),
                 record: transport_record,

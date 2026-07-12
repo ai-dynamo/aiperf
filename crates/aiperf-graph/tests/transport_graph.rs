@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end proof that the graph executor dispatches real OpenAI chat
-//! completions over HTTP via `TransportChatSink` (backed by `aiperf-transport`)
+//! completions over HTTP via `TransportChatSink` (backed by `aiperf-transport-http`)
 //! against the REAL `aiperf-mock-rs` binary — not an in-process stub.
 
 use std::io::Read;

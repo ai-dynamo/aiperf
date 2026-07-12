@@ -23,8 +23,8 @@ use aiperf_gpu_telemetry::{
     PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
 };
 use aiperf_metrics::Unit;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tokio::sync::Notify;

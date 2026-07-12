@@ -50,7 +50,7 @@ impl HttpTransport {
             client_cfg: cfg,
             clock,
             connections,
-            user_agent: "aiperf-transport/0".to_string(),
+            user_agent: "aiperf-transport-http/0".to_string(),
             session_header: None,
         }
     }

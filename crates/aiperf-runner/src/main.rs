@@ -5,13 +5,15 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 use aiperf_runner::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use aiperf_runner::registry::{
-    BuiltinRunnerRegistryFactory, RunnerRegistryFactory, validate_endpoint_profiles_v2,
+    BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerRunContext,
+    validate_endpoint_profiles_v2,
 };
 use aiperf_runner::{
     RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities, execute_run,
@@ -176,21 +178,33 @@ fn run_v2(input: &[u8]) -> ! {
     let product_registry = match aiperf_extensions::AiperfRegistryFactory::build(
         &aiperf_extensions::BuiltinAiperfRegistryFactory,
     ) {
-        Ok(registry) => registry,
+        Ok(registry) => Arc::new(registry),
         Err(error) => {
             eprintln!("failed to compose AIPerf registry: {error}");
             std::process::exit(2);
         }
     };
-    if let Err(error) = validate_endpoint_profiles_v2(&envelope.run, product_registry.endpoints()) {
-        write_v2_validation_failure(
+    let endpoint_profiles =
+        match validate_endpoint_profiles_v2(&envelope.run, product_registry.endpoints()) {
+            Ok(profiles) => profiles,
+            Err(error) => write_v2_validation_failure(
+                envelope.operation,
+                distribution_id,
+                benchmark_id,
+                "invalid_endpoint_profiles",
+                format!("{error:#}"),
+            ),
+        };
+    let run_context = match RunnerRunContext::new(product_registry, endpoint_profiles) {
+        Ok(context) => context,
+        Err(error) => write_v2_validation_failure(
             envelope.operation,
             distribution_id,
             benchmark_id,
-            "invalid_endpoint_profiles",
+            "invalid_run_context",
             format!("{error:#}"),
-        );
-    }
+        ),
+    };
     if has_unavailable_sidecar(&envelope) {
         write_v2_validation_failure(
             envelope.operation,
@@ -212,6 +226,15 @@ fn run_v2(input: &[u8]) -> ! {
                 format!("{error:#}"),
             ),
         };
+    if let Err(error) = runner_registry.validate_run(&envelope.run, &run_context, &selection) {
+        write_v2_validation_failure(
+            envelope.operation,
+            distribution_id,
+            benchmark_id,
+            "invalid_backend_workload_run",
+            format!("{error:#}"),
+        );
+    }
 
     match envelope.operation {
         RunnerOperationV2::Validate => write_json_line(
@@ -233,7 +256,11 @@ fn run_v2(input: &[u8]) -> ! {
             0,
         ),
         RunnerOperationV2::Execute => {
-            let operation = match runner_registry.prepare(&envelope.run, selection) {
+            let operation = match runner_registry.prepare_with_context(
+                &envelope.run,
+                &run_context,
+                selection,
+            ) {
                 Ok(operation) => operation,
                 Err(error) => write_v2_terminal_failure(
                     distribution_id,

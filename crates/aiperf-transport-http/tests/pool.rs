@@ -8,12 +8,12 @@ use std::convert::Infallible;
 use std::rc::Rc;
 use std::time::Duration;
 
-use aiperf_transport::client::connection::LocalExec;
-use aiperf_transport::client::pool::{ConnectionManager, ConnectionPool};
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ConnectionReuseStrategy, HttpVersion, RequestConfig};
-use aiperf_transport::transport::http_transport::HttpTransport;
-use aiperf_transport::{Clock, RealClock, SimClock};
+use aiperf_transport_http::client::connection::LocalExec;
+use aiperf_transport_http::client::pool::{ConnectionManager, ConnectionPool};
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion, RequestConfig};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf_transport_http::{Clock, RealClock, SimClock};
 use bytes::Bytes;
 use common::run_local;
 use http_body_util::Full;
@@ -377,7 +377,10 @@ fn sim_clock_total_timeout_includes_h1_pool_wait() {
 
         let timed_out = second.await.unwrap();
         let error = timed_out.error.expect("pool waiter must hit total timeout");
-        assert_eq!(error.kind, aiperf_transport::models::ErrorKind::Timeout);
+        assert_eq!(
+            error.kind,
+            aiperf_transport_http::models::ErrorKind::Timeout
+        );
         assert_eq!(error.message, "request timeout after 5ns");
         let trace = timed_out.trace.unwrap();
         assert_eq!(trace.connection_pool_wait_start_ns, Some(0));

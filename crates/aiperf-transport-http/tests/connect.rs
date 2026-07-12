@@ -1,13 +1,13 @@
-// crates/aiperf-transport/tests/connect.rs
+// crates/aiperf-transport-http/tests/connect.rs
 mod common;
 use common::{MockServer, run_local};
 
 use std::rc::Rc;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::client::connection::establish;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::TraceData;
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::client::connection::establish;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::TraceData;
 
 #[test]
 fn establishes_h1_connection_to_mock_and_records_socket_info() {
@@ -15,7 +15,7 @@ fn establishes_h1_connection_to_mock_and_records_socket_info() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let url = url::Url::parse(&mock.base_url).unwrap();
         let mut trace = TraceData::default();
         let cfg = ClientConfig::default();

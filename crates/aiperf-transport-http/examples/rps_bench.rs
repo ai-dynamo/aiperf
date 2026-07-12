@@ -1,5 +1,5 @@
-// crates/aiperf-transport/examples/rps_bench.rs
-//! Throughput load generator for `aiperf-transport`: proves sustained
+// crates/aiperf-transport-http/examples/rps_bench.rs
+//! Throughput load generator for `aiperf-transport-http`: proves sustained
 //! requests-per-second against a running OpenAI-compatible server (the
 //! `aiperf-mock-rs --fast` mock).
 //!
@@ -28,11 +28,11 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::client::connection::{Sender, establish};
-use aiperf_transport::client::http_client::HttpClient;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{HttpVersion, RequestRecord, TraceData};
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::client::connection::{Sender, establish};
+use aiperf_transport_http::client::http_client::HttpClient;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{HttpVersion, RequestRecord, TraceData};
 
 fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
@@ -110,7 +110,7 @@ fn main() {
                 .unwrap();
             let local = tokio::task::LocalSet::new();
             local.block_on(&rt, async move {
-                let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+                let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
                 let cfg = ClientConfig {
                     http_version,
                     ..ClientConfig::default()

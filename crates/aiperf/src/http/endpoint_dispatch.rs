@@ -1,37 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Metadata-driven HTTP lifecycles for materialized endpoint requests.
+//! Runtime composition around HTTP-bound endpoint requests.
 //!
-//! Endpoint adapters own decoded JSON while this module applies the four wire
-//! policies identified by `specs/2026-07-11-aiperf-rust-endpoints-design.md`:
-//! streaming-path selection, multipart encoding, inline-media preparation, and
-//! Clock-paced submit/poll/download. New endpoint dialects therefore extend the
-//! decoded [`Endpoint`] seam without adding another issuer or HTTP stack.
+//! Endpoint adapters own decoded semantics, while `aiperf-transport-http` owns
+//! URL/body/lifecycle lowering and HTTP/SSE decoding through
+//! [`HttpEndpointBinding`]. This module retains only runtime responsibilities:
+//! endpoint parsing, observer emission, usage/response aggregation, and the
+//! scheduled result shape.
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Result, ensure};
 use bytes::Bytes;
 use serde_json::Value;
 
 use aiperf_endpoints::{
-    Endpoint, EndpointConfig, EndpointResult, EndpointType, ParsedResponse, RequestContentType,
-    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
+    Endpoint, EndpointConfig, EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse,
+    PreparedEndpoint, RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
+    UsageView,
 };
 use aiperf_metrics::HttpTrace;
-use aiperf_transport::models::{ErrorKind, RequestConfig, RequestRecord, Response, SseMessage};
-use aiperf_transport::transport::body::{
-    JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
+use aiperf_transport_http::models::{ErrorKind, RequestRecord};
+use aiperf_transport_http::transport::endpoint_binding::{
+    HttpEndpointBinding, HttpEndpointRequest, MetadataHttpEndpointBinding, prepare_request,
 };
-use aiperf_transport::transport::inline_media::{
-    HttpMediaFetcher, ImageDataUrlEncoder, inline_image_urls,
-};
-use aiperf_transport::transport::polling::{
-    JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
-};
-use aiperf_transport::transport::url::build_url;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
@@ -44,6 +37,75 @@ use super::{
     absorb_wire_response_metadata,
 };
 
+trait RuntimeEndpointAdapter {
+    fn descriptor(&self) -> &'static EndpointDescriptor;
+    fn streaming(&self) -> bool;
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload;
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
+    fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>>;
+    fn captures_assistant_turn(&self) -> bool;
+}
+
+struct LegacyEndpointAdapter<'a> {
+    endpoint: &'a dyn Endpoint,
+    config: &'a EndpointConfig,
+}
+
+impl RuntimeEndpointAdapter for LegacyEndpointAdapter<'_> {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        self.endpoint.descriptor()
+    }
+
+    fn streaming(&self) -> bool {
+        self.config.streaming
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        self.endpoint.extract_payload_inputs(body)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        self.endpoint
+            .parse_response_with_config(response, self.config)
+    }
+
+    fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>> {
+        self.endpoint.build_assistant_turn(record)
+    }
+
+    fn captures_assistant_turn(&self) -> bool {
+        self.endpoint.captures_assistant_turn()
+    }
+}
+
+struct WorkerPreparedEndpointAdapter<'a>(&'a dyn PreparedEndpoint);
+
+impl RuntimeEndpointAdapter for WorkerPreparedEndpointAdapter<'_> {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        self.0.descriptor()
+    }
+
+    fn streaming(&self) -> bool {
+        self.0.config().streaming()
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        self.0.extract_payload_inputs(body)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        self.0.parse_response(response)
+    }
+
+    fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>> {
+        self.0.build_assistant_turn(record)
+    }
+
+    fn captures_assistant_turn(&self) -> bool {
+        self.0.captures_assistant_turn()
+    }
+}
+
 impl TransportSink {
     /// Dispatch a materialized request through lifecycle policy selected only by
     /// endpoint metadata and its effective per-turn configuration, retaining
@@ -55,15 +117,63 @@ impl TransportSink {
         endpoint: &dyn Endpoint,
         endpoint_config: &EndpointConfig,
         obs: &dyn RequestObserver,
-        mut on_first_token: impl FnMut(i64),
+        on_first_token: impl FnMut(i64),
     ) -> Result<HttpCollectedDispatch> {
+        let endpoint = LegacyEndpointAdapter {
+            endpoint,
+            config: endpoint_config,
+        };
+        let binding =
+            MetadataHttpEndpointBinding::new(endpoint.endpoint, endpoint.config, &self.base_urls);
+        self.dispatch_runtime_endpoint_collect_record_with_hooks(
+            req,
+            &endpoint,
+            &binding,
+            obs,
+            on_first_token,
+        )
+        .await
+    }
+
+    /// Dispatch through a worker-local prepared endpoint binding.
+    pub(super) async fn dispatch_prepared_endpoint_collect_record_with_hooks(
+        &self,
+        req: HttpRequest,
+        endpoint: &dyn PreparedEndpoint,
+        obs: &dyn RequestObserver,
+        on_first_token: impl FnMut(i64),
+    ) -> Result<HttpCollectedDispatch> {
+        let binding = MetadataHttpEndpointBinding::from_prepared(endpoint, &self.base_urls);
+        let endpoint = WorkerPreparedEndpointAdapter(endpoint);
+        self.dispatch_runtime_endpoint_collect_record_with_hooks(
+            req,
+            &endpoint,
+            &binding,
+            obs,
+            on_first_token,
+        )
+        .await
+    }
+
+    async fn dispatch_runtime_endpoint_collect_record_with_hooks<A, B>(
+        &self,
+        req: HttpRequest,
+        endpoint: &A,
+        binding: &B,
+        obs: &dyn RequestObserver,
+        mut on_first_token: impl FnMut(i64),
+    ) -> Result<HttpCollectedDispatch>
+    where
+        A: RuntimeEndpointAdapter + ?Sized,
+        B: HttpEndpointBinding,
+    {
         let HttpRequest {
             uuid,
             max_output_tokens,
             prompt_text,
             request_body,
             request_body_bytes,
-            mut headers,
+            headers,
             parameters,
             endpoint_path,
             streaming,
@@ -93,7 +203,6 @@ impl TransportSink {
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
-        let request_payload = body.clone();
         let mut endpoint_metrics = ObservedEndpointMetrics {
             num_images: serde_json::from_slice::<Value>(&body)
                 .ok()
@@ -101,64 +210,45 @@ impl TransportSink {
                 .filter(|count| *count > 0),
             ..ObservedEndpointMetrics::default()
         };
-        let body = self
-            .prepare_endpoint_body(body, endpoint, endpoint_config, &mut headers)
-            .await?;
-
-        let selected_url = self.endpoint_url(
-            endpoint,
-            endpoint_config,
-            endpoint_path.as_deref(),
-            streaming,
-            url_index,
-        )?;
-        let mut request_config = RequestConfig::new(selected_url);
-        request_config.headers = headers;
-        request_config.params = parameters;
-        request_config.correlation_id = x_correlation_id;
-        request_config.request_id = Some(uuid.to_string());
-        request_config.is_final_turn = is_final_turn;
-        request_config.cancel_after_ns = cancel_after_ns;
-        request_config.reuse = self.connection_reuse;
+        let prepared = prepare_request(
+            binding,
+            &self.transport,
+            HttpEndpointRequest {
+                body,
+                headers,
+                parameters,
+                endpoint_path,
+                streaming,
+                correlation_id: x_correlation_id,
+                request_id: Some(uuid.to_string()),
+                is_final_turn,
+                cancel_after_ns,
+                url_index,
+                reuse: self.connection_reuse,
+            },
+        )
+        .await?;
+        let request_payload = prepared.canonical_body().clone();
+        let request_url = prepared.request_config().url.clone();
 
         let first_token_released = Cell::new(false);
-        let record = if endpoint.metadata().requires_polling {
-            let options = PollingOptions {
-                timeout_ns: seconds_to_ns(endpoint_config.timeout_seconds, "timeout_seconds")?,
-                interval_ns: seconds_to_ns(
-                    endpoint_config.polling_interval_seconds,
-                    "polling_interval_seconds",
-                )?,
-                download_content: endpoint_config.download_video_content,
-            };
-            submit_and_poll(
+        let mut first_response_filter = |ttft_ns, response: &ServerResponse| {
+            if !meaningful_endpoint_response(endpoint, response) {
+                return false;
+            }
+            if !first_token_released.replace(true) {
+                on_first_token(ttft_ns);
+            }
+            true
+        };
+        let record = prepared
+            .dispatch(
                 &self.transport,
                 self.clock.clone(),
-                &request_config,
-                body,
-                options,
-                &JsonVideoPollingProtocol,
+                binding,
+                &mut first_response_filter,
             )
-            .await
-            .record
-        } else {
-            self.transport
-                .send_request_bytes_with_first_token_filter(
-                    &request_config,
-                    body,
-                    streaming,
-                    |ttft_ns, message| {
-                        if !meaningful_token_frame(endpoint, endpoint_config, message) {
-                            return false;
-                        }
-                        if !first_token_released.replace(true) {
-                            on_first_token(ttft_ns);
-                        }
-                        true
-                    },
-                )
-                .await
-        };
+            .await;
 
         let mut parsed_any = false;
         let mut parsed_content = false;
@@ -167,19 +257,18 @@ impl TransportSink {
         let mut model_response = ModelResponseMetadata::default();
         let mut observed_usage = ObservedUsage::default();
         for response in &record.responses {
-            let Some(server_response) = endpoint_response(response) else {
+            let Some(server_response) = binding.decode_response(response) else {
                 continue;
             };
             if let Some(value) = &server_response.json {
                 absorb_wire_response_metadata(value, &mut model_response);
             }
-            let parsed = match parse_endpoint_response(endpoint, endpoint_config, &server_response)
-            {
+            let parsed = match parse_endpoint_response(endpoint, &server_response) {
                 Ok(parsed) => parsed,
                 Err(error) => {
                     tracing::warn!(
                         uuid = %uuid,
-                        endpoint = ?endpoint.metadata().endpoint_type,
+                        endpoint = endpoint.descriptor().id,
                         error = %error,
                         "endpoint response parsing failed"
                     );
@@ -200,7 +289,7 @@ impl TransportSink {
                 continue;
             }
             response_text.push_str(&text);
-            if endpoint.metadata().produces_tokens {
+            if endpoint.descriptor().produces_tokens {
                 let at_ns = i64::try_from(parsed.perf_ns).unwrap_or(i64::MAX);
                 if !first_token_released.replace(true) {
                     on_first_token(at_ns.saturating_sub(record.start_ns));
@@ -214,7 +303,7 @@ impl TransportSink {
                 responses: record
                     .responses
                     .iter()
-                    .filter_map(endpoint_response)
+                    .filter_map(|response| binding.decode_response(response))
                     .collect(),
             };
             match endpoint.build_assistant_turn(&endpoint_record) {
@@ -254,8 +343,8 @@ impl TransportSink {
         );
         tracing::debug!(
             uuid = %uuid,
-            endpoint = ?endpoint.metadata().endpoint_type,
-            url = %request_config.url,
+            endpoint = endpoint.descriptor().id,
+            url = %request_url,
             status = ?record.status,
             responses = record.responses.len(),
             error = ?record.error,
@@ -293,129 +382,28 @@ impl TransportSink {
             record,
         })
     }
-
-    async fn prepare_endpoint_body(
-        &self,
-        body: Bytes,
-        endpoint: &dyn Endpoint,
-        endpoint_config: &EndpointConfig,
-        headers: &mut BTreeMap<String, String>,
-    ) -> Result<Bytes> {
-        let metadata = endpoint.metadata();
-        let content_type =
-            endpoint_config
-                .request_content_type
-                .unwrap_or(if metadata.requires_form_data {
-                    RequestContentType::MultipartFormData
-                } else {
-                    RequestContentType::ApplicationJson
-                });
-        ensure!(
-            metadata.requires_form_data
-                == matches!(content_type, RequestContentType::MultipartFormData),
-            "endpoint {:?} requires_form_data={} but request content type is {:?}",
-            metadata.endpoint_type,
-            metadata.requires_form_data,
-            content_type
-        );
-        if !metadata.requires_inline_media
-            && !matches!(content_type, RequestContentType::MultipartFormData)
-        {
-            return Ok(body);
-        }
-
-        let mut payload = serde_json::from_slice::<Value>(&body).with_context(|| {
-            format!(
-                "decode {:?} request before applying its wire lifecycle",
-                metadata.endpoint_type
-            )
-        })?;
-        if metadata.requires_inline_media {
-            inline_image_urls(
-                &mut payload,
-                &HttpMediaFetcher::new(&self.transport),
-                &ImageDataUrlEncoder,
-            )
-            .await
-            .map_err(|error| anyhow!(error.message))?;
-        }
-        let encoded = match content_type {
-            RequestContentType::ApplicationJson => JsonBodyEncoder.encode(&payload),
-            RequestContentType::MultipartFormData => MultipartBodyEncoder.encode(&payload),
-        }
-        .map_err(|error| anyhow!(error.message))?;
-        headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
-        headers.insert("Content-Type".into(), encoded.content_type);
-        Ok(encoded.bytes)
-    }
-
-    fn endpoint_url(
-        &self,
-        endpoint: &dyn Endpoint,
-        endpoint_config: &EndpointConfig,
-        authored_path: Option<&str>,
-        streaming: bool,
-        url_index: Option<u32>,
-    ) -> Result<String> {
-        let selected_index = url_index.unwrap_or(0) as usize;
-        let base_urls = if endpoint_config.urls.is_empty() {
-            &self.base_urls
-        } else {
-            &endpoint_config.urls
-        };
-        let base_url = base_urls.get(selected_index).ok_or_else(|| {
-            anyhow!(
-                "URL index {selected_index} is out of range for {} configured endpoints",
-                base_urls.len()
-            )
-        })?;
-        let metadata = endpoint.metadata();
-        let target = authored_path
-            .or(endpoint_config.path.as_deref())
-            .or_else(|| streaming.then_some(metadata.streaming_path).flatten())
-            .or(metadata.endpoint_path);
-        match target {
-            None => Ok(base_url.trim_end_matches('/').to_string()),
-            Some(path) if path.starts_with('/') => append_endpoint_path(base_url, path),
-            Some(url) if url::Url::parse(url).is_ok() => Ok(url.to_string()),
-            Some(value) => Err(anyhow!(
-                "dataset endpoint target {value:?} must be an absolute path or URL"
-            )),
-        }
-    }
 }
 
-fn append_endpoint_path(base_url: &str, endpoint_path: &str) -> Result<String> {
-    build_url(base_url, endpoint_path, &BTreeMap::new()).map_err(|error| {
-        anyhow!("cannot append endpoint path {endpoint_path:?} to {base_url:?}: {error}")
-    })
-}
-
-fn meaningful_token_frame(
-    endpoint: &dyn Endpoint,
-    endpoint_config: &EndpointConfig,
-    message: &SseMessage,
+fn meaningful_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
+    endpoint: &A,
+    response: &ServerResponse,
 ) -> bool {
-    if !endpoint.metadata().produces_tokens || message.is_done() {
+    if !endpoint.descriptor().produces_tokens {
         return false;
     }
-    sse_endpoint_response(message)
-        .and_then(|response| {
-            parse_endpoint_response(endpoint, endpoint_config, &response)
-                .ok()
-                .flatten()
-        })
+    parse_endpoint_response(endpoint, response)
+        .ok()
+        .flatten()
         .and_then(|parsed| parsed.data)
         .is_some_and(|data| !data.get_text().is_empty())
 }
 
-fn parse_endpoint_response(
-    endpoint: &dyn Endpoint,
-    endpoint_config: &EndpointConfig,
+fn parse_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
+    endpoint: &A,
     response: &ServerResponse,
 ) -> EndpointResult<Option<ParsedResponse>> {
-    let parsed = endpoint.parse_response_with_config(response, endpoint_config)?;
-    if parsed.is_some() || endpoint.metadata().endpoint_type != EndpointType::Chat {
+    let parsed = endpoint.parse_response(response)?;
+    if parsed.is_some() || endpoint.descriptor().id != "chat" {
         return Ok(parsed);
     }
     let Some(mut object) = response.json.as_ref().and_then(Value::as_object).cloned() else {
@@ -431,7 +419,7 @@ fn parse_endpoint_response(
     object.insert(
         "object".into(),
         Value::String(
-            if endpoint_config.streaming {
+            if endpoint.streaming() {
                 "chat.completion.chunk"
             } else {
                 "chat.completion"
@@ -439,41 +427,11 @@ fn parse_endpoint_response(
             .into(),
         ),
     );
-    endpoint.parse_response_with_config(
-        &ServerResponse {
-            perf_ns: response.perf_ns,
-            json: Some(Value::Object(object)),
-            raw: response.raw.clone(),
-        },
-        endpoint_config,
-    )
-}
-
-fn endpoint_response(response: &Response) -> Option<ServerResponse> {
-    match response {
-        Response::Sse(message) => sse_endpoint_response(message),
-        Response::Text(response) => Some(ServerResponse {
-            perf_ns: non_negative_ns(response.perf_ns),
-            json: response.json(),
-            raw: Some(response.text.clone()),
-        }),
-    }
-}
-
-fn sse_endpoint_response(message: &SseMessage) -> Option<ServerResponse> {
-    if message.is_done() {
-        return None;
-    }
-    let raw = message.data()?.to_string();
-    Some(ServerResponse {
-        perf_ns: non_negative_ns(message.perf_ns),
-        json: serde_json::from_str(&raw).ok(),
-        raw: Some(raw),
+    endpoint.parse_response(&ServerResponse {
+        perf_ns: response.perf_ns,
+        json: Some(Value::Object(object)),
+        raw: response.raw.clone(),
     })
-}
-
-fn non_negative_ns(value: i64) -> u64 {
-    u64::try_from(value).unwrap_or_default()
 }
 
 fn token_kind(data: &ResponseData) -> ObservedTokenKind {
@@ -592,19 +550,6 @@ fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
         .or(observed.prompt_cache_miss_tokens);
 }
 
-fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64> {
-    ensure!(
-        seconds.is_finite() && seconds >= 0.0,
-        "{field} must be finite and non-negative"
-    );
-    let nanoseconds = seconds * 1_000_000_000.0;
-    ensure!(
-        nanoseconds <= i64::MAX as f64,
-        "{field} exceeds the nanosecond clock range"
-    );
-    Ok(nanoseconds.round() as i64)
-}
-
 fn http_trace(record: &RequestRecord) -> HttpTrace {
     let mut http = record
         .trace
@@ -634,6 +579,8 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
 mod tests {
     use super::*;
     use aiperf_endpoints::{ChatEndpoint, HuggingFaceGenerateEndpoint, ImageGenerationEndpoint};
+    use aiperf_transport_http::models::SseMessage;
+    use aiperf_transport_http::transport::endpoint_binding::decode_sse_response;
 
     #[test]
     fn endpoint_sse_filter_uses_the_selected_dialect() {
@@ -642,24 +589,40 @@ mod tests {
             ..EndpointConfig::default()
         };
         let tgi = SseMessage::parse(r#"data: {"token":{"text":"hello"}}"#, 10);
-        assert!(meaningful_token_frame(
-            &HuggingFaceGenerateEndpoint,
-            &config,
-            &tgi
+        let tgi_endpoint = HuggingFaceGenerateEndpoint;
+        let tgi_adapter = LegacyEndpointAdapter {
+            endpoint: &tgi_endpoint,
+            config: &config,
+        };
+        assert!(meaningful_endpoint_response(
+            &tgi_adapter,
+            &decode_sse_response(&tgi).unwrap()
         ));
 
         config.endpoint_type = aiperf_endpoints::EndpointType::ImageGeneration;
         let image = SseMessage::parse(r#"data: {"b64_json":"AA=="}"#, 11);
-        assert!(!meaningful_token_frame(
-            &ImageGenerationEndpoint,
-            &config,
-            &image
+        let image_endpoint = ImageGenerationEndpoint;
+        let image_adapter = LegacyEndpointAdapter {
+            endpoint: &image_endpoint,
+            config: &config,
+        };
+        assert!(!meaningful_endpoint_response(
+            &image_adapter,
+            &decode_sse_response(&image).unwrap()
         ));
 
-        config.endpoint_type = EndpointType::Chat;
+        config.endpoint_type = aiperf_endpoints::EndpointType::Chat;
         let legacy_chat =
             SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"compat"}}]}"#, 12);
-        assert!(meaningful_token_frame(&ChatEndpoint, &config, &legacy_chat));
+        let chat_endpoint = ChatEndpoint;
+        let chat_adapter = LegacyEndpointAdapter {
+            endpoint: &chat_endpoint,
+            config: &config,
+        };
+        assert!(meaningful_endpoint_response(
+            &chat_adapter,
+            &decode_sse_response(&legacy_chat).unwrap()
+        ));
     }
 
     #[test]
@@ -690,23 +653,5 @@ mod tests {
         assert_eq!(observed.prompt_tokens, Some(12));
         assert_eq!(observed.prompt_cache_read_tokens, Some(7));
         assert_eq!(observed.prompt_cache_write_tokens, Some(2));
-        assert_eq!(seconds_to_ns(0.5, "interval").unwrap(), 500_000_000);
-        assert!(seconds_to_ns(f64::INFINITY, "timeout").is_err());
-    }
-
-    #[test]
-    fn endpoint_path_join_collapses_v1_and_full_suffix_overlap() {
-        assert_eq!(
-            append_endpoint_path("http://host/v1", "/v1/embeddings").unwrap(),
-            "http://host/v1/embeddings"
-        );
-        assert_eq!(
-            append_endpoint_path(
-                "http://host/v1/images/generations",
-                "/v1/images/generations"
-            )
-            .unwrap(),
-            "http://host/v1/images/generations"
-        );
     }
 }

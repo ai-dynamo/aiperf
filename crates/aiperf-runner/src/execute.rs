@@ -54,11 +54,10 @@ use aiperf_dataset::{
     SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern,
     TextTokenizer, TiktokenEncoding, TiktokenTokenizer, TraceSynthesisConfig,
 };
-use aiperf_endpoints::{EndpointConfig, EndpointType};
+use aiperf_endpoints::{EndpointConfig, EndpointId, EndpointType, RawEndpointConfig};
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_graph::input::{
-    GraphInputAdapter, GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle,
-    GraphInputConfig,
+    GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle, GraphInputConfig,
 };
 use aiperf_graph::policy::FailFastRunFailurePolicy;
 use aiperf_graph::workload::{
@@ -80,8 +79,8 @@ use aiperf_timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::HttpVersion;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -92,8 +91,10 @@ use uuid::Uuid;
 
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
-    GraphCancellationConfig, NativeRunnerGraphPlacementFactory, RunnerGraphBackendFactory,
-    RunnerGraphBackendFactoryConfig, RunnerGraphPlacementFactory,
+    GraphCancellationConfig, LegacyRunnerGraphEndpointRuntimeFactory,
+    NativeRunnerGraphPlacementFactory, PreparedRunnerGraphEndpointRuntimeFactory,
+    RunnerGraphBackendFactory, RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
+    RunnerGraphPlacementFactory,
 };
 use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
@@ -107,8 +108,8 @@ use crate::protocol::{
     SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
 use crate::records::{
-    CapturedHttpExchange, CapturedRecord, write_outputs_json, write_raw_records_jsonl,
-    write_records_jsonl,
+    CapturedHttpExchange, CapturedModelOutput, CapturedRecord, write_outputs_json,
+    write_raw_records_jsonl, write_records_jsonl,
 };
 use crate::server_metrics::ServerMetricsRun;
 use crate::turn_execution::{
@@ -124,6 +125,261 @@ type PhaseRuntimeParts = (
     Rc<dyn ScheduledPhaseResources>,
     Option<Rc<dyn UserTarget>>,
 );
+
+/// Admission resources shared by every phase in one scheduled run.
+///
+/// The same value is consumed by online HTTP and in-process offline adapters,
+/// keeping cross-phase slot debt and adaptive actuator ownership above the
+/// backend/clock seam.
+pub(crate) struct NativeScheduledResources {
+    session: Option<Rc<SlotPool>>,
+    prefill: Option<Rc<SlotPool>>,
+    phase: Rc<dyn ScheduledPhaseResources>,
+}
+
+/// Construct run-wide scheduled admission resources from authored phase
+/// policy without selecting a transport or clock implementation.
+pub(crate) fn native_scheduled_resources(phases: &[PhaseSpec]) -> NativeScheduledResources {
+    let session = phases
+        .iter()
+        .any(|phase| {
+            phase.request_arrival().is_some()
+                && (phase.concurrency().is_some()
+                    || phase
+                        .common()
+                        .adaptive_scale
+                        .as_ref()
+                        .is_some_and(|adaptive| {
+                            matches!(
+                                adaptive.control_variable,
+                                AdaptiveControlVariableSpec::Concurrency
+                            )
+                        }))
+        })
+        .then(|| Rc::new(SlotPool::new(1)));
+    let prefill = phases
+        .iter()
+        .any(|phase| {
+            phase.request_arrival().is_some()
+                && (phase.common().prefill_concurrency.is_some()
+                    || phase
+                        .common()
+                        .adaptive_scale
+                        .as_ref()
+                        .is_some_and(|adaptive| {
+                            matches!(
+                                adaptive.control_variable,
+                                AdaptiveControlVariableSpec::PrefillConcurrency
+                            )
+                        }))
+        })
+        .then(|| Rc::new(SlotPool::new(1)));
+    let phase: Rc<dyn ScheduledPhaseResources> = Rc::new(SlotPoolPhaseResources::new(
+        session.clone(),
+        prefill.clone(),
+    ));
+    NativeScheduledResources {
+        session,
+        prefill,
+        phase,
+    }
+}
+
+/// Protocol-neutral execution plan consumed by the one native coordinator.
+///
+/// Protocol v1 and protocol v2 lower into this structure without serializing
+/// through one another's wire DTOs. The nested policy values are shared Rust
+/// value types; the process protocol discriminator is deliberately absent.
+pub(crate) struct NativeRunPlan {
+    pub(crate) run: NativeRunSpec,
+}
+
+/// Fully typed inputs required after a protocol implementation has validated
+/// and lowered its authored request.
+pub(crate) struct NativeRunSpec {
+    pub(crate) benchmark_id: String,
+    pub(crate) random_seed: Option<u64>,
+    pub(crate) workers: usize,
+    pub(crate) artifact_dir: PathBuf,
+    pub(crate) models: ModelsSpec,
+    pub(crate) endpoint: NativeEndpointPlan,
+    pub(crate) dataset: NativeDatasetPlan,
+    pub(crate) tokenizer: crate::protocol::TokenizerSpec,
+    pub(crate) phases: Vec<PhaseSpec>,
+    pub(crate) metrics: MetricsSpec,
+    pub(crate) artifacts: crate::protocol::ArtifactSpec,
+    pub(crate) accuracy: Option<AccuracySpec>,
+    pub(crate) gpu_telemetry: Option<crate::protocol::GpuTelemetrySpec>,
+    pub(crate) network_latency: Option<crate::protocol::NetworkLatencySpec>,
+    pub(crate) server_metrics: Option<crate::protocol::ServerMetricsSpec>,
+    pub(crate) live_streaming: Option<crate::protocol::LiveStreamingSpec>,
+}
+
+/// Endpoint preparation selected by the source protocol.
+///
+/// Protocol v1 retains its closed compatibility value. Protocol v2 carries
+/// normalized open endpoint profiles directly into worker-local preparation;
+/// it is never projected through [`EndpointSpec`] or an [`EndpointType`].
+#[derive(Clone)]
+pub(crate) enum NativeEndpointPlan {
+    /// Protocol-v1 compatibility policy.
+    Legacy(Box<EndpointSpec>),
+    /// Protocol-v2 open endpoint profiles.
+    Prepared(NativePreparedEndpointPlan),
+}
+
+impl NativeEndpointPlan {
+    pub(crate) fn legacy(&self) -> Result<&EndpointSpec> {
+        match self {
+            Self::Legacy(spec) => Ok(spec),
+            Self::Prepared(_) => {
+                bail!("this workload has not converged on worker-local prepared endpoint bindings")
+            }
+        }
+    }
+
+    fn default_urls(&self) -> Result<&[String]> {
+        match self {
+            Self::Legacy(spec) => Ok(&spec.urls),
+            Self::Prepared(plan) => Ok(&plan.default_profile()?.config.urls),
+        }
+    }
+}
+
+/// Deterministically ordered protocol-v2 endpoint profiles retained until
+/// each execution worker prepares its own dense binding table.
+#[derive(Clone)]
+pub(crate) struct NativePreparedEndpointPlan {
+    pub(crate) default_profile_id: String,
+    pub(crate) profiles: Vec<NativePreparedEndpointProfile>,
+}
+
+impl NativePreparedEndpointPlan {
+    pub(crate) fn default_profile(&self) -> Result<&NativePreparedEndpointProfile> {
+        self.profile(&self.default_profile_id)
+    }
+
+    pub(crate) fn profile(&self, profile_id: &str) -> Result<&NativePreparedEndpointProfile> {
+        self.profiles
+            .iter()
+            .find(|profile| profile.profile_id == profile_id)
+            .ok_or_else(|| anyhow!("endpoint profile {profile_id:?} was not prepared"))
+    }
+}
+
+/// One normalized endpoint profile without a legacy closed-enum identity.
+#[derive(Clone)]
+pub(crate) struct NativePreparedEndpointProfile {
+    pub(crate) profile_id: String,
+    pub(crate) endpoint_id: EndpointId,
+    pub(crate) config: RawEndpointConfig,
+    pub(crate) connection_reuse: ConnectionReuseStrategy,
+    pub(crate) http2: bool,
+    pub(crate) session_header: Option<String>,
+}
+
+/// Protocol-neutral dataset selection.
+pub(crate) enum NativeDatasetPlan {
+    /// Ordinary linear dataset composition.
+    Linear(DatasetSpec),
+    /// Direct authored graph input consumed exactly once by its adapter.
+    Graph(Box<NativeGraphDatasetPlan>),
+}
+
+/// Direct graph adapter selection and already typed load policy.
+pub(crate) struct NativeGraphDatasetPlan {
+    pub(crate) input: NativeGraphInputPlan,
+    pub(crate) random_seed: Option<u64>,
+    pub(crate) default_output_tokens: usize,
+}
+
+/// Direct Graph-IR input state.
+///
+/// V1 retains an authored source because its historical protocol performs
+/// acquisition during execution. V2 stores the adapter's canonical bundle at
+/// preparation time so topology validation and source loading happen once,
+/// before run artifacts or HTTP resources exist.
+pub(crate) enum NativeGraphInputPlan {
+    /// Source still awaiting its single direct adapter load.
+    Authored {
+        adapter_name: String,
+        input: Box<GraphInputConfig>,
+    },
+    /// Canonical Graph-IR bundle loaded and validated during preparation.
+    Prepared(Arc<GraphInputBundle>),
+}
+
+impl TryFrom<RunRequest> for NativeRunPlan {
+    type Error = anyhow::Error;
+
+    fn try_from(request: RunRequest) -> Result<Self> {
+        let run = request.run;
+        let dataset = lower_v1_dataset(run.dataset)?;
+        Ok(Self {
+            run: NativeRunSpec {
+                benchmark_id: run.benchmark_id,
+                random_seed: run.random_seed,
+                workers: run.workers,
+                artifact_dir: run.artifact_dir,
+                models: run.models,
+                endpoint: NativeEndpointPlan::Legacy(Box::new(run.endpoint)),
+                dataset,
+                tokenizer: run.tokenizer,
+                phases: run.phases,
+                metrics: run.metrics,
+                artifacts: run.artifacts,
+                accuracy: run.accuracy,
+                gpu_telemetry: run.gpu_telemetry,
+                network_latency: run.network_latency,
+                server_metrics: run.server_metrics,
+                live_streaming: run.live_streaming,
+            },
+        })
+    }
+}
+
+fn lower_v1_dataset(dataset: DatasetSpec) -> Result<NativeDatasetPlan> {
+    let adapter_name = match &dataset {
+        DatasetSpec::File(spec) if spec.format == "dag_jsonl" => Some(spec.format.clone()),
+        DatasetSpec::Public(spec) if spec.format == "dag_jsonl" => Some(spec.format.clone()),
+        DatasetSpec::Synthetic(_) | DatasetSpec::File(_) | DatasetSpec::Public(_) => None,
+    };
+    let Some(adapter_name) = adapter_name else {
+        return Ok(NativeDatasetPlan::Linear(dataset));
+    };
+    let (sampling, entries, synthesis) = match &dataset {
+        DatasetSpec::File(spec) => (
+            spec.sampling.as_str(),
+            spec.entries,
+            spec.synthesis.as_ref(),
+        ),
+        DatasetSpec::Public(spec) => (spec.sampling.as_str(), spec.entries, None),
+        DatasetSpec::Synthetic(_) => unreachable!("synthetic datasets have no graph adapter"),
+    };
+    ensure!(
+        sampling.trim().eq_ignore_ascii_case("sequential"),
+        "authored Graph-IR runs currently require sequential dataset sampling; {sampling:?} would need an explicit GraphTraceSource implementation"
+    );
+    ensure!(
+        entries != Some(0),
+        "graph dataset entries must be positive when configured"
+    );
+    ensure!(
+        synthesis.is_none(),
+        "trace synthesis is not supported for authored Graph-IR datasets"
+    );
+    let random_seed = dataset_random_seed(&dataset);
+    let default_output_tokens = default_output_tokens(&dataset)?;
+    let input = graph_input_config(&dataset)?;
+    Ok(NativeDatasetPlan::Graph(Box::new(NativeGraphDatasetPlan {
+        input: NativeGraphInputPlan::Authored {
+            adapter_name,
+            input: Box::new(input),
+        },
+        random_seed,
+        default_output_tokens,
+    })))
+}
 
 /// Execute exactly one request with the native local execution backend.
 pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
@@ -185,12 +441,35 @@ pub fn execute_run_with_all_factories(
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry_factory: &dyn AiperfRegistryFactory,
 ) -> Result<RunTerminal> {
-    validate_request(&request)?;
+    let benchmark_id = request.run.benchmark_id.clone();
+    let plan = NativeRunPlan::try_from(request)?;
     let registry = registry_factory
         .build()
         .context("constructing frozen runner registry")?;
-    let benchmark_id = request.run.benchmark_id.clone();
-    let artifact_dir = request.run.artifact_dir.clone();
+    let report_path = execute_native_plan_with_factories(
+        plan,
+        backend_factory,
+        graph_inputs,
+        graph_placement,
+        &registry,
+    )?;
+    Ok(RunTerminal::succeeded(benchmark_id, report_path))
+}
+
+/// Execute one protocol-neutral plan through the single native coordinator.
+///
+/// The caller supplies the already frozen product registry used while
+/// preparing protocol-v2 endpoint profiles. This prevents execution from
+/// silently composing a second registry universe after validation.
+pub(crate) fn execute_native_plan_with_factories(
+    plan: NativeRunPlan,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
+) -> Result<PathBuf> {
+    validate_plan(&plan)?;
+    let artifact_dir = plan.run.artifact_dir.clone();
     std::fs::create_dir_all(&artifact_dir)
         .with_context(|| format!("creating run artifact directory {}", artifact_dir.display()))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -201,19 +480,19 @@ pub fn execute_run_with_all_factories(
     let native = local.block_on(
         &runtime,
         execute_native(
-            request,
+            plan,
             backend_factory,
             graph_inputs,
             graph_placement,
-            &registry,
+            registry,
         ),
     )?;
     let report_path = artifact_dir.join("native-v2.json");
     write_native_report_json(&native, &report_path)?;
-    Ok(RunTerminal::succeeded(benchmark_id, report_path))
+    Ok(report_path)
 }
 
-fn validate_request(request: &RunRequest) -> Result<()> {
+fn validate_plan(request: &NativeRunPlan) -> Result<()> {
     ensure!(
         !request.run.benchmark_id.trim().is_empty(),
         "benchmark_id cannot be empty"
@@ -223,7 +502,7 @@ fn validate_request(request: &RunRequest) -> Result<()> {
         "at least one model is required"
     );
     ensure!(
-        !request.run.endpoint.urls.is_empty(),
+        !request.run.endpoint.default_urls()?.is_empty(),
         "at least one endpoint URL is required"
     );
     ensure!(
@@ -343,15 +622,15 @@ struct PreparedAccuracy<'a> {
 }
 
 async fn execute_native(
-    request: RunRequest,
+    request: NativeRunPlan,
     backend_factory: &dyn HttpExecutionBackendFactory,
     graph_inputs: &dyn GraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    if let Some(adapter) = graph_input_adapter(&request.run.dataset, graph_inputs) {
+    if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
         validate_graph_request(&request)?;
-        return execute_graph_native(request, adapter, graph_placement, registry).await;
+        return execute_graph_native(request, graph_inputs, graph_placement, registry).await;
     }
     let mut live_streaming = if request.run.live_streaming.is_some() {
         match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
@@ -376,18 +655,7 @@ async fn execute_native(
     result
 }
 
-fn graph_input_adapter(
-    dataset: &DatasetSpec,
-    resolver: &dyn GraphInputAdapterResolver,
-) -> Option<Arc<dyn GraphInputAdapter>> {
-    match dataset {
-        DatasetSpec::File(spec) => resolver.find(&spec.format),
-        DatasetSpec::Public(spec) => resolver.find(&spec.format),
-        DatasetSpec::Synthetic(_) => None,
-    }
-}
-
-fn validate_graph_request(request: &RunRequest) -> Result<()> {
+fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
     ensure!(
         request.run.accuracy.is_none(),
         "authored Graph-IR datasets cannot be combined with an accuracy evaluator"
@@ -410,26 +678,9 @@ fn validate_graph_request(request: &RunRequest) -> Result<()> {
         ),
         "authored Graph-IR runs currently require round_robin model selection; other policies need a graph model-selection trait implementation"
     );
-    let (sampling, entries, synthesis) = match &request.run.dataset {
-        DatasetSpec::File(spec) => (
-            spec.sampling.as_str(),
-            spec.entries,
-            spec.synthesis.as_ref(),
-        ),
-        DatasetSpec::Public(spec) => (spec.sampling.as_str(), spec.entries, None),
-        DatasetSpec::Synthetic(_) => unreachable!("synthetic datasets have no graph adapter"),
-    };
     ensure!(
-        sampling.trim().eq_ignore_ascii_case("sequential"),
-        "authored Graph-IR runs currently require sequential dataset sampling; {sampling:?} would need an explicit GraphTraceSource implementation"
-    );
-    ensure!(
-        entries != Some(0),
-        "graph dataset entries must be positive when configured"
-    );
-    ensure!(
-        synthesis.is_none(),
-        "trace synthesis is not supported for authored Graph-IR datasets"
+        matches!(request.run.dataset, NativeDatasetPlan::Graph(_)),
+        "graph execution requires a direct graph input plan"
     );
     for (phase_index, phase) in request.run.phases.iter().enumerate() {
         ensure!(
@@ -562,49 +813,97 @@ struct PreparedGraphPhase {
 }
 
 async fn execute_graph_native(
-    request: RunRequest,
-    adapter: Arc<dyn GraphInputAdapter>,
+    request: NativeRunPlan,
+    graph_inputs: &dyn GraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
+    let graph = match &request.run.dataset {
+        NativeDatasetPlan::Graph(graph) => graph,
+        NativeDatasetPlan::Linear(_) => bail!("graph execution received a linear dataset plan"),
+    };
+    let graph_random_seed = graph.random_seed;
+    let graph_default_output_tokens = graph.default_output_tokens;
     let metrics_config = metrics_config(&request.run.metrics)?;
     let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
     let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
         tokenizer.clone(),
         request.run.tokenizer.apply_chat_template,
     ));
-    let input = adapter
-        .load(
-            graph_input_config(&request.run.dataset)?,
-            tokenizer.as_ref(),
-        )
-        .await
-        .context("loading direct authored Graph-IR input")?;
+    let input = match &graph.input {
+        NativeGraphInputPlan::Prepared(input) => input.clone(),
+        NativeGraphInputPlan::Authored {
+            adapter_name,
+            input,
+        } => {
+            let adapter = graph_inputs.find(adapter_name).ok_or_else(|| {
+                anyhow!("no Graph-IR input adapter is registered for {adapter_name:?}")
+            })?;
+            let input = GraphInputConfig {
+                load: input.load.clone(),
+                root_limit: input.root_limit,
+            };
+            Arc::new(
+                adapter
+                    .load(input, tokenizer.as_ref())
+                    .await
+                    .context("loading direct authored Graph-IR input")?,
+            )
+        }
+    };
     ensure!(
         !input.plans.is_empty(),
         "authored Graph-IR input contains no root traces after root limiting"
     );
-    let endpoint = endpoint_config(&request.run.endpoint)?;
     let primary_model = request.run.models.items[0].name.clone();
-    let default_output_tokens = default_output_tokens(&request.run.dataset)?;
-    let request_timeout_ns = seconds_to_ns(request.run.endpoint.timeout_seconds)?;
-    let transport = TransportSinkConfig {
-        client: ClientConfig {
-            http_version: if request.run.endpoint.http2 {
-                HttpVersion::Http2PriorKnowledge
-            } else {
-                HttpVersion::Auto
-            },
-            total_timeout_ns: (request_timeout_ns > 0).then_some(request_timeout_ns),
-            ..ClientConfig::default()
-        },
-        connection_reuse: request.run.endpoint.connection_reuse,
-        session_header: request.run.endpoint.session_header.clone(),
+    let default_output_tokens = graph_default_output_tokens;
+    let endpoints_configured = match &request.run.endpoint {
+        NativeEndpointPlan::Legacy(spec) => spec.urls.clone(),
+        NativeEndpointPlan::Prepared(plan) => plan
+            .profiles
+            .iter()
+            .flat_map(|profile| profile.config.urls.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
     };
+    let endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory> =
+        match &request.run.endpoint {
+            NativeEndpointPlan::Legacy(spec) => {
+                let request_timeout_ns = seconds_to_ns(spec.timeout_seconds)?;
+                Arc::new(LegacyRunnerGraphEndpointRuntimeFactory::new(
+                    spec.urls.clone(),
+                    TransportSinkConfig {
+                        client: ClientConfig {
+                            http_version: if spec.http2 {
+                                HttpVersion::Http2PriorKnowledge
+                            } else {
+                                HttpVersion::Auto
+                            },
+                            total_timeout_ns: (request_timeout_ns > 0)
+                                .then_some(request_timeout_ns),
+                            ..ClientConfig::default()
+                        },
+                        connection_reuse: spec.connection_reuse,
+                        session_header: spec.session_header.clone(),
+                    },
+                    endpoint_config(spec)?,
+                    registry.endpoint_resolver(),
+                    input_token_counter.clone(),
+                ))
+            }
+            NativeEndpointPlan::Prepared(plan) => {
+                Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
+                    registry.endpoints().clone(),
+                    plan.clone(),
+                    input_token_counter.clone(),
+                ))
+            }
+        };
     let real_clock_anchor = RealClockAnchor::now();
     let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
     let start_ns = clock.now_ns();
-    let rng_root = RngRoot::new(request.run.random_seed);
+    let rng_root = RngRoot::new(graph_random_seed.or(request.run.random_seed));
     let trace_instances = GraphTraceInstanceSequence::default();
 
     // Construct every phase's placement workers before the first root can be
@@ -616,12 +915,9 @@ async fn execute_graph_native(
             phase_index,
             phase,
             &request,
-            &input,
-            endpoint.clone(),
-            registry.endpoint_resolver(),
-            input_token_counter.clone(),
+            input.as_ref(),
+            endpoint_runtime_factory.clone(),
             metrics_config.clone(),
-            transport.clone(),
             real_clock_anchor,
             clock.clone(),
             start_ns,
@@ -692,7 +988,7 @@ async fn execute_graph_native(
             .zip(end_time)
             .map(|(start, end)| end.saturating_sub(start) as f64 / 1_000_000_000.0),
         was_cancelled: false,
-        endpoints_configured: request.run.endpoint.urls.clone(),
+        endpoints_configured,
         endpoints_successful,
         server_metrics: None,
     };
@@ -712,13 +1008,10 @@ async fn execute_graph_native(
 fn prepare_graph_phase(
     phase_index: usize,
     phase: &PhaseSpec,
-    request: &RunRequest,
+    request: &NativeRunPlan,
     input: &GraphInputBundle,
-    endpoint: EndpointConfig,
-    endpoint_resolver: Arc<dyn aiperf_dataset::EndpointResolver>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
+    endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
     metrics: MetricsConfig,
-    transport: TransportSinkConfig,
     real_clock_anchor: RealClockAnchor,
     clock: Rc<dyn Clock>,
     run_origin_ns: i64,
@@ -779,14 +1072,10 @@ fn prepare_graph_phase(
         RunnerGraphBackendFactoryConfig {
             real_clock_anchor,
             run_origin_ns,
-            base_urls: request.run.endpoint.urls.clone(),
             model: primary_model.to_string(),
             default_max_tokens: default_output_tokens,
-            transport,
-            endpoint,
-            endpoint_resolver,
+            endpoint_runtime_factory,
             segments: input.segments.clone(),
-            input_token_counter,
             metrics,
             phase: metrics_phase(phase)?,
             prefill_concurrency: common.prefill_concurrency,
@@ -815,7 +1104,7 @@ fn prepare_graph_phase(
 }
 
 fn write_graph_artifacts(
-    request: &RunRequest,
+    request: &NativeRunPlan,
     captured: &[CapturedRecord],
     metrics_config: &MetricsConfig,
 ) -> Result<()> {
@@ -835,7 +1124,7 @@ fn write_graph_artifacts(
 }
 
 async fn execute_native_with_accuracy(
-    request: RunRequest,
+    request: NativeRunPlan,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
@@ -881,14 +1170,21 @@ async fn execute_native_with_accuracy(
 }
 
 async fn execute_native_inner(
-    request: RunRequest,
+    request: NativeRunPlan,
     accuracy: Option<AccuracyWorkerRun<'_>>,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
+    let endpoint_spec = request.run.endpoint.legacy()?;
     let rng_root = RngRoot::new(request.run.random_seed);
-    let dataset_rng_root = dataset_rng_root(&request.run.dataset, rng_root);
+    let dataset_spec = match &request.run.dataset {
+        NativeDatasetPlan::Linear(dataset) => dataset,
+        NativeDatasetPlan::Graph(_) => {
+            bail!("scheduled execution received a direct graph dataset plan")
+        }
+    };
+    let dataset_rng_root = dataset_rng_root(dataset_spec, rng_root);
     let metrics_config = metrics_config(&request.run.metrics)?;
     let model_names = request
         .run
@@ -940,19 +1236,19 @@ async fn execute_native_inner(
     } else {
         build_dataset(
             registry,
-            &request.run.dataset,
+            dataset_spec,
             &request.run.models,
             dataset_rng_root,
             tokenizer.as_ref(),
-            request.run.endpoint.endpoint_type,
+            endpoint_spec.endpoint_type,
         )
         .await?
     };
-    let endpoint = endpoint_config(&request.run.endpoint)?;
+    let endpoint = endpoint_config(endpoint_spec)?;
     let default_output_tokens = if prepared_accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
-        default_output_tokens(&request.run.dataset)?
+        default_output_tokens(dataset_spec)?
     };
     if prepared_accuracy.is_some() {
         for phase in &request.run.phases {
@@ -981,7 +1277,7 @@ async fn execute_native_inner(
             NetworkLatencyRun::new(
                 &request.run.benchmark_id,
                 spec,
-                &request.run.endpoint.urls,
+                &endpoint_spec.urls,
                 clock.clone(),
             )
         })
@@ -1037,16 +1333,16 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
-    let request_timeout_ns = seconds_to_ns(request.run.endpoint.timeout_seconds)?;
+    let request_timeout_ns = seconds_to_ns(endpoint_spec.timeout_seconds)?;
     let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
         workers: request.run.workers,
         coordinator_clock: clock.clone(),
         real_clock_anchor,
-        base_urls: request.run.endpoint.urls.clone(),
+        base_urls: endpoint_spec.urls.clone(),
         model: primary_model.clone(),
         transport: TransportSinkConfig {
             client: ClientConfig {
-                http_version: if request.run.endpoint.http2 {
+                http_version: if endpoint_spec.http2 {
                     HttpVersion::Http2PriorKnowledge
                 } else {
                     HttpVersion::Auto
@@ -1054,8 +1350,8 @@ async fn execute_native_inner(
                 total_timeout_ns: (request_timeout_ns > 0).then_some(request_timeout_ns),
                 ..ClientConfig::default()
             },
-            connection_reuse: request.run.endpoint.connection_reuse,
-            session_header: request.run.endpoint.session_header.clone(),
+            connection_reuse: endpoint_spec.connection_reuse,
+            session_header: endpoint_spec.session_header.clone(),
         },
     })?;
     let start_ns = clock.now_ns();
@@ -1072,239 +1368,28 @@ async fn execute_native_inner(
         capture: capture.clone(),
     });
 
-    let shared_session = request
-        .run
-        .phases
-        .iter()
-        .any(|phase| {
-            phase.request_arrival().is_some()
-                && (phase.concurrency().is_some()
-                    || phase
-                        .common()
-                        .adaptive_scale
-                        .as_ref()
-                        .is_some_and(|adaptive| {
-                            matches!(
-                                adaptive.control_variable,
-                                AdaptiveControlVariableSpec::Concurrency
-                            )
-                        }))
-        })
-        .then(|| Rc::new(SlotPool::new(1)));
-    let shared_prefill = request
-        .run
-        .phases
-        .iter()
-        .any(|phase| {
-            phase.request_arrival().is_some()
-                && (phase.common().prefill_concurrency.is_some()
-                    || phase
-                        .common()
-                        .adaptive_scale
-                        .as_ref()
-                        .is_some_and(|adaptive| {
-                            matches!(
-                                adaptive.control_variable,
-                                AdaptiveControlVariableSpec::PrefillConcurrency
-                            )
-                        }))
-        })
-        .then(|| Rc::new(SlotPool::new(1)));
-    let request_resources: Rc<dyn ScheduledPhaseResources> = Rc::new(SlotPoolPhaseResources::new(
-        shared_session.clone(),
-        shared_prefill.clone(),
-    ));
+    let shared_resources = native_scheduled_resources(&request.run.phases);
 
     let mut plans = Vec::with_capacity(request.run.phases.len());
     for (phase_index, phase) in request.run.phases.iter().enumerate() {
-        let phase_rng = RngRoot::new(
-            dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")),
-        );
-        let phase_dataset = match phase {
-            PhaseSpec::FixedSchedule {
-                start_offset,
-                end_offset,
-                ..
-            } => dataset.filter_first_turn_window(*start_offset, *end_offset)?,
-            _ => dataset.clone(),
-        };
-        let source = native_conversation_source(
-            phase_dataset,
-            primary_model.clone(),
+        let mut plan = build_native_scheduled_phase_plan(
+            phase_index,
+            phase,
+            &dataset,
+            &primary_model,
             default_output_tokens,
-            phase_rng,
-            endpoint.clone(),
-            &registry,
+            dataset_rng_root,
+            rng_root,
+            &endpoint,
+            registry,
             tokenizer.clone(),
             input_token_counter.clone(),
-            matches!(phase, PhaseSpec::FixedSchedule { .. }),
-        )?;
-        let arrival_seed = rng_root
-            .derive_seed(&format!("runner.phase.{phase_index}.arrival"))
-            .unwrap_or(phase_index as u64);
-        let (
-            workload,
-            intervals,
-            phase_session,
-            phase_prefill,
-            enforce_stop,
-            resources,
-            user_target,
-        ): PhaseRuntimeParts = match phase {
-            PhaseSpec::Concurrency { .. }
-            | PhaseSpec::Poisson { .. }
-            | PhaseSpec::Gamma { .. }
-            | PhaseSpec::Constant { .. } => {
-                let (arrival, rate, smoothness) = phase
-                    .request_arrival()
-                    .expect("request-rate phase variants have an arrival policy");
-                let intervals = Rc::new(RefCell::new(make_interval_generator(
-                    arrival,
-                    rate,
-                    smoothness,
-                    arrival_seed,
-                )));
-                let workload = Rc::new(RequestRateWorkload::with_components(
-                    source,
-                    intervals.clone(),
-                    shared_session.clone(),
-                    shared_prefill.clone(),
-                )?) as Rc<dyn Workload>;
-                (
-                    workload,
-                    intervals,
-                    shared_session.clone(),
-                    shared_prefill.clone(),
-                    true,
-                    request_resources.clone(),
-                    None,
-                )
-            }
-            PhaseSpec::UserCentric {
-                rate,
-                users,
-                concurrency,
-                ..
-            } => {
-                ensure!(
-                    phase.common().prefill_concurrency.is_none(),
-                    "user_centric phases do not own a prefill admission pool"
-                );
-                ensure!(
-                    phase.common().rate_ramp.is_none(),
-                    "user_centric cadence is authored and does not accept rate_ramp"
-                );
-                let adaptive = phase.common().adaptive_scale.as_ref();
-                let initial_users = adaptive
-                    .filter(|adaptive| {
-                        matches!(
-                            adaptive.control_variable,
-                            AdaptiveControlVariableSpec::Users
-                        )
-                    })
-                    .map(|adaptive| integer_adaptive_bound(adaptive.minimum, "users minimum"))
-                    .transpose()?
-                    .unwrap_or(*users);
-                let session_concurrency = match (adaptive, concurrency) {
-                    (
-                        Some(AdaptiveScaleSpec {
-                            control_variable: AdaptiveControlVariableSpec::Concurrency,
-                            maximum,
-                            ..
-                        }),
-                        None,
-                    ) => Some(integer_adaptive_bound(*maximum, "concurrency maximum")?),
-                    _ => *concurrency,
-                };
-                let concrete = Rc::new(UserCentricWorkload::new(
-                    UserCentricConfig {
-                        num_users: initial_users,
-                        request_rate: *rate,
-                        concurrency: session_concurrency,
-                    },
-                    source,
-                )?);
-                let phase_session = concrete.session_slots();
-                let user_target: Rc<dyn UserTarget> = Rc::new(concrete.control());
-                let resources: Rc<dyn ScheduledPhaseResources> =
-                    Rc::new(SlotPoolPhaseResources::new(phase_session.clone(), None));
-                let intervals = Rc::new(RefCell::new(make_interval_generator(
-                    aiperf_timing::ArrivalPattern::ConcurrencyBurst,
-                    None,
-                    None,
-                    arrival_seed,
-                )));
-                (
-                    concrete,
-                    intervals,
-                    phase_session,
-                    None,
-                    true,
-                    resources,
-                    Some(user_target),
-                )
-            }
-            PhaseSpec::FixedSchedule {
-                auto_offset,
-                start_offset,
-                ..
-            } => {
-                ensure!(
-                    phase.common().concurrency_ramp.is_none()
-                        && phase.common().prefill_ramp.is_none()
-                        && phase.common().rate_ramp.is_none(),
-                    "fixed_schedule phases have authored timestamps and do not accept ramps"
-                );
-                ensure!(
-                    phase.common().prefill_concurrency.is_none(),
-                    "fixed_schedule prefill admission is not configured by protocol v1"
-                );
-                let schedule_source =
-                    Rc::new(DatasetFixedScheduleSource::new(FixedScheduleConfig {
-                        auto_offset_timestamps: *auto_offset,
-                        start_offset_ms: *start_offset,
-                    })?);
-                let workload = Rc::new(FixedScheduleWorkload::new(source, schedule_source)?)
-                    as Rc<dyn Workload>;
-                let intervals = Rc::new(RefCell::new(make_interval_generator(
-                    aiperf_timing::ArrivalPattern::ConcurrencyBurst,
-                    None,
-                    None,
-                    arrival_seed,
-                )));
-                (
-                    workload,
-                    intervals,
-                    None,
-                    None,
-                    false,
-                    Rc::new(aiperf::phase_runtime::NoopScheduledPhaseResources),
-                    None,
-                )
-            }
-        };
-        let phase_config = phase_config(phase)?;
-        let policies = ancillary_policies(
-            phase,
-            &request.run.endpoint.urls,
-            RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.cancellation"))),
-        )?;
-        let controller = ramp_controller(
-            phase,
             clock.clone(),
-            intervals.clone(),
-            phase_session.clone(),
-            phase_prefill.clone(),
-            RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.ramp"))),
-        )?;
-        let runtime_extension = adaptive_runtime_extension(
-            phase,
+            start_ns,
             &request.run.benchmark_id,
             &request.run.artifact_dir,
-            intervals,
-            phase_session,
-            phase_prefill,
-            user_target,
+            &endpoint_spec.urls,
+            &shared_resources,
         )?;
         let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
             capture: capture.clone(),
@@ -1319,12 +1404,7 @@ async fn execute_native_inner(
             let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
             record_processors.push(processor);
         }
-        let mut plan = ScheduledPhasePlan::new(phase_config, workload, policies)
-            .with_enforce_stop(enforce_stop)
-            .with_start_ns(start_ns)
-            .with_resources(resources)
-            .with_record_processors(record_processors)
-            .with_controller(controller);
+        plan = plan.with_record_processors(record_processors);
         let mut sidecars = Vec::new();
         if let Some(server_metrics) = &server_metrics {
             sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
@@ -1341,9 +1421,6 @@ async fn execute_native_inner(
         }
         if !sidecars.is_empty() {
             plan = plan.with_sidecars(sidecars);
-        }
-        if let Some(extension) = runtime_extension {
-            plan = plan.with_runtime_extension(extension);
         }
         plans.push(plan);
     }
@@ -1459,7 +1536,7 @@ async fn execute_native_inner(
             model: Some(primary_model),
         },
         summary: ReportSummary {
-            endpoints_configured: request.run.endpoint.urls,
+            endpoints_configured: endpoint_spec.urls.clone(),
             server_metrics: server_metrics_report,
             ..ReportSummary::default()
         },
@@ -1505,7 +1582,7 @@ fn dataset_default_output_tokens(dataset: &Dataset) -> Result<usize> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn native_conversation_source(
+pub(crate) fn native_conversation_source(
     dataset: Dataset,
     model: String,
     default_output_tokens: usize,
@@ -1542,7 +1619,232 @@ fn native_conversation_source(
     ))
 }
 
-async fn build_dataset(
+/// Lower one authored phase into the shared scheduled runtime above the
+/// injected `{transport, clock}` seams.
+///
+/// Dataset filtering/materialization, arrival policy, session/prefill
+/// admission, fixed/user-centric scheduling, ramps, cancellation, adaptive
+/// control, and phase lifecycle are deliberately composed here once. Backend
+/// adapters may decorate the returned plan with observers or sidecars, but do
+/// not reproduce its scheduler logic.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_native_scheduled_phase_plan(
+    phase_index: usize,
+    phase: &PhaseSpec,
+    dataset: &Dataset,
+    primary_model: &str,
+    default_output_tokens: usize,
+    dataset_rng_root: RngRoot,
+    rng_root: RngRoot,
+    endpoint: &EndpointConfig,
+    registry: &AiperfRegistry,
+    tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    benchmark_id: &str,
+    artifact_dir: &Path,
+    endpoint_names: &[String],
+    shared: &NativeScheduledResources,
+) -> Result<ScheduledPhasePlan> {
+    let phase_rng =
+        RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
+    let phase_dataset = match phase {
+        PhaseSpec::FixedSchedule {
+            start_offset,
+            end_offset,
+            ..
+        } => dataset.filter_first_turn_window(*start_offset, *end_offset)?,
+        _ => dataset.clone(),
+    };
+    let source = native_conversation_source(
+        phase_dataset,
+        primary_model.to_owned(),
+        default_output_tokens,
+        phase_rng,
+        endpoint.clone(),
+        registry,
+        tokenizer,
+        input_token_counter,
+        matches!(phase, PhaseSpec::FixedSchedule { .. }),
+    )?;
+    let arrival_seed = rng_root
+        .derive_seed(&format!("runner.phase.{phase_index}.arrival"))
+        .unwrap_or(phase_index as u64);
+    let (
+        workload,
+        intervals,
+        phase_session,
+        phase_prefill,
+        enforce_stop,
+        resources,
+        user_target,
+    ): PhaseRuntimeParts = match phase {
+        PhaseSpec::Concurrency { .. }
+        | PhaseSpec::Poisson { .. }
+        | PhaseSpec::Gamma { .. }
+        | PhaseSpec::Constant { .. } => {
+            let (arrival, rate, smoothness) = phase
+                .request_arrival()
+                .expect("request-rate phase variants have an arrival policy");
+            let intervals = Rc::new(RefCell::new(make_interval_generator(
+                arrival,
+                rate,
+                smoothness,
+                arrival_seed,
+            )));
+            let workload = Rc::new(RequestRateWorkload::with_components(
+                source,
+                intervals.clone(),
+                shared.session.clone(),
+                shared.prefill.clone(),
+            )?) as Rc<dyn Workload>;
+            (
+                workload,
+                intervals,
+                shared.session.clone(),
+                shared.prefill.clone(),
+                true,
+                shared.phase.clone(),
+                None,
+            )
+        }
+        PhaseSpec::UserCentric {
+            rate,
+            users,
+            concurrency,
+            ..
+        } => {
+            ensure!(
+                phase.common().prefill_concurrency.is_none(),
+                "user_centric phases do not own a prefill admission pool"
+            );
+            ensure!(
+                phase.common().rate_ramp.is_none(),
+                "user_centric cadence is authored and does not accept rate_ramp"
+            );
+            let adaptive = phase.common().adaptive_scale.as_ref();
+            let initial_users = adaptive
+                .filter(|adaptive| {
+                    matches!(
+                        adaptive.control_variable,
+                        AdaptiveControlVariableSpec::Users
+                    )
+                })
+                .map(|adaptive| integer_adaptive_bound(adaptive.minimum, "users minimum"))
+                .transpose()?
+                .unwrap_or(*users);
+            let session_concurrency = match (adaptive, concurrency) {
+                (
+                    Some(AdaptiveScaleSpec {
+                        control_variable: AdaptiveControlVariableSpec::Concurrency,
+                        maximum,
+                        ..
+                    }),
+                    None,
+                ) => Some(integer_adaptive_bound(*maximum, "concurrency maximum")?),
+                _ => *concurrency,
+            };
+            let concrete = Rc::new(UserCentricWorkload::new(
+                UserCentricConfig {
+                    num_users: initial_users,
+                    request_rate: *rate,
+                    concurrency: session_concurrency,
+                },
+                source,
+            )?);
+            let phase_session = concrete.session_slots();
+            let user_target: Rc<dyn UserTarget> = Rc::new(concrete.control());
+            let resources: Rc<dyn ScheduledPhaseResources> =
+                Rc::new(SlotPoolPhaseResources::new(phase_session.clone(), None));
+            let intervals = Rc::new(RefCell::new(make_interval_generator(
+                aiperf_timing::ArrivalPattern::ConcurrencyBurst,
+                None,
+                None,
+                arrival_seed,
+            )));
+            (
+                concrete,
+                intervals,
+                phase_session,
+                None,
+                true,
+                resources,
+                Some(user_target),
+            )
+        }
+        PhaseSpec::FixedSchedule {
+            auto_offset,
+            start_offset,
+            ..
+        } => {
+            ensure!(
+                phase.common().concurrency_ramp.is_none()
+                    && phase.common().prefill_ramp.is_none()
+                    && phase.common().rate_ramp.is_none(),
+                "fixed_schedule phases have authored timestamps and do not accept ramps"
+            );
+            ensure!(
+                phase.common().prefill_concurrency.is_none(),
+                "fixed_schedule prefill admission is not configured by the native scheduler"
+            );
+            let schedule_source = Rc::new(DatasetFixedScheduleSource::new(FixedScheduleConfig {
+                auto_offset_timestamps: *auto_offset,
+                start_offset_ms: *start_offset,
+            })?);
+            let workload =
+                Rc::new(FixedScheduleWorkload::new(source, schedule_source)?) as Rc<dyn Workload>;
+            let intervals = Rc::new(RefCell::new(make_interval_generator(
+                aiperf_timing::ArrivalPattern::ConcurrencyBurst,
+                None,
+                None,
+                arrival_seed,
+            )));
+            (
+                workload,
+                intervals,
+                None,
+                None,
+                false,
+                Rc::new(aiperf::phase_runtime::NoopScheduledPhaseResources),
+                None,
+            )
+        }
+    };
+    let policies = ancillary_policies(
+        phase,
+        endpoint_names,
+        RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.cancellation"))),
+    )?;
+    let controller = ramp_controller(
+        phase,
+        clock,
+        intervals.clone(),
+        phase_session.clone(),
+        phase_prefill.clone(),
+        RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.ramp"))),
+    )?;
+    let runtime_extension = adaptive_runtime_extension(
+        phase,
+        benchmark_id,
+        artifact_dir,
+        intervals,
+        phase_session,
+        phase_prefill,
+        user_target,
+    )?;
+    let mut plan = ScheduledPhasePlan::new(phase_config(phase)?, workload, policies)
+        .with_enforce_stop(enforce_stop)
+        .with_start_ns(start_ns)
+        .with_resources(resources)
+        .with_controller(controller);
+    if let Some(extension) = runtime_extension {
+        plan = plan.with_runtime_extension(extension);
+    }
+    Ok(plan)
+}
+
+pub(crate) async fn build_dataset(
     registry: &AiperfRegistry,
     dataset: &DatasetSpec,
     models: &ModelsSpec,
@@ -1598,13 +1900,16 @@ async fn build_dataset(
     }
 }
 
-fn dataset_rng_root(dataset: &DatasetSpec, run_rng_root: RngRoot) -> RngRoot {
-    let override_seed = match dataset {
+pub(crate) fn dataset_rng_root(dataset: &DatasetSpec, run_rng_root: RngRoot) -> RngRoot {
+    dataset_random_seed(dataset).map_or(run_rng_root, |seed| RngRoot::new(Some(seed)))
+}
+
+fn dataset_random_seed(dataset: &DatasetSpec) -> Option<u64> {
+    match dataset {
         DatasetSpec::Synthetic(spec) => spec.random_seed,
         DatasetSpec::File(spec) => spec.random_seed,
         DatasetSpec::Public(spec) => spec.random_seed,
-    };
-    override_seed.map_or(run_rng_root, |seed| RngRoot::new(Some(seed)))
+    }
 }
 
 const fn is_rankings_endpoint(endpoint_type: EndpointType) -> bool {
@@ -1960,7 +2265,7 @@ const fn distribution_normal_stddev(spec: &DistributionSpec) -> f64 {
     }
 }
 
-fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
+pub(crate) fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
     let expected = match dataset {
         DatasetSpec::Synthetic(spec) => spec
             .prompts
@@ -1990,7 +2295,7 @@ fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
     Ok(expected as usize)
 }
 
-fn distribution(spec: &DistributionSpec) -> Result<SamplingDistribution> {
+pub(crate) fn distribution(spec: &DistributionSpec) -> Result<SamplingDistribution> {
     let (distribution, min, max) = match spec {
         DistributionSpec::Fixed(value) => (
             SamplingDistribution::fixed(value.value)?,
@@ -2060,7 +2365,7 @@ fn endpoint_config(spec: &EndpointSpec) -> Result<EndpointConfig> {
     .map_err(Into::into)
 }
 
-fn metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
+pub(crate) fn metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
     let slice_duration_ns = spec
         .slice_duration_seconds
         .map(|seconds| {
@@ -2575,7 +2880,7 @@ impl ModelSelector for WeightedModelSelector {
     }
 }
 
-fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer>> {
+pub(crate) fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer>> {
     let spec = spec.unwrap_or("builtin");
     let path = Path::new(spec);
     if path.is_dir() {
@@ -2611,7 +2916,7 @@ struct RunCapture {
     origin_ns: i64,
     observer: Rc<NativeMetricsObserver>,
     identities: RefCell<Vec<CaptureIdentity>>,
-    response_text: RefCell<HashMap<Uuid, String>>,
+    outputs: RefCell<HashMap<Uuid, CapturedModelOutput>>,
     raw_enabled: bool,
     raw_exchanges: RefCell<HashMap<Uuid, CapturedHttpExchange>>,
 }
@@ -2623,7 +2928,7 @@ impl RunCapture {
             clock,
             origin_ns,
             identities: RefCell::new(Vec::new()),
-            response_text: RefCell::new(HashMap::new()),
+            outputs: RefCell::new(HashMap::new()),
             raw_enabled,
             raw_exchanges: RefCell::new(HashMap::new()),
         }
@@ -2667,16 +2972,22 @@ impl RunCapture {
         );
     }
 
-    fn record_response_text(&self, uuid: Uuid, response_text: &str) -> Result<()> {
-        if response_text.is_empty() {
-            return Ok(());
-        }
+    fn record_model_output(
+        &self,
+        uuid: Uuid,
+        flattened_text: &str,
+        visible_text: Option<&str>,
+        reasoning_text: Option<&str>,
+    ) -> Result<()> {
         ensure!(
-            self.response_text
+            self.outputs
                 .borrow_mut()
-                .insert(uuid, response_text.to_string())
+                .insert(
+                    uuid,
+                    CapturedModelOutput::from_parts(flattened_text, visible_text, reasoning_text),
+                )
                 .is_none(),
-            "native response text was recorded more than once for request {uuid}"
+            "native model output was recorded more than once for request {uuid}"
         );
         Ok(())
     }
@@ -2685,7 +2996,7 @@ impl RunCapture {
         &self,
         uuid: Uuid,
         request_payload: Vec<u8>,
-        record: aiperf_transport::models::RequestRecord,
+        record: aiperf_transport_http::models::RequestRecord,
     ) -> Result<()> {
         if !self.raw_enabled {
             return Ok(());
@@ -2722,7 +3033,12 @@ impl RunCapture {
         Ok(CapturedRecord {
             uuid: credit.turn.uuid,
             x_correlation_id: credit.turn.x_correlation_id.clone(),
-            response_text: self.response_text.borrow().get(&credit.turn.uuid).cloned(),
+            output: self
+                .outputs
+                .borrow()
+                .get(&credit.turn.uuid)
+                .cloned()
+                .unwrap_or_default(),
             raw: None,
             ingest,
         })
@@ -2731,7 +3047,7 @@ impl RunCapture {
     fn finish(&self, issued_times: &HashMap<Uuid, i64>) -> Result<Vec<CapturedRecord>> {
         let collection = self.observer.finish_with_records();
         let identities = self.identities.borrow();
-        let response_text = self.response_text.borrow();
+        let outputs = self.outputs.borrow();
         let mut raw_exchanges = self.raw_exchanges.take();
         ensure!(
             collection.records.len() == identities.len(),
@@ -2756,7 +3072,7 @@ impl RunCapture {
                 Ok(CapturedRecord {
                     uuid: identity.uuid,
                     x_correlation_id: identity.x_correlation_id.clone(),
-                    response_text: response_text.get(&identity.uuid).cloned(),
+                    output: outputs.get(&identity.uuid).cloned().unwrap_or_default(),
                     raw: raw_exchanges.remove(&identity.uuid),
                     ingest,
                 })
@@ -2863,8 +3179,12 @@ impl TurnDispatcher for ConfiguredDispatcher {
                     collected.request_payload.to_vec(),
                     collected.record,
                 )?;
-                self.capture
-                    .record_response_text(uuid, &outcome.response_text)?;
+                self.capture.record_model_output(
+                    uuid,
+                    &outcome.response_text,
+                    outcome.model_response.content.as_deref(),
+                    outcome.model_response.reasoning.as_deref(),
+                )?;
                 self.capture.observer.record_response(
                     uuid,
                     NativeResponseMetadata {

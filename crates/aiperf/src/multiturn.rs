@@ -28,7 +28,7 @@ use aiperf_dataset::{
 };
 use aiperf_endpoints::{
     ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, Media as EndpointMedia, ModelEndpoint,
-    Turn as EndpointTurn,
+    PreparedEndpoint, Turn as EndpointTurn,
 };
 use aiperf_graph::segment::intern_message;
 use aiperf_graph::wire::OpenAiChatMessage;
@@ -56,6 +56,20 @@ pub trait InputTokenCounter: Send + Sync {
         body: &[u8],
         authored_input_tokens: u64,
     ) -> Result<u64>;
+
+    /// Count input tokens through a worker-local prepared endpoint binding.
+    ///
+    /// Policies that preserve authored counts inherit this default. Exact
+    /// endpoint-aware counters override it without reconstructing a legacy
+    /// endpoint/configuration pair.
+    fn count_prepared_input_tokens(
+        &self,
+        _endpoint: &dyn PreparedEndpoint,
+        _body: &[u8],
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        Ok(authored_input_tokens)
+    }
 }
 
 /// Input-count policy that preserves the count authored by the dataset.
@@ -104,28 +118,12 @@ impl EndpointInputTokenCounter {
             .checked_add(tokens)
             .ok_or_else(|| anyhow!("input token count overflowed u64"))
     }
-}
 
-impl fmt::Debug for EndpointInputTokenCounter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("EndpointInputTokenCounter")
-            .field("tokenizer", &self.tokenizer.name())
-            .field("apply_chat_template", &self.apply_chat_template)
-            .finish()
-    }
-}
-
-impl InputTokenCounter for EndpointInputTokenCounter {
-    fn count_input_tokens(
+    fn count_extracted(
         &self,
-        endpoint: &dyn Endpoint,
-        body: &[u8],
+        extracted: aiperf_endpoints::ExtractedPayload,
         authored_input_tokens: u64,
     ) -> Result<u64> {
-        let Ok(body) = serde_json::from_slice(body) else {
-            return Ok(authored_input_tokens);
-        };
-        let extracted = endpoint.extract_payload_inputs(&body);
         if self.apply_chat_template
             && let Some(messages) = extracted
                 .messages
@@ -152,6 +150,47 @@ impl InputTokenCounter for EndpointInputTokenCounter {
             return Ok(extracted.pretokenised_token_count);
         }
         Ok(authored_input_tokens)
+    }
+}
+
+impl fmt::Debug for EndpointInputTokenCounter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EndpointInputTokenCounter")
+            .field("tokenizer", &self.tokenizer.name())
+            .field("apply_chat_template", &self.apply_chat_template)
+            .finish()
+    }
+}
+
+impl InputTokenCounter for EndpointInputTokenCounter {
+    fn count_input_tokens(
+        &self,
+        endpoint: &dyn Endpoint,
+        body: &[u8],
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        let Ok(body) = serde_json::from_slice(body) else {
+            return Ok(authored_input_tokens);
+        };
+        self.count_extracted(
+            endpoint.extract_payload_inputs(&body),
+            authored_input_tokens,
+        )
+    }
+
+    fn count_prepared_input_tokens(
+        &self,
+        endpoint: &dyn PreparedEndpoint,
+        body: &[u8],
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        let Ok(body) = serde_json::from_slice(body) else {
+            return Ok(authored_input_tokens);
+        };
+        self.count_extracted(
+            endpoint.extract_payload_inputs(&body),
+            authored_input_tokens,
+        )
     }
 }
 

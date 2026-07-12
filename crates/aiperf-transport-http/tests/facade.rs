@@ -1,12 +1,12 @@
-// crates/aiperf-transport/tests/facade.rs
+// crates/aiperf-transport-http/tests/facade.rs
 mod common;
 use common::{MockServer, run_local};
 use std::rc::Rc;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ConnectionReuseStrategy, ErrorKind, RequestConfig};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ConnectionReuseStrategy, ErrorKind, RequestConfig};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 
 fn payload() -> serde_json::Value {
     serde_json::json!({
@@ -28,7 +28,7 @@ fn facade_streams_a_chat_completion() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let t = HttpTransport::new(clock, ClientConfig::default());
         let cfg = RequestConfig::new(format!("{}/v1/chat/completions", mock.base_url));
         let mut ttft = None;
@@ -60,7 +60,7 @@ fn facade_sticky_reuse_reuses_connection_across_turns() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let t = HttpTransport::new(clock, ClientConfig::default());
         let url = format!("{}/v1/chat/completions", mock.base_url);
 
@@ -124,7 +124,7 @@ fn total_timeout_bounds_connect_send_and_response_as_one_request() {
         let Some(mock) = MockServer::spawn(&["--ttft", "500"]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let transport = HttpTransport::new(
             clock,
             ClientConfig {

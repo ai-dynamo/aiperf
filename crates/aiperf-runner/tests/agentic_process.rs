@@ -4,7 +4,9 @@
 //! Process proof for canonical worker + Rust gateway + the one HTTP dispatcher.
 
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::{Command, Output, Stdio};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -407,6 +409,40 @@ fn write_worker(root: &TempDir) {
     std::fs::write(package.join("worker.py"), PROCESS_EVALUATOR).unwrap();
 }
 
+fn runner_capabilities() -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+        .arg("--capabilities")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    one_json_line(&output.stdout)
+}
+
+fn run_runner(request: &Value) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(serde_json::to_string(request).unwrap().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn one_json_line(stdout: &[u8]) -> Value {
+    let lines = stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 1, "stdout={}", String::from_utf8_lossy(stdout));
+    serde_json::from_slice(lines[0]).unwrap()
+}
+
 #[test]
 fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
     let server = MockServer::spawn();
@@ -526,4 +562,105 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
         .unwrap();
     assert_eq!(auxiliary["messages"][0]["tool_calls"][0]["id"], "prior");
     assert_eq!(auxiliary["messages"][1]["tool_call_id"], "prior");
+}
+
+#[test]
+fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair() {
+    let server = MockServer::spawn();
+    let root = TempDir::new().unwrap();
+    write_worker(&root);
+    let python = python_executable();
+    let artifact_target = root.path().join("runner-v2");
+    let capabilities = runner_capabilities();
+    let distribution_id = capabilities["distribution_id"].as_str().unwrap();
+    assert!(
+        capabilities["supported_pairs"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(["online_http", "agentic"]))
+    );
+    let mut request = json!({
+        "protocol_version": 2,
+        "operation": "validate",
+        "expected_distribution_id": distribution_id,
+        "run": {
+            "identity": {"benchmark_id": "agentic-v2-stdio"},
+            "artifact_target": artifact_target.clone(),
+            "models": {"items": [{"name": "primary-model"}]},
+            "endpoints": {"profiles": [{
+                "id": "default",
+                "type": "chat",
+                "urls": [server.base_url.clone()],
+                "streaming": true,
+                "use_legacy_max_tokens": false,
+                "use_server_token_count": true,
+                "timeout_seconds": 30.0,
+                "connection_reuse": "pooled",
+                "download_video_content": false,
+                "extra": {},
+                "headers": {},
+                "http2": false,
+                "wait_for_model_timeout": 0.0,
+                "wait_for_model_interval": 5.0,
+                "wait_for_model_mode": "inference"
+            }]},
+            "backend": {"type": "online_http", "config": {}},
+            "workload": {"type": "agentic", "config": {
+                "worker_count": 2,
+                "dataset": "fixture/agentic@locked",
+                "tokenizer": {"name": "builtin"},
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "concurrency": 2
+                }],
+                "evaluator": {
+                    "python_executable": python,
+                    "worker_module": "fixture_agentic.worker",
+                    "environment": {"PYTHONPATH": root.path()}
+                },
+                "task_concurrency": 2,
+                "environment": "fixture",
+                "output_dir": "episodes",
+                "max_tokens": 64,
+                "context_window": 4096,
+                "inference_gateway_host": "127.0.0.1"
+            }},
+            "metrics": {},
+            "artifacts": {},
+            "sidecars": {}
+        }
+    });
+
+    let validation_output = run_runner(&request);
+    let validation = one_json_line(&validation_output.stdout);
+    assert_eq!(validation_output.status.code(), Some(0));
+    assert_eq!(validation["event"], "run_validation");
+    assert_eq!(validation["success"], true);
+    assert_eq!(validation["distribution_id"], distribution_id);
+    assert!(!artifact_target.exists());
+    assert!(server.captured.0.lock().unwrap().is_empty());
+
+    request["operation"] = json!("execute");
+    let execution_output = run_runner(&request);
+    let terminal = one_json_line(&execution_output.stdout);
+    assert_eq!(
+        execution_output.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&execution_output.stderr)
+    );
+    assert_eq!(terminal["event"], "run_terminal");
+    assert_eq!(terminal["success"], true);
+    assert_eq!(terminal["distribution_id"], distribution_id);
+    assert_eq!(terminal["provenance"]["backend"], "online_http");
+    assert_eq!(terminal["provenance"]["workload"], "agentic");
+    let report_path = PathBuf::from(terminal["report_path"].as_str().unwrap());
+    assert_eq!(report_path, artifact_target.join("native-v2.json"));
+    let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+    assert_eq!(report["schema_version"], "2.0");
+    assert_eq!(report["run"]["mode"], "agentic_accuracy");
+    assert_eq!(report["agentic"]["summary"]["episode_count"], 2);
+    assert_eq!(server.captured.0.lock().unwrap().len(), 4);
 }

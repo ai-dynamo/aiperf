@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! A [`GraphSink`] backed by the Rust-native [`aiperf_transport`] HTTP client
+//! A [`GraphSink`] backed by the Rust-native [`aiperf_transport_http`] HTTP client
 //! (hyper + the `aiperf-clock` `Clock`).
 //!
 //! This is the graph dataflow's live dispatch path: it streams real OpenAI
@@ -19,16 +19,16 @@ use uuid::Uuid;
 use aiperf_clock::Clock;
 use aiperf_core::sse::ChatChunk;
 use aiperf_dataset::{Overrides, build_message_body_from_wires};
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{HttpVersion, RequestConfig, Response};
-use aiperf_transport::transport::http_transport::HttpTransport;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{HttpVersion, RequestConfig, Response};
+use aiperf_transport_http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 
 use crate::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::wire::OpenAiChatMessage;
 
-/// Live OpenAI-chat sink over [`aiperf_transport`]. Single-threaded per trace
+/// Live OpenAI-chat sink over [`aiperf_transport_http`]. Single-threaded per trace
 /// (`Rc`/`!Send`), matching the executor's `?Send` dispatch seam.
 pub struct TransportChatSink {
     transport: HttpTransport,

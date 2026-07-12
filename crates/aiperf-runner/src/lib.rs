@@ -15,6 +15,9 @@ mod gpu_telemetry;
 mod graph_execution;
 mod live_streaming;
 mod network_latency;
+#[cfg(feature = "dynamo-offline")]
+pub mod offline_execution;
+pub mod online_execution;
 pub mod protocol;
 pub mod protocol_v2;
 mod records;

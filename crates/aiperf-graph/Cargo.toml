@@ -14,7 +14,7 @@ aiperf-dataset.workspace = true
 aiperf-metrics.workspace = true
 aiperf-clock.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
-aiperf-transport = { path = "../aiperf-transport" }
+aiperf-transport-http = { path = "../aiperf-transport-http" }
 loadgen-core.workspace = true
 bytes = "1"
 url = "2"

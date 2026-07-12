@@ -46,8 +46,8 @@ use aiperf_dataset::{
 use aiperf_endpoints::{Endpoint, EndpointConfig, EndpointId, Modality, RawEndpointConfig};
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_timing::StopConfig;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ConnectionReuseStrategy, HttpVersion};
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use loadgen_core::sink::RequestObserver;
@@ -55,9 +55,11 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use crate::protocol::{PhaseSpec, TokenizerSpec};
+use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
-    RunnerClockKind, RunnerRegistryBuilder, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
-    ValidatedWorkloadConfig, WorkloadRequirements,
+    OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
+    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, RunnerWorkloadDescriptor,
+    RunnerWorkloadFactory, ValidatedBackendConfig, ValidatedWorkloadConfig, WorkloadRequirements,
 };
 use crate::turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
@@ -141,7 +143,7 @@ const fn default_true() -> bool {
 /// same names Python's authored v2 projection fills for every workload. For
 /// agentic runs, the one profiling concurrency phase supplies model-call
 /// admission only; the canonical harness owns episode ordering and cadence.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgenticWorkloadConfigV2 {
     /// Number of execution-placement workers below the single dispatcher.
@@ -428,6 +430,180 @@ pub fn register_agentic_workload(builder: &mut RunnerRegistryBuilder) -> Result<
     builder.register_workload(Arc::new(AgenticRunnerWorkloadFactory))
 }
 
+/// Register the executable `online_http + agentic` pair adapter.
+pub fn register_agentic_online_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+    builder.register_pair(Arc::new(AgenticOnlinePairFactory))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AgenticOnlinePairFactory;
+
+impl RunnerPairFactory for AgenticOnlinePairFactory {
+    fn backend_id(&self) -> &'static str {
+        "online_http"
+    }
+
+    fn workload_id(&self) -> &'static str {
+        AGENTIC_WORKLOAD_DESCRIPTOR.id
+    }
+
+    fn validate_pair(
+        &self,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        validated_online_http_backend(backend)?;
+        validated_agentic_workload(workload)?.validate()
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        self.validate_pair(backend, workload)?;
+        validate_agentic_authored_run(run, context)
+    }
+
+    fn prepare(
+        &self,
+        _run: &AuthoredRunSpecV2,
+        _backend: Box<dyn ValidatedBackendConfig>,
+        _workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        Err(anyhow!(
+            "online_http + agentic preparation requires the coordinator-owned runner context"
+        ))
+    }
+
+    fn prepare_with_context(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: Box<dyn ValidatedBackendConfig>,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        self.validate_run(run, context, backend.as_ref(), workload.as_ref())?;
+        let workload = validated_agentic_workload(workload.as_ref())?.clone();
+        let endpoint = context.default_endpoint_profile()?;
+        let spec = AgenticOnlineExecutionSpec {
+            benchmark_id: run.identity.benchmark_id.clone(),
+            artifact_target: run.artifact_target.clone(),
+            model: run.models.items[0].name.clone(),
+            workload,
+            endpoint: AgenticOnlineEndpointSpec {
+                endpoint_id: endpoint.endpoint_id.clone(),
+                config: endpoint.config.clone(),
+                connection_reuse: endpoint.connection_reuse,
+                session_header: endpoint.session_header.clone(),
+                http2: endpoint.http2,
+            },
+        };
+        spec.validate()?;
+        Ok(Box::new(PreparedAgenticOnlineOperation {
+            spec,
+            registry: context.product_registry_handle(),
+        }))
+    }
+}
+
+fn validated_online_http_backend(
+    config: &dyn ValidatedBackendConfig,
+) -> Result<&OnlineHttpBackendConfigV2> {
+    ValidatedBackendConfig::as_any(config)
+        .downcast_ref::<OnlineHttpBackendConfigV2>()
+        .ok_or_else(|| anyhow!("agentic pair received the wrong online_http backend config type"))
+}
+
+fn validated_agentic_workload(
+    config: &dyn ValidatedWorkloadConfig,
+) -> Result<&AgenticWorkloadConfigV2> {
+    ValidatedWorkloadConfig::as_any(config)
+        .downcast_ref::<AgenticWorkloadConfigV2>()
+        .ok_or_else(|| anyhow!("agentic pair received the wrong workload config type"))
+}
+
+fn validate_agentic_authored_run(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+) -> Result<()> {
+    ensure!(
+        run.models.items.len() == 1,
+        "agentic workloads require exactly one model"
+    );
+    ensure!(
+        context.endpoint_profiles().len() == 1,
+        "agentic workloads require exactly one endpoint profile named \"default\""
+    );
+    let endpoint = context.default_endpoint_profile()?;
+    let factory = context
+        .product_registry()
+        .endpoints()
+        .resolve_factory(&endpoint.endpoint_id)
+        .context("resolving validated agentic endpoint")?;
+    let descriptor = factory.descriptor();
+    ensure!(
+        descriptor.produces_tokens
+            && descriptor.supports_streaming
+            && descriptor.input_modalities.contains(&Modality::Text),
+        "agentic endpoint {:?} must consume text and produce streaming tokens",
+        descriptor.id
+    );
+    context
+        .product_registry()
+        .endpoints()
+        .legacy_endpoint(&endpoint.endpoint_id)
+        .context("agentic dynamic turns require a legacy endpoint adapter")?;
+    ensure!(
+        endpoint.config.wait_for_model_timeout <= 0.0,
+        "agentic protocol-v2 execution does not yet implement endpoint readiness probes"
+    );
+    ensure!(
+        run.metrics.slice_duration_seconds.is_none() && run.metrics.slos.is_empty(),
+        "agentic protocol-v2 execution does not consume run-level metric slicing or SLOs"
+    );
+    ensure!(
+        run.artifacts.records_path.is_none()
+            && run.artifacts.raw_path.is_none()
+            && run.artifacts.outputs_path.is_none()
+            && !run.artifacts.trace
+            && run.artifacts.user_files.is_empty(),
+        "agentic protocol-v2 execution currently writes only its canonical native-v2 and provider artifacts"
+    );
+    Ok(())
+}
+
+struct PreparedAgenticOnlineOperation {
+    spec: AgenticOnlineExecutionSpec,
+    registry: Arc<AiperfRegistry>,
+}
+
+impl fmt::Debug for PreparedAgenticOnlineOperation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedAgenticOnlineOperation")
+            .field("benchmark_id", &self.spec.benchmark_id)
+            .field("artifact_target", &self.spec.artifact_target)
+            .field("model", &self.spec.model)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedRunnerOperation for PreparedAgenticOnlineOperation {
+    fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
+        let outcome = execute_agentic_online_with_registry(self.spec, self.registry.as_ref())?;
+        Ok(PreparedRunOutcome {
+            report_path: outcome.report_path,
+            provenance: BTreeMap::from([
+                ("backend".to_owned(), "online_http".to_owned()),
+                ("workload".to_owned(), "agentic".to_owned()),
+            ]),
+        })
+    }
+}
+
 /// Open endpoint binding plus transport policy for one agentic online run.
 #[derive(Clone, Debug)]
 pub struct AgenticOnlineEndpointSpec {
@@ -597,6 +773,45 @@ pub fn execute_agentic_online_with_factories(
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
 ) -> Result<AgenticExecutionOutcome> {
+    let registry = registry_factory
+        .build()
+        .context("building injected AIPerf registry for agentic run")?;
+    execute_agentic_online_with_registry_and_factories(
+        spec,
+        &registry,
+        backend_factory,
+        evaluator_factory,
+        gateway_factory,
+        tokenizer_factory,
+    )
+}
+
+/// Execute and commit native-v2 through one already frozen product registry.
+pub fn execute_agentic_online_with_registry(
+    spec: AgenticOnlineExecutionSpec,
+    registry: &AiperfRegistry,
+) -> Result<AgenticExecutionOutcome> {
+    execute_agentic_online_with_registry_and_factories(
+        spec,
+        registry,
+        &NativeHttpExecutionBackendFactory,
+        &NativeAgenticEvaluatorProcessFactory,
+        &NativeAgenticGatewayFactory,
+        &NativeAgenticTokenizerFactory,
+    )
+}
+
+/// Execute and commit native-v2 with a coordinator-owned product registry and
+/// every remaining process seam injected.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_agentic_online_with_registry_and_factories(
+    spec: AgenticOnlineExecutionSpec,
+    registry: &AiperfRegistry,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
+    gateway_factory: &dyn AgenticGatewayFactory,
+    tokenizer_factory: &dyn AgenticTokenizerFactory,
+) -> Result<AgenticExecutionOutcome> {
     spec.validate()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -605,9 +820,9 @@ pub fn execute_agentic_online_with_factories(
     let local = tokio::task::LocalSet::new();
     let report = local.block_on(
         &runtime,
-        execute_agentic_online_async_with_factories(
+        execute_agentic_online_async_with_registry_and_factories(
             &spec,
-            registry_factory,
+            registry,
             backend_factory,
             evaluator_factory,
             gateway_factory,
@@ -632,14 +847,35 @@ pub async fn execute_agentic_online_async_with_factories(
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
 ) -> Result<AgenticRunReport> {
-    spec.validate()?;
     let registry = registry_factory
         .build()
         .context("building injected AIPerf registry for agentic run")?;
+    execute_agentic_online_async_with_registry_and_factories(
+        spec,
+        &registry,
+        backend_factory,
+        evaluator_factory,
+        gateway_factory,
+        tokenizer_factory,
+    )
+    .await
+}
+
+/// Async agentic composition through one already frozen product registry.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_agentic_online_async_with_registry_and_factories(
+    spec: &AgenticOnlineExecutionSpec,
+    registry: &AiperfRegistry,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
+    gateway_factory: &dyn AgenticGatewayFactory,
+    tokenizer_factory: &dyn AgenticTokenizerFactory,
+) -> Result<AgenticRunReport> {
+    spec.validate()?;
     let tokenizer = tokenizer_factory
         .build(&spec.workload.tokenizer.name)
         .context("loading agentic tokenizer")?;
-    let endpoint = prepare_agentic_endpoint(&registry, &spec.endpoint)?;
+    let endpoint = prepare_agentic_endpoint(registry, &spec.endpoint)?;
     let model_concurrency = spec.workload.model_concurrency()?;
     let evaluator_config = spec.workload.evaluator_config(&spec.artifact_target)?;
 

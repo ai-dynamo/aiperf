@@ -1,13 +1,13 @@
-// crates/aiperf-transport/tests/h2c.rs
+// crates/aiperf-transport-http/tests/h2c.rs
 mod common;
 use common::{MockServer, run_local};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::client::http_client::HttpClient;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::HttpVersion;
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::client::http_client::HttpClient;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::HttpVersion;
 use bytes::Bytes;
 
 fn body() -> Bytes {
@@ -26,7 +26,7 @@ fn h2c_prior_knowledge_completes_streaming() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let cfg = ClientConfig {
             http_version: HttpVersion::Http2PriorKnowledge,
             ..ClientConfig::default()

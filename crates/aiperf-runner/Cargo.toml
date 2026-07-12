@@ -8,6 +8,25 @@ edition.workspace = true
 license.workspace = true
 description = "Versioned single-benchmark subprocess runner for the Python AIPerf orchestrator."
 
+[features]
+default = []
+# The runner is the only native executable, so every optional AIPerf/Dynamo
+# composition feature must terminate here rather than requiring another binary.
+dynamo-offline = ["aiperf/dynamo-offline"]
+dynamo-router-runtime = ["dynamo-offline", "aiperf/dynamo-router-runtime"]
+dynamo-zmq-events = ["dynamo-offline", "aiperf/dynamo-zmq-events"]
+dynamo-kvbm-offload = ["dynamo-offline", "aiperf/dynamo-kvbm-offload"]
+dynamo-aic-forward-pass = ["dynamo-offline", "aiperf/dynamo-aic-forward-pass"]
+dynamo-profile = ["dynamo-offline", "aiperf/dynamo-profile"]
+dynamo-full = [
+    "dynamo-router-runtime",
+    "dynamo-zmq-events",
+    "dynamo-kvbm-offload",
+    "dynamo-aic-forward-pass",
+    "dynamo-profile",
+]
+dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
+
 [dependencies]
 aiperf.workspace = true
 aiperf-adaptive = { path = "../aiperf-adaptive" }
@@ -23,7 +42,7 @@ aiperf-network-latency.workspace = true
 aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
-aiperf-transport.workspace = true
+aiperf-transport-http.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true
@@ -34,6 +53,7 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

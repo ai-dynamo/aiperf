@@ -826,10 +826,19 @@ impl EndpointResolver for EndpointRegistry {
 }
 
 /// Dense worker-local endpoint binding key carried by scheduled turns.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct EndpointKey(u32);
 
 impl EndpointKey {
+    /// Rehydrate a dense key carried over an authenticated execution channel.
+    ///
+    /// The receiving worker must still resolve the key through its own
+    /// [`PreparedEndpointTable`], which rejects out-of-range values.
+    pub const fn from_index(index: u32) -> Self {
+        Self(index)
+    }
+
     /// Return the worker-local vector index.
     pub const fn index(self) -> u32 {
         self.0

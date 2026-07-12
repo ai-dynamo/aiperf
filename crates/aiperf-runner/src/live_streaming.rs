@@ -26,7 +26,8 @@ use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::protocol::{RUNNER_PROTOCOL_VERSION, RunSpec};
+use crate::execute::NativeRunSpec;
+use crate::protocol::RUNNER_PROTOCOL_VERSION;
 use crate::records::{CapturedRecord, record_json_value};
 
 const WORKER_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -123,7 +124,7 @@ pub(crate) struct PythonLiveStreamingRun {
 
 impl PythonLiveStreamingRun {
     /// Spawn, initialize, and negotiate the strict extension worker.
-    pub(crate) async fn spawn(run: &RunSpec, metrics_config: MetricsConfig) -> Result<Self> {
+    pub(crate) async fn spawn(run: &NativeRunSpec, metrics_config: MetricsConfig) -> Result<Self> {
         let spec = run
             .live_streaming
             .as_ref()
@@ -167,6 +168,7 @@ impl PythonLiveStreamingRun {
             .ok_or_else(|| anyhow!("live telemetry worker stdout was not piped"))?;
         let mut stdout = BufReader::new(stdout);
 
+        let endpoint = run.endpoint.legacy()?;
         let initialize = InitializeEvent {
             protocol_version: RUNNER_PROTOCOL_VERSION,
             event: "initialize",
@@ -178,9 +180,9 @@ impl PythonLiveStreamingRun {
                     .iter()
                     .map(|item| item.name.as_str())
                     .collect(),
-                endpoint_type: run.endpoint.endpoint_type,
-                endpoint_urls: &run.endpoint.urls,
-                streaming: run.endpoint.streaming,
+                endpoint_type: endpoint.endpoint_type,
+                endpoint_urls: &endpoint.urls,
+                streaming: endpoint.streaming,
                 artifact_dir: &run.artifact_dir,
                 otel: &spec.otel,
                 mlflow: &spec.mlflow,

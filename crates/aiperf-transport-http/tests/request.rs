@@ -1,14 +1,14 @@
-// crates/aiperf-transport/tests/request.rs
+// crates/aiperf-transport-http/tests/request.rs
 mod common;
 use common::{MockServer, chat_body, run_local};
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use aiperf_transport::RealClock;
-use aiperf_transport::client::http_client::HttpClient;
-use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::Response;
+use aiperf_transport_http::RealClock;
+use aiperf_transport_http::client::http_client::HttpClient;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::Response;
 use bytes::Bytes;
 
 #[test]
@@ -17,7 +17,7 @@ fn streaming_chat_records_tokens_ttft_and_usage() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let client = HttpClient::new(clock, ClientConfig::default());
         let url = url::Url::parse(&format!("{}/v1/chat/completions", mock.base_url)).unwrap();
         let mut headers = BTreeMap::new();
@@ -47,7 +47,7 @@ fn non_streaming_models_endpoint_returns_text_json() {
         let Some(mock) = MockServer::spawn(&[]).await else {
             return;
         };
-        let clock: Rc<dyn aiperf_transport::Clock> = RealClock::new();
+        let clock: Rc<dyn aiperf_transport_http::Clock> = RealClock::new();
         let client = HttpClient::new(clock, ClientConfig::default());
         // A non-streaming completion request returns a single JSON body.
         let url = url::Url::parse(&format!("{}/v1/chat/completions", mock.base_url)).unwrap();
