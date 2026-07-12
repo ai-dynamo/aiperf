@@ -1140,7 +1140,12 @@ impl StockLaunch {
                 .environment
                 .get(*key)
                 .ok_or_else(|| anyhow!("stock worker environment omitted {key}"))?;
-            staging_environment_relative(value, key)?;
+            // Runtime roots resolve to the private, ephemeral /work tmpfs (mounted
+            // by the isolation layer), never the host-bound /staging artifact tree.
+            ensure!(
+                value == "/work",
+                "stock worker {key} must use the isolated ephemeral runtime root /work"
+            );
         }
         let mut records = BTreeSet::new();
         for closure in &self.record_closures {
@@ -1186,26 +1191,10 @@ impl StockLaunch {
     }
 }
 
-fn staging_environment_relative(value: &str, key: &str) -> Result<PathBuf> {
-    let relative = value
-        .strip_prefix("/staging/")
-        .ok_or_else(|| anyhow!("stock worker {key} must be contained under /staging"))?;
-    strict_relative_path(relative, &format!("stock worker {key}"))
-}
-
-fn prepare_staging_environment(staging: &Path, launch: &StockLaunch) -> Result<()> {
-    let staging = staging
-        .canonicalize()
-        .with_context(|| format!("canonicalizing evaluator staging {}", staging.display()))?;
-    for key in STAGING_ENVIRONMENT_DIRECTORIES {
-        let value = launch
-            .environment
-            .get(*key)
-            .ok_or_else(|| anyhow!("stock worker environment omitted {key}"))?;
-        let directory = staging.join(staging_environment_relative(value, key)?);
-        create_secure_directories(&staging, &directory)?;
-        set_file_mode(&directory, 0o700)?;
-    }
+fn prepare_staging_environment(_staging: &Path, _launch: &StockLaunch) -> Result<()> {
+    // Runtime roots (HOME/TMP/XDG) resolve to the isolation-layer's private /work
+    // tmpfs, so there are no host-backed /staging runtime directories to create.
+    // Only the artifact staging root itself is host-bound and sealed.
     Ok(())
 }
 

@@ -24,12 +24,18 @@ const SANDBOX_UID: u32 = 65_534;
 const SANDBOX_GID: u32 = 65_534;
 const PRIVATE_STAGING_MODE: u32 = 0o700;
 pub(crate) const BOOTSTRAP_PROCESS_LIMIT_ENV: &str = "AIPERF_EVALUATOR_BOOTSTRAP_PROCESS_LIMIT";
-const REQUIRED_STAGING_ENVIRONMENT: [(&str, &str, &str); 5] = [
-    ("HOME", "/staging/home", "home"),
-    ("TMPDIR", "/staging/tmp", "tmp"),
-    ("XDG_CONFIG_HOME", "/staging/.xdg-config", ".xdg-config"),
-    ("XDG_DATA_HOME", "/staging/.xdg-data", ".xdg-data"),
-    ("XDG_CACHE_HOME", "/staging/.xdg-cache", ".xdg-cache"),
+// Runtime state (HOME/TMP/XDG) is routed to a private, ephemeral `/work` tmpfs
+// rather than the host-bound `/staging` tree. `/staging` is walked and sealed as
+// the evaluator artifact tree, so provider runtime files written under HOME/XDG
+// (e.g. Inspect's `.xdg-data/inspect_ai/traces/*.log.gz`) would otherwise fail
+// the seal as undeclared artifacts. Keeping them on a tmpfs that is never sealed
+// is structural — it does not require enumerating each provider's cache files.
+const REQUIRED_RUNTIME_ENVIRONMENT: [(&str, &str); 5] = [
+    ("HOME", "/work"),
+    ("TMPDIR", "/work"),
+    ("XDG_CONFIG_HOME", "/work"),
+    ("XDG_DATA_HOME", "/work"),
+    ("XDG_CACHE_HOME", "/work"),
 ];
 
 /// One file in the immutable worker launch closure.
@@ -628,6 +634,11 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             OsString::from("--ro-bind"),
             worker_root.as_os_str().to_owned(),
             OsString::from("/"),
+            OsString::from("--tmpfs"),
+            OsString::from("/work"),
+            OsString::from("--chmod"),
+            OsString::from("1777"),
+            OsString::from("/work"),
             OsString::from("--dir"),
             OsString::from("/staging"),
             OsString::from("--bind"),
@@ -740,14 +751,14 @@ fn exact_staging_environment(
     authored: &BTreeMap<OsString, OsString>,
 ) -> Result<BTreeMap<OsString, OsString>, EvaluationProviderError> {
     let mut environment = authored.clone();
-    for (key, expected, _) in REQUIRED_STAGING_ENVIRONMENT {
+    for (key, expected) in REQUIRED_RUNTIME_ENVIRONMENT {
         let key = OsString::from(key);
         let expected = OsString::from(expected);
         if let Some(actual) = environment.get(&key)
             && actual != &expected
         {
             return Err(EvaluationProviderError::Launch(format!(
-                "worker environment supplied an invalid private staging path for {}",
+                "worker environment supplied an invalid private runtime path for {}",
                 key.to_string_lossy()
             )));
         }
@@ -763,23 +774,10 @@ fn prepare_private_staging_layout(staging: &Path) -> Result<Vec<String>, Evaluat
 
         let expected_uid = unsafe { libc::geteuid() };
         let expected_gid = unsafe { libc::getegid() };
-        let mut identities = Vec::with_capacity(REQUIRED_STAGING_ENVIRONMENT.len() + 1);
-        for (name, path) in std::iter::once(("staging", staging.to_path_buf())).chain(
-            REQUIRED_STAGING_ENVIRONMENT
-                .iter()
-                .map(|(_, _, relative)| (*relative, staging.join(relative))),
-        ) {
-            if name != "staging" {
-                match std::fs::create_dir(&path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                    Err(error) => {
-                        return Err(EvaluationProviderError::Launch(format!(
-                            "failed to create private staging directory {name:?}: {error}"
-                        )));
-                    }
-                }
-            }
+        // Only `/staging` is host-bound and sealed. Runtime roots (HOME/TMP/XDG)
+        // now live on the ephemeral `/work` tmpfs and need no host directory.
+        let mut identities = Vec::with_capacity(1);
+        for (name, path) in [("staging", staging.to_path_buf())] {
             let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
                 EvaluationProviderError::Launch(format!(
                     "failed to inspect private staging directory {name:?}: {error}"

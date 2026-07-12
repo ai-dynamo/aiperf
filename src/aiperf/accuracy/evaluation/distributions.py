@@ -34,6 +34,8 @@ CONTROL_WRITE_FD = 4
 BOOTSTRAP_PROCESS_LIMIT_ENV = "AIPERF_EVALUATOR_BOOTSTRAP_PROCESS_LIMIT"
 STOCK_PROCESS_LIMIT = 1024
 STAGING_ROOT = "/staging"
+# Private, ephemeral tmpfs for runtime state (HOME/TMP/XDG); never sealed.
+RUNTIME_ROOT = "/work"
 ISOLATION_PROFILE = "linux-bubblewrap-rootfs-process-tree-v3"
 SOURCE_TREE_DIGEST_POLICY = "aiperf-semantic-source-tree-sha256-v1"
 WORKER_OPERATIONS = (
@@ -163,16 +165,21 @@ class StockDistributionDescriptor:
         return MappingProxyType(
             {
                 "PATH": "/runtime/bin",
-                "HOME": f"{STAGING_ROOT}/home",
-                "TMPDIR": f"{STAGING_ROOT}/tmp",
+                # Runtime state roots live on the private, ephemeral /work tmpfs,
+                # never the host-bound /staging tree that is walked and sealed as
+                # the evaluator artifact tree. Provider runtime files (e.g. Inspect
+                # trace logs under XDG_DATA_HOME) would otherwise fail the seal as
+                # undeclared artifacts.
+                "HOME": RUNTIME_ROOT,
+                "TMPDIR": RUNTIME_ROOT,
                 "LANG": "C.UTF-8",
                 "LC_ALL": "C.UTF-8",
                 "PYTHONNOUSERSITE": "1",
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONHASHSEED": "0",
-                "XDG_CONFIG_HOME": f"{STAGING_ROOT}/.xdg-config",
-                "XDG_DATA_HOME": f"{STAGING_ROOT}/.xdg-data",
-                "XDG_CACHE_HOME": f"{STAGING_ROOT}/.xdg-cache",
+                "XDG_CONFIG_HOME": RUNTIME_ROOT,
+                "XDG_DATA_HOME": RUNTIME_ROOT,
+                "XDG_CACHE_HOME": RUNTIME_ROOT,
             }
         )
 
