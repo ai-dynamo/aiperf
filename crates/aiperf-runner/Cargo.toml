@@ -42,6 +42,7 @@ aiperf-network-latency.workspace = true
 aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
+aiperf-telemetry-archive = { path = "../aiperf-telemetry-archive" }
 aiperf-transport-http.workspace = true
 aiperf-transport-grpc.workspace = true
 anyhow.workspace = true
