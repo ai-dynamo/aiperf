@@ -32,3 +32,14 @@ def test_companion_has_no_python_runtime_entrypoint() -> None:
     assert "entry-points" not in project["project"]
     assert wheel["bypass-selection"] is True
     assert wheel["hooks"]["custom"]["path"] == "hatch_build.py"
+
+
+def test_container_and_release_require_verified_companion_inputs() -> None:
+    dockerfile = (_ROOT / "Dockerfile").read_text()
+    nightly = (_ROOT / ".github/workflows/nightly.yml").read_text()
+
+    assert "/dist/aiperf_runner-*.whl" in dockerfile
+    assert "verify_runner_companion.py" in dockerfile
+    assert "runner-build.json" in nightly
+    assert "refuses to synthesize Cargo metadata" in nightly
+    assert "aiperf/runner-inputs/${RESOLVED_SHA}/linux-${{ matrix.arch }}" in nightly

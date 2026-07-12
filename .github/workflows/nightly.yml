@@ -479,6 +479,68 @@ jobs:
           print(f"Repository URL: {url}")
           PYEOF
 
+      # The native build is a separate trusted release input because the
+      # default Cargo graph still names the pinned, locally developed sibling
+      # dynamo-aiperf-native path. This job must never synthesize a stub
+      # manifest, rewrite Cargo metadata, or silently build a different online
+      # graph. The native pipeline publishes the exact binary and its
+      # source/lock/features manifest under this immutable commit+arch key.
+      - name: Fetch native runner release input
+        env:
+          S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          RESOLVED_SHA: ${{ needs.prepare-nightly.outputs.resolved_sha }}
+        run: |
+          set -euo pipefail
+          INPUT_DIR=packaging/aiperf-runner/bin
+          INPUT_PREFIX="s3://${S3_BUCKET}/aiperf/runner-inputs/${RESOLVED_SHA}/linux-${{ matrix.arch }}"
+          mkdir -p "${INPUT_DIR}"
+          if ! aws s3 cp "${INPUT_PREFIX}/aiperf-runner" "${INPUT_DIR}/aiperf-runner"; then
+            echo "::error::Missing prebuilt aiperf-runner release input. The release job refuses to synthesize Cargo metadata for the external dynamo-aiperf-native path dependency."
+            exit 1
+          fi
+          if ! aws s3 cp "${INPUT_PREFIX}/runner-build.json" "${INPUT_DIR}/runner-build.json"; then
+            echo "::error::Missing runner-build.json source/lock/features manifest; refusing an unprovenanced native artifact."
+            exit 1
+          fi
+          chmod 755 "${INPUT_DIR}/aiperf-runner"
+
+          INPUT_DIR="${INPUT_DIR}" RESOLVED_SHA="${RESOLVED_SHA}" python3 - <<'PYEOF'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          root = Path(os.environ["INPUT_DIR"])
+          manifest = json.loads((root / "runner-build.json").read_text())
+          if manifest.get("source_revision") != os.environ["RESOLVED_SHA"]:
+              raise SystemExit("::error::Runner source revision does not match resolved nightly SHA")
+          if manifest.get("features") != []:
+              raise SystemExit("::error::Stock online runner input must have an empty Cargo feature list")
+          completed = subprocess.run(
+              [root / "aiperf-runner", "--capabilities"],
+              check=True,
+              capture_output=True,
+          )
+          lines = [line for line in completed.stdout.splitlines() if line.strip()]
+          if len(lines) != 1:
+              raise SystemExit("::error::Runner capabilities must contain exactly one JSON line")
+          capabilities = json.loads(lines[0])
+          if capabilities.get("distribution_id") != manifest.get("distribution_id"):
+              raise SystemExit("::error::Runner capabilities disagree with manifest distribution_id")
+          print(f"Verified native release input {capabilities['distribution_id']}")
+          PYEOF
+
+      - name: Build and validate runner companion wheel
+        run: |
+          set -euo pipefail
+          uv build --wheel --out-dir .runner-wheel-check/ packaging/aiperf-runner
+          RUNNER_WHEEL=$(find .runner-wheel-check/ -maxdepth 1 -name "aiperf_runner-*.whl" -type f | head -1)
+          if [ -z "${RUNNER_WHEEL}" ]; then
+            echo "::error::Companion build produced no aiperf_runner wheel"
+            exit 1
+          fi
+          uvx twine check "${RUNNER_WHEEL}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -491,28 +553,33 @@ jobs:
             | docker login --username AWS --password-stdin \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
-      # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
-      # The wheel-builder layer is cached into aiperf:cache-amd64 and reused
-      # by the runtime build below.
+      # The Python frontend wheel is pure (py3-none-any), while the companion
+      # wheel must be built inside the exact target-platform Docker stage. The
+      # wheel-builder layer is cached per architecture and reused by the
+      # runtime build below.
       #
       # Target `wheel-artifact` is a scratch-based export stage that contains
       # only the wheel file, so `--output type=local` writes a few MB instead
       # of the full wheel-builder filesystem (~400 MB).
-      - name: Build and extract wheel (amd64 only)
-        if: matrix.arch == 'amd64'
+      - name: Build and extract target-platform wheels
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          mkdir -p wheel-raw dist
           docker buildx build \
-            --platform linux/amd64 \
+            --platform "${{ matrix.platform }}" \
             --target   wheel-artifact \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
-            --output     type=local,dest=./dist/ \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
+            --output     type=local,dest=./wheel-raw/ \
             .
+          cp wheel-raw/aiperf_runner-*.whl dist/
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            cp wheel-raw/aiperf-*.whl dist/
+          fi
 
       # Repacks the canonical aiperf wheel into a second wheel whose dist name
       # is `aiperf-nightly`. Version, tags, and module contents are unchanged;
@@ -632,11 +699,23 @@ jobs:
           WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
         run: |
           set -euo pipefail
-          # `aiperf*.whl` (no hyphen) matches both `aiperf-...` and
-          # `aiperf_nightly-...`.
-          for WHEEL in $(find dist/ -maxdepth 1 -name "aiperf*.whl" -type f); do
+          for WHEEL in $(find dist/ -maxdepth 1 \( -name "aiperf-*.whl" -o -name "aiperf_nightly-*.whl" \) -type f); do
             aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
           done
+
+      - name: Upload runner companion wheel to S3
+        env:
+          S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          WHEEL_VERSION: ${{ needs.prepare-nightly.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+          RUNNER_WHEEL=$(find dist/ -maxdepth 1 -name "aiperf_runner-*.whl" -type f | head -1)
+          if [ -z "${RUNNER_WHEEL}" ]; then
+            echo "::error::No runner companion wheel found for ${{ matrix.arch }}"
+            exit 1
+          fi
+          aws s3 cp "${RUNNER_WHEEL}" \
+            "s3://${S3_BUCKET}/aiperf/nightly/${WHEEL_VERSION}/" --sse AES256
 
       - name: Build and push ${{ matrix.arch }} image to ECR
         env:

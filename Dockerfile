@@ -72,9 +72,14 @@ WORKDIR /workspace
 
 # Copy the entire application
 COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
+COPY packaging/aiperf-runner /workspace/packaging/aiperf-runner
 
-# Build the wheel
-RUN uv build --wheel --out-dir /dist
+# Build the Python frontend and the platform companion from the trusted native
+# binary + provenance manifest staged in packaging/aiperf-runner/bin. The
+# companion hook verifies the expected distribution_id against the executable
+# bytes and fails closed when either release input is absent.
+RUN uv build --wheel --out-dir /dist \
+    && uv build --wheel --out-dir /dist /workspace/packaging/aiperf-runner
 
 # Export-only stage: scratch-based so `docker buildx build --target
 # wheel-artifact --output type=local,dest=<dir>` writes only the wheel file
@@ -174,8 +179,15 @@ RUN uv sync --active --no-install-project --no-default-groups
 
 # Copy the rest of the application
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl \
+RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_runner-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
+
+# Capability negotiation recomputes the executable content identity. The smoke
+# also clears PATH to prove Python discovers the companion through installed
+# wheel metadata, then exercises the strict stdin bootstrap contract.
+COPY tools/verify_runner_companion.py /tmp/verify_runner_companion.py
+RUN /opt/aiperf/venv/bin/python /tmp/verify_runner_companion.py \
+    && rm /tmp/verify_runner_companion.py
 
 # Remove setuptools as it is not needed for the runtime image
 RUN uv pip uninstall setuptools
@@ -290,6 +302,10 @@ COPY --from=env-builder --chown=1000:1000 /opt/tiktoken_cache /opt/tiktoken_cach
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
     PATH="/opt/aiperf/venv/bin:${PATH}" \
     TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
+
+# Re-run the native process from the final distroless filesystem rather than
+# assuming the copied venv preserved its executable/runtime dependencies.
+RUN /opt/aiperf/venv/bin/aiperf-runner --capabilities
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]
