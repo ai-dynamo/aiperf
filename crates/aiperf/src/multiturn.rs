@@ -28,7 +28,8 @@ use aiperf_dataset::{
 };
 use aiperf_endpoints::{
     ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointId, EndpointKey,
-    Media as EndpointMedia, ModelEndpoint, PreparedEndpoint, Turn as EndpointTurn,
+    Media as EndpointMedia, ModelEndpoint, PreparedEndpoint, PreparedEndpointTable,
+    Turn as EndpointTurn,
 };
 use aiperf_graph::segment::intern_message;
 use aiperf_graph::wire::OpenAiChatMessage;
@@ -834,6 +835,104 @@ pub struct PreparedEndpointReference {
     pub endpoint_id: EndpointId,
 }
 
+/// One coordinator-local prepared binding selected for request materialization.
+pub struct ResolvedPreparedEndpoint<'a> {
+    /// Stable identity carried to the execution worker.
+    pub reference: PreparedEndpointReference,
+    /// Coordinator-local binding used to build the exact request body.
+    pub endpoint: &'a dyn PreparedEndpoint,
+}
+
+/// Open selection seam for prepared dataset endpoint overrides.
+///
+/// The ordinary single-profile implementation is
+/// [`PreparedEndpointTableResolver`]. A future remote catalog or workload-local
+/// routing policy can implement the same contract without changing session,
+/// scheduling, or dispatch code.
+pub trait PreparedTurnEndpointResolver: fmt::Debug {
+    /// Resolve an authored per-turn endpoint name, or the run default when
+    /// absent, to one dense prepared binding.
+    fn resolve(&self, name: Option<&str>) -> Result<ResolvedPreparedEndpoint<'_>>;
+}
+
+/// Dense-table prepared endpoint resolver used by local online execution.
+pub struct PreparedEndpointTableResolver {
+    table: Rc<PreparedEndpointTable>,
+    default: PreparedEndpointReference,
+    named: HashMap<String, PreparedEndpointReference>,
+}
+
+impl fmt::Debug for PreparedEndpointTableResolver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut names = self.named.keys().collect::<Vec<_>>();
+        names.sort_unstable();
+        formatter
+            .debug_struct("PreparedEndpointTableResolver")
+            .field("default", &self.default)
+            .field("names", &names)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedEndpointTableResolver {
+    /// Bind one default endpoint and all descriptor aliases to a prepared table.
+    pub fn single(
+        table: Rc<PreparedEndpointTable>,
+        default: PreparedEndpointReference,
+    ) -> Result<Self> {
+        let endpoint = table.get(default.key)?;
+        if endpoint.descriptor().id != default.endpoint_id.as_str() {
+            bail!(
+                "prepared endpoint key {} contains {:?}, expected {:?}",
+                default.key.index(),
+                endpoint.descriptor().id,
+                default.endpoint_id.as_str()
+            );
+        }
+        let mut named = HashMap::new();
+        for name in std::iter::once(endpoint.descriptor().id)
+            .chain(endpoint.descriptor().aliases.iter().copied())
+        {
+            named.insert(normalize_endpoint_name(name), default.clone());
+        }
+        Ok(Self {
+            table,
+            default,
+            named,
+        })
+    }
+}
+
+impl PreparedTurnEndpointResolver for PreparedEndpointTableResolver {
+    fn resolve(&self, name: Option<&str>) -> Result<ResolvedPreparedEndpoint<'_>> {
+        let reference = match name {
+            None => self.default.clone(),
+            Some(name) => self
+                .named
+                .get(&normalize_endpoint_name(name))
+                .cloned()
+                .ok_or_else(|| anyhow!("dataset endpoint override {name:?} was not prepared"))?,
+        };
+        let endpoint = self.table.get(reference.key)?;
+        if endpoint.descriptor().id != reference.endpoint_id.as_str() {
+            bail!(
+                "prepared endpoint key {} contains {:?}, expected {:?}",
+                reference.key.index(),
+                endpoint.descriptor().id,
+                reference.endpoint_id.as_str()
+            );
+        }
+        Ok(ResolvedPreparedEndpoint {
+            reference,
+            endpoint,
+        })
+    }
+}
+
+fn normalize_endpoint_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace(['-', '/'], "_")
+}
+
 /// Endpoint selection retained by one schedulable turn.
 #[derive(Clone)]
 pub enum TurnEndpoint {
@@ -1084,11 +1183,46 @@ impl ConversationSource for DatasetConversationSource {
 }
 
 #[derive(Clone)]
+enum NativeSessionEndpoint {
+    Legacy(Arc<LegacyNativeSessionEndpoint>),
+    Prepared {
+        primary_model_name: String,
+        endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+    },
+}
+
+struct LegacyNativeSessionEndpoint {
+    model_endpoint: ModelEndpoint,
+    endpoint_resolver: Arc<dyn EndpointResolver>,
+}
+
+impl fmt::Debug for NativeSessionEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Legacy(legacy) => formatter
+                .debug_struct("LegacySessionEndpoint")
+                .field(
+                    "endpoint_type",
+                    &legacy.model_endpoint.endpoint.endpoint_type,
+                )
+                .finish_non_exhaustive(),
+            Self::Prepared {
+                primary_model_name,
+                endpoint_resolver,
+            } => formatter
+                .debug_struct("PreparedSessionEndpoint")
+                .field("primary_model_name", primary_model_name)
+                .field("endpoint_resolver", endpoint_resolver)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct NativeSessionBackend {
     session: RefCell<NativeConversationSession>,
     metadata: ConversationMetadata,
-    model_endpoint: ModelEndpoint,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
+    endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
@@ -1180,23 +1314,51 @@ impl NativeSessionBackend {
         let mut session = self.session.borrow_mut();
         session.advance_to(turn_index)?;
         let endpoint_name = session.endpoint_override()?.map(str::to_string);
-        let endpoint = match endpoint_name.as_deref() {
-            Some(name) => self.endpoint_resolver.resolve(Some(name))?,
-            None => self
-                .endpoint_resolver
-                .resolve_type(self.model_endpoint.endpoint.endpoint_type)?,
+        let (materialized, turn_endpoint, prepared_endpoint) = match &self.endpoint {
+            NativeSessionEndpoint::Legacy(legacy) => {
+                let endpoint = match endpoint_name.as_deref() {
+                    Some(name) => legacy.endpoint_resolver.resolve(Some(name))?,
+                    None => legacy
+                        .endpoint_resolver
+                        .resolve_type(legacy.model_endpoint.endpoint.endpoint_type)?,
+                };
+                let mut effective_model_endpoint = legacy.model_endpoint.clone();
+                let endpoint_metadata = endpoint.metadata();
+                effective_model_endpoint.endpoint.endpoint_type = endpoint_metadata.endpoint_type;
+                effective_model_endpoint.endpoint.streaming &= endpoint_metadata.supports_streaming;
+                let materialized = self.materializer.materialize(
+                    &session,
+                    endpoint.as_ref(),
+                    &effective_model_endpoint,
+                    CreditPhase::Profiling,
+                    &Overrides::new(),
+                )?;
+                let turn_endpoint = TurnEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
+                    endpoint,
+                    config: effective_model_endpoint.endpoint,
+                }));
+                (materialized, turn_endpoint, None)
+            }
+            NativeSessionEndpoint::Prepared {
+                primary_model_name,
+                endpoint_resolver,
+            } => {
+                let selected = endpoint_resolver.resolve(endpoint_name.as_deref())?;
+                let materialized = self.materializer.materialize_prepared(
+                    &session,
+                    selected.endpoint,
+                    primary_model_name,
+                    CreditPhase::Profiling,
+                    &Overrides::new(),
+                )?;
+                let reference = selected.reference.clone();
+                (
+                    materialized,
+                    TurnEndpoint::Prepared(selected.reference),
+                    Some((reference, selected.endpoint)),
+                )
+            }
         };
-        let mut model_endpoint = self.model_endpoint.clone();
-        let endpoint_metadata = endpoint.metadata();
-        model_endpoint.endpoint.endpoint_type = endpoint_metadata.endpoint_type;
-        model_endpoint.endpoint.streaming &= endpoint_metadata.supports_streaming;
-        let materialized = self.materializer.materialize(
-            &session,
-            endpoint.as_ref(),
-            &model_endpoint,
-            CreditPhase::Profiling,
-            &Overrides::new(),
-        )?;
         let timing = self
             .metadata
             .turns
@@ -1206,11 +1368,23 @@ impl NativeSessionBackend {
             u64::try_from(timing.input_length)
                 .map_err(|_| anyhow!("authored trace input count exceeds u64"))?
         } else {
-            self.input_token_counter.count_input_tokens(
-                endpoint.as_ref(),
-                &materialized.body,
-                materialized.input_tokens,
-            )?
+            match prepared_endpoint {
+                Some((_, endpoint)) => self.input_token_counter.count_prepared_input_tokens(
+                    endpoint,
+                    &materialized.body,
+                    materialized.input_tokens,
+                )?,
+                None => match &turn_endpoint {
+                    TurnEndpoint::Legacy(binding) => self.input_token_counter.count_input_tokens(
+                        binding.endpoint.as_ref(),
+                        &materialized.body,
+                        materialized.input_tokens,
+                    )?,
+                    TurnEndpoint::Prepared(_) => {
+                        unreachable!("prepared endpoint retained above for token counting")
+                    }
+                },
+            }
         };
         let input_length = usize::try_from(input_tokens)
             .map_err(|_| anyhow!("materialized input token count exceeds usize"))?;
@@ -1239,10 +1413,7 @@ impl NativeSessionBackend {
             request_headers: materialized.headers,
             request_parameters: materialized.parameters,
             endpoint_path,
-            endpoint: TurnEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
-                endpoint,
-                config: model_endpoint.endpoint,
-            })),
+            endpoint: turn_endpoint,
             streaming: materialized.streaming,
             audio_duration_seconds: materialized.audio_duration_seconds,
             timestamp_ms: timing.timestamp_ms,
@@ -1262,8 +1433,7 @@ pub struct NativeDatasetConversationSource {
     dataset: Arc<NativeDataset>,
     metadata: Vec<ConversationMetadata>,
     sampler: Box<dyn Sampler>,
-    model_endpoint: ModelEndpoint,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
+    endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
@@ -1289,6 +1459,58 @@ impl NativeDatasetConversationSource {
             default_output_tokens,
             rng_root,
             endpoint,
+        )
+    }
+
+    /// Honor loader sampling through a directly prepared open endpoint table.
+    pub fn preferred_with_prepared_endpoint(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        table: Rc<PreparedEndpointTable>,
+        endpoint: PreparedEndpointReference,
+    ) -> Result<Self> {
+        let samplers = SamplerRegistry::with_builtin_strategies()?;
+        let resolver: Rc<dyn PreparedTurnEndpointResolver> =
+            Rc::new(PreparedEndpointTableResolver::single(table, endpoint)?);
+        Self::preferred_with_prepared_resolver(
+            dataset,
+            model,
+            default_output_tokens,
+            rng_root,
+            &samplers,
+            resolver,
+        )
+    }
+
+    /// Honor loader sampling with injected sampler and prepared endpoint
+    /// resolution registries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preferred_with_prepared_resolver(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        samplers: &SamplerRegistry,
+        endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+    ) -> Result<Self> {
+        let dataset = Arc::new(dataset);
+        let sampler = samplers.create(
+            &dataset.metadata().sampling_strategy,
+            &dataset.metadata().conversations,
+            rng_root,
+        )?;
+        Self::new_with_endpoint(
+            dataset,
+            sampler,
+            NativeSessionEndpoint::Prepared {
+                primary_model_name: model.into(),
+                endpoint_resolver,
+            },
+            Arc::new(EndpointRequestMaterializer),
+            Arc::new(TiktokenTokenizer::builtin()),
+            default_output_tokens,
         )
     }
 
@@ -1383,6 +1605,47 @@ impl NativeDatasetConversationSource {
         Self::sequential_with_endpoint_config(dataset, model, default_output_tokens, endpoint)
     }
 
+    /// Construct a sequential source through one directly prepared endpoint.
+    pub fn sequential_with_prepared_endpoint(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        table: Rc<PreparedEndpointTable>,
+        endpoint: PreparedEndpointReference,
+    ) -> Result<Self> {
+        let endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver> =
+            Rc::new(PreparedEndpointTableResolver::single(table, endpoint)?);
+        Self::sequential_with_prepared_resolver(
+            dataset,
+            model,
+            default_output_tokens,
+            endpoint_resolver,
+        )
+    }
+
+    /// Construct a sequential source with a prepared resolver built once by
+    /// the owning harness.
+    pub fn sequential_with_prepared_resolver(
+        dataset: NativeDataset,
+        model: impl Into<String>,
+        default_output_tokens: usize,
+        endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+    ) -> Result<Self> {
+        let dataset = Arc::new(dataset);
+        let sampler = SequentialSampler::from_metadata(&dataset.metadata().conversations)?;
+        Self::new_with_endpoint(
+            dataset,
+            Box::new(sampler),
+            NativeSessionEndpoint::Prepared {
+                primary_model_name: model.into(),
+                endpoint_resolver,
+            },
+            Arc::new(EndpointRequestMaterializer),
+            Arc::new(TiktokenTokenizer::builtin()),
+            default_output_tokens,
+        )
+    }
+
     /// Construct a sequential source with caller-selected endpoint policy.
     ///
     /// Endpoint configuration is part of the ordinary dataset pipeline; callers
@@ -1440,6 +1703,27 @@ impl NativeDatasetConversationSource {
         response_tokenizer: Arc<dyn TextTokenizer>,
         default_output_tokens: usize,
     ) -> Result<Self> {
+        Self::new_with_endpoint(
+            dataset,
+            sampler,
+            NativeSessionEndpoint::Legacy(Arc::new(LegacyNativeSessionEndpoint {
+                model_endpoint,
+                endpoint_resolver,
+            })),
+            materializer,
+            response_tokenizer,
+            default_output_tokens,
+        )
+    }
+
+    fn new_with_endpoint(
+        dataset: Arc<NativeDataset>,
+        sampler: Box<dyn Sampler>,
+        endpoint: NativeSessionEndpoint,
+        materializer: Arc<dyn RequestMaterializer>,
+        response_tokenizer: Arc<dyn TextTokenizer>,
+        default_output_tokens: usize,
+    ) -> Result<Self> {
         if default_output_tokens == 0 {
             bail!("native dataset default output tokens must be positive");
         }
@@ -1476,8 +1760,7 @@ impl NativeDatasetConversationSource {
             dataset,
             metadata,
             sampler,
-            model_endpoint,
-            endpoint_resolver,
+            endpoint,
             materializer,
             response_tokenizer,
             input_token_counter: Arc::new(AuthoredInputTokenCounter),
@@ -1516,8 +1799,7 @@ impl NativeDatasetConversationSource {
         let backend = NativeSessionBackend {
             session: RefCell::new(NativeConversationSession::new(self.dataset.clone(), id)?),
             metadata,
-            model_endpoint: self.model_endpoint.clone(),
-            endpoint_resolver: self.endpoint_resolver.clone(),
+            endpoint: self.endpoint.clone(),
             materializer: self.materializer.clone(),
             response_tokenizer: self.response_tokenizer.clone(),
             input_token_counter: self.input_token_counter.clone(),
@@ -2022,6 +2304,57 @@ mod tests {
         let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
         assert_eq!(turn.request_body.unwrap(), authored);
         assert!(turn.streaming);
+    }
+
+    #[tokio::test]
+    async fn native_source_materializes_directly_through_prepared_endpoint() {
+        let dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([{"text":"hello"}]))),
+                &ComposeConfig::new("prepared-model", RngRoot::new(Some(5))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let registry = aiperf_endpoints::EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("chat").unwrap();
+        let endpoint = registry
+            .prepare(
+                &endpoint_id,
+                aiperf_endpoints::RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..aiperf_endpoints::RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let mut source = NativeDatasetConversationSource::sequential_with_prepared_endpoint(
+            dataset,
+            "prepared-model",
+            4,
+            Rc::new(table),
+            PreparedEndpointReference {
+                key,
+                endpoint_id: endpoint_id.clone(),
+            },
+        )
+        .unwrap();
+
+        let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
+
+        let TurnEndpoint::Prepared(reference) = turn.endpoint else {
+            panic!("prepared source constructed a legacy endpoint turn")
+        };
+        assert_eq!(reference.key, key);
+        assert_eq!(reference.endpoint_id, endpoint_id);
+        let body: Value = serde_json::from_slice(turn.request_body.as_ref().unwrap()).unwrap();
+        assert_eq!(body["model"], "prepared-model");
+        assert_eq!(body["messages"][0]["content"], "hello");
+        assert_eq!(body["stream"], true);
     }
 
     #[tokio::test]
