@@ -474,6 +474,21 @@ pub trait ArchiveSanitizer: Debug + Send + Sync {
     fn sanitize_diagnostic(&self, diagnostic: &ArchiveDiagnostic) -> ArchiveDiagnostic;
 }
 
+pub trait RawNonceSource: Debug + Send {
+    fn fill_nonce(&mut self, bytes: &mut [u8]) -> Result<(), RawNonceError>;
+}
+
+pub trait RawEnvelopeProfile: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static RawEnvelopeDescriptor;
+    fn seal(
+        &self,
+        key: &RawEnvelopeKey,
+        nonce: &[u8],
+        aad: &[u8],
+        plaintext: &[u8],
+    ) -> Result<RawEnvelope, RawEnvelopeError>;
+}
+
 pub trait SegmentRotationPolicy: Debug + Send {
     fn should_rotate(&self, state: &OpenSegmentState, now_ns: i64) -> bool;
 }
@@ -579,12 +594,18 @@ transition/marker insertion. Once success establishes the terminal payload kind,
 success `frame_id`, inserts both owner identities into every row, and only then computes canonical
 logical-row/projection hashes and final draft allocation off the LocalSet. Hashes produced by decode
 or pre-terminal normalization are explicitly provisional and cannot enter WAL coverage. The job
-returns `SequencedArchiveFrameDraft` plus the next epoch state.
+returns `SequencedArchiveFrameDraft` plus a *proposed* next epoch state; worker return alone does
+not install that state.
 
 Each source has a bounded FIFO projection strand with at most one active job; strands run in
-parallel across sources. The permit covers both its queued slot and active footprint. The owner
-starts source record N+1 only after N returns and updates the epoch chain, and commits returned jobs
-through a bounded global `record_seq` reorder buffer. If a sequenced projection fails, its success
+parallel across sources. The permit covers both its queued slot and active footprint. After N
+returns, the owner performs every terminal success action, including raw-object registry lookup,
+nonce/envelope creation, and final material declaration. Only a fully terminal success installs its
+proposed epoch and releases the source strand for N+1. A terminalization failure discards the
+proposed epoch and whole success draft; attached best-effort emits loss under the preceding epoch,
+while primary/required mode records that loss when possible and fail-stops before admitting a
+successor. The owner commits terminal results through a bounded global `record_seq` reorder buffer.
+If a sequenced projection fails, its success
 candidate ID is discarded. The owner sends a tracked `ProjectionFailureTerminalization` containing
 the reservation and typed failure to the originating driver LocalSet. That LocalSet stamps
 `loss_observed_ns = Clock::now_ns()` only after receiving the failure and returns an immutable
@@ -842,6 +863,7 @@ Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.projection-reservatio
 `.wal-frame.v1`, `.wal-prefix.v1`, `.wal-segment.v1`,
 `.series-source.v1`, `.attribute-epoch.v1`, `.body-encoded.v1`, `.body-decoded.v1`,
 `.logical-row.v1`, `.projection-multiset.v1`, `.projection-coverage.v1`, `.raw-object.v1`,
+`.raw-aad.v1`, `.raw-nonce-reservation.v1`,
 `.loss-overflow.v1`, `.loss-saturation-slot.v1`, `.receipt-observer-epoch.v1`,
 `.receipt-target.v1`, `.receipt-event.v1`, `.receipt-batch.v1`,
 `.receipt-range-coverage.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
@@ -1033,9 +1055,10 @@ updated `LATEST` with the same logical shape. A head descriptor contains:
 Generation objects are immutable, content-addressed, and hash-linked. Generation zero is a full
 genesis containing archive/schema/writer identity, the persistent archive-identity digest, archive-key
 digest, canonical-spool ID, secret-free source descriptors, session/anchor, exact runner
-distribution provenance, and empty index root. Later generations are bounded transaction records containing parent, session,
-added/removed partition/raw-object IDs, exact logical projection evidence, health delta, state transition, and
-termination reason. `unix_epoch_ns` is a decimal string in JSON.
+distribution provenance, and empty index root. Later generations are bounded transaction records
+containing parent, session, added/removed partition/raw-object IDs, append-only raw-nonce
+reservations and key-local successful-object counts, exact logical projection evidence, health
+delta, state transition, and termination reason. `unix_epoch_ns` is a decimal string in JSON.
 
 Head, generation, and index-node JSON each have a checked-in canonical descriptor/version/
 fingerprint. All archive JSON uses `aiperf.archive.canonical-json.v1`: the input decoder rejects
@@ -1049,7 +1072,8 @@ forbidden. `true`, `false`, and `null` use those exact lowercase tokens. Each en
 stores magic/type/version, payload byte length, payload, and BLAKE3 checksum; its content key hashes
 those exact canonical bytes.
 
-The partition/raw-object/coverage descriptor set is a persistent content-addressed B-tree. Its
+The partition/raw-object/raw-nonce-reservation/coverage descriptor set is a persistent content-
+addressed B-tree. Its
 composite search key is `(object_kind_u8, table_id_u8, session_key_16, source_key,
 clock_key_u64_be, logical_object_id_digest_32)` with lexicographic byte comparison. Numeric kind/
 table IDs and digest inputs live in the checked-in index descriptor. The per-kind matrix is:
@@ -1059,6 +1083,7 @@ table IDs and digest inputs live in the checked-in index descriptor. The per-kin
 | table partition | exact table | one actual session | one exact source/global sentinel | minimum included frame Clock | domain hash of table/schema/content/projection evidence |
 | projection coverage | exact table | frame session | frame source/global sentinel | authoritative frame Clock | domain hash of frame ID/table |
 | shared raw object | none sentinel | all-zero sentinel | global sentinel | none sentinel | `raw_object_id` |
+| raw nonce reservation | none sentinel | all-zero sentinel | global sentinel | none sentinel | domain hash of key ID/nonce; descriptor maps to raw-object ID |
 
 Actual UUID zero, empty source IDs, and numeric ID zero are invalid, reserving all-zero/zero for
 `none`. `source_key` is byte `0x00` for global/no source and `0x01 || u32_be(length) || utf8` for a
@@ -1074,7 +1099,8 @@ partition min/max reduce only those header values. Coverage and clockless family
 use that value. Signed Clock value `t` sorts as `u64_be((t as u64) XOR 0x8000000000000000)`; the raw
 none sentinel is all zero and is unambiguous under its object kind.
 
-A leaf stores sorted partition, raw-object, or projection-coverage descriptors. A root leaf stores
+A leaf stores sorted partition, raw-object, raw-nonce-reservation, or projection-coverage
+descriptors. A root leaf stores
 0–256 entries (zero is the one canonical empty root); a non-root leaf stores 128–256. A root internal page stores
 2–256 children and a non-root internal page stores 128–256. An internal page carries inclusive
 min/max composite key, child key/hash/byte length, exact sorted source IDs, table/object-kind mask,
@@ -1508,10 +1534,21 @@ because doing so would destroy exactness. They are a separately classified artif
 
 - configuration requires an explicit sensitive-data acknowledgment, restrictive local mode, and
   an `ArchiveRawKeyProvider` reference;
-- every retained body uses an AEAD envelope. The equality ID uses the raw-object subkey over exact
-  encoded bytes. Its public header contains envelope version, algorithm, key ID, and random nonce;
-  exact plaintext digest/length are inside encrypted plaintext metadata, not AAD. The shared
-  physical object contains no response-specific media or content-encoding interpretation;
+- every retained body uses a descriptor-selected `RawEnvelopeProfile`; v1 ships and defaults to
+  `aead_aes_256_gcm_siv_random96_v1`, exactly AEAD_AES_256_GCM_SIV from
+  [RFC 8452](https://www.rfc-editor.org/rfc/rfc8452.html) with a 32-byte key,
+  12-byte random nonce, and 16-byte tag. The product `RawNonceSource` obtains every nonce from the
+  OS CSPRNG; deterministic sources exist only behind the injected trait in tests;
+- the equality ID uses the raw-object subkey over exact encoded bytes. The public header contains
+  envelope version, algorithm, archive ID, raw-object ID, key ID, random nonce, and ciphertext
+  length. AEAD additional data is the 32-byte
+  `digest("aiperf.archive.raw-aad.v1", exact_canonical_public_header_bytes)`. Exact plaintext
+  digest/length remain inside encrypted plaintext metadata. The shared physical object contains no
+  response-specific media or content-encoding interpretation;
+- profile validation caps plaintext at 1 GiB and successful objects at 2²⁹ per key ID, then requires
+  a different key ID before admitting another object. These conservative RFC 8452 random-nonce
+  bounds keep the 32-byte AAD short and bound distinguishing advantage even under limited nonce
+  repeats; configuration may choose a stricter cap but not a looser one under this profile;
 - key material, plaintext digest, and bodies never appear in manifests/reports/logs;
 - raw-body bytes count against receive, spool, transaction-reserve, and retention quotas.
 
@@ -1522,14 +1559,26 @@ encryption, restrictive access, retention, and secret-scanning policy govern the
 
 Randomized encryption is performed exactly once per equality ID, not once per referencing frame.
 The projection worker returns `RawObjectCandidate { raw_object_id, exact_entity_lease }`; it never
-chooses a nonce. The single archive owner serially consults its committed-plus-pending raw registry.
-For a new ID it consumes the lease, creates one random-nonce envelope, and writes the complete
-ciphertext/nonce/digest into the accepting WAL frame before acknowledging it. For an indexed or
-pending ID it reuses the exact existing physical descriptor and drops the redundant lease without
-decrypting/re-encrypting. Recovery rebuilds the registry from the verified index plus WAL before
-accepting drafts. Thus concurrent duplicates cannot create different ciphertext for the same
-content-addressed key, and every create-if-absent retry supplies byte-identical envelope bytes.
-Nonce derivation from plaintext or equality ID is forbidden.
+chooses a nonce. The single archive owner serially consults its committed-plus-pending raw-object
+registry and persistent `(key_id, nonce) -> raw_object_id` reservation index. For a new ID it
+consumes the lease, draws a nonce, rejects a reservation held by any other raw object, and retries
+at most 16 draws. Exhaustion, key lookup, CSPRNG, bounds, or AEAD failure is a typed terminalization
+failure; the owner applies the preceding-epoch loss/fail-stop rule before releasing the source
+strand. It never weakens encryption or silently advances the key counter. A key ID rotates before
+its successful-object limit, is never reused after retirement, and its nonce reservations remain
+reachable for the archive lifetime even if the referenced raw body is later garbage-collected.
+
+After a unique reservation, the owner creates the envelope and writes the complete public header,
+ciphertext/tag/digest, raw-key usage count, and nonce reservation into the accepting WAL frame
+before acknowledgment. For an indexed or pending raw-object ID it reuses the exact existing
+physical descriptor and drops the redundant lease without decrypting, consuming a nonce, or
+incrementing the key count. Recovery rebuilds both registries and key counts from the verified
+index plus WAL before accepting drafts. Thus concurrent duplicates cannot create different
+ciphertext for the same content-addressed key, distinct objects cannot accidentally reuse a nonce,
+and every create-if-absent retry supplies byte-identical envelope bytes. Nonce derivation from
+plaintext/equality ID, a process-local counter without durable reservation, and best-effort RNG
+fallback are forbidden. Forced-collision, RNG-failure, unavailable-key, AEAD-failure, limit, crash,
+and rekey goldens pin this state machine.
 
 Every retained frame has one row in the `raw_references` table:
 
@@ -1549,8 +1598,11 @@ reference owns response-specific interpretation: absent `Content-Encoding` is
 `["identity"]`; other validated tokens are lowercase in wire application order. Equal bytes with
 different chains deliberately share one physical object and retain distinct references. The
 physical raw-object index descriptor is shared and contains only object ID/key, ciphertext digest/
-bytes, envelope algorithm/key ID, and required local/remote coverage—never a frame ID, plaintext
-digest, or key material. The attempt row repeats the opaque object ID for convenient joins. WAL
+bytes, envelope algorithm/key ID/nonce, and required local/remote coverage—never a frame ID,
+plaintext digest, or key material. Its immutable nonce-reservation descriptor contains key ID,
+nonce, raw-object ID, and key-local successful-object sequence; it exposes no source/body fact and
+outlives raw-object GC for the archive lifetime. The attempt row repeats the opaque object ID for
+convenient joins. WAL
 retirement, requested finalization, and remote head CAS wait for every reference projection plus
 the one applicable verified physical object. Compaction preserves references and descriptors;
 head reachability drives GC. Crash tests cover first-object creation, duplicate frames before and
@@ -1744,8 +1796,8 @@ One local commit performs these ordered durability steps:
    file-fsync, rename to its final key, directory-fsync, and verify its ciphertext digest; a reused
    raw ID must resolve to the byte-identical existing descriptor;
 4. copy-on-write the bounded manifest-index path adding partition descriptors, shared raw-object
-   descriptors, and every nonzero or zero-row `ProjectionCoverage`; file-fsync, rename, and
-   directory-fsync every new content-addressed page;
+   descriptors, append-only nonce reservations/key counts, and every nonzero or zero-row
+   `ProjectionCoverage`; file-fsync, rename, and directory-fsync every new content-addressed page;
 5. write the immutable hash-linked generation transaction, file-fsync, rename, and
    directory-fsync;
 6. write a new `LOCAL-LATEST.tmp` containing current and preceding valid heads, file-fsync,
@@ -2837,9 +2889,11 @@ version or material schema/writer change invalidates the profile until rerun.
    durable copy;
 7. raw-reference coverage, one randomized bytes-only physical envelope per equality ID, duplicate/
    concurrent candidate reuse, both arrival orders for equal bytes with distinct normalized
-   content-encoding chains, create-if-absent retries with byte-identical ciphertext, exact-byte verification,
-   named-object visibility horizon, pre-activation writer claims, and uncertain/success/conflict
-   `LATEST` CAS reconciliation are idempotent under competing writers;
+   content-encoding chains, persistent nonce reservation/key counts, create-if-absent retries with
+   byte-identical ciphertext, and key/RNG/AEAD/forced-collision/limit failures cannot commit an
+   attribute epoch or release its successor; exact-byte verification, named-object visibility
+   horizon, pre-activation writer claims, and uncertain/success/conflict `LATEST` CAS reconciliation
+   remain idempotent under competing writers;
 8. every equal/ancestor/divergent local/remote reconciliation cell and sync-only finalization path;
 9. exact-resume identity/writer mismatch fails before session/source activation;
 10. bounded exact-parent compaction verifies per-projection logical row counts/multiset digests;
@@ -2865,7 +2919,9 @@ version or material schema/writer change invalidates the profile until rerun.
 4. redirects/proxies/content negotiation/TLS/mTLS/credential forwarding obey strict defaults and
    a non-2xx metric-looking body never parses;
 5. raw-body retention is off by default; opt-in requires classification, key provider, restrictive
-   permissions, authenticated encryption locally and remotely, and artifact-wide secret scanning;
+   permissions, authenticated encryption locally and remotely, artifact-wide secret scanning, and
+   the exact AES-256-GCM-SIV/random-96-bit-CSPRNG/AAD/per-key-limit/nonce-reservation profile; forced
+   nonce collision, RNG failure, key exhaustion, and rekey tests fail closed;
 6. path traversal and unsafe artifact/spool/target aliasing fail validation;
 7. relative to the authenticated spool/head/store trust roots, frame/partition/index/generation/
    head hashes detect corruption and substitution; malicious total namespace rewrite/rollback is
@@ -2937,8 +2993,10 @@ for passing standalone and attached profile artifacts rather than trusting docum
    owner;
 2. add qualified lifetime lock, create-only genesis/resumed-session transaction, cryptographically
    bound final frames/prefixes in sealed WAL with
-   lagged retirement, persistent zero/nonzero table coverage, shared raw-object registry plus raw-
-   reference rows with per-response encoding, immutable Parquet/index/generations/head, and the
+   lagged retirement, persistent zero/nonzero table coverage, shared raw-object plus nonce-
+   reservation/key-count registries, the concrete raw-envelope profile, raw-reference rows with
+   per-response encoding, owner-terminal attribute-epoch commit, immutable Parquet/index/
+   generations/head, and the
    bounded indexed non-self-referential receipt journal with epoch-only bootstrap;
 3. add every-step crash/property/corruption recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
@@ -3088,7 +3146,9 @@ This design is complete only when:
   prunable by the pinned query ecosystem;
 - qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
   persistent zero/nonzero projection coverage, shared encrypted raw objects with per-frame
-  references and reference-owned content encoding, immutable partitions/generations/index/head,
+  references and reference-owned content encoding, a concrete misuse-resistant CSPRNG/nonce/key-
+  limit profile whose terminalization gates attribute-epoch commit, immutable partitions/
+  generations/index/head,
   cryptographically bound final WAL frames/prefixes, and bounded indexed receipt journal with
   independently reachable per-execution observer epochs
   recover every complete durable projection exactly once across all injected crash/finalization
