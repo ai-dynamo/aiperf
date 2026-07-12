@@ -914,9 +914,17 @@ impl EvaluationWorkload {
                 progressed = true;
             }
 
+            // The worker rejects a poll whose limit exceeds the provider-negotiated
+            // `stream_events` credit (session.py: "poll_events limit exceeds negotiated
+            // credit"). Providers propose small stream buffers (e.g. 64), so cap the
+            // runner's preferred batch size to the negotiated capacity.
+            let poll_limit = self
+                .limits
+                .event_batch_size
+                .min(plan.queue_credits.stream_events);
             let mut batch = self
                 .provider
-                .poll_events(self.limits.event_batch_size, 0)
+                .poll_events(poll_limit, 0)
                 .await
                 .map_err(provider_error)
                 .context("polling evaluator events")?;
@@ -2541,6 +2549,19 @@ mod tests {
             limit: usize,
             _wait_ms: u64,
         ) -> std::result::Result<EvaluationEventBatch, EvaluationProviderError> {
+            // Mirror the real worker's negotiated-credit enforcement
+            // (session.py: a poll whose limit exceeds the proposed
+            // `stream_events` credit is a protocol error). This makes every
+            // workload run test a live poll-loop parity guard: without the
+            // runner capping its poll limit to the negotiated credit, a run with
+            // `event_batch_size > stream_events` fails here instead of silently
+            // passing on a hand-crafted batch.
+            if limit > self.plan.queue_credits.stream_events {
+                return Err(EvaluationProviderError::Protocol(format!(
+                    "poll_events limit {limit} exceeds negotiated stream_events credit {}",
+                    self.plan.queue_credits.stream_events
+                )));
+            }
             if self.terminal_submitted
                 && !self.case_terminal_emitted
                 && self
