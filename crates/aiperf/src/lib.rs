@@ -25,6 +25,7 @@ pub mod agentic_gateway;
 pub mod ancillary;
 #[cfg(feature = "dynamo-offline")]
 pub mod dynamo_offline;
+pub mod evaluation;
 pub mod fixed_schedule;
 pub mod http;
 pub mod metrics;
