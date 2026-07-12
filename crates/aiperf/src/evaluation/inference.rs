@@ -8,6 +8,8 @@
 //! worker-local prepared endpoint binding, and issues the resulting turn through
 //! [`ScheduledRuntime`]. It therefore shares endpoint formatting, transport,
 //! cancellation, metrics, and usage reconciliation with ordinary workloads.
+//! The accepted request/response/event algebra is ported exactly from
+//! `src/aiperf/accuracy/evaluation/operation_schemas.py:11-376`.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -446,19 +448,18 @@ fn copy_optional(
 
 fn string_or_string_array(value: &Value, field: &str) -> Result<Vec<String>> {
     match value {
-        Value::String(value) if !value.is_empty() => Ok(vec![value.clone()]),
-        Value::Array(values) => values
+        Value::String(value) => Ok(vec![value.clone()]),
+        Value::Array(values) if !values.is_empty() => values
             .iter()
             .map(|value| {
                 value
                     .as_str()
-                    .filter(|value| !value.is_empty())
                     .map(str::to_string)
-                    .ok_or_else(|| anyhow!("{field} array entries must be non-empty strings"))
+                    .ok_or_else(|| anyhow!("{field} array entries must be strings"))
             })
             .collect(),
         _ => Err(anyhow!(
-            "{field} must be a non-empty string or string array"
+            "{field} must be a string or non-empty string array"
         )),
     }
 }
@@ -624,7 +625,9 @@ fn validate_inference_request(operation_id: &str, payload: &Value) -> Result<()>
             )?;
             validate_messages(required_array(object, "messages")?)?;
             validate_generation(object.get("generation"))?;
-            validate_optional_array(object, "tools")?;
+            validate_tools(object.get("tools"))?;
+            validate_tool_choice(object.get("tool_choice"))?;
+            validate_optional_object(object, "response_format")?;
             validate_parameters(object.get("parameters"))?;
         }
         "model.complete" => {
@@ -653,7 +656,7 @@ fn validate_inference_request(operation_id: &str, payload: &Value) -> Result<()>
                 ensure!(instructions.is_string(), "instructions must be a string");
             }
             validate_generation(object.get("generation"))?;
-            validate_optional_array(object, "tools")?;
+            validate_tools(object.get("tools"))?;
             validate_parameters(object.get("parameters"))?;
         }
         "model.embed" => {
@@ -693,6 +696,13 @@ fn validate_inference_request(operation_id: &str, payload: &Value) -> Result<()>
 }
 
 fn validate_inference_stream(operation_id: &str, payload: &Value) -> Result<()> {
+    if payload.is_null() {
+        return match operation_id {
+            "model.generate" | "model.complete" | "model.responses" => Ok(()),
+            "model.embed" => Ok(()),
+            _ => Err(anyhow!("unsupported inference operation {operation_id:?}")),
+        };
+    }
     let object = payload
         .as_object()
         .ok_or_else(|| anyhow!("{operation_id} stream event must be an object"))?;
@@ -768,9 +778,21 @@ fn validate_inference_response(operation_id: &str, payload: &Value) -> Result<()
                         .ok_or_else(|| anyhow!("generate choice requires message"))?,
                 )?;
                 ensure!(
-                    choice.get("stop_reason").is_some_and(Value::is_string),
-                    "generate choice requires stop_reason"
+                    matches!(
+                        choice.get("stop_reason").and_then(Value::as_str),
+                        Some(
+                            "stop"
+                                | "max_tokens"
+                                | "model_length"
+                                | "tool_calls"
+                                | "content_filter"
+                                | "unknown"
+                        )
+                    ),
+                    "generate choice stop_reason is invalid"
                 );
+                validate_optional_string(choice, "finish_reason")?;
+                validate_optional_object_or_null(choice, "logprobs")?;
             }
             validate_usage(object.get("usage"))
         }
@@ -798,12 +820,15 @@ fn validate_inference_response(operation_id: &str, payload: &Value) -> Result<()
                     choice.get("finish_reason").is_some_and(Value::is_string),
                     "completion choice requires finish_reason"
                 );
+                validate_optional_object_or_null(choice, "logprobs")?;
             }
             validate_usage(object.get("usage"))
         }
         "model.responses" => {
             require_only_fields(object, &["output", "usage", "status"], operation_id)?;
-            validate_messages(required_array(object, "output")?)?;
+            for message in required_array(object, "output")? {
+                validate_message(message)?;
+            }
             ensure!(
                 matches!(
                     object.get("status").and_then(Value::as_str),
@@ -852,9 +877,8 @@ fn validate_generation(value: Option<&Value>) -> Result<()> {
     ensure!(
         generation
             .get("max_tokens")
-            .and_then(Value::as_u64)
-            .is_some_and(|value| value > 0 && u32::try_from(value).is_ok()),
-        "generation.max_tokens must be a positive u32"
+            .is_some_and(|value| is_integer(value) && integer_is_at_least(value, 1)),
+        "generation.max_tokens must be a positive integer"
     );
     for field in ["temperature", "top_p"] {
         if let Some(value) = generation.get(field) {
@@ -899,14 +923,60 @@ fn validate_parameters(value: Option<&Value>) -> Result<()> {
             "reasoning_history",
         ],
         "parameters",
-    )
-}
-
-fn validate_optional_array(object: &Map<String, Value>, field: &str) -> Result<()> {
-    if let Some(value) = object.get(field) {
-        ensure!(value.is_array(), "{field} must be an array");
+    )?;
+    for field in ["best_of", "top_k", "num_choices", "max_tool_output"] {
+        if let Some(value) = parameters.get(field) {
+            ensure!(
+                is_integer(value) && integer_is_at_least(value, 1),
+                "parameters.{field} must be a positive integer"
+            );
+        }
     }
-    Ok(())
+    for field in ["top_logprobs", "reasoning_tokens"] {
+        if let Some(value) = parameters.get(field) {
+            ensure!(
+                is_integer(value) && integer_is_at_least(value, 0),
+                "parameters.{field} must be a non-negative integer"
+            );
+        }
+    }
+    if let Some(seed) = parameters.get("seed") {
+        ensure!(is_integer(seed), "parameters.seed must be an integer");
+    }
+    for field in ["frequency_penalty", "presence_penalty"] {
+        if let Some(value) = parameters.get(field) {
+            ensure!(value.is_number(), "parameters.{field} must be numeric");
+        }
+    }
+    for field in ["logprobs", "parallel_tool_calls", "internal_tools"] {
+        if let Some(value) = parameters.get(field) {
+            ensure!(value.is_boolean(), "parameters.{field} must be boolean");
+        }
+    }
+    if let Some(logit_bias) = parameters.get("logit_bias") {
+        let logit_bias = logit_bias
+            .as_object()
+            .ok_or_else(|| anyhow!("parameters.logit_bias must be an object"))?;
+        ensure!(
+            logit_bias.values().all(Value::is_number),
+            "parameters.logit_bias values must be numeric"
+        );
+    }
+    validate_enum(
+        parameters,
+        "reasoning_effort",
+        &["minimal", "low", "medium", "high"],
+    )?;
+    validate_enum(
+        parameters,
+        "reasoning_summary",
+        &["concise", "detailed", "auto"],
+    )?;
+    validate_enum(
+        parameters,
+        "reasoning_history",
+        &["none", "all", "last", "auto"],
+    )
 }
 
 fn validate_messages(messages: &[Value]) -> Result<()> {
@@ -936,11 +1006,237 @@ fn validate_message(message: &Value) -> Result<()> {
     let content = message
         .get("content")
         .ok_or_else(|| anyhow!("message requires content"))?;
+    match content {
+        Value::String(_) => {}
+        Value::Array(blocks) => {
+            for block in blocks {
+                validate_content_block(block)?;
+            }
+        }
+        _ => return Err(anyhow!("message content must be text or content blocks")),
+    }
+    validate_optional_string(message, "name")?;
+    validate_optional_string(message, "tool_call_id")?;
+    if let Some(tool_calls) = message.get("tool_calls") {
+        let tool_calls = tool_calls
+            .as_array()
+            .ok_or_else(|| anyhow!("message.tool_calls must be an array"))?;
+        for tool_call in tool_calls {
+            validate_tool_call(tool_call)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_content_block(block: &Value) -> Result<()> {
+    let block = block
+        .as_object()
+        .ok_or_else(|| anyhow!("message content block must be an object"))?;
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => {
+            require_only_fields(block, &["type", "text"], "text content block")?;
+            ensure!(
+                block.get("text").is_some_and(Value::is_string),
+                "text content block requires text"
+            );
+        }
+        Some("reasoning") => {
+            require_only_fields(
+                block,
+                &["type", "reasoning", "signature"],
+                "reasoning content block",
+            )?;
+            ensure!(
+                block.get("reasoning").is_some_and(Value::is_string),
+                "reasoning content block requires reasoning"
+            );
+            validate_optional_string(block, "signature")?;
+        }
+        Some(kind @ ("image" | "audio" | "video" | "document" | "data")) => {
+            require_only_fields(
+                block,
+                &["type", "asset_id", "media_type", "detail"],
+                "asset content block",
+            )?;
+            ensure!(
+                block
+                    .get("asset_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty()),
+                "{kind} content block requires non-empty asset_id"
+            );
+            validate_optional_nonempty_string(block, "media_type")?;
+            validate_enum(block, "detail", &["auto", "low", "high"])?;
+        }
+        Some("tool_result") => {
+            require_only_fields(
+                block,
+                &["type", "tool_call_id", "content", "is_error"],
+                "tool result content block",
+            )?;
+            ensure!(
+                block
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty()),
+                "tool result requires non-empty tool_call_id"
+            );
+            ensure!(
+                block.contains_key("content"),
+                "tool result requires content"
+            );
+            if let Some(is_error) = block.get("is_error") {
+                ensure!(
+                    is_error.is_boolean(),
+                    "tool result is_error must be boolean"
+                );
+            }
+        }
+        Some(kind) => return Err(anyhow!("unsupported message content block type {kind:?}")),
+        None => return Err(anyhow!("message content block requires string type")),
+    }
+    Ok(())
+}
+
+fn validate_tool_call(value: &Value) -> Result<()> {
+    let call = value
+        .as_object()
+        .ok_or_else(|| anyhow!("tool call must be an object"))?;
+    require_only_fields(call, &["id", "type", "function"], "tool call")?;
     ensure!(
-        content.is_string() || content.is_array(),
-        "message content must be text or content blocks"
+        call.get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty()),
+        "tool call requires non-empty id"
+    );
+    ensure!(
+        call.get("type").and_then(Value::as_str) == Some("function"),
+        "tool call type must be function"
+    );
+    let function = call
+        .get("function")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("tool call requires function object"))?;
+    require_only_fields(function, &["name", "arguments"], "tool call function")?;
+    ensure!(
+        function
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty()),
+        "tool call function requires non-empty name"
+    );
+    ensure!(
+        function.get("arguments").is_some_and(Value::is_object),
+        "tool call function arguments must be an object"
     );
     Ok(())
+}
+
+fn validate_tools(value: Option<&Value>) -> Result<()> {
+    let Some(value) = value else { return Ok(()) };
+    let tools = value
+        .as_array()
+        .ok_or_else(|| anyhow!("tools must be an array"))?;
+    for tool in tools {
+        let tool = tool
+            .as_object()
+            .ok_or_else(|| anyhow!("tool must be an object"))?;
+        require_only_fields(tool, &["type", "function"], "tool")?;
+        ensure!(
+            tool.get("type").and_then(Value::as_str) == Some("function"),
+            "tool type must be function"
+        );
+        let function = tool
+            .get("function")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("tool requires function object"))?;
+        require_only_fields(
+            function,
+            &["name", "description", "parameters"],
+            "tool function",
+        )?;
+        ensure!(
+            function
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty()),
+            "tool function requires non-empty name"
+        );
+        validate_optional_string(function, "description")?;
+        ensure!(
+            function.get("parameters").is_some_and(Value::is_object),
+            "tool function parameters must be an object"
+        );
+    }
+    Ok(())
+}
+
+fn validate_tool_choice(value: Option<&Value>) -> Result<()> {
+    let Some(value) = value else { return Ok(()) };
+    ensure!(
+        value.is_object() || matches!(value.as_str(), Some("auto" | "none" | "required")),
+        "tool_choice must be an object or auto/none/required"
+    );
+    Ok(())
+}
+
+fn validate_optional_object(object: &Map<String, Value>, field: &str) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        ensure!(value.is_object(), "{field} must be an object");
+    }
+    Ok(())
+}
+
+fn validate_optional_object_or_null(object: &Map<String, Value>, field: &str) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        ensure!(
+            value.is_null() || value.is_object(),
+            "{field} must be object or null"
+        );
+    }
+    Ok(())
+}
+
+fn validate_optional_string(object: &Map<String, Value>, field: &str) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        ensure!(value.is_string(), "{field} must be a string");
+    }
+    Ok(())
+}
+
+fn validate_optional_nonempty_string(object: &Map<String, Value>, field: &str) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        ensure!(
+            value.as_str().is_some_and(|value| !value.is_empty()),
+            "{field} must be a non-empty string"
+        );
+    }
+    Ok(())
+}
+
+fn validate_enum(object: &Map<String, Value>, field: &str, allowed: &[&str]) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        ensure!(
+            value.as_str().is_some_and(|value| allowed.contains(&value)),
+            "{field} has an invalid value"
+        );
+    }
+    Ok(())
+}
+
+fn is_integer(value: &Value) -> bool {
+    value.as_i64().is_some() || value.as_u64().is_some()
+}
+
+fn integer_is_at_least(value: &Value, minimum: i64) -> bool {
+    value.as_i64().map_or_else(
+        || {
+            u64::try_from(minimum)
+                .ok()
+                .is_some_and(|minimum| value.as_u64().is_some_and(|value| value >= minimum))
+        },
+        |value| value >= minimum,
+    )
 }
 
 fn validate_usage(value: Option<&Value>) -> Result<()> {
@@ -1575,24 +1871,106 @@ fn normalize_message(value: &Value) -> Result<Value> {
         .unwrap_or("assistant");
     let mut message = Map::new();
     message.insert("role".into(), Value::String(role.into()));
-    let content = source
+    let mut content = source
         .get("content")
         .cloned()
         .unwrap_or(Value::String(String::new()));
-    message.insert(
-        "content".into(),
-        if content.is_null() {
-            Value::String(String::new())
-        } else {
-            content
-        },
-    );
-    for field in ["name", "tool_call_id", "tool_calls"] {
+    if content.is_null() {
+        content = Value::String(String::new());
+    }
+    if let Some(reasoning) = source
+        .get("reasoning_content")
+        .or_else(|| source.get("reasoning"))
+        .and_then(Value::as_str)
+    {
+        let mut blocks = vec![json!({"type":"reasoning","reasoning":reasoning})];
+        if let Some(signature) = source
+            .get("reasoning_signature")
+            .or_else(|| source.get("signature"))
+            .and_then(Value::as_str)
+        {
+            blocks[0]
+                .as_object_mut()
+                .expect("reasoning block is an object")
+                .insert("signature".into(), Value::String(signature.into()));
+        }
+        match content {
+            Value::String(text) if !text.is_empty() => {
+                blocks.push(json!({"type":"text","text":text}));
+            }
+            Value::Array(existing) => blocks.extend(existing),
+            _ => {}
+        }
+        content = Value::Array(blocks);
+    }
+    message.insert("content".into(), content);
+    for field in ["name", "tool_call_id"] {
         if let Some(value) = source.get(field) {
             message.insert(field.into(), value.clone());
         }
     }
+    if let Some(tool_calls) = source.get("tool_calls") {
+        message.insert("tool_calls".into(), normalize_tool_calls(tool_calls)?);
+    }
     Ok(Value::Object(message))
+}
+
+fn normalize_tool_calls(value: &Value) -> Result<Value> {
+    let calls = value
+        .as_array()
+        .ok_or_else(|| anyhow!("upstream tool_calls must be an array"))?;
+    calls
+        .iter()
+        .map(|call| {
+            let call = call
+                .as_object()
+                .ok_or_else(|| anyhow!("upstream tool call must be an object"))?;
+            let id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow!("upstream tool call omitted id"))?;
+            ensure!(
+                call.get("type").and_then(Value::as_str) == Some("function"),
+                "upstream tool call type must be function"
+            );
+            let function = call
+                .get("function")
+                .and_then(Value::as_object)
+                .ok_or_else(|| anyhow!("upstream tool call omitted function"))?;
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow!("upstream tool call omitted function name"))?;
+            let arguments = function
+                .get("arguments")
+                .ok_or_else(|| anyhow!("upstream tool call omitted function arguments"))?;
+            let arguments = match arguments {
+                Value::Object(_) => arguments.clone(),
+                Value::String(arguments) => {
+                    let parsed: Value = serde_json::from_str(arguments)
+                        .context("decoding upstream tool-call arguments")?;
+                    ensure!(
+                        parsed.is_object(),
+                        "upstream tool-call arguments must decode to an object"
+                    );
+                    parsed
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "upstream tool-call arguments must be object or JSON"
+                    ));
+                }
+            };
+            Ok(json!({
+                "id": id,
+                "type": "function",
+                "function": {"name": name, "arguments": arguments},
+            }))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Value::Array)
 }
 
 fn stop_reason(value: &str) -> &'static str {
@@ -1714,8 +2092,8 @@ mod tests {
         let materializer = materializer();
         let payload = json!({
             "messages": [
-                {"role":"user","content":[{"type":"text","text":"hello"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]},
-                {"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},
+                {"role":"user","content":[{"type":"text","text":"hello"},{"type":"image","asset_id":"image-1","media_type":"image/png"}]},
+                {"role":"assistant","content":"","tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":{}}}]},
                 {"role":"tool","tool_call_id":"call-1","content":"done"}
             ],
             "tools": [{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
@@ -1760,7 +2138,7 @@ mod tests {
                 "responses",
                 "model.responses",
                 json!({
-                    "input":[{"type":"message","role":"user","content":"hello"}],
+                    "input":[{"role":"user","content":"hello"}],
                     "instructions":"answer briefly",
                     "generation":{"max_tokens":9}
                 }),
@@ -1861,9 +2239,21 @@ mod tests {
         factory
             .validator()
             .validate_request(&json!({
-                "messages":[{"role":"user","content":"hello"}],
+                "messages":[
+                    {"role":"user","content":[
+                        {"type":"text","text":"hello"},
+                        {"type":"image","asset_id":"image-1","media_type":"image/png","detail":"high"},
+                        {"type":"tool_result","tool_call_id":"call-0","content":{"ok":true}}
+                    ]},
+                    {"role":"assistant","content":"","tool_calls":[{
+                        "id":"call-1","type":"function","function":{"name":"lookup","arguments":{"q":"x"}}
+                    }]}
+                ],
                 "generation":{"max_tokens":8},
-                "parameters":{"seed":7,"reasoning_effort":"low"}
+                "tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
+                "tool_choice":"auto",
+                "response_format":{"type":"json_object"},
+                "parameters":{"seed":7,"reasoning_effort":"low","parallel_tool_calls":true}
             }))
             .unwrap();
         assert!(
@@ -1876,6 +2266,27 @@ mod tests {
                 }))
                 .is_err()
         );
+        assert!(
+            factory
+                .validator()
+                .validate_request(&json!({
+                    "messages":[{"role":"assistant","content":"","tool_calls":[{
+                        "id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}
+                    }]}],
+                    "generation":{"max_tokens":8}
+                }))
+                .is_err()
+        );
+        assert!(
+            factory
+                .validator()
+                .validate_request(&json!({
+                    "messages":[{"role":"user","content":[{"type":"image_url","url":"secret"}]}],
+                    "generation":{"max_tokens":8}
+                }))
+                .is_err()
+        );
+        factory.validator().validate_stream(&Value::Null).unwrap();
         factory
             .validator()
             .validate_response(&json!({
@@ -1896,6 +2307,18 @@ mod tests {
                 }))
                 .is_err()
         );
+        assert!(
+            factory
+                .validator()
+                .validate_response(&json!({
+                    "choices":[{
+                        "message":{"role":"assistant","content":"ok"},
+                        "stop_reason":"provider_specific"
+                    }],
+                    "usage":{}
+                }))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1909,7 +2332,7 @@ mod tests {
                 model_response: crate::scheduled::ModelResponseMetadata {
                     wire_responses: vec![json!({
                         "choices":[
-                            {"message":{"role":"assistant","content":"one"},"finish_reason":"stop","logprobs":{"tokens":[1]}},
+                            {"message":{"role":"assistant","content":"one","tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":"tool_calls","logprobs":{"tokens":[1]}},
                             {"message":{"role":"assistant","content":"two"},"finish_reason":"length","logprobs":null}
                         ],
                         "usage":{"completion_tokens_details":{"reasoning_tokens":2}}
@@ -1924,6 +2347,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(generated.payload["choices"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            generated.payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]["q"],
+            "x"
+        );
+        assert_eq!(generated.payload["choices"][0]["stop_reason"], "tool_calls");
         assert_eq!(generated.payload["choices"][1]["stop_reason"], "max_tokens");
         assert_eq!(generated.payload["usage"]["reasoning_tokens"], 2);
 

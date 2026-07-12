@@ -394,7 +394,7 @@ impl EvaluationWorkloadLimits {
         let requested = plan.queue_credits;
         let ceiling = self.credit_ceiling;
         ensure!(
-            requested.units <= self.unit_concurrency && requested.units <= ceiling.units,
+            requested.units <= ceiling.units,
             "provider requested {} unit credits above the configured ceiling",
             requested.units
         );
@@ -634,6 +634,7 @@ impl EvaluationWorkload {
             .require_scheduled()
             .context("evaluation workload requires a scheduled runtime")?
             .clock();
+        let unit_admission_limit = plan.queue_credits.units.min(self.limits.unit_concurrency);
 
         loop {
             let mut progressed = false;
@@ -685,10 +686,7 @@ impl EvaluationWorkload {
                 }
             }
 
-            let available = plan
-                .queue_credits
-                .units
-                .saturating_sub(state.active_units.len());
+            let available = unit_admission_limit.saturating_sub(state.active_units.len());
             if available > 0 {
                 let ids = pending_units
                     .iter()
@@ -2413,6 +2411,23 @@ mod tests {
             cancellation,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn provider_unit_capacity_may_exceed_authored_admission_concurrency() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (mut provider, _plan_request) = provider_proof_fixture(state);
+        provider.plan.queue_credits.units = 5;
+        let mut ceiling = provider.plan.queue_credits;
+        ceiling.units = 8;
+        let limits = EvaluationWorkloadLimits {
+            unit_concurrency: 1,
+            credit_ceiling: ceiling,
+            unit_page_size: 1,
+            event_batch_size: 8,
+            idle_poll_ns: 1,
+        };
+        limits.accept_plan(&provider.plan).unwrap();
     }
 
     #[test]
