@@ -15,8 +15,10 @@ from aiperf.accuracy.agentic import AgenticModelResult, EventQueue
 from aiperf.accuracy.harbor_agent import (
     AIPerfCallbackLLM,
     AIPerfTerminus2,
-    ModelCallBroker,
     RustInferenceError,
+)
+from aiperf.accuracy.model_broker import (
+    ModelCallBroker,
     register_broker,
     unregister_broker,
 )

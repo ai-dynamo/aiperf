@@ -115,7 +115,7 @@ class HarborHarness(AgenticHarness):
         model_name: str,
         config: dict[str, Any],
     ) -> None:
-        from aiperf.accuracy.harbor_agent import ModelCallBroker, register_broker
+        from aiperf.accuracy.model_broker import ModelCallBroker, register_broker
 
         self._dataset_name = dataset_name
         self._dataset_revision = dataset_revision
@@ -297,7 +297,7 @@ class HarborHarness(AgenticHarness):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._broker.close()
-        from aiperf.accuracy.harbor_agent import unregister_broker
+        from aiperf.accuracy.model_broker import unregister_broker
 
         try:
             unregister_broker(self._broker_id)
