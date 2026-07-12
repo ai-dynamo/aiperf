@@ -34,7 +34,8 @@ use crate::metrics::{NativeMetricsObserver, ObserverTee};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime,
-    TurnDispatchOutcome, TurnDispatcher, TurnLifecycleObserver, TurnRecordProcessor, Workload,
+    TurnDispatchOutcome, TurnDispatcher, TurnLifecycleObserver, TurnRecordProcessor,
+    UserControlSnapshot, Workload,
 };
 use crate::scheduler::LocalTaskScheduler;
 
@@ -385,6 +386,71 @@ pub struct PhasedScheduledRunReport {
     pub reports: Vec<ScheduledPhaseReport>,
 }
 
+enum PendingScheduledPhaseReport {
+    Finalized(Box<ScheduledRunReport>),
+    Deferred {
+        runtime: Rc<ScheduledRuntime>,
+        end_ns: i64,
+        strategy: &'static str,
+        user_control: Option<UserControlSnapshot>,
+    },
+}
+
+impl PendingScheduledPhaseReport {
+    fn finish(self) -> ScheduledRunReport {
+        match self {
+            Self::Finalized(report) => *report,
+            Self::Deferred {
+                runtime,
+                end_ns,
+                strategy,
+                user_control,
+            } => runtime.finish_at(end_ns, strategy, user_control),
+        }
+    }
+}
+
+/// Drained phase runtimes whose aggregate reduction has not run yet.
+///
+/// The value is intentionally `!Send`: it preserves the worker-local
+/// `Rc`/`RefCell` observer graph while allowing an offline driver to leave its
+/// Tokio `LocalSet` before performing metric sweeps and report construction on
+/// the same OS thread.
+pub struct DeferredPhasedScheduledRunReport {
+    phases: Vec<PhaseStats>,
+    order: BTreeMap<String, (usize, PhaseKind)>,
+    reports: Vec<(String, PendingScheduledPhaseReport)>,
+}
+
+impl DeferredPhasedScheduledRunReport {
+    /// Reduce captured observer facts into ordered phase reports.
+    pub fn finish(mut self) -> PhasedScheduledRunReport {
+        self.reports.sort_by_key(|(phase_id, _)| {
+            self.order
+                .get(phase_id)
+                .map(|(index, _)| *index)
+                .unwrap_or(usize::MAX)
+        });
+        let reports = self
+            .reports
+            .into_iter()
+            .map(|(phase_id, report)| ScheduledPhaseReport {
+                kind: self
+                    .order
+                    .get(&phase_id)
+                    .map(|(_, kind)| *kind)
+                    .unwrap_or(PhaseKind::Profiling),
+                phase_id,
+                report: report.finish(),
+            })
+            .collect();
+        PhasedScheduledRunReport {
+            phases: self.phases,
+            reports,
+        }
+    }
+}
+
 /// Phased result plus one compatibility report accumulated directly from the
 /// live observer stream across the complete shared clock/dispatcher lifecycle.
 #[derive(Debug, Serialize)]
@@ -393,6 +459,76 @@ pub struct AggregatedPhasedScheduledRunReport {
     pub phased: PhasedScheduledRunReport,
     /// Whole-run compatibility metrics observed before phase finalization.
     pub performance: loadgen_core::collector::TraceSimulationReport,
+}
+
+/// Drained phased execution plus its still-unreduced whole-run collector.
+pub struct DeferredAggregatedPhasedScheduledRunReport {
+    phased: DeferredPhasedScheduledRunReport,
+    aggregate: Box<dyn DeferredAggregateStrategy>,
+    wall_ms: f64,
+}
+
+impl DeferredAggregatedPhasedScheduledRunReport {
+    /// Finalize phase-local and whole-run collectors after the live runtime has
+    /// been torn down.
+    pub fn finish(self) -> AggregatedPhasedScheduledRunReport {
+        let phased = self.phased.finish();
+        let performance = self.aggregate.finish(&phased, self.wall_ms);
+        AggregatedPhasedScheduledRunReport {
+            phased,
+            performance,
+        }
+    }
+}
+
+trait DeferredAggregateStrategy {
+    fn observer(&self) -> Option<Rc<dyn RequestObserver>>;
+
+    fn finish(
+        self: Box<Self>,
+        phased: &PhasedScheduledRunReport,
+        wall_ms: f64,
+    ) -> loadgen_core::collector::TraceSimulationReport;
+}
+
+struct DedicatedAggregateCollector {
+    collector: Rc<CollectorObserver>,
+}
+
+impl DeferredAggregateStrategy for DedicatedAggregateCollector {
+    fn observer(&self) -> Option<Rc<dyn RequestObserver>> {
+        Some(self.collector.clone())
+    }
+
+    fn finish(
+        self: Box<Self>,
+        _phased: &PhasedScheduledRunReport,
+        wall_ms: f64,
+    ) -> loadgen_core::collector::TraceSimulationReport {
+        self.collector.finish(wall_ms)
+    }
+}
+
+struct SinglePhaseAggregateReuse;
+
+impl DeferredAggregateStrategy for SinglePhaseAggregateReuse {
+    fn observer(&self) -> Option<Rc<dyn RequestObserver>> {
+        None
+    }
+
+    fn finish(
+        self: Box<Self>,
+        phased: &PhasedScheduledRunReport,
+        _wall_ms: f64,
+    ) -> loadgen_core::collector::TraceSimulationReport {
+        phased
+            .reports
+            .first()
+            .expect("single-phase aggregate strategy requires one phase report")
+            .report
+            .performance
+            .clone()
+    }
 }
 
 /// Run scheduled phases while one collector observes every phase on the
@@ -421,6 +557,39 @@ pub async fn run_scheduled_phases_with_aggregate(
     })
 }
 
+/// Run scheduled phases to quiescence while deferring all aggregate reduction.
+///
+/// This is the virtual-time backend boundary: the returned value owns the
+/// drained worker-local observer graph and can be finalized after the DES
+/// `LocalSet` has exited. No request, engine, or clock decision is deferred.
+pub async fn run_scheduled_phases_with_aggregate_deferred(
+    mut plans: Vec<ScheduledPhasePlan>,
+    clock: Rc<dyn aiperf_clock::Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    observer: Rc<dyn PhaseObserver>,
+) -> Result<DeferredAggregatedPhasedScheduledRunReport> {
+    let aggregate: Box<dyn DeferredAggregateStrategy> = if plans.len() == 1 {
+        Box::new(SinglePhaseAggregateReuse)
+    } else {
+        Box::new(DedicatedAggregateCollector {
+            collector: Rc::new(CollectorObserver::new(true)),
+        })
+    };
+    if let Some(observer) = aggregate.observer() {
+        for plan in &mut plans {
+            plan.additional_observers.push(observer.clone());
+        }
+    }
+    let phased = run_scheduled_phases_deferred(plans, clock.clone(), dispatcher, observer).await?;
+    let wall_ms = clock.now_ns().saturating_sub(start_ns) as f64 / 1_000_000.0;
+    Ok(DeferredAggregatedPhasedScheduledRunReport {
+        phased,
+        aggregate,
+        wall_ms,
+    })
+}
+
 /// Run prepared scheduled workloads through the shared phase orchestrator.
 pub async fn run_scheduled_phases(
     plans: Vec<ScheduledPhasePlan>,
@@ -428,6 +597,30 @@ pub async fn run_scheduled_phases(
     dispatcher: Rc<dyn TurnDispatcher>,
     observer: Rc<dyn PhaseObserver>,
 ) -> Result<PhasedScheduledRunReport> {
+    Ok(
+        run_scheduled_phases_inner(plans, clock, dispatcher, observer, false)
+            .await?
+            .finish(),
+    )
+}
+
+/// Run prepared phases to quiescence without reducing their retained metrics.
+pub async fn run_scheduled_phases_deferred(
+    plans: Vec<ScheduledPhasePlan>,
+    clock: Rc<dyn aiperf_clock::Clock>,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    observer: Rc<dyn PhaseObserver>,
+) -> Result<DeferredPhasedScheduledRunReport> {
+    run_scheduled_phases_inner(plans, clock, dispatcher, observer, true).await
+}
+
+async fn run_scheduled_phases_inner(
+    plans: Vec<ScheduledPhasePlan>,
+    clock: Rc<dyn aiperf_clock::Clock>,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    observer: Rc<dyn PhaseObserver>,
+    defer_reports: bool,
+) -> Result<DeferredPhasedScheduledRunReport> {
     let configs = plans
         .iter()
         .map(|plan| plan.config.clone())
@@ -449,6 +642,7 @@ pub async fn run_scheduled_phases(
         ),
         reports: reports.clone(),
         runtimes: RefCell::new(Vec::new()),
+        defer_reports,
     });
     let phase_execution_factory: Rc<dyn PhaseExecutionFactory> = execution_factory.clone();
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
@@ -471,33 +665,21 @@ pub async fn run_scheduled_phases(
         }
     };
 
-    let mut reports = reports.borrow_mut().drain(..).collect::<Vec<_>>();
-    reports.sort_by_key(|(phase_id, _)| {
-        order
-            .get(phase_id)
-            .map(|(index, _)| *index)
-            .unwrap_or(usize::MAX)
-    });
-    let reports = reports
-        .into_iter()
-        .map(|(phase_id, report)| ScheduledPhaseReport {
-            kind: order
-                .get(&phase_id)
-                .map(|(_, kind)| *kind)
-                .unwrap_or(PhaseKind::Profiling),
-            phase_id,
-            report,
-        })
-        .collect();
-    Ok(PhasedScheduledRunReport { phases, reports })
+    let reports = reports.borrow_mut().drain(..).collect::<Vec<_>>();
+    Ok(DeferredPhasedScheduledRunReport {
+        phases,
+        order,
+        reports,
+    })
 }
 
 struct ScheduledPhaseExecutionFactory {
     clock: Rc<dyn aiperf_clock::Clock>,
     dispatcher: Rc<dyn TurnDispatcher>,
     plans: RefCell<BTreeMap<String, ScheduledPhasePlan>>,
-    reports: Rc<RefCell<Vec<(String, ScheduledRunReport)>>>,
+    reports: Rc<RefCell<Vec<(String, PendingScheduledPhaseReport)>>>,
     runtimes: RefCell<Vec<Rc<ScheduledRuntime>>>,
+    defer_reports: bool,
 }
 
 impl ScheduledPhaseExecutionFactory {
@@ -589,6 +771,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             resources: plan.resources,
             sidecars: plan.sidecars,
             reports: self.reports.clone(),
+            defer_report: self.defer_reports,
             finalized: Cell::new(false),
         })
     }
@@ -650,7 +833,8 @@ struct ScheduledPhaseExecution {
     controller: Rc<dyn ScheduledPhaseController>,
     resources: Rc<dyn ScheduledPhaseResources>,
     sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
-    reports: Rc<RefCell<Vec<(String, ScheduledRunReport)>>>,
+    reports: Rc<RefCell<Vec<(String, PendingScheduledPhaseReport)>>>,
+    defer_report: bool,
     finalized: Cell<bool>,
 }
 
@@ -758,6 +942,7 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let sidecars = self.sidecars.clone();
         let clock = self.clock.clone();
         let reports = self.reports.clone();
+        let defer_report = self.defer_report;
         Box::pin(async move {
             runtime.scheduler().wait_idle().await;
             let phase_end_ns = clock.now_ns();
@@ -771,9 +956,17 @@ impl PhaseExecution for ScheduledPhaseExecution {
                     ))
                 })?;
             }
-            reports
-                .borrow_mut()
-                .push((phase_id, runtime.finish(strategy, snapshot)));
+            let report = if defer_report {
+                PendingScheduledPhaseReport::Deferred {
+                    runtime,
+                    end_ns: clock.now_ns(),
+                    strategy,
+                    user_control: snapshot,
+                }
+            } else {
+                PendingScheduledPhaseReport::Finalized(Box::new(runtime.finish(strategy, snapshot)))
+            };
+            reports.borrow_mut().push((phase_id, report));
             Ok(())
         })
     }

@@ -276,7 +276,7 @@ pub enum TelemetryWatchConfigV2 {
         /// Non-empty unique physical source set.
         sources: Vec<TelemetrySourceSpecV2>,
         /// Persistent archive configuration.
-        archive: TelemetryArchiveSpecV2,
+        archive: Box<TelemetryArchiveSpecV2>,
     },
     /// Resume receipt/synchronization work without preparing any source.
     FinalizeRemote {
@@ -327,7 +327,7 @@ impl<'de> Deserialize<'de> for TelemetryWatchConfigV2 {
                     duration_ns: wire.duration_ns,
                     shutdown_timeout_ns: wire.shutdown_timeout_ns,
                     sources: wire.sources,
-                    archive: wire.archive,
+                    archive: Box::new(wire.archive),
                 })
             }
             "finalize_remote" => {
