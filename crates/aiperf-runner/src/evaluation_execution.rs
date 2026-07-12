@@ -717,8 +717,7 @@ mod tests {
         stream.stream_schema_fingerprint = Some("3".repeat(64));
         mismatches.push(stream);
         let mut endpoint_capabilities = matching;
-        endpoint_capabilities.endpoint_capabilities =
-            BTreeSet::from(["model.complete".to_owned()]);
+        endpoint_capabilities.endpoint_capabilities = BTreeSet::from(["embedding".to_owned()]);
         mismatches.push(endpoint_capabilities);
 
         for mismatch in &mismatches {

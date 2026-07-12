@@ -1295,6 +1295,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
             native_report,
             report_facts,
             provenance,
+            report_commit: None,
         })
     }
 }
@@ -1658,6 +1659,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             native_report,
             report_facts,
             provenance,
+            report_commit: None,
         })
     }
 }
