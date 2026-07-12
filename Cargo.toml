@@ -41,12 +41,14 @@ half = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 itoa = "1"
 libc = "0.2"
+libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 llm-tokenizer = "1.4.1"
 petgraph = "0.6"
 parquet = { version = "58.3", default-features = false, features = ["json", "snap", "zstd"] }
 rand = "0.9"
 rand_distr = "0.5"
 rand_pcg = "0.9"
+rayon = "1"
 regex = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
