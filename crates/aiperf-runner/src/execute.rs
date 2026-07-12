@@ -1353,6 +1353,7 @@ async fn execute_native_inner(
             connection_reuse: endpoint_spec.connection_reuse,
             session_header: endpoint_spec.session_header.clone(),
         },
+        prepared_endpoints: None,
     })?;
     let start_ns = clock.now_ns();
     execution_backend.set_run_origin(start_ns)?;

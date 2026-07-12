@@ -12,6 +12,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use aiperf::http::{
@@ -20,6 +21,7 @@ use aiperf::http::{
 };
 use aiperf::multiturn::TurnToSend;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
+use aiperf_endpoints::PreparedEndpointTable;
 use aiperf_metrics::InferenceDimensions;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -47,6 +49,21 @@ pub struct HttpExecutionBackendConfig {
     pub model: String,
     /// Fully resolved transport policy.
     pub transport: TransportSinkConfig,
+    /// Optional worker-local open endpoint preparation.
+    ///
+    /// The factory runs independently on every native worker, preserving the
+    /// same dense-key table contract a future remote placement can implement.
+    pub prepared_endpoints: Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
+}
+
+/// Worker-local prepared endpoint table construction.
+///
+/// Implementations retain registry/factory state only. Each placement worker
+/// calls this seam before accepting commands, so prepared endpoint objects and
+/// credentials never cross a thread or remote execution boundary.
+pub trait HttpPreparedEndpointTableFactory: Send + Sync {
+    /// Build one complete deterministic dense-key table for a worker.
+    fn prepare_worker(&self) -> Result<PreparedEndpointTable>;
 }
 
 /// Composition seam for local, thread-per-core, or remote execution placement.
@@ -74,12 +91,13 @@ impl HttpExecutionBackendFactory for NativeHttpExecutionBackendFactory {
             "HTTP execution workers must be positive"
         );
         if config.workers == 1 {
-            return Ok(Rc::new(TransportSink::new_multi_configured(
+            return Ok(Rc::new(prepare_transport_sink(
                 config.coordinator_clock,
                 0,
                 &config.base_urls,
                 config.model,
                 config.transport,
+                config.prepared_endpoints.as_deref(),
             )?));
         }
         Ok(Rc::new(ThreadPerCoreHttpExecutionBackend::new(config)?))
@@ -224,12 +242,13 @@ impl ThreadPerCoreHttpExecutionBackend {
             config.workers > 1,
             "thread-per-core execution requires at least two workers"
         );
-        let dimension_sink = TransportSink::new_multi_configured(
+        let dimension_sink = prepare_transport_sink(
             config.coordinator_clock.clone(),
             0,
             &config.base_urls,
             config.model.clone(),
             config.transport.clone(),
+            config.prepared_endpoints.as_deref(),
         )?;
         let mut senders = Vec::with_capacity(config.workers);
         let mut threads = Vec::with_capacity(config.workers);
@@ -240,12 +259,19 @@ impl ThreadPerCoreHttpExecutionBackend {
             let base_urls = config.base_urls.clone();
             let model = config.model.clone();
             let transport = config.transport.clone();
+            let prepared_endpoints = config.prepared_endpoints.clone();
             let anchor = config.real_clock_anchor;
             let thread = match std::thread::Builder::new()
                 .name(format!("aiperf-http-{worker_id}"))
                 .spawn(move || {
                     let result = run_worker_thread(
-                        receiver, anchor, base_urls, model, transport, started_tx,
+                        receiver,
+                        anchor,
+                        base_urls,
+                        model,
+                        transport,
+                        prepared_endpoints,
+                        started_tx,
                     );
                     if let Err(error) = &result {
                         tracing::error!(worker_id, error = %error, "HTTP execution worker failed");
@@ -393,6 +419,7 @@ fn run_worker_thread(
     base_urls: Vec<String>,
     model: String,
     transport: TransportSinkConfig,
+    prepared_endpoints: Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
     started: std::sync::mpsc::SyncSender<std::result::Result<(), String>>,
 ) -> Result<()> {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -406,7 +433,14 @@ fn run_worker_thread(
         }
     };
     let clock = RealClock::from_anchor(anchor);
-    let sink = match TransportSink::new_multi_configured(clock, 0, &base_urls, model, transport) {
+    let sink = match prepare_transport_sink(
+        clock,
+        0,
+        &base_urls,
+        model,
+        transport,
+        prepared_endpoints.as_deref(),
+    ) {
         Ok(sink) => Rc::new(sink),
         Err(error) => {
             let _ = started.send(Err(error.to_string()));
@@ -419,6 +453,21 @@ fn run_worker_thread(
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, run_worker(receiver, sink));
     Ok(())
+}
+
+fn prepare_transport_sink(
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    base_urls: &[String],
+    model: String,
+    transport: TransportSinkConfig,
+    prepared_endpoints: Option<&dyn HttpPreparedEndpointTableFactory>,
+) -> Result<TransportSink> {
+    let sink = TransportSink::new_multi_configured(clock, start_ns, base_urls, model, transport)?;
+    match prepared_endpoints {
+        Some(factory) => Ok(sink.with_prepared_endpoints(Rc::new(factory.prepare_worker()?))),
+        None => Ok(sink),
+    }
 }
 
 async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<TransportSink>) {
