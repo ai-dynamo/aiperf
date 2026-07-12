@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
 
+use aiperf_telemetry_archive::CanonicalJsonValue;
 use anyhow::{Result, anyhow};
 use serde_json::value::RawValue;
 
@@ -18,12 +19,14 @@ use crate::registry::{
     ResourceRequirementsV2, RunnerClockKind, RunnerRegistryBuilder, RunnerWorkloadDescriptor,
     RunnerWorkloadFactory, ValidatedWorkloadConfig, WorkloadRequirements,
 };
+use crate::telemetry_archive_components::{
+    ArchiveCollectionPlacement, TelemetryArchiveComponentRegistries,
+    ValidatedTelemetryArchiveCollectComponents, ValidatedTelemetryArchiveSyncComponents,
+};
 use crate::telemetry_source::{
     ArchiveSourceFactoryRegistry, ArchiveSourceValidationContext, ValidatedArchiveSource,
 };
-use crate::telemetry_watch::{
-    TelemetryArchiveSpecV2, TelemetryArchiveSyncSpecV2, TelemetryWatchConfigV2,
-};
+use crate::telemetry_watch::TelemetryWatchConfigV2;
 
 /// Built-in telemetry-watch workload capability facts.
 pub static TELEMETRY_WATCH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
@@ -39,12 +42,16 @@ pub static TELEMETRY_WATCH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
 pub struct ValidatedTelemetrySourceV2 {
     /// Stable physical source identity.
     pub id: String,
+    /// Frozen source-factory wire ID.
+    pub source_type: String,
     /// Positive fixed-deadline cadence.
     pub interval_ns: i64,
     /// Positive per-call lifetime.
     pub request_timeout_ns: i64,
     /// Static additive attributes.
     pub attributes: BTreeMap<String, String>,
+    /// Factory-produced canonical persistent source configuration.
+    pub persistent_identity: CanonicalJsonValue,
     /// Factory-owned validated source ready for preparation.
     pub prepared: Box<dyn ValidatedArchiveSource>,
 }
@@ -54,9 +61,11 @@ impl Debug for ValidatedTelemetrySourceV2 {
         formatter
             .debug_struct("ValidatedTelemetrySourceV2")
             .field("id", &self.id)
+            .field("source_type", &self.source_type)
             .field("interval_ns", &self.interval_ns)
             .field("request_timeout_ns", &self.request_timeout_ns)
             .field("attributes", &self.attributes)
+            .field("persistent_identity", &self.persistent_identity)
             .field("prepared", &self.prepared)
             .finish()
     }
@@ -73,15 +82,15 @@ pub enum ValidatedTelemetryWatchWorkloadV2 {
         shutdown_timeout_ns: i64,
         /// Non-empty physical source set in authored order.
         sources: Vec<ValidatedTelemetrySourceV2>,
-        /// Common strict archive configuration.
-        archive: Box<TelemetryArchiveSpecV2>,
+        /// Strictly selected persistent archive component graph.
+        archive: ValidatedTelemetryArchiveCollectComponents,
     },
     /// Source-free receipt/publication completion.
     FinalizeRemote {
         /// Positive sync/finalization budget.
         shutdown_timeout_ns: i64,
-        /// Strict selectors checked against durable genesis.
-        archive: TelemetryArchiveSyncSpecV2,
+        /// Strict source-free selectors checked against durable genesis.
+        archive: ValidatedTelemetryArchiveSyncComponents,
     },
 }
 
@@ -97,19 +106,29 @@ impl ValidatedTelemetryWatchWorkloadV2 {
 #[derive(Clone, Debug)]
 pub struct TelemetryWatchWorkloadFactoryV2 {
     sources: ArchiveSourceFactoryRegistry,
+    archive_components: TelemetryArchiveComponentRegistries,
 }
 
 impl TelemetryWatchWorkloadFactoryV2 {
     /// Build from an explicitly composed source registry.
     #[must_use]
-    pub fn new(sources: ArchiveSourceFactoryRegistry) -> Self {
-        Self { sources }
+    pub fn new(
+        sources: ArchiveSourceFactoryRegistry,
+        archive_components: TelemetryArchiveComponentRegistries,
+    ) -> Self {
+        Self {
+            sources,
+            archive_components,
+        }
     }
 
     /// Stock factory linked into the native runner distribution.
     #[must_use]
     pub fn stock() -> Self {
-        Self::new(ArchiveSourceFactoryRegistry::stock())
+        Self::new(
+            ArchiveSourceFactoryRegistry::stock(),
+            TelemetryArchiveComponentRegistries::stock(),
+        )
     }
 }
 
@@ -138,14 +157,20 @@ impl RunnerWorkloadFactory for TelemetryWatchWorkloadFactoryV2 {
                             request_timeout_ns: source.request_timeout_ns,
                         },
                     )?;
+                    let persistent_identity = prepared.persistent_identity().clone();
                     validated.push(ValidatedTelemetrySourceV2 {
                         id: source.id,
+                        source_type: source.source_type.into_string(),
                         interval_ns: source.interval_ns,
                         request_timeout_ns: source.request_timeout_ns,
                         attributes: source.attributes,
+                        persistent_identity,
                         prepared,
                     });
                 }
+                let archive = self
+                    .archive_components
+                    .validate_collect(*archive, ArchiveCollectionPlacement::StandalonePrimary)?;
                 Ok(Box::new(ValidatedTelemetryWatchWorkloadV2::Collect {
                     duration_ns,
                     shutdown_timeout_ns,
@@ -156,12 +181,15 @@ impl RunnerWorkloadFactory for TelemetryWatchWorkloadFactoryV2 {
             TelemetryWatchConfigV2::FinalizeRemote {
                 shutdown_timeout_ns,
                 archive,
-            } => Ok(Box::new(
-                ValidatedTelemetryWatchWorkloadV2::FinalizeRemote {
-                    shutdown_timeout_ns,
-                    archive,
-                },
-            )),
+            } => {
+                let archive = self.archive_components.validate_sync(archive)?;
+                Ok(Box::new(
+                    ValidatedTelemetryWatchWorkloadV2::FinalizeRemote {
+                        shutdown_timeout_ns,
+                        archive,
+                    },
+                ))
+            }
         }
     }
 
@@ -211,7 +239,7 @@ mod tests {
             "rotation": {"type": "rows_bytes_age", "config": {}},
             "admission": {"type": "primary_durable", "config": {}},
             "recovery": {"type": "create_new", "config": {}},
-            "archive_key": {"type": "test_key", "config": {}},
+            "archive_key": {"type": "secret_provider", "config": {"id": "archive-identity"}},
             "raw_body": {"type": "none", "config": {}}
         })
     }
@@ -263,7 +291,7 @@ mod tests {
                 "local_spool": "/tmp/aiperf-watch-spool",
                 "store_access": {"type": "local_filesystem", "config": {}},
                 "recovery": {"type": "finalize_remote", "config": {}},
-                "archive_key": {"type": "test_key", "config": {}}
+                "archive_key": {"type": "secret_provider", "config": {"id": "archive-identity"}}
             }
         }));
         let finalize = factory.validate(&finalize).unwrap();

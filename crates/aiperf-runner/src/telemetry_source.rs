@@ -28,7 +28,8 @@ use url::Url;
 
 use crate::control_plane_http::{
     ControlPlaneCredentialReference, ControlPlaneHttp, ControlPlaneHttpErrorKind,
-    ControlPlaneHttpProvider, ControlPlaneRequest, ValidatedControlPlaneProfile,
+    ControlPlaneHttpProvider, ControlPlaneRequest, ControlPlaneTlsReference,
+    ValidatedControlPlaneProfile,
 };
 
 /// Stable factory capability facts.
@@ -84,6 +85,19 @@ impl Debug for ArchiveSourcePrepareContext {
 pub trait ValidatedArchiveSource: Debug + Send + Sync {
     /// Factory-produced canonical persistent source identity with defaults explicit.
     fn persistent_identity(&self) -> &CanonicalJsonValue;
+
+    /// Worst-case exact content-encoded entity bytes accepted from this source.
+    ///
+    /// Archive admission uses this static side-effect-free bound before source
+    /// preparation so an accepted projection cannot outgrow its reserved input
+    /// footprint.
+    fn maximum_encoded_entity_bytes(&self) -> usize;
+
+    /// Worst-case exact content-decoded entity bytes produced by this source.
+    ///
+    /// This remains independent from the encoded bound because compressed
+    /// sources reserve both representations through decode and raw projection.
+    fn maximum_decoded_entity_bytes(&self) -> usize;
 
     /// Prepare the complete already-typed driver without a concrete downcast.
     fn prepare(
@@ -348,12 +362,6 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
                 "prometheus_http content decoding: {error}"
             ))
         })?;
-        if config.tls.trust_provider.is_some() || config.tls.mtls_provider.is_some() {
-            return Err(ArchiveSourceFactoryError::InvalidConfig(
-                "this runner distribution does not provide custom telemetry TLS material"
-                    .to_owned(),
-            ));
-        }
         let persistent_identity =
             CanonicalJsonValue::parse(&serde_json::to_vec(&config).map_err(|error| {
                 ArchiveSourceFactoryError::InvalidConfig(format!(
@@ -369,6 +377,10 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
             ControlPlaneCredentialReference::None,
             ControlPlaneCredentialReference::BearerProvider,
         );
+        let tls = ControlPlaneTlsReference {
+            trust_provider: config.tls.trust_provider.clone(),
+            mtls_provider: config.tls.mtls_provider.clone(),
+        };
         let mut client = ClientConfig {
             connect_timeout_ns: Some(config.connect_timeout_ns),
             request_timeout_ns: None,
@@ -389,6 +401,7 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
             url,
             client,
             credential,
+            tls,
             formats
                 .into_iter()
                 .map(|format| format.media_type().to_owned())
@@ -421,6 +434,14 @@ struct ValidatedPrometheusArchiveSource {
 impl ValidatedArchiveSource for ValidatedPrometheusArchiveSource {
     fn persistent_identity(&self) -> &CanonicalJsonValue {
         &self.persistent_identity
+    }
+
+    fn maximum_encoded_entity_bytes(&self) -> usize {
+        self.entity_policy.limits().max_encoded_bytes
+    }
+
+    fn maximum_decoded_entity_bytes(&self) -> usize {
+        self.entity_policy.limits().max_decoded_bytes
     }
 
     fn prepare(
@@ -673,6 +694,8 @@ mod tests {
             .unwrap();
         let persistent = String::from_utf8(validated.persistent_identity().to_bytes()).unwrap();
         assert!(persistent.contains("\"accepted_content_encodings\":[\"gzip\",\"identity\"]"));
+        assert_eq!(validated.maximum_encoded_entity_bytes(), 1024);
+        assert_eq!(validated.maximum_decoded_entity_bytes(), 4096);
         assert_eq!(
             registry
                 .descriptors()
@@ -706,6 +729,24 @@ mod tests {
                 )
                 .is_err()
         );
+
+        for (field, value) in [("redirects", "same_origin"), ("proxy", "ambient")] {
+            let mut unsafe_policy: serde_json::Value =
+                serde_json::from_str(config().get()).unwrap();
+            unsafe_policy[field] = json!(value);
+            assert!(
+                registry
+                    .validate(
+                        "prometheus_http",
+                        &raw(unsafe_policy),
+                        ArchiveSourceValidationContext {
+                            request_timeout_ns: 2_000_000,
+                        },
+                    )
+                    .is_err(),
+                "unsafe {field} policy unexpectedly validated"
+            );
+        }
 
         let mut too_slow: serde_json::Value = serde_json::from_str(config().get()).unwrap();
         too_slow["connect_timeout_ns"] = json!(3_000_000);
@@ -780,6 +821,59 @@ mod tests {
                     },
                 )
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn tls_and_mtls_provider_ids_are_validated_without_resolving_material() {
+        let registry = ArchiveSourceFactoryRegistry::stock();
+        let mut secure: serde_json::Value = serde_json::from_str(config().get()).unwrap();
+        secure["url"] = json!("https://node-a.example.test/metrics");
+        secure["credential_provider"] = json!("node-metrics");
+        secure["tls"] = json!({
+            "trust_provider": "cluster-ca",
+            "mtls_provider": "node-client"
+        });
+        let validated = registry
+            .validate(
+                "prometheus_http",
+                &raw(secure),
+                ArchiveSourceValidationContext {
+                    request_timeout_ns: 2_000_000,
+                },
+            )
+            .unwrap();
+        let identity = String::from_utf8(validated.persistent_identity().to_bytes()).unwrap();
+        assert!(identity.contains("\"trust_provider\":\"cluster-ca\""));
+        assert!(identity.contains("\"mtls_provider\":\"node-client\""));
+
+        let mut cleartext: serde_json::Value = serde_json::from_str(config().get()).unwrap();
+        cleartext["tls"] = json!({"trust_provider": "cluster-ca", "mtls_provider": null});
+        assert!(
+            registry
+                .validate(
+                    "prometheus_http",
+                    &raw(cleartext),
+                    ArchiveSourceValidationContext {
+                        request_timeout_ns: 2_000_000,
+                    },
+                )
+                .is_err()
+        );
+
+        let mut invalid: serde_json::Value = serde_json::from_str(config().get()).unwrap();
+        invalid["url"] = json!("https://node-a.example.test/metrics");
+        invalid["tls"] = json!({"trust_provider": " padded ", "mtls_provider": null});
+        assert!(
+            registry
+                .validate(
+                    "prometheus_http",
+                    &raw(invalid),
+                    ArchiveSourceValidationContext {
+                        request_timeout_ns: 2_000_000,
+                    },
+                )
+                .is_err()
         );
     }
 }

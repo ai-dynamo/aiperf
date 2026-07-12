@@ -5,7 +5,7 @@
 //!
 //! This module is deliberately source-implementation agnostic. Sidecar
 //! factories prepare each physical telemetry source exactly once, then expose
-//! its one run-owned driver through [`RunOwnedTelemetryDriver`]. The bridge
+//! its canonical run-owned [`RunningTelemetryDriver`] handle. The bridge
 //! owns phase membership, atomically sealed source-cardinal boundary plans,
 //! synchronous native-first fanout, nonblocking archive admission, visible
 //! loss, lifecycle observation, and archive-independent native parity facts.
@@ -15,14 +15,17 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::future::Future;
-use std::pin::Pin;
 use std::rc::Rc;
 
+use aiperf_telemetry_archive::driver::RunningTelemetryDriver;
+pub use aiperf_telemetry_archive::driver::{
+    BoundaryAttemptCompletion as SourceBoundaryResult,
+    BoundaryAttemptTerminal as SourceBoundaryTerminal,
+};
 use aiperf_telemetry_archive::{
     AdmissionRejection, BoundaryCapturePlan, BoundaryPlanError, BoundaryPlanRegistry,
-    BoundaryReference, BoundaryRole, CanonicalJsonValue, Digest, LossKindV1, LossReasonV1,
-    SourceBoundarySnapshotCommand, domain_digest,
+    BoundaryReference, BoundaryRole, CanonicalJsonValue, Digest, SourceBoundarySnapshotCommand,
+    domain_digest,
 };
 use aiperf_timing::{
     PhaseBranchStats, PhaseCompletionReason, PhaseConfig, PhaseObserver, PhaseStats,
@@ -30,78 +33,13 @@ use aiperf_timing::{
 
 use crate::telemetry_archive_owner::ArchiveLifecycleObservation;
 
-/// LocalSet-compatible future returned by a run-owned source driver.
-pub type LocalBoundaryFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
-
-/// One terminal outcome for every reference in a source boundary command.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceBoundaryTerminal {
-    /// One physical attempt satisfied every structured reference.
-    Attempt {
-        /// Per-source sequence assigned to the physical attempt.
-        source_record_seq: u64,
-        /// Per-source network sequence when IO began.
-        request_attempt_seq: Option<u64>,
-        /// Complete references copied from the sealed source command.
-        boundary_refs: Vec<BoundaryReference>,
-    },
-    /// One exact loss row closed every structured reference.
-    Loss {
-        /// Closed archive loss class.
-        loss_kind: LossKindV1,
-        /// Closed reason paired with the loss class.
-        reason: LossReasonV1,
-        /// Complete references copied from the sealed source command.
-        boundary_refs: Vec<BoundaryReference>,
-    },
-}
-
-impl SourceBoundaryTerminal {
-    fn boundary_refs(&self) -> &[BoundaryReference] {
-        match self {
-            Self::Attempt { boundary_refs, .. } | Self::Loss { boundary_refs, .. } => boundary_refs,
-        }
-    }
-}
-
-/// Source-scoped result returned only after a planned capture is terminal.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceBoundaryResult {
-    /// Stable physical source identity.
-    pub source_id: String,
-    /// Stable adjacent-phase transition identity.
-    pub transition_id: String,
-    /// Exactly one attempt-or-loss terminal result.
-    pub terminal: SourceBoundaryTerminal,
-}
-
-/// One already prepared physical source driver shared by every phase.
-///
-/// `submit_boundary` must only enqueue into capacity reserved during source
-/// preparation. The returned future waits for the exact attempt-or-loss result;
-/// submission itself must not block and must never start another physical
-/// source. Phase membership is captured by the driver at each snapshot instant.
-pub trait RunOwnedTelemetryDriver: Debug {
-    /// Stable prepared source ID used by attachment resolution.
-    fn source_id(&self) -> &str;
-
-    /// Add or remove one active phase from future continuous snapshot membership.
-    fn set_phase_active(&self, phase_id: &str, active: bool) -> Result<(), AttachedTelemetryError>;
-
-    /// Submit one command that was already validated in a complete sealed plan.
-    fn submit_boundary(
-        &self,
-        command: SourceBoundarySnapshotCommand,
-    ) -> LocalBoundaryFuture<Result<SourceBoundaryResult, AttachedTelemetryError>>;
-}
-
 /// Run-owned source inventory and attached boundary coordinator.
 ///
 /// The inventory may contain sources that feed native metrics without archival.
 /// `archived_source_ids` selects an exact non-empty subset and never carries
 /// source configuration, so attaching an archive cannot duplicate physical IO.
 pub struct AttachedTelemetryRuntime {
-    drivers: BTreeMap<String, Rc<dyn RunOwnedTelemetryDriver>>,
+    drivers: BTreeMap<String, Rc<dyn RunningTelemetryDriver>>,
     archived_source_ids: BTreeSet<String>,
     boundary_registry: RefCell<BoundaryPlanRegistry>,
     active_phases: RefCell<BTreeSet<String>>,
@@ -110,7 +48,7 @@ pub struct AttachedTelemetryRuntime {
 impl AttachedTelemetryRuntime {
     /// Resolve an attachment against already prepared unique physical sources.
     pub fn new(
-        drivers: impl IntoIterator<Item = Rc<dyn RunOwnedTelemetryDriver>>,
+        drivers: impl IntoIterator<Item = Rc<dyn RunningTelemetryDriver>>,
         archived_source_ids: impl IntoIterator<Item = String>,
     ) -> Result<Self, AttachedTelemetryError> {
         let mut by_id = BTreeMap::new();
@@ -299,13 +237,17 @@ impl AttachedTelemetryRuntime {
                 .get(&command.source_id)
                 .expect("sealed boundary plans contain only prepared sources");
             let expected = command.clone();
-            let future = driver.submit_boundary(command);
+            let future = driver
+                .submit_boundary(command)
+                .map_err(|error| AttachedTelemetryError::Component(error.to_string()))?;
             pending.push((expected, future));
         }
 
         let mut results = Vec::with_capacity(pending.len());
         for (expected, future) in pending {
-            let result = future.await?;
+            let result = future
+                .await
+                .map_err(|error| AttachedTelemetryError::Component(error.to_string()))?;
             validate_boundary_result(&transition_id, &expected, &result)?;
             results.push(result);
         }
@@ -361,7 +303,9 @@ impl AttachedTelemetryRuntime {
         active: bool,
     ) -> Result<(), AttachedTelemetryError> {
         for driver in self.drivers.values() {
-            driver.set_phase_active(phase_id, active)?;
+            driver
+                .set_phase_active(phase_id, active)
+                .map_err(|error| AttachedTelemetryError::Component(error.to_string()))?;
         }
         Ok(())
     }
@@ -1194,16 +1138,14 @@ fn validate_boundary_result(
             result.transition_id, result.source_id, transition_id, command.source_id
         )));
     }
-    if result.terminal.boundary_refs() != command.subscribers {
+    if terminal_boundary_refs(&result.terminal) != command.subscribers {
         return Err(AttachedTelemetryError::BoundaryResultMismatch(format!(
             "driver changed structured references for source {:?}",
             command.source_id
         )));
     }
-    if let SourceBoundaryTerminal::Loss {
-        loss_kind, reason, ..
-    } = &result.terminal
-        && loss_kind.reason() != *reason
+    if let SourceBoundaryTerminal::Loss { kind, reason, .. } = &result.terminal
+        && kind.reason() != *reason
     {
         return Err(AttachedTelemetryError::BoundaryResultMismatch(format!(
             "driver returned incompatible loss kind/reason for source {:?}",
@@ -1211,6 +1153,13 @@ fn validate_boundary_result(
         )));
     }
     Ok(())
+}
+
+fn terminal_boundary_refs(terminal: &SourceBoundaryTerminal) -> &[BoundaryReference] {
+    match terminal {
+        SourceBoundaryTerminal::Attempt { boundary_refs, .. }
+        | SourceBoundaryTerminal::Loss { boundary_refs, .. } => boundary_refs,
+    }
 }
 
 fn lifecycle_completion_reason(
@@ -1516,7 +1465,8 @@ mod tests {
         }
     }
 
-    impl RunOwnedTelemetryDriver for FakeDriver {
+    #[async_trait::async_trait(?Send)]
+    impl RunningTelemetryDriver for FakeDriver {
         fn source_id(&self) -> &str {
             &self.source_id
         }
@@ -1525,7 +1475,7 @@ mod tests {
             &self,
             phase_id: &str,
             active: bool,
-        ) -> Result<(), AttachedTelemetryError> {
+        ) -> Result<(), aiperf_telemetry_archive::driver::DriverCommandError> {
             if active {
                 self.active.borrow_mut().insert(phase_id.to_owned());
             } else {
@@ -1537,11 +1487,16 @@ mod tests {
         fn submit_boundary(
             &self,
             command: SourceBoundarySnapshotCommand,
-        ) -> LocalBoundaryFuture<Result<SourceBoundaryResult, AttachedTelemetryError>> {
+        ) -> Result<
+            aiperf_telemetry_archive::driver::LocalDriverFuture<
+                Result<SourceBoundaryResult, aiperf_telemetry_archive::driver::DriverStopError>,
+            >,
+            aiperf_telemetry_archive::driver::DriverCommandError,
+        > {
             self.submissions
                 .borrow_mut()
                 .push(command.source_id.clone());
-            Box::pin(async move {
+            Ok(Box::pin(async move {
                 Ok(SourceBoundaryResult {
                     source_id: command.source_id,
                     transition_id: command.subscribers[0].transition_id.clone(),
@@ -1551,13 +1506,24 @@ mod tests {
                         boundary_refs: command.subscribers,
                     },
                 })
-            })
+            }))
+        }
+
+        fn stop(&self, _shutdown_deadline_ns: i64) {}
+
+        async fn join(
+            &self,
+        ) -> Result<
+            aiperf_telemetry_archive::driver::TelemetryDriverSummary,
+            aiperf_telemetry_archive::driver::DriverStopError,
+        > {
+            Ok(aiperf_telemetry_archive::driver::TelemetryDriverSummary::default())
         }
     }
 
     fn runtime() -> Rc<AttachedTelemetryRuntime> {
         let submissions = Rc::new(RefCell::new(Vec::new()));
-        let drivers: Vec<Rc<dyn RunOwnedTelemetryDriver>> = vec![
+        let drivers: Vec<Rc<dyn RunningTelemetryDriver>> = vec![
             Rc::new(FakeDriver::new("node-b", submissions.clone())),
             Rc::new(FakeDriver::new("node-a", submissions)),
         ];
@@ -1606,7 +1572,7 @@ mod tests {
     #[test]
     fn attachment_resolves_only_existing_unique_physical_sources() {
         let submissions = Rc::new(RefCell::new(Vec::new()));
-        let drivers: Vec<Rc<dyn RunOwnedTelemetryDriver>> =
+        let drivers: Vec<Rc<dyn RunningTelemetryDriver>> =
             vec![Rc::new(FakeDriver::new("node-a", submissions))];
         assert!(matches!(
             AttachedTelemetryRuntime::new(drivers.clone(), Vec::new()),
