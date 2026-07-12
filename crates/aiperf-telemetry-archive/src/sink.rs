@@ -1816,6 +1816,7 @@ mod tests {
             archive_id: archive(),
             canonical_spool_id: Digest::from_bytes([1; 32]),
             archive_identity_digest: Digest::from_bytes([2; 32]),
+            archive_target_digest: crate::manifest::archive_target_digest("file:///archive/"),
             archive_key_digest: Digest::from_bytes([3; 32]),
             writer_compatibility_id: Digest::from_bytes([4; 32]),
             runner_distribution_id: Digest::from_bytes([5; 32]),

@@ -9,6 +9,7 @@
 
 use std::fmt::{self, Debug, Display, Formatter};
 
+use crate::sync::WriterClaimId;
 use crate::{ArchiveId, ArchiveState, Digest, SessionId};
 
 /// Current whole-frame state of one open WAL or physical partition segment.
@@ -306,6 +307,11 @@ pub trait ArchiveRecoveryPolicy: Debug + Send {
         local: &LocalArchiveState,
         remote: Option<&RemoteArchiveState>,
     ) -> Result<RecoveryPlan, ArchiveRecoveryError>;
+
+    /// Returns the explicitly authored crashed claim required for exact takeover.
+    fn prior_writer_claim_id(&self) -> Option<WriterClaimId> {
+        None
+    }
 }
 
 /// Allows creation only when both local and remote discovery are absent.
@@ -333,6 +339,7 @@ impl ArchiveRecoveryPolicy for CreateNewRecoveryPolicy {
 pub struct ExactResumeRecoveryPolicy {
     expected_archive_id: ArchiveId,
     expected_persistent_identity_digest: Digest,
+    prior_writer_claim_id: WriterClaimId,
 }
 
 impl ExactResumeRecoveryPolicy {
@@ -341,10 +348,12 @@ impl ExactResumeRecoveryPolicy {
     pub const fn new(
         expected_archive_id: ArchiveId,
         expected_persistent_identity_digest: Digest,
+        prior_writer_claim_id: WriterClaimId,
     ) -> Self {
         Self {
             expected_archive_id,
             expected_persistent_identity_digest,
+            prior_writer_claim_id,
         }
     }
 }
@@ -395,6 +404,10 @@ impl ArchiveRecoveryPolicy for ExactResumeRecoveryPolicy {
             });
         }
         Err(ArchiveRecoveryError::DivergentHeads)
+    }
+
+    fn prior_writer_claim_id(&self) -> Option<WriterClaimId> {
+        Some(self.prior_writer_claim_id)
     }
 }
 
@@ -517,7 +530,9 @@ mod tests {
             session_id: None,
             next_record_seq: 9,
         };
-        let policy = ExactResumeRecoveryPolicy::new(archive(), identity);
+        let prior_claim = WriterClaimId::from_digest(Digest::from_bytes([5; 32]));
+        let policy = ExactResumeRecoveryPolicy::new(archive(), identity, prior_claim);
+        assert_eq!(policy.prior_writer_claim_id(), Some(prior_claim));
         assert_eq!(
             policy.recover(&local, None).unwrap(),
             RecoveryPlan::ResumeLocal {

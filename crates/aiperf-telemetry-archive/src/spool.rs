@@ -479,6 +479,8 @@ pub struct RecoveryExpectation {
     pub canonical_spool_id: Digest,
     /// Persistent collection/writer identity digest.
     pub archive_identity_digest: Digest,
+    /// Credential-free normalized archive target digest.
+    pub archive_target_digest: Digest,
     /// Archive-key provider digest.
     pub archive_key_digest: Digest,
     /// Writer compatibility ID.
@@ -493,6 +495,7 @@ impl RecoveryExpectation {
             archive_id: genesis.archive_id,
             canonical_spool_id: genesis.canonical_spool_id,
             archive_identity_digest: genesis.archive_identity_digest,
+            archive_target_digest: genesis.archive_target_digest,
             archive_key_digest: genesis.archive_key_digest,
             writer_compatibility_id: genesis.writer_compatibility_id,
         }
@@ -583,7 +586,12 @@ impl LocalArchiveRepository {
         expectation: RecoveryExpectation,
         faults: &dyn DurabilityFaultInjector,
     ) -> Result<Self, SpoolError> {
-        let repository = Self::recover_existing(spool, expectation.archive_id, faults)?;
+        let repository = Self::recover_existing(
+            spool,
+            expectation.archive_id,
+            expectation.archive_target_digest,
+            faults,
+        )?;
         verify_expectation(&repository.genesis, expectation)?;
         Ok(repository)
     }
@@ -598,6 +606,7 @@ impl LocalArchiveRepository {
     pub fn recover_existing(
         spool: QualifiedSpool,
         expected_archive_id: ArchiveId,
+        expected_archive_target_digest: Digest,
         faults: &dyn DurabilityFaultInjector,
     ) -> Result<Self, SpoolError> {
         let spool = Arc::new(spool);
@@ -637,6 +646,9 @@ impl LocalArchiveRepository {
         };
         if verified.genesis.archive_id != expected_archive_id {
             return Err(SpoolError::IdentityMismatch("archive ID"));
+        }
+        if verified.genesis.archive_target_digest != expected_archive_target_digest {
+            return Err(SpoolError::IdentityMismatch("archive target digest"));
         }
         Ok(Self {
             spool,
@@ -1831,6 +1843,9 @@ fn verify_expectation(
     if genesis.archive_identity_digest != expectation.archive_identity_digest {
         return Err(SpoolError::IdentityMismatch("archive identity digest"));
     }
+    if genesis.archive_target_digest != expectation.archive_target_digest {
+        return Err(SpoolError::IdentityMismatch("archive target digest"));
+    }
     if genesis.archive_key_digest != expectation.archive_key_digest {
         return Err(SpoolError::IdentityMismatch("archive key digest"));
     }
@@ -2085,6 +2100,7 @@ mod tests {
             archive_id: archive(),
             canonical_spool_id: Digest::from_bytes([1; 32]),
             archive_identity_digest: Digest::from_bytes([2; 32]),
+            archive_target_digest: crate::manifest::archive_target_digest("file:///archive/"),
             archive_key_digest: Digest::from_bytes([3; 32]),
             writer_compatibility_id: Digest::from_bytes([4; 32]),
             runner_distribution_id: Digest::from_bytes([5; 32]),
@@ -2381,13 +2397,14 @@ mod tests {
     }
 
     #[test]
-    fn source_free_recovery_discovers_genesis_identity_but_pins_archive_id() {
+    fn source_free_recovery_pins_archive_and_normalized_target_identity() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("spool");
         drop(create(&path));
         let recovered = LocalArchiveRepository::recover_existing(
             QualifiedSpool::open(&path).unwrap(),
             archive(),
+            crate::manifest::archive_target_digest("file:///archive/"),
             &NoDurabilityFaults,
         )
         .unwrap();
@@ -2399,9 +2416,19 @@ mod tests {
             LocalArchiveRepository::recover_existing(
                 QualifiedSpool::open(&path).unwrap(),
                 other_archive,
+                crate::manifest::archive_target_digest("file:///archive/"),
                 &NoDurabilityFaults,
             ),
             Err(SpoolError::IdentityMismatch("archive ID"))
+        ));
+        assert!(matches!(
+            LocalArchiveRepository::recover_existing(
+                QualifiedSpool::open(&path).unwrap(),
+                archive(),
+                crate::manifest::archive_target_digest("s3://other/archive/"),
+                &NoDurabilityFaults,
+            ),
+            Err(SpoolError::IdentityMismatch("archive target digest"))
         ));
     }
 

@@ -15,6 +15,15 @@ const ENVELOPE_MAGIC: &str = "aiperf.archive.envelope.v1";
 const GENERATION_TYPE: &str = "manifest-generation";
 const LOCAL_LATEST_TYPE: &str = "local-latest";
 
+/// Derives the credential-free persistent identity of one normalized archive target.
+#[must_use]
+pub fn archive_target_digest(normalized_target: &str) -> Digest {
+    domain_digest(
+        "aiperf.archive.normalized-target.v1",
+        &[normalized_target.as_bytes()],
+    )
+}
+
 /// Real or virtual Clock domain recorded by one collection session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimeDomain {
@@ -134,6 +143,8 @@ pub struct GenesisV1 {
     pub canonical_spool_id: Digest,
     /// Digest of every persistent collection/writer policy input.
     pub archive_identity_digest: Digest,
+    /// Digest of the credential-free normalized archive target bytes.
+    pub archive_target_digest: Digest,
     /// Digest identifying the archive-key provider/key derivation authority.
     pub archive_key_digest: Digest,
     /// Frozen writer compatibility ID.
@@ -184,6 +195,10 @@ impl GenesisV1 {
                 string(self.archive_key_digest.to_hex()),
             ),
             (
+                "archive_target_digest",
+                string(self.archive_target_digest.to_hex()),
+            ),
+            (
                 "canonical_spool_id",
                 string(self.canonical_spool_id.to_hex()),
             ),
@@ -218,6 +233,7 @@ impl GenesisV1 {
             archive_id,
             canonical_spool_id: digest(object, "canonical_spool_id")?,
             archive_identity_digest: digest(object, "archive_identity_digest")?,
+            archive_target_digest: digest(object, "archive_target_digest")?,
             archive_key_digest: digest(object, "archive_key_digest")?,
             writer_compatibility_id: digest(object, "writer_compatibility_id")?,
             runner_distribution_id: digest(object, "runner_distribution_id")?,
@@ -234,6 +250,9 @@ impl GenesisV1 {
             epoch_anchor: parse_epoch_anchor(object.get("epoch_anchor"))?,
         };
         genesis.validate()?;
+        if genesis.to_value()? != *value {
+            return Err(ManifestError::InvalidField("genesis fields"));
+        }
         Ok(genesis)
     }
 }
@@ -786,13 +805,13 @@ impl LocalLatestV1 {
     /// Decodes and verifies the exact canonical pointer envelope.
     pub fn decode(bytes: &[u8]) -> Result<Self, ManifestError> {
         let payload = decode_envelope(LOCAL_LATEST_TYPE, bytes)?;
-        let object = as_object(&payload, "local latest")?;
+        let fields = as_object(&payload, "local latest")?;
         let current = HeadDescriptorV1::from_value(
-            object
+            fields
                 .get("current")
                 .ok_or(ManifestError::InvalidField("current"))?,
         )?;
-        let preceding = match object.get("preceding") {
+        let preceding = match fields.get("preceding") {
             Some(CanonicalJsonValue::Null) => None,
             Some(value) => Some(HeadDescriptorV1::from_value(value)?),
             None => return Err(ManifestError::InvalidField("preceding")),
@@ -1211,6 +1230,7 @@ mod tests {
                 archive_id: archive(),
                 canonical_spool_id: Digest::from_bytes([1; 32]),
                 archive_identity_digest: Digest::from_bytes([2; 32]),
+                archive_target_digest: archive_target_digest("file:///archive/"),
                 archive_key_digest: Digest::from_bytes([3; 32]),
                 writer_compatibility_id: Digest::from_bytes([4; 32]),
                 runner_distribution_id: Digest::from_bytes([5; 32]),
@@ -1240,11 +1260,11 @@ mod tests {
         let head = HeadDescriptorV1::from_generation(&object).unwrap();
         assert_eq!(
             object.hash.to_hex(),
-            "753973287c188274480a0bf148d966ef0936b1c80d6d419fc92dc623a2734453"
+            "899a19c087fc7b3104522099f72318ff345e391bf07fc32aacddd4d91424690f"
         );
         assert_eq!(
             head.hash().to_hex(),
-            "d185167ed74f3ce8b3a611872d730e34812a84e4f6834a1e46092e6bed3031af"
+            "e9675eb5ab0b7d7cde25a987a655fd6946c454a36b88e7d979635676bfba6443"
         );
         assert_eq!(head.next_record_seq, 0);
         assert_eq!(head.active_wal_segment_id, None);

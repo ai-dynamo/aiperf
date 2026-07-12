@@ -15,6 +15,7 @@ use std::env;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::Arc;
 
+use aiperf_telemetry_archive::sync::WriterClaimId;
 use aiperf_telemetry_archive::{
     ArchiveAdmissionMode, ArchiveAdmissionPolicy, ArchiveId, ArchiveKeyProvider,
     ArchiveObjectStore, ArchiveRecoveryPolicy, ArchiveSampleView, ArchiveSanitizer,
@@ -151,6 +152,8 @@ pub struct ArchiveRecoveryExpectation {
     pub archive_id: ArchiveId,
     /// Fully assembled persistent collection identity digest.
     pub persistent_identity_digest: Digest,
+    /// Credential-free normalized archive target digest discovered from genesis.
+    pub archive_target_digest: Digest,
 }
 
 /// Provider-owned, already validated object-store preparation request.
@@ -358,7 +361,7 @@ pub trait PreparedArchiveWriter: Debug + Send + Sync {
     fn prepare_resumed_sink(
         &self,
         repository: LocalArchiveRepository,
-        header: WalSegmentHeaderV1,
+        new_session_id: aiperf_telemetry_archive::SessionId,
         maximum_frame_bytes: u64,
         receipts: OwnedReceiptJournalMode,
         decoder: &dyn ArchiveWalFrameDecoder,
@@ -437,6 +440,9 @@ pub trait ValidatedArchiveRecoveryComponent: Debug + Send + Sync {
 
     /// Authored archive identity required by exact collect-resume.
     fn expected_archive_id(&self) -> Option<ArchiveId>;
+
+    /// Explicit crashed writer claim required by exact remote takeover.
+    fn expected_prior_claim_id(&self) -> Option<WriterClaimId>;
 
     /// Binds collect recovery after authoritative identity discovery.
     fn bind_collect(
@@ -1157,6 +1163,13 @@ impl Debug for PreparedTelemetryArchiveCollectComponents {
     }
 }
 
+impl PreparedTelemetryArchiveCollectComponents {
+    /// Returns the genesis identity of the credential-free normalized target.
+    pub fn archive_target_digest(&self) -> Digest {
+        aiperf_telemetry_archive::manifest::archive_target_digest(self.target.as_str())
+    }
+}
+
 /// Validated source-free synchronization selectors.
 #[derive(Debug)]
 pub struct ValidatedTelemetryArchiveSyncComponents {
@@ -1258,6 +1271,13 @@ impl Debug for PreparedTelemetryArchiveSyncComponents {
     }
 }
 
+impl PreparedTelemetryArchiveSyncComponents {
+    /// Returns the authored target identity required by source-free recovery.
+    pub fn archive_target_digest(&self) -> Digest {
+        aiperf_telemetry_archive::manifest::archive_target_digest(self.target.as_str())
+    }
+}
+
 /// Prepared recovery factory retained across authoritative spool discovery.
 pub struct PreparedArchiveRecoverySelection {
     component: Box<dyn ValidatedArchiveRecoveryComponent>,
@@ -1272,6 +1292,11 @@ impl PreparedArchiveRecoverySelection {
     /// Returns the authored archive identity required by exact collect-resume.
     pub fn expected_archive_id(&self) -> Option<ArchiveId> {
         self.component.expected_archive_id()
+    }
+
+    /// Returns the explicitly authored crashed claim required by exact resume.
+    pub fn expected_prior_claim_id(&self) -> Option<WriterClaimId> {
+        self.component.expected_prior_claim_id()
     }
 
     fn operation_checked(
@@ -1504,13 +1529,19 @@ impl PreparedArchiveWriter for PreparedParquetArchiveWriter {
     fn prepare_resumed_sink(
         &self,
         repository: LocalArchiveRepository,
-        header: WalSegmentHeaderV1,
+        new_session_id: aiperf_telemetry_archive::SessionId,
         maximum_frame_bytes: u64,
         receipts: OwnedReceiptJournalMode,
         decoder: &dyn ArchiveWalFrameDecoder,
     ) -> Result<Box<dyn ArchiveSink>, ArchiveComponentError> {
         self.sink_factory
-            .resume(repository, header, maximum_frame_bytes, receipts, decoder)
+            .resume(
+                repository,
+                new_session_id,
+                maximum_frame_bytes,
+                receipts,
+                decoder,
+            )
             .map(|sink| Box::new(sink) as Box<dyn ArchiveSink>)
             .map_err(|error| ArchiveComponentError::Prepare(error.to_string()))
     }
@@ -1830,6 +1861,7 @@ macro_rules! impl_recovery_factory {
                     identity: component_identity(RECOVERY_FAMILY, self.descriptor().id, &config)?,
                     operation: $operation,
                     expected_archive_id: None,
+                    expected_prior_claim_id: None,
                 }))
             }
         }
@@ -1852,6 +1884,7 @@ struct ValidatedRecovery {
     identity: ValidatedArchiveComponentIdentity,
     operation: ArchiveRecoveryOperation,
     expected_archive_id: Option<ArchiveId>,
+    expected_prior_claim_id: Option<WriterClaimId>,
 }
 
 impl ValidatedArchiveRecoveryComponent for ValidatedRecovery {
@@ -1865,6 +1898,10 @@ impl ValidatedArchiveRecoveryComponent for ValidatedRecovery {
 
     fn expected_archive_id(&self) -> Option<ArchiveId> {
         self.expected_archive_id
+    }
+
+    fn expected_prior_claim_id(&self) -> Option<WriterClaimId> {
+        self.expected_prior_claim_id
     }
 
     fn bind_collect(
@@ -1889,6 +1926,11 @@ impl ValidatedArchiveRecoveryComponent for ValidatedRecovery {
                 Ok(Box::new(ExactResumeRecoveryPolicy::new(
                     expected_archive_id,
                     expectation.persistent_identity_digest,
+                    self.expected_prior_claim_id.ok_or_else(|| {
+                        ArchiveComponentError::Prepare(
+                            "exact_resume is missing its validated prior claim ID".to_owned(),
+                        )
+                    })?,
                 )))
             }
             ArchiveRecoveryOperation::FinalizeRemote => {
@@ -1914,6 +1956,7 @@ impl ValidatedArchiveRecoveryComponent for ValidatedRecovery {
 #[serde(deny_unknown_fields)]
 struct ExactResumeRecoveryConfig {
     archive_id: Uuid,
+    prior_claim_id: String,
 }
 
 impl ArchiveRecoveryComponentFactory for ExactResumeRecoveryFactory {
@@ -1942,10 +1985,26 @@ impl ArchiveRecoveryComponentFactory for ExactResumeRecoveryFactory {
                     message: error.to_string(),
                 }
             })?;
+        let expected_prior_claim_id =
+            WriterClaimId::parse(&config.prior_claim_id).map_err(|error| {
+                ArchiveComponentError::InvalidConfig {
+                    family: RECOVERY_FAMILY,
+                    id: self.descriptor().id.to_owned(),
+                    message: format!("prior_claim_id: {error}"),
+                }
+            })?;
+        if config.prior_claim_id != expected_prior_claim_id.to_hex() {
+            return Err(ArchiveComponentError::InvalidConfig {
+                family: RECOVERY_FAMILY,
+                id: self.descriptor().id.to_owned(),
+                message: "prior_claim_id must be 64 lowercase hexadecimal characters".to_owned(),
+            });
+        }
         Ok(Box::new(ValidatedRecovery {
             identity: component_identity(RECOVERY_FAMILY, self.descriptor().id, &config)?,
             operation: ArchiveRecoveryOperation::ExactResume,
             expected_archive_id: Some(expected_archive_id),
+            expected_prior_claim_id: Some(expected_prior_claim_id),
         }))
     }
 }
@@ -2831,7 +2890,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_resume_requires_and_exposes_authored_archive_identity() {
+    fn exact_resume_requires_and_exposes_authored_archive_and_prior_claim_identity() {
         let registries = TelemetryArchiveComponentRegistries::stock();
         let mut missing = collect_archive_for_value();
         missing["recovery"] = json!({"type": "exact_resume", "config": {}});
@@ -2844,16 +2903,24 @@ mod tests {
 
         let authored_uuid = Uuid::parse_str("018f84a7-1f3c-7c21-8be2-7e8dbf9536b1").unwrap();
         let expected = ArchiveId::new(*authored_uuid.as_bytes()).unwrap();
+        let prior_claim = WriterClaimId::from_digest(Digest::from_bytes([0x77; 32]));
         let mut exact = collect_archive_for_value();
         exact["recovery"] = json!({
             "type": "exact_resume",
-            "config": {"archive_id": authored_uuid}
+            "config": {
+                "archive_id": authored_uuid,
+                "prior_claim_id": prior_claim.to_hex()
+            }
         });
         let exact: TelemetryArchiveSpecV2 = serde_json::from_value(exact).unwrap();
         let validated = registries
             .validate_collect(exact, ArchiveCollectionPlacement::StandalonePrimary)
             .unwrap();
         assert_eq!(validated.recovery.expected_archive_id(), Some(expected));
+        assert_eq!(
+            validated.recovery.expected_prior_claim_id(),
+            Some(prior_claim)
+        );
     }
 
     #[test]
