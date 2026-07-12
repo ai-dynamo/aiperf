@@ -274,7 +274,7 @@ fn validate_no_secret_value<'a>(
                 let safe_inline_image_url = allow_inline_image_data_url
                     && normalized == "url"
                     && is_inline_image_url_path(path)
-                    && is_safe_inline_image_data_url(child);
+                    && child.as_str().is_some_and(is_safe_inline_image_data_url);
                 if FORBIDDEN_FIELDS.contains(&normalized.as_str()) && !safe_inline_image_url {
                     return Err(CanonicalJsonError::new(format!(
                         "control field {} may carry connection authority or a credential",
@@ -311,16 +311,22 @@ fn is_inline_image_url_path(path: &[ControlPathSegment<'_>]) -> bool {
     )
 }
 
-fn is_safe_inline_image_data_url(value: &Value) -> bool {
+/// Validate the sole inline locator admitted by the stock operation schema.
+///
+/// This is the executable counterpart of `_INLINE_RASTER_DATA_URI_PATTERN` in
+/// `src/aiperf/accuracy/evaluation/operation_schemas.py`. Request, response,
+/// and stream validators share it so their advertised schema fingerprints
+/// cannot conceal a broader transport-authority surface.
+pub fn is_safe_inline_image_data_url(value: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "data:image/gif;base64,",
         "data:image/jpeg;base64,",
         "data:image/png;base64,",
         "data:image/webp;base64,",
     ];
-    let Some(value) = value.as_str() else {
+    if value.len() > CanonicalJsonLimits::default().max_string_bytes {
         return false;
-    };
+    }
     let Some(encoded) = PREFIXES
         .iter()
         .find_map(|prefix| value.strip_prefix(prefix))
@@ -810,6 +816,25 @@ mod tests {
         }))
         .unwrap();
         assert!(validate_no_secret_host_payload(&misplaced).is_err());
+    }
+
+    #[test]
+    fn inline_image_data_url_validator_matches_the_schema_boundary() {
+        assert!(is_safe_inline_image_data_url(
+            "data:image/png;base64,aW5lcnQ="
+        ));
+        assert!(is_safe_inline_image_data_url("data:image/jpeg;base64,AAAA"));
+        assert!(!is_safe_inline_image_data_url("data:image/png;base64,"));
+        assert!(!is_safe_inline_image_data_url(
+            "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="
+        ));
+        assert!(!is_safe_inline_image_data_url(
+            "data:image/png;base64,not-base64!"
+        ));
+        assert!(!is_safe_inline_image_data_url(&format!(
+            "data:image/png;base64,{}",
+            "A".repeat(CanonicalJsonLimits::default().max_string_bytes)
+        )));
     }
 
     #[test]

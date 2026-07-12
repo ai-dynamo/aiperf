@@ -29,8 +29,9 @@ pub use artifacts::{
 };
 pub use canonical::{
     CANONICAL_JSON_CODEC, CanonicalJson, CanonicalJsonError, CanonicalJsonLimits,
-    artifact_content_sha256, is_sha256, normalized_result_sha256, redact_diagnostic, sha256_hex,
-    validate_no_secret_control_value, validate_no_secret_host_payload,
+    artifact_content_sha256, is_safe_inline_image_data_url, is_sha256, normalized_result_sha256,
+    redact_diagnostic, sha256_hex, validate_no_secret_control_value,
+    validate_no_secret_host_payload,
 };
 pub use isolation::{
     AttestedWorkerLaunch, BubblewrapEvaluatorIsolation, EvaluatorIsolation,

@@ -19,7 +19,7 @@ use std::task::{Context as TaskContext, Poll};
 
 use aiperf_accuracy::{
     CanonicalJson, HostOperationUsage, STOCK_EVALUATION_OPERATION_SCHEMAS,
-    validate_no_secret_host_payload,
+    is_safe_inline_image_data_url, validate_no_secret_host_payload,
 };
 use aiperf_dataset::{
     AccuracyAssociation, ContentGroup, Conversation, ConversationContextMode, CorrelationId,
@@ -1091,8 +1091,11 @@ fn validate_content_block(block: &Value) -> Result<()> {
                 .ok_or_else(|| anyhow!("image URL content block requires image_url"))?;
             require_only_fields(image, &["url", "detail"], "inline image URL")?;
             ensure!(
-                image.get("url").is_some_and(Value::is_string),
-                "inline image URL requires a string URL"
+                image
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_safe_inline_image_data_url),
+                "inline image URL must be a bounded raster data URI"
             );
             validate_enum(image, "detail", &["auto", "low", "high"])?;
         }
@@ -2615,6 +2618,34 @@ mod tests {
                 "usage":{"prompt_tokens":3,"completion_tokens":1}
             }))
             .unwrap();
+        factory
+            .validator()
+            .validate_response(&json!({
+                "choices":[{
+                    "message":{"role":"assistant","content":[{
+                        "type":"image_url",
+                        "image_url":{"url":"data:image/webp;base64,AAAA"}
+                    }]},
+                    "stop_reason":"stop"
+                }],
+                "usage":{}
+            }))
+            .unwrap();
+        assert!(
+            factory
+                .validator()
+                .validate_response(&json!({
+                    "choices":[{
+                        "message":{"role":"assistant","content":[{
+                            "type":"image_url",
+                            "image_url":{"url":"https://metadata.invalid/image"}
+                        }]},
+                        "stop_reason":"stop"
+                    }],
+                    "usage":{}
+                }))
+                .is_err()
+        );
         assert!(
             factory
                 .validator()
