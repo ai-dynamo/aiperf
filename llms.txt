@@ -82,6 +82,11 @@ Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
 `aiperf-core` → `loadgen-core`; `aiperf-transport` →
 `aiperf-clock`. `aiperf-metrics` stays IO-free and runtime-neutral.
 
+Telemetry deps: `aiperf-runner` composes all three leaves;
+`aiperf-gpu-telemetry` and `aiperf-server-metrics` → {`aiperf-clock`,
+`aiperf-metrics`, `aiperf-transport`}; `aiperf-network-latency` →
+{`aiperf-clock`, `aiperf-metrics`}. Core metrics never depends back on a producer.
+
 ## Run ancillary timing policy
 
 ```bash
