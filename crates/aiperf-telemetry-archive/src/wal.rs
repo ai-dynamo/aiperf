@@ -14,11 +14,15 @@ use crate::{
 
 const FRAME_MAGIC: &[u8; 8] = b"AIPFWF01";
 const SEGMENT_MAGIC: &[u8; 8] = b"AIPFWS01";
-const FOOTER_MAGIC: &[u8; 8] = b"AIPFWEND";
+/// Fixed sealed-segment footer magic used by crash recovery.
+pub const WAL_FOOTER_MAGIC: &[u8; 8] = b"AIPFWEND";
 const WIRE_VERSION: u16 = 1;
 const FRAME_TRAILER_BYTES: usize = 32 + 4;
 const FOOTER_WITHOUT_DIGEST_BYTES: usize = 8 + 2 + 8 + 8 + 8 + 32;
 const FOOTER_BYTES: usize = FOOTER_WITHOUT_DIGEST_BYTES + 32;
+
+/// Exact byte length of the v1 sealed-segment footer.
+pub const SEALED_WAL_FOOTER_BYTES: usize = FOOTER_BYTES;
 
 /// The default hard upper bound for one encoded WAL frame.
 pub const DEFAULT_MAX_WAL_FRAME_BYTES: u64 = 1 << 30;
@@ -221,7 +225,9 @@ impl WalFrame {
     /// Strictly decodes one complete frame and rejects any trailing bytes.
     pub fn decode(bytes: &[u8], maximum: u64) -> Result<Self, WalError> {
         match decode_frame_prefix(bytes, maximum)? {
-            FramePrefixDecode::Complete { frame, consumed } if consumed == bytes.len() => Ok(frame),
+            FramePrefixDecode::Complete { frame, consumed } if consumed == bytes.len() => {
+                Ok(*frame)
+            }
             FramePrefixDecode::Complete { .. } => Err(WalError::TrailingFrameBytes),
             FramePrefixDecode::Incomplete => Err(WalError::IncompleteFrame),
         }
@@ -398,7 +404,7 @@ impl WalSegmentBuilder {
             return Err(WalError::CannotSealEmptySegment);
         };
         let mut footer_without_digest = Vec::with_capacity(FOOTER_WITHOUT_DIGEST_BYTES);
-        footer_without_digest.extend_from_slice(FOOTER_MAGIC);
+        footer_without_digest.extend_from_slice(WAL_FOOTER_MAGIC);
         footer_without_digest.extend_from_slice(&WIRE_VERSION.to_be_bytes());
         footer_without_digest.extend_from_slice(&self.frame_count.to_be_bytes());
         footer_without_digest.extend_from_slice(&self.header.first_record_seq.to_be_bytes());
@@ -706,7 +712,10 @@ impl Display for WalError {
 impl std::error::Error for WalError {}
 
 enum FramePrefixDecode {
-    Complete { frame: WalFrame, consumed: usize },
+    Complete {
+        frame: Box<WalFrame>,
+        consumed: usize,
+    },
     Incomplete,
 }
 
@@ -782,7 +791,10 @@ fn decode_frame_prefix(bytes: &[u8], maximum: u64) -> Result<FramePrefixDecode, 
         frame_digest: stored_digest,
         crc32c: stored_crc,
     };
-    Ok(FramePrefixDecode::Complete { frame, consumed })
+    Ok(FramePrefixDecode::Complete {
+        frame: Box::new(frame),
+        consumed,
+    })
 }
 
 fn decode_frame_header(cursor: &mut Cursor<'_>) -> Result<WalFrameHeaderV1, WalError> {
@@ -911,6 +923,14 @@ fn recover_frames(
     let mut expected_seq = header.first_record_seq;
     let mut prefix = domain_digest("aiperf.archive.wal-prefix.v1", &[&bytes[..header_len]]);
     while cursor < frames_end {
+        let tail = &bytes[cursor..frames_end];
+        let footer_prefix_len = tail.len().min(WAL_FOOTER_MAGIC.len());
+        if WAL_FOOTER_MAGIC[..footer_prefix_len] == tail[..footer_prefix_len] {
+            if allow_incomplete_tail {
+                break;
+            }
+            return Err(WalError::IncompleteFooter);
+        }
         match decode_frame_prefix(&bytes[cursor..frames_end], maximum_frame_bytes)? {
             FramePrefixDecode::Complete { frame, consumed } => {
                 if frame.header.record_seq != expected_seq {
@@ -926,7 +946,7 @@ fn recover_frames(
                 cursor = cursor
                     .checked_add(consumed)
                     .ok_or(WalError::LengthOverflow)?;
-                frames.push(frame);
+                frames.push(*frame);
             }
             FramePrefixDecode::Incomplete if allow_incomplete_tail => break,
             FramePrefixDecode::Incomplete => return Err(WalError::IncompleteFrame),
@@ -962,7 +982,7 @@ fn decode_footer(bytes: &[u8]) -> Result<Footer, WalError> {
         return Err(WalError::IncompleteFooter);
     }
     let mut cursor = Cursor::new(bytes);
-    if cursor.take(8, "footer magic")? != FOOTER_MAGIC {
+    if cursor.take(8, "footer magic")? != WAL_FOOTER_MAGIC {
         return Err(WalError::InvalidMagic("footer"));
     }
     let version = cursor.u16("footer version")?;

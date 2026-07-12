@@ -18,6 +18,7 @@ pub mod identity;
 pub mod index;
 pub mod manifest;
 pub mod scheduling;
+pub mod spool;
 pub mod time;
 pub mod wal;
 
@@ -50,8 +51,13 @@ pub use scheduling::{
     AbsoluteCallDeadline, CadenceAdvance, CadenceDeadline, FixedDeadlineCadence,
     IssuedSourceAttempt, MissedCadenceRange, SchedulingError, SourceAttemptGate, SourceAttemptKind,
 };
+pub use spool::{
+    DurabilityEdge, DurabilityFaultInjector, FailAtDurabilityEdge, FilesystemKind,
+    LocalArchiveRepository, LocalWalWriter, NoDurabilityFaults, QualifiedSpool,
+    RecoveryExpectation, SpoolError, SpoolQualification,
+};
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
 pub use wal::{
-    Crc32c, RecoveredWal, SealedWalSegment, WalError, WalFrame, WalFrameHeaderV1,
-    WalSegmentBuilder, WalSegmentHeaderV1,
+    Crc32c, RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment, WAL_FOOTER_MAGIC, WalError,
+    WalFrame, WalFrameHeaderV1, WalSegmentBuilder, WalSegmentHeaderV1,
 };

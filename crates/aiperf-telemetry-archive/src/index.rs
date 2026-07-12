@@ -338,6 +338,13 @@ impl IndexSnapshot {
         entries.into_iter()
     }
 
+    /// Iterates every reachable content-addressed page in hash order.
+    pub fn page_objects(&self) -> impl Iterator<Item = (Digest, &[u8])> {
+        self.pages
+            .iter()
+            .map(|(hash, bytes)| (*hash, bytes.as_slice()))
+    }
+
     /// Applies one validated canonical mutation transaction.
     pub fn apply(
         &self,
@@ -524,6 +531,8 @@ pub enum IndexError {
     LengthOverflow,
     /// A referenced content-addressed page is absent.
     MissingPage(Digest),
+    /// A page source failed before bytes could be verified.
+    PageSource(String),
     /// A page's bytes do not match its expected hash.
     PageHashMismatch(Digest),
     /// Same content key resolved to unequal bytes.
@@ -572,6 +581,7 @@ impl Display for IndexError {
             }
             Self::LengthOverflow => formatter.write_str("index count or byte length overflow"),
             Self::MissingPage(hash) => write!(formatter, "missing index page {hash}"),
+            Self::PageSource(message) => write!(formatter, "index page source failed: {message}"),
             Self::PageHashMismatch(hash) => write!(formatter, "index page hash mismatch {hash}"),
             Self::ContentAddressCollision(hash) => {
                 write!(formatter, "index content-address collision {hash}")
@@ -667,14 +677,9 @@ impl Node {
     fn insert(&mut self, entry: IndexEntry) -> Result<Option<Self>, IndexError> {
         match self {
             Self::Leaf(entries) => {
-                let index = entries
-                    .binary_search_by(|existing| existing.key.cmp(&entry.key))
-                    .map_err(|index| index)
-                    .map_err(|index| {
-                        entries.insert(index, entry.clone());
-                    });
-                if index.is_ok() {
-                    return Err(IndexError::DuplicateTreeKey(entry.key));
+                match entries.binary_search_by(|existing| existing.key.cmp(&entry.key)) {
+                    Ok(_) => return Err(IndexError::DuplicateTreeKey(entry.key)),
+                    Err(index) => entries.insert(index, entry),
                 }
                 if entries.len() <= MAX_PAGE_ARITY {
                     return Ok(None);
@@ -1155,7 +1160,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>, IndexError> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(IndexError::InvalidPage("hex length"));
     }
     let mut output = Vec::with_capacity(value.len() / 2);
