@@ -1008,7 +1008,15 @@ fn validate_message(message: &Value) -> Result<()> {
         .ok_or_else(|| anyhow!("message must be an object"))?;
     require_only_fields(
         message,
-        &["role", "content", "name", "tool_call_id", "tool_calls"],
+        &[
+            "role",
+            "content",
+            "name",
+            "tool_call_id",
+            "tool_calls",
+            "reasoning",
+            "reasoning_signature",
+        ],
         "message",
     )?;
     ensure!(
@@ -1992,25 +2000,35 @@ fn normalize_message(value: &Value) -> Result<Value> {
         .or_else(|| source.get("reasoning"))
         .and_then(Value::as_str)
     {
-        let mut blocks = vec![json!({"type":"reasoning","reasoning":reasoning})];
-        if let Some(signature) = source
-            .get("reasoning_signature")
-            .or_else(|| source.get("signature"))
-            .and_then(Value::as_str)
-        {
-            blocks[0]
-                .as_object_mut()
-                .expect("reasoning block is an object")
-                .insert("signature".into(), Value::String(signature.into()));
-        }
-        match content {
-            Value::String(text) if !text.is_empty() => {
-                blocks.push(json!({"type":"text","text":text}));
+        // Keep the assistant's chain-of-thought in a separate `reasoning` field
+        // rather than folding it into `content`. Evaluator graders score the
+        // final answer via `content` (providers stringify it directly, e.g.
+        // nemo_evaluator.py `str(message["content"])`), so mixing reasoning text
+        // into `content` corrupts answer extraction for reasoning models. The
+        // reasoning is preserved losslessly, just not in the scored text.
+        if !reasoning.is_empty() {
+            message.insert("reasoning".into(), Value::String(reasoning.into()));
+            if let Some(signature) = source
+                .get("reasoning_signature")
+                .or_else(|| source.get("signature"))
+                .and_then(Value::as_str)
+            {
+                message.insert(
+                    "reasoning_signature".into(),
+                    Value::String(signature.into()),
+                );
             }
-            Value::Array(existing) => blocks.extend(existing),
-            _ => {}
         }
-        content = Value::Array(blocks);
+        // Fall back to the reasoning text only when there is no answer content.
+        let content_is_empty = match &content {
+            Value::String(text) => text.is_empty(),
+            Value::Array(items) => items.is_empty(),
+            Value::Null => true,
+            _ => false,
+        };
+        if content_is_empty {
+            content = Value::String(reasoning.into());
+        }
     }
     message.insert("content".into(), content);
     for field in ["name", "tool_call_id"] {
