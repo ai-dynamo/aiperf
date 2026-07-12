@@ -44,6 +44,8 @@ pub struct ThreadPerCoreGraphTraceExecutionBackend {
     senders: Vec<mpsc::Sender<WorkerCommand>>,
     controls: Vec<mpsc::UnboundedSender<WorkerControl>>,
     next_worker: Cell<usize>,
+    cancelled: Cell<bool>,
+    prefill_shards: RefCell<Option<Vec<usize>>>,
     threads: RefCell<Vec<JoinHandle<()>>>,
 }
 
@@ -117,6 +119,8 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
             senders,
             controls,
             next_worker: Cell::new(0),
+            cancelled: Cell::new(false),
+            prefill_shards: RefCell::new(None),
             threads: RefCell::new(threads),
         })
     }
@@ -130,8 +134,12 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
 #[async_trait(?Send)]
 impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
-        let worker_id = self.next_worker.get();
-        self.next_worker.set((worker_id + 1) % self.senders.len());
+        if self.cancelled.get() {
+            return Err(cancelled_trace(&plan.trace.id));
+        }
+        let worker_id = self.next_execution_worker().ok_or_else(|| {
+            TraceError::Other("graph placement has no worker with positive prefill capacity".into())
+        })?;
         let (result_tx, result_rx) = oneshot::channel();
         self.senders[worker_id]
             .send(WorkerCommand::Execute {
@@ -152,7 +160,8 @@ impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
     }
 
     fn cancel_inflight(&self) -> Result<(), TraceError> {
-        self.broadcast_control(|ack| WorkerControl::CancelInflight { ack })
+        self.cancelled.set(true);
+        self.broadcast_control(|_worker_id, ack| WorkerControl::CancelInflight { ack })
     }
 
     fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
@@ -161,37 +170,77 @@ impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
                 "graph prefill limit must be positive".into(),
             ));
         }
-        self.broadcast_control(|ack| WorkerControl::SetPrefillLimit { limit, ack })
+        let shards = shard_global_limit(limit, self.worker_count());
+        self.broadcast_control(|worker_id, ack| WorkerControl::SetPrefillLimit {
+            limit: shards[worker_id],
+            ack,
+        })?;
+        *self.prefill_shards.borrow_mut() = Some(shards);
+        Ok(())
     }
 }
 
 impl ThreadPerCoreGraphTraceExecutionBackend {
+    fn next_execution_worker(&self) -> Option<usize> {
+        let worker_count = self.worker_count();
+        let start = self.next_worker.get() % worker_count;
+        let shards = self.prefill_shards.borrow();
+        for offset in 0..worker_count {
+            let worker_id = (start + offset) % worker_count;
+            if shards.as_ref().is_none_or(|limits| limits[worker_id] > 0) {
+                self.next_worker.set((worker_id + 1) % worker_count);
+                return Some(worker_id);
+            }
+        }
+        None
+    }
+
     fn broadcast_control(
         &self,
-        control: impl Fn(std::sync::mpsc::SyncSender<Result<(), String>>) -> WorkerControl,
+        control: impl Fn(usize, std::sync::mpsc::SyncSender<Result<(), String>>) -> WorkerControl,
     ) -> Result<(), TraceError> {
+        let mut errors = Vec::new();
         for (worker_id, sender) in self.controls.iter().enumerate() {
             let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
-            sender.send(control(ack_tx)).map_err(|_| {
-                TraceError::Other(format!(
+            if sender.send(control(worker_id, ack_tx)).is_err() {
+                errors.push(format!(
                     "graph placement worker {worker_id} is unavailable for control updates"
-                ))
-            })?;
-            ack_rx
-                .recv()
-                .map_err(|_| {
-                    TraceError::Other(format!(
+                ));
+                continue;
+            }
+            match ack_rx.recv() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => errors.push(format!(
+                    "graph placement worker {worker_id} rejected its control update: {error}"
+                )),
+                Err(_) => errors.push(format!(
                         "graph placement worker {worker_id} exited before acknowledging its control update"
-                    ))
-                })?
-                .map_err(|error| {
-                    TraceError::Other(format!(
-                        "graph placement worker {worker_id} rejected its control update: {error}"
-                    ))
-                })?;
+                )),
+            }
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(TraceError::Other(format!(
+                "graph placement control fanout failed: {}",
+                errors.join("; ")
+            )))
+        }
     }
+}
+
+fn shard_global_limit(limit: usize, worker_count: usize) -> Vec<usize> {
+    let quotient = limit / worker_count;
+    let remainder = limit % worker_count;
+    (0..worker_count)
+        .map(|worker_id| quotient + usize::from(worker_id < remainder))
+        .collect()
+}
+
+fn cancelled_trace(trace_id: &str) -> TraceError {
+    TraceError::Cancelled(format!(
+        "graph trace {trace_id:?} was rejected after placement cancellation"
+    ))
 }
 
 impl Drop for ThreadPerCoreGraphTraceExecutionBackend {
@@ -224,8 +273,8 @@ enum WorkerControl {
 fn worker_thread(
     worker_id: usize,
     factory: Arc<dyn GraphTraceExecutionBackendFactory>,
-    mut commands: mpsc::Receiver<WorkerCommand>,
-    mut controls: mpsc::UnboundedReceiver<WorkerControl>,
+    commands: mpsc::Receiver<WorkerCommand>,
+    controls: mpsc::UnboundedReceiver<WorkerControl>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -255,39 +304,62 @@ fn worker_thread(
             return;
         }
 
-        let mut active = JoinSet::new();
-        loop {
-            tokio::select! {
-                biased;
-                control = controls.recv() => match control {
-                    Some(WorkerControl::CancelInflight { ack }) => {
-                        active.abort_all();
-                        let _ = ack.send(Ok(()));
-                    }
-                    Some(WorkerControl::SetPrefillLimit { limit, ack }) => {
-                        let result = backend
-                            .set_prefill_limit(limit)
-                            .map_err(|error| error.to_string());
-                        let _ = ack.send(result);
-                    }
-                    None => break,
-                },
-                command = commands.recv() => match command {
-                    Some(WorkerCommand::Execute { plan, result }) => {
-                        let backend = backend.clone();
-                        active.spawn_local(async move {
-                            let _ = result.send(backend.execute_trace(plan).await);
-                        });
-                    }
-                    None => break,
-                },
-                completed = active.join_next(), if !active.is_empty() => {
-                    let _ = completed;
+        worker_loop(backend, commands, controls).await;
+    }));
+}
+
+async fn worker_loop(
+    backend: Rc<dyn GraphTraceExecutionBackend>,
+    mut commands: mpsc::Receiver<WorkerCommand>,
+    mut controls: mpsc::UnboundedReceiver<WorkerControl>,
+) {
+    let mut active = JoinSet::new();
+    let mut cancelled = false;
+    loop {
+        tokio::select! {
+            biased;
+            control = controls.recv() => match control {
+                Some(WorkerControl::CancelInflight { ack }) => {
+                    cancelled = true;
+                    let result = backend.cancel_inflight().map_err(|error| error.to_string());
+                    reject_queued_commands(&mut commands);
+                    let _ = ack.send(result);
                 }
+                Some(WorkerControl::SetPrefillLimit { limit, ack }) => {
+                    let result = backend
+                        .set_prefill_limit(limit)
+                        .map_err(|error| error.to_string());
+                    let _ = ack.send(result);
+                }
+                None => break,
+            },
+            command = commands.recv() => match command {
+                Some(command) if cancelled => reject_command(command),
+                Some(WorkerCommand::Execute { plan, result }) => {
+                    let backend = backend.clone();
+                    active.spawn_local(async move {
+                        let _ = result.send(backend.execute_trace(plan).await);
+                    });
+                }
+                None => break,
+            },
+            completed = active.join_next(), if !active.is_empty() => {
+                let _ = completed;
             }
         }
-        while active.join_next().await.is_some() {}
-    }));
+    }
+    while active.join_next().await.is_some() {}
+}
+
+fn reject_queued_commands(commands: &mut mpsc::Receiver<WorkerCommand>) {
+    while let Ok(command) = commands.try_recv() {
+        reject_command(command);
+    }
+}
+
+fn reject_command(command: WorkerCommand) {
+    let WorkerCommand::Execute { plan, result } = command;
+    let _ = result.send(Err(cancelled_trace(&plan.trace.id)));
 }
 
 fn stop_workers(
@@ -316,8 +388,12 @@ impl Error for GraphPlacementError {}
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use tokio::sync::Notify;
 
     use super::*;
     use crate::model::{GraphRecord, TraceRecord};
@@ -344,6 +420,118 @@ mod tests {
         worker_id: usize,
         placements: Arc<Mutex<Vec<(usize, String)>>>,
         prefill_limits: Arc<Mutex<Vec<(usize, usize)>>>,
+    }
+
+    struct FanoutFactory {
+        cancellations: Arc<Mutex<Vec<usize>>>,
+        failing_worker: usize,
+    }
+
+    impl GraphTraceExecutionBackendFactory for FanoutFactory {
+        fn create_backend(
+            &self,
+            worker_id: usize,
+        ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+            Ok(Rc::new(FanoutWorker {
+                worker_id,
+                cancellations: self.cancellations.clone(),
+                failing_worker: self.failing_worker,
+            }))
+        }
+    }
+
+    struct FanoutWorker {
+        worker_id: usize,
+        cancellations: Arc<Mutex<Vec<usize>>>,
+        failing_worker: usize,
+    }
+
+    #[async_trait(?Send)]
+    impl GraphTraceExecutionBackend for FanoutWorker {
+        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+            Ok(())
+        }
+
+        fn cancel_inflight(&self) -> Result<(), TraceError> {
+            self.cancellations.lock().unwrap().push(self.worker_id);
+            if self.worker_id == self.failing_worker {
+                Err(TraceError::Other(format!(
+                    "intentional worker {} cancellation failure",
+                    self.worker_id
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct CancellableWorkerState {
+        started: AtomicBool,
+        cancelled: AtomicBool,
+        terminal_cleanups: AtomicUsize,
+        wake: Notify,
+    }
+
+    struct CancellableFactory {
+        state: Arc<CancellableWorkerState>,
+    }
+
+    impl GraphTraceExecutionBackendFactory for CancellableFactory {
+        fn create_backend(
+            &self,
+            _worker_id: usize,
+        ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+            Ok(Rc::new(CancellableWorker {
+                state: self.state.clone(),
+            }))
+        }
+    }
+
+    struct CancellableWorker {
+        state: Arc<CancellableWorkerState>,
+    }
+
+    #[async_trait(?Send)]
+    impl GraphTraceExecutionBackend for CancellableWorker {
+        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+            self.state.started.store(true, Ordering::SeqCst);
+            self.state.wake.notify_waiters();
+            loop {
+                let notified = self.state.wake.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.state.cancelled.load(Ordering::SeqCst) {
+                    self.state.terminal_cleanups.fetch_add(1, Ordering::SeqCst);
+                    return Err(TraceError::Cancelled(
+                        "worker completed graceful terminal cancellation".into(),
+                    ));
+                }
+                notified.await;
+            }
+        }
+
+        fn cancel_inflight(&self) -> Result<(), TraceError> {
+            self.state.cancelled.store(true, Ordering::SeqCst);
+            self.state.wake.notify_waiters();
+            Ok(())
+        }
+    }
+
+    struct QueueCancellationWorker {
+        cancellations: Rc<Cell<usize>>,
+    }
+
+    #[async_trait(?Send)]
+    impl GraphTraceExecutionBackend for QueueCancellationWorker {
+        async fn execute_trace(&self, _plan: GraphTracePlan) -> Result<(), TraceError> {
+            panic!("a command arriving after cancellation must never execute")
+        }
+
+        fn cancel_inflight(&self) -> Result<(), TraceError> {
+            self.cancellations.set(self.cancellations.get() + 1);
+            Ok(())
+        }
     }
 
     #[async_trait(?Send)]
@@ -408,28 +596,213 @@ mod tests {
     }
 
     #[test]
-    fn placement_broadcasts_prefill_control_to_every_worker() {
+    fn global_prefill_limit_shards_exactly_and_routes_only_to_positive_workers() {
         let placements = Arc::new(Mutex::new(Vec::new()));
         let prefill_limits = Arc::new(Mutex::new(Vec::new()));
         let factory = Arc::new(RecordingFactory {
-            placements,
+            placements: placements.clone(),
             prefill_limits: prefill_limits.clone(),
         });
-        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(2, factory).unwrap();
-        backend.set_prefill_limit(7).unwrap();
+        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(3, factory).unwrap();
+        backend.set_prefill_limit(2).unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
         runtime.block_on(LocalSet::new().run_until(async {
-            backend.execute_trace(plan("a")).await.unwrap();
-            backend.execute_trace(plan("b")).await.unwrap();
+            for id in ["a", "b", "c", "d"] {
+                backend.execute_trace(plan(id)).await.unwrap();
+            }
+            backend.set_prefill_limit(1).unwrap();
+            backend.execute_trace(plan("e")).await.unwrap();
+            backend.execute_trace(plan("f")).await.unwrap();
         }));
         drop(backend);
 
         let mut observed = prefill_limits.lock().unwrap().clone();
         observed.sort_unstable();
-        assert_eq!(observed, vec![(0, 7), (1, 7)]);
+        assert_eq!(
+            observed,
+            vec![(0, 1), (0, 1), (1, 0), (1, 1), (2, 0), (2, 0)]
+        );
+        assert_eq!(
+            *placements.lock().unwrap(),
+            vec![
+                (0, "a".into()),
+                (1, "b".into()),
+                (0, "c".into()),
+                (1, "d".into()),
+                (0, "e".into()),
+                (0, "f".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn public_placement_rejects_a_zero_global_prefill_limit() {
+        let prefill_limits = Arc::new(Mutex::new(Vec::new()));
+        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(
+            2,
+            Arc::new(RecordingFactory {
+                placements: Arc::new(Mutex::new(Vec::new())),
+                prefill_limits: prefill_limits.clone(),
+            }),
+        )
+        .unwrap();
+
+        let error = backend.set_prefill_limit(0).unwrap_err();
+        drop(backend);
+
+        assert_eq!(
+            error,
+            TraceError::Other("graph prefill limit must be positive".into())
+        );
+        assert!(prefill_limits.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancellation_fanout_reaches_all_workers_after_one_rejects_it() {
+        let cancellations = Arc::new(Mutex::new(Vec::new()));
+        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(
+            3,
+            Arc::new(FanoutFactory {
+                cancellations: cancellations.clone(),
+                failing_worker: 0,
+            }),
+        )
+        .unwrap();
+
+        let error = backend.cancel_inflight().unwrap_err().to_string();
+        drop(backend);
+
+        let mut observed = cancellations.lock().unwrap().clone();
+        observed.sort_unstable();
+        assert_eq!(observed, vec![0, 1, 2]);
+        assert!(error.contains("worker 0") && error.contains("intentional"));
+    }
+
+    #[test]
+    fn active_trace_reaches_terminal_cleanup_after_graceful_cancellation() {
+        let state = Arc::new(CancellableWorkerState::default());
+        let backend = Rc::new(
+            ThreadPerCoreGraphTraceExecutionBackend::new(
+                1,
+                Arc::new(CancellableFactory {
+                    state: state.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let backend_for_run = backend.clone();
+        let state_for_run = state.clone();
+        let error = runtime.block_on(LocalSet::new().run_until(async move {
+            let executing = backend_for_run.clone();
+            let task =
+                tokio::task::spawn_local(
+                    async move { executing.execute_trace(plan("active")).await },
+                );
+            while !state_for_run.started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            backend_for_run.cancel_inflight().unwrap();
+            task.await.unwrap().unwrap_err()
+        }));
+        drop(backend);
+
+        assert!(matches!(error, TraceError::Cancelled(_)));
+        assert_eq!(state.terminal_cleanups.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn worker_rejects_commands_arriving_after_cancellation_is_latched() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(LocalSet::new().run_until(async {
+            let cancellations = Rc::new(Cell::new(0));
+            let backend: Rc<dyn GraphTraceExecutionBackend> = Rc::new(QueueCancellationWorker {
+                cancellations: cancellations.clone(),
+            });
+            let (command_tx, command_rx) = mpsc::channel(1);
+            let (control_tx, control_rx) = mpsc::unbounded_channel();
+            let worker = tokio::task::spawn_local(worker_loop(backend, command_rx, control_rx));
+
+            let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+            control_tx
+                .send(WorkerControl::CancelInflight { ack: ack_tx })
+                .unwrap();
+            loop {
+                match ack_rx.try_recv() {
+                    Ok(result) => {
+                        result.unwrap();
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("cancellation acknowledgment failed: {error}"),
+                }
+            }
+
+            let (result_tx, result_rx) = oneshot::channel();
+            command_tx
+                .send(WorkerCommand::Execute {
+                    plan: plan("late"),
+                    result: result_tx,
+                })
+                .await
+                .unwrap();
+            let error = result_rx.await.unwrap().unwrap_err();
+            assert!(matches!(error, TraceError::Cancelled(_)));
+            assert_eq!(cancellations.get(), 1);
+
+            drop(command_tx);
+            drop(control_tx);
+            worker.await.unwrap();
+        }));
+    }
+
+    #[test]
+    fn worker_drains_execute_already_queued_when_cancellation_arrives() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(LocalSet::new().run_until(async {
+            let cancellations = Rc::new(Cell::new(0));
+            let backend: Rc<dyn GraphTraceExecutionBackend> = Rc::new(QueueCancellationWorker {
+                cancellations: cancellations.clone(),
+            });
+            let (command_tx, command_rx) = mpsc::channel(1);
+            let (control_tx, control_rx) = mpsc::unbounded_channel();
+            let (result_tx, result_rx) = oneshot::channel();
+            command_tx
+                .send(WorkerCommand::Execute {
+                    plan: plan("queued"),
+                    result: result_tx,
+                })
+                .await
+                .unwrap();
+            let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+            control_tx
+                .send(WorkerControl::CancelInflight { ack: ack_tx })
+                .unwrap();
+
+            let worker = tokio::task::spawn_local(worker_loop(backend, command_rx, control_rx));
+            let error = result_rx.await.unwrap().unwrap_err();
+            assert!(matches!(error, TraceError::Cancelled(_)));
+            assert!(ack_rx.recv().unwrap().is_ok());
+            assert_eq!(cancellations.get(), 1);
+
+            drop(command_tx);
+            drop(control_tx);
+            worker.await.unwrap();
+        }));
     }
 
     #[test]

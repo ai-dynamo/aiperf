@@ -9,11 +9,13 @@
 //! turns never cross this boundary: one selected worker owns every firing gate,
 //! branch, join, channel version, and dynamic reply splice for the trace.
 
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 use aiperf_clock::Clock;
 use async_trait::async_trait;
 
+use crate::context::TraceContext;
 use crate::errors::TraceError;
 use crate::executor::{ExecutorFlags, TraceExecutor};
 use crate::materialize::PromptMaterializer;
@@ -35,20 +37,26 @@ pub trait GraphTraceExecutionBackend {
     /// Execute one complete trace on one placement target.
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError>;
 
-    /// Cancel every trace currently executing through this placement.
+    /// Gracefully cancel every trace currently executing through this backend.
     ///
-    /// Local one-shot backends have no independently retained work to cancel;
-    /// thread-per-core and future remote placements override this control-plane
-    /// hook without changing graph scheduling.
+    /// Implementations latch cancellation before returning, arrange for active
+    /// [`execute_trace`](Self::execute_trace) futures to reach their normal
+    /// terminal cleanup and return [`TraceError::Cancelled`], and reject future
+    /// traces. The hook must be idempotent. Placement queues are drained by the
+    /// placement implementation rather than by worker-local backends.
     fn cancel_inflight(&self) -> Result<(), TraceError> {
-        Ok(())
+        Err(TraceError::Other(
+            "graph execution backend does not expose graceful cancellation".into(),
+        ))
     }
 
     /// Update the placement-wide node-prefill limit.
     ///
     /// The default fails closed because silently accepting an actuator update
     /// would make graph ramps and adaptive control inert. Placements that own
-    /// worker-local admission pools broadcast the new limit to every worker.
+    /// worker-local admission pools receive deterministic shards of the global
+    /// limit. A worker-local zero is valid and disables new prefill admission
+    /// on that shard; the public placement boundary still rejects a global zero.
     fn set_prefill_limit(&self, _limit: usize) -> Result<(), TraceError> {
         Err(TraceError::Other(
             "graph execution placement does not expose prefill control".into(),
@@ -64,6 +72,8 @@ pub struct LocalGraphTraceExecutionBackend<M: WireMessage> {
     node_policy: Rc<dyn NodeDispatchPolicy>,
     node_failure: Rc<dyn NodeFailurePolicy>,
     flags: ExecutorFlags,
+    cancelled: Cell<bool>,
+    active: RefCell<Vec<Weak<TraceContext>>>,
 }
 
 impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
@@ -80,6 +90,8 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
             node_policy: Rc::new(NoopNodeDispatchPolicy),
             node_failure: Rc::new(ResilientNodeFailurePolicy),
             flags: ExecutorFlags::default(),
+            cancelled: Cell::new(false),
+            active: RefCell::new(Vec::new()),
         }
     }
 
@@ -105,6 +117,9 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
 #[async_trait(?Send)]
 impl<M: WireMessage + 'static> GraphTraceExecutionBackend for LocalGraphTraceExecutionBackend<M> {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+        if self.cancelled.get() {
+            return Err(local_cancellation(&plan.trace.id));
+        }
         let handle = Handle::new(self.clock.clone());
         let executor = TraceExecutor::new_with_policies(
             Rc::new(plan.graph),
@@ -116,8 +131,133 @@ impl<M: WireMessage + 'static> GraphTraceExecutionBackend for LocalGraphTraceExe
             self.flags,
         )?;
         let context = executor.build_context(plan.trace)?;
+        self.active.borrow_mut().push(Rc::downgrade(&context));
         executor.schedule_entries(&context);
         handle.wait_idle().await;
+        self.active
+            .borrow_mut()
+            .retain(|active| active.as_ptr() != Rc::as_ptr(&context));
         context.abort.borrow().clone().map_or_else(|| Ok(()), Err)
+    }
+
+    fn cancel_inflight(&self) -> Result<(), TraceError> {
+        self.cancelled.set(true);
+        let active = self
+            .active
+            .borrow()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+        for context in active {
+            context.set_abort(local_cancellation(&context.trace.id));
+        }
+        Ok(())
+    }
+}
+
+fn local_cancellation(trace_id: &str) -> TraceError {
+    TraceError::Cancelled(format!(
+        "graph trace {trace_id:?} was cancelled by its execution backend"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use aiperf_timing::SlotPool;
+
+    use super::*;
+    use crate::model::{
+        ChannelSpec, ChannelType, GraphRecord, LlmNode, ReducerName, START_NODE_ID, StaticEdge,
+        TraceRecord,
+    };
+    use crate::policy::PrefillSlotNodePolicy;
+    use crate::sink::{EchoSink, GraphSink};
+    use crate::wire::OpenAiChatMessage;
+
+    struct EmptyMaterializer;
+
+    impl PromptMaterializer for EmptyMaterializer {
+        fn build(
+            &self,
+            _node: &LlmNode,
+            _inputs: &BTreeMap<String, crate::reducers::ChanVal>,
+        ) -> Result<Vec<bytes::Bytes>, aiperf_dataset::DatasetError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn blocked_plan(id: &str) -> GraphTracePlan {
+        let mut graph = GraphRecord::default();
+        graph.state.insert(
+            "output".into(),
+            ChannelSpec {
+                channel_type: ChannelType::Messages,
+                reducer: ReducerName::AddMessages,
+            },
+        );
+        graph.nodes.insert(
+            "blocked".into(),
+            LlmNode {
+                output: "output".into(),
+                streaming: true,
+                inputs: Vec::new(),
+                min_start_delay_us: None,
+                max_tokens: Some(1),
+                items: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        );
+        graph.edges.push(StaticEdge {
+            source: START_NODE_ID.into(),
+            target: "blocked".into(),
+            delay_after_predecessor_us: None,
+            min_start_delay_us: None,
+            delay_after_predecessor_start_us: None,
+            delay_after_predecessor_first_token_us: None,
+        });
+        GraphTracePlan {
+            graph,
+            trace: TraceRecord {
+                id: id.into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        }
+    }
+
+    #[test]
+    fn local_backend_latches_cancellation_and_drains_active_context() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+            let clock: Rc<dyn Clock> = Rc::new(aiperf_clock::SimClock::new());
+            let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(EchoSink);
+            let backend = Rc::new(
+                LocalGraphTraceExecutionBackend::new(clock, Rc::new(EmptyMaterializer), sink)
+                    .with_node_policy(Rc::new(PrefillSlotNodePolicy::new(Rc::new(SlotPool::new(
+                        0,
+                    ))))),
+            );
+            let executing = backend.clone();
+            let task = tokio::task::spawn_local(async move {
+                executing.execute_trace(blocked_plan("active")).await
+            });
+            tokio::task::yield_now().await;
+
+            backend.cancel_inflight().unwrap();
+            let error = task.await.unwrap().unwrap_err();
+            assert!(matches!(error, TraceError::Cancelled(_)));
+
+            let error = backend
+                .execute_trace(blocked_plan("after-cancel"))
+                .await
+                .unwrap_err();
+            assert!(matches!(error, TraceError::Cancelled(_)));
+        }));
     }
 }
