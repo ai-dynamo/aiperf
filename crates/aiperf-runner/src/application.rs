@@ -6,24 +6,20 @@
 //! This is the executable's only implementation-universe boundary. A stock or
 //! custom statically linked distribution supplies explicit factories once;
 //! capabilities, protocol-v2 validation, and protocol-v2 execution then borrow
-//! the exact same registries. Protocol v1 remains a compatibility adapter over
-//! the same product registry and native dispatcher.
+//! the exact same registries.
 
 use std::sync::Arc;
 
-use aiperf_extensions::{
-    AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory, ExtensionError,
-};
+use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use anyhow::Result;
 
 use crate::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
 use crate::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, RunnerDatasetInputAdapterResolver,
 };
-use crate::execute::execute_run_with_all_factories;
 use crate::execution_factories::{RunnerExecutionFactories, native_execution_factories};
 use crate::graph_input::{BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver};
-use crate::protocol::{RunRequest, RunTerminal, RunnerCapabilities};
+use crate::protocol::RunnerCapabilities;
 use crate::protocol_v2::RunnerEnvelopeV2;
 use crate::registry::{BuiltinRunnerRegistryFactory, RunnerRegistryFactory};
 use crate::sidecar_input::{
@@ -93,22 +89,6 @@ impl RunnerApplication {
         self.coordinator.capabilities()
     }
 
-    /// Execute one protocol-v1 compatibility request through the shared dispatcher.
-    ///
-    /// `AiperfRegistry` is an immutable aggregate of cloneable frozen registries;
-    /// this adapter clones that value but never reruns linked extension
-    /// registration. Protocol v2 borrows the original value directly.
-    pub fn execute_v1(&self, request: RunRequest) -> Result<RunTerminal> {
-        let frozen_registry = FrozenRegistryFactory(self.coordinator.product_registry());
-        execute_run_with_all_factories(
-            request,
-            self.execution_factories.http(),
-            self.coordinator.graph_inputs(),
-            self.execution_factories.graph(),
-            &frozen_registry,
-        )
-    }
-
     /// Validate or execute one protocol-v2 envelope through the frozen coordinator.
     pub fn handle_v2(&self, envelope: RunnerEnvelopeV2) -> RunnerProcessResultV2 {
         self.coordinator.handle(envelope)
@@ -117,13 +97,5 @@ impl RunnerApplication {
     /// Borrow the exact product registry used by capabilities and execution.
     pub fn product_registry(&self) -> &AiperfRegistry {
         self.coordinator.product_registry()
-    }
-}
-
-struct FrozenRegistryFactory<'a>(&'a AiperfRegistry);
-
-impl AiperfRegistryFactory for FrozenRegistryFactory<'_> {
-    fn build(&self) -> std::result::Result<AiperfRegistry, ExtensionError> {
-        Ok(self.0.clone())
     }
 }

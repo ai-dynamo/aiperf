@@ -49,11 +49,10 @@ pub mod turn_execution;
 
 pub use application::RunnerApplication;
 pub use distribution_identity::current_distribution_id;
-pub use execute::{execute_run, execute_run_with_all_factories, execute_run_with_backend_factory};
 pub use execution_factories::{RunnerExecutionFactories, native_execution_factories};
 pub use graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
 pub use grpc_turn_execution::NativeGrpcExecutionBackendFactory;
-pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};
+pub use protocol::RunnerCapabilities;
 pub use turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
 };
