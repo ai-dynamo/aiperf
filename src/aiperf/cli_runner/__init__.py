@@ -19,7 +19,6 @@ from aiperf.cli_runner._multi_run import _run_multi_benchmark
 from aiperf.cli_runner._preflight import (
     _preflight_accuracy_deps,
     _preflight_artifact_dir,
-    _preflight_endpoint_ready,
     _preflight_fd_limit,
 )
 from aiperf.cli_runner._single_run import _run_single_benchmark
@@ -53,7 +52,9 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)
     _preflight_fd_limit()
-    _preflight_endpoint_ready(plan)
+    # Do not probe endpoint readiness here: Python cannot synthesize a valid
+    # request for runner-owned dialect IDs. The selected native adapter owns
+    # validation, normalization, readiness, and the first inference request.
 
     callbacks: list[OnComplete] = []
     if plan.configs[0].artifacts.auto_plot:

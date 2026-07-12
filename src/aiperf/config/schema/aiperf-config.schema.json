@@ -9070,9 +9070,11 @@
           "description": "Strategy for distributing requests across multiple URLs. round_robin cycles through URLs in order."
         },
         "type": {
-          "$ref": "#/$defs/EndpointType",
           "default": "chat",
-          "description": "API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format, and others — see `aiperf plugins` for the full list."
+          "description": "Endpoint dialect identifier compiled into the selected aiperf-runner. The portable config accepts any non-empty string; execution validates availability against that exact runner.",
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
         },
         "path": {
           "anyOf": [
@@ -9169,7 +9171,7 @@
             }
           ],
           "default": null,
-          "description": "Custom template configuration for template endpoint type. Only used when type='template'. Defines request body format and response parsing."
+          "description": "Optional request/response template configuration forwarded unchanged for interpretation by the selected runner adapter."
         },
         "headers": {
           "additionalProperties": {
@@ -9315,29 +9317,6 @@
           ]
         }
       ]
-    },
-    "EndpointType": {
-      "enum": [
-        "chat",
-        "cohere_rankings",
-        "completions",
-        "responses",
-        "chat_embeddings",
-        "embeddings",
-        "hf_tei_rankings",
-        "huggingface_generate",
-        "image_generation",
-        "image_edit",
-        "video_generation",
-        "image_retrieval",
-        "nim_embeddings",
-        "nim_rankings",
-        "solido_rag",
-        "raw",
-        "template"
-      ],
-      "title": "EndpointType",
-      "type": "string"
     },
     "FileDataset": {
       "additionalProperties": false,
@@ -15433,7 +15412,7 @@
     },
     "TemplateConfig": {
       "additionalProperties": false,
-      "description": "Configuration for custom template-based endpoints.\n\nWhen endpoint type is \"template\", this configures how requests\nare formatted and responses are parsed.",
+      "description": "Optional request/response template policy for a runner adapter.",
       "properties": {
         "body": {
           "description": "Jinja2 template string for request body. Variables: {{prompt}}, {{max_tokens}}, {{model}}, {{messages}}, etc.",

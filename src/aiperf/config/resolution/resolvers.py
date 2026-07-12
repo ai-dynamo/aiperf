@@ -73,8 +73,8 @@ class ArtifactDirResolver:
     """Resolve artifact_dir to absolute path and create the directory tree.
 
     When the user hasn't explicitly set a custom artifact directory, appends
-    an auto-generated subdirectory name based on the model, endpoint type,
-    and stimulus (e.g. ``artifacts/llama-3-8b-openai-chat-concurrency10/``).
+    an auto-generated subdirectory name based on the model, endpoint ID,
+    and stimulus (e.g. ``artifacts/llama-3-8b-chat-concurrency10/``).
     """
 
     def resolve(self, run: BenchmarkRun, *, for_probe: bool = False) -> None:
@@ -126,9 +126,9 @@ class ArtifactDirResolver:
 
     @staticmethod
     def _compute_artifact_name(cfg: object) -> str:
-        """Build a descriptive directory name from model, service kind, and stimulus.
+        """Build a descriptive directory name from model, endpoint, and stimulus.
 
-        Produces names like ``llama-3-8b-openai-chat-concurrency10``.
+        Produces names like ``llama-3-8b-chat-concurrency10``.
         """
         from aiperf.config.config import BenchmarkConfig
 
@@ -146,14 +146,8 @@ class ArtifactDirResolver:
                 model_name = "_".join(model_name.split("/"))
             parts.append(model_name)
 
-        # 2. Service kind + endpoint type
-        try:
-            from aiperf.plugin import plugins
-
-            metadata = plugins.get_endpoint_metadata(cfg.endpoint.type)
-            parts.append(f"{metadata.service_kind}-{cfg.endpoint.type}")
-        except Exception:  # missing/partial plugin registry must not fail artifact-dir naming; falls back to str(endpoint.type)
-            parts.append(str(cfg.endpoint.type))
+        # 2. Endpoint identity is runner-owned; Python treats it as opaque.
+        parts.append(str(cfg.endpoint.type))
 
         # 3. Stimulus from the first non-warmup phase
         stimulus = _get_stimulus(cfg)

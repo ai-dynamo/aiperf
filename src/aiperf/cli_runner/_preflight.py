@@ -4,9 +4,10 @@
 
 These run before any service bootstrap so misconfiguration surfaces as a
 clean ``ConfigurationError`` instead of a stack trace from deep inside the
-controller. The checks are: artifact-dir creatable+writable, accuracy
-benchmark/grader optional dependencies present, file descriptor soft limit
-raised (and hard limit large enough), and the target endpoint reachable.
+controller. The endpoint-neutral checks are: artifact-dir creatable+writable,
+accuracy benchmark/grader optional dependencies present, and file descriptor
+soft limit raised (and hard limit large enough). Endpoint validation and
+readiness belong to the selected native runner and its compiled adapter.
 """
 
 from __future__ import annotations
@@ -151,46 +152,3 @@ def _preflight_accuracy_deps(plan: BenchmarkPlan) -> None:
             RuntimeError,
         ) as exc:
             raise ConfigurationError(str(exc)) from exc
-
-
-def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
-    """Block until the target endpoint is ready (see ready_checker).
-
-    Runs before any service bootstrap so a slow/down server fails fast with
-    a clear error instead of timing out inside the system controller. Uses
-    the endpoint config of the first run in the plan — multi-run sweeps are
-    assumed to share an endpoint.
-    """
-    import asyncio
-    import logging
-
-    cfg = plan.configs[0].endpoint
-    if cfg.wait_for_model_timeout <= 0:
-        return
-
-    # Preflight runs before rich logging is installed; install a minimal
-    # stderr handler so probe lines are visible.
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-
-    from aiperf.common.readiness_probe import wait_for_endpoint
-
-    headers = dict(cfg.headers or {})
-    if cfg.api_key:
-        headers["Authorization"] = f"Bearer {cfg.api_key}"
-
-    asyncio.run(
-        wait_for_endpoint(
-            urls=list(cfg.urls),
-            model_names=plan.configs[0].get_model_names(),
-            mode=cfg.wait_for_model_mode,
-            endpoint_type=str(cfg.type),
-            custom_endpoint=cfg.path,
-            timeout_s=cfg.wait_for_model_timeout,
-            interval_s=cfg.wait_for_model_interval,
-            headers=headers,
-        )
-    )

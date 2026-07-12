@@ -57,7 +57,7 @@ from aiperf.common.enums import (
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
-from aiperf.config.endpoint import EndpointDefaults
+from aiperf.config.endpoint import EndpointDefaults, EndpointId
 from aiperf.config.loader.parsing import (
     normalize_http_urls,
     parse_file,
@@ -77,7 +77,6 @@ from aiperf.plugin.enums import (
     ConvergenceCriterionType,
     CustomDatasetType,
     DatasetSamplingStrategy,
-    EndpointType,
     GPUTelemetryCollectorType,
     PublicDatasetType,
     SearchPlannerType,
@@ -151,11 +150,11 @@ class CLIConfig(BaseConfig):
     ] = EndpointDefaults.CUSTOM_ENDPOINT
 
     endpoint_type: Annotated[
-        EndpointType,
+        EndpointId,
         Field(
-            description="The API endpoint type to benchmark. Determines request/response format and supported features. "
-            "Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). "
-            "See enum documentation for all supported endpoint types.",
+            description="Endpoint dialect identifier compiled into the selected "
+            "aiperf-runner. Common stock identifiers include `chat`, "
+            "`messages`, and `responses`; custom runner distributions may add more.",
         ),
         CLIParameter(
             name=("--endpoint-type",),  # GenAI-Perf
@@ -167,7 +166,7 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             description="Enable streaming responses. When enabled, the server streams tokens incrementally "
-            "as they are generated. Automatically disabled if the selected endpoint type does not support streaming. "
+            "as they are generated. The selected runner validates and normalizes endpoint support. "
             "Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.",
         ),
         CLIParameter(

@@ -10,7 +10,7 @@ Endpoint - Server connection and API configuration
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, TypeAlias
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -29,7 +29,6 @@ from aiperf.common.enums import (
 from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
-    EndpointType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -37,15 +36,32 @@ from aiperf.plugin.enums import (
 __all__ = [
     "EndpointConfig",
     "EndpointDefaults",
+    "EndpointId",
     "TemplateConfig",
 ]
+
+
+def _normalize_endpoint_id(value: str) -> str:
+    """Strip presentation whitespace while preserving runner-owned identity."""
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("endpoint type must be a non-empty string")
+    return normalized
+
+
+EndpointId: TypeAlias = Annotated[
+    str,
+    Field(min_length=1),
+    AfterValidator(_normalize_endpoint_id),
+]
+"""Portable endpoint identifier resolved against the selected native runner."""
 
 
 @dataclass(frozen=True)
 class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
-    TYPE = EndpointType.CHAT
+    TYPE = "chat"
     STREAMING = False
     URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
@@ -66,12 +82,7 @@ class EndpointDefaults:
 
 
 class TemplateConfig(BaseConfig):
-    """
-    Configuration for custom template-based endpoints.
-
-    When endpoint type is "template", this configures how requests
-    are formatted and responses are parsed.
-    """
+    """Optional request/response template policy for a runner adapter."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -137,14 +148,12 @@ class EndpointConfig(BaseConfig):
     ]
 
     type: Annotated[
-        EndpointType,
+        EndpointId,
         Field(
-            default=EndpointType.CHAT,
-            description="API endpoint type determining request/response format. "
-            "chat: OpenAI chat completions, completions: OpenAI completions, "
-            "embeddings: vector embeddings, rankings: reranking, "
-            "template: custom format, and others — see `aiperf plugins` "
-            "for the full list.",
+            default=EndpointDefaults.TYPE,
+            description="Endpoint dialect identifier compiled into the selected "
+            "aiperf-runner. The portable config accepts any non-empty string; "
+            "execution validates availability against that exact runner.",
         ),
     ]
 
@@ -243,9 +252,8 @@ class EndpointConfig(BaseConfig):
         TemplateConfig | None,
         Field(
             default=None,
-            description="Custom template configuration for template endpoint type. "
-            "Only used when type='template'. "
-            "Defines request body format and response parsing.",
+            description="Optional request/response template configuration "
+            "forwarded unchanged for interpretation by the selected runner adapter.",
         ),
     ]
 
@@ -363,8 +371,7 @@ class EndpointConfig(BaseConfig):
 
         Handles:
             - url → urls (singular to plural, wrapped in list)
-            - Auto-set type to 'template' when template field is provided
-            - Disable streaming when endpoint type does not support it
+            - Preserve endpoint policy for validation by the selected runner
         """
         if not isinstance(data, dict):
             return data
@@ -379,30 +386,6 @@ class EndpointConfig(BaseConfig):
             url = data.pop("url")
             if "urls" not in data:
                 data["urls"] = [url] if isinstance(url, str) else url
-
-        # Auto-detect template type
-        if "template" in data and data["template"] is not None and "type" not in data:
-            data["type"] = EndpointType.TEMPLATE
-
-        # Disable streaming when the endpoint type does not support it
-        if data.get("streaming"):
-            try:
-                from aiperf.plugin import plugins
-
-                endpoint_type = data.get("type", EndpointType.CHAT)
-                metadata = plugins.get_endpoint_metadata(endpoint_type)
-                if not metadata.supports_streaming:
-                    import warnings
-
-                    warnings.warn(
-                        f"Streaming is not supported for endpoint type '{endpoint_type}'. "
-                        "Streaming will be disabled.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                    data["streaming"] = False
-            except ImportError:
-                pass
 
         return data
 
@@ -460,12 +443,6 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def _validate_template_required(self) -> Self:
-        if self.type == EndpointType.TEMPLATE and self.template is None:
-            raise ValueError("template is required when endpoint type is 'template'")
-        return self
-
-    @model_validator(mode="after")
     def _validate_wait_for_model_coherent(self) -> Self:
         """Reject configurations where probe sub-options are set to non-default
         values without enabling the probe itself (timeout > 0). Catches typos like
@@ -494,34 +471,5 @@ class EndpointConfig(BaseConfig):
                 f"{shown} has no effect unless --wait-for-model-timeout is set "
                 f"to a positive value. Set --wait-for-model-timeout to enable "
                 f"the readiness probe."
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_request_content_type(self) -> Self:
-        """Auto-select multipart for endpoints that declare requires_form_data."""
-        from aiperf.plugin import plugins
-
-        metadata = plugins.get_endpoint_metadata(self.type)
-        requires_form_data = getattr(metadata, "requires_form_data", False)
-
-        if self.request_content_type is None:
-            if requires_form_data:
-                self.request_content_type = RequestContentType.MULTIPART_FORM_DATA
-            return self
-
-        if self.request_content_type == RequestContentType.APPLICATION_JSON:
-            if requires_form_data:
-                raise ValueError(
-                    f"endpoint type {self.type} requires multipart/form-data; "
-                    "application/json is not supported."
-                )
-            return self
-
-        if not requires_form_data:
-            raise ValueError(
-                f"request_content_type={self.request_content_type} is only supported for "
-                f"endpoint types that accept form-data (e.g. image_edit, "
-                f"video_generation); endpoint type {self.type} does not."
             )
         return self

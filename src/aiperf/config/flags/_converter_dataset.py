@@ -15,10 +15,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.flags._section_fields import (
-    TOKENIZER_FIELDS,
-)
-
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
 
@@ -321,7 +317,7 @@ def _resolve_entries(cli: CLIConfig) -> int | None:
     return None
 
 
-def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> None:
+def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig) -> None:
     from aiperf.common.enums import DatasetType
 
     entries = _resolve_entries(cli)
@@ -361,8 +357,10 @@ def _apply_dataset_type(d: dict[str, Any], cli: CLIConfig, needs_text: bool) -> 
     if entries is not None:
         d.setdefault("entries", entries)
     # else: omit; SyntheticDataset.entries=100 default applies
-    if needs_text:
-        d.setdefault("prompts", {}).setdefault("isl", {}).setdefault("mean", 550)
+    # The portable CLI cannot infer a compiled endpoint's modalities. Keep the
+    # established generic text stimulus default and let runner preparation
+    # validate or normalize it for the selected dialect.
+    d.setdefault("prompts", {}).setdefault("isl", {}).setdefault("mean", 550)
 
 
 def _apply_sequence_distribution(d: dict[str, Any], cli: CLIConfig) -> None:
@@ -586,75 +584,6 @@ def _apply_inter_turn_delay_cap(d: dict[str, Any], cli: CLIConfig) -> None:
     d["inter_turn_delay_cap_seconds"] = cli.inter_turn_delay_cap_seconds
 
 
-# --- text-endpoint validation -------------------------------------------
-
-
-_NON_TEXT_TEXT_TRIGGERS: tuple[tuple[str, str], ...] = (
-    (
-        "prompt_input_tokens_mean",
-        "--isl/--prompt-input-tokens-mean/--synthetic-input-tokens-mean",
-    ),
-    (
-        "prompt_input_tokens_stddev",
-        "--isl-stddev/--prompt-input-tokens-stddev/--synthetic-input-tokens-stddev",
-    ),
-    (
-        "prompt_input_tokens_block_size",
-        "--isl-block-size/--prompt-input-tokens-block-size/--synthetic-input-tokens-block-size",
-    ),
-    ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
-    ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
-)
-
-# Tokenizer options are also rejected for non-tokenizing endpoints
-# (image_retrieval, embeddings, etc.).
-_NON_TEXT_TOKENIZER_TRIGGERS: tuple[tuple[str, str], ...] = (
-    ("tokenizer_name", "--tokenizer"),
-    ("trust_remote_code", "--tokenizer-trust-remote-code"),
-    ("tokenizer_revision", "--tokenizer-revision"),
-)
-
-
-def _determine_needs_text(cli: CLIConfig) -> bool:
-    """True iff the configured endpoint type tokenizes input or produces tokens.
-
-    Reads ``cli.endpoint_type`` (if available) and consults the plugin
-    registry; on a non-text endpoint, raises if any text-only flag was set.
-    """
-    from aiperf.plugin.plugins import get_endpoint_metadata
-
-    endpoint_type = getattr(cli, "endpoint_type", None)
-    if endpoint_type is None:
-        return True
-    meta = get_endpoint_metadata(endpoint_type)
-    needs_text = meta.tokenizes_input or meta.produces_tokens
-    if not needs_text:
-        s = cli.model_fields_set
-        violations = [flag for attr, flag in _NON_TEXT_TEXT_TRIGGERS if attr in s]
-        if violations:
-            raise ValueError(
-                f"{', '.join(violations)} cannot be used with --endpoint-type "
-                f"{endpoint_type}."
-            )
-        prefix_prompt_fields = {f for f in s if f.startswith("prompt_prefix_")}
-        if prefix_prompt_fields:
-            raise ValueError(
-                f"Prefix prompt options ({', '.join(sorted(prefix_prompt_fields))}) "
-                f"cannot be used with --endpoint-type {endpoint_type}."
-            )
-    if not needs_text:
-        tok_set = cli.model_fields_set & TOKENIZER_FIELDS
-        tok_violations = [
-            flag for field, flag in _NON_TEXT_TOKENIZER_TRIGGERS if field in tok_set
-        ]
-        if tok_violations:
-            raise ValueError(
-                f"Tokenizer options ({', '.join(tok_violations)}) cannot be used "
-                f"with --endpoint-type {endpoint_type}."
-            )
-    return needs_text
-
-
 # --- public entrypoint ----------------------------------------------------
 
 
@@ -670,14 +599,13 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     Returns:
         A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``.
     """
-    needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     if cli.dataset_filters and not cli.public_dataset:
         raise ValueError("--dataset-filter requires --public-dataset")
 
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)
-    _apply_dataset_type(d, cli, needs_text)
+    _apply_dataset_type(d, cli)
     _apply_sequence_distribution(d, cli)
     _apply_turns(d, cli)
     _apply_synthesis(d, cli)

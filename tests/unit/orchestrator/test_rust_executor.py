@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import orjson
 import pytest
 
-from aiperf.orchestrator import rust_executor
+from aiperf.orchestrator import runner_installation, rust_executor
 
 
 def _completed(payload: object, *, returncode: int = 0) -> subprocess.CompletedProcess:
@@ -22,6 +22,22 @@ def _completed(payload: object, *, returncode: int = 0) -> subprocess.CompletedP
         stdout=orjson.dumps(payload) + b"\n",
         stderr=b"runner diagnostic" if returncode else b"",
     )
+
+
+def _capabilities(*endpoint_types: str) -> dict[str, object]:
+    return {
+        "event": "runner_capabilities",
+        "protocol_versions": [1],
+        "report_schema_version": "2.0",
+        "endpoint_types": list(endpoint_types),
+        "dataset_types": ["synthetic"],
+        "phase_types": ["concurrency"],
+        "phase_features": [],
+        "run_features": ["http_transport_policy", "thread_per_core_execution"],
+        "telemetry_source_types": [],
+        "server_metrics_formats": [],
+        "runner_version": "0.0.0",
+    }
 
 
 def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) -> None:
@@ -40,7 +56,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
     }
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
-    assert rust_executor._load_capabilities(Path("runner")) == response
+    assert runner_installation._load_capabilities(Path("runner")) == response
 
 
 @pytest.mark.parametrize(
@@ -70,18 +86,99 @@ def test_capabilities_reject_incompatible_runner(
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     with pytest.raises((RuntimeError, ValueError), match=match):
-        rust_executor._load_capabilities(Path("runner"))
+        runner_installation._load_capabilities(Path("runner"))
 
 
 def test_capabilities_surface_process_failure(monkeypatch) -> None:
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda *args, **kwargs: _completed({}, returncode=2),
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["runner", "--capabilities"],
+            returncode=2,
+            stdout=b"",
+            stderr=b"x-api-key: runner-secret\nrunner diagnostic",
+        ),
     )
 
-    with pytest.raises(RuntimeError, match="exit 2.*runner diagnostic"):
-        rust_executor._load_capabilities(Path("runner"))
+    with pytest.raises(RuntimeError, match="exit 2") as raised:
+        runner_installation._load_capabilities(Path("runner"))
+    assert "runner diagnostic" in str(raised.value)
+    assert "runner-secret" not in str(raised.value)
+    assert "<redacted>" in str(raised.value)
+
+
+def test_runner_installation_accepts_runner_owned_endpoint_ids() -> None:
+    installation = runner_installation.RunnerInstallation(
+        binary=Path("/opt/aiperf-runner"),
+        capabilities=_capabilities("chat", "messages", "acme_chat"),
+    )
+
+    installation.preflight_endpoint("messages")
+    installation.preflight_endpoint("acme_chat")
+
+
+def test_runner_installation_rejects_unavailable_endpoint_clearly() -> None:
+    installation = runner_installation.RunnerInstallation(
+        binary=Path("/opt/aiperf-runner"),
+        capabilities=_capabilities("chat", "messages"),
+    )
+
+    with pytest.raises(RuntimeError, match="not compiled.*chat, messages") as raised:
+        installation.preflight_endpoint("acme_chat")
+
+    message = str(raised.value)
+    assert "AIPERF_RUNNER_BIN" in message
+    assert "plugin" not in message.lower()
+
+
+def test_runner_installation_preflights_every_fixed_plan_endpoint() -> None:
+    installation = runner_installation.RunnerInstallation(
+        binary=Path("/opt/aiperf-runner"),
+        capabilities=_capabilities("chat", "messages"),
+    )
+    plan = SimpleNamespace(
+        configs=[
+            SimpleNamespace(endpoint=SimpleNamespace(type="chat")),
+            SimpleNamespace(endpoint=SimpleNamespace(type="future_compiled_endpoint")),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="future_compiled_endpoint"):
+        installation.preflight_plan(plan)
+
+
+def test_executor_rejects_endpoint_before_resolution_without_secret_leakage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation = runner_installation.RunnerInstallation(
+        binary=Path("/opt/aiperf-runner"),
+        capabilities=_capabilities("chat", "messages"),
+    )
+    executor = rust_executor.RustSubprocessExecutor(
+        base_dir=tmp_path,
+        installation=installation,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_resolve_run",
+        lambda _run: pytest.fail("config resolution must not run"),
+    )
+    run = SimpleNamespace(
+        cfg=SimpleNamespace(
+            endpoint=SimpleNamespace(type="acme_chat", api_key="sk-never-log-me")
+        ),
+        label="custom-endpoint",
+        trial=0,
+        artifact_dir=tmp_path,
+    )
+
+    result = executor.execute_sync(run)
+
+    assert result.success is False
+    assert "acme_chat" in result.error
+    assert "available endpoints: chat, messages" in result.error
+    assert "sk-never-log-me" not in result.error
 
 
 def test_missing_terminal_surfaces_exit_and_redacted_stderr() -> None:
@@ -98,6 +195,26 @@ def test_missing_terminal_surfaces_exit_and_redacted_stderr() -> None:
     assert "stack overflow" in message
     assert "runner-secret" not in message
     assert "<redacted>" in message
+
+
+def test_terminal_failure_redacts_runner_error_and_stderr(tmp_path: Path) -> None:
+    completed = subprocess.CompletedProcess(
+        args=["runner"],
+        returncode=1,
+        stdout=b"",
+        stderr=b"x-api-key: stderr-secret",
+    )
+
+    result = rust_executor._failure(
+        completed,
+        {"error": "Authorization: Bearer terminal-secret"},
+        SimpleNamespace(label="failed", artifact_dir=tmp_path),
+    )
+
+    assert result.success is False
+    assert "terminal-secret" not in result.error
+    assert "stderr-secret" not in result.error
+    assert result.error.count("<redacted>") == 2
 
 
 @pytest.mark.parametrize(
@@ -131,7 +248,7 @@ def test_capabilities_require_every_typed_feature_inventory(
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     with pytest.raises(ValueError, match=field):
-        rust_executor._load_capabilities(Path("runner"))
+        runner_installation._load_capabilities(Path("runner"))
 
 
 def test_request_capabilities_cover_every_nested_native_variant() -> None:
@@ -179,7 +296,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         }
     }
 
-    rust_executor._require_request_capabilities(capabilities, request)
+    runner_installation._require_request_capabilities(capabilities, request)
 
     for field, value in (
         ("endpoint_types", "chat"),
@@ -204,4 +321,4 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         narrowed = {name: list(values) for name, values in capabilities.items()}
         narrowed[field].remove(value)
         with pytest.raises(RuntimeError, match=rf"{field}\.{value}"):
-            rust_executor._require_request_capabilities(narrowed, request)
+            runner_installation._require_request_capabilities(narrowed, request)

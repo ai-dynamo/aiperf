@@ -38,22 +38,6 @@ def _endpoint_template_from_extra(
     }
 
 
-def _endpoint_template_fallback(endpoint: dict[str, Any]) -> None:
-    from aiperf.plugin.enums import EndpointType
-
-    if endpoint.get("type") != EndpointType.TEMPLATE or "template" in endpoint:
-        return
-    extra_raw = endpoint.get("extra")
-    if not extra_raw:
-        return
-    ex = dict(extra_raw) if isinstance(extra_raw, list) else extra_raw
-    ts = ex.get("payload_template")
-    if ts is None:
-        return
-    body = safe_read_template_path(ts)
-    endpoint["template"] = {"body": body if body is not None else ts}
-
-
 # Map (CLIConfig endpoint field name) -> (AIPerfConfig endpoint key).
 _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "url_selection_strategy": "url_strategy",
@@ -98,7 +82,6 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
         _endpoint_template_from_extra(endpoint, extra)
         endpoint["extra"] = extra
 
-    _endpoint_template_fallback(endpoint)
     return endpoint
 
 

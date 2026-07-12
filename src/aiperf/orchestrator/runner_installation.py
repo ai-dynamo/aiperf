@@ -1,0 +1,335 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Discovery and exact-binary capability checks for ``aiperf-runner``.
+
+Endpoint identity is owned by the selected native runner. This module is the
+only Python authority for locating that runner and reading its advertised
+catalog; it deliberately has no plugin-registry or endpoint-metadata fallback.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import orjson
+
+from aiperf.common.redact import redact_string
+from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_VERSION
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkPlan
+
+_RUNNER_ENV = "AIPERF_RUNNER_BIN"
+_NATIVE_REPORT_SCHEMA_VERSION = "2.0"
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerInstallation:
+    """One selected runner binary and the capabilities read from that binary."""
+
+    binary: Path
+    capabilities: dict[str, Any]
+
+    @classmethod
+    def resolve(cls, binary: Path | None = None) -> RunnerInstallation:
+        """Discover one runner and negotiate its capability contract once."""
+        resolved = _resolve_runner_binary(binary)
+        return cls(binary=resolved, capabilities=_load_capabilities(resolved))
+
+    def preflight_endpoint(self, endpoint_id: str) -> None:
+        """Reject an endpoint absent from this exact compiled runner catalog."""
+        available = self.capabilities.get("endpoint_types")
+        if not isinstance(available, list) or not all(
+            isinstance(value, str) and value for value in available
+        ):
+            raise ValueError(
+                f"selected aiperf-runner {self.binary} does not publish a usable "
+                "endpoint_types catalog; install a compatible runner. Python "
+                "endpoint metadata is not used as a fallback."
+            )
+        if endpoint_id in available:
+            return
+        choices = ", ".join(sorted(available)) or "<none>"
+        raise RuntimeError(
+            f"endpoint {endpoint_id!r} is not compiled into selected "
+            f"aiperf-runner {self.binary}; available endpoints: {choices}. "
+            "Select a runner distribution containing that endpoint (for example "
+            f"with {_RUNNER_ENV})."
+        )
+
+    def preflight_plan(self, plan: BenchmarkPlan) -> None:
+        """Validate every distinct fixed-plan endpoint before its first run."""
+        endpoint_ids = {str(config.endpoint.type) for config in plan.configs}
+        for endpoint_id in sorted(endpoint_ids):
+            self.preflight_endpoint(endpoint_id)
+
+    def preflight_request(self, request: dict[str, Any]) -> None:
+        """Validate a projected request against this installation's inventory."""
+        _require_request_capabilities(self.capabilities, request)
+
+    def execute(self, request: dict[str, Any]) -> subprocess.CompletedProcess[bytes]:
+        """Run one request with the same binary whose catalog was negotiated."""
+        self.preflight_request(request)
+        return subprocess.run(
+            [str(self.binary)],
+            input=orjson.dumps(request),
+            capture_output=True,
+            check=False,
+        )
+
+
+def _resolve_runner_binary(explicit: Path | None) -> Path:
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(Path(explicit))
+    configured = os.environ.get(_RUNNER_ENV)
+    if configured:
+        candidates.append(Path(configured))
+    discovered = shutil.which("aiperf-runner")
+    if discovered:
+        candidates.append(Path(discovered))
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved.is_file() and os.access(resolved, os.X_OK):
+            return resolved
+    raise FileNotFoundError(
+        "aiperf-runner executable was not found; install the native runner beside "
+        f"aiperf or set {_RUNNER_ENV} to its absolute path"
+    )
+
+
+def _load_capabilities(binary: Path) -> dict[str, Any]:
+    completed = subprocess.run(
+        [str(binary), "--capabilities"],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = redact_string(completed.stderr.decode(errors="replace")).strip()
+        raise RuntimeError(
+            f"aiperf-runner capability negotiation failed (exit "
+            f"{completed.returncode}): {stderr or 'no diagnostic'}"
+        )
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError(
+            "aiperf-runner --capabilities must write exactly one JSON line; "
+            f"received {len(lines)}"
+        )
+    try:
+        capabilities = orjson.loads(lines[0])
+    except orjson.JSONDecodeError as error:
+        raise ValueError(
+            f"aiperf-runner returned invalid capability JSON: {error}"
+        ) from error
+    if not isinstance(capabilities, dict):
+        raise ValueError("aiperf-runner capabilities must be an object")
+    if capabilities.get("event") != "runner_capabilities":
+        raise ValueError("aiperf-runner returned an unknown capability response")
+    versions = capabilities.get("protocol_versions")
+    if not isinstance(versions, list) or RUNNER_PROTOCOL_VERSION not in versions:
+        raise RuntimeError(
+            f"aiperf-runner does not support protocol {RUNNER_PROTOCOL_VERSION}: "
+            f"advertised {versions!r}"
+        )
+    schema = capabilities.get("report_schema_version")
+    if schema != _NATIVE_REPORT_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"aiperf-runner report schema {schema!r} is incompatible; "
+            f"expected {_NATIVE_REPORT_SCHEMA_VERSION!r}"
+        )
+    for field in (
+        "endpoint_types",
+        "dataset_types",
+        "phase_types",
+        "phase_features",
+        "run_features",
+        "telemetry_source_types",
+        "server_metrics_formats",
+    ):
+        values = capabilities.get(field)
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) and value for value in values
+        ):
+            detail = (
+                "; install a compatible catalog-publishing runner because Python "
+                "endpoint metadata is not used as a fallback"
+                if field == "endpoint_types"
+                else ""
+            )
+            raise ValueError(
+                f"aiperf-runner capability {field} must be an array of "
+                f"non-empty strings{detail}"
+            )
+    return capabilities
+
+
+def _require_request_capabilities(
+    capabilities: dict[str, Any], request: dict[str, Any]
+) -> None:
+    """Fail before launch when a resolved run exceeds the child contract."""
+    run, endpoint, dataset, phases, artifacts = _request_components(request)
+    _require_capability(capabilities, "run_features", "thread_per_core_execution")
+    _require_endpoint_capabilities(capabilities, endpoint)
+    _require_capability(capabilities, "dataset_types", dataset["type"])
+    _require_phase_capabilities(capabilities, phases)
+    _require_output_capabilities(capabilities, run, artifacts)
+    _require_gpu_capabilities(capabilities, run.get("gpu_telemetry"))
+    _require_network_capabilities(capabilities, run.get("network_latency"))
+    _require_server_metrics_capabilities(capabilities, run.get("server_metrics"))
+    _require_live_streaming_capabilities(capabilities, run.get("live_streaming"))
+
+
+def _request_components(
+    request: dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    list[Any],
+    dict[str, Any],
+]:
+    """Extract and structurally validate the native request components."""
+    run = request.get("run")
+    if not isinstance(run, dict):
+        raise ValueError("native run request omitted its run object")
+    endpoint = run.get("endpoint")
+    dataset = run.get("dataset")
+    phases = run.get("phases")
+    artifacts = run.get("artifacts", {})
+    if not isinstance(endpoint, dict) or not isinstance(endpoint.get("type"), str):
+        raise ValueError("native run request omitted endpoint.type")
+    if not isinstance(dataset, dict) or not isinstance(dataset.get("type"), str):
+        raise ValueError("native run request omitted dataset.type")
+    if not isinstance(phases, list) or not phases:
+        raise ValueError("native run request must contain at least one phase")
+    if not isinstance(artifacts, dict):
+        raise ValueError("native run artifacts must be an object")
+    workers = run.get("workers")
+    if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
+        raise ValueError("native run workers must be a positive integer")
+    return run, endpoint, dataset, phases, artifacts
+
+
+def _require_endpoint_capabilities(
+    capabilities: dict[str, Any], endpoint: dict[str, Any]
+) -> None:
+    """Validate endpoint identity and optional transport policy inventory."""
+    _require_capability(capabilities, "endpoint_types", endpoint["type"])
+    if any(
+        field in endpoint
+        for field in (
+            "timeout_seconds",
+            "connection_reuse",
+            "request_content_type",
+            "download_video_content",
+            "session_header",
+        )
+    ):
+        _require_capability(capabilities, "run_features", "http_transport_policy")
+
+
+def _require_phase_capabilities(
+    capabilities: dict[str, Any], phases: list[Any]
+) -> None:
+    """Validate each phase kind and its optional native control features."""
+    for index, phase in enumerate(phases):
+        if not isinstance(phase, dict) or not isinstance(phase.get("type"), str):
+            raise ValueError(f"native run phase {index} omitted type")
+        _require_capability(capabilities, "phase_types", phase["type"])
+        if "adaptive_scale" in phase:
+            _require_capability(capabilities, "phase_features", "adaptive_scale")
+        if any(
+            field in phase
+            for field in ("concurrency_ramp", "prefill_ramp", "rate_ramp")
+        ):
+            _require_capability(capabilities, "phase_features", "ramps")
+        if "cancellation" in phase:
+            _require_capability(capabilities, "phase_features", "request_cancellation")
+
+
+def _require_output_capabilities(
+    capabilities: dict[str, Any],
+    run: dict[str, Any],
+    artifacts: dict[str, Any],
+) -> None:
+    """Validate accuracy and artifact features selected by the run."""
+    if "accuracy" in run:
+        _require_capability(capabilities, "run_features", "python_accuracy_evaluator")
+    if "outputs_path" in artifacts:
+        _require_capability(capabilities, "run_features", "outputs_json")
+    if "raw_path" in artifacts:
+        _require_capability(capabilities, "run_features", "raw_records")
+
+
+def _require_gpu_capabilities(capabilities: dict[str, Any], gpu_telemetry: Any) -> None:
+    """Validate optional GPU telemetry sources."""
+    if gpu_telemetry is None:
+        return
+    _require_capability(capabilities, "run_features", "gpu_telemetry")
+    if not isinstance(gpu_telemetry, dict):
+        raise ValueError("native run gpu_telemetry must be an object")
+    sources = gpu_telemetry.get("sources")
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("native run GPU telemetry requires at least one source")
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict) or not isinstance(source.get("type"), str):
+            raise ValueError(f"native GPU telemetry source {index} omitted type")
+        _require_capability(capabilities, "telemetry_source_types", source["type"])
+
+
+def _require_network_capabilities(
+    capabilities: dict[str, Any], network_latency: Any
+) -> None:
+    """Validate optional network-latency policy."""
+    if network_latency is None:
+        return
+    if not isinstance(network_latency, dict):
+        raise ValueError("native run network_latency must be an object")
+    _require_capability(capabilities, "run_features", "network_latency")
+
+
+def _require_server_metrics_capabilities(
+    capabilities: dict[str, Any], server_metrics: Any
+) -> None:
+    """Validate optional server-metrics formats."""
+    if server_metrics is None:
+        return
+    _require_capability(capabilities, "run_features", "server_metrics")
+    if not isinstance(server_metrics, dict):
+        raise ValueError("native run server_metrics must be an object")
+    formats = server_metrics.get("formats")
+    if not isinstance(formats, list) or not formats:
+        raise ValueError("native run server_metrics requires at least one format")
+    for format_name in formats:
+        if not isinstance(format_name, str):
+            raise ValueError("native server metrics formats must be strings")
+        _require_capability(capabilities, "server_metrics_formats", format_name)
+
+
+def _require_live_streaming_capabilities(
+    capabilities: dict[str, Any], live_streaming: Any
+) -> None:
+    """Validate the optional supervised Python streaming extension."""
+    if live_streaming is None:
+        return
+    if not isinstance(live_streaming, dict):
+        raise ValueError("native run live_streaming must be an object")
+    _require_capability(capabilities, "run_features", "python_live_streaming")
+
+
+def _require_capability(
+    capabilities: dict[str, Any], field: str, required: str
+) -> None:
+    advertised = capabilities[field]
+    if required not in advertised:
+        raise RuntimeError(
+            f"aiperf-runner does not support {field}.{required}; "
+            f"advertised {advertised!r}"
+        )

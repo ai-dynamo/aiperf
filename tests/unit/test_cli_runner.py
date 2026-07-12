@@ -91,7 +91,6 @@ def _no_real_native_process():
 class TestRunBenchmark:
     """Test run_benchmark routing for BenchmarkPlan inputs."""
 
-    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_single_benchmark")
@@ -100,7 +99,6 @@ class TestRunBenchmark:
         mock_single: Mock,
         mock_artifact: Mock,
         mock_fd: Mock,
-        mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -114,9 +112,7 @@ class TestRunBenchmark:
         assert run.cfg is plan.configs[0]
         mock_artifact.assert_called_once_with(plan)
         mock_fd.assert_called_once_with()
-        mock_endpoint.assert_called_once_with(plan)
 
-    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_multi_benchmark")
@@ -125,7 +121,6 @@ class TestRunBenchmark:
         mock_multi: Mock,
         mock_artifact: Mock,
         mock_fd: Mock,
-        mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -136,9 +131,7 @@ class TestRunBenchmark:
         mock_multi.assert_called_once_with(plan, on_complete=[])
         mock_artifact.assert_called_once_with(plan)
         mock_fd.assert_called_once_with()
-        mock_endpoint.assert_called_once_with(plan)
 
-    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_multi_benchmark")
@@ -147,7 +140,6 @@ class TestRunBenchmark:
         mock_multi: Mock,
         mock_artifact: Mock,
         mock_fd: Mock,
-        mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -170,7 +162,36 @@ class TestRunBenchmark:
         mock_multi.assert_called_once_with(plan, on_complete=[])
         mock_artifact.assert_called_once_with(plan)
         mock_fd.assert_called_once_with()
-        mock_endpoint.assert_called_once_with(plan)
+
+    @pytest.mark.parametrize("endpoint_type", ["messages", "acme_chat"])
+    @patch("aiperf.cli_runner._preflight_fd_limit")
+    @patch("aiperf.cli_runner._preflight_artifact_dir")
+    @patch("aiperf.cli_runner._run_single_benchmark")
+    def test_native_path_never_enters_python_endpoint_readiness_probe(
+        self,
+        mock_single: Mock,
+        _mock_artifact: Mock,
+        _mock_fd: Mock,
+        endpoint_type: str,
+    ) -> None:
+        from aiperf.cli_runner import run_benchmark
+
+        config = _make_config(
+            endpoint={
+                "urls": ["http://localhost:8000"],
+                "type": endpoint_type,
+                "wait_for_model_timeout": 60,
+            }
+        )
+        plan = _make_plan(config=config)
+
+        with patch(
+            "aiperf.common.readiness_probe.wait_for_endpoint"
+        ) as readiness_probe:
+            run_benchmark(plan)
+
+        mock_single.assert_called_once()
+        readiness_probe.assert_not_called()
 
 
 class TestRunSingleBenchmark:

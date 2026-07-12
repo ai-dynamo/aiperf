@@ -137,7 +137,6 @@ class TestCompletedRunDataclass:
 class TestRunBenchmarkAutoPlotWiring:
     """run_benchmark builds the auto-plot callback only when configured."""
 
-    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_single_benchmark")
@@ -146,7 +145,6 @@ class TestRunBenchmarkAutoPlotWiring:
         mock_single: Mock,
         _mock_artifact: Mock,
         _mock_fd: Mock,
-        _mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -159,7 +157,6 @@ class TestRunBenchmarkAutoPlotWiring:
         on_complete = mock_single.call_args.kwargs["on_complete"]
         assert on_complete == []
 
-    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_single_benchmark")
@@ -168,7 +165,6 @@ class TestRunBenchmarkAutoPlotWiring:
         mock_single: Mock,
         _mock_artifact: Mock,
         _mock_fd: Mock,
-        _mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -189,7 +185,6 @@ class TestRunBenchmarkAutoPlotWiring:
         on_complete = mock_single.call_args.kwargs["on_complete"]
         assert on_complete == [sentinel]
 
-    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_multi_benchmark")
@@ -198,7 +193,6 @@ class TestRunBenchmarkAutoPlotWiring:
         mock_multi: Mock,
         _mock_artifact: Mock,
         _mock_fd: Mock,
-        _mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
