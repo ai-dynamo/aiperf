@@ -20,6 +20,28 @@ use serde_json::{Value, value::RawValue};
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(target_os = "linux")]
+#[used]
+#[unsafe(link_section = ".init_array.00100")]
+static AIPERF_MIMALLOC_PREINIT: unsafe extern "C" fn() = configure_mimalloc_before_process_init;
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" fn configure_mimalloc_before_process_init() {
+    const MI_OPTION_ARENA_EAGER_COMMIT: i32 = 4;
+
+    unsafe extern "C" {
+        fn getenv(name: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+    }
+    // mimalloc's own Linux constructor has priority 101. This priority-100 hook
+    // changes only its default before that constructor commits the initial arena;
+    // an explicit operator environment setting remains authoritative.
+    if unsafe { getenv(c"MIMALLOC_ARENA_EAGER_COMMIT".as_ptr()) }.is_null() {
+        // SAFETY: mimalloc has not run process initialization and no Rust heap
+        // allocation can precede an ELF init-array constructor.
+        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_ARENA_EAGER_COMMIT, 0) };
+    }
+}
+
 fn main() {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.len() == 1 && arguments[0] == "--capabilities" {
