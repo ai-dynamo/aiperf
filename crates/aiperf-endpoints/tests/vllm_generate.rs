@@ -98,12 +98,7 @@ fn preparation_rejects_malformed_endpoint_sampling_params() {
     let result = registry.prepare(
         &EndpointId::new("vllm_generate").unwrap(),
         RawEndpointConfig {
-            extra: Some(
-                json!({"sampling_params": []})
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
+            extra: Some(json!({"sampling_params": []}).as_object().unwrap().clone()),
             ..RawEndpointConfig::default()
         },
     );
