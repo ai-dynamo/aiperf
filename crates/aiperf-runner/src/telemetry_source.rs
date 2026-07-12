@@ -568,7 +568,13 @@ impl TelemetryFetcher for PrometheusTelemetryFetcher {
                 FetchedAttempt {
                     source_id,
                     source_record_seq,
-                    request_attempt_seq: request_start_ns.map(|_| request_attempt_seq),
+                    // The driver assigned this sequence when it dispatched the
+                    // fetch and requires it echoed back as the attempt identity,
+                    // independent of whether the request physically started
+                    // (that is carried by request_start_ns / the disposition). An
+                    // error without timings (e.g. a body-too-large abort) must
+                    // still return the assigned sequence, not None.
+                    request_attempt_seq: Some(request_attempt_seq),
                     scheduled_ns,
                     request_start_ns,
                     first_byte_ns,
