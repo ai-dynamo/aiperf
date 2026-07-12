@@ -106,12 +106,7 @@ class RunnerInstallation:
         *,
         operation: RunnerOperationV2,
     ) -> dict[str, Any]:
-        """Build a v2 request bound to this installation without executing it.
-
-        The selected runner must explicitly advertise both protocol v2 and its
-        exact distribution identity. This provisional API intentionally does
-        not launch v2 until the Rust strict DTO and response contract land.
-        """
+        """Build a v2 request bound to this installation without executing it."""
         versions = self.capabilities.get("protocol_versions")
         if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
             raise RuntimeError(
@@ -131,6 +126,16 @@ class RunnerInstallation:
             expected_distribution_id=distribution_id,
         )
 
+    def supports_pair(self, backend_id: str, workload_id: str) -> bool:
+        """Return whether this exact image advertises an executable v2 pair."""
+        versions = self.capabilities.get("protocol_versions")
+        if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
+            return False
+        supported = self.capabilities.get("supported_pairs")
+        if not isinstance(supported, list):
+            return False
+        return [backend_id, workload_id] in supported
+
     def preflight_plan(self, plan: BenchmarkPlan) -> None:
         """Validate every distinct fixed-plan endpoint before its first run."""
         endpoint_ids = {str(config.endpoint.type) for config in plan.configs}
@@ -139,7 +144,17 @@ class RunnerInstallation:
 
     def preflight_request(self, request: dict[str, Any]) -> None:
         """Validate a projected request against this installation's inventory."""
-        _require_request_capabilities(self.capabilities, request)
+        protocol_version = request.get("protocol_version")
+        if protocol_version == RUNNER_PROTOCOL_VERSION:
+            _require_request_capabilities(self.capabilities, request)
+            return
+        if protocol_version == RUNNER_PROTOCOL_V2:
+            _require_v2_request_capabilities(self.capabilities, request)
+            return
+        raise ValueError(
+            f"native request protocol_version must be {RUNNER_PROTOCOL_VERSION} or "
+            f"{RUNNER_PROTOCOL_V2}, got {protocol_version!r}"
+        )
 
     def execute(self, request: dict[str, Any]) -> subprocess.CompletedProcess[bytes]:
         """Run one request with the same binary whose catalog was negotiated."""
@@ -220,6 +235,8 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
             f"aiperf-runner does not support protocol {RUNNER_PROTOCOL_VERSION}: "
             f"advertised {versions!r}"
         )
+    if RUNNER_PROTOCOL_V2 in versions:
+        _validate_v2_capabilities(capabilities)
     schema = capabilities.get("report_schema_version")
     if schema != _NATIVE_REPORT_SCHEMA_VERSION:
         raise RuntimeError(
@@ -252,6 +269,45 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
     return capabilities
 
 
+def _validate_v2_capabilities(capabilities: dict[str, Any]) -> None:
+    """Validate inventories required to select a protocol-v2 execution pair."""
+    if capabilities.get("capabilities_schema_version") != 2:
+        raise RuntimeError(
+            "aiperf-runner advertises protocol 2 without capability schema 2"
+        )
+    for field in ("supported_pairs", "statically_compatible_pairs"):
+        pairs = capabilities.get(field)
+        if not isinstance(pairs, list) or not all(
+            isinstance(pair, list)
+            and len(pair) == 2
+            and all(isinstance(value, str) and value for value in pair)
+            for pair in pairs
+        ):
+            raise ValueError(
+                f"aiperf-runner capability {field} must be an array of "
+                "[backend, workload] string pairs"
+            )
+    for field in ("backends", "workloads", "endpoints"):
+        descriptors = capabilities.get(field)
+        if not isinstance(descriptors, list) or not all(
+            isinstance(descriptor, dict)
+            and isinstance(descriptor.get("id"), str)
+            and bool(descriptor["id"])
+            for descriptor in descriptors
+        ):
+            raise ValueError(
+                f"aiperf-runner capability {field} must be an array of "
+                "descriptors with non-empty id fields"
+            )
+    extensions = capabilities.get("extensions")
+    if not isinstance(extensions, list) or not all(
+        isinstance(extension, str) and extension for extension in extensions
+    ):
+        raise ValueError(
+            "aiperf-runner capability extensions must be an array of non-empty strings"
+        )
+
+
 def _runner_distribution_id(binary: Path) -> str:
     """Hash one opened runner image with the native versioned BLAKE3 contract."""
     digest = blake3()
@@ -275,6 +331,37 @@ def _is_distribution_id(value: object) -> bool:
     return len(hexadecimal) == _DISTRIBUTION_ID_HEX_LENGTH and all(
         character in "0123456789abcdef" for character in hexadecimal
     )
+
+
+def _require_v2_request_capabilities(
+    capabilities: dict[str, Any], request: dict[str, Any]
+) -> None:
+    """Fail before launch unless this image advertises the exact v2 pair."""
+    run = request.get("run")
+    if not isinstance(run, dict):
+        raise ValueError("protocol-v2 request omitted its run object")
+    backend = run.get("backend")
+    workload = run.get("workload")
+    if not isinstance(backend, dict) or not isinstance(backend.get("type"), str):
+        raise ValueError("protocol-v2 request omitted run.backend.type")
+    if not isinstance(workload, dict) or not isinstance(workload.get("type"), str):
+        raise ValueError("protocol-v2 request omitted run.workload.type")
+    pair = [backend["type"], workload["type"]]
+    supported = capabilities.get("supported_pairs")
+    if not isinstance(supported, list) or pair not in supported:
+        raise RuntimeError(
+            "selected aiperf-runner does not contain executable protocol-v2 pair "
+            f"({pair[0]!r}, {pair[1]!r}); advertised {supported!r}"
+        )
+
+    endpoints = run.get("endpoints")
+    profiles = endpoints.get("profiles") if isinstance(endpoints, dict) else None
+    if not isinstance(profiles, list) or not profiles:
+        raise ValueError("protocol-v2 request requires at least one endpoint profile")
+    for index, profile in enumerate(profiles):
+        if not isinstance(profile, dict) or not isinstance(profile.get("type"), str):
+            raise ValueError(f"protocol-v2 endpoint profile {index} omitted type")
+        _require_capability(capabilities, "endpoint_types", profile["type"])
 
 
 def _require_request_capabilities(

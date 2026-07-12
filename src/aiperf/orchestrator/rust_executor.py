@@ -24,6 +24,7 @@ from aiperf.orchestrator.native_report import (
 )
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_wire import (
+    RUNNER_PROTOCOL_V2,
     RUNNER_PROTOCOL_VERSION,
     build_run_request,
     validate_v1_selection,
@@ -71,17 +72,17 @@ class RustSubprocessExecutor(RunExecutor):
     def execute_sync(self, run: BenchmarkRun) -> RunResult:
         """Execute one run and return its orchestrator-facing metric projection."""
         try:
-            # This must precede config resolvers: they may create artifact
-            # directories or warm tokenizer caches. Unknown endpoint identity
-            # is an exact-runner compatibility error, not a Python plugin lookup.
-            self.installation.preflight_endpoint(str(run.cfg.endpoint.type))
-            validate_v1_selection(run.cfg)
-            self._resolve_run(run)
-            request = build_run_request(run)
+            request = self._request_for_run(run)
             completed = self.installation.execute(request)
             terminal = _parse_terminal(
                 completed.stdout,
                 run,
+                protocol_version=request["protocol_version"],
+                distribution_id=(
+                    self.installation.distribution_id
+                    if request["protocol_version"] == RUNNER_PROTOCOL_V2
+                    else None
+                ),
                 returncode=completed.returncode,
                 stderr=completed.stderr,
             )
@@ -100,6 +101,27 @@ class RustSubprocessExecutor(RunExecutor):
                 error=redact_string(str(error)),
                 artifacts_path=run.artifact_dir,
             )
+
+    def _request_for_run(self, run: BenchmarkRun) -> dict[str, Any]:
+        """Select v2 only for a pair executable in this exact runner image."""
+        versions = self.installation.capabilities.get("protocol_versions")
+        if isinstance(versions, list) and RUNNER_PROTOCOL_V2 in versions:
+            authored = self.installation.project_authored_request(
+                run,
+                operation="execute",
+            )
+            backend = authored["run"]["backend"]["type"]
+            workload = authored["run"]["workload"]["type"]
+            if self.installation.supports_pair(backend, workload):
+                return authored
+
+        # Compatibility v1 still needs Python resolution. Endpoint capability
+        # checking and v1-only selection rejection happen before resolvers,
+        # which may create artifacts or warm tokenizer caches.
+        self.installation.preflight_endpoint(str(run.cfg.endpoint.type))
+        validate_v1_selection(run.cfg)
+        self._resolve_run(run)
+        return build_run_request(run)
 
     @staticmethod
     def _resolve_run(run: BenchmarkRun) -> None:
@@ -139,6 +161,8 @@ def _parse_terminal(
     stdout: bytes,
     run: BenchmarkRun,
     *,
+    protocol_version: int = RUNNER_PROTOCOL_VERSION,
+    distribution_id: str | None = None,
     returncode: int | None = None,
     stderr: bytes = b"",
 ) -> dict[str, Any]:
@@ -160,10 +184,14 @@ def _parse_terminal(
     if not isinstance(terminal, dict):
         raise ValueError("native runner terminal response must be an object")
     expected = {
-        "protocol_version": RUNNER_PROTOCOL_VERSION,
+        "protocol_version": protocol_version,
         "event": "run_terminal",
         "benchmark_id": run.benchmark_id,
     }
+    if protocol_version == RUNNER_PROTOCOL_V2:
+        if distribution_id is None:
+            raise ValueError("protocol-v2 terminal validation requires distribution_id")
+        expected["distribution_id"] = distribution_id
     for field, value in expected.items():
         if terminal.get(field) != value:
             raise ValueError(
@@ -192,9 +220,7 @@ def _failure(
     terminal: dict[str, Any],
     run: BenchmarkRun,
 ) -> RunResult:
-    detail = redact_string(
-        str(terminal.get("error") or "native runner failed without an error message")
-    )
+    detail = redact_string(_terminal_error(terminal))
     stderr = redact_string(completed.stderr.decode(errors="replace")).strip()
     if stderr:
         detail = f"{detail}\nRust stderr: {stderr[-4000:]}"
@@ -204,6 +230,27 @@ def _failure(
         error=f"native benchmark failed (exit {completed.returncode}): {detail}",
         artifacts_path=run.artifact_dir,
     )
+
+
+def _terminal_error(terminal: dict[str, Any]) -> str:
+    """Render either protocol generation's typed failure without using stderr."""
+    error = terminal.get("error")
+    if isinstance(error, str) and error:
+        return error
+    errors = terminal.get("errors")
+    if isinstance(errors, list):
+        messages = [
+            diagnostic.get("message")
+            for diagnostic in errors
+            if isinstance(diagnostic, dict)
+            and isinstance(diagnostic.get("message"), str)
+            and diagnostic["message"]
+        ]
+        if messages:
+            stage = terminal.get("stage")
+            prefix = f"{stage}: " if isinstance(stage, str) and stage else ""
+            return prefix + "; ".join(messages)
+    return "native runner failed without an error message"
 
 
 def _classify(summary: dict[str, Any], run: BenchmarkRun) -> RunResult:

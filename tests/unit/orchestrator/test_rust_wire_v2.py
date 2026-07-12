@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import orjson
 import pytest
 from pydantic import ValidationError
 
@@ -337,6 +339,70 @@ def test_runner_installation_uses_only_advertised_distribution_identity(
     )
     with pytest.raises(RuntimeError, match="without distribution_id|not invent"):
         missing_identity.project_authored_request(run, operation="validate")
+
+
+def test_executor_selects_advertised_v2_pair_without_legacy_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _run(tmp_path / "authored-only")
+    installation = RunnerInstallation(
+        binary=Path("/opt/aiperf-runner"),
+        capabilities={
+            "protocol_versions": [1, 2],
+            "distribution_id": "blake3:" + "a" * 64,
+            "supported_pairs": [["online_http", "scheduled"]],
+            "endpoint_types": ["future_endpoint"],
+        },
+    )
+    executor = rust_executor.RustSubprocessExecutor(
+        base_dir=tmp_path,
+        installation=installation,
+    )
+    monkeypatch.setattr(
+        executor,
+        "_resolve_run",
+        lambda _run: pytest.fail("an executable v2 pair entered legacy resolution"),
+    )
+
+    request = executor._request_for_run(run)
+
+    assert request["protocol_version"] == 2
+    assert request["run"]["backend"]["type"] == "online_http"
+    assert request["run"]["workload"]["type"] == "scheduled"
+    assert not run.artifact_dir.exists()
+
+
+def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
+    distribution_id = "blake3:" + "b" * 64
+    terminal = rust_executor._parse_terminal(
+        orjson.dumps(
+            {
+                "protocol_version": 2,
+                "event": "run_terminal",
+                "distribution_id": distribution_id,
+                "benchmark_id": "bound-runner",
+                "success": False,
+                "report_path": None,
+                "stage": "validation",
+                "errors": [{"code": "invalid", "message": "bad pair"}],
+                "provenance": {},
+            }
+        )
+        + b"\n",
+        SimpleNamespace(benchmark_id="bound-runner"),
+        protocol_version=2,
+        distribution_id=distribution_id,
+    )
+
+    assert terminal["stage"] == "validation"
+    with pytest.raises(ValueError, match="distribution_id"):
+        rust_executor._parse_terminal(
+            orjson.dumps({**terminal, "distribution_id": "blake3:wrong"})
+            + b"\n",
+            SimpleNamespace(benchmark_id="bound-runner"),
+            protocol_version=2,
+            distribution_id=distribution_id,
+        )
 
 
 def test_v1_projection_remains_the_execution_compatibility_path(tmp_path: Path) -> None:
