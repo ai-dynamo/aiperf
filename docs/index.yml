@@ -25,6 +25,10 @@ navigation:
     contents:
     - page: Profile OpenAI-Compatible Text APIs Using AIPerf
       path: tutorials/openai-text-endpoints.md
+    - page: Profile KServe Endpoints
+      path: tutorials/kserve.md
+    - page: Native gRPC Transport
+      path: tutorials/grpc-transport.md
     - page: Profile the OpenAI Responses API with AIPerf
       path: tutorials/openai-responses.md
     - page: Profile Hugging Face TGI Models with AIPerf
@@ -257,6 +261,8 @@ navigation:
     path: diagrams/mixins.md
   - page: AIPerf Code Patterns
     path: dev/patterns.md
+  - page: Add Native gRPC Endpoints
+    path: dev/adding-grpc-endpoints.md
   - page: Global Property-Test Invariants
     path: dev/global-invariants.md
   - page: Sweep Orchestrator (Dev Reference)
