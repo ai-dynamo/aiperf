@@ -39,6 +39,7 @@ commit hash(es):
 - `6f40d5327`
 - `fa30ee23c`
 - `c5ad057fa`
+- `0ab1c12a8`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
@@ -104,3 +105,54 @@ self-review:
 - every planned graph node and edge has explicit design evidence;
 - the catalog module is compile-time checked and runtime parsed without unsafe casts;
 - no remaining Task 1 review concern identified.
+
+## Source Drift Re-review Fix — 2026-07-12
+
+status: DONE
+
+source-grounded correction:
+- commit `2e1aa0782` was preserved unchanged;
+- the first-class `dynamo_online` visual flavor now selects the built, feature-gated `dynamo_offline` runner backend/pair with `replay_mode=online`;
+- the built path is grounded in `DynamoReplayModeSpec::Online` and `DynamoOfflineExecutor::execute_scheduled`;
+- the distinct `dynamo_online` backend ID / registered pair remains a separate planned node and edge with design evidence.
+
+integrity fixes:
+- scenes now reject edges whose source or target node is absent from the scene;
+- every canonical scene is closed over all selected edge endpoints;
+- dedicated Dynamo-online runner-pair entities with `delivery: runner_pair` must remain planned for both nodes and edges.
+
+tests added:
+- built online replay maps through `node.dynamo-offline-runner-backend`;
+- online replay has feature-gated built status and exact line-ranged runner evidence;
+- the dedicated runner backend/pair remains planned;
+- scene endpoint closure rejects incomplete scenes and validates all canonical scenes;
+- parameterized node/edge tests reject built dedicated Dynamo-online runner-pair facts.
+
+RED:
+- command:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run test -- src/domain/graph-catalog.test.ts`
+- observed:
+  - `1 failed test file`
+  - `5 failed, 20 passed`
+  - failures covered missing built online replay facts, absent scene endpoint closure, and missing edge-level planned-only enforcement.
+
+GREEN:
+- focused command:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run test -- src/domain/graph-catalog.test.ts`
+- focused result:
+  - `1 passed test file`
+  - `25 passed`
+- full commands:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run validate:content`
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run typecheck`
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas test`
+- full results:
+  - `validate:content`: `Architecture Atlas content is valid: 25 components, 20 edges, 23 crates.`
+  - `typecheck`: success
+  - `npm test`: `12 passed test files, 114 passed tests`
+
+source-drift fix commit hash(es):
+- pending
+
+concerns:
+- none identified.

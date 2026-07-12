@@ -343,12 +343,51 @@ describe("graph-first catalog", () => {
     const librarySeam = architectureCatalog.graphNodes.find(
       (node) => node.id === "node.dynamo-online-library-seam",
     );
+    const onlineReplay = architectureCatalog.graphNodes.find(
+      (node) => node.id === "node.dynamo-online-replay-mode",
+    );
     const runnerPair = architectureCatalog.graphNodes.find(
       (node) => node.id === "node.dynamo-online-runner-pair",
     );
     expect(librarySeam?.status.state).toBe("built");
+    expect(onlineReplay?.status).toEqual({
+      state: "built",
+      delivery: "feature_gated",
+    });
+    expect(onlineReplay?.flavors).toContain("dynamo_online");
     expect(runnerPair?.status.state).toBe("planned");
     expect(runnerPair?.flavors).toContain("dynamo_online");
+  });
+
+  it("maps built online replay through the dynamo_offline runner backend", () => {
+    const backend = architectureCatalog.graphNodes.find(
+      (node) => node.id === "node.dynamo-offline-runner-backend",
+    );
+    const replay = architectureCatalog.graphNodes.find(
+      (node) => node.id === "node.dynamo-online-replay-mode",
+    );
+    const edge = architectureCatalog.graphEdges.find(
+      (candidate) => candidate.id === "edge.dynamo.online.replay-mode",
+    );
+
+    expect(backend?.flavors).toEqual(
+      expect.arrayContaining(["dynamo_offline", "dynamo_online"]),
+    );
+    expect(backend?.childIds).toContain("node.dynamo-online-replay-mode");
+    expect(replay?.parentId).toBe("node.dynamo-offline-runner-backend");
+    expect(edge?.status).toEqual({
+      state: "built",
+      delivery: "feature_gated",
+    });
+    expect(edge?.flavors).toEqual(["dynamo_online"]);
+    expect(
+      replay?.evidence.some(
+        ({ path, lines, role }) =>
+          path === "crates/aiperf-runner/src/offline_execution.rs" &&
+          role === "source" &&
+          lines !== undefined,
+      ),
+    ).toBe(true);
   });
 
   it("keeps Dynamo online out of built runner journey facts", () => {
@@ -421,6 +460,31 @@ describe("graph-first catalog", () => {
     await expect(
       validateArchitectureCatalog(catalog, repositoryRoot),
     ).rejects.toThrow(/scene.*node\.missing/i);
+  });
+
+  it("rejects scene edges whose endpoints are outside the scene", async () => {
+    const catalog = minimalGraphCatalog();
+    catalog.graphScenes[0].nodeIds = ["node.root"];
+
+    await expect(
+      validateArchitectureCatalog(catalog, repositoryRoot),
+    ).rejects.toThrow(/scene.*edge.*endpoint/i);
+  });
+
+  it("keeps every canonical scene closed over edge endpoints", () => {
+    const edges = new Map(
+      architectureCatalog.graphEdges.map((edge) => [edge.id, edge]),
+    );
+
+    for (const scene of architectureCatalog.graphScenes) {
+      const nodeIds = new Set(scene.nodeIds);
+      for (const edgeId of scene.edgeIds) {
+        const edge = edges.get(edgeId);
+        expect(edge).toBeDefined();
+        expect(nodeIds.has(edge!.source.nodeId)).toBe(true);
+        expect(nodeIds.has(edge!.target.nodeId)).toBe(true);
+      }
+    }
   });
 
   it("rejects dangling port endpoints", async () => {
@@ -513,23 +577,42 @@ describe("graph-first catalog", () => {
     ).rejects.toThrow(/planned.*design evidence/i);
   });
 
-  it("rejects Dynamo-online runner entities marked built", async () => {
-    const catalog = minimalGraphCatalog();
-    (catalog.graphNodes[1] as GraphNode).status = {
-      state: "built",
-      delivery: "runner_pair",
-    };
-    (catalog.graphNodes[1] as GraphNode).evidence = [
-      {
-        path: "AGENTS.md",
-        lines: { start: 1, end: 12 },
-        role: "source",
-      },
-    ];
-    await expect(
-      validateArchitectureCatalog(catalog, repositoryRoot),
-    ).rejects.toThrow(/planned.*dynamo[_ ]online.*runner/i);
-  });
+  it.each(["node", "edge"] as const)(
+    "rejects dedicated Dynamo-online runner-pair %s facts marked built",
+    async (entityKind) => {
+      const catalog = minimalGraphCatalog();
+      const sourceEvidence = [
+        {
+          path: "AGENTS.md",
+          lines: { start: 1, end: 12 },
+          role: "source" as const,
+        },
+      ];
+      if (entityKind === "node") {
+        (catalog.graphNodes[1] as GraphNode).status = {
+          state: "built",
+          delivery: "runner_pair",
+        };
+        (catalog.graphNodes[1] as GraphNode).evidence = sourceEvidence;
+      } else {
+        catalog.graphEdges.push({
+          id: "edge.dynamo.online.dedicated-pair",
+          source: { nodeId: "node.root", portId: "port.root.out" },
+          target: { nodeId: "node.runner", portId: "port.runner.in" },
+          channel: "control",
+          status: { state: "built", delivery: "runner_pair" },
+          flavors: ["dynamo_online"],
+          protocol: "Dedicated Dynamo-online runner pair",
+          evidence: sourceEvidence,
+          footnotes: [],
+        });
+      }
+
+      await expect(
+        validateArchitectureCatalog(catalog, repositoryRoot),
+      ).rejects.toThrow(/planned.*dynamo[_ ]online.*runner/i);
+    },
+  );
 
   it("rejects invalid parent-child relationships and cycles", async () => {
     const catalog = minimalGraphCatalog();

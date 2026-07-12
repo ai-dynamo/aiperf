@@ -761,19 +761,20 @@ const graphNodesRaw = [
       "node.dynamo-offline-sim-clock",
       "node.dynamo-offline-steppable-replay",
       "node.dynamo-offline-report-gate",
+      "node.dynamo-online-replay-mode",
     ],
     owner: "rust",
     status: { state: "built", delivery: "feature_gated" },
-    flavors: ["dynamo_offline"],
+    flavors: ["dynamo_offline", "dynamo_online"],
     title: {
-      executive: "Dynamo offline runner backend",
-      developer: "Feature-gated offline backend and pairs",
-      maintainer: "DynamoOfflineBackendFactory registration",
+      executive: "Dynamo replay runner backend",
+      developer: "Feature-gated Dynamo offline backend and pairs",
+      maintainer: "DynamoOfflineBackendFactory with replay_mode",
     },
     summary: {
-      executive: "Registers deterministic offline execution in special runner builds.",
-      developer: "Adds scheduled and graph pairs behind the dynamo-offline feature.",
-      maintainer: "Source-backed backend and pair registration in offline_execution.",
+      executive: "Runs deterministic or wall-clock in-process replay in special builds.",
+      developer: "The dynamo_offline backend selects offline or online replay_mode.",
+      maintainer: "One registered backend and pair family owns both clock axes.",
     },
     evidence: [
       source(
@@ -792,6 +793,54 @@ const graphNodesRaw = [
     ],
     audience: fullAudience,
     footnotes: [],
+  },
+  {
+    id: "node.dynamo-online-replay-mode",
+    tier: 2,
+    parentId: "node.dynamo-offline-runner-backend",
+    childIds: [],
+    owner: "rust",
+    status: { state: "built", delivery: "feature_gated" },
+    flavors: ["dynamo_online"],
+    title: {
+      executive: "Dynamo online in-process replay",
+      developer: "dynamo_offline replay_mode online",
+      maintainer: "DynamoReplayModeSpec::Online execution branch",
+    },
+    summary: {
+      executive: "Drives the in-process Dynamo engine under a real wall clock.",
+      developer: "Uses the existing feature-gated backend and pair with replay_mode online.",
+      maintainer: "Dispatches to run_scheduled_backend_online without registering a new backend ID.",
+    },
+    evidence: [
+      source(
+        "crates/aiperf-runner/src/offline_execution.rs",
+        219,
+        246,
+        "DynamoReplayModeSpec",
+      ),
+      source(
+        "crates/aiperf-runner/src/offline_execution.rs",
+        1845,
+        1877,
+        "DynamoOfflineExecutor::execute_scheduled",
+      ),
+    ],
+    seamPorts: [
+      {
+        id: "port.dynamo.online.replay.control",
+        name: "wall-clock-replay",
+        channel: "control",
+      },
+    ],
+    audience: fullAudience,
+    footnotes: [
+      {
+        executive: "This is not a dedicated Dynamo-online registry backend.",
+        developer: "The registered backend ID remains dynamo_offline.",
+        maintainer: "A distinct dynamo_online backend/pair remains design-only.",
+      },
+    ],
   },
   {
     id: "node.dynamo-offline-sim-clock",
@@ -1022,6 +1071,36 @@ const graphEdgesRaw = [
     footnotes: [],
   },
   {
+    id: "edge.dynamo.online.replay-mode",
+    source: {
+      nodeId: "node.dynamo-offline-runner-backend",
+      portId: "port.dynamo.offline.runner.control",
+    },
+    target: {
+      nodeId: "node.dynamo-online-replay-mode",
+      portId: "port.dynamo.online.replay.control",
+    },
+    channel: "control",
+    status: { state: "built", delivery: "feature_gated" },
+    flavors: ["dynamo_online"],
+    protocol: "Existing dynamo_offline pair with replay_mode=online",
+    evidence: [
+      source(
+        "crates/aiperf-runner/src/offline_execution.rs",
+        219,
+        246,
+        "DynamoReplayModeSpec",
+      ),
+      source(
+        "crates/aiperf-runner/src/offline_execution.rs",
+        1845,
+        1877,
+        "DynamoOfflineExecutor::execute_scheduled",
+      ),
+    ],
+    footnotes: [],
+  },
+  {
     id: "edge.dynamo.offline.runner.sim-clock",
     source: {
       nodeId: "node.dynamo-offline-runner-backend",
@@ -1106,14 +1185,17 @@ const graphScenesRaw = [
       "node.runtime-composition",
       "node.clock-seam",
       "node.request-sink-seam",
+      "node.metrics-telemetry",
       "node.dynamo-online-library-seam",
       "node.dynamo-offline-runner-backend",
+      "node.dynamo-online-replay-mode",
       "node.dynamo-offline-sim-clock",
       "node.dynamo-offline-steppable-replay",
       "node.dynamo-offline-report-gate",
     ],
     edgeIds: [
       "edge.runtime.dispatch.metrics",
+      "edge.dynamo.online.replay-mode",
       "edge.dynamo.offline.runner.sim-clock",
       "edge.dynamo.offline.sim-clock.replay",
       "edge.dynamo.offline.replay.report-gate",
@@ -1126,6 +1208,7 @@ const graphScenesRaw = [
     rustScene: true,
     nodeIds: [
       "node.runner-protocol-registries",
+      "node.dynamo-online-library-seam",
       "node.dynamo-online-runner-pair",
       "node.dynamo-offline-runner-backend",
     ],
@@ -1139,6 +1222,7 @@ const graphScenesRaw = [
     nodeIds: [
       "node.scheduling-phase-lifecycle",
       "node.journey.scheduling-or-graph-ir",
+      "node.journey.dataset-materialization",
     ],
     edgeIds: ["edge.journey.8"],
     audience: fullSceneAudience,
@@ -1150,6 +1234,8 @@ const graphScenesRaw = [
     nodeIds: [
       "node.dataset-segment-pipeline",
       "node.journey.dataset-materialization",
+      "node.journey.endpoint-binding",
+      "node.endpoint-bindings-transports",
     ],
     edgeIds: ["edge.journey.9", "edge.dataset.to.endpoint"],
     audience: fullSceneAudience,
@@ -1161,6 +1247,8 @@ const graphScenesRaw = [
     nodeIds: [
       "node.endpoint-bindings-transports",
       "node.journey.endpoint-binding",
+      "node.journey.http-grpc-dynamo-dispatch",
+      "node.dataset-segment-pipeline",
     ],
     edgeIds: ["edge.journey.10", "edge.dataset.to.endpoint"],
     audience: fullSceneAudience,
@@ -1172,6 +1260,7 @@ const graphScenesRaw = [
     nodeIds: [
       "node.graph-ir-execution",
       "node.journey.scheduling-or-graph-ir",
+      "node.journey.dataset-materialization",
     ],
     edgeIds: ["edge.journey.8"],
     audience: fullSceneAudience,
@@ -1183,6 +1272,8 @@ const graphScenesRaw = [
     nodeIds: [
       "node.metrics-telemetry",
       "node.journey.metrics-and-reporting",
+      "node.journey.result-returned-to-python",
+      "node.runtime-composition",
     ],
     edgeIds: [
       "edge.journey.13",
@@ -1195,7 +1286,11 @@ const graphScenesRaw = [
     id: "scene.accuracy-evaluator-hosting",
     title: "Accuracy and evaluator hosting",
     rustScene: true,
-    nodeIds: ["node.accuracy-evaluator-hosting", "node.metrics-telemetry"],
+    nodeIds: [
+      "node.accuracy-evaluator-hosting",
+      "node.metrics-telemetry",
+      "node.journey.result-returned-to-python",
+    ],
     edgeIds: ["edge.metrics.to.result"],
     audience: fullSceneAudience,
   },
@@ -1208,6 +1303,9 @@ const graphScenesRaw = [
       "node.runner-protocol-registries",
       "node.runtime-composition",
       "node.graph-ir-execution",
+      "node.metrics-telemetry",
+      "node.dataset-segment-pipeline",
+      "node.endpoint-bindings-transports",
     ],
     edgeIds: ["edge.runtime.dispatch.metrics", "edge.dataset.to.endpoint"],
     audience: fullSceneAudience,

@@ -202,16 +202,13 @@ function assertImplementationEvidence(catalog: ArchitectureCatalog): void {
     if (entity.status.state === "planned" && !hasDesign) {
       throw new Error(`${entity.id} is planned but has no design evidence`);
     }
-  }
-
-  for (const node of catalog.graphNodes) {
     if (
-      node.flavors.includes("dynamo_online") &&
-      node.status.delivery === "runner_pair" &&
-      node.status.state === "built"
+      entity.flavors.includes("dynamo_online") &&
+      entity.status.delivery === "runner_pair" &&
+      entity.status.state === "built"
     ) {
       throw new Error(
-        `${node.id} must remain planned for dynamo_online runner integration`,
+        `${entity.id} must remain planned for dedicated dynamo_online runner integration`,
       );
     }
   }
@@ -220,6 +217,7 @@ function assertImplementationEvidence(catalog: ArchitectureCatalog): void {
 function assertGraphReferences(catalog: ArchitectureCatalog): void {
   const nodeIds = new Set(catalog.graphNodes.map(({ id }) => id));
   const edgeIds = new Set(catalog.graphEdges.map(({ id }) => id));
+  const edgesById = new Map(catalog.graphEdges.map((edge) => [edge.id, edge]));
   const portsByNode = new Map(
     catalog.graphNodes.map((node) => [
       node.id,
@@ -257,6 +255,16 @@ function assertGraphReferences(catalog: ArchitectureCatalog): void {
     for (const edgeId of scene.edgeIds) {
       if (!edgeIds.has(edgeId)) {
         throw new Error(`${scene.id} references missing scene edge ${edgeId}`);
+      }
+      const edge = edgesById.get(edgeId);
+      if (
+        edge &&
+        (!scene.nodeIds.includes(edge.source.nodeId) ||
+          !scene.nodeIds.includes(edge.target.nodeId))
+      ) {
+        throw new Error(
+          `${scene.id} edge ${edgeId} has an endpoint outside the scene`,
+        );
       }
     }
   }
