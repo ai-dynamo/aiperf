@@ -468,6 +468,10 @@ pub struct EvaluationPlan {
     /// Exact finite case count; absent for Rust-scheduled occurrences.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finite_case_count: Option<usize>,
+    /// Maximum logical host operations over the complete session lifetime.
+    pub max_total_host_operations: u64,
+    /// Maximum incremental host stream events over the complete session lifetime.
+    pub max_total_stream_events: u64,
     /// Provider-requested credits that become negotiated when Rust accepts the plan.
     ///
     /// Rust rejects a plan outside its configured ceilings rather than silently
@@ -479,6 +483,17 @@ impl EvaluationPlan {
     /// Validate unique requirements and bounded, immutable identities.
     pub fn validate(&self) -> Result<(), EvaluationProtocolError> {
         self.queue_credits.validate()?;
+        if self.max_total_host_operations == 0
+            || self.max_total_host_operations > 10_000_000
+            || self.max_total_stream_events > 10_000_000
+            || u64::try_from(self.queue_credits.host_operations).map_or(true, |outstanding| {
+                outstanding > self.max_total_host_operations
+            })
+        {
+            return Err(EvaluationProtocolError::new(
+                "provider total host-operation/stream envelope was invalid",
+            ));
+        }
         match self.scheduling_mode {
             EvaluationSchedulingMode::Finite => {
                 if self.finite_unit_count == Some(0)
@@ -542,6 +557,19 @@ impl EvaluationPlan {
     }
 }
 
+/// Ordered digest identity for one source overlay applied to a pinned base tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationSourceOverlayIdentity {
+    /// Stable overlay identity in application order.
+    pub overlay_id: String,
+    /// SHA-256 over the exact unified-diff resource bytes.
+    pub artifact_content_sha256: String,
+}
+
+/// Exact source-overlay application policy understood by both worker and host.
+pub const SOURCE_OVERLAY_POLICY_V1: &str = "aiperf-unified-diff-overlay-v1";
+
 /// Generic immutable identity component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -550,8 +578,68 @@ pub struct EvaluationIdentityComponent {
     pub name: String,
     /// Exact version or immutable revision.
     pub version: String,
-    /// Exact source/package digest.
+    /// Exact effective source/package tree digest after ordered overlays.
     pub source_sha256: String,
+    /// Optional immutable Git commit for the base source tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_commit: Option<String>,
+    /// Base source-tree digest required whenever overlays are present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_source_sha256: Option<String>,
+    /// Exact deterministic overlay application policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay_policy: Option<String>,
+    /// Ordered overlay resource identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overlays: Vec<EvaluationSourceOverlayIdentity>,
+}
+
+impl EvaluationIdentityComponent {
+    fn validate(&self) -> Result<(), EvaluationProtocolError> {
+        validate_nonempty_bounded("evaluation component name", &self.name, 512)?;
+        validate_nonempty_bounded("evaluation component version", &self.version, 512)?;
+        if !is_sha256(&self.source_sha256)
+            || self
+                .source_commit
+                .as_deref()
+                .is_some_and(|commit| !is_source_commit(commit))
+        {
+            return Err(EvaluationProtocolError::new(
+                "evaluation component source identity was mutable or invalid",
+            ));
+        }
+        if self.overlays.is_empty() {
+            if self.base_source_sha256.is_some() || self.overlay_policy.is_some() {
+                return Err(EvaluationProtocolError::new(
+                    "evaluation component declared overlay metadata without overlays",
+                ));
+            }
+            return Ok(());
+        }
+        if self.source_commit.is_none()
+            || self
+                .base_source_sha256
+                .as_deref()
+                .is_none_or(|digest| !is_sha256(digest))
+            || self.overlay_policy.as_deref() != Some(SOURCE_OVERLAY_POLICY_V1)
+        {
+            return Err(EvaluationProtocolError::new(
+                "overlaid evaluation component omitted exact base or policy identity",
+            ));
+        }
+        let mut overlay_ids = BTreeSet::new();
+        for overlay in &self.overlays {
+            validate_opaque_id("source overlay_id", &overlay.overlay_id)?;
+            if !overlay_ids.insert(&overlay.overlay_id)
+                || !is_sha256(&overlay.artifact_content_sha256)
+            {
+                return Err(EvaluationProtocolError::new(
+                    "source overlay identity was duplicated or had an invalid digest",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Rust host and isolation identity bound into an evaluation.
@@ -666,8 +754,7 @@ impl EvaluationIdentity {
         }
         self.worker.validate()?;
         for component in std::iter::once(&self.dataset).chain(self.components.iter()) {
-            validate_nonempty_bounded("evaluation component name", &component.name, 512)?;
-            validate_nonempty_bounded("evaluation component version", &component.version, 512)?;
+            component.validate()?;
         }
         validate_no_secret_control_value(&self.policies)
             .map_err(|error| EvaluationProtocolError::new(error.to_string()))?;
@@ -690,13 +777,9 @@ impl EvaluationIdentity {
             }
         }
         if self
-            .components
-            .iter()
-            .any(|component| !is_sha256(&component.source_sha256))
-            || self
-                .sandbox_sha256
-                .as_deref()
-                .is_some_and(|digest| !is_sha256(digest))
+            .sandbox_sha256
+            .as_deref()
+            .is_some_and(|digest| !is_sha256(digest))
         {
             return Err(EvaluationProtocolError::new(
                 "evaluation component identity contained an invalid digest",
@@ -1576,7 +1659,6 @@ impl ScopedProxyGrant {
             || self.max_concurrent_operations > self.max_operations
             || self.max_request_bytes == 0
             || self.max_response_bytes == 0
-            || self.max_stream_events == 0
             || self.expires_after_ms == 0
             || !is_sha256(&self.process_scope_sha256)
         {
@@ -1854,6 +1936,13 @@ fn is_safe_reporting_label(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 
+fn is_source_commit(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1866,6 +1955,38 @@ mod tests {
         assert_eq!(id.as_ref(), "model.responses-v2");
         assert!(SemanticOperationId::new("POST /v1/chat").is_err());
         assert!(EvaluationCaseId::new(" ").is_err());
+    }
+
+    #[test]
+    fn source_overlays_bind_base_order_policy_and_effective_tree() {
+        let mut component = EvaluationIdentityComponent {
+            name: "inspect_ai".to_string(),
+            version: "0.3.141".to_string(),
+            source_sha256: "a".repeat(64),
+            source_commit: Some("b".repeat(40)),
+            base_source_sha256: Some("c".repeat(64)),
+            overlay_policy: Some(SOURCE_OVERLAY_POLICY_V1.to_string()),
+            overlays: vec![
+                EvaluationSourceOverlayIdentity {
+                    overlay_id: "model-call-context".to_string(),
+                    artifact_content_sha256: "d".repeat(64),
+                },
+                EvaluationSourceOverlayIdentity {
+                    overlay_id: "cache-veto".to_string(),
+                    artifact_content_sha256: "e".repeat(64),
+                },
+            ],
+        };
+        component.validate().unwrap();
+        let original_order = serde_json::to_vec(&component).unwrap();
+        component.overlays.swap(0, 1);
+        component.validate().unwrap();
+        assert_ne!(serde_json::to_vec(&component).unwrap(), original_order);
+        component.overlays[1].overlay_id = component.overlays[0].overlay_id.clone();
+        assert!(component.validate().is_err());
+        component.overlays.truncate(1);
+        component.overlay_policy = Some("unknown-overlay-policy".to_string());
+        assert!(component.validate().is_err());
     }
 
     #[test]
