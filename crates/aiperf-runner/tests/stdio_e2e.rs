@@ -50,6 +50,12 @@ fn capabilities_are_a_single_versioned_json_line() {
             .contains(&serde_json::json!("outputs_json"))
     );
     assert!(
+        capabilities["run_features"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("raw_records"))
+    );
+    assert!(
         capabilities["telemetry_source_types"]
             .as_array()
             .unwrap()
@@ -140,7 +146,9 @@ async fn stdio_child_runs_http_and_commits_native_report() {
                 "urls": [format!("http://{address}/v1/chat/completions")],
                 "type": "chat",
                 "streaming": true,
-                "use_server_token_count": true
+                "use_server_token_count": true,
+                "api_key": "raw-e2e-secret",
+                "headers": {"X-Custom-Tracking": "trace-e2e"}
             },
             "dataset": {
                 "type": "synthetic",
@@ -167,6 +175,7 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             },
             "artifacts": {
                 "records_path": "profile_export.jsonl",
+                "raw_path": "profile_export_raw.jsonl",
                 "outputs_path": "outputs.json",
                 "trace": true
             }
@@ -231,6 +240,25 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             && row["metrics"]["request_latency"]["value"].is_number()
             && row["metrics"]["time_to_first_token"]["value"].is_number()
             && row["trace_data"]["trace_type"] == "aiperf-transport"
+    }));
+    let raw_records =
+        std::fs::read_to_string(artifacts.path().join("profile_export_raw.jsonl")).unwrap();
+    assert!(!raw_records.contains("raw-e2e-secret"));
+    let raw_rows = raw_records
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(raw_rows.len(), 4);
+    assert!(raw_rows.iter().all(|row| {
+        row["metadata"]["benchmark_phase"] == "profiling"
+            && row["payload"]["model"] == "mock-model"
+            && row["request_headers"]["Authorization"] == "<redacted>"
+            && row["request_headers"]["X-Custom-Tracking"] == "trace-e2e"
+            && row["status"] == 200
+            && row["response_headers"]["content-type"] == "text/event-stream"
+            && row["responses"]
+                .as_array()
+                .is_some_and(|responses| responses.len() == 4)
     }));
     let outputs: serde_json::Value =
         serde_json::from_slice(&std::fs::read(artifacts.path().join("outputs.json")).unwrap())

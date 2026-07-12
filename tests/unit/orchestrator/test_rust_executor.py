@@ -123,6 +123,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "gpu_telemetry",
             "outputs_json",
             "python_accuracy_evaluator",
+            "raw_records",
         ],
         "telemetry_source_types": ["dcgm"],
     }
@@ -138,7 +139,10 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
                     "cancellation": {},
                 }
             ],
-            "artifacts": {"outputs_path": "outputs.json"},
+            "artifacts": {
+                "outputs_path": "outputs.json",
+                "raw_path": "profile_export_raw.jsonl",
+            },
             "accuracy": {},
             "gpu_telemetry": {"sources": [{"type": "dcgm"}]},
         }
@@ -156,6 +160,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("run_features", "outputs_json"),
         ("run_features", "python_accuracy_evaluator"),
         ("run_features", "gpu_telemetry"),
+        ("run_features", "raw_records"),
         ("telemetry_source_types", "dcgm"),
     ):
         narrowed = {name: list(values) for name, values in capabilities.items()}

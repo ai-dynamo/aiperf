@@ -14,7 +14,7 @@ from unittest import mock
 
 import orjson
 
-from aiperf.common.models.record_models import MetricRecordInfo
+from aiperf.common.models.record_models import MetricRecordInfo, RawRecordInfo
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.orchestrator.jsonl_loader import load_single_metric
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
@@ -237,6 +237,8 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
                         "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
                         "streaming": True,
                         "use_server_token_count": True,
+                        "api_key": "config-v2-raw-secret",
+                        "headers": {"X-Custom-Tracking": "config-v2-trace"},
                     },
                     "dataset": {
                         "type": "synthetic",
@@ -249,7 +251,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
                         "requests": 4,
                         "concurrency": 2,
                     },
-                    "artifacts": {"dir": str(tmp_path)},
+                    "artifacts": {"dir": str(tmp_path), "raw": True},
                     "slos": {"request_latency": 1000},
                     "gpu_telemetry": {"enabled": False},
                     "server_metrics": {"enabled": False},
@@ -288,6 +290,22 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert all(row["metadata"]["benchmark_phase"] == "profiling" for row in rows)
         assert all("time_to_first_token" in row["metrics"] for row in rows)
         assert len(load_single_metric(tmp_path, "request_latency")) == 4
+        raw_bytes = (tmp_path / "profile_export_raw.jsonl").read_bytes()
+        assert b"config-v2-raw-secret" not in raw_bytes
+        raw_rows = [orjson.loads(line) for line in raw_bytes.splitlines()]
+        assert len(raw_rows) == 4
+        assert all(RawRecordInfo.model_validate(row) for row in raw_rows)
+        assert all(
+            row["request_headers"]["Authorization"] == "<redacted>"
+            and row["request_headers"]["X-Custom-Tracking"] == "config-v2-trace"
+            and row["status"] == 200
+            and row["response_headers"]["content-type"] == "text/event-stream"
+            and len(row["responses"]) == 3
+            for row in raw_rows
+        )
+        assert sorted(orjson.dumps(row["payload"]) for row in raw_rows) == sorted(
+            orjson.dumps(body) for body in _ChatHandler.bodies
+        )
 
         cli_artifacts = tmp_path / "single-cli-run"
         cli_envelope = AIPerfConfig.model_validate(

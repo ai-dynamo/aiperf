@@ -28,7 +28,7 @@ use aiperf_core::sse::ChatChunk;
 use aiperf_metrics::HttpTrace;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{
-    ErrorDetails, ErrorKind, HttpVersion, RequestConfig, Response, SseMessage,
+    ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord, Response, SseMessage,
 };
 use aiperf_transport::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -114,6 +114,28 @@ pub struct HttpDispatchResult {
     pub completion_tokens: Option<u32>,
     /// Fine-grained request trace converted into native metric facts.
     pub http: HttpTrace,
+}
+
+struct HttpCollectedDispatch {
+    result: HttpDispatchResult,
+    request_payload: Bytes,
+    record: RequestRecord,
+}
+
+/// HTTP-specific terminal result retained by raw-artifact consumers.
+///
+/// Policy-neutral workloads continue to consume [`TurnDispatchOutcome`]. The
+/// native subprocess runner calls the concrete collection method only when it
+/// must preserve HTTP wire facts; alternate backends do not inherit an HTTP
+/// dependency through the shared [`TurnDispatcher`] seam.
+#[derive(Clone, Debug)]
+pub struct HttpTurnDispatchResult {
+    /// Backend-neutral result consumed by scheduling and record processors.
+    pub outcome: TurnDispatchOutcome,
+    /// Canonical JSON payload before transport-specific body preparation.
+    pub request_payload: Bytes,
+    /// Exact HTTP transport record.
+    pub record: RequestRecord,
 }
 
 impl Dispatchable for HttpRequest {
@@ -223,8 +245,19 @@ impl TransportSink {
         &self,
         req: HttpRequest,
         obs: &dyn RequestObserver,
-        mut on_first_token: impl FnMut(i64),
+        on_first_token: impl FnMut(i64),
     ) -> Result<HttpDispatchResult> {
+        self.dispatch_collect_record_with_hooks(req, obs, on_first_token)
+            .await
+            .map(|collected| collected.result)
+    }
+
+    async fn dispatch_collect_record_with_hooks(
+        &self,
+        req: HttpRequest,
+        obs: &dyn RequestObserver,
+        mut on_first_token: impl FnMut(i64),
+    ) -> Result<HttpCollectedDispatch> {
         let HttpRequest {
             uuid,
             max_output_tokens,
@@ -259,6 +292,7 @@ impl TransportSink {
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
+        let request_payload = body.clone();
 
         let selected_index = url_index.unwrap_or(0) as usize;
         let selected_url = self.urls.get(selected_index).ok_or_else(|| {
@@ -385,7 +419,31 @@ impl TransportSink {
             },
         );
         obs.on_terminal(uuid, terminal);
-        Ok(HttpDispatchResult {
+        let http = {
+            let mut http = rec
+                .trace
+                .as_ref()
+                .map_or_else(HttpTrace::default, |trace| HttpTrace {
+                    blocked_ns: trace.blocked(),
+                    dns_lookup_ns: trace.dns_lookup(),
+                    connecting_ns: trace.connecting(),
+                    sending_ns: trace.sending(),
+                    waiting_ns: trace.waiting(),
+                    receiving_ns: trace.receiving(),
+                    duration_ns: trace.duration(),
+                    connection_reused: Some(trace.connection_reused_ns.is_some()),
+                    data_sent_bytes: Some(trace.request_bytes_total),
+                    data_received_bytes: Some(trace.response_bytes_total),
+                    chunks_sent: Some(u64::from(trace.request_chunks_count)),
+                    chunks_received: Some(u64::from(trace.response_chunks_count)),
+                    ..HttpTrace::default()
+                });
+            http.stream_setup_ns = rec
+                .recv_start_ns
+                .map(|receive_start| receive_start.saturating_sub(rec.start_ns));
+            http
+        };
+        let result = HttpDispatchResult {
             start_ns: rec.start_ns,
             end_ns: rec.end_ns.unwrap_or_else(|| self.clock.now_ns()),
             status: rec.status,
@@ -394,30 +452,12 @@ impl TransportSink {
             model_response,
             prompt_tokens,
             completion_tokens,
-            http: {
-                let mut http =
-                    rec.trace
-                        .as_ref()
-                        .map_or_else(HttpTrace::default, |trace| HttpTrace {
-                            blocked_ns: trace.blocked(),
-                            dns_lookup_ns: trace.dns_lookup(),
-                            connecting_ns: trace.connecting(),
-                            sending_ns: trace.sending(),
-                            waiting_ns: trace.waiting(),
-                            receiving_ns: trace.receiving(),
-                            duration_ns: trace.duration(),
-                            connection_reused: Some(trace.connection_reused_ns.is_some()),
-                            data_sent_bytes: Some(trace.request_bytes_total),
-                            data_received_bytes: Some(trace.response_bytes_total),
-                            chunks_sent: Some(u64::from(trace.request_chunks_count)),
-                            chunks_received: Some(u64::from(trace.response_chunks_count)),
-                            ..HttpTrace::default()
-                        });
-                http.stream_setup_ns = rec
-                    .recv_start_ns
-                    .map(|receive_start| receive_start.saturating_sub(rec.start_ns));
-                http
-            },
+            http,
+        };
+        Ok(HttpCollectedDispatch {
+            result,
+            request_payload,
+            record: rec,
         })
     }
 }
@@ -612,6 +652,26 @@ impl TurnDispatcher for TransportSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
+        Ok(self
+            .dispatch_turn_collect_record(turn, observer, on_first_token)
+            .await?
+            .outcome)
+    }
+}
+
+impl TransportSink {
+    /// Dispatch one scheduled turn while retaining the exact HTTP exchange.
+    ///
+    /// This is the raw-artifact counterpart to [`TurnDispatcher::dispatch_turn`]
+    /// and intentionally remains a concrete HTTP method. Scheduling code sees
+    /// only the backend-neutral outcome, while the subprocess runner can retain
+    /// transport facts without rebuilding endpoint formatting or parsing.
+    pub async fn dispatch_turn_collect_record(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpTurnDispatchResult> {
         let is_final_turn = turn.is_final_turn();
         let endpoint_aware = turn.request_body.is_some();
         let endpoint = turn.endpoint.clone();
@@ -647,8 +707,8 @@ impl TurnDispatcher for TransportSink {
             cancel_after_ns: turn.cancel_after_ns,
             url_index: turn.url_index,
         };
-        let result = if endpoint_aware {
-            self.dispatch_endpoint_collect_with_hooks(
+        let collected = if endpoint_aware {
+            self.dispatch_endpoint_collect_record_with_hooks(
                 request,
                 endpoint.as_ref(),
                 &endpoint_config,
@@ -657,18 +717,38 @@ impl TurnDispatcher for TransportSink {
             )
             .await?
         } else {
-            self.dispatch_collect_with_hooks(request, observer, on_first_token)
+            self.dispatch_collect_record_with_hooks(request, observer, on_first_token)
                 .await?
         };
-        Ok(TurnDispatchOutcome {
-            start_ns: result.start_ns,
-            end_ns: result.end_ns,
-            terminal: result.terminal,
-            response_text: result.response_text,
-            model_response: result.model_response,
-            prompt_tokens: result.prompt_tokens.map(u64::from),
-            completion_tokens: result.completion_tokens.map(u64::from),
-            http: result.http,
+        let HttpCollectedDispatch {
+            result,
+            request_payload,
+            record,
+        } = collected;
+        let HttpDispatchResult {
+            start_ns,
+            end_ns,
+            terminal,
+            response_text,
+            model_response,
+            prompt_tokens,
+            completion_tokens,
+            http,
+            ..
+        } = result;
+        Ok(HttpTurnDispatchResult {
+            outcome: TurnDispatchOutcome {
+                start_ns,
+                end_ns,
+                terminal,
+                response_text,
+                model_response,
+                prompt_tokens: prompt_tokens.map(u64::from),
+                completion_tokens: completion_tokens.map(u64::from),
+                http,
+            },
+            request_payload,
+            record,
         })
     }
 }

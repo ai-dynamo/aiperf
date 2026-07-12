@@ -40,21 +40,23 @@ use loadgen_core::sink::{
 use crate::scheduled::ModelResponseMetadata;
 
 use super::{
-    HttpDispatchResult, HttpRequest, TransportSink, absorb_transport_error,
+    HttpCollectedDispatch, HttpDispatchResult, HttpRequest, TransportSink, absorb_transport_error,
     absorb_wire_response_metadata,
 };
 
 impl TransportSink {
     /// Dispatch a materialized request through lifecycle policy selected only by
-    /// endpoint metadata and its effective per-turn configuration.
-    pub(super) async fn dispatch_endpoint_collect_with_hooks(
+    /// endpoint metadata and its effective per-turn configuration, retaining
+    /// the canonical JSON payload and terminal transport record for an optional
+    /// raw artifact consumer.
+    pub(super) async fn dispatch_endpoint_collect_record_with_hooks(
         &self,
         req: HttpRequest,
         endpoint: &dyn Endpoint,
         endpoint_config: &EndpointConfig,
         obs: &dyn RequestObserver,
         mut on_first_token: impl FnMut(i64),
-    ) -> Result<HttpDispatchResult> {
+    ) -> Result<HttpCollectedDispatch> {
         let HttpRequest {
             uuid,
             max_output_tokens,
@@ -91,6 +93,7 @@ impl TransportSink {
                 Bytes::from(serde_json::to_vec(&payload)?)
             }
         };
+        let request_payload = body.clone();
         let mut endpoint_metrics = ObservedEndpointMetrics {
             num_images: serde_json::from_slice::<Value>(&body)
                 .ok()
@@ -247,7 +250,7 @@ impl TransportSink {
         obs.on_endpoint_metrics(uuid, endpoint_metrics);
         obs.on_terminal(uuid, terminal);
 
-        Ok(HttpDispatchResult {
+        let result = HttpDispatchResult {
             start_ns: record.start_ns,
             end_ns: record.end_ns.unwrap_or_else(|| self.clock.now_ns()),
             status: record.status,
@@ -257,6 +260,11 @@ impl TransportSink {
             prompt_tokens,
             completion_tokens,
             http: http_trace(&record),
+        };
+        Ok(HttpCollectedDispatch {
+            result,
+            request_payload,
+            record,
         })
     }
 

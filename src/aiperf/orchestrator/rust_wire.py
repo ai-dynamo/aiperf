@@ -119,6 +119,16 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
                 if cfg.artifacts.export_outputs_json
                 else {}
             ),
+            **(
+                {
+                    "raw_path": _artifact_relative_path(
+                        run.artifact_dir,
+                        cfg.artifacts.profile_export_raw_jsonl_file,
+                    )
+                }
+                if cfg.artifacts.raw
+                else {}
+            ),
             "trace": cfg.artifacts.trace,
         },
     }

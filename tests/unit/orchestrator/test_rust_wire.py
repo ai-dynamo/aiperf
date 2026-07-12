@@ -185,6 +185,16 @@ def test_projects_outputs_json_into_the_native_results_layer(tmp_path) -> None:
     assert projected["artifacts"]["outputs_path"] == "outputs.json"
 
 
+def test_projects_raw_records_as_a_distinct_native_artifact(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.artifacts.raw = True
+
+    projected = build_run_request(run)["run"]
+
+    assert projected["artifacts"]["records_path"] == "profile_export.jsonl"
+    assert projected["artifacts"]["raw_path"] == "profile_export_raw.jsonl"
+
+
 def test_projects_complete_adaptive_scale_policy(tmp_path) -> None:
     phase = build_run_request(
         _run(

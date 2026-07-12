@@ -17,8 +17,12 @@ use std::path::Path;
 use aiperf_metrics::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
 };
+use aiperf_transport::models::{
+    ErrorKind, RequestRecord, Response, SseFieldName, SseMessage, TextResponse,
+};
 use anyhow::{Context, Result};
 use serde::Serialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -27,7 +31,16 @@ pub(crate) struct CapturedRecord {
     pub(crate) uuid: Uuid,
     pub(crate) x_correlation_id: String,
     pub(crate) response_text: Option<String>,
+    pub(crate) raw: Option<CapturedHttpExchange>,
     pub(crate) ingest: RecordIngest,
+}
+
+/// Exact HTTP facts retained only when Config v2 requests raw artifacts.
+pub(crate) struct CapturedHttpExchange {
+    /// Canonical JSON payload before multipart/media transport preparation.
+    pub(crate) request_payload: Vec<u8>,
+    /// Exact terminal transport record.
+    pub(crate) record: RequestRecord,
 }
 
 #[derive(Serialize)]
@@ -68,6 +81,46 @@ struct RecordError {
     #[serde(rename = "type")]
     error_type: &'static str,
     message: &'static str,
+}
+
+#[derive(Serialize)]
+struct RawRecordRow<'a> {
+    metadata: RawRecordMetadata,
+    start_perf_ns: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<&'a RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_headers: Option<BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_headers: Option<&'a BTreeMap<String, String>>,
+    responses: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<Value>,
+}
+
+#[derive(Serialize)]
+struct RawRecordMetadata {
+    session_num: u64,
+    x_request_id: String,
+    x_correlation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_id: Option<String>,
+    turn_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credit_issued_ns: Option<i64>,
+    request_start_ns: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_ack_ns: Option<i64>,
+    request_end_ns: i64,
+    worker_id: &'static str,
+    record_processor_id: &'static str,
+    benchmark_phase: Phase,
+    was_cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cancellation_time_ns: Option<i64>,
+    agent_depth: u32,
 }
 
 #[derive(Serialize)]
@@ -119,6 +172,45 @@ pub(crate) fn write_records_jsonl(
     writer
         .flush()
         .with_context(|| format!("flushing record export {}", path.display()))
+}
+
+/// Write Python-compatible raw request/response records in dispatch order.
+///
+/// The request payload is serialized through [`RawValue`], which validates the
+/// one-time captured JSON while preserving its original bytes verbatim in the
+/// enclosing JSONL object. The response side comes from the terminal
+/// `aiperf-transport` record, so no SSE frame, status, response header, or
+/// structured transport error is reconstructed from aggregate metrics.
+pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating raw record directory {}", parent.display()))?;
+    }
+    let file = File::create(path)
+        .with_context(|| format!("creating native raw record export {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    for captured in records {
+        let payload = captured
+            .raw
+            .as_ref()
+            .map(|raw| serde_json::from_slice::<Box<RawValue>>(&raw.request_payload))
+            .transpose()
+            .with_context(|| {
+                format!(
+                    "validating captured request payload for raw record {}",
+                    captured.uuid
+                )
+            })?;
+        let row = raw_record_row(captured, payload.as_deref());
+        serde_json::to_writer(&mut writer, &row)
+            .with_context(|| format!("serializing raw record export {}", path.display()))?;
+        writer
+            .write_all(b"\n")
+            .with_context(|| format!("writing raw record export {}", path.display()))?;
+    }
+    writer
+        .flush()
+        .with_context(|| format!("flushing raw record export {}", path.display()))
 }
 
 /// Write profiling response text and the legacy selected metric values.
@@ -224,6 +316,152 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
     }
 }
 
+fn raw_record_row<'a>(
+    captured: &'a CapturedRecord,
+    payload: Option<&'a RawValue>,
+) -> RawRecordRow<'a> {
+    let ingest = &captured.ingest;
+    let raw = captured.raw.as_ref();
+    let request_headers = raw.map(|raw| redact_headers(&raw.record.request_headers));
+    let status = raw.and_then(|raw| raw.record.status);
+    let response_headers = raw
+        .map(|raw| &raw.record.response_headers)
+        .filter(|headers| !headers.is_empty());
+    let responses = raw
+        .map(|raw| raw.record.responses.iter().map(response_value).collect())
+        .unwrap_or_default();
+    let error = raw
+        .and_then(|raw| raw.record.error.as_ref().map(error_value))
+        .or_else(|| native_error_value(ingest));
+    RawRecordRow {
+        metadata: RawRecordMetadata {
+            session_num: ingest.session_num,
+            x_request_id: captured.uuid.to_string(),
+            x_correlation_id: captured.x_correlation_id.clone(),
+            conversation_id: ingest.conversation_id.clone(),
+            turn_index: ingest.turn_index,
+            credit_issued_ns: ingest.admit_ns,
+            request_start_ns: ingest.start_ns,
+            request_ack_ns: ingest.first_token_ns,
+            request_end_ns: ingest.end_ns,
+            worker_id: "rust-0",
+            record_processor_id: "aiperf-runner",
+            benchmark_phase: ingest.phase,
+            was_cancelled: ingest.canceled,
+            cancellation_time_ns: ingest.canceled.then_some(ingest.end_ns),
+            agent_depth: 0,
+        },
+        start_perf_ns: raw.map_or(ingest.start_ns, |raw| raw.record.start_ns),
+        payload,
+        request_headers,
+        status,
+        response_headers,
+        responses,
+        error,
+    }
+}
+
+fn redact_headers(headers: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    const SENSITIVE: &[&str] = &[
+        "authorization",
+        "proxy-authorization",
+        "x-api-key",
+        "api-key",
+        "ocp-apim-subscription-key",
+        "x-goog-api-key",
+        "x-functions-key",
+        "aeg-sas-key",
+        "x-amz-security-token",
+    ];
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let value = if SENSITIVE
+                .iter()
+                .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
+            {
+                "<redacted>".to_string()
+            } else {
+                value.clone()
+            };
+            (name.clone(), value)
+        })
+        .collect()
+}
+
+fn response_value(response: &Response) -> Value {
+    match response {
+        Response::Sse(message) => sse_response_value(message),
+        Response::Text(response) => text_response_value(response),
+    }
+}
+
+fn sse_response_value(message: &SseMessage) -> Value {
+    let packets = message
+        .packets
+        .iter()
+        .map(|packet| {
+            json!({
+                "name": sse_field_name(&packet.name),
+                "value": packet.value,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"perf_ns": message.perf_ns, "packets": packets})
+}
+
+fn sse_field_name(name: &SseFieldName) -> &str {
+    match name {
+        SseFieldName::Data => "data",
+        SseFieldName::Event => "event",
+        SseFieldName::Id => "id",
+        SseFieldName::Retry => "retry",
+        SseFieldName::Comment => "comment",
+        SseFieldName::Other(name) => name,
+    }
+}
+
+fn text_response_value(response: &TextResponse) -> Value {
+    json!({
+        "perf_ns": response.perf_ns,
+        "text": response.text,
+        "content_type": response.content_type,
+    })
+}
+
+fn error_value(error: &aiperf_transport::models::ErrorDetails) -> Value {
+    json!({
+        "code": error.code,
+        "type": match error.kind {
+            ErrorKind::Http => "HttpError",
+            ErrorKind::Sse => "SSEResponseError",
+            ErrorKind::Cancelled => "RequestCancellationError",
+            ErrorKind::Connect => "ConnectError",
+            ErrorKind::Timeout => "TimeoutError",
+            ErrorKind::Other => "TransportError",
+        },
+        "message": error.message,
+    })
+}
+
+fn native_error_value(record: &RecordIngest) -> Option<Value> {
+    (record.errored || record.canceled).then(|| {
+        json!({
+            "code": if record.canceled { Some(499) } else { None },
+            "type": if record.canceled {
+                "NativeRequestCancelled"
+            } else {
+                "NativeRequestError"
+            },
+            "message": if record.canceled {
+                "request was cancelled by benchmark policy"
+            } else {
+                "request failed before the native transport produced a record"
+            },
+        })
+    })
+}
+
 fn record_metrics(
     captured: &CapturedRecord,
     config: &MetricsConfig,
@@ -291,6 +529,7 @@ mod tests {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
             response_text: Some("hello".into()),
+            raw: None,
             ingest,
         };
 
@@ -326,12 +565,14 @@ mod tests {
                     uuid: Uuid::from_u128(2),
                     x_correlation_id: "session-2".into(),
                     response_text: Some("answer".into()),
+                    raw: None,
                     ingest: profiling,
                 },
                 CapturedRecord {
                     uuid: Uuid::from_u128(1),
                     x_correlation_id: "session-1".into(),
                     response_text: Some("warmup".into()),
+                    raw: None,
                     ingest: warmup,
                 },
             ],
@@ -353,5 +594,60 @@ mod tests {
                 .get("time_to_first_token")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn raw_jsonl_preserves_payload_frames_headers_and_redaction() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile_export_raw.jsonl");
+        let payload = br#"{"model":"m",  "messages": []}"#.to_vec();
+        let transport_record = RequestRecord {
+            start_ns: 2_000_000,
+            end_ns: Some(12_000_000),
+            request_body: payload.clone().into(),
+            request_headers: BTreeMap::from([
+                ("Authorization".into(), "Bearer super-secret".into()),
+                ("X-Custom-Tracking".into(), "trace-123".into()),
+            ]),
+            status: Some(200),
+            response_headers: BTreeMap::from([("content-type".into(), "text/event-stream".into())]),
+            responses: vec![
+                Response::Sse(SseMessage::parse(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}",
+                    6_000_000,
+                )),
+                Response::Sse(SseMessage::parse("data: [DONE]", 12_000_000)),
+            ],
+            ..RequestRecord::default()
+        };
+        let captured = CapturedRecord {
+            uuid: Uuid::from_u128(9),
+            x_correlation_id: "session-9".into(),
+            response_text: Some("hi".into()),
+            raw: Some(CapturedHttpExchange {
+                request_payload: payload.clone(),
+                record: transport_record,
+            }),
+            ingest: RecordIngest::minimal(2_000_000, 12_000_000, Phase::Profiling),
+        };
+
+        write_raw_records_jsonl(&path, &[captured]).unwrap();
+
+        let bytes = std::fs::read(path).unwrap();
+        assert!(bytes.windows(payload.len()).any(|window| window == payload));
+        assert!(
+            !bytes
+                .windows(b"super-secret".len())
+                .any(|window| window == b"super-secret")
+        );
+        let row: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(row["metadata"]["benchmark_phase"], "profiling");
+        assert_eq!(row["payload"]["model"], "m");
+        assert_eq!(row["request_headers"]["Authorization"], "<redacted>");
+        assert_eq!(row["request_headers"]["X-Custom-Tracking"], "trace-123");
+        assert_eq!(row["response_headers"]["content-type"], "text/event-stream");
+        assert_eq!(row["responses"].as_array().unwrap().len(), 2);
+        assert_eq!(row["responses"][0]["packets"][0]["name"], "data");
+        assert!(row.get("error").is_none());
     }
 }

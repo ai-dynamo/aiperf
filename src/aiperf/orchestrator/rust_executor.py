@@ -213,6 +213,8 @@ def _require_request_capabilities(
         _require_capability(capabilities, "run_features", "python_accuracy_evaluator")
     if "outputs_path" in artifacts:
         _require_capability(capabilities, "run_features", "outputs_json")
+    if "raw_path" in artifacts:
+        _require_capability(capabilities, "run_features", "raw_records")
     gpu_telemetry = run.get("gpu_telemetry")
     if gpu_telemetry is not None:
         _require_capability(capabilities, "run_features", "gpu_telemetry")

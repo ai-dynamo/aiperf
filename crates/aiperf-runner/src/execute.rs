@@ -88,7 +88,10 @@ use crate::protocol::{
     SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
     SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
-use crate::records::{CapturedRecord, write_outputs_json, write_records_jsonl};
+use crate::records::{
+    CapturedHttpExchange, CapturedRecord, write_outputs_json, write_raw_records_jsonl,
+    write_records_jsonl,
+};
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
@@ -327,6 +330,7 @@ async fn execute_native_inner(
         clock.clone(),
         start_ns,
         metrics_config.clone(),
+        request.run.artifacts.raw_path.is_some(),
     ));
     let transport = TransportSink::new_multi(
         clock.clone(),
@@ -652,6 +656,10 @@ async fn execute_native_inner(
             &metrics_config,
             request.run.artifacts.trace,
         )?;
+    }
+    if let Some(raw_path) = &request.run.artifacts.raw_path {
+        let raw_path = artifact_path(&request.run.artifact_dir, raw_path, "raw_path")?;
+        write_raw_records_jsonl(&raw_path, &captured)?;
     }
     if let Some(outputs_path) = &request.run.artifacts.outputs_path {
         let outputs_path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
@@ -1806,16 +1814,20 @@ struct RunCapture {
     observer: Rc<NativeMetricsObserver>,
     identities: RefCell<Vec<CaptureIdentity>>,
     response_text: RefCell<HashMap<Uuid, String>>,
+    raw_enabled: bool,
+    raw_exchanges: RefCell<HashMap<Uuid, CapturedHttpExchange>>,
 }
 
 impl RunCapture {
-    fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig) -> Self {
+    fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig, raw_enabled: bool) -> Self {
         Self {
             observer: Rc::new(NativeMetricsObserver::new(clock.clone(), origin_ns, config)),
             clock,
             origin_ns,
             identities: RefCell::new(Vec::new()),
             response_text: RefCell::new(HashMap::new()),
+            raw_enabled,
+            raw_exchanges: RefCell::new(HashMap::new()),
         }
     }
 
@@ -1871,10 +1883,36 @@ impl RunCapture {
         Ok(())
     }
 
+    fn record_http_exchange(
+        &self,
+        uuid: Uuid,
+        request_payload: Vec<u8>,
+        record: aiperf_transport::models::RequestRecord,
+    ) -> Result<()> {
+        if !self.raw_enabled {
+            return Ok(());
+        }
+        ensure!(
+            self.raw_exchanges
+                .borrow_mut()
+                .insert(
+                    uuid,
+                    CapturedHttpExchange {
+                        request_payload,
+                        record,
+                    },
+                )
+                .is_none(),
+            "native HTTP exchange was recorded more than once for request {uuid}"
+        );
+        Ok(())
+    }
+
     fn finish(&self, issued_times: &HashMap<Uuid, i64>) -> Result<Vec<CapturedRecord>> {
         let collection = self.observer.finish_with_records();
         let identities = self.identities.borrow();
         let response_text = self.response_text.borrow();
+        let mut raw_exchanges = self.raw_exchanges.take();
         ensure!(
             collection.records.len() == identities.len(),
             "native record capture finalized {} records for {} dispatched identities",
@@ -1899,6 +1937,7 @@ impl RunCapture {
                     uuid: identity.uuid,
                     x_correlation_id: identity.x_correlation_id.clone(),
                     response_text: response_text.get(&identity.uuid).cloned(),
+                    raw: raw_exchanges.remove(&identity.uuid),
                     ingest,
                 })
             })
@@ -1999,12 +2038,18 @@ impl TurnDispatcher for ConfiguredDispatcher {
             runtime: observer,
             capture: self.capture.observer.as_ref(),
         };
-        let result = self
+        let collected = self
             .transport
-            .dispatch_turn(turn, &tee, on_first_token)
+            .dispatch_turn_collect_record(turn, &tee, on_first_token)
             .await;
-        match &result {
-            Ok(outcome) => {
+        match collected {
+            Ok(collected) => {
+                let outcome = collected.outcome;
+                self.capture.record_http_exchange(
+                    uuid,
+                    collected.request_payload.to_vec(),
+                    collected.record,
+                )?;
                 self.capture
                     .record_response_text(uuid, &outcome.response_text)?;
                 self.capture.observer.record_response(
@@ -2017,8 +2062,9 @@ impl TurnDispatcher for ConfiguredDispatcher {
                         http: outcome.http,
                     },
                 );
+                Ok(outcome)
             }
-            Err(_) => {
+            Err(error) => {
                 let now = self.capture.clock.now_ns();
                 self.capture
                     .observer
@@ -2031,9 +2077,9 @@ impl TurnDispatcher for ConfiguredDispatcher {
                         ..NativeResponseMetadata::default()
                     },
                 );
+                Err(error)
             }
         }
-        result
     }
 }
 
