@@ -64,7 +64,8 @@ use dynamo_mocker::replay::{
     ReplayPrefillLoadEstimator, ReplayRouterMode, ReplayTerminalStatus as DynamoTerminalStatus,
     SlaThresholds as DynamoSlaThresholds, TraceDistributionStats as DynamoDistributionStats,
     TraceSimulationReport as DynamoSimulationReport, generate_trace_worker_artifacts_offline,
-    generate_trace_worker_artifacts_offline_with_kv_event_visibility, simulate_offline_trace_files,
+    generate_trace_worker_artifacts_offline_with_kv_event_visibility,
+    simulate_concurrency_live_requests, simulate_offline_trace_files,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
@@ -3842,6 +3843,94 @@ pub fn run_graph_workload_online_deferred(
         phases: execution.phases,
         dynamo,
         parity,
+    })
+}
+
+/// One request specification for the native wall-clock online baseline: the
+/// exact source-trace hash-block ids plus the requested output length.
+#[derive(Clone, Debug)]
+pub struct NativeBaselineRequest {
+    /// Source-trace block hash ids, converted to tokens by Dynamo's own
+    /// `TurnTrace::synthesize_tokens` (the native format AIPerf also ships).
+    pub hash_ids: Vec<i64>,
+    /// Requested output tokens for this request.
+    pub max_output_tokens: usize,
+}
+
+/// Flat comparable summary of a native wall-clock online replay run.
+#[derive(Clone, Debug)]
+pub struct NativeLiveBaseline {
+    /// Requests admitted by the native driver.
+    pub num_requests: usize,
+    /// Requests that reached a terminal completion.
+    pub completed_requests: usize,
+    /// Summed input tokens across all requests.
+    pub total_input_tokens: usize,
+    /// Summed output tokens across all requests.
+    pub total_output_tokens: usize,
+    /// Mean time-to-first-token in milliseconds.
+    pub ttft_mean_ms: f64,
+    /// Mean end-to-end request latency in milliseconds.
+    pub request_latency_mean_ms: f64,
+    /// Mean inter-token latency in milliseconds.
+    pub inter_token_latency_mean_ms: f64,
+    /// Request throughput in requests per second.
+    pub request_throughput_rps: f64,
+    /// Output-token throughput in tokens per second.
+    pub output_throughput_tok_s: f64,
+}
+
+/// Run Dynamo's own wall-clock online concurrency replay driver
+/// (`simulate_concurrency_live_requests`) as the apples-to-apples baseline for a
+/// `replay_mode=online` product run. Requests are built in the native format:
+/// each request's tokens come from Dynamo's `TurnTrace::synthesize_tokens`
+/// conversion of the same source-trace `hash_ids` the AIPerf runner ships, so
+/// the two drivers feed the engine byte-identical inputs. `engine_args_json` is
+/// the same inline `MockEngineArgs` object authored on the runner's
+/// `backend.config.engine`, so both sides normalize to identical engine args.
+///
+/// The returned report measures real wall-clock latency (`Instant::elapsed`),
+/// exactly like AIPerf's observer, which is what makes the comparison valid.
+pub fn native_live_concurrency_baseline(
+    engine_args_json: &str,
+    requests: &[NativeBaselineRequest],
+    input_length: usize,
+    max_in_flight: usize,
+    num_workers: usize,
+) -> Result<NativeLiveBaseline> {
+    let block_size = MockEngineArgs::from_json_str(engine_args_json)
+        .context("invalid native baseline engine args")?
+        .normalized()?
+        .block_size;
+    let hash_encoder = DynamoTraceHashEncoder;
+    let mut direct = Vec::with_capacity(requests.len());
+    for (index, request) in requests.iter().enumerate() {
+        let tokens = hash_encoder.encode(&request.hash_ids, block_size, input_length)?;
+        direct.push(DirectRequest {
+            tokens,
+            max_output_tokens: request.max_output_tokens,
+            output_token_ids: None,
+            uuid: Some(Uuid::from_u128(index as u128 + 1)),
+            dp_rank: 0,
+            arrival_timestamp_ms: None,
+            priority: 0,
+            strict_priority: 0,
+            policy_class: None,
+        });
+    }
+    let args = MockEngineArgs::from_json_str(engine_args_json)
+        .context("invalid native baseline engine args")?;
+    let report = simulate_concurrency_live_requests(args, direct, max_in_flight, num_workers)?;
+    Ok(NativeLiveBaseline {
+        num_requests: report.request_counts.num_requests,
+        completed_requests: report.request_counts.completed_requests,
+        total_input_tokens: report.request_counts.total_input_tokens,
+        total_output_tokens: report.request_counts.total_output_tokens,
+        ttft_mean_ms: report.latency.ttft.mean_ms,
+        request_latency_mean_ms: report.latency.e2e.mean_ms,
+        inter_token_latency_mean_ms: report.latency.itl.distribution.mean_ms,
+        request_throughput_rps: report.throughput.request_throughput_rps,
+        output_throughput_tok_s: report.throughput.output_throughput_tok_s,
     })
 }
 
