@@ -127,20 +127,22 @@ impl FrozenPublicEvaluationMetadataPolicy {
         aggregate_rules: Vec<PublicAggregateMetadataRule>,
     ) -> Result<Self, PublicMetadataProjectionError> {
         let mut cases = BTreeMap::new();
+        let mut public_cases = std::collections::BTreeSet::new();
         for rule in &case_rules {
             validate_label(&rule.provider_task, "provider task")?;
             validate_label(&rule.provider_source, "provider source")?;
             validate_label(&rule.public_task, "public task")?;
             validate_label(&rule.public_source, "public source")?;
-            if cases
-                .insert(
-                    (rule.provider_task.clone(), rule.provider_source.clone()),
-                    PublicCaseMetadataProjection {
-                        task: rule.public_task.clone(),
-                        source: rule.public_source.clone(),
-                    },
-                )
-                .is_some()
+            if !public_cases.insert((rule.public_task.clone(), rule.public_source.clone()))
+                || cases
+                    .insert(
+                        (rule.provider_task.clone(), rule.provider_source.clone()),
+                        PublicCaseMetadataProjection {
+                            task: rule.public_task.clone(),
+                            source: rule.public_source.clone(),
+                        },
+                    )
+                    .is_some()
             {
                 return Err(PublicMetadataProjectionError::Policy(
                     "public case metadata rule was duplicated".to_string(),
@@ -149,12 +151,14 @@ impl FrozenPublicEvaluationMetadataPolicy {
         }
 
         let mut numeric_metrics = BTreeMap::new();
+        let mut public_numeric_metrics = std::collections::BTreeSet::new();
         for rule in &numeric_metric_rules {
             validate_label(&rule.provider_name, "provider numeric metric")?;
             validate_label(&rule.public_name, "public numeric metric")?;
-            if numeric_metrics
-                .insert(rule.provider_name.clone(), rule.public_name.clone())
-                .is_some()
+            if !public_numeric_metrics.insert(rule.public_name.clone())
+                || numeric_metrics
+                    .insert(rule.provider_name.clone(), rule.public_name.clone())
+                    .is_some()
             {
                 return Err(PublicMetadataProjectionError::Policy(
                     "public numeric-metric rule was duplicated".to_string(),
@@ -163,6 +167,7 @@ impl FrozenPublicEvaluationMetadataPolicy {
         }
 
         let mut aggregates = BTreeMap::new();
+        let mut public_aggregates = std::collections::BTreeSet::new();
         for rule in &aggregate_rules {
             for (value, label) in [
                 (&rule.provider_scorer, "provider aggregate scorer"),
@@ -174,7 +179,11 @@ impl FrozenPublicEvaluationMetadataPolicy {
             ] {
                 validate_label(value, label)?;
             }
-            if aggregates
+            if !public_aggregates.insert((
+                rule.public_scorer.clone(),
+                rule.public_reducer.clone(),
+                rule.public_metric.clone(),
+            )) || aggregates
                 .insert(
                     (
                         rule.provider_scorer.clone(),
@@ -453,6 +462,23 @@ mod tests {
             FrozenPublicEvaluationMetadataPolicy::new(
                 Vec::new(),
                 vec![duplicate.clone(), duplicate],
+                Vec::new(),
+            )
+            .is_err()
+        );
+        assert!(
+            FrozenPublicEvaluationMetadataPolicy::new(
+                Vec::new(),
+                vec![
+                    PublicNumericMetricRule {
+                        provider_name: "provider_accuracy".to_string(),
+                        public_name: "accuracy".to_string(),
+                    },
+                    PublicNumericMetricRule {
+                        provider_name: "provider_reward".to_string(),
+                        public_name: "accuracy".to_string(),
+                    },
+                ],
                 Vec::new(),
             )
             .is_err()
