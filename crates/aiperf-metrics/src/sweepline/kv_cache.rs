@@ -294,21 +294,11 @@ fn append_chunk_events(
 
 fn relative_cumsums(icl: IclSeries<'_>) -> Vec<f64> {
     let mut relative = Vec::with_capacity(icl.values_ns.len());
-    let mut cumulative = 0.0;
-    for value in icl.values_ns {
-        cumulative += *value;
-        relative.push(cumulative);
-    }
-    for &record in icl.append_order.iter().rev() {
-        let offset = icl.offsets[record];
-        let end = offset + icl.lengths[record];
-        let before = offset
-            .checked_sub(1)
-            .and_then(|previous| relative.get(previous))
-            .copied()
-            .unwrap_or(0.0);
-        for value in relative[offset..end].iter_mut().rev() {
-            *value -= before;
+    for &record in icl.append_order {
+        let mut cumulative = 0.0;
+        for &value in icl.values_for_record(record) {
+            cumulative += value;
+            relative.push(cumulative);
         }
     }
     relative
@@ -521,6 +511,58 @@ mod tests {
         assert!((integral - expected_integral).abs() < 1e-10);
         assert_eq!(tokens.final_value(), 0.0);
         assert!(tokens.values().iter().all(|value| *value >= 0.0));
+    }
+
+    #[test]
+    fn icl_curves_are_invariant_to_record_append_order() {
+        let start = [0.0, 1_000.0, 2_000.0];
+        let generation_start = [100.0, 1_100.0, 2_100.0];
+        let end = [400.0, 1_500.0, 2_600.0];
+        let input = [10.0, 20.0, 30.0];
+        let output = [4.0, 3.0, 5.0];
+        let lengths = [3, 2, 2];
+
+        let canonical_values = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0];
+        let canonical_offsets = [0, 3, 5];
+        let canonical_order = [0, 1, 2];
+        let canonical = IclSeries::new(
+            &canonical_values,
+            &canonical_offsets,
+            &lengths,
+            &canonical_order,
+        );
+
+        let reordered_values = [60.0, 70.0, 10.0, 20.0, 30.0, 40.0, 50.0];
+        let reordered_offsets = [2, 5, 0];
+        let reordered_order = [2, 0, 1];
+        let reordered = IclSeries::new(
+            &reordered_values,
+            &reordered_offsets,
+            &lengths,
+            &reordered_order,
+        );
+
+        let canonical_tokens = tokens_in_flight_sweep_line_icl(
+            &start,
+            &generation_start,
+            &end,
+            &input,
+            &output,
+            canonical,
+        );
+        let reordered_tokens = tokens_in_flight_sweep_line_icl(
+            &start,
+            &generation_start,
+            &end,
+            &input,
+            &output,
+            reordered,
+        );
+        assert_eq!(canonical_tokens, reordered_tokens);
+
+        let canonical_throughput = throughput_sweep_line_icl(&generation_start, &output, canonical);
+        let reordered_throughput = throughput_sweep_line_icl(&generation_start, &output, reordered);
+        assert_eq!(canonical_throughput, reordered_throughput);
     }
 
     #[allow(clippy::too_many_arguments)]

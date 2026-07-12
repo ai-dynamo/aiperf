@@ -1264,6 +1264,39 @@ mod tests {
     }
 
     #[test]
+    fn ragged_series_preserves_out_of_order_rows_masks_and_shifted_merge() {
+        let mut series = RaggedSeries::new();
+        series.prepare_rows(3);
+        series.add_for_record(2, &[20.0, 21.0]);
+        series.add_for_record(0, &[1.0]);
+
+        assert_eq!(series.values(), &[20.0, 21.0, 1.0]);
+        assert_eq!(series.values_for_record(0), Some(&[1.0][..]));
+        assert_eq!(series.values_for_record(1), None);
+        assert_eq!(series.values_for_record(2), Some(&[20.0, 21.0][..]));
+        assert_eq!(series.record_indices().collect::<Vec<_>>(), vec![2, 2, 0]);
+        assert_eq!(
+            series.values_for_mask(&[true, false, true]),
+            vec![20.0, 21.0, 1.0]
+        );
+        let replay = series.replay().unwrap();
+        assert_eq!(replay.offsets, &[2, 0, 0]);
+        assert_eq!(replay.lengths, &[1, 0, 2]);
+        assert_eq!(replay.append_order, &[2, 0]);
+
+        let mut merged = RaggedSeries::new();
+        merged.add_for_record(0, &[7.0]);
+        merged.append_shifted(&series, 1, 3);
+        assert_eq!(merged.values_for_record(1), Some(&[1.0][..]));
+        assert_eq!(merged.values_for_record(2), None);
+        assert_eq!(merged.values_for_record(3), Some(&[20.0, 21.0][..]));
+        assert_eq!(
+            merged.record_indices().collect::<Vec<_>>(),
+            vec![0, 1, 3, 3]
+        );
+    }
+
+    #[test]
     fn categorical_codes_follow_first_appearance() {
         let mut interner = CategoryInterner::default();
         assert_eq!(interner.intern("b".to_string()), 0);
