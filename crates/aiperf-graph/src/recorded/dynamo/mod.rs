@@ -156,16 +156,17 @@ fn build_chains(
         };
         let session_id = context.session_id.clone();
         if !parents.contains_key(&session_id) {
-            let candidate = context
+            let candidate = match context
                 .parent_trajectory_id
                 .as_deref()
-                .filter(|parent| !parent.is_empty() && *parent != session_id)
-                .or_else(|| {
-                    context
-                        .parent_session_id
-                        .as_deref()
-                        .filter(|parent| !parent.is_empty() && *parent != session_id)
-                });
+                .filter(|parent| !parent.is_empty())
+            {
+                Some(parent) => (parent != session_id).then_some(parent),
+                None => context
+                    .parent_session_id
+                    .as_deref()
+                    .filter(|parent| !parent.is_empty() && *parent != session_id),
+            };
             if let Some(parent) = candidate {
                 parents.insert(session_id.clone(), parent.to_string());
             }
@@ -174,7 +175,6 @@ fn build_chains(
     }
     let mut chains = BTreeMap::new();
     for (session_id, mut events) in grouped {
-        validate_session_id(&session_id)?;
         events.sort_by_key(|record| (record.event_time_ms, record.source_order));
         for record in &events {
             if record.event_type == EventType::RequestEnd
@@ -187,6 +187,7 @@ fn build_chains(
         if events.is_empty() {
             continue;
         }
+        validate_session_id(&session_id)?;
         chains.insert(
             session_id.clone(),
             SessionChain {
@@ -644,6 +645,34 @@ mod tests {
     use super::*;
     use crate::recorded::PromptCorpus;
 
+    fn inline_config(records: Vec<Value>) -> RecordedTraceInputConfig {
+        RecordedTraceInputConfig {
+            load: LoadConfig::new(DatasetSource::Inline(Value::Array(records))),
+            root_limit: None,
+            max_context_length: None,
+            max_osl: None,
+            idle_gap_cap_seconds: Some(60.0),
+            prompt_corpus: PromptCorpus::Sonnet,
+            content_root_seed: 42,
+        }
+    }
+
+    fn fallback_record(session: &str, request_id: &str, start_ms: i64, input: i64) -> Value {
+        json!({
+            "schema": "dynamo.request.trace.v1",
+            "event_type": "request_end",
+            "event_time_unix_ms": start_ms,
+            "agent_context": {"session_id": session},
+            "request": {
+                "request_id": request_id,
+                "input_tokens": input,
+                "output_tokens": 1,
+                "request_received_ms": start_ms,
+                "total_time_ms": 0
+            }
+        })
+    }
+
     #[tokio::test]
     async fn inline_tree_lowers_headers_partial_tail_and_streaming() {
         let records = vec![
@@ -716,5 +745,133 @@ mod tests {
         assert_eq!(node.metadata["expected"]["input_tokens"], Value::Null);
         assert_eq!(node.metadata["expected"]["output_tokens"], Value::Null);
         assert_eq!(node.metadata["virtual_hash_fallback"], true);
+    }
+
+    #[test]
+    fn virtual_hashes_follow_global_start_order_and_do_not_resurrect_after_shrink() {
+        let mut child = fallback_record("b", "b0", 1_000, 16);
+        child["agent_context"]["parent_session_id"] = json!("a");
+        let records = vec![
+            fallback_record("a", "a0", 0, 32),
+            child,
+            fallback_record("a", "a1", 2_000, 16),
+            fallback_record("a", "a2", 3_000, 32),
+        ];
+        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        let requests = build_tree_requests(&chains, &["a".into(), "b".into()], 16).unwrap();
+        let hashes = requests
+            .iter()
+            .map(|request| {
+                (
+                    request.node_id.as_str(),
+                    request
+                        .hash_ids
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            hashes,
+            [
+                ("a:0", vec!["-1".into(), "-2".into()]),
+                ("b:0", vec!["-3".into()]),
+                ("a:1", vec!["-1".into()]),
+                ("a:2", vec!["-1".into(), "-4".into()]),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_block_sizes_fail_even_when_selection_would_hide_one_tree() {
+        let mut first = fallback_record("a", "a0", 0, 16);
+        first["request"]["replay"] = json!({
+            "trace_block_size": 16,
+            "input_length": 16,
+            "input_sequence_hashes": [1]
+        });
+        let mut hidden = fallback_record("z", "z0", 1, 32);
+        hidden["request"]["replay"] = json!({
+            "trace_block_size": 32,
+            "input_length": 32,
+            "input_sequence_hashes": [2]
+        });
+        let mut config = inline_config(vec![first, hidden]);
+        config.root_limit = Some(1);
+        let error = compile_dynamo_trace_input(config, &TiktokenTokenizer::builtin())
+            .await
+            .err()
+            .expect("mixed block sizes must fail before selected-tree build");
+        assert!(error.to_string().contains("mixes replay block sizes"));
+    }
+
+    #[test]
+    fn first_non_self_parent_from_any_event_is_the_single_tree_authority() {
+        let records = vec![
+            json!({
+                "schema": "dynamo.request.trace.v1", "event_type": "tool_start",
+                "event_time_unix_ms": 0,
+                "agent_context": {
+                    "session_id": "child", "parent_trajectory_id": "root"
+                },
+                "tool": {"tool_call_id": "t", "tool_class": "shell"}
+            }),
+            fallback_record("child", "c0", 1, 16),
+            fallback_record("root", "r0", 0, 16),
+            json!({
+                "schema": "dynamo.request.trace.v1", "event_type": "tool_start",
+                "event_time_unix_ms": 2,
+                "agent_context": {
+                    "session_id": "child", "parent_trajectory_id": "other"
+                },
+                "tool": {"tool_call_id": "t2", "tool_class": "shell"}
+            }),
+        ];
+        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        assert_eq!(chains["child"].parent.as_deref(), Some("root"));
+        let trees = select_trees(&chains, None, None).unwrap();
+        assert_eq!(
+            trees,
+            [("root".into(), vec!["child".into(), "root".into()])]
+        );
+    }
+
+    #[test]
+    fn authoritative_self_trajectory_does_not_fall_back_to_legacy_parent() {
+        let mut child = fallback_record("child", "c0", 1, 16);
+        child["agent_context"] = json!({
+            "session_id": "child",
+            "parent_trajectory_id": "child",
+            "parent_session_id": "root"
+        });
+        let records = vec![fallback_record("root", "r0", 0, 16), child];
+        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        assert_eq!(chains["child"].parent, None);
+        assert_eq!(
+            select_trees(&chains, None, None).unwrap(),
+            [
+                ("child".into(), vec!["child".into()]),
+                ("root".into(), vec!["root".into()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_only_session_scope_is_dropped_before_node_id_validation() {
+        let records = vec![
+            json!({
+                "schema": "dynamo.request.trace.v1", "event_type": "tool_start",
+                "event_time_unix_ms": 0,
+                "agent_context": {"session_id": "tool:only"},
+                "tool": {"tool_call_id": "t", "tool_class": "shell"}
+            }),
+            fallback_record("root", "r0", 1, 16),
+        ];
+        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        assert_eq!(
+            chains.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["root"]
+        );
     }
 }

@@ -250,6 +250,138 @@ pub(super) fn intern_message(
 }
 
 #[cfg(test)]
+mod parity_tests {
+    use std::collections::{BTreeMap, HashSet};
+
+    use num_bigint::BigInt;
+
+    use super::*;
+    use crate::recorded::content::RecordedContentSynthesizer;
+    use crate::recorded::trie::RecordedRequest;
+
+    struct FixedContent;
+
+    impl RecordedContentSynthesizer for FixedContent {
+        fn block_tokens(
+            &mut self,
+            hashes: &[BigInt],
+            block_size: usize,
+            _trace_scope: Option<&str>,
+        ) -> Result<Vec<u32>, RecordedTraceError> {
+            let mut output = Vec::new();
+            for hash in hashes {
+                let token = hash.to_string().parse::<u32>().unwrap();
+                output.extend(std::iter::repeat_n(token, block_size));
+            }
+            Ok(output)
+        }
+
+        fn tail_tokens(&self, count: usize, _seed: &str) -> Vec<u32> {
+            vec![999; count]
+        }
+
+        fn decode(&self, tokens: &[u32]) -> Result<String, RecordedTraceError> {
+            Ok(tokens
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(","))
+        }
+    }
+
+    fn node(id: &str, order: usize, hashes: &[i64], input: usize, output: usize) -> TrieNode {
+        TrieNode {
+            request: RecordedRequest {
+                node_id: id.into(),
+                chain_id: "chain".into(),
+                turn_index: order,
+                order,
+                hash_ids: hashes.iter().copied().map(BigInt::from).collect(),
+                input_tokens: input,
+                output_tokens: output,
+                start_seconds: order as f64,
+                duration_seconds: 1.0,
+                model: None,
+                streaming: false,
+                ttft_seconds: None,
+                causal_parent_id: None,
+                async_ancestors: HashSet::new(),
+                max_tokens: output.max(1),
+                extra_headers: BTreeMap::new(),
+                adapter_metadata: BTreeMap::new(),
+            },
+            content_parent: None,
+            warped_start: order as f64,
+            rank: order,
+        }
+    }
+
+    #[test]
+    fn inherited_tags_freeze_shared_prefix_and_split_assistant_then_user() {
+        let parent = node("parent", 0, &[1, 2], 32, 16);
+        let mut child = node("child", 1, &[1, 2, 3, 4], 64, 1);
+        child.content_parent = Some(0);
+        let nodes = vec![parent, child];
+        let caps = compute_assistant_caps(&nodes, 16);
+        let (tags, inherited) = assign_block_tags(&nodes, 16, &caps).unwrap();
+        assert_eq!(inherited, [0, 2]);
+        assert_eq!(tags[0].len(), 2);
+        assert!(tags[0].iter().all(|tag| tag.role == Role::User));
+        assert_eq!(
+            tags[1][..2].iter().map(|tag| tag.role).collect::<Vec<_>>(),
+            [Role::User, Role::User]
+        );
+        assert_eq!(tags[1][2].role, Role::Assistant);
+        assert_eq!(tags[1][3].role, Role::User);
+        assert!(tags[1][2].starts_message);
+        assert!(tags[1][3].starts_message);
+
+        let mut content = FixedContent;
+        let mut pool = SegmentPool::new();
+        let parent_path = emit_prompt(
+            &nodes[0],
+            &tags[0],
+            16,
+            None,
+            "trace",
+            &mut content,
+            &mut pool,
+        )
+        .unwrap();
+        let child_path = emit_prompt(
+            &nodes[1],
+            &tags[1],
+            16,
+            None,
+            "trace",
+            &mut content,
+            &mut pool,
+        )
+        .unwrap();
+        assert_eq!(parent_path.len(), 1);
+        assert_eq!(child_path.len(), 3);
+        assert_eq!(parent_path[0], child_path[0]);
+    }
+
+    #[test]
+    fn covered_count_zero_uses_one_real_user_message() {
+        let node = node("tiny", 0, &[], 7, 1);
+        let mut content = FixedContent;
+        let mut pool = SegmentPool::new();
+        let path = emit_prompt(&node, &[], 16, None, "trace", &mut content, &mut pool).unwrap();
+        assert_eq!(path.len(), 1);
+        let payload = pool.freeze();
+        let aiperf_dataset::Payload::Message { role, tokens, .. } =
+            aiperf_dataset::SegmentStore::get(&payload, path[0]).unwrap()
+        else {
+            panic!("tiny fallback message")
+        };
+        assert_eq!(role.as_str(), "user");
+        assert_eq!(tokens.as_ref(), &[999; 7]);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 

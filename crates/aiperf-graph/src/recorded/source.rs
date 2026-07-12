@@ -250,7 +250,24 @@ fn source_error(path: &Path, error: std::io::Error) -> RecordedTraceError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use serde_json::json;
+
     use super::*;
+
+    fn gzip_member(lines: &[Value]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        for line in lines {
+            encoder
+                .write_all(&serde_json::to_vec(line).unwrap())
+                .unwrap();
+            encoder.write_all(b"\n").unwrap();
+        }
+        encoder.finish().unwrap()
+    }
 
     #[test]
     fn segmented_names_sort_numerically_across_width_rollover() {
@@ -260,5 +277,74 @@ mod tests {
         ];
         paths.sort_by_key(|path| segment_sort_key(path));
         assert_eq!(paths[0], PathBuf::from("trace.999999.jsonl.gz"));
+    }
+
+    #[test]
+    fn explicit_gzip_reads_every_concatenated_member_and_sink_envelope() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.JSONL.GZ");
+        let first = gzip_member(&[
+            json!({"verification": "trace-s3-uploader"}),
+            json!({"timestamp": 7, "event": {"schema": "dynamo.request.trace.v1", "event_type": "request_end", "event_time_unix_ms": 1}}),
+        ]);
+        let second = gzip_member(&[json!({
+            "schema": "dynamo.request.trace.v1",
+            "event_type": "request_end",
+            "event_time_unix_ms": 2
+        })]);
+        let mut bytes = first;
+        bytes.extend(second);
+        fs::write(&path, bytes).unwrap();
+
+        let values = read_json_lines(&path).unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0]["verification"], "trace-s3-uploader");
+        assert_eq!(values[1]["event"]["event_time_unix_ms"], 1);
+        assert_eq!(values[2]["event_time_unix_ms"], 2);
+    }
+
+    #[test]
+    fn directory_and_nonexistent_prefix_follow_python_discovery_order() {
+        let directory = tempfile::tempdir().unwrap();
+        for name in [
+            "trace.1000000.jsonl.gz",
+            "trace.999999.jsonl.gz",
+            "other.jsonl",
+            "ignored.JSONL.GZ",
+        ] {
+            fs::write(directory.path().join(name), b"\n").unwrap();
+        }
+        let discovered = discover_dynamo_segments(directory.path()).unwrap();
+        let names = discovered
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "other.jsonl",
+                "trace.999999.jsonl.gz",
+                "trace.1000000.jsonl.gz"
+            ]
+        );
+
+        let prefix = directory.path().join("trace.jsonl.gz");
+        let discovered = discover_dynamo_segments(&prefix).unwrap();
+        let names = discovered
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["trace.999999.jsonl.gz", "trace.1000000.jsonl.gz"]);
+        assert!(parse_segment_name(".000000.jsonl.gz").is_none());
+    }
+
+    #[test]
+    fn corrupt_gzip_fails_with_source_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.jsonl.gz");
+        fs::write(&path, b"not gzip").unwrap();
+        let error = read_json_lines(&path).unwrap_err().to_string();
+        assert!(error.contains("trace.jsonl.gz"));
+        assert!(error.contains("corrupt") || error.contains("unreadable"));
     }
 }

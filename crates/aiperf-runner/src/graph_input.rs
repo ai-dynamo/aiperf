@@ -22,6 +22,10 @@ use std::sync::Arc;
 
 use aiperf_dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use aiperf_graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
+use aiperf_graph::recorded::{
+    PromptCorpus, RecordedTraceInputConfig, compile_dynamo_trace_input, compile_weka_trace_input,
+};
+use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -41,12 +45,16 @@ pub struct PreparedRunnerGraphInput {
     pub random_seed: Option<u64>,
     /// Fallback output-token limit for nodes without an authored value.
     pub default_output_tokens: usize,
+    /// Whether phase admission may recycle a finite recorded root corpus.
+    pub allow_dataset_wrap: bool,
 }
 
 /// Inputs shared by every direct graph-source adapter.
 pub struct RunnerGraphInputContext<'a> {
     /// Fully prepared tokenizer used during segment interning and token counts.
     pub tokenizer: &'a dyn TextTokenizer,
+    /// Run-root seed used by recorded content reconstruction.
+    pub run_random_seed: Option<u64>,
 }
 
 /// One direct authored graph-source adapter.
@@ -127,8 +135,11 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 1] =
-            [Arc::new(DagJsonlRunnerGraphInputAdapter)];
+        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 3] = [
+            Arc::new(DagJsonlRunnerGraphInputAdapter),
+            Arc::new(WekaTraceRunnerGraphInputAdapter),
+            Arc::new(DynamoTraceRunnerGraphInputAdapter),
+        ];
         Self {
             adapters: adapters
                 .into_iter()
@@ -274,8 +285,391 @@ impl DagJsonlRunnerGraphInputAdapter {
             bundle,
             random_seed: prepared.random_seed,
             default_output_tokens: prepared.default_output_tokens,
+            allow_dataset_wrap: true,
         })
     }
+}
+
+/// Built-in native WEKA recorded-trace adapter.
+#[derive(Debug)]
+pub struct WekaTraceRunnerGraphInputAdapter;
+
+/// Built-in native Dynamo recorded-trace adapter.
+#[derive(Debug)]
+pub struct DynamoTraceRunnerGraphInputAdapter;
+
+#[async_trait(?Send)]
+impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
+    fn format(&self) -> &'static str {
+        "weka_trace"
+    }
+
+    async fn load(
+        &self,
+        raw: &RawValue,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let input: RecordedDatasetInput =
+            serde_json::from_str(raw.get()).context("decoding direct WEKA graph input")?;
+        self.load_decoded(input, context).await
+    }
+
+    async fn load_protocol_v1(
+        &self,
+        dataset: DatasetSpec,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        self.load_decoded(RecordedDatasetInput::from_protocol_v1(dataset)?, context)
+            .await
+    }
+}
+
+#[async_trait(?Send)]
+impl RunnerGraphInputAdapter for DynamoTraceRunnerGraphInputAdapter {
+    fn format(&self) -> &'static str {
+        "dynamo_trace"
+    }
+
+    async fn load(
+        &self,
+        raw: &RawValue,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let input: RecordedDatasetInput =
+            serde_json::from_str(raw.get()).context("decoding direct Dynamo graph input")?;
+        self.load_decoded(input, context).await
+    }
+
+    async fn load_protocol_v1(
+        &self,
+        dataset: DatasetSpec,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        self.load_decoded(RecordedDatasetInput::from_protocol_v1(dataset)?, context)
+            .await
+    }
+}
+
+impl WekaTraceRunnerGraphInputAdapter {
+    async fn load_decoded(
+        &self,
+        input: RecordedDatasetInput,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let prepared = match input {
+            RecordedDatasetInput::File(input) => {
+                prepare_recorded_file(input, self.format(), context)?
+            }
+            RecordedDatasetInput::Public(input) => {
+                prepare_recorded_public(input, self.format(), context)?
+            }
+        };
+        let random_seed = prepared.random_seed;
+        let default_output_tokens = prepared.default_output_tokens;
+        let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let bundle = compile_weka_trace_input(prepared.input, context.tokenizer)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("loading and lowering native WEKA Graph-IR input")?;
+        finish_recorded_input(
+            bundle,
+            random_seed,
+            default_output_tokens,
+            allow_dataset_wrap,
+            self.format(),
+        )
+    }
+}
+
+impl DynamoTraceRunnerGraphInputAdapter {
+    async fn load_decoded(
+        &self,
+        input: RecordedDatasetInput,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let RecordedDatasetInput::File(input) = input else {
+            return Err(anyhow!(
+                "dynamo_trace does not support public dataset sources"
+            ));
+        };
+        ensure!(
+            input.path.is_some(),
+            "dynamo_trace product input requires a file, directory, or segmented-prefix path"
+        );
+        let prepared = prepare_recorded_file(input, self.format(), context)?;
+        let random_seed = prepared.random_seed;
+        let default_output_tokens = prepared.default_output_tokens;
+        let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let bundle = compile_dynamo_trace_input(prepared.input, context.tokenizer)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("loading and lowering native Dynamo Graph-IR input")?;
+        finish_recorded_input(
+            bundle,
+            random_seed,
+            default_output_tokens,
+            allow_dataset_wrap,
+            self.format(),
+        )
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum RecordedDatasetInput {
+    File(RecordedFileInput),
+    Public(PublicDatasetSpec),
+}
+
+impl RecordedDatasetInput {
+    fn from_protocol_v1(dataset: DatasetSpec) -> Result<Self> {
+        match dataset {
+            DatasetSpec::File(spec) => Ok(Self::File((*spec).into())),
+            DatasetSpec::Public(spec) => Ok(Self::Public(*spec)),
+            DatasetSpec::Synthetic(_) => Err(anyhow!(
+                "protocol-v1 synthetic datasets cannot author recorded Graph-IR"
+            )),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedFileInput {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    path: Option<PathBuf>,
+    #[serde(default)]
+    records: Option<Value>,
+    format: String,
+    #[serde(default = "default_sequential")]
+    sampling: String,
+    #[serde(default)]
+    synthesis: Option<TraceSynthesisSpec>,
+    #[serde(default)]
+    entries: Option<usize>,
+    #[serde(default)]
+    random_seed: Option<u64>,
+    #[serde(default)]
+    osl: Option<DistributionSpec>,
+    #[serde(default)]
+    options: Map<String, Value>,
+}
+
+impl From<FileDatasetSpec> for RecordedFileInput {
+    fn from(spec: FileDatasetSpec) -> Self {
+        Self {
+            name: None,
+            path: spec.path,
+            records: spec.records,
+            format: spec.format,
+            sampling: spec.sampling,
+            synthesis: spec.synthesis,
+            entries: spec.entries,
+            random_seed: spec.random_seed,
+            osl: spec.osl,
+            options: spec.options,
+        }
+    }
+}
+
+fn finish_recorded_input(
+    bundle: GraphInputBundle,
+    random_seed: Option<u64>,
+    default_output_tokens: usize,
+    allow_dataset_wrap: bool,
+    expected_format: &str,
+) -> Result<PreparedRunnerGraphInput> {
+    ensure!(
+        !bundle.plans.is_empty(),
+        "recorded Graph-IR input contains no roots after selection"
+    );
+    ensure!(
+        bundle.metadata.format == expected_format,
+        "recorded adapter {expected_format:?} returned bundle format {:?}",
+        bundle.metadata.format
+    );
+    Ok(PreparedRunnerGraphInput {
+        bundle,
+        random_seed,
+        default_output_tokens,
+        allow_dataset_wrap,
+    })
+}
+
+struct PreparedRecordedInput {
+    input: RecordedTraceInputConfig,
+    random_seed: Option<u64>,
+    default_output_tokens: usize,
+    allow_dataset_wrap: bool,
+}
+
+fn prepare_recorded_file(
+    input: RecordedFileInput,
+    expected_format: &str,
+    context: &RunnerGraphInputContext<'_>,
+) -> Result<PreparedRecordedInput> {
+    ensure!(
+        input
+            .name
+            .as_ref()
+            .is_none_or(|name| !name.trim().is_empty()),
+        "recorded graph dataset name must be non-empty when present"
+    );
+    ensure!(
+        input.format == expected_format,
+        "recorded graph adapter {expected_format:?} received dataset.format={:?}",
+        input.format
+    );
+    ensure!(
+        input.path.is_some() ^ input.records.is_some(),
+        "recorded graph input requires exactly one of path or records"
+    );
+    ensure!(
+        input.sampling.eq_ignore_ascii_case("sequential"),
+        "recorded Graph-IR input requires sequential root selection"
+    );
+    ensure!(
+        input.entries != Some(0),
+        "recorded graph root limit must be positive when configured"
+    );
+    let default_output_tokens = recorded_default_output_tokens(input.osl.as_ref())?;
+    let random_seed = input.random_seed;
+    let source = match (input.path, input.records) {
+        (Some(path), None) => DatasetSource::Path(path),
+        (None, Some(records)) => DatasetSource::Inline(records),
+        _ => unreachable!("recorded source exclusivity validated"),
+    };
+    let mut load = LoadConfig::new(source);
+    load.options = input.options;
+    let synthesis = input.synthesis;
+    let allow_dataset_wrap = synthesis
+        .as_ref()
+        .and_then(|value| value.allow_dataset_wrap)
+        .unwrap_or(false);
+    let max_context_length = synthesis
+        .as_ref()
+        .and_then(|value| value.max_context_length)
+        .map(usize::try_from)
+        .transpose()
+        .context("recorded max_context_length exceeds usize")?;
+    let max_osl = synthesis
+        .as_ref()
+        .and_then(|value| value.max_osl)
+        .map(|value| value as usize);
+    let idle_gap_cap_seconds = synthesis
+        .as_ref()
+        .map_or(Some(60.0), |value| value.idle_gap_cap_seconds);
+    let corpus = PromptCorpus::parse(
+        synthesis
+            .as_ref()
+            .and_then(|value| value.corpus.as_deref())
+            .unwrap_or("coding"),
+    )
+    .map_err(|error| anyhow!(error.to_string()))?;
+    let content_root_seed = context.run_random_seed.unwrap_or_else(|| {
+        RngRoot::new(None).derive_seed_or_entropy("dataset.recorded_graph.content")
+    });
+    Ok(PreparedRecordedInput {
+        input: RecordedTraceInputConfig {
+            load,
+            root_limit: input.entries,
+            max_context_length,
+            max_osl,
+            idle_gap_cap_seconds,
+            prompt_corpus: corpus,
+            content_root_seed,
+        },
+        random_seed,
+        default_output_tokens,
+        allow_dataset_wrap,
+    })
+}
+
+fn prepare_recorded_public(
+    input: PublicDatasetSpec,
+    expected_format: &str,
+    context: &RunnerGraphInputContext<'_>,
+) -> Result<PreparedRecordedInput> {
+    ensure!(
+        !input.name.trim().is_empty(),
+        "public WEKA dataset name cannot be empty"
+    );
+    ensure!(
+        input.format == expected_format,
+        "recorded graph adapter {expected_format:?} received dataset.format={:?}",
+        input.format
+    );
+    ensure!(
+        input.sampling.eq_ignore_ascii_case("sequential"),
+        "public WEKA Graph-IR input requires sequential root selection"
+    );
+    ensure!(
+        input.entries != Some(0),
+        "public WEKA root limit must be positive"
+    );
+    let source = match input.source {
+        PublicDatasetSourceSpec::Url { url } => DatasetSource::Url(url),
+        PublicDatasetSourceSpec::HuggingFace {
+            dataset,
+            subset,
+            split,
+            revision,
+        } => DatasetSource::HuggingFace {
+            dataset,
+            config: subset,
+            split,
+            max_rows: None,
+            revision,
+        },
+    };
+    let mut load = LoadConfig::new(source);
+    load.options = input.options;
+    let option_limit = load
+        .options
+        .remove("max_conversations")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| anyhow!("public WEKA max_conversations must be positive"))
+        })
+        .transpose()?;
+    let root_limit = input.entries.or(option_limit);
+    if let DatasetSource::HuggingFace { max_rows, .. } = &mut load.source {
+        *max_rows = root_limit;
+    }
+    Ok(PreparedRecordedInput {
+        input: RecordedTraceInputConfig {
+            load,
+            root_limit,
+            max_context_length: None,
+            max_osl: None,
+            idle_gap_cap_seconds: Some(60.0),
+            prompt_corpus: PromptCorpus::Coding,
+            content_root_seed: context.run_random_seed.unwrap_or_else(|| {
+                RngRoot::new(None).derive_seed_or_entropy("dataset.recorded_graph.content")
+            }),
+        },
+        random_seed: input.random_seed,
+        default_output_tokens: 1,
+        allow_dataset_wrap: false,
+    })
+}
+
+fn recorded_default_output_tokens(osl: Option<&DistributionSpec>) -> Result<usize> {
+    let expected = osl
+        .map(distribution)
+        .transpose()?
+        .map(|value| value.expected_value().ceil())
+        .unwrap_or(1.0);
+    ensure!(
+        expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
+        "recorded graph dataset.osl expected value is outside usize range"
+    );
+    Ok(expected as usize)
 }
 
 #[derive(Deserialize)]
@@ -529,6 +923,7 @@ mod tests {
                 &input,
                 &RunnerGraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
                 },
             )
             .await
@@ -554,6 +949,7 @@ mod tests {
                 &input,
                 &RunnerGraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
                 },
             )
             .await
@@ -582,6 +978,7 @@ mod tests {
                 dataset,
                 &RunnerGraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
                 },
             )
             .await
@@ -591,5 +988,138 @@ mod tests {
         assert_eq!(prepared.bundle.metadata.root_count, 1);
         assert_eq!(prepared.random_seed, Some(91));
         assert_eq!(prepared.default_output_tokens, 4);
+    }
+
+    #[tokio::test]
+    async fn weka_adapter_strictly_decodes_and_compiles_directly_to_graph_ir() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "weka_trace",
+            "sampling": "sequential",
+            "records": {
+                "id": "root",
+                "models": ["m"],
+                "block_size": 16,
+                "hash_id_scope": "global",
+                "requests": [{
+                    "t": 0,
+                    "type": "n",
+                    "model": "m",
+                    "in": 16,
+                    "out": 7,
+                    "hash_ids": [1]
+                }]
+            },
+            "random_seed": 91,
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "max_osl": 3,
+                "allow_dataset_wrap": true,
+                "idle_gap_cap_seconds": 60.0,
+                "corpus": "sonnet"
+            }
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &RunnerGraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("direct WEKA compiler");
+        assert_eq!(prepared.bundle.metadata.format, "weka_trace");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 1);
+        assert_eq!(
+            prepared.bundle.plans[0].graph.nodes["root:0"].max_tokens,
+            Some(3)
+        );
+        assert_eq!(prepared.random_seed, Some(91));
+        assert!(prepared.allow_dataset_wrap);
+    }
+
+    #[tokio::test]
+    async fn dynamo_adapter_rejects_inline_records_before_source_acquisition() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "dynamo_trace",
+            "sampling": "sequential",
+            "records": []
+        }));
+        let error = resolver
+            .load(
+                &input,
+                &RunnerGraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect_err("product Dynamo input must remain path-backed");
+        assert!(
+            format!("{error:#}").contains("requires a file, directory, or segmented-prefix path")
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamo_adapter_streams_a_path_and_compiles_directly_to_graph_ir() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("trace.jsonl");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema": "dynamo.request.trace.v1",
+                "event_type": "request_end",
+                "event_time_unix_ms": 1,
+                "agent_context": {"session_id": "root"},
+                "request": {
+                    "request_id": "r", "model": "m", "input_tokens": 16,
+                    "output_tokens": 1, "replay": {
+                        "trace_block_size": 16, "input_length": 16,
+                        "input_sequence_hashes": [7]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "dynamo_trace",
+            "sampling": "sequential",
+            "path": path,
+            "synthesis": {
+                "speedup_ratio": 1.0,
+                "prefix_len_multiplier": 1.0,
+                "prefix_root_multiplier": 1,
+                "prompt_len_multiplier": 1.0,
+                "output_len_multiplier": 1.0,
+                "corpus": "sonnet"
+            }
+        }));
+        let prepared = resolver
+            .load(
+                &input,
+                &RunnerGraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("direct Dynamo compiler");
+        assert_eq!(prepared.bundle.metadata.format, "dynamo_trace");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 1);
+        assert_eq!(prepared.bundle.plans[0].trace.id, "root");
     }
 }

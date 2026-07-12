@@ -12,6 +12,7 @@ import orjson
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.environment import Environment
 from aiperf.config import (
     AgenticProviderConfig,
     AIPerfConfig,
@@ -288,6 +289,55 @@ def test_dag_jsonl_rows_enter_graph_workload_once_without_conversion(
     assert "graph_ir" not in workload["config"]["dataset"]
 
 
+@pytest.mark.parametrize("format_name", ["weka_trace", "dynamo_trace"])
+def test_recorded_graph_sources_enter_the_native_graph_workload_untouched(
+    tmp_path: Path, format_name: str
+) -> None:
+    source: dict[str, object]
+    if format_name == "weka_trace":
+        source = {
+            "records": [
+                {
+                    "id": "trace",
+                    "models": ["m"],
+                    "block_size": 16,
+                    "hash_id_scope": "global",
+                    "requests": [],
+                }
+            ]
+        }
+    else:
+        source = {"path": str(tmp_path / "capture-prefix")}
+    run = _run(
+        tmp_path / f"{format_name}-target",
+        dataset={
+            "type": "file",
+            "format": format_name,
+            **source,
+            "synthesis": {
+                "idle_gap_cap_seconds": None,
+                "corpus": "sonnet",
+            },
+        },
+    )
+
+    workload = build_authored_run_request(
+        run,
+        operation="validate",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["workload"]
+
+    assert workload["type"] == "graph"
+    dataset = workload["config"]["dataset"]
+    assert dataset["format"] == format_name
+    assert dataset["synthesis"]["idle_gap_cap_seconds"] is None
+    assert dataset["synthesis"]["corpus"] == "sonnet"
+    if format_name == "weka_trace":
+        assert dataset["records"] == source["records"]
+    else:
+        assert dataset["path"] == str((tmp_path / "capture-prefix").resolve())
+
+
 def test_projection_never_reads_resolved_or_performs_resolver_io(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -527,6 +577,44 @@ def test_v2_public_dataset_is_expanded_once_without_acquisition(
     assert not run.artifact_dir.exists()
 
 
+def test_v2_public_weka_dataset_projects_revision_pinned_native_graph_source(
+    tmp_path: Path,
+) -> None:
+    run = _run(
+        tmp_path / "not-created",
+        dataset={
+            "type": "public",
+            "dataset": "weka_cc_traces_062126",
+            "entries": 3,
+            "sampling": "sequential",
+        },
+    )
+
+    workload = build_authored_run_request(
+        run,
+        operation="validate",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["workload"]
+
+    assert workload["type"] == "graph"
+    assert workload["config"]["dataset"] == {
+        "type": "public",
+        "name": "weka_cc_traces_062126",
+        "format": "weka_trace",
+        "source": {
+            "type": "hugging_face",
+            "dataset": "semianalysisai/cc-traces-weka-062126",
+            "subset": "default",
+            "split": "train",
+            "revision": "23f152f6f0f9399a85901b89a6458def0ef16729",
+        },
+        "sampling": "sequential",
+        "options": {"max_conversations": 3},
+        "entries": 3,
+    }
+    assert not run.artifact_dir.exists()
+
+
 def test_v2_sidecars_are_direct_protocol_neutral_native_inputs(tmp_path: Path) -> None:
     run = _run(tmp_path / "not-created")
     run.cfg.gpu_telemetry.enabled = True
@@ -565,6 +653,65 @@ def test_v2_sidecars_are_direct_protocol_neutral_native_inputs(tmp_path: Path) -
         "http://otel:4318/v1/metrics"
     )
     assert not run.artifact_dir.exists()
+
+
+def test_v2_content_server_environment_projects_without_touching_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _run(tmp_path / "not-created")
+    content_dir = tmp_path / "content-does-not-exist"
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "ENABLED", True)
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "HOST", "0.0.0.0")
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "PORT", 8090)
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "CONTENT_DIR", str(content_dir))
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "MAX_TRACKED_RECORDS", 321)
+
+    sidecar = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["resources"]["sidecars"]["content_server"]
+
+    assert sidecar == {
+        "host": "0.0.0.0",
+        "port": 8090,
+        "content_dir": str(content_dir.absolute()),
+        "max_tracked_records": 321,
+    }
+    assert not content_dir.exists()
+
+
+def test_v2_enabled_content_server_without_directory_omits_externalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "ENABLED", True)
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "CONTENT_DIR", "")
+
+    sidecar = build_authored_run_request(
+        _run(tmp_path / "not-created"),
+        operation="validate",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["resources"]["sidecars"]["content_server"]
+
+    assert "content_dir" not in sidecar
+
+
+def test_v2_content_server_relative_directory_is_authored_as_absolute_without_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "ENABLED", True)
+    monkeypatch.setattr(Environment.CONTENT_SERVER, "CONTENT_DIR", "generated-media")
+
+    sidecar = build_authored_run_request(
+        _run(tmp_path / "not-created"),
+        operation="validate",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["resources"]["sidecars"]["content_server"]
+
+    expected = tmp_path / "generated-media"
+    assert sidecar["content_dir"] == str(expected)
+    assert not expected.exists()
 
 
 def test_v2_custom_gpu_source_never_reads_resolved_state(tmp_path: Path) -> None:

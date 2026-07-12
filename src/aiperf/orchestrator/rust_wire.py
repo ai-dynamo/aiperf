@@ -199,7 +199,7 @@ def _authored_workload(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
         workload_type = str(cfg.workload.type)
         workload_config = copy.deepcopy(cfg.workload.config)
     else:
-        workload_type = _default_workload_type(cfg, dataset)
+        workload_type = ""
         workload_config = {}
 
     # Evaluation owns a deliberately different provider-neutral authored
@@ -210,11 +210,15 @@ def _authored_workload(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
     if workload_type == "evaluation":
         return {"type": workload_type, "config": workload_config}
 
+    authored_dataset = _authored_dataset_v2(run, dataset)
+    if not workload_type:
+        workload_type = _default_workload_type(cfg, authored_dataset)
+
     # Explicit extension-owned keys remain intact. The current Config-v2
     # scheduled fields fill only missing keys during the compatibility window.
     current_fields: dict[str, Any] = {
         "worker_count": _worker_count(cfg),
-        "dataset": _authored_dataset_v2(run, dataset),
+        "dataset": authored_dataset,
         "tokenizer": _authored_tokenizer_v2(cfg),
         "phases": [_phase(phase) for phase in cfg.phases],
     }
@@ -260,9 +264,11 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
         if dataset.osl is not None:
             result["osl"] = _distribution(dataset.osl)
         if dataset.synthesis is not None:
-            result["synthesis"] = dataset.synthesis.model_dump(
-                mode="json", exclude_none=True
-            )
+            synthesis = dataset.synthesis.model_dump(mode="json", exclude_none=True)
+            # Null is semantic for recorded graphs: it disables idle-gap
+            # compression, while an absent field selects the 60s default.
+            synthesis["idle_gap_cap_seconds"] = dataset.synthesis.idle_gap_cap_seconds
+            result["synthesis"] = synthesis
         if dataset.path is not None:
             path = dataset.path.expanduser()
             result["path"] = str(
@@ -300,7 +306,16 @@ def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:
 
 def _default_workload_type(cfg: Any, dataset: Any) -> str:
     """Select the compatibility workload from exact normalized authored state."""
-    if str(getattr(dataset, "format", "")) == "dag_jsonl":
+    format_name = (
+        dataset.get("format", "")
+        if isinstance(dataset, dict)
+        else getattr(dataset, "format", "")
+    )
+    if str(format_name) in {
+        "dag_jsonl",
+        "weka_trace",
+        "dynamo_trace",
+    }:
         return "graph"
     if cfg.accuracy is not None and cfg.accuracy.enabled:
         return "static_accuracy"
@@ -372,12 +387,16 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
 def _authored_sidecars(run: BenchmarkRun) -> dict[str, Any]:
     """Project direct native sidecar inputs without starting their resources.
 
-    Protocol v1 and v2 share these protocol-neutral source policies, but v2
-    never constructs a v1 run request or enters the resolver chain. Runtime
-    acquisition, reachability, cadence, and worker startup remain owned by the
-    selected Rust sidecar adapters during pair preparation.
+    Some telemetry values also have isolated protocol-v1 compatibility shapes;
+    the content server is protocol-v2-only. V2 never constructs a v1 run
+    request or enters the resolver chain. Runtime acquisition, reachability,
+    cadence, and worker startup remain owned by the selected Rust sidecar
+    adapters during pair preparation.
     """
     result: dict[str, Any] = {}
+    content_server = _content_server()
+    if content_server is not None:
+        result["content_server"] = content_server
     gpu_telemetry = _gpu_telemetry(run, include_resolved_custom_metrics=False)
     if gpu_telemetry is not None:
         result["gpu_telemetry"] = gpu_telemetry
@@ -390,6 +409,32 @@ def _authored_sidecars(run: BenchmarkRun) -> dict[str, Any]:
     live_streaming = _live_streaming(run)
     if live_streaming is not None:
         result["live_streaming"] = live_streaming
+    return result
+
+
+def _content_server() -> dict[str, Any] | None:
+    """Project the public content-server environment into strict native policy.
+
+    File externalization is active only when both ENABLED and CONTENT_DIR are
+    set, exactly as in ``DatasetManager._get_content_server_kwargs`` on
+    ``ajc/content-server``. An enabled server with no directory still receives
+    a temporary serving root but synthetic media remains inline.
+    """
+    settings = Environment.CONTENT_SERVER
+    if not settings.ENABLED:
+        return None
+    result: dict[str, Any] = {
+        "host": settings.HOST,
+        "port": settings.PORT,
+        "max_tracked_records": settings.MAX_TRACKED_RECORDS,
+    }
+    if settings.CONTENT_DIR:
+        content_dir = Path(settings.CONTENT_DIR).expanduser()
+        result["content_dir"] = str(
+            content_dir
+            if content_dir.is_absolute()
+            else (Path.cwd() / content_dir).absolute()
+        )
     return result
 
 
@@ -928,9 +973,9 @@ def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
     if dataset.osl is not None:
         result["osl"] = _distribution(dataset.osl)
     if dataset.synthesis is not None:
-        result["synthesis"] = dataset.synthesis.model_dump(
-            mode="json", exclude_none=True
-        )
+        synthesis = dataset.synthesis.model_dump(mode="json", exclude_none=True)
+        synthesis["idle_gap_cap_seconds"] = dataset.synthesis.idle_gap_cap_seconds
+        result["synthesis"] = synthesis
     if dataset.path is not None:
         resolved_paths = run.resolved.dataset_file_paths or {}
         path = Path(resolved_paths.get(dataset.name, dataset.path)).resolve()
@@ -941,6 +986,7 @@ def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
 
 
 _PUBLIC_NATIVE_FORMATS = {
+    "aiperf.dataset.loader.recorded_graph:WekaTraceNativeLoader": "weka_trace",
     "aiperf.dataset.loader.exgentic:ExgenticDatasetLoader": "exgentic",
     "aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader": "exgentic_v2",
     "aiperf.dataset.loader.sharegpt:ShareGPTLoader": "sharegpt",
@@ -1000,7 +1046,7 @@ def _public_dataset(run: BenchmarkRun, dataset: PublicDataset) -> dict[str, Any]
         run,
         dataset,
         streaming=metadata.streaming,
-        entries_first=native_format in {"exgentic", "exgentic_v2"},
+        entries_first=native_format in {"exgentic", "exgentic_v2", "weka_trace"},
     )
     if native_format in {"exgentic", "exgentic_v2"} and max_conversations is None:
         raise RustWireError(

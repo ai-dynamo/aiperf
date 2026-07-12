@@ -181,3 +181,40 @@ fn wrapping_window(corpus: &[u32], start: usize, count: usize) -> Vec<u32> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use aiperf_dataset::TiktokenTokenizer;
+    use num_bigint::BigInt;
+
+    use super::*;
+
+    #[test]
+    fn blake3_hash_streams_preserve_global_and_trace_local_namespaces() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let mut content =
+            CorpusContentSynthesizer::new(&tokenizer, PromptCorpus::Sonnet, 42).unwrap();
+        let hash = "184467440737095516170".parse::<BigInt>().unwrap();
+
+        let global = content
+            .block_tokens(std::slice::from_ref(&hash), 16, None)
+            .unwrap();
+        let global_again = content
+            .block_tokens(std::slice::from_ref(&hash), 16, None)
+            .unwrap();
+        let local_a = content
+            .block_tokens(std::slice::from_ref(&hash), 16, Some("trace-a"))
+            .unwrap();
+        let local_a_again = content
+            .block_tokens(std::slice::from_ref(&hash), 16, Some("trace-a"))
+            .unwrap();
+        let local_b = content
+            .block_tokens(std::slice::from_ref(&hash), 16, Some("trace-b"))
+            .unwrap();
+
+        assert_eq!(global, global_again);
+        assert_eq!(local_a, local_a_again);
+        assert_ne!(global, local_a);
+        assert_ne!(local_a, local_b);
+    }
+}

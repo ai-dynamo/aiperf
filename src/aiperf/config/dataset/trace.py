@@ -9,7 +9,7 @@ Trace synthesis config used by file datasets.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     ConfigDict,
@@ -23,9 +23,9 @@ class SynthesisConfig(BaseConfig):
     """
     Configuration for trace synthesis/transformation.
 
-    Used with mooncake_trace format to transform production trace
-    data before replay. Allows scaling timestamps, token lengths,
-    and radix tree structure.
+    Mooncake fields scale production replay timestamps, token lengths, and
+    radix-tree structure. Recorded WEKA/Dynamo fields bound whole-trace
+    selection, idle-gap warping, canonical native content, and corpus wrapping.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -96,5 +96,39 @@ class SynthesisConfig(BaseConfig):
             default=None,
             description="Maximum output sequence length cap. "
             "Traces with output_length > max_osl are capped to this value (not filtered).",
+        ),
+    ]
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            default=None,
+            description="Maximum per-trace input-plus-output context for recorded graph selection.",
+        ),
+    ]
+
+    allow_dataset_wrap: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="Whether a finite recorded graph corpus may wrap during selection.",
+        ),
+    ]
+
+    idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            default=60.0,
+            description="True-idle gap cap for weka_trace/dynamo_trace; null disables warping.",
+        ),
+    ]
+
+    corpus: Annotated[
+        Literal["coding", "sonnet"] | None,
+        Field(
+            default=None,
+            description="Content corpus for recorded graph prompt reconstruction.",
         ),
     ]

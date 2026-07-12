@@ -183,6 +183,109 @@ pub(super) fn apply_start_anchors(
 }
 
 #[cfg(test)]
+mod parity_tests {
+    use std::collections::{BTreeMap, HashSet};
+
+    use num_bigint::BigInt;
+
+    use super::*;
+    use crate::recorded::trie::RecordedRequest;
+
+    fn node(id: &str, order: usize, start: f64, duration: f64) -> TrieNode {
+        TrieNode {
+            request: RecordedRequest {
+                node_id: id.into(),
+                chain_id: "chain".into(),
+                turn_index: order,
+                order,
+                hash_ids: vec![BigInt::from(order + 1)],
+                input_tokens: 16,
+                output_tokens: 1,
+                start_seconds: start,
+                duration_seconds: duration,
+                model: None,
+                streaming: false,
+                ttft_seconds: None,
+                causal_parent_id: None,
+                async_ancestors: HashSet::new(),
+                max_tokens: 1,
+                extra_headers: BTreeMap::new(),
+                adapter_metadata: BTreeMap::new(),
+            },
+            content_parent: None,
+            warped_start: start,
+            rank: 0,
+        }
+    }
+
+    #[test]
+    fn idle_warp_cuts_only_union_idle_and_accumulates_multiple_gaps() {
+        let mut nodes = vec![
+            node("a", 0, 0.0, 5.0),
+            node("overlap", 1, 2.0, 1.0),
+            node("c", 2, 100.0, 1.0),
+            node("d", 3, 200.0, 1.0),
+        ];
+        apply_idle_warp(&mut nodes, Some(10.0));
+        assert_eq!(nodes[0].warped_start, 0.0);
+        assert_eq!(nodes[1].warped_start, 2.0);
+        assert_eq!(nodes[2].warped_start, 15.0);
+        assert_eq!(nodes[3].warped_start, 26.0);
+        assert_eq!(nodes[0].end(), 5.0, "active duration is never compressed");
+    }
+
+    #[test]
+    fn overlapping_causal_child_gets_dispatch_and_first_token_anchors() {
+        let mut parent = node("parent", 0, 0.0, 5.0);
+        parent.request.streaming = true;
+        parent.request.ttft_seconds = Some(1.0);
+        let mut child = node("child", 1, 2.0, 1.0);
+        child.request.causal_parent_id = Some("parent".into());
+        let mut nodes = vec![parent, child];
+        compute_ranks(&mut nodes);
+        let mut edges = build_interval_edges(&nodes);
+        apply_start_anchors(&nodes, &mut edges);
+        let edge = &edges["child"][0];
+        assert_eq!(edge.source, "parent");
+        assert_eq!(edge.delay_after_predecessor_start_us, Some(2_000_000.0));
+        assert_eq!(
+            edge.delay_after_predecessor_first_token_us,
+            Some(1_000_000.0)
+        );
+        assert_eq!(edge.delay_after_predecessor_us, None);
+    }
+
+    #[test]
+    fn interval_frontier_preserves_and_fan_in_and_async_exclusion() {
+        let a = node("a", 0, 0.0, 4.0);
+        let b = node("b", 1, 1.0, 2.0);
+        let target = node("target", 2, 6.0, 1.0);
+        let mut nodes = vec![a, b, target];
+        compute_ranks(&mut nodes);
+        let edges = build_interval_edges(&nodes);
+        let incoming = &edges["target"];
+        assert_eq!(incoming.len(), 2);
+        assert_eq!(incoming[0].source, "a");
+        assert_eq!(incoming[0].delay_after_predecessor_us, Some(2_000_000.0));
+        assert_eq!(incoming[1].source, "b");
+        assert_eq!(incoming[1].delay_after_predecessor_us, Some(0.0));
+
+        nodes[0]
+            .request
+            .async_ancestors
+            .insert("fire-and-forget".into());
+        let edges = build_interval_edges(&nodes);
+        assert_eq!(
+            edges["target"]
+                .iter()
+                .map(|edge| edge.source.as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 

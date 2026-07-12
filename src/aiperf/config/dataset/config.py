@@ -302,7 +302,8 @@ class FileDataset(BaseConfig):
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
             "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, "
-            "directories for random_pool.",
+            "JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, "
+            "and directories for random_pool.",
         ),
     ]
 
@@ -327,6 +328,7 @@ class FileDataset(BaseConfig):
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
             "mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. "
+            "weka_trace / dynamo_trace: Rust-native recorded graphs. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
             "random_pool: directory of reusable prompts.",
         ),
@@ -348,8 +350,8 @@ class FileDataset(BaseConfig):
         Field(
             default=None,
             description="Trace synthesis/transformation configuration. "
-            "Allows scaling timestamps and token lengths before replay. "
-            "Only used with mooncake_trace format.",
+            "Allows scaling trace replay and configuring Rust-native "
+            "WEKA/Dynamo graph reconstruction.",
         ),
     ]
 

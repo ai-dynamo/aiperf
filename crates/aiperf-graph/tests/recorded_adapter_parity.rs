@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use aiperf_dataset::{DatasetSource, LoadConfig, TiktokenTokenizer};
+use aiperf_dataset::{DatasetSource, Handle, LoadConfig, Payload, SegmentStore, TiktokenTokenizer};
 use aiperf_graph::materialize::{PromptMaterializer, SegmentItemsMaterializer};
 use aiperf_graph::model::{GraphRecord, LlmNode};
 use aiperf_graph::recorded::{
@@ -207,6 +207,26 @@ fn assert_topology_parity(weka: &GraphRecord, dynamo: &GraphRecord) {
     }
 }
 
+fn message_segments(store: &dyn SegmentStore) -> Vec<(String, String, Vec<u8>, Vec<u32>)> {
+    let mut messages = (0..store.len())
+        .filter_map(|index| {
+            let handle = Handle::new(u32::try_from(index).expect("test segment index"));
+            let segment = store.segment(handle)?;
+            let Payload::Message { role, wire, tokens } = &segment.payload else {
+                return None;
+            };
+            Some((
+                segment.id.to_hex(),
+                role.as_str().to_string(),
+                wire.to_vec(),
+                tokens.to_vec(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    messages.sort_by(|left, right| left.0.cmp(&right.0));
+    messages
+}
+
 #[tokio::test]
 async fn logical_weka_and_dynamo_traces_materialize_byte_identical_prompts() {
     let tokenizer = TiktokenTokenizer::builtin();
@@ -222,6 +242,11 @@ async fn logical_weka_and_dynamo_traces_materialize_byte_identical_prompts() {
     let weka_graph = &weka.plans[0].graph;
     let dynamo_graph = &dynamo.plans[0].graph;
     assert_topology_parity(weka_graph, dynamo_graph);
+    assert_eq!(
+        message_segments(weka.segments.as_ref()),
+        message_segments(dynamo.segments.as_ref()),
+        "all prompt and synthesized response message segments"
+    );
 
     for node_id in weka_graph.nodes.keys() {
         let weka_messages =

@@ -165,7 +165,7 @@ impl GraphTraceSource for CyclingGraphTraceSource {
             .checked_add(1)
             .ok_or_else(|| GraphWorkloadError("graph admitted root count exceeds u64".into()))?;
         let instance = self.instance_sequence.take()?;
-        plan.trace.id = format!("{}#instance-{instance}", plan.trace.id);
+        plan.trace.id = format!("{}::instance-{instance}", plan.trace.id);
         self.next.set(next_ordinal);
         self.admitted_requests.set(next_requests);
         Ok(Some(plan))
@@ -737,15 +737,15 @@ mod tests {
         .unwrap();
         assert_eq!(
             source.next_trace().unwrap().unwrap().trace.id,
-            "a#instance-0"
+            "a::instance-0"
         );
         assert_eq!(
             source.next_trace().unwrap().unwrap().trace.id,
-            "b#instance-1"
+            "b::instance-1"
         );
         assert_eq!(
             source.next_trace().unwrap().unwrap().trace.id,
-            "a#instance-2"
+            "a::instance-2"
         );
         assert!(source.next_trace().unwrap().is_none());
     }
@@ -849,11 +849,11 @@ mod tests {
 
         assert_eq!(
             warmup.next_trace().unwrap().unwrap().trace.id,
-            "root#instance-0"
+            "root::instance-0"
         );
         assert_eq!(
             profiling.next_trace().unwrap().unwrap().trace.id,
-            "root#instance-1"
+            "root::instance-1"
         );
     }
 

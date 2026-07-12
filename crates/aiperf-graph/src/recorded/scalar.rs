@@ -9,7 +9,14 @@ use serde_json::Value;
 pub(super) fn integer(value: &Value) -> Option<BigInt> {
     match value {
         Value::Bool(value) => Some(BigInt::from(u8::from(*value))),
-        Value::String(value) => value.parse().ok(),
+        Value::String(value) => {
+            let value = value.trim();
+            value.parse().ok().or_else(|| {
+                (!value.contains(['e', 'E']))
+                    .then(|| decimal_integer(value))
+                    .flatten()
+            })
+        }
         Value::Number(number) => {
             let text = number.to_string();
             text.parse().ok().or_else(|| decimal_integer(&text))
@@ -21,7 +28,7 @@ pub(super) fn integer(value: &Value) -> Option<BigInt> {
 pub(super) fn float(value: &Value) -> Option<f64> {
     match value {
         Value::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
-        Value::String(value) => value.parse().ok(),
+        Value::String(value) => value.trim().parse().ok(),
         Value::Number(number) => number.as_f64(),
         _ => None,
     }
@@ -82,6 +89,9 @@ mod tests {
         assert_eq!(integer(&json!(1.25)), None);
         assert_eq!(integer(&json!(1.2e3)), Some(BigInt::from(1200)));
         assert_eq!(integer(&json!("42")), Some(BigInt::from(42)));
+        assert_eq!(integer(&json!("42.0")), Some(BigInt::from(42)));
+        assert_eq!(integer(&json!(" 42 ")), Some(BigInt::from(42)));
+        assert_eq!(integer(&json!("1.2e3")), None);
         assert_eq!(integer(&json!(true)), Some(BigInt::from(1)));
     }
 }

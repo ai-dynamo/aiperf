@@ -413,3 +413,106 @@ fn optional_finite_nonnegative(
         Some(value) => finite_nonnegative(value, &format!("{label}.{field}")).map(Some),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use num_bigint::BigInt;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn schema_accepts_python_integer_coercions_nullable_subagent_stats_and_wide_hashes() {
+        let value: Value = serde_json::from_str(
+            r#"{
+                "id":"trace","models":["m"],"block_size":"16.0",
+                "hash_id_scope":"global","requests":[{
+                    "t":false,"type":"subagent","agent_id":"child",
+                    "subagent_type":"Explore","duration_ms":null,
+                    "total_tokens":null,"tool_use_count":null,
+                    "status":"async_launched","requests":[{
+                        "t":"0.5","type":"s","model":"m","input_length":"16.0",
+                        "output_length":true,
+                        "hash_ids":[184467440737095516170],"ttft":"0.25"
+                    }],"models":["m"]
+                }]
+            }"#,
+        )
+        .unwrap();
+        let trace = parse_trace(value).unwrap();
+        assert_eq!(trace.block_size, 16);
+        let WekaEntry::Subagent(subagent) = &trace.requests[0] else {
+            panic!("subagent")
+        };
+        assert_eq!(subagent.status, "async_launched");
+        let WekaEntry::Leaf(leaf) = &subagent.requests[0] else {
+            panic!("leaf")
+        };
+        assert_eq!(leaf.input_tokens, 16);
+        assert_eq!(leaf.output_tokens, 1);
+        assert_eq!(leaf.start_seconds, 0.5);
+        assert_eq!(leaf.ttft_seconds, Some(0.25));
+        assert_eq!(
+            leaf.hashes,
+            ["184467440737095516170".parse::<BigInt>().unwrap()]
+        );
+    }
+
+    #[test]
+    fn schema_rejects_unknown_fields_alias_conflicts_and_scope_collisions() {
+        let base = json!({
+            "id": "trace", "models": ["m"], "block_size": 16,
+            "hash_id_scope": "local", "requests": [{
+                "t": 0, "type": "n", "model": "m", "in": 16,
+                "out": 1, "hash_ids": [1]
+            }]
+        });
+        let mut unknown = base.clone();
+        unknown["foreign"] = json!(true);
+        assert!(
+            parse_trace(unknown)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field")
+        );
+
+        let mut aliases = base.clone();
+        aliases["requests"][0]["input_length"] = json!(16);
+        assert!(
+            parse_trace(aliases)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot provide both")
+        );
+
+        let mut collision = base;
+        collision["requests"] = json!([{
+            "t": 0, "type": "subagent", "agent_id": "trace",
+            "subagent_type": "x", "status": "completed", "requests": [], "models": []
+        }]);
+        assert!(
+            parse_trace(collision)
+                .unwrap_err()
+                .to_string()
+                .contains("collides")
+        );
+    }
+
+    #[test]
+    fn nullable_and_nonnullable_optional_integer_fields_remain_distinct() {
+        let accepted = json!({
+            "id": "trace", "models": ["m"], "block_size": 16,
+            "hash_id_scope": "local", "requests": [{
+                "t": 0, "type": "subagent", "agent_id": "child",
+                "subagent_type": "x", "status": "async_launched",
+                "duration_ms": null, "total_tokens": null, "tool_use_count": null,
+                "requests": [{"t":0,"type":"n","model":"m","in":1,"out":1}],
+                "models": []
+            }]
+        });
+        parse_trace(accepted.clone()).unwrap();
+        let mut rejected = accepted;
+        rejected["requests"][0]["tool_tokens"] = Value::Null;
+        assert!(parse_trace(rejected).is_err());
+    }
+}

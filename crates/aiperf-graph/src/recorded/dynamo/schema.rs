@@ -143,6 +143,8 @@ fn parse_context(value: &Value) -> Result<AgentContext, RecordedTraceError> {
     let object = value
         .as_object()
         .ok_or_else(|| RecordedTraceError("Dynamo agent_context must be an object".into()))?;
+    optional_string(object, "trajectory_id")?;
+    optional_string(object, "session_type_id")?;
     Ok(AgentContext {
         session_id: string(required(object, "session_id")?, "agent_context.session_id")?,
         parent_session_id: optional_string(object, "parent_session_id")?,
@@ -162,7 +164,7 @@ fn parse_request(value: &Value) -> Result<RequestMetrics, RecordedTraceError> {
     optional_float(object, "avg_itl_ms", true)?;
     optional_float(object, "kv_hit_rate", false)?;
     optional_float(object, "kv_transfer_estimated_latency_ms", true)?;
-    optional_i64(object, "queue_depth")?;
+    optional_integer(object, "queue_depth")?;
     if let Some(worker) = object.get("worker").filter(|value| !value.is_null()) {
         parse_worker(worker)?;
     }
@@ -271,7 +273,7 @@ fn parse_worker(value: &Value) -> Result<(), RecordedTraceError> {
         "decode_worker_id",
         "decode_dp_rank",
     ] {
-        optional_i64(object, field)?;
+        optional_integer(object, field)?;
     }
     Ok(())
 }
@@ -312,6 +314,16 @@ fn optional_i64(
     }
 }
 
+fn optional_integer(
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<BigInt>, RecordedTraceError> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => bigint(value, field).map(Some),
+    }
+}
+
 fn optional_float(
     object: &Map<String, Value>,
     field: &str,
@@ -347,4 +359,169 @@ fn integer_i64(value: &Value, label: &str) -> Result<i64, RecordedTraceError> {
 fn bigint(value: &Value, label: &str) -> Result<BigInt, RecordedTraceError> {
     super::super::scalar::integer(value)
         .ok_or_else(|| RecordedTraceError(format!("Dynamo {label} must be an integer")))
+}
+
+#[cfg(test)]
+mod tests {
+    use num_bigint::BigInt;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn current_schema_accepts_envelopes_extras_coercions_and_u64_hash_domain() {
+        let value: Value = serde_json::from_str(
+            r#"{
+                "timestamp": 1,
+                "event": {
+                    "schema":"dynamo.request.trace.v1",
+                    "event_type":"request_end",
+                    "event_time_unix_ms":"1000.0",
+                    "event_source":"dynamo",
+                    "forward_compatible": {"ignored": true},
+                    "agent_context":{"session_id":"s","future":"ok"},
+                    "request":{
+                        "request_id":"r","input_tokens":"16.0","output_tokens":true,
+                        "queue_depth":184467440737095516170,
+                        "worker":{"decode_worker_id":184467440737095516170},
+                        "replay":{
+                            "trace_block_size":"16.0","input_length":"16.0",
+                            "input_sequence_hashes":[184467440737095516170],
+                            "future":"ok"
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let record = parse_record(value, 0).unwrap().unwrap();
+        assert_eq!(record.event_time_ms, 1000);
+        let request = record.request.unwrap();
+        assert_eq!(request.input_tokens, Some(16));
+        assert_eq!(request.output_tokens, Some(1));
+        assert_eq!(request.replay.as_ref().unwrap().block_size, 16);
+        assert_eq!(
+            request.replay.unwrap().hashes,
+            ["184467440737095516170".parse::<BigInt>().unwrap()]
+        );
+    }
+
+    #[test]
+    fn marker_lines_skip_and_replay_only_records_remain_typed() {
+        assert!(
+            parse_record(json!({"verification": "trace-s3-uploader"}), 0)
+                .unwrap()
+                .is_none()
+        );
+        let record = parse_record(
+            json!({
+                "schema": "dynamo.request.trace.v1",
+                "event_type": "request_end",
+                "event_time_unix_ms": 1,
+                "request": {
+                    "request_id": "r",
+                    "replay": {
+                        "trace_block_size": 2,
+                        "input_length": 4,
+                        "input_sequence_hashes": [1, 2]
+                    }
+                }
+            }),
+            1,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(record.context.is_none());
+        assert!(record.request.is_some());
+    }
+
+    #[test]
+    fn tool_status_aliases_are_lossless_and_invalid_status_fails() {
+        for status in [
+            "running",
+            "succeeded",
+            "ok",
+            "success",
+            "error",
+            "failed",
+            "cancelled",
+            "canceled",
+            "timeout",
+        ] {
+            let record = parse_record(
+                json!({
+                    "schema": "dynamo.request.trace.v1",
+                    "event_type": "tool_end",
+                    "event_time_unix_ms": 1,
+                    "agent_context": {"session_id": "s"},
+                    "tool": {"tool_call_id": "c", "tool_class": "shell", "status": status}
+                }),
+                0,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(record.tool.unwrap().status.as_deref(), Some(status));
+        }
+        let error = parse_record(
+            json!({
+                "schema": "dynamo.request.trace.v1",
+                "event_type": "tool_error",
+                "event_time_unix_ms": 1,
+                "tool": {"tool_call_id": "c", "tool_class": "shell", "status": "unknown"}
+            }),
+            0,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported value"));
+    }
+
+    #[test]
+    fn finite_metric_fields_and_recorded_hash_namespace_fail_closed() {
+        let invalid_ttft = json!({
+            "schema": "dynamo.request.trace.v1", "event_type": "request_end",
+            "event_time_unix_ms": 1,
+            "request": {"request_id": "r", "ttft_ms": "nan"}
+        });
+        assert!(
+            parse_record(invalid_ttft, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("finite")
+        );
+
+        let negative_hash = json!({
+            "schema": "dynamo.request.trace.v1", "event_type": "request_end",
+            "event_time_unix_ms": 1,
+            "request": {"request_id": "r", "replay": {
+                "trace_block_size": 16, "input_length": 1,
+                "input_sequence_hashes": [-1]
+            }}
+        });
+        assert!(
+            parse_record(negative_hash, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("non-negative")
+        );
+    }
+
+    #[test]
+    fn declared_optional_context_fields_are_validated_even_when_not_retained() {
+        let invalid = json!({
+            "schema": "dynamo.request.trace.v1",
+            "event_type": "request_end",
+            "event_time_unix_ms": 1,
+            "agent_context": {
+                "session_id": "s",
+                "trajectory_id": 7,
+                "session_type_id": "agent"
+            }
+        });
+        assert!(
+            parse_record(invalid, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("trajectory_id must be a string")
+        );
+    }
 }

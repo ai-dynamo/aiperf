@@ -362,6 +362,7 @@ def _evaluation_capabilities() -> dict:
                 "isolation_profile_id": "strict_process_tree_v1",
             }
         ],
+        "evaluation_unavailable": [],
     }
 
 
@@ -411,6 +412,101 @@ def test_capability_preflight_requires_exact_provider_distribution() -> None:
         installation.preflight_request(
             _evaluation_request("nvidia_nemo_evaluator_mutable")
         )
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    [
+        "provider_roots_unavailable",
+        "unsupported_platform",
+        "isolation_unavailable",
+    ],
+)
+def test_capability_preflight_prioritizes_stable_unavailability_reason(
+    reason_code: str,
+) -> None:
+    capabilities = _evaluation_capabilities()
+    capabilities["supported_pairs"] = []
+    capabilities["supported_evaluation_combinations"] = []
+    capabilities["evaluation_unavailable"] = [
+        {
+            "provider": "nemo_evaluator",
+            "distribution": "nvidia_nemo_evaluator_0_4_locked",
+            "reason_code": reason_code,
+        }
+    ]
+    _validate_v2_capabilities(capabilities)
+    installation = RunnerInstallation(
+        binary=Path("/unused/aiperf-runner"), capabilities=capabilities
+    )
+
+    with pytest.raises(RuntimeError, match=reason_code) as raised:
+        installation.preflight_request(
+            _evaluation_request("nvidia_nemo_evaluator_0_4_locked")
+        )
+
+    assert "executable protocol-v2 pair" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "unavailable",
+    [
+        {
+            "provider": "nemo_evaluator",
+            "distribution": "nvidia_nemo_evaluator_0_4_locked",
+            "reason_code": "unreviewed_reason",
+        },
+        {
+            "provider": "nemo_evaluator",
+            "distribution": "nvidia_nemo_evaluator_0_4_locked",
+            "reason_code": "provider_roots_unavailable",
+            "detail": "/secret/deployment/path",
+        },
+    ],
+)
+def test_capability_validation_rejects_open_ended_unavailability(
+    unavailable: dict,
+) -> None:
+    capabilities = _evaluation_capabilities()
+    capabilities["supported_evaluation_combinations"] = []
+    capabilities["evaluation_unavailable"] = [unavailable]
+
+    with pytest.raises(ValueError, match="evaluation|reason_code"):
+        _validate_v2_capabilities(capabilities)
+
+
+def test_capability_validation_rejects_supported_unavailable_overlap() -> None:
+    capabilities = _evaluation_capabilities()
+    capabilities["evaluation_unavailable"] = [
+        {
+            "provider": "nemo_evaluator",
+            "distribution": "nvidia_nemo_evaluator_0_4_locked",
+            "reason_code": "provider_roots_unavailable",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="both supported and unavailable"):
+        _validate_v2_capabilities(capabilities)
+
+
+def test_capability_validation_requires_deterministic_unavailability_order() -> None:
+    capabilities = _evaluation_capabilities()
+    capabilities["supported_evaluation_combinations"] = []
+    capabilities["evaluation_unavailable"] = [
+        {
+            "provider": "openbench",
+            "distribution": "groq_openbench_0_5_3_inspect_0_3_141_locked",
+            "reason_code": "isolation_unavailable",
+        },
+        {
+            "provider": "nemo_evaluator",
+            "distribution": "nvidia_nemo_evaluator_0_4_locked",
+            "reason_code": "provider_roots_unavailable",
+        },
+    ]
+
+    with pytest.raises(ValueError, match="ordered by provider and distribution"):
+        _validate_v2_capabilities(capabilities)
 
 
 def test_capability_preflight_rejects_unlinked_resource_adapter() -> None:
