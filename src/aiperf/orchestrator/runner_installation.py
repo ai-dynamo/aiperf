@@ -16,6 +16,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from hmac import compare_digest
+from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
 
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
+_RUNNER_COMPANION_DISTRIBUTION = "aiperf-runner"
+_RUNNER_COMMAND = "aiperf-runner"
 _NATIVE_REPORT_SCHEMA_VERSION = "2.0"
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _DISTRIBUTION_ID_PREFIX = "blake3:"
@@ -208,22 +211,72 @@ class RunnerInstallation:
 
 
 def _resolve_runner_binary(explicit: Path | None) -> Path:
-    candidates: list[Path] = []
     if explicit is not None:
-        candidates.append(Path(explicit))
+        return _require_runner_binary(Path(explicit), "explicit --runner-bin")
+
     configured = os.environ.get(_RUNNER_ENV)
     if configured:
-        candidates.append(Path(configured))
-    discovered = shutil.which("aiperf-runner")
+        return _require_runner_binary(Path(configured), _RUNNER_ENV)
+
+    companion = _installed_companion_binary()
+    if companion is not None:
+        return companion
+
+    discovered = shutil.which(_RUNNER_COMMAND)
     if discovered:
-        candidates.append(Path(discovered))
-    for candidate in candidates:
-        resolved = candidate.expanduser().resolve()
-        if resolved.is_file() and os.access(resolved, os.X_OK):
-            return resolved
+        return _require_runner_binary(Path(discovered), "PATH")
+
     raise FileNotFoundError(
-        "aiperf-runner executable was not found; install the native runner beside "
-        f"aiperf or set {_RUNNER_ENV} to its absolute path"
+        "aiperf-runner executable was not found; install the platform companion "
+        f"package {_RUNNER_COMPANION_DISTRIBUTION!r}, pass --runner-bin, set "
+        f"{_RUNNER_ENV}, or place {_RUNNER_COMMAND} on PATH for development"
+    )
+
+
+def _installed_companion_binary() -> Path | None:
+    """Locate the native script installed by the platform companion wheel.
+
+    The wheel contains the Rust executable as wheel ``scripts`` data. Discovery
+    reads its installed RECORD through ``importlib.metadata``; it never imports
+    a Python shim and does not use PATH for this precedence tier.
+    """
+    try:
+        distribution = metadata.distribution(_RUNNER_COMPANION_DISTRIBUTION)
+    except metadata.PackageNotFoundError:
+        return None
+
+    files = distribution.files
+    if files is None:
+        raise RuntimeError(
+            f"installed companion package {_RUNNER_COMPANION_DISTRIBUTION!r} "
+            "does not expose its installed file RECORD"
+        )
+    filenames = {_RUNNER_COMMAND, f"{_RUNNER_COMMAND}.exe"}
+    entries = sorted(
+        (entry for entry in files if Path(str(entry)).name in filenames),
+        key=str,
+    )
+    if len(entries) != 1:
+        raise RuntimeError(
+            f"installed companion package {_RUNNER_COMPANION_DISTRIBUTION!r} "
+            f"must contain exactly one native {_RUNNER_COMMAND} executable; "
+            f"found {len(entries)}"
+        )
+    candidate = Path(distribution.locate_file(entries[0]))
+    return _require_runner_binary(
+        candidate,
+        f"installed companion package {_RUNNER_COMPANION_DISTRIBUTION!r}",
+    )
+
+
+def _require_runner_binary(candidate: Path, source: str) -> Path:
+    """Validate one selected precedence tier without falling through."""
+    resolved = candidate.expanduser().resolve()
+    if resolved.is_file() and os.access(resolved, os.X_OK):
+        return resolved
+    raise FileNotFoundError(
+        f"{source} selected aiperf-runner {resolved}, but it is not an "
+        "executable file; refusing to substitute a lower-precedence runner"
     )
 
 
