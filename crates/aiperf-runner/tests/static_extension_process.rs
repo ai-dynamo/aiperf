@@ -141,6 +141,7 @@ fn statically_linked_extension_child() {
         &BuiltinRunnerRegistryFactory,
         &StaticTestRegistryFactory,
         Arc::new(GraphInputAdapterRegistry::with_builtin_adapters()),
+        Arc::new(aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
     )
     .unwrap();
 

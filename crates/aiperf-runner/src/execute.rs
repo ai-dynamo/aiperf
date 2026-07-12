@@ -25,7 +25,8 @@ use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConf
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
     ConversationSource, EndpointInputTokenCounter, InputTokenCounter, IssuedCredit,
-    NativeDatasetConversationSource, TurnToSend,
+    NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
+    PreparedTurnEndpointResolver, TurnToSend,
 };
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
@@ -54,7 +55,10 @@ use aiperf_dataset::{
     SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern,
     TextTokenizer, TiktokenEncoding, TiktokenTokenizer, TraceSynthesisConfig,
 };
-use aiperf_endpoints::{EndpointConfig, EndpointId, EndpointType, RawEndpointConfig};
+use aiperf_endpoints::{
+    EndpointConfig, EndpointId, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
+    RawEndpointConfig,
+};
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_graph::input::{
     GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle, GraphInputConfig,
@@ -89,6 +93,7 @@ use loadgen_core::sink::{
 };
 use uuid::Uuid;
 
+use crate::dataset_input::PreparedDatasetInput;
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
     GraphCancellationConfig, LegacyRunnerGraphEndpointRuntimeFactory,
@@ -113,7 +118,8 @@ use crate::records::{
 };
 use crate::server_metrics::ServerMetricsRun;
 use crate::turn_execution::{
-    HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
+    HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
+    NativeHttpExecutionBackendFactory,
 };
 
 type PhaseRuntimeParts = (
@@ -279,10 +285,66 @@ pub(crate) struct NativePreparedEndpointProfile {
     pub(crate) session_header: Option<String>,
 }
 
+#[derive(Clone)]
+struct NativePreparedEndpointTableFactory {
+    registry: EndpointRegistry,
+    plan: NativePreparedEndpointPlan,
+}
+
+impl NativePreparedEndpointTableFactory {
+    fn new(registry: EndpointRegistry, plan: NativePreparedEndpointPlan) -> Self {
+        Self { registry, plan }
+    }
+
+    fn prepare_table(&self) -> Result<PreparedEndpointTable> {
+        let mut table = PreparedEndpointTable::new();
+        for profile in &self.plan.profiles {
+            let endpoint = self
+                .registry
+                .prepare(&profile.endpoint_id, profile.config.clone())
+                .with_context(|| format!("preparing endpoint profile {:?}", profile.profile_id))?;
+            table.push(endpoint)?;
+        }
+        Ok(table)
+    }
+
+    fn reference(&self, profile_id: &str) -> Result<PreparedEndpointReference> {
+        let index = self
+            .plan
+            .profiles
+            .iter()
+            .position(|profile| profile.profile_id == profile_id)
+            .ok_or_else(|| anyhow!("endpoint profile {profile_id:?} was not prepared"))?;
+        let index = u32::try_from(index).context("prepared endpoint profile index exceeds u32")?;
+        Ok(PreparedEndpointReference {
+            key: EndpointKey::from_index(index),
+            endpoint_id: self.plan.profiles[index as usize].endpoint_id.clone(),
+        })
+    }
+
+    fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
+        let table = Rc::new(self.prepare_table()?);
+        let default = self.reference(&self.plan.default_profile_id)?;
+        Ok(Rc::new(PreparedEndpointTableResolver::single(
+            table, default,
+        )?))
+    }
+}
+
+impl HttpPreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
+    fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
+        self.prepare_table()
+    }
+}
+
 /// Protocol-neutral dataset selection.
 pub(crate) enum NativeDatasetPlan {
     /// Ordinary linear dataset composition.
     Linear(DatasetSpec),
+    /// Canonical linear dataset loaded once during protocol-v2 preparation.
+    PreparedLinear(PreparedDatasetInput),
+    /// Dataset authored by a canonical evaluator during execution preparation.
+    Evaluator,
     /// Direct authored graph input consumed exactly once by its adapter.
     Graph(Box<NativeGraphDatasetPlan>),
 }
@@ -908,7 +970,11 @@ async fn execute_graph_native(
 ) -> Result<NativeReport> {
     let graph = match &request.run.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
-        NativeDatasetPlan::Linear(_) => bail!("graph execution received a linear dataset plan"),
+        NativeDatasetPlan::Linear(_)
+        | NativeDatasetPlan::PreparedLinear(_)
+        | NativeDatasetPlan::Evaluator => {
+            bail!("graph execution received a non-graph dataset plan")
+        }
     };
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
@@ -1264,15 +1330,22 @@ async fn execute_native_inner(
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    let endpoint_spec = request.run.endpoint.legacy()?;
     let rng_root = RngRoot::new(request.run.random_seed);
     let dataset_spec = match &request.run.dataset {
-        NativeDatasetPlan::Linear(dataset) => dataset,
+        NativeDatasetPlan::Linear(dataset) => Some(dataset),
+        NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::Evaluator => None,
         NativeDatasetPlan::Graph(_) => {
             bail!("scheduled execution received a direct graph dataset plan")
         }
     };
-    let dataset_rng_root = dataset_rng_root(dataset_spec, rng_root);
+    let dataset_rng_root = match &request.run.dataset {
+        NativeDatasetPlan::Linear(dataset) => dataset_rng_root(dataset, rng_root),
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset
+            .random_seed
+            .map_or(rng_root, |seed| RngRoot::new(Some(seed))),
+        NativeDatasetPlan::Evaluator => rng_root,
+        NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
+    };
     let metrics_config = metrics_config(&request.run.metrics)?;
     let model_names = request
         .run
@@ -1290,6 +1363,73 @@ async fn execute_native_inner(
         tokenizer.clone(),
         request.run.tokenizer.apply_chat_template,
     ));
+    let (
+        endpoint_urls,
+        transport_config,
+        prepared_endpoints,
+        source_factory,
+        legacy_endpoint_type,
+    ): NativeEndpointExecutionParts<'_> = match &request.run.endpoint {
+        NativeEndpointPlan::Legacy(spec) => {
+            let endpoint = endpoint_config(spec)?;
+            let request_timeout_ns = seconds_to_ns(spec.timeout_seconds)?;
+            (
+                spec.urls.clone(),
+                TransportSinkConfig {
+                    client: ClientConfig {
+                        http_version: if spec.http2 {
+                            HttpVersion::Http2PriorKnowledge
+                        } else {
+                            HttpVersion::Auto
+                        },
+                        total_timeout_ns: (request_timeout_ns > 0)
+                            .then_some(request_timeout_ns),
+                        ..ClientConfig::default()
+                    },
+                    connection_reuse: spec.connection_reuse,
+                    session_header: spec.session_header.clone(),
+                },
+                None,
+                Box::new(LegacyNativeConversationSourceFactory {
+                    endpoint,
+                    registry,
+                }),
+                Some(spec.endpoint_type),
+            )
+        }
+        NativeEndpointPlan::Prepared(plan) => {
+            let profile = plan.default_profile()?;
+            let request_timeout_ns = seconds_to_ns(profile.config.timeout_seconds)?;
+            let table_factory = Arc::new(NativePreparedEndpointTableFactory::new(
+                registry.endpoints().clone(),
+                plan.clone(),
+            ));
+            let endpoint_resolver = table_factory.coordinator_resolver()?;
+            (
+                profile.config.urls.clone(),
+                TransportSinkConfig {
+                    client: ClientConfig {
+                        http_version: if profile.http2 {
+                            HttpVersion::Http2PriorKnowledge
+                        } else {
+                            HttpVersion::Auto
+                        },
+                        total_timeout_ns: (request_timeout_ns > 0)
+                            .then_some(request_timeout_ns),
+                        ..ClientConfig::default()
+                    },
+                    connection_reuse: profile.connection_reuse,
+                    session_header: profile.session_header.clone(),
+                },
+                Some(table_factory),
+                Box::new(PreparedNativeConversationSourceFactory {
+                    endpoint_resolver,
+                    samplers: registry.samplers(),
+                }),
+                None,
+            )
+        }
+    };
     let mut prepared_accuracy = if let Some(accuracy) = accuracy {
         let evaluator_config = EvaluatorLoadConfig {
             tasks: accuracy.spec.tasks.clone(),
@@ -1322,21 +1462,41 @@ async fn execute_native_inner(
     let dataset = if let Some(accuracy) = &prepared_accuracy {
         accuracy.dataset.dataset().as_ref().clone()
     } else {
-        build_dataset(
-            registry,
-            dataset_spec,
-            &request.run.models,
-            dataset_rng_root,
-            tokenizer.as_ref(),
-            endpoint_spec.endpoint_type,
-        )
-        .await?
+        match &request.run.dataset {
+            NativeDatasetPlan::Linear(dataset) => {
+                let endpoint_type = legacy_endpoint_type.ok_or_else(|| {
+                    anyhow!(
+                        "protocol-v2 prepared endpoints require a directly prepared linear dataset"
+                    )
+                })?;
+                build_dataset(
+                    registry,
+                    dataset,
+                    &request.run.models,
+                    dataset_rng_root,
+                    tokenizer.as_ref(),
+                    endpoint_type,
+                )
+                .await?
+            }
+            NativeDatasetPlan::PreparedLinear(dataset) => dataset.dataset.clone(),
+            NativeDatasetPlan::Evaluator => {
+                bail!("evaluator dataset plan requires an accuracy evaluator")
+            }
+            NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
+        }
     };
-    let endpoint = endpoint_config(endpoint_spec)?;
     let default_output_tokens = if prepared_accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
-        default_output_tokens(dataset_spec)?
+        match (&request.run.dataset, dataset_spec) {
+            (NativeDatasetPlan::Linear(_), Some(dataset)) => default_output_tokens(dataset)?,
+            (NativeDatasetPlan::PreparedLinear(dataset), None) => dataset.default_output_tokens,
+            (NativeDatasetPlan::Evaluator, None) => {
+                unreachable!("evaluator without accuracy rejected above")
+            }
+            _ => unreachable!("dataset plan/spec pairing is exhaustive"),
+        }
     };
     if prepared_accuracy.is_some() {
         for phase in &request.run.phases {
@@ -1365,7 +1525,7 @@ async fn execute_native_inner(
             NetworkLatencyRun::new(
                 &request.run.benchmark_id,
                 spec,
-                &endpoint_spec.urls,
+                &endpoint_urls,
                 clock.clone(),
             )
         })
@@ -1421,27 +1581,14 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
-    let request_timeout_ns = seconds_to_ns(endpoint_spec.timeout_seconds)?;
     let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
         workers: request.run.workers,
         coordinator_clock: clock.clone(),
         real_clock_anchor,
-        base_urls: endpoint_spec.urls.clone(),
+        base_urls: endpoint_urls.clone(),
         model: primary_model.clone(),
-        transport: TransportSinkConfig {
-            client: ClientConfig {
-                http_version: if endpoint_spec.http2 {
-                    HttpVersion::Http2PriorKnowledge
-                } else {
-                    HttpVersion::Auto
-                },
-                total_timeout_ns: (request_timeout_ns > 0).then_some(request_timeout_ns),
-                ..ClientConfig::default()
-            },
-            connection_reuse: endpoint_spec.connection_reuse,
-            session_header: endpoint_spec.session_header.clone(),
-        },
-        prepared_endpoints: None,
+        transport: transport_config,
+        prepared_endpoints,
     })?;
     let start_ns = clock.now_ns();
     execution_backend.set_run_origin(start_ns)?;
@@ -1461,7 +1608,7 @@ async fn execute_native_inner(
 
     let mut plans = Vec::with_capacity(request.run.phases.len());
     for (phase_index, phase) in request.run.phases.iter().enumerate() {
-        let mut plan = build_native_scheduled_phase_plan(
+        let mut plan = build_native_scheduled_phase_plan_with_source_factory(
             phase_index,
             phase,
             &dataset,
@@ -1469,15 +1616,14 @@ async fn execute_native_inner(
             default_output_tokens,
             dataset_rng_root,
             rng_root,
-            &endpoint,
-            registry,
+            source_factory.as_ref(),
             tokenizer.clone(),
             input_token_counter.clone(),
             clock.clone(),
             start_ns,
             &request.run.benchmark_id,
             &request.run.artifact_dir,
-            &endpoint_spec.urls,
+            &endpoint_urls,
             &shared_resources,
         )?;
         let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
@@ -1625,7 +1771,7 @@ async fn execute_native_inner(
             model: Some(primary_model),
         },
         summary: ReportSummary {
-            endpoints_configured: endpoint_spec.urls.clone(),
+            endpoints_configured: endpoint_urls,
             server_metrics: server_metrics_report,
             ..ReportSummary::default()
         },
@@ -1708,15 +1854,104 @@ pub(crate) fn native_conversation_source(
     ))
 }
 
-/// Lower one authored phase into the shared scheduled runtime above the
-/// injected `{transport, clock}` seams.
-///
-/// Dataset filtering/materialization, arrival policy, session/prefill
-/// admission, fixed/user-centric scheduling, ramps, cancellation, adaptive
-/// control, and phase lifecycle are deliberately composed here once. Backend
-/// adapters may decorate the returned plan with observers or sidecars, but do
-/// not reproduce its scheduler logic.
+/// Prepared conversation-source construction behind the shared scheduled
+/// workload. Legacy protocol-v1 and open protocol-v2 endpoint bindings
+/// implement this seam without branching inside phase/scheduler policy.
+pub(crate) trait NativeConversationSourceFactory {
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        &self,
+        dataset: Dataset,
+        model: String,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        tokenizer: Arc<dyn TextTokenizer>,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+        sequential: bool,
+    ) -> Result<Box<dyn ConversationSource>>;
+}
+
+type NativeEndpointExecutionParts<'a> = (
+    Vec<String>,
+    TransportSinkConfig,
+    Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
+    Box<dyn NativeConversationSourceFactory + 'a>,
+    Option<EndpointType>,
+);
+
+struct LegacyNativeConversationSourceFactory<'a> {
+    endpoint: EndpointConfig,
+    registry: &'a AiperfRegistry,
+}
+
+impl NativeConversationSourceFactory for LegacyNativeConversationSourceFactory<'_> {
+    fn build(
+        &self,
+        dataset: Dataset,
+        model: String,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        tokenizer: Arc<dyn TextTokenizer>,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+        sequential: bool,
+    ) -> Result<Box<dyn ConversationSource>> {
+        native_conversation_source(
+            dataset,
+            model,
+            default_output_tokens,
+            rng_root,
+            self.endpoint.clone(),
+            self.registry,
+            tokenizer,
+            input_token_counter,
+            sequential,
+        )
+    }
+}
+
+struct PreparedNativeConversationSourceFactory<'a> {
+    endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+    samplers: &'a aiperf_dataset::SamplerRegistry,
+}
+
+impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory<'_> {
+    fn build(
+        &self,
+        dataset: Dataset,
+        model: String,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        tokenizer: Arc<dyn TextTokenizer>,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+        sequential: bool,
+    ) -> Result<Box<dyn ConversationSource>> {
+        let source = if sequential {
+            NativeDatasetConversationSource::sequential_with_prepared_resolver(
+                dataset,
+                model,
+                default_output_tokens,
+                self.endpoint_resolver.clone(),
+            )?
+        } else {
+            NativeDatasetConversationSource::preferred_with_prepared_resolver(
+                dataset,
+                model,
+                default_output_tokens,
+                rng_root,
+                self.samplers,
+                self.endpoint_resolver.clone(),
+            )?
+        };
+        Ok(Box::new(
+            source
+                .with_response_tokenizer(tokenizer)
+                .with_input_token_counter(input_token_counter),
+        ))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "dynamo-offline"), allow(dead_code))]
 pub(crate) fn build_native_scheduled_phase_plan(
     phase_index: usize,
     phase: &PhaseSpec,
@@ -1736,6 +1971,57 @@ pub(crate) fn build_native_scheduled_phase_plan(
     endpoint_names: &[String],
     shared: &NativeScheduledResources,
 ) -> Result<ScheduledPhasePlan> {
+    let source_factory = LegacyNativeConversationSourceFactory {
+        endpoint: endpoint.clone(),
+        registry,
+    };
+    build_native_scheduled_phase_plan_with_source_factory(
+        phase_index,
+        phase,
+        dataset,
+        primary_model,
+        default_output_tokens,
+        dataset_rng_root,
+        rng_root,
+        &source_factory,
+        tokenizer,
+        input_token_counter,
+        clock,
+        start_ns,
+        benchmark_id,
+        artifact_dir,
+        endpoint_names,
+        shared,
+    )
+}
+
+/// Lower one authored phase into the shared scheduled runtime above the
+/// injected `{transport, clock}` seams.
+///
+/// Dataset filtering/materialization, arrival policy, session/prefill
+/// admission, fixed/user-centric scheduling, ramps, cancellation, adaptive
+/// control, and phase lifecycle are deliberately composed here once. Backend
+/// adapters may decorate the returned plan with observers or sidecars, but do
+/// not reproduce its scheduler logic.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
+    phase_index: usize,
+    phase: &PhaseSpec,
+    dataset: &Dataset,
+    primary_model: &str,
+    default_output_tokens: usize,
+    dataset_rng_root: RngRoot,
+    rng_root: RngRoot,
+    source_factory: &dyn NativeConversationSourceFactory,
+    tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    benchmark_id: &str,
+    artifact_dir: &Path,
+    endpoint_names: &[String],
+    shared: &NativeScheduledResources,
+) -> Result<ScheduledPhasePlan> {
     let phase_rng =
         RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
     let phase_dataset = match phase {
@@ -1746,13 +2032,11 @@ pub(crate) fn build_native_scheduled_phase_plan(
         } => dataset.filter_first_turn_window(*start_offset, *end_offset)?,
         _ => dataset.clone(),
     };
-    let source = native_conversation_source(
+    let source = source_factory.build(
         phase_dataset,
         primary_model.to_owned(),
         default_output_tokens,
         phase_rng,
-        endpoint.clone(),
-        registry,
         tokenizer,
         input_token_counter,
         matches!(phase, PhaseSpec::FixedSchedule { .. }),

@@ -16,6 +16,7 @@ use aiperf_graph::input::GraphInputAdapterResolver;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
+use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::protocol::RunnerCapabilities;
 use crate::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
@@ -55,6 +56,7 @@ pub struct RunnerV2Coordinator {
     runner_registry: RunnerRegistry,
     product_registry: Arc<AiperfRegistry>,
     graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+    dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
 }
 
 impl std::fmt::Debug for RunnerV2Coordinator {
@@ -74,6 +76,7 @@ impl RunnerV2Coordinator {
         runner_registry_factory: &dyn RunnerRegistryFactory,
         product_registry_factory: &dyn AiperfRegistryFactory,
         graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
     ) -> Result<Self> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
@@ -90,6 +93,7 @@ impl RunnerV2Coordinator {
             runner_registry,
             product_registry,
             graph_inputs,
+            dataset_inputs,
         })
     }
 
@@ -151,6 +155,7 @@ impl RunnerV2Coordinator {
         let context = match RunnerRunContext::new(
             self.product_registry.clone(),
             self.graph_inputs.clone(),
+            self.dataset_inputs.clone(),
             endpoint_profiles,
         ) {
             Ok(context) => context,

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use aiperf_graph::input::GraphInputAdapterRegistry;
 use aiperf_runner::coordinator::RunnerV2Coordinator;
+use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
 use aiperf_runner::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
@@ -158,11 +159,13 @@ fn run_v2(input: &[u8]) -> ! {
         ),
     };
     let graph_inputs = Arc::new(GraphInputAdapterRegistry::with_builtin_adapters());
+    let dataset_inputs = Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new());
     let coordinator = match RunnerV2Coordinator::new(
         distribution_id.clone(),
         &BuiltinRunnerRegistryFactory,
         &aiperf_extensions::BuiltinAiperfRegistryFactory,
         graph_inputs,
+        dataset_inputs,
     ) {
         Ok(coordinator) => coordinator,
         Err(error) => write_v2_validation_failure(

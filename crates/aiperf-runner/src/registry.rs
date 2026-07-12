@@ -26,6 +26,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
+use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunnerComponentId};
 
@@ -748,6 +749,7 @@ pub struct ValidatedEndpointProfileV2 {
 pub struct RunnerRunContext {
     product_registry: Arc<AiperfRegistry>,
     graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+    dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
     endpoint_profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     endpoint_profile_indexes: Arc<BTreeMap<String, usize>>,
 }
@@ -773,6 +775,7 @@ impl RunnerRunContext {
     pub fn new(
         product_registry: Arc<AiperfRegistry>,
         graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
         profiles: Vec<ValidatedEndpointProfileV2>,
     ) -> Result<Self> {
         let mut endpoint_profile_indexes = BTreeMap::new();
@@ -792,6 +795,7 @@ impl RunnerRunContext {
         Ok(Self {
             product_registry,
             graph_inputs,
+            dataset_inputs,
             endpoint_profiles: Arc::new(profiles),
             endpoint_profile_indexes: Arc::new(endpoint_profile_indexes),
         })
@@ -815,6 +819,16 @@ impl RunnerRunContext {
     /// Clone the graph-input resolver handle into a prepared graph operation.
     pub fn graph_inputs_handle(&self) -> Arc<dyn GraphInputAdapterResolver> {
         self.graph_inputs.clone()
+    }
+
+    /// Borrow the frozen dataset-input resolver composed by the coordinator.
+    pub fn dataset_inputs(&self) -> &dyn RunnerDatasetInputAdapterResolver {
+        self.dataset_inputs.as_ref()
+    }
+
+    /// Clone the dataset-input resolver into a prepared scheduled operation.
+    pub fn dataset_inputs_handle(&self) -> Arc<dyn RunnerDatasetInputAdapterResolver> {
+        self.dataset_inputs.clone()
     }
 
     /// Build the coordinator-owned native-report identity from frozen values.
@@ -1425,6 +1439,7 @@ mod tests {
         let context = RunnerRunContext::new(
             Arc::new(AiperfRegistry::builtin().unwrap()),
             Arc::new(aiperf_graph::input::GraphInputAdapterRegistry::with_builtin_adapters()),
+            Arc::new(crate::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
             vec![
                 profile("default", "chat"),
                 profile("z-last", "messages"),

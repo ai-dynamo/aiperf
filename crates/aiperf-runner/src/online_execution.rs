@@ -18,29 +18,27 @@ use std::sync::Arc;
 use aiperf_dataset::{
     DatasetFetcher, DatasetSource, HttpDatasetFetcher, LoadConfig, TiktokenEncoding,
 };
-use aiperf_endpoints::EndpointType;
-use aiperf_graph::input::GraphInputAdapterRegistry;
+use aiperf_endpoints::Modality;
+use aiperf_graph::input::GraphInputAdapterResolver;
+use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 use url::Url;
 
+use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeGraphInputPlan,
     NativePreparedEndpointPlan, NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec,
     distribution, execute_native_plan_with_factories, load_tokenizer,
 };
 use crate::graph_execution::NativeRunnerGraphPlacementFactory;
-use crate::protocol::{
-    AccuracySpec, ArtifactSpec, DatasetSpec, DistributionSpec, EndpointSpec, FixedDistributionSpec,
-    PhaseSpec, SyntheticDatasetSpec, TokenizerSpec,
-};
+use crate::protocol::{AccuracySpec, ArtifactSpec, DistributionSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
     GraphWorkloadConfigV2, OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
     RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
-    StaticAccuracyWorkloadConfigV2, ValidatedBackendConfig, ValidatedEndpointProfileV2,
-    ValidatedWorkloadConfig,
+    StaticAccuracyWorkloadConfigV2, ValidatedBackendConfig, ValidatedWorkloadConfig,
 };
 use crate::turn_execution::NativeHttpExecutionBackendFactory;
 
@@ -271,7 +269,10 @@ impl OnlineWorkloadAdapter for OnlineScheduledAdapter {
         let workload =
             workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
         let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness { plan }))
+        Ok(Box::new(NativePlanHarness {
+            plan,
+            graph_inputs: context.graph_inputs_handle(),
+        }))
     }
 }
 
@@ -309,7 +310,10 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
         let workload =
             workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
         let plan = lower_graph(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness { plan }))
+        Ok(Box::new(NativePlanHarness {
+            plan,
+            graph_inputs: context.graph_inputs_handle(),
+        }))
     }
 }
 
@@ -350,7 +354,10 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
             self.workload_id(),
         )?;
         let plan = lower_static_accuracy(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness { plan }))
+        Ok(Box::new(NativePlanHarness {
+            plan,
+            graph_inputs: context.graph_inputs_handle(),
+        }))
     }
 }
 
@@ -843,22 +850,46 @@ fn lower_scheduled(
     workload: &ScheduledWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunPlan> {
-    let dataset = serde_json::from_str::<DatasetSpec>(workload.dataset.get())
-        .context("decoding protocol-v2 linear dataset plan")?;
-    ensure!(
-        !matches!(&dataset, DatasetSpec::File(spec) if spec.format == "dag_jsonl")
-            && !matches!(&dataset, DatasetSpec::Public(spec) if spec.format == "dag_jsonl"),
-        "scheduled workloads cannot consume a direct dag_jsonl graph program"
-    );
-    lower_common(
+    let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
+    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    let profile = context.default_endpoint_profile()?;
+    let prepared_endpoint = context
+        .product_registry()
+        .endpoints()
+        .prepare(&profile.endpoint_id, profile.config.clone())
+        .context("preparing the default endpoint for linear dataset composition")?;
+    let rankings = prepared_endpoint
+        .descriptor()
+        .output_modalities
+        .contains(&Modality::Rankings);
+    let prepare_context = RunnerDatasetInputContext {
+        registry: context.product_registry(),
+        models: &run.models,
+        run_rng_root: RngRoot::new(run.identity.random_seed),
+        tokenizer: tokenizer_impl.as_ref(),
+        rankings,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating linear dataset preparation runtime")?;
+    let local = tokio::task::LocalSet::new();
+    let dataset = local
+        .block_on(
+            &runtime,
+            context
+                .dataset_inputs()
+                .load(&workload.dataset, &prepare_context),
+        )
+        .context("loading and validating authored linear dataset")?;
+    build_common_plan(
         run,
-        context,
         workload.worker_count,
-        NativeDatasetPlan::Linear(dataset),
-        &workload.tokenizer,
+        NativeDatasetPlan::PreparedLinear(dataset),
+        tokenizer,
         &workload.phases,
         None,
-        tokenizers,
+        NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
     )
 }
 
@@ -889,39 +920,15 @@ fn lower_static_accuracy(
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunPlan> {
     let accuracy = StaticAccuracyConfigV2::decode(&workload.accuracy)?.lower();
-    lower_common(
-        run,
-        context,
-        workload.worker_count,
-        NativeDatasetPlan::Linear(accuracy_placeholder_dataset()),
-        &workload.tokenizer,
-        &workload.phases,
-        Some(accuracy),
-        tokenizers,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn lower_common(
-    run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
-    workers: usize,
-    dataset: NativeDatasetPlan,
-    tokenizer: &RawValue,
-    phases: &[PhaseSpec],
-    accuracy: Option<AccuracySpec>,
-    tokenizers: &dyn OnlineTokenizerSourceResolver,
-) -> Result<NativeRunPlan> {
-    let tokenizer = lower_authored_tokenizer(tokenizer, tokenizers)?;
-    let endpoint = lower_endpoint(context.default_endpoint_profile()?, context)?;
+    let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     build_common_plan(
         run,
-        workers,
-        dataset,
+        workload.worker_count,
+        NativeDatasetPlan::Evaluator,
         tokenizer,
-        phases,
-        accuracy,
-        NativeEndpointPlan::Legacy(Box::new(endpoint)),
+        &workload.phases,
+        Some(accuracy),
+        NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
     )
 }
 
@@ -975,9 +982,9 @@ fn prepare_graph_input(
     else {
         bail!("protocol-v2 graph preparation received an already prepared input bundle")
     };
-    let adapters = GraphInputAdapterRegistry::with_builtin_adapters();
-    let adapter = adapters
-        .get(&adapter_name)
+    let adapter = context
+        .graph_inputs()
+        .find(&adapter_name)
         .with_context(|| format!("resolving direct Graph-IR adapter {adapter_name:?}"))?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1040,68 +1047,9 @@ fn lower_prepared_endpoint_plan(context: &RunnerRunContext) -> NativePreparedEnd
     }
 }
 
-fn accuracy_placeholder_dataset() -> DatasetSpec {
-    // Static evaluators author every prompt and generation control. The normal
-    // dataset field is deliberately not loaded or converted; this inert value
-    // supplies only the common coordinator's pre-evaluator RNG namespace.
-    DatasetSpec::Synthetic(Box::new(SyntheticDatasetSpec {
-        entries: 1,
-        random_seed: None,
-        sampling: "sequential".into(),
-        prompts: None,
-        prefix_prompts: None,
-        turns: DistributionSpec::Fixed(FixedDistributionSpec {
-            value: 1.0,
-            min: None,
-            max: None,
-        }),
-        turn_delay_ms: DistributionSpec::Fixed(FixedDistributionSpec {
-            value: 0.0,
-            min: None,
-            max: None,
-        }),
-        turn_delay_ratio: 1.0,
-        images: None,
-        audio: None,
-        video: None,
-        rankings: None,
-    }))
-}
-
-fn lower_endpoint(
-    profile: &ValidatedEndpointProfileV2,
-    context: &RunnerRunContext,
-) -> Result<EndpointSpec> {
-    let legacy = context
-        .product_registry()
-        .endpoints()
-        .legacy_endpoint(&profile.endpoint_id)
-        .context("resolving the selected endpoint's native execution adapter")?;
-    let endpoint_type: EndpointType = legacy.metadata().endpoint_type;
-    let raw = profile.config.clone();
-    Ok(EndpointSpec {
-        urls: raw.urls,
-        endpoint_type,
-        path: raw.path,
-        streaming: raw.streaming,
-        use_legacy_max_tokens: raw.use_legacy_max_tokens,
-        use_server_token_count: raw.use_server_token_count,
-        timeout_seconds: raw.timeout_seconds,
-        connection_reuse: profile.connection_reuse,
-        request_content_type: raw.request_content_type,
-        download_video_content: raw.download_video_content,
-        template: raw.template,
-        response_field: raw.response_field,
-        extra: raw.extra.unwrap_or_default(),
-        headers: raw.headers,
-        api_key: raw.api_key,
-        session_header: profile.session_header.clone(),
-        http2: profile.http2,
-    })
-}
-
 struct NativePlanHarness {
     plan: NativeRunPlan,
+    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
 }
 
 impl fmt::Debug for NativePlanHarness {
@@ -1118,11 +1066,10 @@ impl PreparedOnlineHarness for NativePlanHarness {
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
     ) -> Result<PathBuf> {
-        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
         execute_native_plan_with_factories(
             self.plan,
             &NativeHttpExecutionBackendFactory,
-            &graph_inputs,
+            self.graph_inputs.as_ref(),
             &NativeRunnerGraphPlacementFactory,
             product_registry,
         )
