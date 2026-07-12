@@ -94,18 +94,28 @@ where
 
     /// Queue one operation or return a precise bound rejection.
     pub fn push(&mut self, unit: K, operation: T) -> Result<(), FairQueueRejection> {
-        if self.len >= self.limits.global {
-            return Err(FairQueueRejection::GlobalLimit);
-        }
+        self.check_push(&unit)?;
         let queue = self.queues.entry(unit.clone()).or_default();
-        if queue.len() >= self.limits.per_unit {
-            return Err(FairQueueRejection::PerUnitLimit);
-        }
         let was_empty = queue.is_empty();
         queue.push_back(operation);
         self.len += 1;
         if was_empty {
             self.ready_units.push_back(unit);
+        }
+        Ok(())
+    }
+
+    /// Check queue credits before another subsystem commits correlated state.
+    pub fn check_push(&self, unit: &K) -> Result<(), FairQueueRejection> {
+        if self.len >= self.limits.global {
+            return Err(FairQueueRejection::GlobalLimit);
+        }
+        if self
+            .queues
+            .get(unit)
+            .is_some_and(|queue| queue.len() >= self.limits.per_unit)
+        {
+            return Err(FairQueueRejection::PerUnitLimit);
         }
         Ok(())
     }
@@ -244,8 +254,13 @@ mod tests {
         let mut queue = FairOperationArbiter::new(FairQueueLimits::new(3, 2).unwrap());
         queue.push("a", 1).unwrap();
         queue.push("a", 2).unwrap();
+        assert_eq!(
+            queue.check_push(&"a"),
+            Err(FairQueueRejection::PerUnitLimit)
+        );
         assert_eq!(queue.push("a", 3), Err(FairQueueRejection::PerUnitLimit));
         queue.push("b", 4).unwrap();
+        assert_eq!(queue.check_push(&"c"), Err(FairQueueRejection::GlobalLimit));
         assert_eq!(queue.push("c", 5), Err(FairQueueRejection::GlobalLimit));
         assert_eq!(queue.len(), 3);
         queue.validate().unwrap();

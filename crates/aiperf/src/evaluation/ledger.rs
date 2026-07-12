@@ -104,11 +104,31 @@ pub struct OperationLedger {
 impl OperationLedger {
     /// Register one newly accepted logical operation in queued state.
     pub fn register(&mut self, registration: OperationRegistration) -> Result<()> {
-        validate_registration(&registration)?;
+        self.check_registration(&registration)?;
         let operation_id = registration.operation_id.clone();
+        self.logical_call_ids
+            .insert(registration.logical_call_id.clone(), operation_id.clone());
+        self.idempotency_keys
+            .insert(registration.idempotency_key.clone(), operation_id.clone());
+        self.operations.insert(
+            operation_id,
+            OperationRecord {
+                registration,
+                state: OperationState::Queued,
+                attempts: Vec::new(),
+                terminal: None,
+            },
+        );
+        Ok(())
+    }
+
+    /// Validate all identity indexes before a caller commits queue state.
+    pub fn check_registration(&self, registration: &OperationRegistration) -> Result<()> {
+        validate_registration(registration)?;
         ensure!(
-            !self.operations.contains_key(&operation_id),
-            "duplicate evaluator host operation {operation_id:?}"
+            !self.operations.contains_key(&registration.operation_id),
+            "duplicate evaluator host operation {:?}",
+            registration.operation_id
         );
         ensure!(
             !self
@@ -123,19 +143,6 @@ impl OperationLedger {
                 .contains_key(&registration.idempotency_key),
             "duplicate evaluator idempotency key {:?}",
             registration.idempotency_key
-        );
-        self.logical_call_ids
-            .insert(registration.logical_call_id.clone(), operation_id.clone());
-        self.idempotency_keys
-            .insert(registration.idempotency_key.clone(), operation_id.clone());
-        self.operations.insert(
-            operation_id,
-            OperationRecord {
-                registration,
-                state: OperationState::Queued,
-                attempts: Vec::new(),
-                terminal: None,
-            },
         );
         Ok(())
     }
