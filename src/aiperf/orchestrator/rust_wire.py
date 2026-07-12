@@ -232,8 +232,10 @@ def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:
     """Retain authored tokenizer acquisition policy with an explicit identity."""
     primary_model = cfg.models.items[0].name
     if cfg.tokenizer is None:
+        from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
         return {
-            "name": primary_model,
+            "name": "builtin" if is_fake_model_name(primary_model) else primary_model,
             "revision": "main",
             "trust_remote_code": False,
             "apply_chat_template": False,

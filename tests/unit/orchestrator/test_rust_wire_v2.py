@@ -341,7 +341,7 @@ def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
     assert "turn_delay" not in config["dataset"]
     assert "name" not in config["dataset"]
     assert config["tokenizer"] == {
-        "name": "mock-model",
+        "name": "builtin",
         "revision": "main",
         "trust_remote_code": False,
         "apply_chat_template": False,
