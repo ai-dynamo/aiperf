@@ -12,6 +12,9 @@ import pytest
 import yaml
 
 from aiperf.cli_commands.config import expand, init, validate
+from aiperf.orchestrator.rust_wire import build_authored_run_request
+
+_DISTRIBUTION_ID = "blake3:" + "a" * 64
 
 _VALID_BENCHMARK = textwrap.dedent("""\
 benchmark:
@@ -27,6 +30,54 @@ benchmark:
       requests: 10
       concurrency: 1
 """)
+
+
+class _RecordingRunnerInstallation:
+    """Exact-image stand-in that records authored validation without I/O."""
+
+    def __init__(self, supported_pairs: list[list[str]], *, protocol_v2: bool = True):
+        self.capabilities = {
+            "protocol_versions": [1, 2] if protocol_v2 else [1],
+            "distribution_id": _DISTRIBUTION_ID,
+            "supported_pairs": supported_pairs,
+        }
+        self.projected_runs = []
+        self.validated_runs = []
+        self.validation_error: Exception | None = None
+
+    def project_authored_request(self, run, *, operation: str):
+        self.projected_runs.append(run)
+        return build_authored_run_request(
+            run,
+            operation=operation,
+            expected_distribution_id=_DISTRIBUTION_ID,
+        )
+
+    def supports_pair(self, backend_id: str, workload_id: str) -> bool:
+        return [backend_id, workload_id] in self.capabilities["supported_pairs"]
+
+    def validate_authored_run(self, run):
+        self.validated_runs.append(run)
+        if self.validation_error is not None:
+            raise self.validation_error
+        return {"success": True}
+
+
+def _select_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    installation: _RecordingRunnerInstallation,
+) -> list[None]:
+    resolutions: list[None] = []
+
+    def resolve():
+        resolutions.append(None)
+        return installation
+
+    monkeypatch.setattr(
+        "aiperf.orchestrator.runner_installation.RunnerInstallation.resolve",
+        resolve,
+    )
+    return resolutions
 
 
 def _write_grid_sweep(tmp_path: Path) -> Path:
@@ -360,3 +411,118 @@ class TestConfigValidate:
         err = capsys.readouterr().err
         assert "Unknown SLO metric" in err
         assert "tyme_to_furst_token" in err
+
+    def test_native_validation_receives_every_expanded_variation_without_resolution(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        missing_dataset = tmp_path / "missing.jsonl"
+        artifact_dir = tmp_path / "never-created"
+        config_file = tmp_path / "sweep.yaml"
+        config_file.write_text(
+            textwrap.dedent(f"""\
+                variables:
+                  concurrency: 1
+                sweep:
+                  type: grid
+                  parameters:
+                    variables.concurrency: [1, 3, 5]
+                benchmark:
+                  models: [remote/model]
+                  tokenizer:
+                    name: remote/tokenizer
+                  endpoint:
+                    urls: ["http://x:8000/v1/chat/completions"]
+                    streaming: true
+                  datasets:
+                    - name: main
+                      type: file
+                      path: {missing_dataset}
+                      format: single_turn
+                  phases:
+                    - name: profiling
+                      type: concurrency
+                      requests: 10
+                      concurrency: "{{{{ concurrency }}}}"
+                  artifacts:
+                    dir: {artifact_dir}
+                  gpu_telemetry:
+                    enabled: false
+                  server_metrics:
+                    enabled: false
+                """),
+            encoding="utf-8",
+        )
+        installation = _RecordingRunnerInstallation([["online_http", "scheduled"]])
+        resolutions = _select_runner(monkeypatch, installation)
+        monkeypatch.setattr(
+            "aiperf.config.resolution.resolvers.build_default_resolver_chain",
+            lambda: pytest.fail("config validate entered the runtime resolver chain"),
+        )
+
+        validate(config_file)
+
+        assert len(resolutions) == 1
+        assert [
+            run.cfg.phases[0].concurrency for run in installation.validated_runs
+        ] == [1, 3, 5]
+        assert [run.variation.values for run in installation.validated_runs] == [
+            {"variables.concurrency": 1},
+            {"variables.concurrency": 3},
+            {"variables.concurrency": 5},
+        ]
+        assert len(installation.projected_runs) == 3
+        assert not missing_dataset.exists()
+        assert not artifact_dir.exists()
+        assert "Configuration valid" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "installation",
+        [
+            _RecordingRunnerInstallation([], protocol_v2=False),
+            _RecordingRunnerInstallation([["dynamo_offline", "graph"]]),
+        ],
+        ids=["v1-only", "unmatched-v2-pair"],
+    )
+    def test_native_validation_preserves_python_only_compatibility_without_pair(
+        self,
+        installation: _RecordingRunnerInstallation,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_file = tmp_path / "benchmark.yaml"
+        config_file.write_text(_VALID_BENCHMARK, encoding="utf-8")
+        _select_runner(monkeypatch, installation)
+
+        validate(config_file)
+
+        assert installation.validated_runs == []
+        if installation.capabilities["protocol_versions"] == [1]:
+            assert installation.projected_runs == []
+        else:
+            assert len(installation.projected_runs) == 1
+        assert "Configuration valid" in capsys.readouterr().out
+
+    def test_native_validation_rejection_is_a_config_error(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config_file = tmp_path / "benchmark.yaml"
+        config_file.write_text(_VALID_BENCHMARK, encoding="utf-8")
+        installation = _RecordingRunnerInstallation([["online_http", "scheduled"]])
+        installation.validation_error = RuntimeError("authored phase rejected")
+        _select_runner(monkeypatch, installation)
+
+        with pytest.raises(SystemExit) as exc:
+            validate(config_file)
+
+        assert exc.value.code == 1
+        error = capsys.readouterr().err
+        assert "Native runner validation failed" in error
+        assert "authored phase rejected" in error
+        assert "base" in error
