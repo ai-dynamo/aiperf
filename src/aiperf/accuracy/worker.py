@@ -36,6 +36,7 @@ from typing import Any, TextIO
 
 from aiperf.accuracy.agentic import (
     AgenticHarness,
+    AgenticHarnessProvider,
     AgenticModelResult,
     require_identifier,
     require_non_negative_int,
@@ -43,7 +44,7 @@ from aiperf.accuracy.agentic import (
 )
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.5.0"
+WORKER_VERSION = "1.6.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -53,8 +54,71 @@ _LOCKED_PACKAGE_VERSIONS = {
     "sympy": "1.14.0",
     "word2number": "1.1",
 }
-_AGENTIC_LOCKED_PACKAGE_VERSIONS = {"harbor": "0.18.0"}
+_HARBOR_LOCKED_PACKAGE_VERSIONS = {"harbor": "0.18.0"}
+_BROWSERGYM_LOCKED_PACKAGE_VERSIONS = {
+    "agentlab": "0.4.2",
+    "browsergym-core": "0.14.3",
+    "browsergym-experiments": "0.14.3",
+}
 _LCB_MAX_RELEASE = 6
+
+
+class _LazyAgenticHarnessProvider(AgenticHarnessProvider):
+    """Import one optional canonical harness only after namespace selection."""
+
+    def __init__(
+        self,
+        *,
+        capability: str,
+        namespace_prefix: str | None,
+        factory: str,
+        required_versions: dict[str, str],
+    ) -> None:
+        self._capability = capability
+        self._namespace_prefix = namespace_prefix
+        self._factory = factory
+        self._required_versions = required_versions
+
+    @property
+    def capability(self) -> str:
+        """Return this provider's handshake capability."""
+        return self._capability
+
+    def is_available(self) -> bool:
+        """Require every evaluator-critical package at its exact pinned version."""
+        return all(
+            _package_version(package) == expected
+            for package, expected in self._required_versions.items()
+        )
+
+    def matches(self, dataset: str) -> bool:
+        """Reserve a namespace prefix or act as the final Harbor fallback."""
+        if self._namespace_prefix is None:
+            return True
+        return dataset.strip().lower().startswith(self._namespace_prefix)
+
+    async def create(
+        self, dataset: str, model_name: str, config: Any
+    ) -> AgenticHarness:
+        """Import and invoke the provider's async factory."""
+        factory = _import_symbol(self._factory)
+        return await factory(dataset, model_name, config)
+
+
+_AGENTIC_HARNESS_PROVIDERS: tuple[AgenticHarnessProvider, ...] = (
+    _LazyAgenticHarnessProvider(
+        capability="agentic_browsergym",
+        namespace_prefix="browsergym/",
+        factory="aiperf.accuracy.browsergym:create_browsergym_harness",
+        required_versions=_BROWSERGYM_LOCKED_PACKAGE_VERSIONS,
+    ),
+    _LazyAgenticHarnessProvider(
+        capability="agentic_harbor",
+        namespace_prefix=None,
+        factory="aiperf.accuracy.harbor:create_harbor_harness",
+        required_versions=_HARBOR_LOCKED_PACKAGE_VERSIONS,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -211,6 +275,9 @@ class AccuracyWorker:
                 "latex2sympy2-extended",
                 "word2number",
                 "harbor",
+                "agentlab",
+                "browsergym-core",
+                "browsergym-experiments",
             )
         }
         capabilities = [
@@ -231,8 +298,14 @@ class AccuracyWorker:
                 "finish_agentic",
             ]
         )
-        if packages["harbor"] == _AGENTIC_LOCKED_PACKAGE_VERSIONS["harbor"]:
-            capabilities.extend(["agentic_harbor", "agentic_inference_gateway"])
+        available_agentic = [
+            provider
+            for provider in _AGENTIC_HARNESS_PROVIDERS
+            if provider.is_available()
+        ]
+        if available_agentic:
+            capabilities.extend(["agentic", "agentic_inference_gateway"])
+            capabilities.extend(provider.capability for provider in available_agentic)
         return {
             "protocol": PROTOCOL_VERSION,
             "worker_version": WORKER_VERSION,
@@ -348,7 +421,7 @@ class AccuracyWorker:
         return {"items": results}
 
     async def load_agentic(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Load one canonical Harbor dataset without starting model inference."""
+        """Load one canonical agentic dataset without starting model inference."""
         _reject_unknown_fields(
             request, {"id", "op", "dataset", "model", "config"}, "load_agentic"
         )
@@ -932,9 +1005,22 @@ def _identifier_array(value: Any, field: str) -> list[str]:
 async def _create_agentic_harness(
     dataset: str, model_name: str, config: Any
 ) -> AgenticHarness:
-    from aiperf.accuracy.harbor import create_harbor_harness
-
-    return await create_harbor_harness(dataset, model_name, config)
+    provider = next(
+        (
+            candidate
+            for candidate in _AGENTIC_HARNESS_PROVIDERS
+            if candidate.matches(dataset)
+        ),
+        None,
+    )
+    if provider is None:
+        raise ValueError(f"no canonical agentic harness owns dataset {dataset!r}")
+    if not provider.is_available():
+        raise RuntimeError(
+            f"agentic dataset {dataset!r} requires unavailable pinned capability "
+            f"{provider.capability!r}"
+        )
+    return await provider.create(dataset, model_name, config)
 
 
 def _optional_positive_int(config: dict[str, Any], field: str) -> int | None:
@@ -1075,11 +1161,18 @@ def _dependency_lock_digest() -> str | None:
     authored = os.getenv("AIPERF_ACCURACY_WORKER_LOCK_SHA256")
     if authored:
         return authored
-    lock_name = (
-        "agentic-accuracy-worker.txt"
-        if _package_version("harbor") == _AGENTIC_LOCKED_PACKAGE_VERSIONS["harbor"]
-        else "accuracy-worker.txt"
-    )
+    if all(
+        _package_version(package) == expected
+        for package, expected in _BROWSERGYM_LOCKED_PACKAGE_VERSIONS.items()
+    ):
+        lock_name = "browser-agentic-accuracy-worker.txt"
+    elif all(
+        _package_version(package) == expected
+        for package, expected in _HARBOR_LOCKED_PACKAGE_VERSIONS.items()
+    ):
+        lock_name = "agentic-accuracy-worker.txt"
+    else:
+        lock_name = "accuracy-worker.txt"
     lock = Path(__file__).resolve().parents[3] / "requirements" / lock_name
     try:
         return hashlib.sha256(lock.read_bytes()).hexdigest()
@@ -1101,17 +1194,8 @@ def _verify_locked_environment() -> None:
 
 
 def _verify_agentic_environment() -> None:
+    """Require the static evaluator substrate shared by every agentic provider."""
     _verify_locked_environment()
-    mismatches = []
-    for package, expected in _AGENTIC_LOCKED_PACKAGE_VERSIONS.items():
-        actual = _package_version(package)
-        if actual != expected:
-            mismatches.append(f"{package}={actual!r} (expected {expected!r})")
-    if mismatches:
-        raise RuntimeError(
-            "agentic evaluator environment does not match "
-            "requirements/agentic-accuracy-worker.txt: " + ", ".join(mismatches)
-        )
 
 
 def main() -> None:

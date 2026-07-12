@@ -20,7 +20,9 @@ The first concrete harness is Harbor 0.18.0. Its callback point is the abstract
 ``self._llm`` usage in ``harbor/agents/terminus_2/terminus_2.py`` at upstream
 commit ``4e256b94b43bb8acefd9714b81913fd8bcf1df5c``. AIPerf implements that
 interface with a queue-backed callback; it does not proxy or perform HTTP in
-Python.
+Python. AgentLab 0.4.2 plus BrowserGym 0.14.3 is the second provider: its
+sync ``AbstractChatModel`` callback uses the same broker while AgentLab retains
+canonical browser prompts, actions, environment transitions, and rewards.
 """
 
 from __future__ import annotations
@@ -305,8 +307,8 @@ class AgenticEvent:
 class AgenticHarness(ABC):
     """Harness trait behind the worker's stateful agentic operations.
 
-    A concrete implementation may use Harbor, a future browser harness, or a
-    hermetic test fixture. It must never send an inference request itself.
+    A concrete implementation may use Harbor, AgentLab/BrowserGym, or a hermetic
+    test fixture. It must never send an inference request itself.
     """
 
     @property
@@ -342,6 +344,34 @@ class AgenticHarness(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Cancel remaining work and release all harness resources."""
+
+
+class AgenticHarnessProvider(ABC):
+    """Factory seam for independently pinned canonical harness families.
+
+    Providers are selected only from the opaque dataset namespace.  Rust never
+    branches on benchmark identity and every provider must return the same
+    :class:`AgenticHarness` protocol surface.
+    """
+
+    @property
+    @abstractmethod
+    def capability(self) -> str:
+        """Return the provider-specific worker capability name."""
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        """Return whether this worker has the provider's exact pinned packages."""
+
+    @abstractmethod
+    def matches(self, dataset: str) -> bool:
+        """Return whether this provider owns the opaque dataset namespace."""
+
+    @abstractmethod
+    async def create(
+        self, dataset: str, model_name: str, config: Any
+    ) -> AgenticHarness:
+        """Create one frozen canonical harness instance."""
 
 
 class EventQueue:

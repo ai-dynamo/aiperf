@@ -31,7 +31,8 @@ use crate::protocol::{
 
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
-const AGENTIC_CAPABILITY: &str = "agentic_harbor";
+const AGENTIC_CAPABILITY: &str = "agentic";
+const LEGACY_AGENTIC_CAPABILITY: &str = "agentic_harbor";
 const AGENTIC_INFERENCE_GATEWAY_CAPABILITY: &str = "agentic_inference_gateway";
 const GRADER_OVERRIDE_CAPABILITY: &str = "grader_override";
 
@@ -188,7 +189,7 @@ pub trait AccuracyEvaluator {
 /// the ordinary AIPerf transport and submit terminal results back here.
 #[async_trait(?Send)]
 pub trait AgenticEvaluator: AccuracyEvaluator {
-    /// Whether the worker reported the pinned Harbor capability.
+    /// Whether the worker reported at least one pinned canonical agent harness.
     fn supports_agentic(&self) -> bool;
 
     /// Whether evaluator environments accept Rust callback-ingress injection.
@@ -770,10 +771,9 @@ impl AccuracyEvaluator for PythonEvaluator {
 #[async_trait(?Send)]
 impl AgenticEvaluator for PythonEvaluator {
     fn supports_agentic(&self) -> bool {
-        self.identity
-            .capabilities
-            .iter()
-            .any(|capability| capability == AGENTIC_CAPABILITY)
+        self.identity.capabilities.iter().any(|capability| {
+            capability == AGENTIC_CAPABILITY || capability == LEGACY_AGENTIC_CAPABILITY
+        })
     }
 
     fn supports_agentic_inference_gateway(&self) -> bool {
@@ -791,7 +791,7 @@ impl AgenticEvaluator for PythonEvaluator {
     ) -> Result<AgenticEvaluatorIdentity, EvaluatorWorkerError> {
         if !self.supports_agentic() {
             return Err(EvaluatorWorkerError::Protocol(
-                "evaluator worker does not report agentic_harbor; launch it from the pinned agentic worker environment"
+                "evaluator worker reports no canonical agentic harness; launch it from the pinned agentic worker environment"
                     .to_string(),
             ));
         }

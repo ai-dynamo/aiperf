@@ -351,9 +351,9 @@ impl Default for AgenticEvaluatorLoadConfig {
 
 /// Authenticated Rust callback ingress advertised to evaluator sandboxes.
 ///
-/// Harbor environments and verifiers use this address only as an OpenAI wire
-/// adapter. The ingress enqueues each request into Rust's ordinary scheduled
-/// inference path; it never forwards directly to a model server.
+/// Harness environments and verifiers may use this address only as an OpenAI
+/// wire adapter. The ingress enqueues each request into Rust's ordinary
+/// scheduled inference path; it never forwards directly to a model server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgenticInferenceGatewayConfig {

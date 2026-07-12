@@ -1169,13 +1169,13 @@ fn combine_token_totals(
 /// Combined performance and canonical agentic-evaluation result.
 #[derive(Debug)]
 pub struct AgenticRunReport {
-    /// Requested Harbor Hub package, legacy dataset, or local task directory.
+    /// Requested canonical harness dataset identifier.
     pub dataset: String,
     /// Target model name.
     pub model: String,
     /// Exact Python worker and dependency identity.
     pub worker: aiperf_accuracy::EvaluatorIdentity,
-    /// Frozen Harbor, dataset, agent, environment, and verifier identity.
+    /// Frozen harness, dataset, agent, environment, and verifier identity.
     pub evaluator: AgenticEvaluatorIdentity,
     /// Standard performance report over every Rust-owned model call.
     pub performance: TraceSimulationReport,

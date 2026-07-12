@@ -50,7 +50,7 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic `SamplingRng` / `DistributionSampler` / `SequenceSampler` seams, cached cumulative weighted distributions, fixed-seed profile canary | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
 | `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline with exact raw/message replay, media, context, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity, never ground truth | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
 | `aiperf-metrics` | IO-free performance/accuracy engine: validated catalog, columns/ragged replay, formulas, SLO/phase/window/timeslice logic, sweeps, accuracy analysis, typed native-v2 reporter including exact static-evaluator and stateful agentic provenance/result blocks | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
-| `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, lossless agent/tool messages, capability-gated callback configuration, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. | `src/protocol.rs`, `src/worker.rs` |
+| `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, lossless agent/tool messages, generic/provider capabilities, callback configuration, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. | `src/protocol.rs`, `src/worker.rs` |
 | `aiperf-extensions` | cycle-free compile-time composition for dataset-format, sampler, and endpoint registries; accuracy is a directly injected process seam, not a Rust plugin category | `src/lib.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
@@ -126,6 +126,26 @@ AIPERF_AGENTIC_PYTHON=/path/to/pinned/agentic/python \
   cargo test -p aiperf --test agentic_harbor_e2e -- --ignored --nocapture
 ```
 
+AgentLab 0.4.2 plus BrowserGym 0.14.3 is the canonical browser provider. It
+directly runs `DEFAULT_BENCHMARKS`, `GenericAgent`, and `ExpArgs`; its sync model
+callback emits JSONL and only a Rust terminal result can resume the browser
+loop. BrowserGym owns prompts, actions, Playwright transitions, traces, and
+rewards. Browser tasks use dependency-safe sequential admission. The separately
+hashed worker lock is required because AgentLab's OpenAI <2 constraint conflicts
+with Harbor's LiteLLM/OpenAI 2.x constraint.
+
+```bash
+AIPERF_ACCURACY_PYTHON=/path/to/pinned/browser/python \
+cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --agentic-benchmark browsergym/webarena_verified@0.14.3 \
+  --agentic-environment browsergym --agentic-task-concurrency 1 \
+  --agentic-max-episodes 100 --json out.json
+
+AIPERF_BROWSER_AGENTIC_PYTHON=/path/to/pinned/browser/python \
+MINIWOB_URL=file:///path/to/miniwob/html/miniwob/ \
+  cargo test -p aiperf --test agentic_browsergym_e2e -- --ignored --nocapture
+```
+
 ## Run the scheduled workloads
 
 ```bash
@@ -164,7 +184,7 @@ early-issue/lateness statistics.
   → `aiperf/src/http.rs` (`TransportSink`) →
   `aiperf-core/src/observer.rs` (`CollectorObserver`).
 - **Where is accuracy ownership split?** `aiperf-accuracy/src/{protocol,worker}.rs`
-  (static + stateful supervised evaluator seams) → `src/aiperf/accuracy/{worker,agentic,harbor,harbor_agent}.py`
+  (static + stateful supervised evaluator seams) → `src/aiperf/accuracy/{worker,agentic,model_broker,harbor,harbor_agent,browsergym}.py`
   (canonical Python task/agent/environment/verifier ownership) and
   `aiperf/src/accuracy.rs` (normal Rust static dataset lowering, response capture,
   batched grade correlation, accumulation/reporting) or `aiperf/src/agentic.rs`
@@ -266,12 +286,14 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   addenda**: Rust owns inference/timing/metrics/reporting and the typed
   accumulator/analyzer; supervised pinned Python workers own canonical datasets,
   environments, hidden tests, execution, and scoring over opaque IDs. Static
-  Lighteval plus stateful Harbor are wired. Primary and LLM-backed
-  environment/verifier calls all enter the same Rust scheduled transport through
-  a capability-gated authenticated ingress with no model client. Native v2 reports
-  exact provenance and per-purpose accounting. Real packaged canaries cover
-  SWE-bench Verified, Terminal-Bench 2.1, Aider Polyglot, GAIA, SkillsBench, BFCL
-  1.0, and tau3, including an actual tau3 user-simulator callback.
+  Lighteval, stateful Harbor 0.18, and AgentLab 0.4.2 + BrowserGym 0.14.3 are
+  wired behind provider traits. Primary and LLM-backed environment/verifier calls
+  all enter the same Rust scheduled transport through a capability-gated
+  authenticated ingress with no model client. Native v2 reports exact provenance
+  and per-purpose accounting. Harbor canaries cover SWE-bench Verified,
+  Terminal-Bench 2.1, Aider Polyglot, GAIA, SkillsBench, BFCL 1.0, and tau3; a
+  real MiniWoB/Chromium canary proves canonical BrowserGym reward 1.0. OSWorld,
+  AppWorld, and MCPMark remain unbuilt provider families.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,

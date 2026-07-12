@@ -45,3 +45,35 @@ benchmark. Its handshake reports all relevant package versions plus the lock
 SHA-256. A distribution using another platform should ship an immutable
 container and set `AIPERF_ACCURACY_WORKER_IMAGE_DIGEST` instead of silently
 resolving a different environment.
+
+`agentic-accuracy-worker.txt` is the Python 3.12 Harbor 0.18.0 lock.
+`browser-agentic-accuracy-worker.txt` is the separate Python 3.12 AgentLab
+0.4.2 plus BrowserGym 0.14.3 lock. The split is mandatory: AgentLab 0.4.2 pins
+OpenAI below 2 while Harbor's LiteLLM pins OpenAI 2.x. Rust selects the provider
+from the opaque dataset namespace, but every model call still returns through
+the same JSONL protocol and ordinary Rust scheduler/endpoint/transport path.
+BrowserGym datasets use identifiers such as `browsergym/miniwob@0.14.3` and require
+`--agentic-environment browsergym`; benchmark-specific services and Playwright
+browsers must be prepared according to the pinned BrowserGym package.
+
+Create the combined agentic worker environment with:
+
+```bash
+uv venv --python 3.12 .venv-browser-accuracy
+VIRTUAL_ENV=.venv-browser-accuracy \
+  uv pip sync requirements/browser-agentic-accuracy-worker.txt
+VIRTUAL_ENV=.venv-browser-accuracy uv pip install --no-deps -e .
+
+AIPERF_ACCURACY_PYTHON=.venv-browser-accuracy/bin/python \
+  cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --agentic-benchmark browsergym/miniwob@0.14.3 \
+  --agentic-environment browsergym --agentic-task-concurrency 1
+```
+
+Regenerate that lock intentionally with:
+
+```bash
+uv pip compile pyproject.toml --extra accuracy --extra browser-agentic-accuracy \
+  --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+  --generate-hashes -o requirements/browser-agentic-accuracy-worker.txt
+```

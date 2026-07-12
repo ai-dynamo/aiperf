@@ -469,3 +469,72 @@ These are generic Harbor task packages; no SWE-bench, BFCL, tau3, or other
 benchmark-specific prompt, tool loop, environment, test decoder, executor, or
 scorer exists in Rust. Harness families not present in Harbor 0.18 require a
 separate canonical adapter and may not be claimed through this implementation.
+
+## Addendum — 2026-07-11 (AgentLab/BrowserGym canonical browser harness)
+
+The final sentence above remains the governing rule and now has a second
+implementation. The stateful worker owns an `AgenticHarnessProvider` factory
+seam rather than hard-coding Harbor. Dataset names beginning with
+`browsergym/` select pinned `agentlab==0.4.2` (upstream commit
+`367d4e8a9c2cd97eab4524f6898ac98010fc99a8`) plus `browsergym==0.14.3`
+(upstream commit `0a785fbed075224ae81ca9c1fe924f66050696fe`); every other existing
+source form remains Harbor-owned. The generic worker capability is `agentic`,
+with `agentic_browsergym` and `agentic_harbor` reporting the installed provider.
+Rust retains legacy `agentic_harbor` handshake compatibility.
+
+The adapter does not port browser prompts, action parsing, environments, or
+evaluators. It directly instantiates BrowserGym's `DEFAULT_BENCHMARKS`, adapts
+AgentLab's official `FLAGS_GPT_4o` / `FLAGS_GPT_4o_VISION` profile through
+`GenericAgentArgs.set_benchmark`, and runs the exact `ExpArgs.prepare` /
+`ExpArgs.run` loop. AgentLab therefore still owns observation preprocessing,
+prompt construction and token fitting, parser retries, action generation,
+Playwright reset/step/cleanup, trajectory artifacts, and
+`summary_info.json`. BrowserGym still owns task lists, fixed seeds, action sets,
+step limits, and rewards; its WebArena-Verified task still calls
+`WebArenaVerifiedEvaluatorAPI` over the captured network trace. AIPerf's only
+model implementation is `AIPerfAgentLabChatModel`, an `AbstractChatModel` that
+blocks the synchronous environment thread on the same queue-backed
+`ModelCallBroker` used by Harbor. It has no HTTP client.
+
+Rust remains the sole inference data plane. The complete AgentLab-authored
+message list, including screenshot data URLs, becomes a JSONL `model_call`.
+`AgenticWorkload` acquires its Rust model slot and lowers it through the normal
+dataset materializer, endpoint, `ScheduledRuntime`, `TransportSink`, and SSE
+parser. Only Rust's submitted terminal result unblocks AgentLab. Transport or
+worker failure becomes an infrastructure result; a canonical completed reward
+of zero remains a model score. BrowserGym is run sequentially
+(`task_concurrency=1`) in a stable topological order derived from its task
+dependency graph, preserving stateful WebArena/VisualWebArena dependencies
+without recreating their scheduler semantics.
+
+The pinned BrowserGym registry exposes MiniWoB, WebArena, WebArena-Verified,
+WebArena Lite, VisualWebArena, WorkArena L1/L2/L3 curricula, AssistantBench, and
+WebLINX through identifiers such as `browsergym/webarena_verified@0.14.3`.
+Exact selected `EnvArgs`, metadata, package versions, source files, and task
+seeds are content-digested into report provenance. Backend services and
+Playwright browsers remain benchmark prerequisites owned by BrowserGym.
+
+Harbor and AgentLab cannot share one Python environment: Harbor 0.18's LiteLLM
+requires OpenAI 2.x while AgentLab 0.4.2 requires OpenAI below 2. The two
+provider environments are therefore independently hash-locked. Browser runs
+record `requirements/browser-agentic-accuracy-worker.txt` digest
+`2e998cbe869fa6ae21b3ce52264a2cf188316941bb2ebf8e256461a989aedb66`;
+Harbor retains digest
+`5ab314ec28af774ed9edf4a6baf5216f8831ecf06eb9bf3b62418bef275b57ef`.
+Rust still launches one long-lived worker per run, and reports its exact Python,
+package, worker-source, lock, and optional container identity.
+
+Executable proof has two levels. The Python suite uses the real pinned registry
+and a real local MiniWoB++ checkout at revision
+`7fd85d71a4b60325c6585396ec4f48377d049838`; the canonical environment returns
+reward `1.0`. `crates/aiperf/tests/agentic_browsergym_e2e.rs` then runs the
+compiled Rust CLI against that environment and a loopback OpenAI-SSE server. It
+requires one captured streaming request with `include_usage`, exact full
+messages, Rust token/call accounting, AgentLab/BrowserGym provenance, canonical
+reward `1.0`, and `summary_info.json`. Its frozen selected task revision is
+`sha256:69ae6bd5d03cb41821df06d488bd986d2e041a8f427d385a7a25fb7415f27c27`.
+
+This addendum proves the pinned BrowserGym family, not every external agentic
+benchmark. OSWorld/OSWorld-Verified, AppWorld, and MCPMark are not in
+BrowserGym 0.14.3 or Harbor 0.18 and still require their own canonical provider
+adapters before they may be claimed.

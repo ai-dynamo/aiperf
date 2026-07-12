@@ -32,6 +32,7 @@ from aiperf.accuracy.browsergym import (
     _validate_config,
 )
 from aiperf.accuracy.model_broker import ModelCallBroker
+from aiperf.accuracy.worker import AccuracyWorker
 
 
 @pytest.mark.asyncio
@@ -164,6 +165,15 @@ def test_browsergym_config_and_release_are_strict() -> None:
         _validate_config({"environment": "browsergym", "task_concurrency": 2})
     with pytest.raises(ValueError, match="revision must be '0.14.3'"):
         _parse_dataset("browsergym/miniwob@latest")
+
+
+def test_worker_advertises_generic_and_browsergym_capabilities() -> None:
+    hello = AccuracyWorker().hello(1)
+    assert "agentic" in hello["capabilities"]
+    assert "agentic_browsergym" in hello["capabilities"]
+    assert "agentic_inference_gateway" in hello["capabilities"]
+    assert hello["packages"]["agentlab"] == "0.4.2"
+    assert hello["packages"]["browsergym-core"] == "0.14.3"
 
 
 def test_summary_distinguishes_model_score_from_infrastructure_error() -> None:
