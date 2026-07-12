@@ -170,6 +170,7 @@ def _requires_protocol_v2(cfg: Any) -> bool:
         str(cfg.backend.type) != "online_http"
         or bool(cfg.backend.config)
         or cfg.workload is not None
+        or bool(cfg.endpoint_profiles)
         or cfg.endpoint.wait_for_model_timeout > 0
     )
 

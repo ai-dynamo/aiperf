@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import difflib
 from typing import Annotated, Any, Literal, Self
+from urllib.parse import urlparse
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
@@ -196,6 +197,18 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Field(
             description="Endpoint configuration for connecting to inference server(s). "
             "Includes URLs, API type, authentication, timeout, and connection settings.",
+        ),
+    ]
+
+    endpoint_profiles: Annotated[
+        dict[str, EndpointConfig],
+        Field(
+            default_factory=dict,
+            description=(
+                "Additional named protocol-v2 endpoint profiles. The existing "
+                "endpoint section remains the required 'default' profile; evaluation "
+                "routes reference either 'default' or one of these names."
+            ),
         ),
     ]
 
@@ -517,6 +530,80 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 raise ValueError(
                     f"Phase '{phase.name}': prefill_concurrency requires "
                     "endpoint.streaming=true"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_native_online_backend_url_family(self) -> Self:
+        """Keep native HTTP and gRPC selections explicit and non-fallback.
+
+        Custom runner backends retain open URL policy. The two built-in online
+        backends, however, must never reinterpret one another's URLs; in
+        particular a ``grpc://`` run cannot fall through protocol v1's HTTP
+        path when the selected runner lacks the v2 pair.
+        """
+        backend = str(self.backend.type)
+        schemes = {urlparse(url).scheme.lower() for url in self.endpoint.urls}
+        if backend == "online_http" and not schemes <= {"http", "https"}:
+            raise ValueError(
+                "backend.type='online_http' requires http:// or https:// endpoint URLs; "
+                "select backend.type='online_grpc' for grpc:// or grpcs://"
+            )
+        if backend == "online_grpc":
+            if not schemes <= {"grpc", "grpcs"}:
+                raise ValueError(
+                    "backend.type='online_grpc' requires grpc:// or grpcs:// endpoint URLs"
+                )
+            if len(schemes) != 1:
+                raise ValueError(
+                    "all online_grpc endpoint URLs must use the same grpc or grpcs scheme"
+                )
+            if self.endpoint.transport is not None:
+                raise ValueError(
+                    "online_grpc is a native protocol-v2 backend; endpoint.transport "
+                    "must be unset"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_endpoint_profile_names_and_evaluation_routes(self) -> Self:
+        """Keep named route references structural and side-effect free.
+
+        Provider packages still own evaluator configuration and dynamic route
+        requirements. Python checks only identities that are already present in
+        Config v2; endpoint dialect capability remains a runner-factory rule.
+        """
+        for profile_id in self.endpoint_profiles:
+            if not profile_id.strip() or profile_id != profile_id.strip():
+                raise ValueError(
+                    "endpoint_profiles keys must be non-empty and contain no "
+                    "surrounding whitespace"
+                )
+            if profile_id == "default":
+                raise ValueError(
+                    "endpoint_profiles cannot redefine reserved profile 'default'; "
+                    "use benchmark.endpoint for that profile"
+                )
+
+        if self.workload is None or self.workload.type != "evaluation":
+            return self
+
+        routes = self.workload.config["routes"]
+        available_profiles = {"default", *self.endpoint_profiles}
+        available_models = {item.name for item in self.models.items}
+        for service_id, route in routes.items():
+            profile_id = route["endpoint_profile"]
+            if profile_id not in available_profiles:
+                raise ValueError(
+                    f"evaluation route {service_id!r} references endpoint profile "
+                    f"{profile_id!r}, which is not defined; available profiles: "
+                    f"{sorted(available_profiles)}"
+                )
+            model = route["model"]
+            if model not in available_models:
+                raise ValueError(
+                    f"evaluation route {service_id!r} references model {model!r}, "
+                    f"which is not present in benchmark.models"
                 )
         return self
 

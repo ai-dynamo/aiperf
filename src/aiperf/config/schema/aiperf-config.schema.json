@@ -851,6 +851,14 @@
           "$ref": "#/$defs/EndpointConfig",
           "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
         },
+        "endpointProfiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EndpointConfig"
+          },
+          "description": "Additional named protocol-v2 endpoint profiles. The existing endpoint section remains the required 'default' profile; evaluation routes reference either 'default' or one of these names.",
+          "title": "Endpointprofiles",
+          "type": "object"
+        },
         "datasets": {
           "description": "Dataset configuration as a single-element list. The list shape exists to share the schema between YAML and the AIPerfSweep CRD; the runtime currently loads exactly one dataset. Singular `dataset:` shorthand at the BenchmarkConfig top level is normalized to a one-entry list with name='default'.",
           "items": {
@@ -9072,7 +9080,7 @@
       "description": "Endpoint configuration for connecting to inference servers.\n\nThis section configures how AIPerf connects to and communicates\nwith the target inference server(s). It supports multiple URLs\nfor load-balanced deployments and various API types.",
       "properties": {
         "urls": {
-          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
+          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
           "items": {
             "type": "string"
           },
@@ -9158,7 +9166,7 @@
             }
           ],
           "default": null,
-          "description": "Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit setting overrides auto-detection."
+          "description": "Legacy Python transport plugin name. Native protocol-v2 transport is selected by benchmark.backend; leave this unset for online_grpc."
         },
         "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
@@ -9296,13 +9304,13 @@
           "type": "string"
         },
         "url": {
-          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
+          "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
           "oneOf": [
             {
               "type": "string"
             },
             {
-              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Example: ['http://localhost:8000/v1/chat/completions']",
+              "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. URLs without a scheme have ``http://`` prepended automatically. Protocol-v2 native gRPC backends accept explicit ``grpc://`` or ``grpcs://`` targets. Example: ['http://localhost:8000']",
               "items": {
                 "type": "string"
               },
@@ -9333,6 +9341,146 @@
           ]
         }
       ]
+    },
+    "EvaluationProviderConfig": {
+      "additionalProperties": false,
+      "description": "Registered evaluator process implementation selected by identity only.\n\nThe selected runner factory owns the executable, module, argv, environment,\nworking directory, isolation profile, and attested source/lock closure.\nThose coordinates are deliberately not fields in the authored model.",
+      "properties": {
+        "type": {
+          "description": "Open provider ID resolved by the runner registry.",
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "distribution": {
+          "description": "Immutable provider distribution ID registered by the selected runner; never an executable or import target.",
+          "minLength": 1,
+          "title": "Distribution",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "distribution"
+      ],
+      "title": "EvaluationProviderConfig",
+      "type": "object"
+    },
+    "EvaluationResourceConfig": {
+      "additionalProperties": false,
+      "description": "One explicitly named Rust-hosted resource implementation.",
+      "properties": {
+        "type": {
+          "description": "Open factory ID resolved by the selected runner registry.",
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "description": "Factory-owned authored configuration. Python preserves this object without interpreting implementation-specific keys.",
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "EvaluationResourceConfig",
+      "type": "object"
+    },
+    "EvaluationRouteConfig": {
+      "additionalProperties": false,
+      "description": "One logical evaluator service mapped to a Rust-owned endpoint profile.",
+      "properties": {
+        "model": {
+          "description": "Server-facing model identity.",
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "endpointProfile": {
+          "description": "Run-local endpoint profile reference.",
+          "minLength": 1,
+          "title": "Endpointprofile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "endpointProfile"
+      ],
+      "title": "EvaluationRouteConfig",
+      "type": "object"
+    },
+    "EvaluationWorkloadConfig": {
+      "additionalProperties": false,
+      "description": "Provider-neutral authored shape for the protocol-v2 evaluation workload.\n\n``evaluation`` is intentionally opaque to Python.  The exact registered\nprovider factory strictly validates it, using its fingerprinted Rust schema,\nbefore any evaluator process, asset resolver, or sandbox is started.",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/EvaluationProviderConfig"
+        },
+        "evaluation": {
+          "additionalProperties": true,
+          "description": "Opaque, provider-owned authored evaluation configuration.",
+          "title": "Evaluation",
+          "type": "object"
+        },
+        "routes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EvaluationRouteConfig"
+          },
+          "description": "Logical model-service routes; values contain no URL or credential.",
+          "minProperties": 1,
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Routes",
+          "type": "object"
+        },
+        "resources": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EvaluationResourceConfig"
+          },
+          "description": "Explicit Rust-hosted resource capability bindings.",
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Resources",
+          "type": "object"
+        },
+        "unitConcurrency": {
+          "default": 1,
+          "description": "Maximum concurrently started evaluation units.",
+          "title": "Unitconcurrency",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Maximum concurrently started evaluation units.",
+              "exclusiveMinimum": 0,
+              "title": "Unitconcurrency",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        }
+      },
+      "required": [
+        "provider",
+        "routes"
+      ],
+      "title": "EvaluationWorkloadConfig",
+      "type": "object"
     },
     "FileDataset": {
       "additionalProperties": false,
@@ -13674,7 +13822,7 @@
     },
     "RunnerWorkloadConfig": {
       "additionalProperties": false,
-      "description": "Optional explicit workload-factory selection for one native run.",
+      "description": "Optional explicit workload-factory selection for one native run.\n\nThe open runner registry still owns arbitrary workload IDs.  The built-in\n``evaluation`` workload has a product-level structural contract, however,\nbecause Python must keep launch coordinates out of authored configuration\nand must project logical routes without importing an evaluator package.",
       "properties": {
         "type": {
           "description": "Open factory ID resolved by the selected runner registry.",
@@ -13683,10 +13831,17 @@
           "type": "string"
         },
         "config": {
-          "additionalProperties": true,
-          "description": "Factory-owned authored configuration. Python preserves this object without interpreting implementation-specific keys.",
-          "title": "Config",
-          "type": "object"
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/EvaluationWorkloadConfig"
+            }
+          ],
+          "description": "Factory-owned authored configuration. The built-in evaluation shape is documented explicitly; other open workload factories retain opaque objects.",
+          "title": "Config"
         }
       },
       "required": [

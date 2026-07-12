@@ -103,18 +103,24 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
         }
 
     sidecars = _authored_sidecars(run)
+    endpoint_profiles = [
+        {
+            "id": "default",
+            **_authored_endpoint(cfg.endpoint, include_readiness=True),
+        }
+    ]
+    endpoint_profiles.extend(
+        {
+            "id": profile_id,
+            **_authored_endpoint(profile, include_readiness=True),
+        }
+        for profile_id, profile in cfg.endpoint_profiles.items()
+    )
     return {
         "identity": identity,
         "artifact_target": str(run.artifact_dir),
         "models": _authored_models(cfg),
-        "endpoints": {
-            "profiles": [
-                {
-                    "id": "default",
-                    **_authored_endpoint(cfg.endpoint, include_readiness=True),
-                }
-            ]
-        },
+        "endpoints": {"profiles": endpoint_profiles},
         "backend": {
             "type": str(cfg.backend.type),
             "config": copy.deepcopy(cfg.backend.config),
@@ -184,6 +190,14 @@ def _authored_workload(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
     else:
         workload_type = _default_workload_type(cfg, dataset)
         workload_config = {}
+
+    # Evaluation owns a deliberately different provider-neutral authored
+    # shape. In particular, legacy dataset/tokenizer/phase fields are not
+    # smuggled into its strict factory config, and Python never adds worker
+    # launch coordinates. The selected runner provider factory is the only
+    # authority that decodes ``evaluation``.
+    if workload_type == "evaluation":
+        return {"type": workload_type, "config": workload_config}
 
     # Explicit extension-owned keys remain intact. The current Config-v2
     # scheduled fields fill only missing keys during the compatibility window.
@@ -490,6 +504,11 @@ def validate_v1_selection(cfg: Any) -> None:
             "selection; remove benchmark.workload or use protocol v2 once its strict "
             "execution DTO is available"
         )
+    if cfg.endpoint_profiles:
+        raise RustWireError(
+            "native runner protocol v1 represents only benchmark.endpoint; named "
+            "endpoint_profiles require protocol v2"
+        )
     if cfg.endpoint.wait_for_model_timeout > 0:
         raise RustWireError(
             "native runner protocol v1 cannot honor endpoint.wait_for_model_timeout; "
@@ -592,9 +611,7 @@ def _gpu_telemetry(
         "sources": sources,
     }
     custom_metrics = (
-        run.resolved.gpu_custom_metrics or []
-        if include_resolved_custom_metrics
-        else []
+        run.resolved.gpu_custom_metrics or [] if include_resolved_custom_metrics else []
     )
     if custom_metrics:
         result["custom_metrics"] = [

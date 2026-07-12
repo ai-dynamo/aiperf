@@ -92,6 +92,10 @@ from aiperf.config.endpoint import (
 )
 from aiperf.config.execution import (
     AgenticProviderConfig,
+    EvaluationProviderConfig,
+    EvaluationResourceConfig,
+    EvaluationRouteConfig,
+    EvaluationWorkloadConfig,
     RunnerBackendConfig,
     RunnerComponentId,
     RunnerWorkloadConfig,

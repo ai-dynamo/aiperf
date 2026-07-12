@@ -142,6 +142,11 @@ class RunnerInstallation:
     def preflight_plan(self, plan: BenchmarkPlan) -> None:
         """Validate every distinct fixed-plan endpoint before its first run."""
         endpoint_ids = {str(config.endpoint.type) for config in plan.configs}
+        endpoint_ids.update(
+            str(profile.type)
+            for config in plan.configs
+            for profile in config.endpoint_profiles.values()
+        )
         for endpoint_id in sorted(endpoint_ids):
             self.preflight_endpoint(endpoint_id)
 
@@ -398,6 +403,120 @@ def _validate_v2_capabilities(capabilities: dict[str, Any]) -> None:
         raise ValueError(
             "aiperf-runner capability extensions must be an array of non-empty strings"
         )
+    _validate_evaluation_capabilities(capabilities)
+
+
+def _validate_evaluation_capabilities(capabilities: dict[str, Any]) -> None:
+    """Validate executable-only evaluator/provider capability inventories."""
+    workloads = capabilities.get("workloads", [])
+    evaluation_registered = any(
+        isinstance(workload, dict) and workload.get("id") == "evaluation"
+        for workload in workloads
+    )
+    fields = (
+        "evaluation_providers",
+        "evaluation_host_operations",
+        "supported_evaluation_combinations",
+    )
+    if not evaluation_registered and not any(field in capabilities for field in fields):
+        # Additive compatibility for protocol-v2 runners predating the
+        # evaluation workload. They can never pass evaluation preflight.
+        return
+    for field in fields:
+        if not isinstance(capabilities.get(field), list):
+            raise ValueError(f"aiperf-runner capability {field} must be an array")
+
+    for provider in capabilities["evaluation_providers"]:
+        if not isinstance(provider, dict):
+            raise ValueError("evaluation provider capabilities must be objects")
+        _require_nonempty_strings(
+            provider,
+            ("id", "display_name", "config_schema_sha256", "isolation_profile_id"),
+            "evaluation provider",
+        )
+        if not isinstance(provider.get("config_schema_version"), int) or (
+            provider["config_schema_version"] <= 0
+        ):
+            raise ValueError(
+                "evaluation provider config_schema_version must be positive"
+            )
+        for field in (
+            "worker_protocol_versions",
+            "execution_granularities",
+            "scheduling_modes",
+            "declared_operations",
+            "distributions",
+        ):
+            if not isinstance(provider.get(field), list) or not provider[field]:
+                raise ValueError(
+                    f"evaluation provider capability {field} must be a non-empty array"
+                )
+        for distribution in provider["distributions"]:
+            if not isinstance(distribution, dict):
+                raise ValueError("evaluation distributions must be objects")
+            _require_nonempty_strings(
+                distribution,
+                (
+                    "id",
+                    "package",
+                    "package_version",
+                    "provider_source_sha256",
+                    "worker_source_sha256",
+                    "dependency_lock_sha256",
+                    "launch_closure_sha256",
+                ),
+                "evaluation distribution",
+            )
+
+    for operation in capabilities["evaluation_host_operations"]:
+        if not isinstance(operation, dict):
+            raise ValueError("evaluation host operation capabilities must be objects")
+        _require_nonempty_strings(
+            operation,
+            ("id", "family", "request_schema_sha256", "response_schema_sha256"),
+            "evaluation host operation",
+        )
+        if not isinstance(operation.get("true_streaming"), bool):
+            raise ValueError(
+                "evaluation host operation true_streaming must be a boolean"
+            )
+        if not isinstance(operation.get("endpoint_capabilities"), list) or not all(
+            isinstance(value, str) and value
+            for value in operation["endpoint_capabilities"]
+        ):
+            raise ValueError(
+                "evaluation host operation endpoint_capabilities must be strings"
+            )
+
+    for combination in capabilities["supported_evaluation_combinations"]:
+        if not isinstance(combination, dict):
+            raise ValueError("supported evaluation combinations must be objects")
+        _require_nonempty_strings(
+            combination,
+            (
+                "backend",
+                "workload",
+                "provider",
+                "distribution",
+                "isolation_profile_id",
+            ),
+            "supported evaluation combination",
+        )
+        for field in ("operations", "resources"):
+            if not isinstance(combination.get(field), list) or not all(
+                isinstance(value, str) and value for value in combination[field]
+            ):
+                raise ValueError(
+                    f"supported evaluation combination {field} must be strings"
+                )
+
+
+def _require_nonempty_strings(
+    value: dict[str, Any], fields: tuple[str, ...], label: str
+) -> None:
+    for field in fields:
+        if not isinstance(value.get(field), str) or not value[field]:
+            raise ValueError(f"{label} {field} must be a non-empty string")
 
 
 def _parse_validation_response(
@@ -521,6 +640,11 @@ def _require_v2_request_capabilities(
             f"({pair[0]!r}, {pair[1]!r}); advertised {supported!r}"
         )
 
+    if workload["type"] == "evaluation":
+        _require_evaluation_selection_capability(
+            capabilities, backend["type"], workload
+        )
+
     endpoints = run.get("endpoints")
     profiles = endpoints.get("profiles") if isinstance(endpoints, dict) else None
     if not isinstance(profiles, list) or not profiles:
@@ -529,6 +653,59 @@ def _require_v2_request_capabilities(
         if not isinstance(profile, dict) or not isinstance(profile.get("type"), str):
             raise ValueError(f"protocol-v2 endpoint profile {index} omitted type")
         _require_capability(capabilities, "endpoint_types", profile["type"])
+
+
+def _require_evaluation_selection_capability(
+    capabilities: dict[str, Any], backend_id: str, workload: dict[str, Any]
+) -> None:
+    """Require one exact executable provider/distribution combination."""
+    config = workload.get("config")
+    provider = config.get("provider") if isinstance(config, dict) else None
+    if not isinstance(provider, dict):
+        raise ValueError("evaluation workload omitted config.provider")
+    provider_id = provider.get("type")
+    distribution_id = provider.get("distribution")
+    if not isinstance(provider_id, str) or not provider_id:
+        raise ValueError("evaluation workload provider.type must be a non-empty string")
+    if not isinstance(distribution_id, str) or not distribution_id:
+        raise ValueError(
+            "evaluation workload provider.distribution must be a non-empty string"
+        )
+    combinations = capabilities.get("supported_evaluation_combinations")
+    if not isinstance(combinations, list):
+        raise RuntimeError(
+            "selected aiperf-runner does not publish executable evaluation combinations"
+        )
+    selected = next(
+        (
+            combination
+            for combination in combinations
+            if isinstance(combination, dict)
+            and combination.get("backend") == backend_id
+            and combination.get("workload") == "evaluation"
+            and combination.get("provider") == provider_id
+            and combination.get("distribution") == distribution_id
+        ),
+        None,
+    )
+    if selected is None:
+        raise RuntimeError(
+            "selected aiperf-runner does not contain executable evaluation "
+            f"provider/distribution ({provider_id!r}, {distribution_id!r}); no "
+            "benchmark-name or provider fallback is permitted"
+        )
+    resources = config.get("resources", {})
+    if not isinstance(resources, dict):
+        raise ValueError("evaluation workload resources must be an object")
+    advertised_resources = selected.get("resources", [])
+    for name, resource in resources.items():
+        if not isinstance(resource, dict) or not isinstance(resource.get("type"), str):
+            raise ValueError(f"evaluation resource {name!r} omitted type")
+        if resource["type"] not in advertised_resources:
+            raise RuntimeError(
+                f"evaluation resource adapter {resource['type']!r} is not executable "
+                f"for provider/distribution ({provider_id!r}, {distribution_id!r})"
+            )
 
 
 def _require_request_capabilities(

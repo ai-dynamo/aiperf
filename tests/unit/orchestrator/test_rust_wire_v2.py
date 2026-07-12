@@ -38,12 +38,14 @@ def _run(
     accuracy: dict | None = None,
     backend: dict | None = None,
     workload: dict | None = None,
+    endpoint_url: str = "http://127.0.0.1:8000",
+    endpoint_type: str = "future_endpoint",
 ) -> BenchmarkRun:
     benchmark: dict = {
         "models": ["mock-model"],
         "endpoint": {
-            "urls": ["http://127.0.0.1:8000"],
-            "type": "future_endpoint",
+            "urls": [endpoint_url],
+            "type": endpoint_type,
             "streaming": True,
         },
         "dataset": dataset
@@ -123,6 +125,50 @@ def test_v2_envelope_and_default_scheduled_projection(
     ]
     assert authored["endpoints"]["profiles"][0]["id"] == "default"
     assert authored["endpoints"]["profiles"][0]["type"] == "future_endpoint"
+
+
+def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
+    tmp_path: Path,
+) -> None:
+    run = _run(
+        tmp_path / "grpc-v2-only",
+        backend={"type": "online_grpc", "config": {}},
+        endpoint_url="grpc://127.0.0.1:8001",
+        endpoint_type="kserve_v2_infer",
+    )
+
+    request = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )
+
+    assert request["protocol_version"] == 2
+    assert request["run"]["backend"] == {"type": "online_grpc", "config": {}}
+    assert request["run"]["endpoints"]["profiles"][0]["urls"] == [
+        "grpc://127.0.0.1:8001"
+    ]
+    with pytest.raises(RustWireError, match="protocol v1 supports only backend"):
+        build_run_request(run)
+
+
+@pytest.mark.parametrize(
+    ("backend", "url", "message"),
+    [
+        ("online_http", "grpc://127.0.0.1:8001", "online_grpc"),
+        ("online_grpc", "http://127.0.0.1:8000", "requires grpc"),
+    ],
+)
+def test_builtin_online_backend_url_families_fail_closed(
+    tmp_path: Path, backend: str, url: str, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        _run(
+            tmp_path / backend,
+            backend={"type": backend, "config": {}},
+            endpoint_url=url,
+            endpoint_type="kserve_v2_infer",
+        )
 
 
 def test_dag_jsonl_rows_enter_graph_workload_once_without_conversion(

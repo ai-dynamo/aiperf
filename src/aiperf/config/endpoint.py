@@ -122,7 +122,8 @@ class EndpointConfig(BaseConfig):
             description="List of server URLs to benchmark. "
             "Requests distributed according to url_strategy. "
             "URLs without a scheme have ``http://`` prepended automatically. "
-            "Example: ['http://localhost:8000/v1/chat/completions']",
+            "Protocol-v2 native gRPC backends accept explicit ``grpc://`` or "
+            "``grpcs://`` targets. Example: ['http://localhost:8000']",
             json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
         AfterValidator(normalize_http_urls),
@@ -212,9 +213,9 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Legacy Python transport plugin name. Native protocol-v2 "
+            "transport is selected by benchmark.backend; leave this unset for "
+            "online_grpc.",
         ),
     ]
 
@@ -415,12 +416,12 @@ class EndpointConfig(BaseConfig):
             if not parsed.scheme or not parsed.netloc or not parsed.hostname:
                 raise ValueError(
                     f"URL {url!r} is missing scheme or host. "
-                    f"Expected 'http://host:port' or 'https://host:port'."
+                    f"Expected an http(s) or grpc(s) URL with a host."
                 )
-            if parsed.scheme.lower() not in ("http", "https"):
+            if parsed.scheme.lower() not in ("http", "https", "grpc", "grpcs"):
                 raise ValueError(
                     f"URL {url!r} has unsupported scheme {parsed.scheme!r}. "
-                    f"Expected 'http' or 'https'."
+                    f"Expected 'http', 'https', 'grpc', or 'grpcs'."
                 )
             # Validate the port if one is present. urlparse.port raises
             # ValueError on access for non-numeric or out-of-range ports
