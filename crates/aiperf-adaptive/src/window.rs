@@ -126,6 +126,13 @@ impl WindowStats {
 /// Implementations are intentionally single-loop objects. Callers typically
 /// store one behind `Rc<RefCell<Box<dyn WindowSampler>>>`; no lock is needed.
 pub trait WindowSampler {
+    /// Ingest one already-terminal native request record.
+    ///
+    /// Worker-local backends use this path after returning immutable records to
+    /// the coordinator; callback-oriented transports use the lifecycle methods
+    /// below. Implementations must preserve identical classification and
+    /// latency formulas across both inputs.
+    fn on_record(&mut self, record: &RecordIngest);
     /// Record the request's arrival on the clock timeline.
     fn on_arrival(&mut self, uuid: Uuid, at_ns: i64);
     /// Replace the provisional arrival start with transport/backend admission.
@@ -184,6 +191,12 @@ impl TumblingWindowSampler {
     /// admission is the latency origin, meaningful token timestamps determine
     /// TTFT/request latency, and endpoint usage owns OSL/ITL reconciliation.
     pub fn process_record(&mut self, record: &RecordIngest) {
+        self.on_record(record);
+    }
+}
+
+impl WindowSampler for TumblingWindowSampler {
+    fn on_record(&mut self, record: &RecordIngest) {
         if record.canceled {
             self.cancelled += 1;
             return;
@@ -202,10 +215,7 @@ impl TumblingWindowSampler {
             .copied()
             .expect("a first token implies a last token");
         let started_ns = record.admit_ns.unwrap_or(record.start_ns);
-        let output_sequence_length = record
-            .usage
-            .completion_tokens
-            .and_then(|value| usize::try_from(value).ok());
+        let output_sequence_length = record.usage.completion_tokens.and_then(count_to_usize);
         let inter_token_latency_ns = output_sequence_length
             .filter(|count| *count > 1)
             .map(|count| last.saturating_sub(first).max(0) as f64 / (count - 1) as f64);
@@ -216,9 +226,7 @@ impl TumblingWindowSampler {
             output_sequence_length,
         });
     }
-}
 
-impl WindowSampler for TumblingWindowSampler {
     fn on_arrival(&mut self, uuid: Uuid, at_ns: i64) {
         self.in_flight.insert(
             uuid,
@@ -244,9 +252,7 @@ impl WindowSampler for TumblingWindowSampler {
 
     fn on_usage(&mut self, uuid: Uuid, usage: ObservedUsage) {
         if let Some(request) = self.in_flight.get_mut(&uuid) {
-            request.output_sequence_length = usage
-                .completion_tokens
-                .and_then(|value| usize::try_from(value).ok());
+            request.output_sequence_length = usage.completion_tokens.and_then(count_to_usize);
         }
     }
 
@@ -313,6 +319,13 @@ impl WindowSampler for TumblingWindowSampler {
 
 fn elapsed_seconds(start_ns: i64, end_ns: i64) -> f64 {
     end_ns.saturating_sub(start_ns).max(0) as f64 / 1_000_000_000.0
+}
+
+fn count_to_usize<T>(value: T) -> Option<usize>
+where
+    T: TryInto<usize>,
+{
+    value.try_into().ok()
 }
 
 #[cfg(test)]
