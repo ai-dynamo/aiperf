@@ -38,7 +38,7 @@ benchmark semantics if not restored deliberately.
 
 State of the `ajc/rust` spike as of this writing: a "walking skeleton"
 (`crates/aiperf/src/run.rs:4`), ~11 commits, six crates (`aiperf-clock`,
-`loadgen-core`, `aiperf-transport`, `aiperf-core`, `aiperf-graph`, `aiperf`). It
+`loadgen-core`, `aiperf-transport-http`, `aiperf-core`, `aiperf-graph`, `aiperf`). It
 already implements thread-per-core single-threaded tokio runtimes, `Rc`/`RefCell`
 per-trace state, raw hyper + UDS transport, `timerfd`/`SimClock`, and has deleted
 ZMQ / services / credits / plugins. Architecture thesis is sound; this ledger is

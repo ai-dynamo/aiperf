@@ -337,7 +337,7 @@ timestamp may already be in the past, and `ts_to_perf` can return a past `perf_s
 | Stop bounds | `StopChecker` / `RunState` | `aiperf-timing` | **built** (user-centric: the `issue_credit`→falsy stop path; fixed-schedule: injected-but-unused) |
 | Absolute-at pacing / think-time sleeps | `Clock::sleep`, `now_ns` | `aiperf-clock` | **built** |
 | Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf-graph` | **built** |
-| Dispatch turn + record TTFT/ITL | `RequestSink` + observer | `loadgen-core`/`aiperf-transport` | **built** |
+| Dispatch turn + record TTFT/ITL | `RequestSink` + observer | `loadgen-core`/`aiperf-transport-http` | **built** |
 | **`schedule_at_perf_sec` / `schedule_later` / `execute_async` scheduler** | a `LoopScheduler` seam over `Clock` | new | **designed** |
 | **User-centric run loop** (spawn heap + per-user pacer + churn) | `UserPool` + `UserCentricWorkload` | new / `aiperf-timing` | **designed** |
 | **Adaptive user target** (ramp) | `set_target_users` on `UserPool` | new | **designed** |

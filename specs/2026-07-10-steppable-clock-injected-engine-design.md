@@ -349,7 +349,7 @@ The `lib/aiperf` + dynamo `lib/mocker` framing above describes the historical
 engine-boundary design lineage. Current AIPerf lives under `crates/`; its realized
 seams are `aiperf-clock::Clock` and `loadgen-core::{RequestSink<R>, RequestObserver,
 Dispatchable}`. The PR2.5-era split HTTP clock was already removed: the CLI and graph
-benchmark both use the Clock-injected `aiperf-transport` hyper client.
+benchmark both use the Clock-injected `aiperf-transport-http` hyper client.
 
 The third mode is now built as an explicitly optional application composition:
 

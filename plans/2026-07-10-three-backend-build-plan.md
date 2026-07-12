@@ -48,7 +48,7 @@ every existing command runs on ONLINE-REAL and ONLINE-MOCK before sim work start
   RequestSink<R>, RequestObserver}` plus `aiperf-clock::Clock`. Do not reintroduce
   the obsolete north-star backend/sink/advance trait shapes from the
   north-star sketches.
-- `aiperf::http::TransportSink` wraps the `aiperf-transport` crate behind
+- `aiperf::http::TransportSink` wraps the `aiperf-transport-http` crate behind
   `RequestSink<HttpRequest>`, emitting observer events from SSE into the collector.
 - The future offline sink should adapt the engine into the same observer contract.
 - Bin: the positional/base URL selects real vs online-mock; both stay the same code

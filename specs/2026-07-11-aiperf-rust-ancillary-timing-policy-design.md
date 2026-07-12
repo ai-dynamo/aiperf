@@ -45,7 +45,7 @@ perturbs an already-running phase:
    *conversation* hits, load-balancing across backends.
 
 All three are **policy** we keep; all three reduce to a tiny trait + an actuator that
-**already exists** in `aiperf-timing`/`aiperf-transport`. The Python code is small and
+**already exists** in `aiperf-timing`/`aiperf-transport-http`. The Python code is small and
 was read whole; the earned-in-blood details are the curve math (`ramping.py`), the
 "start the cancel timer at send-complete, not at issuance" invariant
 (`request_cancellation.py:62-81`), and the "advance round-robin on turn-0 only, then
@@ -222,7 +222,7 @@ consumed at send-complete**.
 ### 2.4 Rust mapping
 
 The companion request-rate spec already puts `cancel_after_ns` on the credit/turn.
-Here it is produced by a `CancellationPolicy` (§4) and consumed by `aiperf-transport`:
+Here it is produced by a `CancellationPolicy` (§4) and consumed by `aiperf-transport-http`:
 
 - The transport already has a **real send-complete hook** (workspace commit
   `e960752c5`, "real send-complete hook") and cancellation support (transport spec's
@@ -289,12 +289,12 @@ sampler impl.
 | Concurrency actuator (`set_limit`, debt-drain) | `SlotPool::set_limit` | `aiperf-timing` | **built** |
 | Stop bounds / phase scope | `StopChecker` / `ConcurrencyManager` | `aiperf-timing` | **built** |
 | All time (ramp elapsed + sleeps, cancel timer) | `Clock` (`now_ns`/`sleep`) | `aiperf-clock` | **built** |
-| Transport send-complete hook + request abort | `aiperf-transport` client | `aiperf-transport` | **built** (send-complete hook `e960752c5`; abort-after-send wiring **designed**) |
+| Transport send-complete hook + request abort | `aiperf-transport-http` client | `aiperf-transport-http` | **built** (send-complete hook `e960752c5`; abort-after-send wiring **designed**) |
 | RNG for Poisson trajectory + Bernoulli draw | `aiperf-rng` (BLAKE3-derived) | `aiperf-rng` | **designed** (rng-derive spec) |
 | **Ramp curve family** (`Linear`/`Exp`/`Poisson`, `next_step`/`value_at`) | **`RampStrategy`** trait | new / `aiperf-timing` | **designed** |
 | **Ramp driver loop** (discrete/continuous, force-target, stop) | **`RampDriver`** + `RamperConfig` | new / `aiperf-timing` | **designed** |
 | **Cancellation decision** (rate %, warmup-off, fixed delay) | **`CancellationPolicy`** trait | new / `aiperf-timing` | **designed** |
-| **Cancel timer** (arm at send-complete, race response) | `Clock::sleep` + `select!` in sink | `aiperf-transport` | **designed** |
+| **Cancel timer** (arm at send-complete, race response) | `Clock::sleep` + `select!` in sink | `aiperf-transport-http` | **designed** |
 | **URL selection** (round-robin, turn-0 gate) | **`UrlSelector`** trait | new / `aiperf-timing` | **designed** |
 
 ### 4.1 The new trait seams (every extension point a trait)
@@ -409,7 +409,7 @@ Linear/Exponential-ease-in/Poisson curve over a fixed duration, a
 fraction of non-warmup requests (fired as a `Clock`-scheduled transport abort at
 send-complete), and a **`UrlSelector`** round-robin that ticks once per conversation
 (turn-0) and pins sticky per-session — every actuator already built in
-`aiperf-timing`/`aiperf-transport`, every new piece a small trait, all time through
+`aiperf-timing`/`aiperf-transport-http`, every new piece a small trait, all time through
 `Clock` so they run bit-deterministically under `SimClock`.
 
 ## Addendum — 2026-07-11: implemented in the native Rust workspace
@@ -428,7 +428,7 @@ This design is now built. This addendum supersedes the original `Status: design
   `url_selection.rs`. Warmup returns before the RNG draw. The implementation
   uses signed nanoseconds (`Option<i64>`) because that is the native `Clock` and
   transport representation; validation prevents negative configured delays.
-- `aiperf-transport` now shares a `SendCompletion` signal between `TimedBody`
+- `aiperf-transport-http` now shares a `SendCompletion` signal between `TimedBody`
   and the cancellation race. The deadline is anchored to the captured
   send-complete timestamp, not to issuance, connection acquisition, or the
   later wakeup time. A timer win drops the request future and produces HTTP 499

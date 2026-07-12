@@ -301,7 +301,7 @@ The original standalone/offline-only deliverable shape is superseded by the nati
 Rust workspace. Graph-IR is now partly realized in `crates/aiperf-graph`, which runs
 on tokio `current_thread` runtimes with `LocalSet` and uses the shared `drive_sim` /
 `drive_real` runtime split. The graph benchmark also has a live HTTP dispatch path
-through `aiperf-transport`; it is no longer solely a deterministic in-process mock
+through `aiperf-transport-http`; it is no longer solely a deterministic in-process mock
 harness.
 
 The byte-exact dataflow and deterministic virtual-clock goals still matter for graph

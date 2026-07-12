@@ -146,7 +146,7 @@ no-policy max-throughput escape hatch only.
 | Absolute-schedule pacer + catch-up | arrival loop | `aiperf::run` (`run_paced`) | **built** (single-turn only) |
 | Pacing / think-time sleeps | `Clock::sleep` | `aiperf-clock` | **built** |
 | Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf-graph` | **built** |
-| Dispatch turn + record TTFT/ITL (TTFT releases prefill) | `TurnDispatcher` + scheduled lifecycle hooks | `aiperf` / `aiperf-transport` | **built** |
+| Dispatch turn + record TTFT/ITL (TTFT releases prefill) | `TurnDispatcher` + scheduled lifecycle hooks | `aiperf` / `aiperf-transport-http` | **built** |
 | **Continuation queue + two-source issue loop** | `RequestRateWorkload` | `aiperf` | **built** |
 | **Conversation source over the segment pool** | `ConversationSource` trait | `aiperf` / `aiperf-dataset` | **built** |
 | **Prefill-release-on-TTFT wiring** | first-token lifecycle hook → `SlotGuard::drop` | `aiperf` | **built** |
