@@ -370,6 +370,58 @@ fn redact_url(endpoint_url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiperf_clock::RealClock;
+    use aiperf_transport::config::ClientConfig;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::{JoinHandle, LocalSet};
+
+    struct FixtureResponse {
+        path: &'static str,
+        status: &'static str,
+        content_type: &'static str,
+        body: &'static str,
+    }
+
+    async fn spawn_fixture_server(responses: Vec<FixtureResponse>) -> (String, JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::task::spawn_local(async move {
+            for expected in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0_u8; 1024];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8(request).unwrap();
+                assert!(request.starts_with(&format!("GET {} HTTP/1.1", expected.path)));
+                let response = format!(
+                    "HTTP/1.1 {}\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    expected.status,
+                    expected.content_type,
+                    expected.body.len(),
+                    expected.body,
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        (format!("http://{address}"), task)
+    }
+
+    fn source_for(base_url: &str) -> PrometheusHttpSource {
+        let clock: Rc<dyn Clock> = RealClock::new();
+        let transport = Rc::new(HttpTransport::new(clock.clone(), ClientConfig::default()));
+        PrometheusHttpSource::new(clock, transport, format!("{base_url}/metrics"))
+    }
 
     #[test]
     fn metrics_urls_normalize_and_credentials_never_reach_display() {
@@ -426,5 +478,85 @@ mod tests {
             "http://host/prometheus/metrics".to_string(),
             "same body".to_string(),
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn trt_json_routes_once_to_vllm_openmetrics_fallback() {
+        LocalSet::new()
+            .run_until(async {
+                let openmetrics =
+                    "# TYPE vllm:prompt_tokens counter\nvllm:prompt_tokens_total 12\n# EOF\n";
+                let (base_url, server) = spawn_fixture_server(vec![
+                    FixtureResponse {
+                        path: "/metrics",
+                        status: "200 OK",
+                        content_type: "application/json",
+                        body: "[{\"iteration_stats\":1}]",
+                    },
+                    FixtureResponse {
+                        path: "/prometheus/metrics",
+                        status: "200 OK",
+                        content_type: "application/openmetrics-text; version=1.0.0",
+                        body: openmetrics,
+                    },
+                ])
+                .await;
+                let source = source_for(&base_url);
+
+                let outcome = source
+                    .scrape(ServerMetricsScrapeMode::Boundary)
+                    .await
+                    .unwrap();
+
+                let ServerMetricsScrapeOutcome::Record(record) = outcome else {
+                    panic!("fallback record")
+                };
+                assert!(record.endpoint_url.ends_with("/prometheus/metrics"));
+                assert_eq!(
+                    record.metrics["vllm:prompt_tokens"].metric_type,
+                    crate::model::PrometheusMetricType::Counter
+                );
+                assert!(source.endpoint_url().ends_with("/prometheus/metrics"));
+                server.await.unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn failed_trt_fallback_auto_disables_without_a_third_request() {
+        LocalSet::new()
+            .run_until(async {
+                let (base_url, server) = spawn_fixture_server(vec![
+                    FixtureResponse {
+                        path: "/metrics",
+                        status: "200 OK",
+                        content_type: "application/json",
+                        body: "[{\"iteration_stats\":1}]",
+                    },
+                    FixtureResponse {
+                        path: "/prometheus/metrics",
+                        status: "404 Not Found",
+                        content_type: "text/plain",
+                        body: "missing",
+                    },
+                ])
+                .await;
+                let source = source_for(&base_url);
+
+                let error = source
+                    .scrape(ServerMetricsScrapeMode::Continuous)
+                    .await
+                    .unwrap_err();
+                assert!(error.is_incompatible());
+                assert_eq!(
+                    source
+                        .scrape(ServerMetricsScrapeMode::Continuous)
+                        .await
+                        .unwrap(),
+                    ServerMetricsScrapeOutcome::Disabled
+                );
+                server.await.unwrap();
+            })
+            .await;
     }
 }
