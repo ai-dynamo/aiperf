@@ -90,6 +90,26 @@ pub trait AiperfExtension {
     fn register(&self, registry: &mut AiperfRegistry) -> Result<(), ExtensionError>;
 }
 
+/// Composition-root seam that constructs one frozen registry universe.
+///
+/// Stock runners use [`BuiltinAiperfRegistryFactory`]. A custom statically
+/// linked runner can inject its own factory and apply an explicit ordered set
+/// of [`AiperfExtension`] values without changing benchmark execution code.
+pub trait AiperfRegistryFactory {
+    /// Build the registry used by capabilities, validation, and execution.
+    fn build(&self) -> Result<AiperfRegistry, ExtensionError>;
+}
+
+/// Factory for the stock in-tree registry set.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinAiperfRegistryFactory;
+
+impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
+    fn build(&self) -> Result<AiperfRegistry, ExtensionError> {
+        AiperfRegistry::builtin()
+    }
+}
+
 /// Aggregate of every runtime-name registry shared by the native CLI paths.
 ///
 /// Directly injected seams such as clocks, transports, observers, segment

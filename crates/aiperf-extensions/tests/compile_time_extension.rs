@@ -5,7 +5,7 @@
 
 use aiperf_dataset::{ConversationMetadata, EndpointResolver, Sampler, SamplerFactory, SessionId};
 use aiperf_endpoints::{ChatEndpoint, EndpointType};
-use aiperf_extensions::{AiperfExtension, AiperfRegistry, ExtensionError};
+use aiperf_extensions::{AiperfExtension, AiperfRegistry, AiperfRegistryFactory, ExtensionError};
 use aiperf_rng::RngRoot;
 
 struct ExternalSampler {
@@ -59,6 +59,14 @@ impl AiperfExtension for ExternalExtension {
     }
 }
 
+struct ExternalRegistryFactory;
+
+impl AiperfRegistryFactory for ExternalRegistryFactory {
+    fn build(&self) -> Result<AiperfRegistry, ExtensionError> {
+        AiperfRegistry::builtin()?.with_extensions([&ExternalExtension as &dyn AiperfExtension])
+    }
+}
+
 struct PartiallyFailingExtension;
 
 impl AiperfExtension for PartiallyFailingExtension {
@@ -109,6 +117,21 @@ fn linked_extension_registers_and_resolves_a_trait_implementation() {
     assert_eq!(
         registry.extension_names().collect::<Vec<_>>(),
         ["external-test"]
+    );
+}
+
+#[test]
+fn custom_distribution_builds_its_registry_through_the_factory_seam() {
+    let registry = ExternalRegistryFactory.build().unwrap();
+    assert_eq!(
+        registry.extension_names().collect::<Vec<_>>(),
+        ["external-test"]
+    );
+    assert!(
+        registry
+            .samplers()
+            .create("external", &metadata(), RngRoot::new(Some(7)))
+            .is_ok()
     );
 }
 
