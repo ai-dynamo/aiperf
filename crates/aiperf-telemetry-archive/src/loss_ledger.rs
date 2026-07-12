@@ -1060,14 +1060,14 @@ fn same_ranges(left: SaturationStateV1, right: SaturationStateV1) -> bool {
 }
 
 fn monotonic_ranges(previous: SaturationStateV1, next: SaturationStateV1) -> bool {
-    same_optional_first(
+    optional_first_monotonic(
         previous.first_source_record_seq,
         next.first_source_record_seq,
-    ) && same_optional_first(
+    ) && optional_first_monotonic(
         previous.first_request_attempt_seq,
         next.first_request_attempt_seq,
-    ) && same_optional_first(previous.first_tick, next.first_tick)
-        && same_optional_first(previous.first_deadline_ns, next.first_deadline_ns)
+    ) && optional_first_monotonic(previous.first_tick, next.first_tick)
+        && optional_first_monotonic(previous.first_deadline_ns, next.first_deadline_ns)
         && optional_last_monotonic(previous.last_source_record_seq, next.last_source_record_seq)
         && optional_last_monotonic(
             previous.last_request_attempt_seq,
@@ -1077,15 +1077,19 @@ fn monotonic_ranges(previous: SaturationStateV1, next: SaturationStateV1) -> boo
         && optional_last_monotonic(previous.last_deadline_ns, next.last_deadline_ns)
 }
 
-fn same_optional_first<T: Eq>(previous: Option<T>, next: Option<T>) -> bool {
-    previous == next
+fn optional_first_monotonic<T: Eq>(previous: Option<T>, next: Option<T>) -> bool {
+    match (previous, next) {
+        (None, None | Some(_)) => true,
+        (Some(previous), Some(next)) => next == previous,
+        (Some(_), None) => false,
+    }
 }
 
 fn optional_last_monotonic<T: Ord>(previous: Option<T>, next: Option<T>) -> bool {
     match (previous, next) {
-        (None, None) => true,
+        (None, None | Some(_)) => true,
         (Some(previous), Some(next)) => next >= previous,
-        _ => false,
+        (Some(_), None) => false,
     }
 }
 
@@ -1802,16 +1806,57 @@ mod tests {
 
         let mut regressed = repeated;
         regressed.saturation_snapshot_seq = first.saturation_snapshot_seq;
+        let mut rollback =
+            FixedLossLedgerV1::new(archive_id(), session_id(), ["source-a"], limits(1)).unwrap();
         assert_eq!(
+            rollback
+                .restore_durable_snapshots([first.clone(), regressed])
+                .unwrap_err(),
+            LossLedgerError::NonMonotonicSnapshotSequence
+        );
+        assert_eq!(rollback.active_saturation_slot_count(), 0);
+        assert!(rollback.bounded_view().complete_ranges);
+
+        let mut optional_request =
+            FixedLossLedgerV1::new(archive_id(), session_id(), ["source-a"], limits(1)).unwrap();
+        optional_request
+            .record(issued(
+                "source-a",
+                100,
+                None,
+                LossKindV1::ProjectionFailed,
+                1,
+            ))
+            .unwrap();
+        optional_request
+            .record(issued("source-a", 1, None, LossKindV1::ProjectionFailed, 2))
+            .unwrap();
+        let without_request = optional_request
+            .bounded_view()
+            .saturation_snapshots
+            .remove(0);
+        optional_request
+            .record(issued(
+                "source-a",
+                3,
+                Some(30),
+                LossKindV1::ProjectionFailed,
+                3,
+            ))
+            .unwrap();
+        let with_request = optional_request
+            .bounded_view()
+            .saturation_snapshots
+            .remove(0);
+        assert!(
             FixedLossLedgerV1::resume(
                 archive_id(),
                 session_id(),
                 ["source-a"],
                 limits(1),
-                [first, regressed],
+                [without_request, with_request],
             )
-            .unwrap_err(),
-            LossLedgerError::NonMonotonicSnapshotSequence
+            .is_ok()
         );
     }
 
