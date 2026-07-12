@@ -167,7 +167,10 @@ def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
             workload_id = authored["workload"]["type"]
             if not installation.supports_pair(backend_id, workload_id):
                 continue
-            installation.validate_authored_run(run)
+            installation.validate_authored_request(
+                projected,
+                benchmark_id=run.benchmark_id,
+            )
         except Exception as error:
             raise ConfigurationError(
                 "Native runner validation failed for variation "

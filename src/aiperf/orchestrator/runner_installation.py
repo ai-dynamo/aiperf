@@ -170,10 +170,26 @@ class RunnerInstallation:
     def validate_authored_run(self, run: BenchmarkRun) -> dict[str, Any]:
         """Run strict side-effect-free validation in one fresh native child."""
         request = self.project_authored_request(run, operation="validate")
+        return self.validate_authored_request(
+            request,
+            benchmark_id=run.benchmark_id,
+        )
+
+    def validate_authored_request(
+        self,
+        request: dict[str, Any],
+        *,
+        benchmark_id: str,
+    ) -> dict[str, Any]:
+        """Validate one already-projected v2 request without projecting it again."""
+        if request.get("protocol_version") != RUNNER_PROTOCOL_V2:
+            raise ValueError("authored validation requires a protocol-v2 request")
+        if request.get("operation") != "validate":
+            raise ValueError("authored validation requires operation='validate'")
         completed = self.execute(request)
         response = _parse_validation_response(
             completed.stdout,
-            benchmark_id=run.benchmark_id,
+            benchmark_id=benchmark_id,
             distribution_id=request["expected_distribution_id"],
             returncode=completed.returncode,
             stderr=completed.stderr,
@@ -186,7 +202,7 @@ class RunnerInstallation:
         if stderr:
             detail = f"{detail}; Rust stderr: {stderr[-4000:]}"
         raise RuntimeError(
-            f"aiperf-runner rejected authored run {run.benchmark_id!r} "
+            f"aiperf-runner rejected authored run {benchmark_id!r} "
             f"(exit {completed.returncode}): {detail}"
         )
 
@@ -351,7 +367,9 @@ def _parse_validation_response(
     try:
         response = orjson.loads(lines[0])
     except orjson.JSONDecodeError as error:
-        raise ValueError(f"aiperf-runner returned invalid validation JSON: {error}") from error
+        raise ValueError(
+            f"aiperf-runner returned invalid validation JSON: {error}"
+        ) from error
     if not isinstance(response, dict):
         raise ValueError("aiperf-runner validation response must be an object")
     expected: dict[str, object] = {
@@ -378,7 +396,9 @@ def _parse_validation_response(
         if not isinstance(entries, list) or not all(
             isinstance(entry, dict) for entry in entries
         ):
-            raise ValueError(f"aiperf-runner validation {field} must be an array of objects")
+            raise ValueError(
+                f"aiperf-runner validation {field} must be an array of objects"
+            )
     errors = response.get("errors", [])
     if not all(
         isinstance(error.get("code"), str)

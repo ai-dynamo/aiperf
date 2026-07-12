@@ -62,6 +62,14 @@ class _RecordingRunnerInstallation:
             raise self.validation_error
         return {"success": True}
 
+    def validate_authored_request(self, request, *, benchmark_id: str):
+        assert request["operation"] == "validate"
+        assert request["run"]["identity"]["benchmark_id"] == benchmark_id
+        self.validated_runs.append(self.projected_runs[-1])
+        if self.validation_error is not None:
+            raise self.validation_error
+        return {"success": True}
+
 
 def _select_runner(
     monkeypatch: pytest.MonkeyPatch,
