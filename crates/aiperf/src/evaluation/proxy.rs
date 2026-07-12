@@ -27,6 +27,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context as TaskContext, Poll};
+use std::time::Duration;
 
 use aiperf_accuracy::{
     CanonicalJson, EvaluationCaseId, HostOperationEvent, HostOperationRequest, HostResponseMode,
@@ -263,9 +264,10 @@ impl axum::serve::Listener for BoundedUnixListener {
                         address,
                     );
                 }
-                Err(_) => {
+                Err(error) => {
                     drop(permit);
-                    tokio::task::yield_now().await;
+                    tracing::error!(%error, "evaluator proxy accept failed; backing off");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }
         }
@@ -1526,11 +1528,15 @@ async fn proxy_operation(
     ConnectInfo(peer): ConnectInfo<ProxyPeerIdentity>,
     request: Request,
 ) -> Response {
-    let (_headers, body, reservation) =
-        match collect_authenticated_body(&state, peer, request, &[]).await {
+    let (_headers, body, request_bytes) =
+        match authenticate_request_head(&state, peer, request, &[]) {
             Ok(parts) => parts,
             Err(rejection) => return rejection.response(),
         };
+    let (body, reservation) = match collect_reserved_body(&state, body, request_bytes).await {
+        Ok(collected) => collected,
+        Err(rejection) => return rejection.response(),
+    };
     let request = match parse_typed_request(&state, &body) {
         Ok(request) => request,
         Err(rejection) => return rejection.response(),
@@ -1543,13 +1549,17 @@ async fn openai_chat_operation(
     ConnectInfo(peer): ConnectInfo<ProxyPeerIdentity>,
     request: Request,
 ) -> Response {
-    let (headers, body, reservation) =
-        match collect_authenticated_body(&state, peer, request, &[&CASE_HEADER]).await {
+    let (headers, body, request_bytes) =
+        match authenticate_request_head(&state, peer, request, &[&CASE_HEADER]) {
             Ok(parts) => parts,
             Err(rejection) => return rejection.response(),
         };
     let Some(dialect) = state.openai_chat.clone() else {
         return ProxyRejection::GrantScope.response();
+    };
+    let (body, reservation) = match collect_reserved_body(&state, body, request_bytes).await {
+        Ok(collected) => collected,
+        Err(rejection) => return rejection.response(),
     };
     let request = match dialect.lower(&state.runtime, &headers, &body) {
         Ok(request) => request,
@@ -1631,14 +1641,22 @@ fn enqueue_proxy_submission(
     })
 }
 
-async fn collect_authenticated_body(
+fn authenticate_request_head(
     state: &ProxyServerState,
     peer: ProxyPeerIdentity,
     request: Request,
     extra_headers: &[&HeaderName],
-) -> std::result::Result<(HeaderMap, bytes::Bytes, ProxyPendingReservation), ProxyRejection> {
+) -> std::result::Result<(HeaderMap, axum::body::Body, u64), ProxyRejection> {
     let (parts, body) = request.into_parts();
     let request_bytes = authenticate_proxy_peer(state, peer, &parts.headers, extra_headers)?;
+    Ok((parts.headers, body, request_bytes))
+}
+
+async fn collect_reserved_body(
+    state: &ProxyServerState,
+    body: axum::body::Body,
+    request_bytes: u64,
+) -> std::result::Result<(bytes::Bytes, ProxyPendingReservation), ProxyRejection> {
     let reservation = state.runtime.reserve_pending(request_bytes)?;
     let request_bytes =
         usize::try_from(request_bytes).map_err(|_| ProxyRejection::InvalidRequest)?;
@@ -1652,7 +1670,7 @@ async fn collect_authenticated_body(
     if body.len() != request_bytes {
         return Err(ProxyRejection::InvalidRequest);
     }
-    Ok((parts.headers, body, reservation))
+    Ok((body, reservation))
 }
 
 fn parse_typed_request(
@@ -1876,7 +1894,6 @@ fn streaming_response(
 #[cfg(test)]
 mod tests {
     use std::process::{Command, Stdio};
-    use std::time::Duration;
 
     use aiperf_accuracy::{
         EvaluationSessionId, HostCallContext, HostOperationDisposition, HostOperationId,
@@ -2504,6 +2521,46 @@ mod tests {
             malformed_response.starts_with("HTTP/1.1 400 Bad Request"),
             "{malformed_response}"
         );
+        assert_eq!(pending_usage(&ingress.runtime), (0, 0, 0, 0, 0));
+        proxy.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn authenticated_unregistered_dialect_rejects_before_body_collection() {
+        let scope = "a".repeat(64);
+        let socket_path = PathBuf::from(format!(
+            "/tmp/aiperf-evaluator-proxy-unregistered-dialect-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let mut scoped_grant = grant(&scope);
+        scoped_grant.semantic_operation_ids =
+            vec![SemanticOperationId::new("embedding.create").unwrap()];
+        let binding = ScopedProxyBinding {
+            local_locator: "unix:///run/aiperf/evaluator-proxy.sock".into(),
+            host_socket_path: socket_path.clone(),
+            grant: scoped_grant,
+        };
+        let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
+        authorizer.bind_root(std::process::id()).unwrap();
+        let (proxy, ingress) = start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
+            .await
+            .unwrap();
+
+        let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+        let head = proxy_request_head(
+            &binding,
+            OPENAI_CHAT_PATH,
+            1024,
+            "x-aiperf-case-id: case-1\r\n",
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut response))
+            .await
+            .expect("unregistered dialect waited for an untrusted request body")
+            .unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
         assert_eq!(pending_usage(&ingress.runtime), (0, 0, 0, 0, 0));
         proxy.shutdown().await.unwrap();
     }
