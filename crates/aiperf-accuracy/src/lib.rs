@@ -34,9 +34,10 @@ pub use canonical::{
     validate_no_secret_host_payload,
 };
 pub use isolation::{
-    AttestedWorkerLaunch, BubblewrapEvaluatorIsolation, EvaluatorIsolation,
-    EvaluatorIsolationEvidence, EvaluatorLaunchAttestor, EvaluatorResourceLimits,
-    IsolationQuiescenceProof, LaunchAttestation, LaunchClosureFile, PreparedEvaluatorLaunch,
+    AttestedProcessLimitBootstrap, AttestedWorkerLaunch, BUBBLEWRAP_PROCESS_TREE_PROFILE_V4,
+    BubblewrapEvaluatorIsolation, EvaluatorIsolation, EvaluatorIsolationEvidence,
+    EvaluatorLaunchAttestor, EvaluatorResourceLimits, IsolationQuiescenceProof, LaunchAttestation,
+    LaunchClosureFile, PreparedEvaluatorLaunch, PreparedEvaluatorStartupBarrier,
     Sha256LaunchAttestor,
 };
 pub use lifecycle::{EvaluationLifecycle, EvaluationLifecycleState};

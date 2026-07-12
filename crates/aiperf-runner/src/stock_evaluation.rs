@@ -33,16 +33,19 @@ use uuid::Uuid;
 const STOCK_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../../src/aiperf/accuracy/evaluation/manifests/stock_distributions.json");
 const STOCK_MANIFEST_SHA256: &str =
-    "34c6ea5b253e6641a0ffaeda40f5f1567eb615f45d24f828fada560df7d1fe07";
+    "ab182a5c0d2ac7ecc875fc85a70845194f575d2694d0ba1e1c5ad77446babb60";
 const STOCK_MANIFEST_SCHEMA: &str = "aiperf-stock-evaluator-distributions-v1";
 /// Exact isolation profile advertised for every executable stock evaluator.
-pub(crate) const STOCK_ISOLATION_PROFILE: &str = "linux-bubblewrap-rootfs-process-tree-v3";
+pub(crate) const STOCK_ISOLATION_PROFILE: &str = accuracy::BUBBLEWRAP_PROCESS_TREE_PROFILE_V4;
 const PLATFORM: &str = "linux-x86_64";
 const PYTHON_IMPLEMENTATION: &str = "cpython";
 const PYTHON_VERSION: &str = "3.12.10";
 const PYTHON_ABI: &str = "cpython-312-x86_64-linux-gnu";
 const PROGRAM: &str = "runtime/bin/python3.12";
 const CURRENT_DIR: &str = "work";
+const RESOURCE_BOOTSTRAP: &str = "runtime/libexec/aiperf-evaluator-resource-bootstrap.py";
+const RESOURCE_BOOTSTRAP_INSIDE: &str = "/runtime/libexec/aiperf-evaluator-resource-bootstrap.py";
+const PROCESS_LIMIT_ARGUMENT: &str = "--max-processes";
 const SITE_PACKAGES_RELATIVE: &str = "lib/python3.12/site-packages";
 const SITE_PACKAGES_DESTINATION: &str = "runtime/lib/python3.12/site-packages";
 const PROVIDER_ROOTS_ENV: &str = "AIPERF_EVALUATOR_PROVIDER_ROOTS";
@@ -421,7 +424,11 @@ impl StockDistribution {
             proxy.validate()?;
         }
         self.isolation.validate()?;
-        self.launch.validate(manifest, &self.identity_components)?;
+        self.launch.validate(
+            manifest,
+            &self.identity_components,
+            self.isolation.resource_limits.processes,
+        )?;
         self.validate_provider_source_digest()?;
         Ok(())
     }
@@ -871,11 +878,15 @@ impl StockIsolation {
     }
 
     fn implementation(&self) -> Result<Arc<dyn accuracy::EvaluatorIsolation>> {
-        Ok(Arc::new(accuracy::BubblewrapEvaluatorIsolation::new(
-            &self.bubblewrap,
-            self.bubblewrap_sha256.clone(),
-            self.resource_limits,
-        )?))
+        let bootstrap = accuracy::AttestedProcessLimitBootstrap::new(RESOURCE_BOOTSTRAP)?;
+        Ok(Arc::new(
+            accuracy::BubblewrapEvaluatorIsolation::new(
+                &self.bubblewrap,
+                self.bubblewrap_sha256.clone(),
+                self.resource_limits,
+            )?
+            .with_attested_process_limit_bootstrap(bootstrap),
+        ))
     }
 }
 
@@ -898,6 +909,7 @@ impl StockLaunch {
         &self,
         manifest: &StockDistributionManifest,
         identity_components: &[accuracy::EvaluationIdentityComponent],
+        maximum_processes: u64,
     ) -> Result<()> {
         ensure!(
             !self.shared_closure_ids.is_empty()
@@ -925,6 +937,21 @@ impl StockLaunch {
                     && !value.contains('\0')),
             "stock worker argv/environment is invalid"
         );
+        let expected_process_limit = maximum_processes.to_string();
+        ensure!(
+            self.args.len() >= 4
+                && self.args[0] == "-I"
+                && self.args[1] == RESOURCE_BOOTSTRAP_INSIDE
+                && self.args[2] == PROCESS_LIMIT_ARGUMENT
+                && self.args[3] == expected_process_limit
+                && self
+                    .args
+                    .iter()
+                    .filter(|argument| argument.as_str() == PROCESS_LIMIT_ARGUMENT)
+                    .count()
+                    == 1,
+            "stock worker process-limit bootstrap argv drifted from isolation policy"
+        );
         for key in STAGING_ENVIRONMENT_DIRECTORIES {
             let value = self
                 .environment
@@ -950,6 +977,10 @@ impl StockLaunch {
                 file.destination
             );
         }
+        ensure!(
+            embedded_destinations.contains(RESOURCE_BOOTSTRAP),
+            "stock worker process-limit bootstrap is absent from the embedded closure"
+        );
         let mut overlay_distributions = BTreeSet::new();
         for overlay in &self.metadata_overlays {
             overlay.validate(
@@ -1541,16 +1572,22 @@ impl ResolvedLaunchClosure {
                 .ok_or_else(|| anyhow!("missing shared closure {closure_id:?}"))?;
             let source_root = match &closure.resolver {
                 SharedClosureResolver::PythonRuntimeRoot(runtime) => {
-                    resolver.python_runtime_root(runtime)?
+                    resolver.python_runtime_root(runtime, &closure.files)?
                 }
-                SharedClosureResolver::SystemRoot(system) => resolver.system_root(system)?,
+                SharedClosureResolver::SystemRoot(system) => {
+                    resolver.system_root(system, &closure.files)?
+                }
             };
             for file in &closure.files {
-                let source = source_root.join(strict_relative_path(
+                let relative = strict_relative_path(
                     &file.source_relative_path,
                     "shared source path",
-                )?);
-                let source = verified_source_path(&source, &file.artifact_content_sha256)?;
+                )?;
+                let source = verified_source_path(
+                    &source_root,
+                    &relative,
+                    &file.artifact_content_sha256,
+                )?;
                 insert_resolved(
                     &mut files,
                     &file.destination,
@@ -1730,7 +1767,8 @@ fn resolve_record_closure(
             continue;
         }
         validate_record_relative(&relative)?;
-        let source = site_root.join(Path::new(&relative));
+        let relative_path = Path::new(&relative);
+        let source = site_root.join(relative_path);
         let expected = if encoded_digest.is_empty() {
             ensure!(
                 source.canonicalize().ok().as_deref() == record_path.canonicalize().ok().as_deref(),
@@ -1740,7 +1778,7 @@ fn resolve_record_closure(
         } else {
             decode_record_digest(&encoded_digest)?
         };
-        let source = verified_source_path(&source, &expected)?;
+        let source = verified_source_path(&site_root, relative_path, &expected)?;
         let environment_root = site_root
             .ancestors()
             .nth(3)
@@ -2231,12 +2269,17 @@ fn ensure_directory_empty(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn verified_source_path(path: &Path, expected_digest: &str) -> Result<PathBuf> {
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("canonicalizing closure source {}", path.display()))?;
-    verify_regular_file_digest(&canonical, expected_digest)?;
-    Ok(canonical)
+fn verified_source_path(root: &Path, relative: &Path, expected_digest: &str) -> Result<PathBuf> {
+    let parent = relative
+        .parent()
+        .ok_or_else(|| anyhow!("closure source has no relative parent"))?;
+    let directory = verified_directory_under(root, parent)?;
+    let file_name = relative
+        .file_name()
+        .ok_or_else(|| anyhow!("closure source has no file name"))?;
+    let path = directory.join(file_name);
+    verify_regular_file_digest(&path, expected_digest)?;
+    Ok(path)
 }
 
 fn verify_regular_file_digest(path: &Path, expected_digest: &str) -> Result<()> {

@@ -913,7 +913,12 @@ impl EvaluationWorkload {
 
             let mut batch = self
                 .provider
-                .poll_events(self.limits.event_batch_size, 0)
+                .poll_events(
+                    self.limits
+                        .event_batch_size
+                        .min(plan.queue_credits.stream_events),
+                    0,
+                )
                 .await
                 .map_err(provider_error)
                 .context("polling evaluator events")?;
@@ -2521,6 +2526,11 @@ mod tests {
             limit: usize,
             _wait_ms: u64,
         ) -> std::result::Result<EvaluationEventBatch, EvaluationProviderError> {
+            if limit == 0 || limit > self.plan.queue_credits.stream_events {
+                return Err(EvaluationProviderError::Protocol(
+                    "fixture poll limit exceeded negotiated stream-event credit".into(),
+                ));
+            }
             if self.terminal_submitted
                 && !self.case_terminal_emitted
                 && self

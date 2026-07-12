@@ -1713,7 +1713,7 @@ either legacy workload.
 
 `crates/aiperf-accuracy/src/isolation.rs` and
 `crates/aiperf-runner/src/stock_evaluation.rs` implement the stock
-`linux-bubblewrap-rootfs-process-tree-v3` profile. Rust independently resolves and hashes the exact
+`linux-bubblewrap-rootfs-process-tree-v4` profile. Rust independently resolves and hashes the exact
 registered CPython, provider package/source-overlay/dependency-lock, system-library, task-manifest,
 and asset closure; materializes a fresh single-link worker root; mounts it read-only at `/`; and
 adds only private writable staging plus the optional per-run Unix proxy socket. Bubblewrap runs the

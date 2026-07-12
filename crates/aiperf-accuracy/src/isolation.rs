@@ -9,6 +9,7 @@ use std::fmt::{self, Display};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,6 +23,9 @@ use crate::provider_protocol::{EvaluationDistributionId, ScopedProxyBinding};
 
 const SANDBOX_UID: u32 = 65_534;
 const SANDBOX_GID: u32 = 65_534;
+const BUBBLEWRAP_STARTUP_BARRIER_FD: i32 = 5;
+const BUBBLEWRAP_STARTUP_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+const PROCESS_LIMIT_ARGUMENT: &str = "--max-processes";
 const PRIVATE_STAGING_MODE: u32 = 0o700;
 const REQUIRED_STAGING_ENVIRONMENT: [(&str, &str, &str); 5] = [
     ("HOME", "/staging/home", "home"),
@@ -30,6 +34,9 @@ const REQUIRED_STAGING_ENVIRONMENT: [(&str, &str, &str); 5] = [
     ("XDG_DATA_HOME", "/staging/.xdg-data", ".xdg-data"),
     ("XDG_CACHE_HOME", "/staging/.xdg-cache", ".xdg-cache"),
 ];
+
+/// Exact Bubblewrap isolation profile with an attested inner process limit and startup barrier.
+pub const BUBBLEWRAP_PROCESS_TREE_PROFILE_V4: &str = "linux-bubblewrap-rootfs-process-tree-v4";
 
 /// One file in the immutable worker launch closure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,8 +381,79 @@ pub struct PreparedEvaluatorLaunch {
     pub current_dir: PathBuf,
     /// Applied resource limits.
     pub resource_limits: EvaluatorResourceLimits,
+    /// Process limit applied to the outer launcher, when enforcement is not
+    /// deferred to an attested bootstrap inside the private user namespace.
+    pub launcher_process_limit: Option<u64>,
+    /// Optional isolation-owned barrier held until the private process tree is pinned.
+    pub startup_barrier: Option<PreparedEvaluatorStartupBarrier>,
     /// Complete isolation proof.
     pub evidence: EvaluatorIsolationEvidence,
+}
+
+/// Prepared one-way startup barrier owned by an isolation implementation.
+///
+/// A supervisor installs the read descriptor in the isolation launcher, then
+/// retains the write end until it has captured the required process-tree
+/// identity. A future isolation implementation can use the same generic
+/// barrier without adding launcher-specific behavior to the supervisor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreparedEvaluatorStartupBarrier {
+    child_fd: i32,
+    capture_timeout: Duration,
+}
+
+impl PreparedEvaluatorStartupBarrier {
+    /// Construct a validated startup barrier descriptor and independent capture deadline.
+    pub fn new(child_fd: i32, capture_timeout: Duration) -> Result<Self, EvaluationProviderError> {
+        if child_fd <= 4 || capture_timeout.is_zero() || capture_timeout > Duration::from_secs(60) {
+            return Err(EvaluationProviderError::Launch(
+                "startup barrier descriptor or capture timeout was invalid".to_string(),
+            ));
+        }
+        Ok(Self {
+            child_fd,
+            capture_timeout,
+        })
+    }
+
+    /// Fixed descriptor installed in the isolation launcher.
+    pub fn child_fd(&self) -> i32 {
+        self.child_fd
+    }
+
+    /// Independent deadline for capturing the private process tree.
+    pub fn capture_timeout(&self) -> Duration {
+        self.capture_timeout
+    }
+}
+
+/// Factory-owned standalone bootstrap that enforces the process limit before worker imports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttestedProcessLimitBootstrap {
+    relative_path: PathBuf,
+}
+
+impl AttestedProcessLimitBootstrap {
+    /// Bind one rootfs-relative standalone bootstrap path.
+    pub fn new(relative_path: impl Into<PathBuf>) -> Result<Self, EvaluationProviderError> {
+        let relative_path = relative_path.into();
+        if relative_path.as_os_str().is_empty()
+            || relative_path.is_absolute()
+            || !relative_path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(EvaluationProviderError::Launch(
+                "process-limit bootstrap path was not strict rootfs-relative".to_string(),
+            ));
+        }
+        Ok(Self { relative_path })
+    }
+
+    /// Rootfs-relative attested bootstrap path.
+    pub fn relative_path(&self) -> &Path {
+        &self.relative_path
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -415,12 +493,52 @@ impl IsolationProcessTreeIdentity {
         self.root.pid
     }
 
+    pub(crate) fn startup_identity_captured(&self) -> bool {
+        !self.require_isolated_pid_namespace
+            || (!self.isolated_pid_namespaces.is_empty()
+                && self.isolated_pid_namespaces.len() == self.isolated_pid_namespace_inits.len()
+                && self
+                    .isolated_pid_namespaces
+                    .iter()
+                    .all(|namespace| self.isolated_pid_namespace_inits.contains_key(namespace)))
+    }
+
+    pub(crate) fn root_is_live(&self) -> Result<bool, EvaluationProviderError> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok(read_linux_process_stat(self.root.pid)?
+                .is_some_and(|stat| stat.start_time_ticks == self.root.start_time_ticks))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(EvaluationProviderError::Quiescence(
+                "process-tree liveness is available only on Linux".to_string(),
+            ))
+        }
+    }
+
+    pub(crate) fn missing_required_namespace_after_root_exit(
+        &self,
+    ) -> Result<bool, EvaluationProviderError> {
+        Ok(self.require_isolated_pid_namespace
+            && self.isolated_pid_namespaces.is_empty()
+            && !self.root_is_live()?)
+    }
+
     #[cfg(test)]
     pub(crate) fn fixture(
         root_pid: u32,
         previous: Option<&Self>,
     ) -> Result<Self, EvaluationProviderError> {
         capture_linux_process_tree(root_pid, previous, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_requiring_private_pid_namespace(
+        root_pid: u32,
+        previous: Option<&Self>,
+    ) -> Result<Self, EvaluationProviderError> {
+        capture_linux_process_tree(root_pid, previous, true)
     }
 }
 
@@ -492,6 +610,7 @@ pub struct BubblewrapEvaluatorIsolation {
     bubblewrap: PathBuf,
     bubblewrap_sha256: String,
     limits: EvaluatorResourceLimits,
+    process_limit_bootstrap: Option<AttestedProcessLimitBootstrap>,
 }
 
 impl BubblewrapEvaluatorIsolation {
@@ -512,7 +631,21 @@ impl BubblewrapEvaluatorIsolation {
             bubblewrap,
             bubblewrap_sha256,
             limits,
+            process_limit_bootstrap: None,
         })
+    }
+
+    /// Defer `RLIMIT_NPROC` to a standalone bootstrap attested in the worker closure.
+    ///
+    /// The bootstrap path and exact `--max-processes` argv are verified during
+    /// preparation. Other resource ceilings continue to apply to the outer
+    /// launcher and are inherited by the worker.
+    pub fn with_attested_process_limit_bootstrap(
+        mut self,
+        bootstrap: AttestedProcessLimitBootstrap,
+    ) -> Self {
+        self.process_limit_bootstrap = Some(bootstrap);
+        self
     }
 
     #[cfg(target_os = "linux")]
@@ -601,11 +734,27 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         }
         let inside_program = Path::new("/").join(relative_program);
         let inside_current = Path::new("/").join(relative_current);
+        let launcher_process_limit = match &self.process_limit_bootstrap {
+            Some(bootstrap) => {
+                let host_bootstrap = worker_root.join(bootstrap.relative_path());
+                let inside_bootstrap = Path::new("/").join(bootstrap.relative_path());
+                ensure_attested_process_limit_bootstrap(
+                    launch,
+                    &host_bootstrap,
+                    &inside_bootstrap,
+                    self.limits.processes,
+                )?;
+                None
+            }
+            None => Some(self.limits.processes),
+        };
 
         let mut args = vec![
             OsString::from("--die-with-parent"),
             OsString::from("--new-session"),
             OsString::from("--unshare-all"),
+            OsString::from("--block-fd"),
+            OsString::from(BUBBLEWRAP_STARTUP_BARRIER_FD.to_string()),
             OsString::from("--uid"),
             OsString::from(SANDBOX_UID.to_string()),
             OsString::from("--gid"),
@@ -643,9 +792,10 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         args.push(OsString::from("--"));
         args.push(inside_program.into_os_string());
         args.extend(launch.args.iter().cloned());
+        let command_sha256 = command_identity_sha256(&self.bubblewrap, &args);
 
         let proof_input = format!(
-            "aiperf-bwrap-rootfs-v3\n{}\n{}\n{}\n{}\n{}\nuid={}\ngid={}\ncap-drop=ALL\n{:?}\n{:?}\n{}\n{}\n{:?}",
+            "aiperf-bwrap-rootfs-v4\n{}\n{}\n{}\n{}\n{}\nuid={}\ngid={}\ncap-drop=ALL\nstartup-barrier-fd={}\ncommand-sha256={}\nlauncher-process-limit={:?}\n{:?}\n{:?}\n{}\n{}\n{:?}",
             self.bubblewrap_sha256,
             attestation.launch_closure_sha256,
             context
@@ -655,6 +805,9 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             staging.display(),
             SANDBOX_UID,
             SANDBOX_GID,
+            BUBBLEWRAP_STARTUP_BARRIER_FD,
+            command_sha256,
+            launcher_process_limit,
             self.limits,
             context
                 .proxy
@@ -665,7 +818,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             environment,
         );
         let evidence = EvaluatorIsolationEvidence {
-            profile_id: "linux-bubblewrap-rootfs-process-tree-v3".to_string(),
+            profile_id: BUBBLEWRAP_PROCESS_TREE_PROFILE_V4.to_string(),
             proof_sha256: sha256_hex(proof_input.as_bytes()),
             enforced: EvaluatorIsolationRequirements::strict_process_tree(),
         };
@@ -676,6 +829,11 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             environment: BTreeMap::new(),
             current_dir: PathBuf::from("/"),
             resource_limits: self.limits,
+            launcher_process_limit,
+            startup_barrier: Some(PreparedEvaluatorStartupBarrier::new(
+                BUBBLEWRAP_STARTUP_BARRIER_FD,
+                BUBBLEWRAP_STARTUP_CAPTURE_TIMEOUT,
+            )?),
             evidence,
         })
     }
@@ -722,6 +880,53 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             ))
         }
     }
+}
+
+fn ensure_attested_process_limit_bootstrap(
+    launch: &AttestedWorkerLaunch,
+    host_bootstrap: &Path,
+    inside_bootstrap: &Path,
+    maximum_processes: u64,
+) -> Result<(), EvaluationProviderError> {
+    let encoded_maximum = maximum_processes.to_string();
+    if maximum_processes == 0
+        || launch.args.len() < 4
+        || launch.args[0] != "-I"
+        || launch.args[1].as_os_str() != inside_bootstrap.as_os_str()
+        || launch.args[2] != PROCESS_LIMIT_ARGUMENT
+        || launch.args[3].as_os_str() != std::ffi::OsStr::new(&encoded_maximum)
+        || launch
+            .args
+            .iter()
+            .filter(|argument| argument.as_os_str() == PROCESS_LIMIT_ARGUMENT)
+            .count()
+            != 1
+    {
+        return Err(EvaluationProviderError::Launch(
+            "attested process-limit bootstrap argv did not match the isolation policy".to_string(),
+        ));
+    }
+    let normalized_bootstrap = normalize_absolute(host_bootstrap)?;
+    if !launch
+        .closure
+        .iter()
+        .any(|file| normalize_absolute(&file.path).is_ok_and(|path| path == normalized_bootstrap))
+    {
+        return Err(EvaluationProviderError::Launch(
+            "process-limit bootstrap was absent from the attested launch closure".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn command_identity_sha256(program: &Path, args: &[OsString]) -> String {
+    let mut bytes = Vec::new();
+    for value in std::iter::once(program.as_os_str()).chain(args.iter().map(OsString::as_os_str)) {
+        let encoded = value.as_encoded_bytes();
+        bytes.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(encoded);
+    }
+    sha256_hex(&bytes)
 }
 
 fn exact_staging_environment(
@@ -1307,6 +1512,38 @@ mod tests {
         SemanticOperationId,
     };
 
+    #[cfg(target_os = "linux")]
+    struct HostTaskGuard(Vec<std::process::Child>);
+
+    #[cfg(target_os = "linux")]
+    impl HostTaskGuard {
+        fn exceed(limit: u64) -> Self {
+            let mut children = Vec::new();
+            while current_uid_task_count() <= limit {
+                children.push(
+                    Command::new("sleep")
+                        .arg("120")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .unwrap(),
+                );
+            }
+            Self(children)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for HostTaskGuard {
+        fn drop(&mut self) {
+            for child in &mut self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
     #[test]
     fn launch_attestation_hashes_files_not_worker_claims() {
         let root = std::env::temp_dir().join(format!(
@@ -1436,7 +1673,7 @@ mod tests {
             );
             assert_eq!(
                 isolation["profile_id"].as_str(),
-                Some("linux-bubblewrap-rootfs-process-tree-v3")
+                Some(BUBBLEWRAP_PROCESS_TREE_PROFILE_V4)
             );
         }
         (path, digest, limits)
@@ -1633,12 +1870,15 @@ mod tests {
     #[test]
     fn registered_bubblewrap_enforces_literal_isolation_acceptance_contract() {
         let (bubblewrap, digest, mut limits) = registered_bubblewrap();
-        // RLIMIT_NPROC counts every process with the outer real UID, including
-        // unrelated test jobs. Keep the acceptance ceiling finite while
-        // reserving enough headroom for Bubblewrap's reaper and the one
-        // deliberate descendant used below.
-        limits.processes = limits.processes.max(current_uid_task_count() + 256);
-        let isolation = BubblewrapEvaluatorIsolation::new(&bubblewrap, digest, limits).unwrap();
+        limits.processes = 16;
+        let _host_tasks = HostTaskGuard::exceed(limits.processes);
+        assert!(current_uid_task_count() > limits.processes);
+        let bootstrap_relative = PathBuf::from("runtime/libexec/process-limit-bootstrap.py");
+        let isolation = BubblewrapEvaluatorIsolation::new(&bubblewrap, digest, limits)
+            .unwrap()
+            .with_attested_process_limit_bootstrap(
+                AttestedProcessLimitBootstrap::new(&bootstrap_relative).unwrap(),
+            );
         if let Err(error) = isolation.check_available() {
             eprintln!("skipping unavailable immutable Bubblewrap profile: {error}");
             return;
@@ -1657,6 +1897,28 @@ mod tests {
         }
         std::fs::create_dir_all(&staging).unwrap();
         let contained_python = materialize_minimal_python(&worker_root);
+        let bootstrap = worker_root.join(&bootstrap_relative);
+        std::fs::create_dir_all(bootstrap.parent().unwrap()).unwrap();
+        std::fs::write(
+            &bootstrap,
+            r#"import os
+import resource
+import sys
+
+if len(sys.argv) < 4 or sys.argv[1] != "--max-processes":
+    os._exit(70)
+encoded = sys.argv[2]
+if not encoded.isascii() or not encoded.isdecimal() or encoded.startswith("0"):
+    os._exit(71)
+maximum = int(encoded)
+resource.setrlimit(resource.RLIMIT_NPROC, (maximum, maximum))
+if resource.getrlimit(resource.RLIMIT_NPROC) != (maximum, maximum):
+    os._exit(72)
+os.execv(sys.executable, [sys.executable, *sys.argv[3:]])
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&bootstrap, std::fs::Permissions::from_mode(0o444)).unwrap();
         let socket_path = base.join("evaluator-proxy.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -1730,11 +1992,16 @@ expected_limits = [
     (resource.RLIMIT_AS, int(os.environ['AIPERF_EXPECT_RLIMIT_AS'])),
     (resource.RLIMIT_FSIZE, int(os.environ['AIPERF_EXPECT_RLIMIT_FSIZE'])),
     (resource.RLIMIT_NOFILE, int(os.environ['AIPERF_EXPECT_RLIMIT_NOFILE'])),
-    (resource.RLIMIT_NPROC, int(os.environ['AIPERF_EXPECT_RLIMIT_NPROC'])),
     (resource.RLIMIT_CPU, int(os.environ['AIPERF_EXPECT_RLIMIT_CPU'])),
 ]
 for resource_id, expected in expected_limits:
     require(resource.getrlimit(resource_id)[0] == expected, 46)
+expected_processes = int(os.environ['AIPERF_EXPECT_RLIMIT_NPROC'])
+require(
+    resource.getrlimit(resource.RLIMIT_NPROC)
+    == (expected_processes, expected_processes),
+    54,
+)
 
 open_descriptors = []
 for descriptor in range(64):
@@ -1756,7 +2023,7 @@ os.set_inheritable(3, False)
 os.set_inheritable(4, False)
 descendant = """
 import os
-for descriptor in (3, 4):
+for descriptor in (3, 4, 5):
     try:
         os.fstat(descriptor)
         raise SystemExit(1)
@@ -1833,6 +2100,10 @@ except BaseException as error:
             distribution_id: EvaluationDistributionId::new("real-bwrap-fixture").unwrap(),
             program: contained_python.clone(),
             args: vec![
+                OsString::from("-I"),
+                OsString::from(Path::new("/").join(&bootstrap_relative)),
+                OsString::from(PROCESS_LIMIT_ARGUMENT),
+                OsString::from(limits.processes.to_string()),
                 OsString::from("-S"),
                 OsString::from("-c"),
                 OsString::from(script),
@@ -1874,9 +2145,7 @@ except BaseException as error:
                 ),
                 (
                     OsString::from("AIPERF_EXPECT_RLIMIT_NPROC"),
-                    OsString::from(
-                        effective_resource_limit(libc::RLIMIT_NPROC, limits.processes).to_string(),
-                    ),
+                    OsString::from(limits.processes.to_string()),
                 ),
                 (
                     OsString::from("AIPERF_EXPECT_RLIMIT_CPU"),
@@ -1887,10 +2156,16 @@ except BaseException as error:
             ]),
             current_dir: worker_root.clone(),
             worker_root: worker_root.clone(),
-            closure: vec![LaunchClosureFile {
-                path: contained_python.clone(),
-                artifact_content_sha256: hash_file(&contained_python).unwrap(),
-            }],
+            closure: vec![
+                LaunchClosureFile {
+                    path: contained_python.clone(),
+                    artifact_content_sha256: hash_file(&contained_python).unwrap(),
+                },
+                LaunchClosureFile {
+                    path: bootstrap.clone(),
+                    artifact_content_sha256: hash_file(&bootstrap).unwrap(),
+                },
+            ],
         };
         let context = ProviderLaunchContext {
             session_id,
@@ -1907,7 +2182,7 @@ except BaseException as error:
                     distribution_id: launch.distribution_id.clone(),
                     executable_sha256: hash_file(&contained_python).unwrap(),
                     launch_closure_sha256: "b".repeat(64),
-                    verified_files: 1,
+                    verified_files: 2,
                 },
                 &context,
             )
@@ -1917,6 +2192,18 @@ except BaseException as error:
         let control_write = File::open("/dev/null").unwrap();
         let control_read_fd = control_read.as_raw_fd();
         let control_write_fd = control_write.as_raw_fd();
+        let startup = prepared.startup_barrier.unwrap();
+        assert_eq!(startup.child_fd(), BUBBLEWRAP_STARTUP_BARRIER_FD);
+        assert_eq!(prepared.launcher_process_limit, None);
+        let mut barrier_descriptors = [0_i32; 2];
+        assert_eq!(
+            unsafe { libc::pipe2(barrier_descriptors.as_mut_ptr(), libc::O_CLOEXEC,) },
+            0
+        );
+        let barrier_read = unsafe { File::from_raw_fd(barrier_descriptors[0]) };
+        let mut barrier_write = unsafe { File::from_raw_fd(barrier_descriptors[1]) };
+        let barrier_read_fd = barrier_read.as_raw_fd();
+        let barrier_write_fd = barrier_write.as_raw_fd();
         let prepared_limits = prepared.resource_limits;
         let mut command = Command::new(&prepared.program);
         command
@@ -1940,6 +2227,12 @@ except BaseException as error:
                     }
                 }
                 crate::supervisor::mark_unexpected_fds_close_on_exec()?;
+                crate::supervisor::duplicate_control_fd(barrier_read_fd, startup.child_fd())?;
+                for descriptor in [barrier_read_fd, barrier_write_fd] {
+                    if descriptor != startup.child_fd() && descriptor > 4 {
+                        libc::close(descriptor);
+                    }
+                }
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -1956,10 +2249,6 @@ except BaseException as error:
                     prepared_limits.open_files,
                 )?;
                 crate::supervisor::set_resource_limit(
-                    libc::RLIMIT_NPROC,
-                    prepared_limits.processes,
-                )?;
-                crate::supervisor::set_resource_limit(
                     libc::RLIMIT_CPU,
                     prepared_limits.cpu_seconds,
                 )?;
@@ -1971,7 +2260,20 @@ except BaseException as error:
         let mut process_tree = isolation.observe_process_tree(root_pid, None).unwrap();
         drop(control_read);
         drop(control_write);
+        drop(barrier_read);
         drop(unexpected);
+        let startup_deadline = Instant::now() + startup.capture_timeout();
+        while !process_tree.startup_identity_captured() {
+            assert!(Instant::now() < startup_deadline);
+            assert!(process_tree.root_is_live().unwrap());
+            std::thread::sleep(Duration::from_millis(1));
+            process_tree = isolation
+                .observe_process_tree(root_pid, Some(&process_tree))
+                .unwrap();
+        }
+        barrier_write.write_all(b"\x01").unwrap();
+        barrier_write.flush().unwrap();
+        drop(barrier_write);
 
         let sibling_script = r#"
 import os, socket
@@ -2155,7 +2457,7 @@ raise SystemExit(0 if stream.recv(1) == b'D' else 41)
         );
         assert_eq!(
             prepared.evidence.profile_id,
-            "linux-bubblewrap-rootfs-process-tree-v3"
+            BUBBLEWRAP_PROCESS_TREE_PROFILE_V4
         );
         std::fs::write(worker_root.join("dev/undeclared"), b"not-empty").unwrap();
         assert!(
