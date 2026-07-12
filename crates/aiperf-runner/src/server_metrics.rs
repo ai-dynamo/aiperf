@@ -518,3 +518,62 @@ fn metric_type_name(metric_type: PrometheusMetricType) -> &'static str {
         PrometheusMetricType::Unknown => "unknown",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    fn artifact_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aiperf-server-metrics-artifact-{}-{}.jsonl",
+            std::process::id(),
+            NEXT_PATH.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn record(timestamp_ns: i64, is_duplicate: bool) -> ServerMetricsRecord {
+        ServerMetricsRecord {
+            endpoint_url: "http://server/metrics".to_string(),
+            timestamp_ns,
+            endpoint_latency_ns: Some(10),
+            request_sent_ns: Some(timestamp_ns - 10),
+            first_byte_ns: Some(timestamp_ns),
+            is_duplicate,
+            benchmark_phase: Some(Phase::Profiling),
+            metrics: BTreeMap::from([(
+                "queue".to_string(),
+                aiperf_server_metrics::MetricFamily {
+                    metric_type: PrometheusMetricType::Gauge,
+                    description: "Queued requests".to_string(),
+                    samples: vec![MetricSample::Scalar {
+                        labels: BTreeMap::new(),
+                        value: 3.0,
+                    }],
+                },
+            )]),
+        }
+    }
+
+    #[test]
+    fn unchanged_scrapes_never_reenter_the_slim_artifact_as_duplicate_rows() {
+        let path = artifact_path();
+        let records = vec![record(10, false), record(20, true), record(30, true)];
+
+        JsonlServerMetricsArtifactSink
+            .write(&path, &records, true)
+            .unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let rows = contents.lines().collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        let row: Value = serde_json::from_str(rows[0]).unwrap();
+        assert_eq!(row["timestamp_ns"], 10);
+        std::fs::remove_file(path).unwrap();
+    }
+}
