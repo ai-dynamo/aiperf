@@ -256,3 +256,18 @@ its `AccuracyRegistry` accessors/error variant are deleted. External evaluator
 implementations are selected by constructing/injecting an `AccuracyEvaluator`,
 just as clocks and transports are constructor-injected seams rather than
 runtime-name registry entries.
+
+## Addendum — 2026-07-11 (the runner is the endpoint composition root)
+
+The compile-time and transactional extension decisions remain authoritative, but the currently
+built endpoint category is not yet open enough to satisfy them for a genuinely new dialect. The
+closed `EndpointType` wire enum bounds extensions to identities already compiled into core, the
+extension proof registers only another name for `ChatEndpoint`, and production execution creates a
+fresh built-in registry instead of consuming a registry composed by `aiperf-runner`.
+
+`2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` supersedes that endpoint-specific
+shape. Endpoint identity becomes an open string ID owned by the adapter descriptor; the runner
+explicitly applies built-ins and linked `AiperfExtension`s once, freezes the aggregate, and uses
+that exact value for capabilities, validation, and execution. Dataset-format and sampler extension
+semantics in this spec are unchanged. Runtime discovery, linker self-registration, dynamic
+libraries, replacement priority, and global mutable registries remain rejected.

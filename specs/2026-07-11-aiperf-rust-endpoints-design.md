@@ -230,3 +230,19 @@ The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_
 3. **The `raw`/`template` dependency cost — resolved.** The implementation uses `jmespath` and
    `minijinja`; a configured template path must resolve to a canonical regular file without symlink
    path components, while a non-path value remains a literal inline template.
+
+## Addendum — 2026-07-11 (runner-owned endpoint identity and validation)
+
+Sections 4 and 5 remain accurate descriptions of the currently built metadata flags and endpoint
+behavior, but their ownership model is superseded by
+`2026-07-11-aiperf-runner-owned-endpoint-registry-design.md`.
+
+The final design does not keep a closed `EndpointType` enum, a separate central metadata table, a
+Python endpoint manifest, or Python endpoint-semantic validators. Each Rust adapter owns an open
+string ID plus descriptor, one frozen extension-aware runner registry derives capabilities and
+creates validated adapter/config bindings, and runner validation shares the same preparation path
+as execution. Python treats endpoint IDs as structural strings and delegates endpoint semantics to
+the exact selected runner before its legacy endpoint implementations and metadata are deleted.
+
+This addendum does not supersede the formatter, parser, replay, extraction, transport-lifecycle, or
+parity-fixture requirements in this spec. Those source-grounded behaviors remain authoritative.
