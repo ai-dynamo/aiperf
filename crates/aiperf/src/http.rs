@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use crate::multiturn::PreparedEndpointReference;
-use crate::multiturn::{LegacyTurnEndpointBinding, TurnEndpoint, TurnToSend};
+use crate::multiturn::{LegacyTurnEndpointBinding, TurnDataPolicy, TurnEndpoint, TurnToSend};
 use crate::scheduled::{
     ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher, TurnResponseObserver,
 };
@@ -128,7 +128,7 @@ impl fmt::Debug for HttpRequest {
 }
 
 /// Version of the trusted execution-command wire.
-pub const HTTP_EXECUTION_COMMAND_VERSION: u32 = 2;
+pub const HTTP_EXECUTION_COMMAND_VERSION: u32 = 3;
 
 /// Data-only HTTP request carried across an execution-placement boundary.
 ///
@@ -267,6 +267,30 @@ struct HttpCollectedDispatch {
     record: RequestRecord,
 }
 
+fn enforce_turn_data_policy(
+    data_policy: TurnDataPolicy,
+    request_payload: &mut Bytes,
+    record: &mut RequestRecord,
+    model_response: &mut ModelResponseMetadata,
+) {
+    if !data_policy.retain_raw_exchange() || !data_policy.allow_public_content_hash() {
+        *request_payload = Bytes::new();
+        record.request_body = Bytes::new();
+        record.request_headers.clear();
+        record.response_headers.clear();
+        record.responses.clear();
+    }
+    if !data_policy.allow_content_diagnostics() {
+        if let Some(error) = &mut record.error {
+            error.message = "restricted evaluator HTTP operation failed".to_string();
+        }
+        if model_response.error_message.is_some() {
+            model_response.error_message =
+                Some("restricted evaluator inference failed".to_string());
+        }
+    }
+}
+
 /// HTTP-specific terminal result retained by raw-artifact consumers.
 ///
 /// Policy-neutral workloads continue to consume [`TurnDispatchOutcome`]. The
@@ -303,6 +327,8 @@ pub struct PreparedHttpTurn {
     pub endpoint: PreparedHttpEndpoint,
     /// Whether the request came from the endpoint-aware dataset seam.
     pub endpoint_aware: bool,
+    /// Content retention/cache/diagnostic policy fixed by materialization.
+    pub data_policy: TurnDataPolicy,
 }
 
 impl fmt::Debug for PreparedHttpTurn {
@@ -313,6 +339,7 @@ impl fmt::Debug for PreparedHttpTurn {
             .field("model", &self.model)
             .field("endpoint", &self.endpoint)
             .field("endpoint_aware", &self.endpoint_aware)
+            .field("data_policy", &self.data_policy)
             .finish()
     }
 }
@@ -365,6 +392,8 @@ pub struct PreparedHttpTurnWire {
     pub endpoint_api_key: Option<String>,
     /// Whether endpoint-aware dataset materialization produced this request.
     pub endpoint_aware: bool,
+    /// Content retention/cache/diagnostic policy fixed by materialization.
+    pub data_policy: TurnDataPolicy,
 }
 
 impl fmt::Debug for PreparedHttpTurnWire {
@@ -381,6 +410,7 @@ impl fmt::Debug for PreparedHttpTurnWire {
             )
             .field("has_endpoint_api_key", &self.endpoint_api_key.is_some())
             .field("endpoint_aware", &self.endpoint_aware)
+            .field("data_policy", &self.data_policy)
             .finish()
     }
 }
@@ -399,6 +429,7 @@ impl PreparedHttpTurn {
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
         let endpoint_aware = turn.request_body.is_some();
+        let data_policy = turn.data_policy;
         let model = turn
             .effective_model
             .clone()
@@ -448,6 +479,7 @@ impl PreparedHttpTurn {
             model,
             endpoint,
             endpoint_aware,
+            data_policy,
         }
     }
 
@@ -477,6 +509,7 @@ impl PreparedHttpTurn {
             endpoint_headers,
             endpoint_api_key,
             endpoint_aware: self.endpoint_aware,
+            data_policy: self.data_policy,
         }
     }
 }
@@ -516,6 +549,7 @@ impl PreparedHttpTurnWire {
             model: self.model,
             endpoint,
             endpoint_aware: self.endpoint_aware,
+            data_policy: self.data_policy,
         })
     }
 }
@@ -1378,11 +1412,20 @@ impl TransportSink {
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<HttpTurnDispatchResult> {
         let PreparedHttpTurn {
-            request,
+            mut request,
             model,
             endpoint,
             endpoint_aware,
+            data_policy,
         } = turn;
+        if !data_policy.allow_result_cache() {
+            request
+                .headers
+                .insert("cache-control".to_string(), "no-store".to_string());
+            request
+                .headers
+                .insert("pragma".to_string(), "no-cache".to_string());
+        }
         let collected = if endpoint_aware {
             match endpoint {
                 PreparedHttpEndpoint::Legacy(binding) => {
@@ -1432,20 +1475,26 @@ impl TransportSink {
         };
         let HttpCollectedDispatch {
             result,
-            request_payload,
-            record,
+            mut request_payload,
+            mut record,
         } = collected;
         let HttpDispatchResult {
             start_ns,
             end_ns,
             terminal,
             response_text,
-            model_response,
+            mut model_response,
             prompt_tokens,
             completion_tokens,
             http,
             ..
         } = result;
+        enforce_turn_data_policy(
+            data_policy,
+            &mut request_payload,
+            &mut record,
+            &mut model_response,
+        );
         Ok(HttpTurnDispatchResult {
             outcome: TurnDispatchOutcome {
                 start_ns,
@@ -1572,6 +1621,48 @@ mod tests {
     }
 
     #[test]
+    fn restricted_turn_policy_erases_raw_exchange_and_content_diagnostics() {
+        const SENTINEL: &str = "hidden-restricted-request-sentinel";
+
+        let mut request_payload = Bytes::from_static(SENTINEL.as_bytes());
+        let mut record = RequestRecord {
+            request_body: Bytes::from_static(SENTINEL.as_bytes()),
+            request_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
+            response_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
+            responses: vec![Response::Text(
+                aiperf_transport_http::models::TextResponse {
+                    perf_ns: 1,
+                    text: SENTINEL.into(),
+                    body: Bytes::from_static(SENTINEL.as_bytes()),
+                    content_type: Some("text/plain".into()),
+                },
+            )],
+            error: Some(ErrorDetails::other(SENTINEL)),
+            ..RequestRecord::started(0)
+        };
+        let mut model_response = ModelResponseMetadata {
+            error_message: Some(SENTINEL.into()),
+            ..ModelResponseMetadata::default()
+        };
+
+        enforce_turn_data_policy(
+            TurnDataPolicy::restricted_transient(),
+            &mut request_payload,
+            &mut record,
+            &mut model_response,
+        );
+
+        assert!(request_payload.is_empty());
+        assert!(record.request_body.is_empty());
+        assert!(record.request_headers.is_empty());
+        assert!(record.response_headers.is_empty());
+        assert!(record.responses.is_empty());
+        assert!(!record.error.as_ref().unwrap().message.contains(SENTINEL));
+        assert!(!model_response.error_message.unwrap().contains(SENTINEL));
+        assert!(!format!("{record:?}").contains(SENTINEL));
+    }
+
+    #[test]
     fn prepared_turn_wire_round_trips_and_redacts_debug_output() {
         let request_secret = "request-secret";
         let endpoint_secret = "endpoint-secret";
@@ -1609,6 +1700,7 @@ mod tests {
                 config: endpoint_config,
             })),
             endpoint_aware: true,
+            data_policy: TurnDataPolicy::restricted_transient(),
         };
 
         let wire = prepared.into_wire();
@@ -1639,6 +1731,10 @@ mod tests {
             EndpointType::Messages
         );
         assert!(rehydrated.endpoint_aware);
+        assert_eq!(
+            rehydrated.data_policy,
+            TurnDataPolicy::restricted_transient()
+        );
     }
 
     #[test]
@@ -1666,6 +1762,7 @@ mod tests {
             endpoint_headers: BTreeMap::new(),
             endpoint_api_key: None,
             endpoint_aware: false,
+            data_policy: TurnDataPolicy::ordinary(),
         };
         let error = wire
             .into_prepared(&BuiltinEndpointResolver::default())
@@ -1702,6 +1799,7 @@ mod tests {
             endpoint_headers: BTreeMap::new(),
             endpoint_api_key: None,
             endpoint_aware: true,
+            data_policy: TurnDataPolicy::ordinary(),
         };
         let encoded = serde_json::to_vec(&wire).unwrap();
         let decoded: PreparedHttpTurnWire = serde_json::from_slice(&encoded).unwrap();

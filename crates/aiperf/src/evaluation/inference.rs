@@ -43,7 +43,8 @@ use super::retry::{
     InferenceAttemptExecutor, OneAttemptInference, OperationCancellation,
 };
 use crate::multiturn::{
-    ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference, TurnToSend,
+    ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference, TurnDataPolicy,
+    TurnToSend,
 };
 use crate::scheduled::TurnResponseObserver;
 use crate::scheduled::{ScheduledRuntime, TurnDispatchOutcome};
@@ -244,7 +245,12 @@ impl EvaluationInferenceMaterializer for DatasetEvaluationInferenceMaterializer 
             route.endpoint.clone(),
         )?;
         let session = source.session_for(&operation.logical_call_id, operation.unit_id.clone())?;
-        let turn = session.build_first_turn(Some(1))?;
+        let mut turn = session.build_first_turn(Some(1))?;
+        turn.data_policy = if operation.restricted {
+            TurnDataPolicy::restricted_transient()
+        } else {
+            TurnDataPolicy::ordinary()
+        };
         ensure!(
             turn.request_correlation_id == operation.operation_id,
             "evaluation operation lost request correlation"
@@ -1471,7 +1477,13 @@ impl HostOperationExecutor for ScheduledInferenceHostExecutor {
         };
         let result = self
             .attempt_executor
-            .execute(&operation.operation_id, false, &attempt, cancellation)
+            .execute(
+                &operation.operation_id,
+                false,
+                operation.restricted,
+                &attempt,
+                cancellation,
+            )
             .await?;
         Ok(HostExecutionTerminal {
             class: result.terminal,
@@ -2378,6 +2390,8 @@ mod tests {
         assert_eq!(body["tools"][0]["function"]["name"], "lookup");
         assert_eq!(body["temperature"], 0.2);
         assert_eq!(primary.request_correlation_id, "operation-primary");
+        assert!(primary.data_policy.retain_raw_exchange());
+        assert!(primary.data_policy.allow_result_cache());
 
         let judge = materializer
             .materialize(&operation("judge", "model.generate", payload))
@@ -2385,6 +2399,10 @@ mod tests {
         let body: Value = serde_json::from_slice(judge.request_body.as_ref().unwrap()).unwrap();
         assert_eq!(body["model"], "judge-model");
         assert!(body.get("messages").is_some());
+        assert!(!judge.data_policy.retain_raw_exchange());
+        assert!(!judge.data_policy.allow_result_cache());
+        assert!(!judge.data_policy.allow_content_diagnostics());
+        assert!(!judge.data_policy.allow_public_content_hash());
     }
 
     #[test]

@@ -859,6 +859,7 @@ mod tests {
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),
             endpoint_aware: true,
+            data_policy: aiperf::multiturn::TurnDataPolicy::ordinary(),
         }
     }
 

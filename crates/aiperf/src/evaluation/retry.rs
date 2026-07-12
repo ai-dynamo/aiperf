@@ -220,6 +220,7 @@ pub trait InferenceAttemptExecutor {
         &self,
         operation_id: &str,
         replay_safe_after_output: bool,
+        restricted_content: bool,
         attempt: &dyn OneAttemptInference,
         cancellation: OperationCancellation,
     ) -> Result<InferenceExecutionResult>;
@@ -247,6 +248,7 @@ impl InferenceAttemptExecutor for ClockedInferenceAttemptExecutor {
         &self,
         operation_id: &str,
         replay_safe_after_output: bool,
+        restricted_content: bool,
         attempt: &dyn OneAttemptInference,
         cancellation: OperationCancellation,
     ) -> Result<InferenceExecutionResult> {
@@ -266,7 +268,14 @@ impl InferenceAttemptExecutor for ClockedInferenceAttemptExecutor {
             let attempt_id = format!("{operation_id}:transport:{ordinal}");
             let outcome = attempt
                 .execute_attempt(operation_id, &attempt_id, ordinal, cancellation.clone())
-                .await?;
+                .await
+                .map_err(|error| {
+                    if restricted_content {
+                        anyhow::anyhow!("restricted evaluator inference attempt failed")
+                    } else {
+                        error
+                    }
+                })?;
             attempts.push(InferenceTransportAttempt {
                 attempt_id,
                 ordinal,
@@ -438,6 +447,7 @@ mod tests {
                 .execute(
                     "operation",
                     false,
+                    false,
                     attempts.as_ref(),
                     OperationCancellation::default(),
                 )
@@ -489,6 +499,7 @@ mod tests {
                 .execute(
                     "operation",
                     false,
+                    false,
                     attempts.as_ref(),
                     OperationCancellation::default(),
                 )
@@ -520,12 +531,58 @@ mod tests {
         let result_for_run = result.clone();
         let outcome = drive_sim(clock, move |_handle| async move {
             let completed = executor
-                .execute("operation", false, attempts.as_ref(), cancellation)
+                .execute("operation", false, false, attempts.as_ref(), cancellation)
                 .await
                 .unwrap();
             *result_for_run.borrow_mut() = Some(completed);
         });
         assert!(!outcome.deadlocked);
         assert_eq!(result.borrow_mut().take().unwrap().attempt_count, 0);
+    }
+
+    #[test]
+    fn restricted_attempt_failure_does_not_echo_content_in_diagnostics() {
+        const SENTINEL: &str = "hidden-attempt-diagnostic-sentinel";
+
+        struct FailingAttempt;
+
+        #[async_trait(?Send)]
+        impl OneAttemptInference for FailingAttempt {
+            async fn execute_attempt(
+                &self,
+                _operation_id: &str,
+                _attempt_id: &str,
+                _attempt_ordinal: usize,
+                _cancellation: OperationCancellation,
+            ) -> Result<AttemptExecution> {
+                Err(anyhow::anyhow!(SENTINEL))
+            }
+        }
+
+        let clock = Rc::new(SimClock::new());
+        let policy = Rc::new(
+            ExponentialTransportRetryPolicy::new(1, 0, 0, [HostTerminalClass::Failed]).unwrap(),
+        );
+        let executor = Rc::new(ClockedInferenceAttemptExecutor::new(clock.clone(), policy));
+        let error = Rc::new(RefCell::new(None));
+        let error_for_run = error.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            let failure = executor
+                .execute(
+                    "operation",
+                    false,
+                    true,
+                    &FailingAttempt,
+                    OperationCancellation::default(),
+                )
+                .await
+                .unwrap_err();
+            *error_for_run.borrow_mut() = Some(failure.to_string());
+        });
+
+        assert!(!outcome.deadlocked);
+        let message = error.borrow_mut().take().unwrap();
+        assert!(!message.contains(SENTINEL));
+        assert_eq!(message, "restricted evaluator inference attempt failed");
     }
 }

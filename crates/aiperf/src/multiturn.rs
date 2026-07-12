@@ -729,6 +729,7 @@ impl LegacySessionBackend {
             timestamp_ms: metadata.timestamp_ms,
             delay_ms: metadata.delay_ms,
             trace_hash_ids: None,
+            data_policy: TurnDataPolicy::ordinary(),
             cancel_after_ns: None,
             url_index: None,
             session: owner.clone(),
@@ -975,6 +976,54 @@ impl fmt::Debug for TurnEndpoint {
     }
 }
 
+/// Retention and disclosure policy carried with one materialized turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnDataPolicy {
+    restricted_transient: bool,
+}
+
+impl TurnDataPolicy {
+    /// Ordinary benchmark content may use configured capture/export paths.
+    pub const fn ordinary() -> Self {
+        Self {
+            restricted_transient: false,
+        }
+    }
+
+    /// Restricted evaluator content may exist only for the live dispatch.
+    pub const fn restricted_transient() -> Self {
+        Self {
+            restricted_transient: true,
+        }
+    }
+
+    /// Whether raw request/response content may be retained after dispatch.
+    pub const fn retain_raw_exchange(self) -> bool {
+        !self.restricted_transient
+    }
+
+    /// Whether a result cache may retain content from this turn.
+    pub const fn allow_result_cache(self) -> bool {
+        !self.restricted_transient
+    }
+
+    /// Whether content-bearing failure detail may enter diagnostics.
+    pub const fn allow_content_diagnostics(self) -> bool {
+        !self.restricted_transient
+    }
+
+    /// Whether raw content may participate in a public digest.
+    pub const fn allow_public_content_hash(self) -> bool {
+        !self.restricted_transient
+    }
+}
+
+impl Default for TurnDataPolicy {
+    fn default() -> Self {
+        Self::ordinary()
+    }
+}
+
 /// A turn awaiting issuance by a timing workload.
 #[derive(Clone, Debug)]
 pub struct TurnToSend {
@@ -1019,6 +1068,8 @@ pub struct TurnToSend {
     pub delay_ms: Option<f64>,
     /// Source-trace cache identities for a simulator-aware dispatch adapter.
     pub trace_hash_ids: Option<StoredTraceHashIds>,
+    /// Content retention/cache/diagnostic policy fixed during materialization.
+    pub data_policy: TurnDataPolicy,
     /// Fixed cancellation delay selected at issuance and armed at send-complete.
     pub cancel_after_ns: Option<i64>,
     /// Effective endpoint index, including a continuation's session pin.
@@ -1421,6 +1472,7 @@ impl NativeSessionBackend {
             trace_hash_ids: timing
                 .trace_hash_ids
                 .map(|handle| StoredTraceHashIds::new(handle, self.segments.clone())),
+            data_policy: TurnDataPolicy::ordinary(),
             cancel_after_ns: None,
             url_index: None,
             session: owner.clone(),

@@ -933,6 +933,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     model,
                     endpoint,
                     endpoint_aware: true,
+                    data_policy: aiperf::multiturn::TurnDataPolicy::ordinary(),
                 },
                 self.observer.as_ref(),
                 &|_| {

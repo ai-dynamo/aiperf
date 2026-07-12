@@ -22,7 +22,7 @@ use aiperf_accuracy::{
     EvaluationUnitOccurrence, EvaluationUnitOccurrenceRequest, EvaluationUnitTemplateId,
     HostCapabilityId, HostOperationDisposition, HostOperationEvent, HostOperationId,
     HostOperationTerminal, HostOperationUsage, HostResponseMode, PublicScoreProjectionPolicy,
-    ResolvedEvaluationAsset, SealedEvaluationArtifacts, SemanticAttemptId,
+    ResolvedEvaluationAsset, ScopedProxyGrant, SealedEvaluationArtifacts, SemanticAttemptId,
 };
 use aiperf_clock::Clock;
 use aiperf_metrics::EvaluationRouteSummaryReport;
@@ -291,8 +291,11 @@ impl EvaluationOccurrenceSource for ClockedEvaluationOccurrenceSource {
 /// Quiescence-gated artifact finalization seam.
 #[async_trait(?Send)]
 pub trait EvaluationArtifactFinalizer {
-    /// Shut down the complete worker tree, prove quiescence, and seal artifacts.
-    async fn finalize(
+    /// Shut down the complete worker tree and prove process-tree quiescence.
+    async fn quiesce(&self, provider: &mut dyn EvaluationProvider) -> Result<()>;
+
+    /// Seal artifacts only after every host capability has also shut down.
+    async fn seal(
         &self,
         provider: &mut dyn EvaluationProvider,
         candidate: &mut EvaluationFinishCandidate,
@@ -333,18 +336,26 @@ impl SealingEvaluationArtifactFinalizer {
 
 #[async_trait(?Send)]
 impl EvaluationArtifactFinalizer for SealingEvaluationArtifactFinalizer {
-    async fn finalize(
-        &self,
-        provider: &mut dyn EvaluationProvider,
-        candidate: &mut EvaluationFinishCandidate,
-    ) -> Result<SealedEvaluationArtifacts> {
+    async fn quiesce(&self, provider: &mut dyn EvaluationProvider) -> Result<()> {
         provider
             .shutdown()
             .await
             .map_err(provider_error)
             .context("shutting down evaluator provider tree")?;
+        ensure!(
+            provider.quiescence_proof().is_some(),
+            "evaluator shutdown returned no process-tree quiescence proof"
+        );
+        Ok(())
+    }
+
+    async fn seal(
+        &self,
+        provider: &mut dyn EvaluationProvider,
+        candidate: &mut EvaluationFinishCandidate,
+    ) -> Result<SealedEvaluationArtifacts> {
         let proof = provider.quiescence_proof().cloned().ok_or_else(|| {
-            anyhow!("evaluator shutdown returned no process-tree quiescence proof")
+            anyhow!("artifact sealing preceded evaluator process-tree quiescence")
         })?;
         let sealed = self
             .sealer
@@ -449,6 +460,30 @@ impl EvaluationWorkloadLimits {
     }
 }
 
+/// Secret-free exact post-plan compatibility grant enforced by Rust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvaluationCompatibilityGrantFacts {
+    pub max_operations: u64,
+    pub max_concurrent_operations: u64,
+    pub max_request_bytes: u64,
+    pub max_response_bytes: u64,
+    pub max_stream_events: u64,
+    pub expires_after_ms: u64,
+}
+
+impl From<&ScopedProxyGrant> for EvaluationCompatibilityGrantFacts {
+    fn from(grant: &ScopedProxyGrant) -> Self {
+        Self {
+            max_operations: grant.max_operations,
+            max_concurrent_operations: grant.max_concurrent_operations,
+            max_request_bytes: grant.max_request_bytes,
+            max_response_bytes: grant.max_response_bytes,
+            max_stream_events: grant.max_stream_events,
+            expires_after_ms: grant.expires_after_ms,
+        }
+    }
+}
+
 /// Fully drained provider result before native-report projection.
 pub struct EvaluationExecutionResult {
     /// Frozen provider plan.
@@ -464,6 +499,8 @@ pub struct EvaluationExecutionResult {
     /// Provider-safe configuration/case identities and Rust route accounting
     /// required by the generic report converter.
     pub report_facts: EvaluationReportFacts,
+    /// Exact post-plan local compatibility authority, absent for pipe-only runs.
+    pub compatibility_grant: Option<EvaluationCompatibilityGrantFacts>,
     /// One-shot lifecycle acknowledgement retained until the native report is
     /// atomically committed by the runner coordinator.
     pub report_commit: EvaluationReportCommit,
@@ -476,6 +513,7 @@ struct EvaluationExecutionCore {
     sealed_artifacts: SealedEvaluationArtifacts,
     operations: Vec<OperationRecord>,
     report_facts: EvaluationReportFacts,
+    compatibility_grant: Option<EvaluationCompatibilityGrantFacts>,
 }
 
 impl EvaluationExecutionCore {
@@ -487,6 +525,7 @@ impl EvaluationExecutionCore {
             sealed_artifacts: self.sealed_artifacts,
             operations: self.operations,
             report_facts: self.report_facts,
+            compatibility_grant: self.compatibility_grant,
             report_commit: EvaluationReportCommit {
                 provider: Some(provider),
             },
@@ -504,6 +543,7 @@ impl std::fmt::Debug for EvaluationExecutionResult {
             .field("sealed_artifacts", &self.sealed_artifacts)
             .field("operations", &self.operations)
             .field("report_facts", &self.report_facts)
+            .field("compatibility_grant", &self.compatibility_grant)
             .field("report_commit", &self.report_commit)
             .finish()
     }
@@ -547,6 +587,7 @@ pub struct EvaluationWorkload {
     asset_resolver: Rc<dyn EvaluationAssetResolver>,
     host_capabilities: EvaluationHostCapabilityInventory,
     public_score_projection_policy: PublicScoreProjectionPolicy,
+    public_config: CanonicalJson,
     occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
     finalizer: Rc<dyn EvaluationArtifactFinalizer>,
     limits: EvaluationWorkloadLimits,
@@ -567,6 +608,7 @@ impl EvaluationWorkload {
         asset_resolver: Rc<dyn EvaluationAssetResolver>,
         host_capabilities: EvaluationHostCapabilityInventory,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_config: CanonicalJson,
         occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
         finalizer: Rc<dyn EvaluationArtifactFinalizer>,
         limits: EvaluationWorkloadLimits,
@@ -582,6 +624,7 @@ impl EvaluationWorkload {
             asset_resolver,
             host_capabilities,
             public_score_projection_policy,
+            public_config,
             occurrence_source,
             finalizer,
             limits,
@@ -665,6 +708,7 @@ impl EvaluationWorkload {
         self.limits.accept_plan(&plan)?;
         self.host_capabilities.validate_plan(&plan)?;
         validate_logical_services(&plan, &self.routes, &self.host_executors)?;
+        let compatibility_grant = self.install_post_plan_proxy_grant(&plan)?;
 
         let assets = self
             .asset_resolver
@@ -987,20 +1031,21 @@ impl EvaluationWorkload {
             candidate.identity == identity,
             "evaluator identity drifted at finalization"
         );
-        let sealed_artifacts = self
-            .finalizer
-            .finalize(self.provider.as_mut(), &mut candidate)
-            .await?;
+        self.finalizer.quiesce(self.provider.as_mut()).await?;
         if let Some(proxy) = self.compatibility_proxy_server.take() {
             proxy
                 .shutdown()
                 .await
                 .context("shutting down evaluator compatibility proxy")?;
         }
+        let sealed_artifacts = self
+            .finalizer
+            .seal(self.provider.as_mut(), &mut candidate)
+            .await?;
         let report_facts = state.build_report_facts(
             &identity,
             &self.routes,
-            self.plan_request.provider_config.value().clone(),
+            self.public_config.value().clone(),
             self.public_score_projection_policy.clone(),
         )?;
         let operations = state.ledger.operations().cloned().collect();
@@ -1011,7 +1056,33 @@ impl EvaluationWorkload {
             sealed_artifacts,
             operations,
             report_facts,
+            compatibility_grant,
         })
+    }
+
+    fn install_post_plan_proxy_grant(
+        &mut self,
+        plan: &EvaluationPlan,
+    ) -> Result<Option<EvaluationCompatibilityGrantFacts>> {
+        let Some(ceiling) = self
+            .compatibility_proxy
+            .as_ref()
+            .map(ProxyOperationReceiver::grant_ceiling)
+        else {
+            return Ok(None);
+        };
+        let narrowed = post_plan_proxy_grant(plan, self.limits.unit_concurrency, &ceiling)?;
+        self.provider
+            .install_compatibility_proxy_grant(&narrowed)
+            .map_err(provider_error)
+            .context("installing evaluator post-plan compatibility grant")?;
+        self.compatibility_proxy
+            .as_ref()
+            .expect("proxy ceiling came from this receiver")
+            .install_narrowed_grant(narrowed.clone())
+            .map_err(proxy_rejection_error)
+            .context("activating evaluator post-plan compatibility grant")?;
+        Ok(Some(EvaluationCompatibilityGrantFacts::from(&narrowed)))
     }
 
     async fn process_provider_event(
@@ -1247,6 +1318,12 @@ impl EvaluationWorkload {
             replay_safe_after_output: false,
         };
         state.ledger.check_registration(&registration)?;
+        ensure!(
+            u64::try_from(state.ledger.operations().len())
+                .context("evaluation operation count exceeds u64")?
+                < state.max_total_host_operations,
+            "provider exceeded its accepted total host-operation envelope"
+        );
         state
             .arbiter
             .check_push(&request.context.unit_id)
@@ -1409,6 +1486,14 @@ impl EvaluationWorkload {
                 };
                 self.host_executors
                     .validate_stream(&semantic_operation_id, &delta.payload)?;
+                ensure!(
+                    state.total_stream_events < state.max_total_stream_events,
+                    "host executor exceeded the accepted total stream-event envelope"
+                );
+                state.total_stream_events = state
+                    .total_stream_events
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("evaluation stream-event count overflow"))?;
                 let stream_sequence = u64::try_from(delta.ordinal)
                     .map_err(|_| anyhow!("stream sequence exceeds u64"))?;
                 let event = HostOperationEvent::StreamDelta {
@@ -1602,6 +1687,9 @@ struct ExecutionState {
     active_operations: BTreeMap<String, ActiveOperation>,
     operation_usage: BTreeMap<String, HostOperationUsage>,
     operation_deadlines: BTreeMap<String, i64>,
+    max_total_host_operations: u64,
+    max_total_stream_events: u64,
+    total_stream_events: u64,
     run_cancellation_started: bool,
     cancel_requested_units: BTreeSet<EvaluationUnitId>,
 }
@@ -1622,6 +1710,9 @@ impl ExecutionState {
             active_operations: BTreeMap::new(),
             operation_usage: BTreeMap::new(),
             operation_deadlines: BTreeMap::new(),
+            max_total_host_operations: plan.max_total_host_operations,
+            max_total_stream_events: plan.max_total_stream_events,
+            total_stream_events: 0,
             run_cancellation_started: false,
             cancel_requested_units: BTreeSet::new(),
         })
@@ -1902,6 +1993,96 @@ fn validate_logical_services(
     Ok(())
 }
 
+fn post_plan_proxy_grant(
+    plan: &EvaluationPlan,
+    unit_concurrency: usize,
+    ceiling: &ScopedProxyGrant,
+) -> Result<ScopedProxyGrant> {
+    ceiling
+        .validate()
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let max_operations = plan.max_total_host_operations;
+    ensure!(
+        max_operations <= ceiling.max_operations,
+        "accepted evaluator plan exceeds compatibility operation ceiling"
+    );
+    let active_units = plan.queue_credits.units.min(unit_concurrency);
+    let active_units = u64::try_from(active_units).context("active evaluator units exceed u64")?;
+    let per_unit = u64::try_from(plan.queue_credits.host_operations_per_unit)
+        .context("per-unit evaluator host-operation credits exceed u64")?;
+    let planned_concurrency = active_units
+        .checked_mul(per_unit)
+        .ok_or_else(|| anyhow!("evaluation proxy concurrency overflow"))?
+        .min(max_operations);
+    let max_concurrent_operations = planned_concurrency.min(ceiling.max_concurrent_operations);
+    ensure!(
+        max_concurrent_operations > 0,
+        "accepted evaluator plan produced an empty compatibility grant"
+    );
+    let mut narrowed = ceiling.clone();
+    narrowed.service_ids.retain(|service_id| {
+        plan.logical_services
+            .iter()
+            .any(|service| &service.service_id == service_id)
+    });
+    narrowed.semantic_operation_ids.retain(|operation_id| {
+        plan.logical_services
+            .iter()
+            .any(|service| service.operations.contains(operation_id))
+    });
+    narrowed.purposes.retain(|purpose| {
+        plan.logical_services
+            .iter()
+            .any(|service| &service.purpose == purpose)
+    });
+    ensure!(
+        !narrowed.service_ids.is_empty()
+            && !narrowed.semantic_operation_ids.is_empty()
+            && !narrowed.purposes.is_empty(),
+        "accepted evaluator plan selected no registered compatibility route"
+    );
+    narrowed.max_operations = max_operations;
+    narrowed.max_concurrent_operations = max_concurrent_operations;
+    narrowed.max_request_bytes = scale_aggregate_proxy_limit(
+        ceiling.max_request_bytes,
+        ceiling.max_operations,
+        max_operations,
+        "request bytes",
+    )?;
+    narrowed.max_response_bytes = scale_aggregate_proxy_limit(
+        ceiling.max_response_bytes,
+        ceiling.max_operations,
+        max_operations,
+        "response bytes",
+    )?;
+    narrowed.max_stream_events = plan.max_total_stream_events;
+    ensure!(
+        narrowed.max_stream_events <= ceiling.max_stream_events,
+        "accepted evaluator plan exceeds compatibility stream-event ceiling"
+    );
+    narrowed
+        .validate_narrowing_of(ceiling)
+        .map_err(|error| anyhow!(error.to_string()))?;
+    Ok(narrowed)
+}
+
+fn scale_aggregate_proxy_limit(
+    ceiling: u64,
+    ceiling_operations: u64,
+    operations: u64,
+    label: &str,
+) -> Result<u64> {
+    ensure!(
+        ceiling % ceiling_operations == 0,
+        "compatibility {label} ceiling is not an exact per-operation multiple"
+    );
+    ceiling
+        .checked_div(ceiling_operations)
+        .and_then(|per_operation| per_operation.checked_mul(operations))
+        .filter(|value| *value > 0)
+        .ok_or_else(|| anyhow!("compatibility {label} post-plan reduction overflowed"))
+}
+
 fn operation_envelope(
     plan: &EvaluationPlan,
     request: &aiperf_accuracy::HostOperationRequest,
@@ -2013,11 +2194,11 @@ mod tests {
         EvaluationCaseTemplateDescriptor, EvaluationDistributionId, EvaluationEventBatch,
         EvaluationExecutionGranularity, EvaluationHostIdentity, EvaluationIdentityComponent,
         EvaluationLifecycleState, EvaluationProviderError, EvaluationProviderId,
-        EvaluationUnitPage, EvaluationUnitTemplateDescriptor, EvaluationWorkerIdentity, FiniteF64,
-        HostCallContext, HostOperationRequest, IsolationQuiescenceProof, LogicalCallId,
-        LogicalServiceId, LogicalServiceRequirement, OperationPurpose, ProviderScore,
-        ScopedProxyBinding, ScopedProxyGrant, ScopedProxySecret, SemanticAttemptId,
-        SemanticOperationId, SequencedEvaluationEvent,
+        EvaluationSessionId, EvaluationUnitPage, EvaluationUnitTemplateDescriptor,
+        EvaluationWorkerIdentity, FiniteF64, HostCallContext, HostOperationRequest,
+        IsolationQuiescenceProof, LogicalCallId, LogicalServiceId, LogicalServiceRequirement,
+        OperationPurpose, ProviderScore, ScopedProxyBinding, ScopedProxyGrant, ScopedProxySecret,
+        SemanticAttemptId, SemanticOperationId, SequencedEvaluationEvent,
     };
     use aiperf_clock::{RealClock, RealClockAnchor, SimClock};
     use aiperf_graph::runtime::drive_sim;
@@ -2038,7 +2219,7 @@ mod tests {
     };
     use crate::evaluation::proxy::{
         CompatibilityProxyDialect, CompatibilityProxyDialectRegistry, CompatibilityProxyRoute,
-        LinuxProcessSubtreeAuthorizer, OpenAiChatCompatibilityDialect,
+        LinuxProcessSubtreeAuthorizer, OpenAiChatCompatibilityDialect, ProxyTimingRuntime,
         start_evaluator_compatibility_proxy,
     };
     use crate::evaluation::retry::InferenceTransportAttempt;
@@ -2083,6 +2264,10 @@ mod tests {
                 name: "dataset".into(),
                 version: "1".into(),
                 source_sha256: "f".repeat(64),
+                source_commit: None,
+                base_source_sha256: None,
+                overlay_policy: None,
+                overlays: Vec::new(),
             },
             components: Vec::new(),
             ordered_manifest_sha256: "1".repeat(64),
@@ -2238,6 +2423,15 @@ mod tests {
             _request: &EvaluationPlanRequest,
         ) -> std::result::Result<EvaluationPlan, EvaluationProviderError> {
             Ok(self.plan.clone())
+        }
+
+        fn install_compatibility_proxy_grant(
+            &mut self,
+            grant: &ScopedProxyGrant,
+        ) -> std::result::Result<(), EvaluationProviderError> {
+            grant
+                .validate()
+                .map_err(|error| EvaluationProviderError::Protocol(error.to_string()))
         }
 
         async fn bind_assets(
@@ -2434,16 +2628,35 @@ mod tests {
         }
     }
 
-    struct ProofArtifactFinalizer;
+    #[derive(Default)]
+    struct ProofArtifactFinalizer {
+        proxy_socket: Option<PathBuf>,
+    }
 
     #[async_trait(?Send)]
     impl EvaluationArtifactFinalizer for ProofArtifactFinalizer {
-        async fn finalize(
+        async fn quiesce(&self, provider: &mut dyn EvaluationProvider) -> Result<()> {
+            provider.shutdown().await.map_err(provider_error)?;
+            if let Some(socket) = &self.proxy_socket {
+                ensure!(
+                    socket.exists(),
+                    "compatibility proxy shut down before provider quiescence"
+                );
+            }
+            Ok(())
+        }
+
+        async fn seal(
             &self,
             provider: &mut dyn EvaluationProvider,
             candidate: &mut EvaluationFinishCandidate,
         ) -> Result<SealedEvaluationArtifacts> {
-            provider.shutdown().await.map_err(provider_error)?;
+            if let Some(socket) = &self.proxy_socket {
+                ensure!(
+                    !socket.exists(),
+                    "artifact sealing preceded compatibility proxy shutdown"
+                );
+            }
             provider.mark_artifacts_sealed().map_err(provider_error)?;
             let artifact = &candidate.artifacts[0];
             Ok(SealedEvaluationArtifacts {
@@ -2621,6 +2834,8 @@ mod tests {
             scheduling_mode: EvaluationSchedulingMode::Finite,
             finite_unit_count: Some(1),
             finite_case_count: Some(1),
+            max_total_host_operations: 2,
+            max_total_stream_events: 4,
             queue_credits: credits,
         };
         let artifact_id = EvaluationArtifactId::new("bundle").unwrap();
@@ -2706,6 +2921,22 @@ mod tests {
         clock: Rc<dyn Clock>,
         cancellation: OperationCancellation,
     ) -> EvaluationWorkload {
+        proof_workload_with_finalizer(
+            provider,
+            plan_request,
+            clock,
+            cancellation,
+            Rc::new(ProofArtifactFinalizer::default()),
+        )
+    }
+
+    fn proof_workload_with_finalizer(
+        provider: ProofProvider,
+        plan_request: EvaluationPlanRequest,
+        clock: Rc<dyn Clock>,
+        cancellation: OperationCancellation,
+        finalizer: Rc<dyn EvaluationArtifactFinalizer>,
+    ) -> EvaluationWorkload {
         let credits = provider.plan.queue_credits;
         let scheduled = ScheduledRuntime::new(
             clock,
@@ -2739,6 +2970,7 @@ mod tests {
             endpoint_capabilities: BTreeSet::from(["chat".into()]),
         }])
         .unwrap();
+        let public_config = plan_request.provider_config.clone();
         EvaluationWorkload::new(
             Box::new(provider),
             plan_request,
@@ -2748,8 +2980,9 @@ mod tests {
             Rc::new(EmptyAssetResolver),
             EvaluationHostCapabilityInventory::default(),
             PublicScoreProjectionPolicy::restricted_only(),
+            public_config,
             None,
-            Rc::new(ProofArtifactFinalizer),
+            finalizer,
             EvaluationWorkloadLimits {
                 unit_concurrency: 1,
                 credit_ceiling: credits,
@@ -2850,6 +3083,69 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn host_side_failure_removes_proxy_before_returning_without_sealing() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, plan_request) = provider_proof_fixture(state.clone());
+        let clock: Rc<dyn Clock> = RealClock::from_anchor(RealClockAnchor::now());
+        let socket_path = PathBuf::from(format!(
+            "/tmp/aiperf-evaluation-failure-proxy-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let scope = "d".repeat(64);
+        let binding = ScopedProxyBinding {
+            local_locator: "unix:///run/aiperf/evaluator-proxy.sock".to_string(),
+            host_socket_path: socket_path.clone(),
+            grant: ScopedProxyGrant {
+                grant_id: "failure-proxy-grant".to_string(),
+                session_id: plan_request.session_id.clone(),
+                secret: ScopedProxySecret::new("s".repeat(48)).unwrap(),
+                service_ids: vec![LogicalServiceId::new("primary").unwrap()],
+                semantic_operation_ids: vec![SemanticOperationId::new("model.generate").unwrap()],
+                purposes: vec![OperationPurpose::new("primary").unwrap()],
+                process_scope_sha256: scope.clone(),
+                max_operations: 2,
+                max_concurrent_operations: 2,
+                max_request_bytes: 64 * 1024,
+                max_response_bytes: 64 * 1024,
+                max_stream_events: 8,
+                expires_after_ms: 10_000,
+            },
+        };
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
+                authorizer.bind_root(std::process::id()).unwrap();
+                let (server, receiver) = start_evaluator_compatibility_proxy(
+                    binding,
+                    0,
+                    authorizer,
+                    CompatibilityProxyDialectRegistry::default(),
+                    ProxyTimingRuntime::yielding(),
+                )
+                .await
+                .unwrap();
+                let mut workload = proof_workload(
+                    provider,
+                    plan_request,
+                    clock,
+                    OperationCancellation::default(),
+                )
+                .with_compatibility_proxy(server, receiver)
+                .unwrap();
+                workload.asset_resolver = Rc::new(FailingAssetResolver);
+
+                let error = workload.execute().await.unwrap_err();
+                assert!(error.to_string().contains("resolving immutable"));
+                assert!(state.borrow().shutdown);
+                assert!(!state.borrow().sealed);
+                assert!(!state.borrow().committed);
+                assert!(!socket_path.exists());
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn pipe_and_proxy_operations_share_one_arbiter_ledger_and_executor() {
         let state = Rc::new(RefCell::new(ProviderProofState::default()));
         let gate = Rc::new(Cell::new(false));
@@ -2897,19 +3193,34 @@ mod tests {
                 as Arc<dyn CompatibilityProxyDialect>])
             .unwrap();
             let (server, receiver) =
-                start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer, dialects)
-                    .await
-                    .unwrap();
-            let workload = proof_workload(provider, plan_request, clock, OperationCancellation::default())
+                start_evaluator_compatibility_proxy(
+                    binding.clone(),
+                    0,
+                    authorizer,
+                    dialects,
+                    ProxyTimingRuntime::from_clock(clock.clone()),
+                )
+                .await
+                .unwrap();
+            let workload = proof_workload_with_finalizer(
+                provider,
+                plan_request,
+                clock,
+                OperationCancellation::default(),
+                Rc::new(ProofArtifactFinalizer {
+                    proxy_socket: Some(socket_path.clone()),
+                }),
+            )
             .with_compatibility_proxy(server, receiver)
             .unwrap();
             let secret = binding.grant.secret.expose_secret().to_string();
             let grant_id = binding.grant.grant_id.clone();
             let client_gate = gate.clone();
+            let client_socket_path = socket_path.clone();
                 let mut client = tokio::task::spawn_local(async move {
                     let body = br#"{"model":"primary","messages":[{"role":"user","content":"hello"}],"max_tokens":4,"stream":true}"#;
                 for _ in 0..128 {
-                    let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+                    let mut stream = UnixStream::connect(&client_socket_path).await.unwrap();
                     let head = format!(
                         "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nAuthorization: Bearer {secret}\r\nx-aiperf-proxy-grant: {grant_id}\r\nx-aiperf-case-id: case-1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
@@ -2959,8 +3270,44 @@ mod tests {
                     .operation_id
                     .starts_with("proxy-operation-")
             }));
+            assert!(!socket_path.exists());
             })
             .await;
+    }
+
+    #[test]
+    fn post_plan_proxy_grant_reduces_distribution_ceiling_to_exact_credits() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, _request) = provider_proof_fixture(state);
+        let mut plan = provider.plan.clone();
+        plan.queue_credits.units = 1;
+        plan.queue_credits.host_operations = 1;
+        plan.queue_credits.host_operations_per_unit = 1;
+        plan.max_total_host_operations = 1;
+        plan.max_total_stream_events = 0;
+        let ceiling = ScopedProxyGrant {
+            grant_id: "grant-plan-limit".to_string(),
+            session_id: EvaluationSessionId::new("session-1").unwrap(),
+            secret: ScopedProxySecret::new("s".repeat(48)).unwrap(),
+            service_ids: vec![LogicalServiceId::new("primary").unwrap()],
+            semantic_operation_ids: vec![SemanticOperationId::new("model.generate").unwrap()],
+            purposes: vec![OperationPurpose::new("primary").unwrap()],
+            process_scope_sha256: "a".repeat(64),
+            max_operations: 40,
+            max_concurrent_operations: 40,
+            max_request_bytes: 40 * 8 * 1024 * 1024,
+            max_response_bytes: 40 * 8 * 1024 * 1024,
+            max_stream_events: 40,
+            expires_after_ms: 86_400_000,
+        };
+        let narrowed = post_plan_proxy_grant(&plan, 8, &ceiling).unwrap();
+        assert_eq!(narrowed.max_operations, 1);
+        assert_eq!(narrowed.max_concurrent_operations, 1);
+        assert_eq!(narrowed.max_request_bytes, 8 * 1024 * 1024);
+        assert_eq!(narrowed.max_response_bytes, 8 * 1024 * 1024);
+        assert_eq!(narrowed.max_stream_events, 0);
+        assert_eq!(narrowed.expires_after_ms, ceiling.expires_after_ms);
+        narrowed.validate_narrowing_of(&ceiling).unwrap();
     }
 
     #[test]

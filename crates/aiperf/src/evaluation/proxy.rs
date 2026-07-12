@@ -34,7 +34,8 @@ use std::time::Duration;
 
 use aiperf_accuracy::{
     CanonicalJson, EvaluationCaseId, HostOperationEvent, HostOperationRequest, HostResponseMode,
-    ScopedProxyBinding, ScopedProxyGrant, validate_no_secret_control_value,
+    RestrictedDisclosure, RestrictedInferencePayload, ScopedProxyBinding, ScopedProxyGrant,
+    validate_no_secret_host_payload,
 };
 use aiperf_clock::Clock;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -267,6 +268,7 @@ pub struct CompatibilityProxyRoute {
     pub purpose: aiperf_accuracy::OperationPurpose,
     /// Exact semantic operation.
     pub semantic_operation_id: aiperf_accuracy::SemanticOperationId,
+    restricted_payload: bool,
 }
 
 impl CompatibilityProxyRoute {
@@ -290,7 +292,28 @@ impl CompatibilityProxyRoute {
             service_id,
             purpose,
             semantic_operation_id,
+            restricted_payload: false,
         })
+    }
+
+    /// Construct a route whose body is transient restricted evaluator material.
+    ///
+    /// The proxy, not the caller, applies the restricted disclosure envelope;
+    /// this keeps arbitrary local clients from self-declaring handling policy.
+    pub fn restricted(
+        selector: impl Into<String>,
+        service_id: aiperf_accuracy::LogicalServiceId,
+        purpose: aiperf_accuracy::OperationPurpose,
+        semantic_operation_id: aiperf_accuracy::SemanticOperationId,
+    ) -> Result<Self> {
+        let mut route = Self::new(selector, service_id, purpose, semantic_operation_id)?;
+        route.restricted_payload = true;
+        Ok(route)
+    }
+
+    /// Whether this exact Rust-owned route wraps compatibility bodies as restricted.
+    pub const fn carries_restricted_payload(&self) -> bool {
+        self.restricted_payload
     }
 }
 
@@ -812,7 +835,9 @@ struct ProxyGrantUsage {
 #[derive(Debug)]
 /// Shared grant/case/budget authority behind every registered proxy dialect.
 pub struct ProxyGrantRuntime {
-    grant: ScopedProxyGrant,
+    ceiling: ScopedProxyGrant,
+    grant: RwLock<ScopedProxyGrant>,
+    ready: AtomicBool,
     started_ns: i64,
     revoked: AtomicBool,
     case_scope: RwLock<BTreeMap<EvaluationCaseId, aiperf_accuracy::EvaluationUnitId>>,
@@ -944,7 +969,7 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
 
         let payload = CanonicalJson::new(serde_json::Value::Object(payload))
             .map_err(|_| ProxyRejection::InvalidRequest)?;
-        validate_no_secret_control_value(&payload).map_err(|_| ProxyRejection::InvalidRequest)?;
+        validate_no_secret_host_payload(&payload).map_err(|_| ProxyRejection::InvalidRequest)?;
         Ok(LoweredCompatibilityOperation {
             route: route.clone(),
             payload,
@@ -1149,7 +1174,9 @@ fn openai_response_id(operation_id: &aiperf_accuracy::HostOperationId) -> String
 impl ProxyGrantRuntime {
     fn new(grant: ScopedProxyGrant, started_ns: i64) -> Self {
         Self {
-            grant,
+            ceiling: grant.clone(),
+            grant: RwLock::new(grant),
+            ready: AtomicBool::new(false),
             started_ns,
             revoked: AtomicBool::new(false),
             case_scope: RwLock::new(BTreeMap::new()),
@@ -1160,18 +1187,59 @@ impl ProxyGrantRuntime {
         }
     }
 
+    fn install_narrowed_grant(
+        &self,
+        grant: ScopedProxyGrant,
+    ) -> std::result::Result<(), ProxyRejection> {
+        grant
+            .validate_narrowing_of(&self.ceiling)
+            .map_err(|_| ProxyRejection::GrantScope)?;
+        if self.revoked.load(Ordering::Acquire) {
+            return Err(ProxyRejection::Unavailable);
+        }
+        let mut effective = self
+            .grant
+            .write()
+            .map_err(|_| ProxyRejection::Unavailable)?;
+        if self.ready.load(Ordering::Acquire) {
+            return Err(ProxyRejection::Duplicate);
+        }
+        let usage = self.usage.lock().map_err(|_| ProxyRejection::Unavailable)?;
+        let cases = self
+            .case_scope
+            .read()
+            .map_err(|_| ProxyRejection::Unavailable)?;
+        let retired = self
+            .retired_cases
+            .read()
+            .map_err(|_| ProxyRejection::Unavailable)?;
+        if usage.accepted_operations != 0
+            || usage.active_operations != 0
+            || usage.pending_request_bytes != 0
+            || !usage.pending_reservations.is_empty()
+            || !cases.is_empty()
+            || !retired.is_empty()
+        {
+            return Err(ProxyRejection::Unavailable);
+        }
+        *effective = grant;
+        self.ready.store(true, Ordering::Release);
+        Ok(())
+    }
+
     fn reserve_pending(
         self: &Arc<Self>,
         request_bytes: u64,
     ) -> std::result::Result<ProxyPendingReservation, ProxyRejection> {
-        if self.revoked.load(Ordering::Acquire) {
+        if self.revoked.load(Ordering::Acquire) || !self.ready.load(Ordering::Acquire) {
             return Err(ProxyRejection::Unavailable);
         }
         if request_bytes == 0 || request_bytes > MAX_PROXY_BODY_BYTES {
             return Err(ProxyRejection::InvalidRequest);
         }
+        let grant = self.grant.read().map_err(|_| ProxyRejection::Unavailable)?;
         let mut usage = self.usage.lock().map_err(|_| ProxyRejection::Unavailable)?;
-        if self.revoked.load(Ordering::Acquire) {
+        if self.revoked.load(Ordering::Acquire) || !self.ready.load(Ordering::Acquire) {
             return Err(ProxyRejection::Unavailable);
         }
         let pending_operations = u64::try_from(usage.pending_reservations.len())
@@ -1189,9 +1257,9 @@ impl ProxyGrantRuntime {
             .checked_add(usage.pending_request_bytes)
             .and_then(|bytes| bytes.checked_add(request_bytes))
             .ok_or(ProxyRejection::GrantExhausted)?;
-        if reserved_operations >= self.grant.max_operations
-            || concurrent_operations >= self.grant.max_concurrent_operations
-            || reserved_request_bytes > self.grant.max_request_bytes
+        if reserved_operations >= grant.max_operations
+            || concurrent_operations >= grant.max_concurrent_operations
+            || reserved_request_bytes > grant.max_request_bytes
         {
             return Err(ProxyRejection::GrantExhausted);
         }
@@ -1229,11 +1297,12 @@ impl ProxyGrantRuntime {
         disconnect: Arc<AtomicBool>,
         events: mpsc::Sender<HostOperationEvent>,
     ) -> std::result::Result<ProxyOperationResponder, ProxyRejection> {
-        if self.revoked.load(Ordering::Acquire) {
+        if self.revoked.load(Ordering::Acquire) || !self.ready.load(Ordering::Acquire) {
             return Err(ProxyRejection::Unavailable);
         }
         self.validate_scope(request)?;
-        let lifetime_ns = i64::try_from(self.grant.expires_after_ms)
+        let grant = self.grant.read().map_err(|_| ProxyRejection::Unavailable)?;
+        let lifetime_ns = i64::try_from(grant.expires_after_ms)
             .ok()
             .and_then(|milliseconds| milliseconds.checked_mul(1_000_000))
             .ok_or(ProxyRejection::GrantExhausted)?;
@@ -1246,7 +1315,7 @@ impl ProxyGrantRuntime {
             return Err(ProxyRejection::Unavailable);
         }
         let mut usage = self.usage.lock().map_err(|_| ProxyRejection::Unavailable)?;
-        if self.revoked.load(Ordering::Acquire) {
+        if self.revoked.load(Ordering::Acquire) || !self.ready.load(Ordering::Acquire) {
             return Err(ProxyRejection::Unavailable);
         }
         let Some(reserved_bytes) = usage
@@ -1332,19 +1401,20 @@ impl ProxyGrantRuntime {
         &self,
         request: &HostOperationRequest,
     ) -> std::result::Result<(), ProxyRejection> {
-        if request.context.session_id != self.grant.session_id
-            || !self
-                .grant
+        if !self.ready.load(Ordering::Acquire) {
+            return Err(ProxyRejection::Unavailable);
+        }
+        let grant = self.grant.read().map_err(|_| ProxyRejection::Unavailable)?;
+        if request.context.session_id != grant.session_id
+            || !grant
                 .service_ids
                 .iter()
                 .any(|allowed| allowed == &request.service_id)
-            || !self
-                .grant
+            || !grant
                 .semantic_operation_ids
                 .iter()
                 .any(|allowed| allowed == &request.semantic_operation_id)
-            || !self
-                .grant
+            || !grant
                 .purposes
                 .iter()
                 .any(|allowed| allowed == &request.purpose)
@@ -1453,10 +1523,14 @@ impl ProxyGrantRuntime {
                 value.checked_add(1)
             })
             .map_err(|_| ProxyRejection::GrantExhausted)?;
+        let (grant_id, session_id) = {
+            let grant = self.grant.read().map_err(|_| ProxyRejection::Unavailable)?;
+            (grant.grant_id.clone(), grant.session_id.clone())
+        };
         let identity = aiperf_accuracy::sha256_hex(
             format!(
                 "aiperf-proxy-operation-v2\0{}\0{}\0{ordinal}",
-                self.grant.grant_id, case_id
+                grant_id, case_id
             )
             .as_bytes(),
         );
@@ -1483,10 +1557,29 @@ impl ProxyGrantRuntime {
                 aiperf_accuracy::LogicalCallId::new(format!("proxy-call-{identity}"))
                     .expect("hash-derived logical call ID is valid")
             });
+        validate_no_secret_host_payload(&lowered.payload)
+            .map_err(|_| ProxyRejection::InvalidRequest)?;
+        let (payload, restricted_payload) = if lowered.route.carries_restricted_payload() {
+            (
+                CanonicalJson::new(json!({})).expect("empty ordinary payload is canonical JSON"),
+                Some(RestrictedInferencePayload {
+                    body: lowered.payload,
+                    disclosure: RestrictedDisclosure {
+                        service_id: lowered.route.service_id.clone(),
+                        purpose: lowered.route.purpose.clone(),
+                        allow_content_logging: false,
+                        allow_cache: false,
+                        allow_public_hash: false,
+                    },
+                }),
+            )
+        } else {
+            (lowered.payload, None)
+        };
         let request = HostOperationRequest {
             operation_id,
             context: aiperf_accuracy::HostCallContext {
-                session_id: self.grant.session_id.clone(),
+                session_id,
                 unit_id,
                 case_id,
                 semantic_attempt_id,
@@ -1495,12 +1588,15 @@ impl ProxyGrantRuntime {
             service_id: lowered.route.service_id,
             purpose: lowered.route.purpose,
             semantic_operation_id: lowered.route.semantic_operation_id,
-            payload: lowered.payload,
-            restricted_payload: None,
+            payload,
+            restricted_payload,
             response_mode: lowered.response_mode,
             deadline_ms: lowered.deadline_ms,
             idempotency_key: format!("proxy-idempotency-{identity}"),
         };
+        request
+            .validate()
+            .map_err(|_| ProxyRejection::InvalidRequest)?;
         Ok((request, lowered.projection))
     }
 
@@ -1547,6 +1643,7 @@ impl ProxyGrantRuntime {
         let event_bytes =
             u64::try_from(encoded.len()).map_err(|_| ProxyRejection::GrantExhausted)?;
         let is_stream = matches!(event, HostOperationEvent::StreamDelta { .. });
+        let grant = self.grant.read().map_err(|_| ProxyRejection::Unavailable)?;
         let mut usage = self.usage.lock().map_err(|_| ProxyRejection::Unavailable)?;
         let response_bytes = usage
             .response_bytes
@@ -1556,9 +1653,7 @@ impl ProxyGrantRuntime {
             .stream_events
             .checked_add(u64::from(is_stream))
             .ok_or(ProxyRejection::GrantExhausted)?;
-        if response_bytes > self.grant.max_response_bytes
-            || stream_events > self.grant.max_stream_events
-        {
+        if response_bytes > grant.max_response_bytes || stream_events > grant.max_stream_events {
             return Err(ProxyRejection::GrantExhausted);
         }
         usage.response_bytes = response_bytes;
@@ -1745,12 +1840,25 @@ impl std::fmt::Debug for ProxyOperationReceiver {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ProxyOperationReceiver")
-            .field("grant_id", &self.runtime.grant.grant_id)
+            .field("grant_id", &self.runtime.ceiling.grant_id)
             .finish_non_exhaustive()
     }
 }
 
 impl ProxyOperationReceiver {
+    /// Return the immutable prelaunch distribution ceiling for post-plan reduction.
+    pub fn grant_ceiling(&self) -> ScopedProxyGrant {
+        self.runtime.ceiling.clone()
+    }
+
+    /// One-shot activate the dormant proxy with an identity-preserving narrowed grant.
+    pub fn install_narrowed_grant(
+        &self,
+        grant: ScopedProxyGrant,
+    ) -> std::result::Result<(), ProxyRejection> {
+        self.runtime.install_narrowed_grant(grant)
+    }
+
     /// Receive one already-authenticated local request without blocking.
     pub fn try_recv(
         &mut self,
@@ -2253,7 +2361,10 @@ fn parse_typed_request(
     request
         .validate()
         .map_err(|_| ProxyRejection::InvalidRequest)?;
-    validate_no_secret_control_value(&request.payload)
+    if request.restricted_payload.is_some() {
+        return Err(ProxyRejection::GrantScope);
+    }
+    validate_no_secret_host_payload(&request.payload)
         .map_err(|_| ProxyRejection::InvalidRequest)?;
     state.runtime.validate_scope(&request)?;
     Ok(request)
@@ -2493,6 +2604,7 @@ mod tests {
     };
     use aiperf_clock::{RealClock, SimClock};
     use aiperf_graph::runtime::drive_sim;
+    use serde_json::Value;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
@@ -2580,6 +2692,39 @@ mod tests {
             max_stream_events: 16,
             expires_after_ms: 10_000,
         }
+    }
+
+    fn active_runtime(grant: ScopedProxyGrant, started_ns: i64) -> Arc<ProxyGrantRuntime> {
+        let runtime = Arc::new(ProxyGrantRuntime::new(grant.clone(), started_ns));
+        runtime.install_narrowed_grant(grant).unwrap();
+        runtime
+    }
+
+    #[test]
+    fn grant_runtime_is_dormant_until_one_exact_post_plan_reduction() {
+        let ceiling = grant(&"a".repeat(64));
+        let runtime = Arc::new(ProxyGrantRuntime::new(ceiling.clone(), 0));
+        assert!(matches!(
+            runtime.reserve_pending(1),
+            Err(ProxyRejection::Unavailable)
+        ));
+
+        let mut narrowed = ceiling;
+        narrowed.max_operations = 1;
+        narrowed.max_concurrent_operations = 1;
+        narrowed.max_request_bytes = 1024;
+        narrowed.max_response_bytes = 1024;
+        narrowed.max_stream_events = 1;
+        runtime.install_narrowed_grant(narrowed.clone()).unwrap();
+        assert!(matches!(
+            runtime.install_narrowed_grant(narrowed),
+            Err(ProxyRejection::Duplicate)
+        ));
+        assert!(matches!(
+            runtime.reserve_pending(1025),
+            Err(ProxyRejection::GrantExhausted)
+        ));
+        assert!(runtime.reserve_pending(1024).is_ok());
     }
 
     fn openai_route(selector: &str) -> CompatibilityProxyRoute {
@@ -2688,7 +2833,7 @@ mod tests {
         let mut limits = grant(&"7".repeat(64));
         limits.max_concurrent_operations = 1;
         limits.max_request_bytes = 100;
-        let runtime = Arc::new(ProxyGrantRuntime::new(limits, 0));
+        let runtime = active_runtime(limits, 0);
 
         let first = runtime.reserve_pending(60).unwrap();
         assert_eq!(pending_usage(&runtime), (1, 60, 0, 0, 0));
@@ -2702,7 +2847,7 @@ mod tests {
         let mut limits = grant(&"8".repeat(64));
         limits.max_concurrent_operations = 2;
         limits.max_request_bytes = 100;
-        let runtime = Arc::new(ProxyGrantRuntime::new(limits, 0));
+        let runtime = active_runtime(limits, 0);
         let first = runtime.reserve_pending(60).unwrap();
         assert!(matches!(
             runtime.reserve_pending(41),
@@ -2752,7 +2897,7 @@ mod tests {
         let mut limits = grant(&"5".repeat(64));
         limits.max_operations = 1;
         limits.max_concurrent_operations = 1;
-        let runtime = Arc::new(ProxyGrantRuntime::new(limits, 0));
+        let runtime = active_runtime(limits, 0);
         let request = request("only-operation");
         runtime
             .activate_unit_cases(
@@ -2782,7 +2927,7 @@ mod tests {
 
     #[test]
     fn staged_case_scope_and_reservation_rollback_are_fail_closed() {
-        let runtime = Arc::new(ProxyGrantRuntime::new(grant(&"a".repeat(64)), 100));
+        let runtime = active_runtime(grant(&"a".repeat(64)), 100);
         let request = request("operation-1");
         let disconnect = Arc::new(AtomicBool::new(false));
         let (events, _receiver) = mpsc::channel(4);
@@ -2856,7 +3001,7 @@ mod tests {
 
     #[test]
     fn grant_rejects_wrong_purpose_and_clock_expiry() {
-        let runtime = Arc::new(ProxyGrantRuntime::new(grant(&"b".repeat(64)), 10));
+        let runtime = active_runtime(grant(&"b".repeat(64)), 10);
         let mut request = request("operation-1");
         runtime
             .activate_unit_cases(
@@ -2906,7 +3051,7 @@ mod tests {
 
     #[test]
     fn openai_chat_dialect_maps_exact_selector_and_rejects_unknown_routes() {
-        let runtime = ProxyGrantRuntime::new(grant(&"f".repeat(64)), 0);
+        let runtime = active_runtime(grant(&"f".repeat(64)), 0);
         runtime
             .activate_unit_cases(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -2948,6 +3093,98 @@ mod tests {
             ),
             Err(ProxyRejection::GrantScope)
         ));
+    }
+
+    #[test]
+    fn proxy_and_pipe_accept_inert_multimodal_urls_and_reject_authority_fields() {
+        let dialect = OpenAiChatCompatibilityDialect::new([openai_route("primary")]).unwrap();
+        let lowered = dialect
+            .lower(
+                br#"{"model":"primary","messages":[{"role":"user","content":[{"type":"text","text":"inspect"},{"type":"image_url","image_url":{"url":"data:image/png;base64,aW5lcnQ="}}]}],"max_tokens":4}"#,
+            )
+            .unwrap();
+        assert_eq!(
+            lowered
+                .payload
+                .value()
+                .pointer("/messages/0/content/1/image_url/url")
+                .and_then(Value::as_str),
+            Some("data:image/png;base64,aW5lcnQ=")
+        );
+
+        let mut pipe_request = request("multimodal-pipe");
+        pipe_request.response_mode = HostResponseMode::Terminal;
+        pipe_request.payload = lowered.payload.clone();
+        pipe_request.validate().unwrap();
+
+        pipe_request.payload = CanonicalJson::new(json!({
+            "messages": [{"role": "user", "content": "hello"}],
+            "generation": {"max_tokens": 4},
+            "base_url": "https://caller.invalid"
+        }))
+        .unwrap();
+        assert!(pipe_request.validate().is_err());
+        assert!(matches!(
+            dialect.lower(
+                br#"{"model":"primary","messages":[{"role":"user","content":"hello","base_url":"https://caller.invalid"}],"max_tokens":4}"#,
+            ),
+            Err(ProxyRejection::InvalidRequest)
+        ));
+    }
+
+    #[test]
+    fn restricted_compatibility_route_wraps_body_with_exact_transient_scope() {
+        const SENTINEL: &str = "hidden-judge-sentinel";
+
+        let service_id = LogicalServiceId::new("judge").unwrap();
+        let purpose = OperationPurpose::new("verifier").unwrap();
+        let semantic_operation_id = SemanticOperationId::new("model.generate").unwrap();
+        let route = CompatibilityProxyRoute::restricted(
+            "judge-model",
+            service_id.clone(),
+            purpose.clone(),
+            semantic_operation_id,
+        )
+        .unwrap();
+        let dialect = OpenAiChatCompatibilityDialect::new([route]).unwrap();
+        let lowered = dialect
+            .lower(
+                format!(
+                    r#"{{"model":"judge-model","messages":[{{"role":"user","content":"{SENTINEL}"}}],"max_tokens":4}}"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let mut scoped_grant = grant(&"f".repeat(64));
+        scoped_grant.service_ids = vec![service_id.clone()];
+        scoped_grant.purposes = vec![purpose.clone()];
+        let runtime = active_runtime(scoped_grant, 0);
+        runtime
+            .activate_unit_cases(
+                aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
+                [EvaluationCaseId::new("case-1").unwrap()],
+            )
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(&CASE_HEADER, "case-1".parse().unwrap());
+        let (request, _projection) = runtime
+            .build_compatibility_request(&headers, lowered)
+            .unwrap();
+
+        assert_eq!(request.payload.value(), &json!({}));
+        let restricted = request.restricted_payload.as_ref().unwrap();
+        assert_eq!(
+            restricted.body.value().pointer("/messages/0/content"),
+            Some(&Value::String(SENTINEL.to_string()))
+        );
+        assert_eq!(restricted.disclosure.service_id, service_id);
+        assert_eq!(restricted.disclosure.purpose, purpose);
+        assert!(!restricted.disclosure.allow_content_logging);
+        assert!(!restricted.disclosure.allow_cache);
+        assert!(!restricted.disclosure.allow_public_hash);
+        assert!(!format!("{restricted:?}").contains(SENTINEL));
+        request.validate().unwrap();
     }
 
     #[test]
@@ -3085,6 +3322,9 @@ mod tests {
         .await
         .unwrap();
         ingress
+            .install_narrowed_grant(binding.grant.clone())
+            .unwrap();
+        ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
                 [EvaluationCaseId::new("case-1").unwrap()],
@@ -3168,6 +3408,9 @@ mod tests {
         )
         .await
         .unwrap();
+        ingress
+            .install_narrowed_grant(binding.grant.clone())
+            .unwrap();
 
         let mut first_stream = UnixStream::connect(&socket_path).await.unwrap();
         let first_head = proxy_request_head(&binding, PROXY_PATH, first_body.len(), "");
@@ -3290,6 +3533,9 @@ mod tests {
         )
         .await
         .unwrap();
+        ingress
+            .install_narrowed_grant(binding.grant.clone())
+            .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -3419,6 +3665,9 @@ mod tests {
         .await
         .unwrap();
         ingress
+            .install_narrowed_grant(binding.grant.clone())
+            .unwrap();
+        ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
                 [EvaluationCaseId::new("case-1").unwrap()],
@@ -3491,6 +3740,9 @@ mod tests {
         )
         .await
         .unwrap();
+        ingress
+            .install_narrowed_grant(binding.grant.clone())
+            .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -3625,6 +3877,9 @@ asyncio.run(main())
         )
         .await
         .unwrap();
+        ingress
+            .install_narrowed_grant(binding.grant.clone())
+            .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -3786,7 +4041,7 @@ asyncio.run(main())
     #[test]
     fn ingress_rejects_before_waiting_when_its_bounded_queue_is_full() {
         let (sender, mut receiver) = mpsc::channel(1);
-        let runtime = Arc::new(ProxyGrantRuntime::new(grant(&"9".repeat(64)), 0));
+        let runtime = active_runtime(grant(&"9".repeat(64)), 0);
         let submission = |id: &str| {
             let (events, _events_rx) = mpsc::channel(1);
             let (admission, _admission_rx) = oneshot::channel();
