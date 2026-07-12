@@ -803,7 +803,12 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
     }
 
     async fn shutdown(&mut self) -> Result<(), EvaluationProviderError> {
-        if self.lifecycle.state() == EvaluationLifecycleState::WorkerExited {
+        if matches!(
+            self.lifecycle.state(),
+            EvaluationLifecycleState::WorkerExited
+                | EvaluationLifecycleState::ArtifactsSealed
+                | EvaluationLifecycleState::ReportCommitted
+        ) {
             return Ok(());
         }
         self.lifecycle.begin_shutdown()?;

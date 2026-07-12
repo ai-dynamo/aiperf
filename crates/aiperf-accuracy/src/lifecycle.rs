@@ -11,7 +11,7 @@ use crate::provider::{EvaluationProviderError, EvaluatorProtocolLimits};
 use crate::provider_protocol::{
     CaseOutcome, EvaluationEvent, EvaluationEventBatch, EvaluationPlan, EvaluationSchedulingMode,
     EvaluationUnitId, EvaluationUnitOccurrence, HostOperationDisposition, HostOperationEvent,
-    HostOperationId, SemanticAttemptId,
+    HostOperationId, LogicalCallId, SemanticAttemptId,
 };
 
 /// Observable evaluator lifecycle state.
@@ -60,16 +60,20 @@ pub struct EvaluationLifecycle {
     state: EvaluationLifecycleState,
     limits: EvaluatorProtocolLimits,
     scheduling_mode: Option<EvaluationSchedulingMode>,
+    accepted_queue_credits: Option<crate::provider_protocol::EvaluationQueueCredits>,
+    queue_unit_limit: usize,
     queue_host_operation_limit: usize,
     queue_per_unit_limit: usize,
     next_event_sequence: u64,
     idempotency_keys: BTreeSet<String>,
+    host_request_idempotency_keys: BTreeSet<String>,
+    logical_call_ids: BTreeSet<LogicalCallId>,
     known_units: BTreeMap<EvaluationUnitId, BTreeSet<crate::provider_protocol::EvaluationCaseId>>,
     canonical_case_order: Vec<crate::provider_protocol::EvaluationCaseId>,
     started_units: BTreeSet<EvaluationUnitId>,
     terminal_cases: BTreeSet<crate::provider_protocol::EvaluationCaseId>,
     outstanding_operations: BTreeMap<HostOperationId, OperationLedgerEntry>,
-    terminal_operations: BTreeSet<HostOperationId>,
+    terminal_operations: BTreeMap<HostOperationId, SemanticAttemptId>,
     pending_cancellation_acks: BTreeSet<HostOperationId>,
 }
 
@@ -83,16 +87,20 @@ impl EvaluationLifecycle {
             state: EvaluationLifecycleState::Spawned,
             limits,
             scheduling_mode: None,
+            accepted_queue_credits: None,
+            queue_unit_limit: 0,
             queue_host_operation_limit: 0,
             queue_per_unit_limit: 0,
             next_event_sequence: 1,
             idempotency_keys: BTreeSet::new(),
+            host_request_idempotency_keys: BTreeSet::new(),
+            logical_call_ids: BTreeSet::new(),
             known_units: BTreeMap::new(),
             canonical_case_order: Vec::new(),
             started_units: BTreeSet::new(),
             terminal_cases: BTreeSet::new(),
             outstanding_operations: BTreeMap::new(),
-            terminal_operations: BTreeSet::new(),
+            terminal_operations: BTreeMap::new(),
             pending_cancellation_acks: BTreeSet::new(),
         })
     }
@@ -127,6 +135,8 @@ impl EvaluationLifecycle {
             ));
         }
         self.scheduling_mode = Some(plan.scheduling_mode);
+        self.accepted_queue_credits = Some(plan.queue_credits);
+        self.queue_unit_limit = plan.queue_credits.units;
         self.queue_host_operation_limit = plan.queue_credits.host_operations;
         self.queue_per_unit_limit = plan.queue_credits.host_operations_per_unit;
         self.state = EvaluationLifecycleState::Planned;
@@ -160,6 +170,26 @@ impl EvaluationLifecycle {
         if units.len() > self.limits.max_collection_items {
             return Err(EvaluationProviderError::Protocol(
                 "unit result exceeded negotiated collection bound".to_string(),
+            ));
+        }
+        let new_case_count = units.iter().try_fold(0_usize, |count, unit| {
+            count.checked_add(unit.cases.len()).ok_or_else(|| {
+                EvaluationProviderError::Protocol("unit/case manifest size overflow".to_string())
+            })
+        })?;
+        if self
+            .known_units
+            .len()
+            .checked_add(units.len())
+            .is_none_or(|count| count > self.limits.max_idempotency_keys)
+            || self
+                .canonical_case_order
+                .len()
+                .checked_add(new_case_count)
+                .is_none_or(|count| count > self.limits.max_idempotency_keys)
+        {
+            return Err(EvaluationProviderError::Protocol(
+                "unit/case manifest exceeded the session identity bound".to_string(),
             ));
         }
         for unit in units {
@@ -233,6 +263,16 @@ impl EvaluationLifecycle {
             return Err(EvaluationProviderError::Protocol(
                 "start_units referenced unknown, duplicate, or previously started units"
                     .to_string(),
+            ));
+        }
+        if self
+            .started_units
+            .len()
+            .checked_add(ids.len())
+            .is_none_or(|active| active > self.queue_unit_limit)
+        {
+            return Err(EvaluationProviderError::Protocol(
+                "start_units exceeded accepted active-unit credits".to_string(),
             ));
         }
         self.started_units.extend(ids.iter().cloned());
@@ -314,8 +354,20 @@ impl EvaluationLifecycle {
                 batch.next_sequence, self.next_event_sequence
             )));
         }
-        if batch.remaining_credits.host_operations > self.queue_host_operation_limit
-            || batch.remaining_credits.host_operations_per_unit > self.queue_per_unit_limit
+        let accepted = self.accepted_queue_credits.ok_or_else(|| {
+            EvaluationProviderError::Lifecycle(
+                "event batch arrived before queue-credit negotiation".to_string(),
+            )
+        })?;
+        let remaining = batch.remaining_credits;
+        if remaining.units > accepted.units
+            || remaining.host_operations > accepted.host_operations
+            || remaining.host_operations_per_unit > accepted.host_operations_per_unit
+            || remaining.stream_events > accepted.stream_events
+            || remaining.sandboxes > accepted.sandboxes
+            || remaining.processes > accepted.processes
+            || remaining.artifacts > accepted.artifacts
+            || remaining.artifact_bytes > accepted.artifact_bytes
         {
             return Err(EvaluationProviderError::Protocol(
                 "worker advertised credits above the accepted plan".to_string(),
@@ -323,6 +375,7 @@ impl EvaluationLifecycle {
         }
         if batch.drained {
             if !self.outstanding_operations.is_empty()
+                || !self.pending_cancellation_acks.is_empty()
                 || !self.started_units.is_empty()
                 || self.terminal_cases.len() != self.canonical_case_order.len()
                 || self
@@ -406,7 +459,15 @@ impl EvaluationLifecycle {
                             "operation {operation_id} terminal attempt/disposition was invalid"
                         )));
                     }
-                    self.terminal_operations.insert(operation_id.clone());
+                    if self
+                        .terminal_operations
+                        .insert(operation_id.clone(), terminal.semantic_attempt_id.clone())
+                        .is_some()
+                    {
+                        return Err(EvaluationProviderError::Protocol(format!(
+                            "duplicate terminal ledger entry for operation {operation_id}"
+                        )));
+                    }
                     self.pending_cancellation_acks.remove(&operation_id);
                 }
                 HostOperationEvent::CancellationAcknowledged {
@@ -415,16 +476,13 @@ impl EvaluationLifecycle {
                     ..
                 } => {
                     if !*already_terminal
-                        || !self.terminal_operations.contains(&operation_id)
+                        || self.terminal_operations.get(&operation_id) != Some(semantic_attempt_id)
                         || !self.pending_cancellation_acks.remove(&operation_id)
                     {
                         return Err(EvaluationProviderError::Protocol(format!(
                             "unexpected cancellation acknowledgement for operation {operation_id}"
                         )));
                     }
-                    // The original entry is gone after terminal; the attempt was
-                    // already checked when the provider requested cancellation.
-                    let _ = semantic_attempt_id;
                 }
             }
             accepted.push(operation_id);
@@ -463,10 +521,19 @@ impl EvaluationLifecycle {
 
     /// Revoke capabilities and begin worker-tree shutdown.
     pub fn begin_shutdown(&mut self) -> Result<(), EvaluationProviderError> {
-        self.transition(
-            EvaluationLifecycleState::ManifestCandidate,
-            EvaluationLifecycleState::Quiescing,
-        )
+        match self.state {
+            EvaluationLifecycleState::ManifestCandidate => {
+                self.state = EvaluationLifecycleState::Quiescing;
+                Ok(())
+            }
+            EvaluationLifecycleState::WorkerExited
+            | EvaluationLifecycleState::ArtifactsSealed
+            | EvaluationLifecycleState::ReportCommitted => Ok(()),
+            _ => self.require(
+                EvaluationLifecycleState::ManifestCandidate,
+                "begin worker shutdown",
+            ),
+        }
     }
 
     /// Record enforced complete process-tree quiescence.
@@ -495,7 +562,9 @@ impl EvaluationLifecycle {
 
     /// Force the failure path into quiescing without pretending normal states completed.
     pub fn abort_to_quiescing(&mut self) {
-        self.state = EvaluationLifecycleState::Quiescing;
+        if self.state < EvaluationLifecycleState::WorkerExited {
+            self.state = EvaluationLifecycleState::Quiescing;
+        }
     }
 
     fn record_event(&mut self, event: &mut EvaluationEvent) -> Result<(), EvaluationProviderError> {
@@ -503,7 +572,11 @@ impl EvaluationLifecycle {
             EvaluationEvent::HostOperationRequested { request } => {
                 request.validate()?;
                 if !self.started_units.contains(&request.context.unit_id)
-                    || self.terminal_operations.contains(&request.operation_id)
+                    || !self
+                        .known_units
+                        .get(&request.context.unit_id)
+                        .is_some_and(|cases| cases.contains(&request.context.case_id))
+                    || self.terminal_operations.contains_key(&request.operation_id)
                     || self
                         .outstanding_operations
                         .contains_key(&request.operation_id)
@@ -529,6 +602,24 @@ impl EvaluationLifecycle {
                         request.context.unit_id
                     )));
                 }
+                if self
+                    .logical_call_ids
+                    .contains(&request.context.logical_call_id)
+                    || self
+                        .host_request_idempotency_keys
+                        .contains(&request.idempotency_key)
+                    || self.logical_call_ids.len() == self.limits.max_idempotency_keys
+                    || self.host_request_idempotency_keys.len() == self.limits.max_idempotency_keys
+                {
+                    return Err(EvaluationProviderError::Protocol(format!(
+                        "host operation {} reused a logical call/idempotency identity or exceeded bounds",
+                        request.operation_id
+                    )));
+                }
+                self.logical_call_ids
+                    .insert(request.context.logical_call_id.clone());
+                self.host_request_idempotency_keys
+                    .insert(request.idempotency_key.clone());
                 self.outstanding_operations.insert(
                     request.operation_id.clone(),
                     OperationLedgerEntry {
@@ -540,17 +631,35 @@ impl EvaluationLifecycle {
                 );
             }
             EvaluationEvent::HostOperationCancelRequested { request } => {
+                if request.reason.trim().is_empty() || request.reason.len() > 4_096 {
+                    return Err(EvaluationProviderError::Protocol(format!(
+                        "operation {} cancellation reason was empty or oversized",
+                        request.operation_id
+                    )));
+                }
+                request.reason = crate::canonical::redact_diagnostic(&request.reason);
                 if let Some(entry) = self.outstanding_operations.get_mut(&request.operation_id) {
-                    if entry.semantic_attempt_id != request.semantic_attempt_id {
+                    if entry.semantic_attempt_id != request.semantic_attempt_id
+                        || entry.cancellation_requested
+                    {
                         return Err(EvaluationProviderError::Protocol(format!(
-                            "operation {} cancellation used a different semantic attempt",
+                            "operation {} cancellation was duplicated or used a different semantic attempt",
                             request.operation_id
                         )));
                     }
                     entry.cancellation_requested = true;
-                } else if self.terminal_operations.contains(&request.operation_id) {
-                    self.pending_cancellation_acks
-                        .insert(request.operation_id.clone());
+                } else if self.terminal_operations.get(&request.operation_id)
+                    == Some(&request.semantic_attempt_id)
+                {
+                    if !self
+                        .pending_cancellation_acks
+                        .insert(request.operation_id.clone())
+                    {
+                        return Err(EvaluationProviderError::Protocol(format!(
+                            "operation {} cancellation was duplicated after terminal",
+                            request.operation_id
+                        )));
+                    }
                 } else {
                     return Err(EvaluationProviderError::Protocol(format!(
                         "operation {} cancellation referenced unknown work",
@@ -560,8 +669,10 @@ impl EvaluationLifecycle {
             }
             EvaluationEvent::CaseTerminal { outcome } => self.record_case_terminal(outcome)?,
             EvaluationEvent::Progress { progress } => {
-                if progress.outstanding_host_operations as usize
-                    != self.outstanding_operations.len()
+                if progress.started_units != self.started_units.len() as u64
+                    || progress.terminal_cases != self.terminal_cases.len() as u64
+                    || progress.outstanding_host_operations as usize
+                        != self.outstanding_operations.len()
                 {
                     return Err(EvaluationProviderError::Protocol(
                         "provider progress disagreed with the host-operation ledger".to_string(),
@@ -585,12 +696,6 @@ impl EvaluationLifecycle {
         outcome: &mut CaseOutcome,
     ) -> Result<(), EvaluationProviderError> {
         outcome.validate()?;
-        if !self.terminal_cases.insert(outcome.case_id.clone()) {
-            return Err(EvaluationProviderError::Protocol(format!(
-                "duplicate case terminal {}",
-                outcome.case_id
-            )));
-        }
         let Some(unit_id) = self
             .known_units
             .iter()
@@ -601,6 +706,12 @@ impl EvaluationLifecycle {
                 outcome.case_id
             )));
         };
+        if !self.terminal_cases.insert(outcome.case_id.clone()) {
+            return Err(EvaluationProviderError::Protocol(format!(
+                "duplicate case terminal {}",
+                outcome.case_id
+            )));
+        }
         let all_terminal = self.known_units[&unit_id]
             .iter()
             .all(|case| self.terminal_cases.contains(case));
@@ -660,8 +771,9 @@ mod tests {
         AggregationPolicy, CompletedCaseOutcome, EvaluationCaseId,
         EvaluationCaseOccurrenceDescriptor, EvaluationEvent, EvaluationPhaseId, EvaluationProgress,
         EvaluationQueueCredits, EvaluationUnitTemplateId, FiniteF64, HostCallContext,
-        HostOperationRequest, HostResponseMode, LogicalCallId, LogicalServiceId, OperationPurpose,
-        ProviderScore, SemanticOperationId, SequencedEvaluationEvent,
+        HostOperationCancelRequest, HostOperationRequest, HostResponseMode, LogicalCallId,
+        LogicalServiceId, OperationPurpose, ProviderScore, SemanticOperationId,
+        SequencedEvaluationEvent,
     };
 
     use super::*;
@@ -796,6 +908,38 @@ mod tests {
             remaining_credits: batch.remaining_credits,
         };
         assert!(lifecycle.record_event_batch(&mut duplicate).is_err());
+
+        let mut lifecycle = ready_lifecycle();
+        let mut requested = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 1,
+                idempotency_key: "attempt-event-1".to_string(),
+                event: EvaluationEvent::HostOperationRequested {
+                    request: Box::new(request()),
+                },
+            }],
+            next_sequence: 2,
+            drained: false,
+            remaining_credits: plan(EvaluationSchedulingMode::Finite).queue_credits,
+        };
+        lifecycle.record_event_batch(&mut requested).unwrap();
+        let mut wrong_attempt = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 2,
+                idempotency_key: "attempt-event-2".to_string(),
+                event: EvaluationEvent::HostOperationCancelRequested {
+                    request: HostOperationCancelRequest {
+                        operation_id: HostOperationId::new("op-1").unwrap(),
+                        semantic_attempt_id: SemanticAttemptId::new("wrong-attempt").unwrap(),
+                        reason: "provider cancelled".to_string(),
+                    },
+                },
+            }],
+            next_sequence: 3,
+            drained: false,
+            remaining_credits: plan(EvaluationSchedulingMode::Finite).queue_credits,
+        };
+        assert!(lifecycle.record_event_batch(&mut wrong_attempt).is_err());
     }
 
     #[test]
@@ -874,5 +1018,162 @@ mod tests {
         };
         lifecycle.record_event_batch(&mut terminal_batch).unwrap();
         assert_eq!(lifecycle.state(), EvaluationLifecycleState::Drained);
+    }
+
+    #[test]
+    fn semantic_retry_cannot_reuse_a_logical_call_or_request_key() {
+        let mut lifecycle = ready_lifecycle();
+        let original = request();
+        let mut first = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 1,
+                idempotency_key: "event-1".to_string(),
+                event: EvaluationEvent::HostOperationRequested {
+                    request: Box::new(original.clone()),
+                },
+            }],
+            next_sequence: 2,
+            drained: false,
+            remaining_credits: EvaluationQueueCredits {
+                host_operations: 1,
+                host_operations_per_unit: 0,
+                ..plan(EvaluationSchedulingMode::Finite).queue_credits
+            },
+        };
+        let first_again = first.clone();
+        lifecycle.record_event_batch(&mut first).unwrap();
+        let mut terminal = HostOperationEvent::Terminal {
+            terminal: crate::provider_protocol::HostOperationTerminal {
+                operation_id: original.operation_id.clone(),
+                semantic_attempt_id: original.context.semantic_attempt_id.clone(),
+                disposition: HostOperationDisposition::Completed,
+                result: Some(CanonicalJson::new(serde_json::json!({"text": "ok"})).unwrap()),
+                error: None,
+                usage: Default::default(),
+                observed_output: false,
+            },
+        };
+        lifecycle
+            .record_host_events(std::slice::from_mut(&mut terminal))
+            .unwrap();
+
+        let mut reused_call = original.clone();
+        reused_call.operation_id = HostOperationId::new("op-2").unwrap();
+        reused_call.context.semantic_attempt_id = SemanticAttemptId::new("attempt-2").unwrap();
+        reused_call.idempotency_key = "request-2".to_string();
+        let mut batch = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 2,
+                idempotency_key: "event-2".to_string(),
+                event: EvaluationEvent::HostOperationRequested {
+                    request: Box::new(reused_call),
+                },
+            }],
+            next_sequence: 3,
+            drained: false,
+            remaining_credits: plan(EvaluationSchedulingMode::Finite).queue_credits,
+        };
+        assert!(lifecycle.record_event_batch(&mut batch).is_err());
+
+        let mut lifecycle = ready_lifecycle();
+        let mut first = first_again;
+        lifecycle.record_event_batch(&mut first).unwrap();
+        let mut terminal = HostOperationEvent::Terminal {
+            terminal: crate::provider_protocol::HostOperationTerminal {
+                operation_id: HostOperationId::new("op-1").unwrap(),
+                semantic_attempt_id: SemanticAttemptId::new("attempt-1").unwrap(),
+                disposition: HostOperationDisposition::Completed,
+                result: Some(CanonicalJson::new(serde_json::json!({"text": "ok"})).unwrap()),
+                error: None,
+                usage: Default::default(),
+                observed_output: false,
+            },
+        };
+        lifecycle
+            .record_host_events(std::slice::from_mut(&mut terminal))
+            .unwrap();
+        let mut reused_key = original;
+        reused_key.operation_id = HostOperationId::new("op-3").unwrap();
+        reused_key.context.logical_call_id = LogicalCallId::new("call-3").unwrap();
+        reused_key.context.semantic_attempt_id = SemanticAttemptId::new("attempt-3").unwrap();
+        let mut batch = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 2,
+                idempotency_key: "event-3".to_string(),
+                event: EvaluationEvent::HostOperationRequested {
+                    request: Box::new(reused_key),
+                },
+            }],
+            next_sequence: 3,
+            drained: false,
+            remaining_credits: plan(EvaluationSchedulingMode::Finite).queue_credits,
+        };
+        assert!(lifecycle.record_event_batch(&mut batch).is_err());
+    }
+
+    #[test]
+    fn operation_cancellation_is_unique_and_attempt_bound() {
+        let mut lifecycle = ready_lifecycle();
+        let mut batch = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 1,
+                idempotency_key: "event-1".to_string(),
+                event: EvaluationEvent::HostOperationRequested {
+                    request: Box::new(request()),
+                },
+            }],
+            next_sequence: 2,
+            drained: false,
+            remaining_credits: EvaluationQueueCredits {
+                host_operations: 1,
+                host_operations_per_unit: 0,
+                ..plan(EvaluationSchedulingMode::Finite).queue_credits
+            },
+        };
+        lifecycle.record_event_batch(&mut batch).unwrap();
+        let cancellation = HostOperationCancelRequest {
+            operation_id: HostOperationId::new("op-1").unwrap(),
+            semantic_attempt_id: SemanticAttemptId::new("attempt-1").unwrap(),
+            reason: "provider cancelled".to_string(),
+        };
+        let mut batch = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 2,
+                idempotency_key: "event-2".to_string(),
+                event: EvaluationEvent::HostOperationCancelRequested {
+                    request: cancellation.clone(),
+                },
+            }],
+            next_sequence: 3,
+            drained: false,
+            remaining_credits: plan(EvaluationSchedulingMode::Finite).queue_credits,
+        };
+        lifecycle.record_event_batch(&mut batch).unwrap();
+        let mut duplicate = EvaluationEventBatch {
+            events: vec![SequencedEvaluationEvent {
+                sequence: 3,
+                idempotency_key: "event-3".to_string(),
+                event: EvaluationEvent::HostOperationCancelRequested {
+                    request: cancellation,
+                },
+            }],
+            next_sequence: 4,
+            drained: false,
+            remaining_credits: plan(EvaluationSchedulingMode::Finite).queue_credits,
+        };
+        assert!(lifecycle.record_event_batch(&mut duplicate).is_err());
+    }
+
+    #[test]
+    fn successful_shutdown_remains_idempotent_after_sealing_and_report_commit() {
+        let mut lifecycle = EvaluationLifecycle::new(EvaluatorProtocolLimits::default()).unwrap();
+        lifecycle.state = EvaluationLifecycleState::ManifestCandidate;
+        lifecycle.begin_shutdown().unwrap();
+        lifecycle.worker_exited().unwrap();
+        lifecycle.artifacts_sealed().unwrap();
+        lifecycle.report_committed().unwrap();
+        lifecycle.begin_shutdown().unwrap();
+        lifecycle.abort_to_quiescing();
+        assert_eq!(lifecycle.state(), EvaluationLifecycleState::ReportCommitted);
     }
 }
