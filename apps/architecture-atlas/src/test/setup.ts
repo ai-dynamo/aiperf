@@ -5,6 +5,14 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 
+class TestResizeObserver implements ResizeObserver {
+  disconnect() {}
+  observe() {}
+  unobserve() {}
+}
+
+globalThis.ResizeObserver = TestResizeObserver;
+
 beforeEach(() => {
   window.localStorage.clear();
   window.scrollTo = vi.fn();

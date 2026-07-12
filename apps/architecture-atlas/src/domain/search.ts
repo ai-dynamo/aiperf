@@ -4,10 +4,13 @@
 import { z } from "zod";
 
 import {
+  architectureIdSchema,
   architectureStatusSchema,
   executionModeSchema,
+  ownershipSchema,
   type ArchitectureStatus,
   type ExecutionMode,
+  type Ownership,
 } from "./architecture";
 import { audienceSchema } from "./audience";
 
@@ -30,12 +33,20 @@ const presentSchema = z
   .optional();
 const modesSchema = csvSchema(executionModeSchema);
 const statusesSchema = csvSchema(architectureStatusSchema);
+const ownershipSelectionSchema = csvSchema(ownershipSchema);
+const layoutSchema = z.enum(["ownership", "lifecycle"]).optional();
+const querySchema = z.string().trim().min(1).max(160).optional();
+const selectedSchema = architectureIdSchema.optional();
 
 export const atlasSearchSchema = z.object({
   audience: audienceSchema.optional(),
+  layout: layoutSchema,
   modes: modesSchema,
+  ownership: ownershipSelectionSchema,
   statuses: statusesSchema,
   present: presentSchema,
+  query: querySchema,
+  selected: selectedSchema,
 });
 
 export type AtlasSearch = z.infer<typeof atlasSearchSchema>;
@@ -44,9 +55,13 @@ export function parseAtlasSearch(search: Record<string, unknown>): AtlasSearch {
   const parsed: AtlasSearch = {};
   const fields = {
     audience: audienceSchema.optional().safeParse(search.audience),
+    layout: layoutSchema.safeParse(search.layout),
     modes: modesSchema.safeParse(search.modes),
+    ownership: ownershipSelectionSchema.safeParse(search.ownership),
     statuses: statusesSchema.safeParse(search.statuses),
     present: presentSchema.safeParse(search.present),
+    query: querySchema.safeParse(search.query),
+    selected: selectedSchema.safeParse(search.selected),
   };
   for (const [key, result] of Object.entries(fields)) {
     if (result.success && result.data !== undefined) {
@@ -77,6 +92,10 @@ export function parseStatuses(
   value: string | undefined,
 ): ArchitectureStatus[] {
   return parseSelection(value, architectureStatusSchema);
+}
+
+export function parseOwnership(value: string | undefined): Ownership[] {
+  return parseSelection(value, ownershipSchema);
 }
 
 export function encodeSelection<T extends string>(

@@ -1,36 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
   useEffect,
   useRef,
+  useState,
   type ChangeEvent,
+  type FormEvent,
   type ReactNode,
 } from "react";
 
+import { architectureCatalog } from "../content";
 import {
   audienceSchema,
   type Audience,
 } from "../domain/audience";
-
-const navigation = [
-  { to: "/", label: "System ownership" },
-  { to: "/journey", label: "One-run journey" },
-  { to: "/execution", label: "Execution modes" },
-  { to: "/data-plane", label: "Data plane" },
-  { to: "/observability", label: "Observability" },
-  { to: "/parity", label: "Parity ledger" },
-  { to: "/atlas", label: "Unified atlas" },
-] as const;
-
-const routesWithFilters = new Set([
-  "/",
-  "/execution",
-  "/data-plane",
-  "/observability",
-  "/parity",
-]);
+import {
+  routeCapabilities,
+  routeSupports,
+} from "../domain/routes";
 
 interface AppShellProps {
   audience: Audience;
@@ -54,7 +43,7 @@ type PresentationRoute =
   | "/parity";
 
 function NavigationLinks() {
-  return navigation.map(({ to, label }) => (
+  return routeCapabilities.map(({ path: to, label }) => (
     <Link
       activeOptions={{ exact: to === "/" }}
       activeProps={{ "aria-current": "page" }}
@@ -62,8 +51,14 @@ function NavigationLinks() {
       key={to}
       search={(previous) => ({
         audience: previous.audience,
-        modes: routesWithFilters.has(to) ? previous.modes : undefined,
-        statuses: routesWithFilters.has(to) ? previous.statuses : undefined,
+        modes:
+          routeSupports(to, "filters") && !routeSupports(to, "atlasState")
+            ? previous.modes
+            : undefined,
+        statuses:
+          routeSupports(to, "filters") && !routeSupports(to, "atlasState")
+            ? previous.statuses
+            : undefined,
       })}
       to={to}
     >
@@ -90,6 +85,8 @@ export function AppShell({
   const nextControl = useRef<HTMLButtonElement>(null);
   const previousControl = useRef<HTMLButtonElement>(null);
   const wasPresenting = useRef(false);
+  const router = useRouter();
+  const [globalQuery, setGlobalQuery] = useState("");
 
   useEffect(() => {
     if (presentation) {
@@ -131,6 +128,30 @@ export function AppShell({
     if (result.success) {
       onAudienceChange(result.data);
     }
+  };
+  const handleGlobalSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = globalQuery.trim();
+    if (!query) {
+      return;
+    }
+    const crate = architectureCatalog.crates.find(
+      ({ packageName }) =>
+        packageName.toLocaleLowerCase() === query.toLocaleLowerCase(),
+    );
+    if (crate) {
+      void router.navigate({
+        to: "/crates/$crateId",
+        params: { crateId: crate.packageName },
+        search: { audience },
+      });
+    } else {
+      void router.navigate({
+        to: "/atlas",
+        search: { audience, query },
+      });
+    }
+    setGlobalQuery("");
   };
 
   if (presentation) {
@@ -214,6 +235,23 @@ export function AppShell({
         </div>
 
         <div className="utility-controls">
+          <form
+            aria-label="Global architecture search"
+            className="global-search"
+            onSubmit={handleGlobalSearch}
+            role="search"
+          >
+            <label>
+              <span>Search architecture</span>
+              <input
+                aria-label="Search architecture"
+                onChange={(event) => setGlobalQuery(event.target.value)}
+                placeholder="Component or crate"
+                type="search"
+                value={globalQuery}
+              />
+            </label>
+          </form>
           <label className="audience-control">
             <span>Audience</span>
             <select

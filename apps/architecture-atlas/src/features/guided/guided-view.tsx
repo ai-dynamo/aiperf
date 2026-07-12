@@ -8,6 +8,7 @@ import type {
   ArchitectureStatus,
   ExecutionMode,
 } from "../../domain/architecture";
+import type { GuidedRoute } from "../../domain/routes";
 import {
   FlowLane,
   GuidedFilters,
@@ -20,22 +21,6 @@ import {
   StatusLegend,
   parityRecords,
 } from "./primitives";
-
-export type GuidedRoute =
-  | "/"
-  | "/journey"
-  | "/execution"
-  | "/data-plane"
-  | "/observability"
-  | "/parity";
-
-export const filterableGuidedRoutes = new Set<GuidedRoute>([
-  "/",
-  "/execution",
-  "/data-plane",
-  "/observability",
-  "/parity",
-]);
 
 const dataPlaneFlowIds = new Set([
   "component.dataset-pipeline",

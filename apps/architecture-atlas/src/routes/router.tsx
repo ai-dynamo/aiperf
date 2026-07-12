@@ -10,7 +10,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import type { RouterHistory } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
 import { AudienceProvider, useAudience } from "../app/audience-context";
 import { AppShell } from "../app/app-shell";
@@ -24,26 +24,25 @@ import type {
   ExecutionMode,
 } from "../domain/architecture";
 import {
+  guidedRoutePaths,
+  routeSupports,
+  type GuidedRoute,
+} from "../domain/routes";
+import {
   encodeSelection,
   parseAtlasSearch,
   parseModes,
+  parseOwnership,
   parseStatuses,
 } from "../domain/search";
-import {
-  GuidedView,
-  filterableGuidedRoutes,
-  type GuidedRoute,
-} from "../features/guided/guided-view";
-import { RoutePlaceholder } from "./placeholders";
+import { CrateReferenceView } from "../features/crates/crate-reference";
+import { GuidedView } from "../features/guided/guided-view";
 
-const presentationRoutes = [
-  "/",
-  "/journey",
-  "/execution",
-  "/data-plane",
-  "/observability",
-  "/parity",
-] as const;
+const LazyAtlasView = lazy(async () => {
+  const module = await import("../features/atlas/atlas-view");
+  return { default: module.AtlasView };
+});
+const presentationRoutes = guidedRoutePaths;
 
 const unavailableAudienceStorage = {
   getItem: () => null,
@@ -70,9 +69,10 @@ function RootRouteComponent() {
   const routeIndex = presentationRoutes.findIndex(
     (route) => route === pathname,
   );
-  const presentationAvailable = routeIndex >= 0;
+  const presentationAvailable = routeSupports(pathname, "presentation");
   const presentation = search.present === true && presentationAvailable;
-  const filtersAvailable = filterableGuidedRoutes.has(pathname as GuidedRoute);
+  const filtersAvailable = routeSupports(pathname, "filters");
+  const atlasStateAvailable = routeSupports(pathname, "atlasState");
 
   useEffect(() => {
     persistAudience(audience, storage);
@@ -81,12 +81,20 @@ function RootRouteComponent() {
       modes: filtersAvailable ? search.modes : undefined,
       statuses: filtersAvailable ? search.statuses : undefined,
       present: presentationAvailable ? search.present : undefined,
+      layout: atlasStateAvailable ? search.layout : undefined,
+      ownership: atlasStateAvailable ? search.ownership : undefined,
+      query: atlasStateAvailable ? search.query : undefined,
+      selected: atlasStateAvailable ? search.selected : undefined,
     };
     if (
       search.audience !== normalizedSearch.audience ||
       search.modes !== normalizedSearch.modes ||
       search.statuses !== normalizedSearch.statuses ||
       search.present !== normalizedSearch.present
+      || search.layout !== normalizedSearch.layout
+      || search.ownership !== normalizedSearch.ownership
+      || search.query !== normalizedSearch.query
+      || search.selected !== normalizedSearch.selected
     ) {
       void navigate({
         replace: true,
@@ -96,6 +104,7 @@ function RootRouteComponent() {
     }
   }, [
     audience,
+    atlasStateAvailable,
     filtersAvailable,
     navigate,
     pathname,
@@ -125,7 +134,7 @@ function RootRouteComponent() {
   };
 
   const navigatePresentation = (route: (typeof presentationRoutes)[number]) => {
-    const retainFilters = filterableGuidedRoutes.has(route);
+    const retainFilters = routeSupports(route, "filters");
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries({
       audience,
@@ -192,13 +201,13 @@ function GuidedRouteComponent({ route }: { route: GuidedRoute }) {
     <GuidedView
       audience={audience}
       modes={
-        filterableGuidedRoutes.has(route) ? parseModes(search.modes) : []
+        routeSupports(route, "filters") ? parseModes(search.modes) : []
       }
       onModesChange={updateModes}
       onStatusesChange={updateStatuses}
       route={route}
       statuses={
-        filterableGuidedRoutes.has(route)
+        routeSupports(route, "filters")
           ? parseStatuses(search.statuses)
           : []
       }
@@ -245,14 +254,57 @@ const parityRoute = createRoute({
 const atlasRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/atlas",
-  component: () => (
-    <RoutePlaceholder
-      eyebrow="Unified view / System map"
-      title="Unified architecture atlas"
-      summary="Navigate the full ownership, execution, data, and measurement topology from one source-grounded map."
-    />
-  ),
+  component: AtlasRouteComponent,
 });
+
+function AtlasRouteComponent() {
+  const audience = useAudience();
+  const search = rootRoute.useSearch();
+  const navigate = rootRoute.useNavigate();
+  return (
+    <Suspense fallback={<p role="status">Loading architecture graph…</p>}>
+      <LazyAtlasView
+        audience={audience}
+        onStateChange={(change) => {
+          void navigate({
+            replace: true,
+            to: "/atlas",
+            search: (previous) => ({
+              ...previous,
+              layout: change.layout ?? previous.layout,
+              modes:
+                change.modes === undefined
+                  ? previous.modes
+                  : encodeSelection(change.modes),
+              ownership:
+                change.owners === undefined
+                  ? previous.ownership
+                  : encodeSelection(change.owners),
+              query:
+                change.query === undefined
+                  ? previous.query
+                  : change.query.trim() || undefined,
+              selected:
+                "selected" in change ? change.selected : previous.selected,
+              statuses:
+                change.statuses === undefined
+                  ? previous.statuses
+                  : encodeSelection(change.statuses),
+            }),
+          });
+        }}
+        state={{
+          layout: search.layout ?? "ownership",
+          modes: parseModes(search.modes),
+          owners: parseOwnership(search.ownership),
+          query: search.query ?? "",
+          selected: search.selected,
+          statuses: parseStatuses(search.statuses),
+        }}
+      />
+    </Suspense>
+  );
+}
 
 const crateRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -262,13 +314,7 @@ const crateRoute = createRoute({
 
 function CrateRouteComponent() {
   const { crateId } = crateRoute.useParams();
-  return (
-    <RoutePlaceholder
-      eyebrow="Maintainer reference / Crate"
-      title={crateId}
-      summary="Crate ownership, contracts, dependencies, and source evidence will be populated from the validated atlas dataset."
-    />
-  );
+  return <CrateReferenceView audience={useAudience()} crateId={crateId} />;
 }
 
 const routeTree = rootRoute.addChildren([

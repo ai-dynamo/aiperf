@@ -10,14 +10,34 @@ describe("atlas search parsing", () => {
     expect(
       parseAtlasSearch({
         audience: "maintainer",
+        layout: "lifecycle",
         modes: "online_http",
+        ownership: "rust",
+        query: "Clock",
+        selected: "component.clock-seam",
         statuses: "not-a-status",
         present: "true",
       }),
     ).toEqual({
       audience: "maintainer",
+      layout: "lifecycle",
       modes: "online_http",
+      ownership: "rust",
       present: true,
+      query: "Clock",
+      selected: "component.clock-seam",
     });
+  });
+
+  it("drops invalid atlas fields independently", () => {
+    expect(
+      parseAtlasSearch({
+        audience: "developer",
+        layout: "radial",
+        ownership: "rust,operator",
+        query: 42,
+        selected: "../clock",
+      }),
+    ).toEqual({ audience: "developer" });
   });
 });
