@@ -23,12 +23,13 @@ in deliberate contrast to the exporters overhaul.
 
 ## 0. Thesis — the seam between workload and transport
 
-An **endpoint** is the OpenAI-dialect adapter between the workload (a `Turn`/`RequestInfo`) and the
-wire (`aiperf-transport`). It has exactly two responsibilities plus an input-accounting side job:
+An **endpoint** is the API-dialect adapter between the workload (a `Turn`/`RequestInfo`) and a
+canonical decoded payload/response shape. It has exactly two responsibilities plus an
+input-accounting side job:
 
-1. **`format_payload`** — build the wire request body from turns (chat messages / responses input /
-   completions prompt / embeddings input).
-2. **`parse_response`** — parse one server response (streaming chunk or full) into a
+1. **`format_payload`** — build the canonical decoded request from turns (chat messages / responses
+   input / completions prompt / embeddings input).
+2. **`parse_response`** — parse one canonical decoded server response into a
    `ParsedResponse { perf_ns, data, usage }`; the collector derives TTFT/tokens from these.
 3. **`extract_payload_inputs`** — a single pass over the built body that yields the tokenizable text
    + media counts for **input-side ISL** accounting.
@@ -39,20 +40,27 @@ exactly, guard with fixtures.** This is redo-*port*, not redo-*clean* — unlike
 
 **Rust home:** `aiperf-endpoints` owns the `Endpoint` trait, every native dialect, the shared
 body-build skeleton, the input-ISL extractor, and the static capability table. It remains
-transport-neutral. `aiperf-transport` owns URL construction, header composition, body encoding,
-inline-media fetch, SSE framing, polling, download, and cancellation; `aiperf` composes those
-seams in the scheduled online dispatcher.
+transport-neutral. `aiperf-transport-http` owns the object-safe `HttpEndpointBinding` seam plus URL
+construction, header composition, body encoding, inline-media fetch, SSE framing, polling,
+download, cancellation, and decoding back into the canonical response shape; `aiperf` retains
+endpoint parsing, observation, and scheduled result composition.
 
 **Implementation addendum (2026-07-11):** the complete tier-2 set is built in
 `crates/aiperf-endpoints/src/tier2.rs` and `tier2/flexible.rs`: NIM/Cohere/Hugging Face rankings,
 image generation/edit, video generation, Hugging Face generate, NIM embeddings, image retrieval,
 Solido RAG, raw, and template. Multipart JSON/binary encoding, request-local inline-media fetch
 deduplication, Clock-paced video polling/download, and post-send cancellation across the entire
-poll lifecycle live under `crates/aiperf-transport/src/transport/`. Per-turn endpoint selection
+poll lifecycle live under `crates/aiperf-transport-http/src/transport/`. Per-turn endpoint selection
 and response/usage/modality observation are wired in `crates/aiperf/src/http/endpoint_dispatch.rs`.
 `crates/aiperf/tests/tier2_endpoints_online.rs` proves all dialect families and all four special
 lifecycles against real loopback HTTP, including cancellation anchored to the original submit-body
 send completion and native image/video report metrics.
+
+**Implementation addendum (2026-07-12):** the concrete HTTP implementation is named
+`aiperf-transport-http`. `transport/endpoint_binding.rs` now owns the object-safe
+`HttpEndpointBinding`, its metadata-driven implementation, HTTP request lowering, and HTTP/SSE to
+`ServerResponse` decoding. The same endpoint implementation can therefore be paired with a future
+gRPC or WebSocket binding without transport-specific endpoint subclasses.
 
 ---
 
@@ -61,8 +69,8 @@ send completion and native image/video report metrics.
 ```rust
 pub trait Endpoint {
     fn metadata(&self) -> &EndpointMetadata;                    // capability flags (§4)
-    fn format_payload(&self, req: &RequestInfo) -> Result<Bytes>;   // build the wire body
-    fn parse_response(&self, resp: &ServerResponse) -> Option<ParsedResponse>;  // one response
+    fn format_payload(&self, req: &RequestInfo) -> Result<Value>;   // canonical decoded payload
+    fn parse_response(&self, resp: &ServerResponse) -> Option<ParsedResponse>;  // canonical response
     fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload;         // input-ISL (§3)
     fn build_assistant_turn(&self, record: &RequestRecord) -> Option<Turn>;     // context replay
 }
@@ -193,7 +201,7 @@ default), `WAIT_FOR_MODEL_TIMEOUT = 0` (probe off), streaming off, `POOLED` reus
 
 The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_params`, `streaming`,
 `use_legacy_max_tokens`, `use_server_token_count`, `extra`, `session_header`, `connection_reuse`,
-`download_video_content`) — most consumed by `aiperf-transport`; the body-relevant ones
+`download_video_content`) — most consumed by `aiperf-transport-http`; the body-relevant ones
 (`use_legacy_max_tokens`, `use_server_token_count`, `extra`, `primary_model_name`) by the endpoint.
 
 ---
@@ -205,11 +213,12 @@ The endpoint config carries the wire knobs (`headers`, `api_key`→Bearer, `url_
   skeleton and content-part hooks; the `extract_inputs` ISL walk (§3, including tool-schema
   byte-parity); the static `EndpointMetadata` table; and config validators. Raw/template use the
   Rust `jmespath` and `minijinja` implementations, with safe template-file resolution.
-- **Built wire lifecycles (`aiperf-transport`):** multipart encoding, async polling and content
-  download, inline-media retrieval/deduplication, and endpoint-specific streaming paths. All sleeps
-  and cancellation deadlines use the injected `Clock`; polling retains one cancellation deadline
-  rooted at the original submission's captured send completion.
-- **Not here (in `aiperf-transport`):** URL construction (`build_url`/`_dedup_path_overlap` — the
+- **Built wire lifecycles (`aiperf-transport-http`):** the `HttpEndpointBinding` translation seam,
+  multipart encoding, async polling and content download, inline-media retrieval/deduplication,
+  endpoint-specific streaming paths, and canonical HTTP/SSE response decoding. All sleeps and
+  cancellation deadlines use the injected `Clock`; polling retains one cancellation deadline rooted
+  at the original submission's captured send completion.
+- **Not here (in `aiperf-transport-http`):** URL construction (`build_url`/`_dedup_path_overlap` — the
   `/v1`+`v1/…` collapse), header composition (correlation header under `session_header`), SSE framing,
   cancellation. Endpoints build the body + parse decoded JSON only.
 - **Testing (parity fixtures):** a Python twin emits, per quirk, `{turns → wire body}` and
@@ -246,3 +255,19 @@ the exact selected runner before its legacy endpoint implementations and metadat
 
 This addendum does not supersede the formatter, parser, replay, extraction, transport-lifecycle, or
 parity-fixture requirements in this spec. Those source-grounded behaviors remain authoritative.
+
+## Addendum — 2026-07-12 (PR-664 KServe endpoint family)
+
+`aiperf-endpoints` now includes the complete PR-664 KServe behavior family:
+`kserve_chat`, `kserve_completions`, `kserve_embeddings`,
+`kserve_v1_predict`, `kserve_v2_infer`, `kserve_v2_embeddings`,
+`kserve_v2_rankings`, `kserve_v2_vlm`, and `kserve_v2_images`. The
+factories preserve selector extras, tensor shapes and datatypes, response
+fallbacks, embedding reshaping, ranking indexes, VLM media, and typed image
+parameters. They are open-registry and runner-protocol-v2-only; KServe V1 is a
+dialect identity, not a runner-v1 adapter.
+
+HTTP behavior remains in `aiperf-transport-http`. The five KServe V2 OIP
+dialects additionally bind to the native Tonic transport described by
+`2026-07-12-aiperf-native-grpc-kserve-v2-design.md`. Endpoint parsing sees
+the same canonical JSON shape after either HTTP JSON or gRPC protobuf decoding.

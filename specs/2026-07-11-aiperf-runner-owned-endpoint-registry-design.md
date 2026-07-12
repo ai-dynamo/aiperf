@@ -1158,3 +1158,21 @@ constructs built-ins internally. Consequently, exact-binary registry authority, 
 capabilities, shared validate/execute preparation, and full runner injection are still pending.
 This addendum records implementation progress only; it does not narrow the original completion
 criteria or authorize a second permanent endpoint authority.
+
+## Addendum — 2026-07-12 (KServe factories and prepared online execution)
+
+The frozen registry now owns nine additional open KServe factories: three
+OpenAI-compatible HTTP routes, KServe V1 Predict, and five KServe V2 OIP
+dialects. Each factory owns its descriptor and prepared behavior; none exposes
+the closed protocol-v1 `Endpoint` compatibility hook or adds an
+`EndpointType` variant.
+
+Selected execution convergence is now built. Runner-v2 HTTP scheduled and
+native gRPC scheduled adapters prepare one dense endpoint table per worker.
+The separate `aiperf-transport-grpc` registry prepares a matching dense
+`GrpcEndpointBinding` table for exactly the five gRPC-capable KServe V2 IDs.
+The complete transport and reachability contract is recorded in
+`2026-07-12-aiperf-native-grpc-kserve-v2-design.md`. This supersedes the
+previous statement that all runner capability and prepared-binding execution
+convergence remained pending; protocol-v1 authorities and unregistered
+workload/lifecycle combinations still remain.

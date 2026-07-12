@@ -326,7 +326,7 @@ descriptors and feature flags are enumerated deterministically into capabilities
 The default backend owns:
 
 - `RealClock`;
-- `aiperf-transport` hyper client configuration;
+- `aiperf-transport-http` hyper client configuration;
 - h1/h2c/UDS/TLS, connection reuse, cancellation, SSE, and trace timing;
 - URL selection and sticky routing;
 - real inference endpoints or loopback mock endpoints with identical code.
@@ -812,3 +812,20 @@ This design is complete when:
 
 Until then, capabilities—not library presence or this design record—are the authority for what the
 exact selected runner can execute.
+
+## Addendum — 2026-07-12 (native KServe/gRPC protocol-v2 pairs)
+
+The base runner now registers and subprocess-proves `online_http + scheduled`
+and `online_grpc + scheduled` protocol-v2 execution. The latter is a new
+real-clock backend over `aiperf-transport-grpc`; every multi-worker lane owns a
+current-thread runtime, `LocalSet`, Clock, prepared endpoint table, dense gRPC
+binding table, and Tonic channel set.
+
+The KServe endpoint family is deliberately absent from protocol-v1 endpoint
+compatibility. `kserve_v1_predict` names KServe's V1 HTTP dialect, not runner
+protocol v1, and executes through the same authored v2 prepared-binding path.
+Python accepts `grpc://` / `grpcs://` only with `online_grpc`, exact-image
+capabilities advertise only the registered pair, and the v1 projector rejects
+the backend. This addendum supersedes the earlier “pair execution pending” and
+empty-`supported_pairs` implementation-status statements; unregistered pairs
+and uncomposed sidecar/readiness lifecycles still fail closed.

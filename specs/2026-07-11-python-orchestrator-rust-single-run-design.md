@@ -38,7 +38,7 @@ are not alternate implementations of this design.
 | Trials, iteration order, cooldown, convergence, confidence, sweep aggregation | Python | `MultiRunOrchestrator` and aggregation/convergence packages |
 | Per-run artifact directory, user-file rendering, tokenizer/public-dataset resolution | Python | Config-v2 resolver chain |
 | One run's models, dataset, phases, ramps, cancellation, adaptive policy | Rust | `aiperf-runner::execute` over scheduled runtime traits |
-| HTTP, TLS/UDS/h2c, request bodies, SSE, usage, raw exchanges | Rust | `aiperf-transport` and `aiperf-endpoints` |
+| HTTP, TLS/UDS/h2c, request bodies, SSE, usage, raw exchanges | Rust | `aiperf-transport-http` and `aiperf-endpoints` |
 | Clock, phase lifecycle, arrivals, slots, TTFT release, stop/drain | Rust | `aiperf-clock`, `aiperf-timing`, `aiperf::phase_runtime` |
 | Request metrics, sweeps, SLO goodput, timeslices, native-v2 | Rust | `aiperf-metrics` |
 | GPU, server Prometheus, network RTT phase sidecars | Rust | native telemetry crates and runner adapters |
@@ -220,3 +220,20 @@ unbounded “future runner additions”: the runner-only execution-surface spec 
 their explicit migration increments and acceptance matrix. Until each pair is
 advertised and proven by the exact runner, it remains library-built but not
 product-reachable.
+
+## Addendum — 2026-07-12 (native gRPC authored selection)
+
+Config v2 now accepts explicit `grpc://` and `grpcs://` targets only when
+`benchmark.backend.type` is `online_grpc`. It rejects HTTP/gRPC backend
+mismatches, mixed gRPC schemes, and the legacy Python
+`endpoint.transport` selector. The authored projector preserves
+`online_grpc`, exact-image capability preflight selects the registered
+`online_grpc + scheduled` pair, and protocol-v1 projection fails rather than
+resolving or falling back.
+
+`online_http + scheduled` is also registered through v2 so HTTP-only KServe
+dialects such as `kserve_v1_predict` use prepared open-registry execution.
+Runner subprocess tests prove both paths and native-v2 reporting. This
+supersedes this spec's earlier “authored v2 static validation only” status for
+those registered pairs; the compatibility sequence remains only for exact
+pairs not yet advertised by the selected runner.
