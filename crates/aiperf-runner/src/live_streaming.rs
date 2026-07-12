@@ -370,8 +370,8 @@ fn live_endpoint_config(endpoint: &NativeEndpointPlan) -> Result<LiveEndpointCon
                 streaming: spec.streaming,
             })
         }
-        NativeEndpointPlan::Prepared(plan) => {
-            let profile = plan.default_profile()?;
+        NativeEndpointPlan::Prepared(profiles) => {
+            let profile = crate::execute::default_prepared_endpoint_profile(profiles)?;
             Ok(LiveEndpointConfig {
                 endpoint_id: profile.endpoint_id.as_str(),
                 urls: &profile.config.urls,
@@ -572,8 +572,9 @@ struct WorkerTerminal {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::execute::{NativePreparedEndpointPlan, NativePreparedEndpointProfile};
 
     #[test]
     fn bounded_queue_drops_oldest_event() {
@@ -604,9 +605,8 @@ mod tests {
 
     #[test]
     fn prepared_endpoint_projects_open_identity_without_legacy_conversion() {
-        let endpoint = NativeEndpointPlan::Prepared(NativePreparedEndpointPlan {
-            default_profile_id: "default".into(),
-            profiles: vec![NativePreparedEndpointProfile {
+        let endpoint = NativeEndpointPlan::Prepared(Arc::new(vec![
+            crate::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
                 endpoint_id: aiperf_endpoints::EndpointId::new("extension_chat").unwrap(),
                 config: aiperf_endpoints::RawEndpointConfig {
@@ -615,10 +615,10 @@ mod tests {
                     ..aiperf_endpoints::RawEndpointConfig::default()
                 },
                 connection_reuse: aiperf_transport_http::models::ConnectionReuseStrategy::default(),
-                http2: false,
+                client: Default::default(),
                 session_header: None,
-            }],
-        });
+            },
+        ]));
 
         let projected = live_endpoint_config(&endpoint).unwrap();
         assert_eq!(projected.endpoint_id, "extension_chat");

@@ -1107,6 +1107,16 @@ impl RunnerRunContext {
             .iter()
             .map(|profile| (profile.profile_id.as_str(), profile))
     }
+
+    /// Retain the exact validated profile collection in a prepared adapter.
+    ///
+    /// This is intentionally a clone of the shared handle, not a projection
+    /// into an execution-specific DTO. Backend/workload adapters therefore
+    /// pass the same normalized objects from validation into worker-local
+    /// endpoint and transport preparation.
+    pub fn endpoint_profiles_handle(&self) -> Arc<Vec<ValidatedEndpointProfileV2>> {
+        self.endpoint_profiles.clone()
+    }
 }
 
 /// Strictly decode and statically validate every authored endpoint profile
@@ -1797,6 +1807,11 @@ mod tests {
             context.endpoint_profile("a-first").unwrap().profile_id,
             "a-first"
         );
+        let retained = context.endpoint_profiles_handle();
+        assert!(std::ptr::eq(
+            context.default_endpoint_profile().unwrap(),
+            &retained[0]
+        ));
         let provenance = context
             .report_provenance(format!("blake3:{}", "a".repeat(64)), "online_http", "graph")
             .unwrap();

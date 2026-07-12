@@ -60,8 +60,7 @@ use aiperf_dataset::{
     TextTokenizer, TiktokenEncoding, TiktokenTokenizer, TraceSynthesisConfig,
 };
 use aiperf_endpoints::{
-    EndpointConfig, EndpointId, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
-    RawEndpointConfig,
+    EndpointConfig, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
 };
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_graph::execution::GraphTraceExecutionBackend;
@@ -91,7 +90,7 @@ use aiperf_timing::{
     make_interval_generator,
 };
 use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
+use aiperf_transport_http::models::HttpVersion;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -126,6 +125,7 @@ use crate::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, write_outputs_json,
     write_raw_records_jsonl, write_records_jsonl,
 };
+use crate::registry::ValidatedEndpointProfileV2;
 use crate::server_metrics::ServerMetricsRun;
 use crate::sidecar_input::{
     GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec, LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec,
@@ -305,7 +305,7 @@ pub(crate) enum NativeEndpointPlan {
     /// Protocol-v1 compatibility policy.
     Legacy(Box<EndpointSpec>),
     /// Protocol-v2 open endpoint profiles.
-    Prepared(NativePreparedEndpointPlan),
+    Prepared(Arc<Vec<ValidatedEndpointProfileV2>>),
 }
 
 impl NativeEndpointPlan {
@@ -321,57 +321,48 @@ impl NativeEndpointPlan {
     fn default_urls(&self) -> Result<&[String]> {
         match self {
             Self::Legacy(spec) => Ok(&spec.urls),
-            Self::Prepared(plan) => Ok(&plan.default_profile()?.config.urls),
+            Self::Prepared(profiles) => {
+                Ok(&default_prepared_endpoint_profile(profiles)?.config.urls)
+            }
         }
     }
 }
 
-/// Deterministically ordered protocol-v2 endpoint profiles retained until
-/// each execution worker prepares its own dense binding table.
-#[derive(Clone)]
-pub(crate) struct NativePreparedEndpointPlan {
-    pub(crate) default_profile_id: String,
-    pub(crate) profiles: Vec<NativePreparedEndpointProfile>,
+/// Conventional profile selected when a workload does not name one explicitly.
+pub(crate) const DEFAULT_ENDPOINT_PROFILE_ID: &str = "default";
+
+/// Resolve one exact coordinator-validated profile retained by an adapter.
+pub(crate) fn prepared_endpoint_profile<'a>(
+    profiles: &'a [ValidatedEndpointProfileV2],
+    profile_id: &str,
+) -> Result<&'a ValidatedEndpointProfileV2> {
+    profiles
+        .iter()
+        .find(|profile| profile.profile_id == profile_id)
+        .ok_or_else(|| anyhow!("endpoint profile {profile_id:?} was not prepared"))
 }
 
-impl NativePreparedEndpointPlan {
-    pub(crate) fn default_profile(&self) -> Result<&NativePreparedEndpointProfile> {
-        self.profile(&self.default_profile_id)
-    }
-
-    pub(crate) fn profile(&self, profile_id: &str) -> Result<&NativePreparedEndpointProfile> {
-        self.profiles
-            .iter()
-            .find(|profile| profile.profile_id == profile_id)
-            .ok_or_else(|| anyhow!("endpoint profile {profile_id:?} was not prepared"))
-    }
-}
-
-/// One normalized endpoint profile without a legacy closed-enum identity.
-#[derive(Clone)]
-pub(crate) struct NativePreparedEndpointProfile {
-    pub(crate) profile_id: String,
-    pub(crate) endpoint_id: EndpointId,
-    pub(crate) config: RawEndpointConfig,
-    pub(crate) connection_reuse: ConnectionReuseStrategy,
-    pub(crate) http2: bool,
-    pub(crate) session_header: Option<String>,
+/// Resolve the conventional profile from the retained validated collection.
+pub(crate) fn default_prepared_endpoint_profile(
+    profiles: &[ValidatedEndpointProfileV2],
+) -> Result<&ValidatedEndpointProfileV2> {
+    prepared_endpoint_profile(profiles, DEFAULT_ENDPOINT_PROFILE_ID)
 }
 
 #[derive(Clone)]
 struct NativePreparedEndpointTableFactory {
     registry: EndpointRegistry,
-    plan: NativePreparedEndpointPlan,
+    profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
 }
 
 impl NativePreparedEndpointTableFactory {
-    fn new(registry: EndpointRegistry, plan: NativePreparedEndpointPlan) -> Self {
-        Self { registry, plan }
+    fn new(registry: EndpointRegistry, profiles: Arc<Vec<ValidatedEndpointProfileV2>>) -> Self {
+        Self { registry, profiles }
     }
 
     fn prepare_table(&self) -> Result<PreparedEndpointTable> {
         let mut table = PreparedEndpointTable::new();
-        for profile in &self.plan.profiles {
+        for profile in self.profiles.iter() {
             let endpoint = self
                 .registry
                 .prepare(&profile.endpoint_id, profile.config.clone())
@@ -383,7 +374,6 @@ impl NativePreparedEndpointTableFactory {
 
     fn reference(&self, profile_id: &str) -> Result<PreparedEndpointReference> {
         let index = self
-            .plan
             .profiles
             .iter()
             .position(|profile| profile.profile_id == profile_id)
@@ -391,13 +381,13 @@ impl NativePreparedEndpointTableFactory {
         let index = u32::try_from(index).context("prepared endpoint profile index exceeds u32")?;
         Ok(PreparedEndpointReference {
             key: EndpointKey::from_index(index),
-            endpoint_id: self.plan.profiles[index as usize].endpoint_id.clone(),
+            endpoint_id: self.profiles[index as usize].endpoint_id.clone(),
         })
     }
 
     fn coordinator_resolver(&self) -> Result<Rc<dyn PreparedTurnEndpointResolver>> {
         let table = Rc::new(self.prepare_table()?);
-        let default = self.reference(&self.plan.default_profile_id)?;
+        let default = self.reference(DEFAULT_ENDPOINT_PROFILE_ID)?;
         Ok(Rc::new(PreparedEndpointTableResolver::single(
             table, default,
         )?))
@@ -1556,19 +1546,14 @@ impl GraphWorkloadObserver for GraphPhaseWorkloadObserver {
         self.trace_nodes
             .borrow_mut()
             .insert(info.trace_id.clone(), info.node_count);
-        for node_index in 0..info.node_count {
-            let sent = if node_index == 0 {
-                PhaseSend::single_turn_session()
-            } else {
-                PhaseSend::dag_child()
-            };
-            if let Err(error) = self.context.record_sent(sent) {
-                self.failures.record(format!(
-                    "recording graph trace {:?} node {node_index} send: {error}",
-                    info.trace_id
-                ));
-                break;
-            }
+        let mut sent = Vec::with_capacity(info.node_count);
+        sent.push(PhaseSend::single_turn_session());
+        sent.extend((1..info.node_count).map(|_| PhaseSend::dag_child()));
+        if let Err(error) = self.context.record_sent_batch(&sent) {
+            self.failures.record(format!(
+                "recording graph trace {:?} admitted send batch: {error}",
+                info.trace_id
+            ));
         }
     }
 
@@ -2028,8 +2013,7 @@ async fn execute_graph_native(
     let default_output_tokens = graph_default_output_tokens;
     let endpoints_configured = match &request.run.endpoint {
         NativeEndpointPlan::Legacy(spec) => spec.urls.clone(),
-        NativeEndpointPlan::Prepared(plan) => plan
-            .profiles
+        NativeEndpointPlan::Prepared(profiles) => profiles
             .iter()
             .flat_map(|profile| profile.config.urls.iter().cloned())
             .collect::<BTreeSet<_>>()
@@ -2061,10 +2045,10 @@ async fn execute_graph_native(
                     input_token_counter.clone(),
                 ))
             }
-            NativeEndpointPlan::Prepared(plan) => {
+            NativeEndpointPlan::Prepared(profiles) => {
                 Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
                     registry.endpoints().clone(),
-                    plan.clone(),
+                    profiles.clone(),
                     input_token_counter.clone(),
                 ))
             }
@@ -2108,11 +2092,18 @@ async fn execute_graph_native(
     create_run_artifacts(&request.run)?;
     let captured = Rc::new(RefCell::new(Vec::new()));
     let placements = phases.iter().map(|phase| phase.placement.clone()).collect();
+    let phase_configs = request
+        .run
+        .phases
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| phase_config(spec, phase_seamless_to_next(&request.run.phases, index)))
+        .collect::<Result<Vec<_>>>()?;
     let phases = phases
         .into_iter()
-        .zip(&request.run.phases)
-        .map(|(prepared, spec)| Ok((phase_config(spec)?.id, prepared)))
-        .collect::<Result<HashMap<_, _>>>()?;
+        .zip(&phase_configs)
+        .map(|(prepared, config)| (config.id.clone(), prepared))
+        .collect::<HashMap<_, _>>();
     let run_cancelling = Rc::new(Cell::new(false));
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(phases),
@@ -2126,16 +2117,7 @@ async fn execute_graph_native(
         phase_observer.clone(),
         execution_factory,
     ));
-    let orchestrator = ClockPhaseOrchestrator::new(
-        request
-            .run
-            .phases
-            .iter()
-            .map(phase_config)
-            .collect::<Result<Vec<_>>>()?,
-        runner_factory,
-        phase_observer,
-    )?;
+    let orchestrator = ClockPhaseOrchestrator::new(phase_configs, runner_factory, phase_observer)?;
     let phase_stats = orchestrator.run_all().await?;
     let mut captured = std::mem::take(&mut *captured.borrow_mut());
     captured.sort_by(|left, right| {
@@ -2626,27 +2608,17 @@ async fn execute_native_inner(
                 Some(spec.endpoint_type),
             )
         }
-        NativeEndpointPlan::Prepared(plan) => {
-            let profile = plan.default_profile()?;
-            let request_timeout_ns = seconds_to_ns(profile.config.timeout_seconds)?;
+        NativeEndpointPlan::Prepared(profiles) => {
+            let profile = default_prepared_endpoint_profile(profiles)?;
             let table_factory = Arc::new(NativePreparedEndpointTableFactory::new(
                 registry.endpoints().clone(),
-                plan.clone(),
+                profiles.clone(),
             ));
             let endpoint_resolver = table_factory.coordinator_resolver()?;
             (
                 profile.config.urls.clone(),
                 TransportSinkConfig {
-                    client: ClientConfig {
-                        http_version: if profile.http2 {
-                            HttpVersion::Http2PriorKnowledge
-                        } else {
-                            HttpVersion::Auto
-                        },
-                        total_timeout_ns: (request_timeout_ns > 0)
-                            .then_some(request_timeout_ns),
-                        ..ClientConfig::default()
-                    },
+                    client: profile.client.clone(),
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
                 },
@@ -2734,6 +2706,7 @@ async fn execute_native_inner(
             let mut plan = build_native_scheduled_phase_plan_with_source_factory(
                 phase_index,
                 phase,
+                phase_seamless_to_next(&request.run.phases, phase_index),
                 &dataset,
                 &primary_model,
                 default_output_tokens,
@@ -3090,6 +3063,7 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
 pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     phase_index: usize,
     phase: &PhaseSpec,
+    seamless_to_next: bool,
     dataset: &Dataset,
     primary_model: &str,
     default_output_tokens: usize,
@@ -3289,11 +3263,12 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
         phase_prefill,
         user_target,
     )?;
-    let mut plan = ScheduledPhasePlan::new(phase_config(phase)?, workload, policies)
-        .with_enforce_stop(enforce_stop)
-        .with_start_ns(start_ns)
-        .with_resources(resources)
-        .with_controller(controller);
+    let mut plan =
+        ScheduledPhasePlan::new(phase_config(phase, seamless_to_next)?, workload, policies)
+            .with_enforce_stop(enforce_stop)
+            .with_start_ns(start_ns)
+            .with_resources(resources)
+            .with_controller(controller);
     if let Some(extension) = runtime_extension {
         plan = plan.with_runtime_extension(extension);
     }
@@ -3892,7 +3867,17 @@ fn artifact_path(root: &Path, relative: &Path, field: &str) -> Result<PathBuf> {
     Ok(root.join(relative))
 }
 
-fn phase_config(spec: &PhaseSpec) -> Result<PhaseConfig> {
+/// Resolve the current phase's outbound handoff from authored phase order.
+// Config v2 authors `seamless` on the subsequent phase, while the native
+// PhaseConfig owns the current -> next handoff. Preserve that direction once
+// at the adapter seam. Source: `src/aiperf/config/config.py:522-530`.
+pub(crate) fn phase_seamless_to_next(phases: &[PhaseSpec], phase_index: usize) -> bool {
+    phases
+        .get(phase_index + 1)
+        .is_some_and(|next| next.common().seamless)
+}
+
+fn phase_config(spec: &PhaseSpec, seamless_to_next: bool) -> Result<PhaseConfig> {
     let common = spec.common();
     let kind = match common.name.as_str() {
         "warmup" => PhaseKind::Warmup,
@@ -3905,7 +3890,7 @@ fn phase_config(spec: &PhaseSpec) -> Result<PhaseConfig> {
         expected_duration_ns: common.duration.map(seconds_to_ns).transpose()?,
     };
     let mut phase = PhaseConfig::new(&common.name, kind, stop)
-        .with_seamless(common.seamless)
+        .with_seamless(seamless_to_next)
         .with_concurrency(spec.concurrency(), common.prefill_concurrency);
     if let Some(grace) = common.grace_period {
         phase = phase.with_grace_period(GracePeriod::Finite(seconds_to_ns(grace)?));
@@ -4705,7 +4690,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use aiperf_graph::errors::TraceError;
     use aiperf_graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
@@ -4780,6 +4765,38 @@ mod tests {
     struct RecordingGraphBackend {
         traces: Arc<AtomicUsize>,
         prefill_updates: Arc<AtomicUsize>,
+    }
+
+    struct CancellingGraphPlacement {
+        builds: Arc<AtomicUsize>,
+        executions: Arc<AtomicUsize>,
+        cancellations: Arc<AtomicUsize>,
+        cancelled: Arc<AtomicBool>,
+        wake: Arc<Notify>,
+    }
+
+    impl RunnerGraphPlacementFactory for CancellingGraphPlacement {
+        fn build(
+            &self,
+            worker_count: usize,
+            _worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+        ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+            assert_eq!(worker_count, 1);
+            self.builds.fetch_add(1, Ordering::SeqCst);
+            Ok(Rc::new(BlockingUntilCancelledGraphBackend {
+                executions: self.executions.clone(),
+                cancellations: self.cancellations.clone(),
+                cancelled: self.cancelled.clone(),
+                wake: self.wake.clone(),
+            }))
+        }
+    }
+
+    struct BlockingUntilCancelledGraphBackend {
+        executions: Arc<AtomicUsize>,
+        cancellations: Arc<AtomicUsize>,
+        cancelled: Arc<AtomicBool>,
+        wake: Arc<Notify>,
     }
 
     #[test]
@@ -4859,6 +4876,34 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait(?Send)]
+    impl GraphTraceExecutionBackend for BlockingUntilCancelledGraphBackend {
+        async fn execute_trace(
+            &self,
+            _plan: aiperf_graph::model::GraphTracePlan,
+        ) -> Result<(), TraceError> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            loop {
+                let notified = self.wake.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.cancelled.load(Ordering::SeqCst) {
+                    return Err(TraceError::Cancelled(
+                        "cancelled by the graph phase lifecycle".into(),
+                    ));
+                }
+                notified.await;
+            }
+        }
+
+        fn cancel_inflight(&self) -> Result<(), TraceError> {
+            self.cancellations.fetch_add(1, Ordering::SeqCst);
+            self.cancelled.store(true, Ordering::SeqCst);
+            self.wake.notify_waiters();
+            Ok(())
+        }
+    }
+
     #[test]
     fn graph_coordinator_accepts_injected_whole_trace_placement() {
         let artifacts = tempfile::tempdir().unwrap();
@@ -4877,10 +4922,21 @@ mod tests {
                 "dataset": {
                     "type": "file",
                     "format": "dag_jsonl",
-                    "records": [{
-                        "session_id": "root",
-                        "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
-                    }]
+                    "records": [
+                        {
+                            "session_id": "root",
+                            "turns": [{
+                                "messages": [{"role": "user", "content": "hello"}],
+                                "forks": ["child"]
+                            }]
+                        },
+                        {
+                            "session_id": "child",
+                            "turns": [{
+                                "messages": [{"role": "user", "content": "child"}]
+                            }]
+                        }
+                    ]
                 },
                 "phases": [{
                     "type": "concurrency",
@@ -4920,6 +4976,99 @@ mod tests {
     }
 
     #[test]
+    fn authored_seamless_lowers_to_the_previous_phase_outbound_handoff() {
+        let phases: Vec<PhaseSpec> = serde_json::from_value(json!([{
+            "type": "concurrency",
+            "name": "warmup",
+            "exclude_from_results": true,
+            "requests": 1,
+            "concurrency": 1
+        }, {
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 1,
+            "concurrency": 1,
+            "seamless": true
+        }]))
+        .unwrap();
+
+        let lowered = phases
+            .iter()
+            .enumerate()
+            .map(|(index, phase)| {
+                phase_config(phase, phase_seamless_to_next(&phases, index)).unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(lowered[0].seamless);
+        assert!(!lowered[1].seamless);
+    }
+
+    #[test]
+    fn graph_duration_grace_cancels_placement_and_drains_as_policy() {
+        let artifacts = tempfile::tempdir().unwrap();
+        let request: RunRequest = serde_json::from_value(json!({
+            "protocol_version": 1,
+            "run": {
+                "benchmark_id": "graph-lifecycle-cancellation",
+                "workers": 1,
+                "artifact_dir": artifacts.path(),
+                "models": {"items": [{"name": "fixture-model"}]},
+                "endpoint": {
+                    "urls": ["http://127.0.0.1:1"],
+                    "type": "chat",
+                    "streaming": true
+                },
+                "dataset": {
+                    "type": "file",
+                    "format": "dag_jsonl",
+                    "records": [{
+                        "session_id": "root",
+                        "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
+                    }]
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "duration": 0.02,
+                    "grace_period": 0.005,
+                    "concurrency": 1
+                }],
+                "metrics": {},
+                "artifacts": {}
+            }
+        }))
+        .unwrap();
+        let builds = Arc::new(AtomicUsize::new(0));
+        let executions = Arc::new(AtomicUsize::new(0));
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let placement = CancellingGraphPlacement {
+            builds: builds.clone(),
+            executions: executions.clone(),
+            cancellations: cancellations.clone(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            wake: Arc::new(Notify::new()),
+        };
+
+        let terminal = execute_run_with_all_factories(
+            request,
+            &UnusedHttpPlacement,
+            &GraphInputAdapterRegistry::with_builtin_adapters(),
+            &placement,
+            &BuiltinAiperfRegistryFactory,
+        )
+        .unwrap();
+
+        assert!(terminal.success, "{:?}", terminal.error);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(cancellations.load(Ordering::SeqCst), 1);
+        assert!(artifacts.path().join("native-v2.json").is_file());
+    }
+
+    #[test]
     fn graph_uses_shared_phase_lifecycle_for_seamless_ramps_and_prefill_control() {
         let artifacts = tempfile::tempdir().unwrap();
         let request: RunRequest = serde_json::from_value(json!({
@@ -4948,7 +5097,6 @@ mod tests {
                     "exclude_from_results": true,
                     "sessions": 1,
                     "concurrency": 2,
-                    "seamless": true,
                     "concurrency_ramp": {"duration": 0.001, "strategy": "linear"}
                 }, {
                     "type": "concurrency",
@@ -4956,6 +5104,7 @@ mod tests {
                     "exclude_from_results": false,
                     "sessions": 1,
                     "concurrency": 2,
+                    "seamless": true,
                     "prefill_concurrency": 2,
                     "prefill_ramp": {"duration": 0.001, "strategy": "linear"},
                     "grace_period": 0.01

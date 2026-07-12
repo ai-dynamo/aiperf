@@ -26,10 +26,9 @@ use url::Url;
 
 use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
-    NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativePreparedEndpointPlan,
-    NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec, NativeSidecarPlan,
-    NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
-    StaticAccuracyEvaluatorProcessSpec,
+    NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunPlan, NativeRunSpec,
+    NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
+    StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
     execute_prepared_native_plan_uncommitted_with_execution_factories, load_tokenizer,
 };
 use crate::execution_factories::RunnerExecutionFactories;
@@ -853,7 +852,7 @@ pub(crate) fn lower_scheduled(
         NativeDatasetPlan::PreparedLinear(dataset),
         tokenizer,
         &workload.phases,
-        NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
+        NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
 }
@@ -894,7 +893,7 @@ fn lower_graph(
         NativeDatasetPlan::Graph(Box::new(dataset)),
         tokenizer,
         &workload.phases,
-        NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
+        NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
 }
@@ -914,7 +913,7 @@ fn lower_static_accuracy(
         NativeDatasetPlan::StaticAccuracy(accuracy),
         tokenizer,
         &workload.phases,
-        NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
+        NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
 }
@@ -971,26 +970,6 @@ fn validate_graph_endpoint_profile_references(
         }
     }
     Ok(())
-}
-
-fn lower_prepared_endpoint_plan(context: &RunnerRunContext) -> NativePreparedEndpointPlan {
-    NativePreparedEndpointPlan {
-        default_profile_id: "default".into(),
-        profiles: context
-            .endpoint_profiles()
-            .map(|(profile_id, profile)| NativePreparedEndpointProfile {
-                profile_id: profile_id.to_owned(),
-                endpoint_id: profile.endpoint_id.clone(),
-                config: profile.config.clone(),
-                connection_reuse: profile.connection_reuse,
-                http2: matches!(
-                    profile.client.http_version,
-                    aiperf_transport_http::models::HttpVersion::Http2PriorKnowledge
-                ),
-                session_header: profile.session_header.clone(),
-            })
-            .collect(),
-    }
 }
 
 struct NativePlanHarness {

@@ -329,11 +329,16 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
 fn rustls_config(ssl_verify: bool) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut cfg = rustls::ClientConfig::builder()
+    // Select the provider explicitly. The complete runner links both the HTTP
+    // transport's aws-lc default and tonic/reqwest's ring features, so rustls
+    // cannot infer a process-global provider safely from feature unification.
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let mut cfg = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .expect("aws-lc supports rustls safe default protocol versions")
         .with_root_certificates(roots)
         .with_no_client_auth();
     if !ssl_verify {
-        let provider = cfg.crypto_provider().clone();
         cfg.dangerous()
             .set_certificate_verifier(Arc::new(NoCertificateVerification { provider }));
     }

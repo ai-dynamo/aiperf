@@ -105,15 +105,15 @@ fn envelope(artifact_dir: &Path) -> RunnerEnvelopeV2 {
                             "name": "warmup",
                             "exclude_from_results": true,
                             "requests": 1,
-                            "concurrency": 1,
-                            "seamless": true
+                            "concurrency": 1
                         },
                         {
                             "type": "concurrency",
                             "name": "profiling",
                             "exclude_from_results": false,
                             "requests": 3,
-                            "concurrency": 2
+                            "concurrency": 2,
+                            "seamless": true
                         }
                     ]
                 }

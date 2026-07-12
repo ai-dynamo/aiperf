@@ -65,7 +65,12 @@ uuid.workspace = true
 aiperf-test-static-extension = { path = "tests/fixtures/aiperf-test-static-extension" }
 axum.workspace = true
 http = "1"
+http-body-util = "0.1"
+hyper = { version = "1.10", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 prost.workspace = true
+rustls = "0.23"
 tempfile = "3"
 tokio-stream = { version = "0.1", features = ["net"] }
+tokio-rustls = "0.26"
 tonic = { workspace = true, features = ["server", "router", "codegen"] }

@@ -43,8 +43,6 @@ use aiperf_graph::wire::OpenAiChatMessage;
 use aiperf_metrics::{InferenceDimensions, MetricsConfig, Phase};
 use aiperf_rng::{RngRoot, namespace};
 use aiperf_timing::{BernoulliFixedDelay, SlotPool};
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::HttpVersion;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -54,8 +52,9 @@ use serde_json::{Map, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::execute::NativePreparedEndpointPlan;
+use crate::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
+use crate::registry::ValidatedEndpointProfileV2;
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -261,7 +260,7 @@ impl RunnerGraphEndpointRuntime for LegacyRunnerGraphEndpointRuntime {
 /// the frozen endpoint registry on every graph worker.
 pub(crate) struct PreparedRunnerGraphEndpointRuntimeFactory {
     registry: EndpointRegistry,
-    plan: NativePreparedEndpointPlan,
+    profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     input_token_counter: Arc<dyn InputTokenCounter>,
 }
 
@@ -269,12 +268,12 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
     /// Bind one normalized profile plan to the process's frozen registry.
     pub(crate) fn new(
         registry: EndpointRegistry,
-        plan: NativePreparedEndpointPlan,
+        profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
         input_token_counter: Arc<dyn InputTokenCounter>,
     ) -> Self {
         Self {
             registry,
-            plan,
+            profiles,
             input_token_counter,
         }
     }
@@ -288,8 +287,8 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
         model: &str,
     ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>> {
         let mut table = PreparedEndpointTable::new();
-        let mut staged = Vec::with_capacity(self.plan.profiles.len());
-        for profile in &self.plan.profiles {
+        let mut staged = Vec::with_capacity(self.profiles.len());
+        for profile in self.profiles.iter() {
             let mut keys = [EndpointKey::from_index(0); 2];
             for streaming in [false, true] {
                 let mut config = profile.config.clone();
@@ -302,22 +301,13 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
                     })?;
                 keys[usize::from(streaming)] = table.push(endpoint)?;
             }
-            let timeout_ns = endpoint_timeout_ns(profile.config.timeout_seconds)?;
             let transport = TransportSink::new_multi_configured(
                 clock.clone(),
                 run_origin_ns,
                 &profile.config.urls,
                 model,
                 TransportSinkConfig {
-                    client: ClientConfig {
-                        http_version: if profile.http2 {
-                            HttpVersion::Http2PriorKnowledge
-                        } else {
-                            HttpVersion::Auto
-                        },
-                        total_timeout_ns: timeout_ns,
-                        ..ClientConfig::default()
-                    },
+                    client: profile.client.clone(),
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
                 },
@@ -350,14 +340,13 @@ impl RunnerGraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFac
             })
             .collect::<BTreeMap<_, _>>();
         ensure!(
-            profiles.contains_key(&self.plan.default_profile_id),
-            "default endpoint profile {:?} was not prepared",
-            self.plan.default_profile_id
+            profiles.contains_key(DEFAULT_ENDPOINT_PROFILE_ID),
+            "default endpoint profile {DEFAULT_ENDPOINT_PROFILE_ID:?} was not prepared"
         );
         Ok(Rc::new(PreparedRunnerGraphEndpointRuntime {
             table,
             profiles,
-            default_profile_id: self.plan.default_profile_id.clone(),
+            default_profile_id: DEFAULT_ENDPOINT_PROFILE_ID.into(),
             input_token_counter: self.input_token_counter.clone(),
         }))
     }
@@ -465,19 +454,6 @@ impl RunnerGraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
             input_tokens,
         })
     }
-}
-
-fn endpoint_timeout_ns(seconds: f64) -> Result<Option<i64>> {
-    ensure!(
-        seconds.is_finite() && seconds >= 0.0,
-        "endpoint timeout must be finite and non-negative"
-    );
-    let nanos = seconds * 1_000_000_000.0;
-    ensure!(
-        nanos <= i64::MAX as f64,
-        "endpoint timeout exceeds the i64 nanosecond range"
-    );
-    Ok((nanos > 0.0).then_some(nanos.round_ties_even() as i64))
 }
 
 fn session_url_index(session_num: u64, url_count: usize) -> u32 {
@@ -1013,21 +989,18 @@ mod tests {
 
         let factory = PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry,
-            NativePreparedEndpointPlan {
-                default_profile_id: "default".into(),
-                profiles: vec![crate::execute::NativePreparedEndpointProfile {
-                    profile_id: "default".into(),
-                    endpoint_id: EndpointId::new("chat").unwrap(),
-                    config: RawEndpointConfig {
-                        urls: vec!["http://127.0.0.1:1".into()],
-                        streaming: true,
-                        ..RawEndpointConfig::default()
-                    },
-                    connection_reuse: ConnectionReuseStrategy::Pooled,
-                    http2: false,
-                    session_header: None,
-                }],
-            },
+            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("chat").unwrap(),
+                config: RawEndpointConfig {
+                    urls: vec!["http://127.0.0.1:1".into()],
+                    streaming: true,
+                    ..RawEndpointConfig::default()
+                },
+                connection_reuse: ConnectionReuseStrategy::Pooled,
+                client: Default::default(),
+                session_header: None,
+            }]),
             Arc::new(AuthoredInputTokenCounter),
         );
         let runtime = factory
