@@ -1053,7 +1053,9 @@ impl MetricsAccumulator {
         {
             let mut offsets = replay.offsets.to_vec();
             offsets.resize(mask.len(), 0);
-            let icl = IclSeries::new(replay.values, replay.record_indices, &offsets);
+            let mut lengths = replay.lengths.to_vec();
+            lengths.resize(mask.len(), 0);
+            let icl = IclSeries::new(replay.values, &offsets, &lengths, replay.append_order);
             return SweepLineCurves::compute(
                 start.as_ref(),
                 generation_start.as_ref(),
@@ -1595,7 +1597,7 @@ mod tests {
             .inter_chunk_latency_replay()
             .unwrap();
         assert_eq!(icl.values, &[10_000_000.0, 10_000_000.0]);
-        assert_eq!(icl.record_indices, &[0, 0]);
+        assert_eq!(icl.record_indices().collect::<Vec<_>>(), vec![0, 0]);
     }
 
     #[test]

@@ -137,10 +137,22 @@ impl NumericColumn {
 pub struct RaggedReplay<'a> {
     /// Concatenated list values.
     pub values: &'a [f64],
-    /// Owning record index for every value.
-    pub record_indices: &'a [usize],
     /// First flat-value offset for every record; unused rows contain zero.
     pub offsets: &'a [usize],
+    /// Flat-value count for every record; unused rows contain zero.
+    pub lengths: &'a [usize],
+    /// Record indices in the order their contiguous value slices were appended.
+    pub append_order: &'a [usize],
+}
+
+impl RaggedReplay<'_> {
+    /// Expands record ownership lazily without retaining one index per value.
+    pub fn record_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.append_order
+            .iter()
+            .copied()
+            .flat_map(|row| std::iter::repeat_n(row, self.lengths[row]))
+    }
 }
 
 /// Extension seam for exact or bounded-memory list-valued metric storage.
@@ -173,8 +185,9 @@ pub trait ListMetricBackend: Debug + Default {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RaggedSeries {
     values: Vec<f64>,
-    record_indices: Vec<usize>,
     offsets: Vec<usize>,
+    lengths: Vec<usize>,
+    append_order: Vec<usize>,
     present: Vec<bool>,
 }
 
@@ -189,14 +202,22 @@ impl RaggedSeries {
         &self.values
     }
 
-    /// Returns the owning record index for each flat value.
-    pub fn record_indices(&self) -> &[usize] {
-        &self.record_indices
+    /// Expands owning record indices lazily in flat-value order.
+    pub fn record_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.append_order
+            .iter()
+            .copied()
+            .flat_map(|row| std::iter::repeat_n(row, self.lengths[row]))
     }
 
     /// Returns one start offset per record; absent rows contain zero.
     pub fn offsets(&self) -> &[usize] {
         &self.offsets
+    }
+
+    /// Returns one value count per absolute record slot.
+    pub fn lengths(&self) -> &[usize] {
+        &self.lengths
     }
 
     /// Returns the values stored for one record.
@@ -205,22 +226,22 @@ impl RaggedSeries {
             return None;
         }
         let start = self.offsets[row];
-        let end = self.record_indices.partition_point(|record| *record <= row);
+        let end = start + self.lengths[row];
         Some(&self.values[start..end])
     }
 
     /// Computes cumulative sums that reset at each record boundary.
     pub fn grouped_cumsum(&self) -> Vec<f64> {
         let mut result = Vec::with_capacity(self.values.len());
-        let mut current_record = None;
-        let mut cumulative = 0.0;
-        for (&value, &record) in self.values.iter().zip(&self.record_indices) {
-            if current_record != Some(record) {
-                current_record = Some(record);
-                cumulative = 0.0;
+        for &row in &self.append_order {
+            let mut cumulative = 0.0;
+            for &value in self
+                .values_for_record(row)
+                .expect("append order contains only present rows")
+            {
+                cumulative += value;
+                result.push(cumulative);
             }
-            cumulative += value;
-            result.push(cumulative);
         }
         result
     }
@@ -229,12 +250,14 @@ impl RaggedSeries {
 impl ListMetricBackend for RaggedSeries {
     fn prepare_rows(&mut self, rows: usize) {
         self.offsets.resize(rows, 0);
+        self.lengths.resize(rows, 0);
         self.present.resize(rows, false);
     }
 
     fn add_for_record(&mut self, row: usize, values: &[f64]) {
         if self.offsets.len() <= row {
             self.offsets.resize(row + 1, 0);
+            self.lengths.resize(row + 1, 0);
             self.present.resize(row + 1, false);
         }
         assert!(!self.present[row], "a ragged row may only be appended once");
@@ -242,15 +265,16 @@ impl ListMetricBackend for RaggedSeries {
             return;
         }
         self.offsets[row] = self.values.len();
+        self.lengths[row] = values.len();
         self.present[row] = true;
+        self.append_order.push(row);
         self.values.extend_from_slice(values);
-        self.record_indices
-            .extend(std::iter::repeat_n(row, values.len()));
     }
 
     fn add_for_record_iter(&mut self, row: usize, values: &mut dyn Iterator<Item = f64>) {
         if self.offsets.len() <= row {
             self.offsets.resize(row + 1, 0);
+            self.lengths.resize(row + 1, 0);
             self.present.resize(row + 1, false);
         }
         assert!(!self.present[row], "a ragged row may only be appended once");
@@ -261,35 +285,37 @@ impl ListMetricBackend for RaggedSeries {
             return;
         }
         self.offsets[row] = start;
+        self.lengths[row] = added;
         self.present[row] = true;
-        self.record_indices.extend(std::iter::repeat_n(row, added));
+        self.append_order.push(row);
     }
 
     fn values_for_mask(&self, record_mask: &[bool]) -> Vec<f64> {
-        self.values
-            .iter()
-            .zip(&self.record_indices)
-            .filter_map(|(value, record)| {
-                record_mask
-                    .get(*record)
-                    .copied()
-                    .unwrap_or(false)
-                    .then_some(*value)
-            })
-            .collect()
+        let mut selected = Vec::new();
+        for &row in &self.append_order {
+            if record_mask.get(row).copied().unwrap_or(false) {
+                selected.extend_from_slice(
+                    self.values_for_record(row)
+                        .expect("append order contains only present rows"),
+                );
+            }
+        }
+        selected
     }
 
     fn replay(&self) -> Option<RaggedReplay<'_>> {
         Some(RaggedReplay {
             values: &self.values,
-            record_indices: &self.record_indices,
             offsets: &self.offsets,
+            lengths: &self.lengths,
+            append_order: &self.append_order,
         })
     }
 
     fn append_shifted(&mut self, other: &Self, row_offset: usize, other_rows: usize) {
         if self.offsets.len() < row_offset {
             self.offsets.resize(row_offset, 0);
+            self.lengths.resize(row_offset, 0);
             self.present.resize(row_offset, false);
         }
         for row in 0..other_rows {
@@ -300,6 +326,7 @@ impl ListMetricBackend for RaggedSeries {
         }
         if self.offsets.len() < row_offset + other_rows {
             self.offsets.resize(row_offset + other_rows, 0);
+            self.lengths.resize(row_offset + other_rows, 0);
             self.present.resize(row_offset + other_rows, false);
         }
     }
@@ -1406,7 +1433,7 @@ mod tests {
         }));
         let replay = left.inter_chunk_latency_replay().unwrap();
         assert_eq!(replay.values, &[5.0, 5.0, 8.0]);
-        assert_eq!(replay.record_indices, &[0, 1, 1]);
+        assert_eq!(replay.record_indices().collect::<Vec<_>>(), vec![0, 1, 1]);
         assert_eq!(replay.offsets, &[0, 1]);
     }
 
@@ -1480,7 +1507,7 @@ mod tests {
         store.push_record(&record);
         let replay = store.inter_chunk_latency_replay().unwrap();
         assert_eq!(replay.values, &[5.0, 8.0]);
-        assert_eq!(replay.record_indices, &[0, 0]);
+        assert_eq!(replay.record_indices().collect::<Vec<_>>(), vec![0, 0]);
         assert_eq!(replay.offsets, &[0]);
     }
 

@@ -9,24 +9,31 @@ use super::{StepFn, SweepEvent, assert_aligned, sweep_line_cumsum_compact};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IclSeries<'a> {
     values_ns: &'a [f64],
-    record_indices: &'a [usize],
     offsets: &'a [usize],
+    lengths: &'a [usize],
+    append_order: &'a [usize],
 }
 
 impl<'a> IclSeries<'a> {
-    /// Builds an ICL series from flat values, a record index per value, and one
-    /// start offset per record.
+    /// Builds an ICL series from flat values and absolute record slices.
     ///
     /// # Panics
     ///
-    /// Panics when flat arrays differ in length or an offset exceeds the values array.
-    pub fn new(values_ns: &'a [f64], record_indices: &'a [usize], offsets: &'a [usize]) -> Self {
-        assert_eq!(values_ns.len(), record_indices.len());
+    /// Panics when row metadata is misaligned or a slice exceeds the values array.
+    pub fn new(
+        values_ns: &'a [f64],
+        offsets: &'a [usize],
+        lengths: &'a [usize],
+        append_order: &'a [usize],
+    ) -> Self {
+        assert_eq!(offsets.len(), lengths.len());
         assert!(offsets.iter().all(|offset| *offset <= values_ns.len()));
+        assert!(append_order.iter().all(|record| *record < offsets.len()));
         Self {
             values_ns,
-            record_indices,
             offsets,
+            lengths,
+            append_order,
         }
     }
 
@@ -40,14 +47,28 @@ impl<'a> IclSeries<'a> {
         self.values_ns
     }
 
-    /// Returns the owning record index for each flat ICL value.
-    pub fn record_indices(self) -> &'a [usize] {
-        self.record_indices
-    }
-
     /// Returns each record's start offset in the flat ICL array.
     pub fn offsets(self) -> &'a [usize] {
         self.offsets
+    }
+
+    /// Returns each record's ICL value count.
+    pub fn lengths(self) -> &'a [usize] {
+        self.lengths
+    }
+
+    /// Returns records in flat-value append order.
+    pub fn append_order(self) -> &'a [usize] {
+        self.append_order
+    }
+
+    fn values_for_record(self, record: usize) -> &'a [f64] {
+        let start = self.offsets[record];
+        let end = start
+            .checked_add(self.lengths[record])
+            .expect("ICL record range overflow");
+        assert!(end <= self.values_ns.len());
+        &self.values_ns[start..end]
     }
 }
 
@@ -140,9 +161,10 @@ pub fn tokens_in_flight_sweep_line_icl(
         );
     }
 
-    let chunks = build_chunk_events(generation_start_ns, end_ns, output_tokens, icl);
-    let mut events = Vec::with_capacity(start_ns.len() * 3 + chunks.events.len());
-    for (record, has_chunks) in chunks.has_valid_chunks.iter().copied().enumerate() {
+    let mut events = Vec::with_capacity(start_ns.len() * 3 + icl.values_ns.len());
+    let has_valid_chunks =
+        append_chunk_events(&mut events, generation_start_ns, end_ns, output_tokens, icl);
+    for (record, has_chunks) in has_valid_chunks.iter().copied().enumerate() {
         if has_chunks
             && !generation_start_ns[record].is_nan()
             && !output_tokens[record].is_nan()
@@ -151,8 +173,6 @@ pub fn tokens_in_flight_sweep_line_icl(
             events.push(SweepEvent::new(generation_start_ns[record], 1.0));
         }
     }
-    events.extend(chunks.events);
-
     for record in 0..start_ns.len() {
         let prefill_valid = !start_ns[record].is_nan()
             && !input_tokens[record].is_nan()
@@ -165,7 +185,7 @@ pub fn tokens_in_flight_sweep_line_icl(
         if end_ns[record].is_nan() {
             continue;
         }
-        match (prefill_valid, chunks.has_valid_chunks[record]) {
+        match (prefill_valid, has_valid_chunks[record]) {
             (true, true) => events.push(SweepEvent::new(
                 end_ns[record],
                 -(input_tokens[record] + output_tokens[record]),
@@ -199,113 +219,119 @@ pub fn throughput_sweep_line_icl(
     if icl.is_empty() {
         return StepFn::empty();
     }
-    validate_record_indices(icl, output_tokens.len());
+    validate_record_slices(icl, output_tokens.len());
 
     let mut positive_counts = vec![0_usize; output_tokens.len()];
-    for (&value, &record) in icl.values_ns.iter().zip(icl.record_indices) {
-        if value > 0.0 {
-            positive_counts[record] += 1;
+    for &record in icl.append_order {
+        for &value in icl.values_for_record(record) {
+            if value > 0.0 {
+                positive_counts[record] += 1;
+            }
         }
     }
     let relative_cumsum = relative_cumsums(icl);
     let mut events = Vec::with_capacity(icl.values_ns.len() * 2);
-    for (index, &relative_end) in relative_cumsum.iter().enumerate() {
-        let record = icl.record_indices[index];
-        let value = icl.values_ns[index];
-        let generation_start = generation_start_ns[record];
-        let tokens = output_tokens[record];
-        if generation_start.is_nan() || value <= 0.0 || tokens.is_nan() || tokens < 1.0 {
-            continue;
+    for &record in icl.append_order {
+        let start = icl.offsets[record];
+        for (within, &value) in icl.values_for_record(record).iter().enumerate() {
+            let relative_end = relative_cumsum[start + within];
+            let generation_start = generation_start_ns[record];
+            let tokens = output_tokens[record];
+            if generation_start.is_nan() || value <= 0.0 || tokens.is_nan() || tokens < 1.0 {
+                continue;
+            }
+            let count = positive_counts[record];
+            if count == 0 {
+                continue;
+            }
+            let interval_end = generation_start + relative_end;
+            let interval_start = interval_end - value;
+            let rate = ((tokens - 1.0) / count as f64) / value;
+            events.push(SweepEvent::new(interval_start, rate));
+            events.push(SweepEvent::new(interval_end, -rate));
         }
-        let count = positive_counts[record];
-        if count == 0 {
-            continue;
-        }
-        let interval_end = generation_start + relative_end;
-        let interval_start = interval_end - value;
-        let rate = ((tokens - 1.0) / count as f64) / value;
-        events.push(SweepEvent::new(interval_start, rate));
-        events.push(SweepEvent::new(interval_end, -rate));
     }
     sweep_line_cumsum_compact(events)
 }
 
-struct ChunkEvents {
-    events: Vec<SweepEvent>,
-    has_valid_chunks: Vec<bool>,
-}
-
-fn build_chunk_events(
+fn append_chunk_events(
+    events: &mut Vec<SweepEvent>,
     generation_start_ns: &[f64],
     end_ns: &[f64],
     output_tokens: &[f64],
     icl: IclSeries<'_>,
-) -> ChunkEvents {
-    validate_record_indices(icl, output_tokens.len());
+) -> Vec<bool> {
+    validate_record_slices(icl, output_tokens.len());
     let mut counts = vec![0_usize; output_tokens.len()];
-    for &record in icl.record_indices {
-        counts[record] += 1;
+    for &record in icl.append_order {
+        counts[record] = icl.lengths[record];
     }
     let relative_cumsum = relative_cumsums(icl);
-    let mut events = Vec::with_capacity(icl.values_ns.len());
     let mut has_valid_chunks = vec![false; output_tokens.len()];
-    for (index, &relative_end) in relative_cumsum.iter().enumerate() {
-        let record = icl.record_indices[index];
-        let value = icl.values_ns[index];
-        let generation_start = generation_start_ns[record];
-        let tokens = output_tokens[record];
-        if generation_start.is_nan() || value < 0.0 || tokens.is_nan() || tokens < 1.0 {
-            continue;
+    for &record in icl.append_order {
+        let start = icl.offsets[record];
+        for (within, &value) in icl.values_for_record(record).iter().enumerate() {
+            let relative_end = relative_cumsum[start + within];
+            let generation_start = generation_start_ns[record];
+            let tokens = output_tokens[record];
+            if generation_start.is_nan() || value < 0.0 || tokens.is_nan() || tokens < 1.0 {
+                continue;
+            }
+            let count = counts[record];
+            if count == 0 {
+                continue;
+            }
+            let mut timestamp = generation_start + relative_end;
+            if !end_ns[record].is_nan() && timestamp >= end_ns[record] {
+                timestamp = next_down(end_ns[record]);
+            }
+            events.push(SweepEvent::new(timestamp, (tokens - 1.0) / count as f64));
+            has_valid_chunks[record] = true;
         }
-        let count = counts[record];
-        if count == 0 {
-            continue;
-        }
-        let mut timestamp = generation_start + relative_end;
-        if !end_ns[record].is_nan() && timestamp >= end_ns[record] {
-            timestamp = next_down(end_ns[record]);
-        }
-        events.push(SweepEvent::new(timestamp, (tokens - 1.0) / count as f64));
-        has_valid_chunks[record] = true;
     }
-    ChunkEvents {
-        events,
-        has_valid_chunks,
-    }
+    has_valid_chunks
 }
 
 fn relative_cumsums(icl: IclSeries<'_>) -> Vec<f64> {
-    let mut global = Vec::with_capacity(icl.values_ns.len());
+    let mut relative = Vec::with_capacity(icl.values_ns.len());
     let mut cumulative = 0.0;
     for value in icl.values_ns {
         cumulative += *value;
-        global.push(cumulative);
+        relative.push(cumulative);
     }
-    icl.record_indices
-        .iter()
-        .enumerate()
-        .map(|(index, record)| {
-            let offset = icl.offsets[*record];
-            assert!(
-                offset <= index,
-                "ICL offsets must point to the record's first value"
-            );
-            let before = offset
-                .checked_sub(1)
-                .and_then(|previous| global.get(previous))
-                .copied()
-                .unwrap_or(0.0);
-            global[index] - before
-        })
-        .collect()
+    for &record in icl.append_order.iter().rev() {
+        let offset = icl.offsets[record];
+        let end = offset + icl.lengths[record];
+        let before = offset
+            .checked_sub(1)
+            .and_then(|previous| relative.get(previous))
+            .copied()
+            .unwrap_or(0.0);
+        for value in relative[offset..end].iter_mut().rev() {
+            *value -= before;
+        }
+    }
+    relative
 }
 
-fn validate_record_indices(icl: IclSeries<'_>, record_count: usize) {
-    assert!(
-        icl.record_indices
-            .iter()
-            .all(|record| *record < record_count)
-    );
+fn validate_record_slices(icl: IclSeries<'_>, record_count: usize) {
+    assert_eq!(icl.offsets.len(), record_count);
+    assert_eq!(icl.lengths.len(), record_count);
+    let mut seen = vec![false; record_count];
+    let mut cursor = 0_usize;
+    for &record in icl.append_order {
+        assert!(!seen[record], "ICL append order contains a duplicate row");
+        seen[record] = true;
+        assert_eq!(
+            icl.offsets[record], cursor,
+            "ICL slices must follow flat append order"
+        );
+        cursor = cursor
+            .checked_add(icl.lengths[record])
+            .expect("ICL flat length overflow");
+        assert!(cursor <= icl.values_ns.len());
+    }
+    assert_eq!(cursor, icl.values_ns.len());
 }
 
 fn next_down(value: f64) -> f64 {
@@ -342,10 +368,14 @@ mod tests {
     #[test]
     fn icl_throughput_integrates_to_osl_minus_one() {
         let values = [10.0, 10.0, 10.0];
-        let records = [0, 0, 0];
         let offsets = [0];
-        let curve =
-            throughput_sweep_line_icl(&[0.0], &[6.0], IclSeries::new(&values, &records, &offsets));
+        let lengths = [3];
+        let append_order = [0];
+        let curve = throughput_sweep_line_icl(
+            &[0.0],
+            &[6.0],
+            IclSeries::new(&values, &offsets, &lengths, &append_order),
+        );
         let integral = curve
             .timestamps_ns()
             .windows(2)
@@ -358,9 +388,10 @@ mod tests {
     #[test]
     fn zero_icl_is_counted_for_tokens_but_not_rate() {
         let values = [0.0, 10.0];
-        let records = [0, 0];
         let offsets = [0];
-        let series = IclSeries::new(&values, &records, &offsets);
+        let lengths = [2];
+        let append_order = [0];
+        let series = IclSeries::new(&values, &offsets, &lengths, &append_order);
         let tokens =
             tokens_in_flight_sweep_line_icl(&[0.0], &[10.0], &[21.0], &[100.0], &[5.0], series);
         let rate = throughput_sweep_line_icl(&[10.0], &[5.0], series);
@@ -372,8 +403,9 @@ mod tests {
     #[test]
     fn chunk_at_end_is_clamped_to_previous_float() {
         let values = [1_024.0];
-        let records = [0];
         let offsets = [0];
+        let lengths = [1];
+        let append_order = [0];
         let end = 1.7e18;
         let curve = tokens_in_flight_sweep_line_icl(
             &[end - 2_048.0],
@@ -381,7 +413,7 @@ mod tests {
             &[end],
             &[10.0],
             &[2.0],
-            IclSeries::new(&values, &records, &offsets),
+            IclSeries::new(&values, &offsets, &lengths, &append_order),
         );
         let chunk_timestamp = next_down(end);
         assert!(curve.timestamps_ns().contains(&chunk_timestamp));
@@ -393,15 +425,16 @@ mod tests {
     #[test]
     fn invalid_chunk_record_does_not_take_end_subtraction_path() {
         let values = [50.0, 50.0, 30.0, 30.0];
-        let records = [0, 0, 1, 1];
         let offsets = [0, 2];
+        let lengths = [2, 2];
+        let append_order = [0, 1];
         let curve = tokens_in_flight_sweep_line_icl(
             &[0.0, f64::NAN],
             &[10.0, f64::NAN],
             &[110.0, 120.0],
             &[100.0, f64::NAN],
             &[20.0, 40.0],
-            IclSeries::new(&values, &records, &offsets),
+            IclSeries::new(&values, &offsets, &lengths, &append_order),
         );
         assert_eq!(curve.final_value(), 0.0);
         assert!(
@@ -415,15 +448,16 @@ mod tests {
     #[test]
     fn output_token_nan_cannot_poison_curve() {
         let values = [50.0, 50.0, 30.0, 30.0];
-        let records = [0, 0, 1, 1];
         let offsets = [0, 2];
+        let lengths = [2, 2];
+        let append_order = [0, 1];
         let curve = tokens_in_flight_sweep_line_icl(
             &[0.0, 5.0],
             &[10.0, 15.0],
             &[110.0, 120.0],
             &[100.0, 50.0],
             &[20.0, f64::NAN],
-            IclSeries::new(&values, &records, &offsets),
+            IclSeries::new(&values, &offsets, &lengths, &append_order),
         );
         assert_eq!(curve.final_value(), 0.0);
         assert!(curve.values().iter().all(|value| value.is_finite()));
@@ -445,9 +479,10 @@ mod tests {
             5.0, 15.0, 10.0, 30.0, // record 1
             20.0, 20.0, 20.0, 10.0, // record 2
         ];
-        let record_indices = [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2];
         let offsets = [0, 4, 8];
-        let series = IclSeries::new(&icl_values, &record_indices, &offsets);
+        let lengths = [4, 4, 4];
+        let append_order = [0, 1, 2];
+        let series = IclSeries::new(&icl_values, &offsets, &lengths, &append_order);
 
         let tokens = tokens_in_flight_sweep_line_icl(
             &start,
