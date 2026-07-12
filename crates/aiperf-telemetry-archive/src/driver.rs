@@ -289,12 +289,15 @@ pub trait PreparedTelemetryDriver: Debug {
     fn source_id(&self) -> &str;
 
     /// Spawn the source on its current-thread LocalSet.
-    fn start(self: Box<Self>) -> Result<Box<dyn RunningTelemetryDriver>, DriverStartError>;
+    fn start(self: Box<Self>) -> Result<Rc<dyn RunningTelemetryDriver>, DriverStartError>;
 }
 
 /// Running source lifecycle handle.
 #[async_trait(?Send)]
 pub trait RunningTelemetryDriver: Debug {
+    /// Stable physical source identity retained from preparation.
+    fn source_id(&self) -> &str;
+
     /// Add or remove one phase from future snapshot membership.
     fn set_phase_active(&self, phase_id: &str, active: bool) -> Result<(), DriverCommandError>;
 
@@ -311,7 +314,7 @@ pub trait RunningTelemetryDriver: Debug {
     fn stop(&self, shutdown_deadline_ns: i64);
 
     /// Drain the terminal observation and source shutdown exactly once.
-    async fn join(self: Box<Self>) -> Result<TelemetryDriverSummary, DriverStopError>;
+    async fn join(&self) -> Result<TelemetryDriverSummary, DriverStopError>;
 }
 
 /// Generic prepared fixed-deadline source.
@@ -372,7 +375,7 @@ impl PreparedTelemetryDriver for FixedDeadlineTelemetryDriver {
         &self.config.source_id
     }
 
-    fn start(self: Box<Self>) -> Result<Box<dyn RunningTelemetryDriver>, DriverStartError> {
+    fn start(self: Box<Self>) -> Result<Rc<dyn RunningTelemetryDriver>, DriverStartError> {
         self.config.validate()?;
         if self.boundary_command_capacity == 0 {
             return Err(DriverStartError::ZeroBoundaryCommandCapacity);
@@ -403,13 +406,13 @@ impl PreparedTelemetryDriver for FixedDeadlineTelemetryDriver {
             )
             .await
         });
-        Ok(Box::new(RunningFixedDeadlineTelemetryDriver {
+        Ok(Rc::new(RunningFixedDeadlineTelemetryDriver {
             cancellation,
             source_id,
             clock: handle_clock,
             boundary_commands,
             phase_membership,
-            task: Some(task),
+            task: RefCell::new(Some(task)),
         }))
     }
 }
@@ -458,7 +461,7 @@ struct RunningFixedDeadlineTelemetryDriver {
     clock: Rc<dyn Clock>,
     boundary_commands: mpsc::Sender<BoundaryCommand>,
     phase_membership: Rc<RefCell<PhaseMembershipTimeline>>,
-    task: Option<JoinHandle<Result<TelemetryDriverSummary, DriverStopError>>>,
+    task: RefCell<Option<JoinHandle<Result<TelemetryDriverSummary, DriverStopError>>>>,
 }
 
 impl Debug for RunningFixedDeadlineTelemetryDriver {
@@ -469,7 +472,7 @@ impl Debug for RunningFixedDeadlineTelemetryDriver {
             .field("stopped", &self.cancellation.is_stopped())
             .field("boundary_capacity", &self.boundary_commands.capacity())
             .field("active_phases", &self.phase_membership.borrow().current)
-            .field("task_present", &self.task.is_some())
+            .field("task_present", &self.task.borrow().is_some())
             .finish()
     }
 }
@@ -477,7 +480,7 @@ impl Debug for RunningFixedDeadlineTelemetryDriver {
 impl Drop for RunningFixedDeadlineTelemetryDriver {
     fn drop(&mut self) {
         self.cancellation.stop(i64::MIN);
-        if let Some(task) = self.task.take() {
+        if let Some(task) = self.task.get_mut().take() {
             task.abort();
         }
     }
@@ -485,6 +488,10 @@ impl Drop for RunningFixedDeadlineTelemetryDriver {
 
 #[async_trait(?Send)]
 impl RunningTelemetryDriver for RunningFixedDeadlineTelemetryDriver {
+    fn source_id(&self) -> &str {
+        &self.source_id
+    }
+
     fn set_phase_active(&self, phase_id: &str, active: bool) -> Result<(), DriverCommandError> {
         validate_driver_identifier("phase_id", phase_id)?;
         if self.cancellation.is_stopped() {
@@ -527,8 +534,12 @@ impl RunningTelemetryDriver for RunningFixedDeadlineTelemetryDriver {
         self.cancellation.stop(shutdown_deadline_ns);
     }
 
-    async fn join(mut self: Box<Self>) -> Result<TelemetryDriverSummary, DriverStopError> {
-        let task = self.task.take().ok_or(DriverStopError::AlreadyJoined)?;
+    async fn join(&self) -> Result<TelemetryDriverSummary, DriverStopError> {
+        let task = self
+            .task
+            .borrow_mut()
+            .take()
+            .ok_or(DriverStopError::AlreadyJoined)?;
         task.await.map_err(|error| {
             DriverStopError::Task(if error.is_cancelled() {
                 "telemetry driver task was cancelled".to_owned()
