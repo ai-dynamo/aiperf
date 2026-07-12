@@ -427,6 +427,8 @@ pub struct GraphWorkloadReport {
     pub admitted: u64,
     /// Successfully drained traces.
     pub completed: u64,
+    /// Traces terminated by configured or phase-driven cancellation.
+    pub cancelled: u64,
     /// Traces that aborted.
     pub failed: u64,
     /// Results in completion order.
@@ -634,10 +636,12 @@ impl GraphWorkload {
 }
 
 fn push_result(report: &mut GraphWorkloadReport, outcome: GraphTraceRunResult) {
-    if outcome.result.is_ok() {
-        report.completed = report.completed.saturating_add(1);
-    } else {
-        report.failed = report.failed.saturating_add(1);
+    match &outcome.result {
+        Ok(()) => report.completed = report.completed.saturating_add(1),
+        Err(TraceError::Cancelled(_)) => {
+            report.cancelled = report.cancelled.saturating_add(1);
+        }
+        Err(_) => report.failed = report.failed.saturating_add(1),
     }
     report.traces.push(outcome);
 }

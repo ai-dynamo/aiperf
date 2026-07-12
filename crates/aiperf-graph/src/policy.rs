@@ -339,6 +339,9 @@ impl RunFailurePolicy for FailFastRunFailurePolicy {
 
     fn on_trace_result(&self, trace_id: &str, result: &Result<(), TraceError>) {
         let Err(error) = result else { return };
+        if matches!(error, TraceError::Cancelled(_)) {
+            return;
+        }
         if !self.failed.replace(true) {
             *self.first_failure.borrow_mut() = Some((trace_id.to_string(), error.clone()));
             self.blocked_notify.notify_waiters();
@@ -415,5 +418,17 @@ mod tests {
             policy.first_failure(),
             Some(("a".into(), TraceError::Other("first".into())))
         );
+    }
+
+    #[test]
+    fn fail_fast_does_not_turn_configured_cancellation_into_run_failure() {
+        let policy = FailFastRunFailurePolicy::default();
+        policy.on_trace_result(
+            "cancelled",
+            &Err(TraceError::Cancelled("configured cancellation".into())),
+        );
+
+        assert!(policy.may_admit());
+        assert_eq!(policy.first_failure(), None);
     }
 }

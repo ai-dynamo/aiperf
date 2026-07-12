@@ -371,7 +371,7 @@ fn lowered_dataset_dag_dispatches_fanout_join_over_real_http() {
 }
 
 #[test]
-fn graph_policy_cancels_real_http_after_send_and_fail_fast_observes_it() {
+fn graph_policy_cancels_real_http_after_send_without_failing_the_run() {
     let server = HangingHttpServer::spawn();
     let tokenizer = aiperf_dataset::TiktokenTokenizer::builtin();
     let mut pool = SegmentPool::new();
@@ -419,7 +419,8 @@ fn graph_policy_cancels_real_http_after_send_and_fail_fast_observes_it() {
     assert!(!outcome.deadlocked);
     let report = report.borrow_mut().take().unwrap();
     assert_eq!(report.admitted, 1);
-    assert_eq!(report.failed, 1);
+    assert_eq!(report.cancelled, 1);
+    assert_eq!(report.failed, 0);
     assert_eq!(observer.canceled.load(Ordering::Relaxed), 1);
     assert_eq!(observer.completed.load(Ordering::Relaxed), 0);
 }

@@ -317,10 +317,17 @@ impl<M: WireMessage> TraceExecutor<M> {
     ) -> Result<ChanVal, TraceError> {
         match self.failure_policy.on_failure(failure) {
             NodeFailureDisposition::ContinueWithEmpty => Ok(self.empty_value(node)),
-            NodeFailureDisposition::AbortTrace => Err(TraceError::Other(format!(
-                "graph node {:?} failed ({:?}): {}",
-                failure.node_id, failure.kind, failure.message
-            ))),
+            NodeFailureDisposition::AbortTrace => {
+                let message = format!(
+                    "graph node {:?} failed ({:?}): {}",
+                    failure.node_id, failure.kind, failure.message
+                );
+                if failure.kind == NodeFailureKind::CancelledReply {
+                    Err(TraceError::Cancelled(message))
+                } else {
+                    Err(TraceError::Other(message))
+                }
+            }
         }
     }
 

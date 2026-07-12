@@ -3,19 +3,19 @@
 
 //! Native construction and execution of one resolved benchmark run.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 
 use aiperf::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
     load_evaluator_problems_with_grader,
 };
 use aiperf::adaptive::{
-    AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
-    positive_seconds_to_ns,
+    AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_scale,
+    build_adaptive_with_origins, positive_seconds_to_ns,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::fixed_schedule::{
@@ -44,7 +44,11 @@ use aiperf_accuracy::{
     AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
     WorkerProcessConfig,
 };
-use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
+use aiperf_adaptive::{
+    AdaptiveError, AdaptiveScale, ControlActuator, ControlSnapshot, CorrelationContext,
+    RequestRateActuator, SessionConcurrencyActuator, SharedWindowSampler, SlaFilter,
+    TumblingWindowSampler, UserTarget,
+};
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
@@ -60,14 +64,15 @@ use aiperf_endpoints::{
     RawEndpointConfig,
 };
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use aiperf_graph::execution::GraphTraceExecutionBackend;
 use aiperf_graph::input::{
     GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle, GraphInputConfig,
 };
 use aiperf_graph::policy::FailFastRunFailurePolicy;
 use aiperf_graph::workload::{
-    CyclingGraphTraceSource, DurationGraphStop, GraphArrivalPolicy, GraphTraceInstanceSequence,
-    GraphTraceSource, GraphWorkload, ImmediateGraphArrival, IntervalGraphArrival,
-    SlotPoolTraceAdmission,
+    CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
+    GraphTraceSource, GraphWorkload, GraphWorkloadObserver, ImmediateGraphArrival,
+    IntervalGraphArrival, SlotPoolTraceAdmission, TraceAdmissionInfo,
 };
 use aiperf_metrics::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
@@ -78,8 +83,10 @@ use aiperf_rng::{
     SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
 use aiperf_timing::{
-    BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
-    NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, PoissonRamp, RampDriver,
+    BernoulliFixedDelay, CancellationPolicy, ClockPhaseOrchestrator, ClockPhaseRunnerFactory,
+    ExponentialRamp, GracePeriod, LinearRamp, LocalPhaseFuture, NoopPhaseObserver, PhaseConfig,
+    PhaseContext, PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseKind,
+    PhaseObserver, PhaseOrchestrator, PhaseReturn, PhaseSend, PoissonRamp, RampDriver,
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
@@ -91,6 +98,7 @@ use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
+use tokio::sync::{Notify, mpsc};
 use uuid::Uuid;
 
 use crate::dataset_input::PreparedDatasetInput;
@@ -1397,24 +1405,6 @@ fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
         );
         let common = phase.common();
         ensure!(
-            common.concurrency_ramp.is_none()
-                && common.prefill_ramp.is_none()
-                && common.rate_ramp.is_none(),
-            "graph phase {phase_index} does not yet support actuator ramps"
-        );
-        ensure!(
-            common.adaptive_scale.is_none(),
-            "graph phase {phase_index} does not yet support adaptive scale"
-        );
-        ensure!(
-            !common.seamless,
-            "graph phase {phase_index} does not yet support seamless handoff"
-        );
-        ensure!(
-            common.grace_period.is_none(),
-            "graph phase {phase_index} drains admitted traces and does not accept a separate grace_period"
-        );
-        ensure!(
             common.requests != Some(0) && common.sessions != Some(0),
             "graph phase {phase_index} request/session bounds must be positive when configured"
         );
@@ -1425,10 +1415,6 @@ fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
         ensure!(
             common.prefill_concurrency != Some(0),
             "graph phase {phase_index} prefill_concurrency must be positive when configured"
-        );
-        ensure!(
-            request.run.workers == 1 || common.prefill_concurrency.is_none(),
-            "graph prefill_concurrency is worker-local today; configure one worker or omit it until a distributed admission implementation is selected"
         );
         if common.duration.is_none() && common.requests.is_none() && common.sessions.is_none() {
             // The direct source performs exactly one authored pass in this case.
@@ -1511,7 +1497,503 @@ fn graph_input_config(dataset: &DatasetSpec) -> Result<GraphInputConfig> {
 
 struct PreparedGraphPhase {
     workload: GraphWorkload,
-    records: mpsc::Receiver<Vec<CapturedRecord>>,
+    placement: Rc<dyn GraphTraceExecutionBackend>,
+    records: mpsc::UnboundedReceiver<Vec<CapturedRecord>>,
+    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    session_slots: Option<Rc<SlotPool>>,
+    prefill_initial: Option<usize>,
+    controller: Rc<dyn ScheduledPhaseController>,
+    failures: Rc<GraphPhaseFailures>,
+    adaptive: Option<AdaptiveRunConfig>,
+}
+
+#[derive(Default)]
+struct GraphPhaseFailures {
+    messages: RefCell<Vec<String>>,
+    notify: Notify,
+}
+
+impl GraphPhaseFailures {
+    fn record(&self, message: impl Into<String>) {
+        self.messages.borrow_mut().push(message.into());
+        self.notify.notify_waiters();
+    }
+
+    fn first(&self) -> Option<String> {
+        self.messages.borrow().first().cloned()
+    }
+
+    async fn wait(&self) {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.first().is_some() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct GraphPhaseWorkloadObserver {
+    context: PhaseContext,
+    trace_nodes: RefCell<HashMap<String, usize>>,
+    failures: Rc<GraphPhaseFailures>,
+    local_cancelling: Rc<Cell<bool>>,
+    run_cancelling: Rc<Cell<bool>>,
+}
+
+impl GraphWorkloadObserver for GraphPhaseWorkloadObserver {
+    fn on_trace_admit(&self, info: &TraceAdmissionInfo, _admit_ns: i64) {
+        if info.node_count == 0 {
+            self.failures.record(format!(
+                "graph trace {:?} contains no dispatchable nodes",
+                info.trace_id
+            ));
+            return;
+        }
+        self.trace_nodes
+            .borrow_mut()
+            .insert(info.trace_id.clone(), info.node_count);
+        for node_index in 0..info.node_count {
+            let sent = if node_index == 0 {
+                PhaseSend::single_turn_session()
+            } else {
+                PhaseSend::dag_child()
+            };
+            if let Err(error) = self.context.record_sent(sent) {
+                self.failures.record(format!(
+                    "recording graph trace {:?} node {node_index} send: {error}",
+                    info.trace_id
+                ));
+                break;
+            }
+        }
+    }
+
+    fn on_trace_complete(&self, outcome: &GraphTraceRunResult) {
+        let node_count = self
+            .trace_nodes
+            .borrow_mut()
+            .remove(&outcome.trace_id)
+            .unwrap_or_default();
+        let cancelled = self.local_cancelling.get()
+            || self.run_cancelling.get()
+            || matches!(
+                outcome.result,
+                Err(aiperf_graph::errors::TraceError::Cancelled(_))
+            );
+        let errored = outcome.result.is_err() && !cancelled;
+        for node_index in 0..node_count {
+            self.context.record_returned(PhaseReturn {
+                completes_session: node_index + 1 == node_count,
+                cancelled,
+                errored,
+                releases_prefill: true,
+            });
+        }
+        if errored {
+            let error = outcome
+                .result
+                .as_ref()
+                .err()
+                .expect("errored graph outcome contains an error");
+            self.failures.record(format!(
+                "graph trace {:?} failed: {error}",
+                outcome.trace_id
+            ));
+        }
+    }
+
+    fn on_sending_complete(&self, _at_ns: i64) {
+        self.context.mark_all_sent();
+    }
+}
+
+#[derive(Default)]
+struct GraphRecordDrainStop {
+    stopped: Cell<bool>,
+    notify: Notify,
+}
+
+impl GraphRecordDrainStop {
+    fn stop(&self) {
+        if !self.stopped.replace(true) {
+            self.notify.notify_waiters();
+        }
+    }
+}
+
+struct GraphPhaseExecution {
+    context: PhaseContext,
+    workload: Rc<GraphWorkload>,
+    placement: Rc<dyn GraphTraceExecutionBackend>,
+    session_slots: Option<Rc<SlotPool>>,
+    prefill_initial: Option<usize>,
+    controller: Rc<dyn ScheduledPhaseController>,
+    failures: Rc<GraphPhaseFailures>,
+    local_cancelling: Rc<Cell<bool>>,
+    records: RefCell<Option<mpsc::UnboundedReceiver<Vec<CapturedRecord>>>>,
+    captured: Rc<RefCell<Vec<CapturedRecord>>>,
+    adaptive_sampler: Option<SharedWindowSampler>,
+    drain_stop: Rc<GraphRecordDrainStop>,
+    drain_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    setup_error: Option<String>,
+}
+
+impl GraphPhaseExecution {
+    fn start_record_drain(&self) -> Result<()> {
+        ensure!(
+            self.drain_task.borrow().is_none(),
+            "graph record drain was already started"
+        );
+        let mut records = self
+            .records
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| anyhow!("graph record receiver was already consumed"))?;
+        let captured = self.captured.clone();
+        let sampler = self.adaptive_sampler.clone();
+        let stop = self.drain_stop.clone();
+        *self.drain_task.borrow_mut() = Some(tokio::task::spawn_local(async move {
+            loop {
+                while let Ok(batch) = records.try_recv() {
+                    ingest_graph_record_batch(&captured, sampler.as_ref(), batch);
+                }
+                if stop.stopped.get() {
+                    return;
+                }
+                let stopped = stop.notify.notified();
+                tokio::pin!(stopped);
+                stopped.as_mut().enable();
+                if stop.stopped.get() {
+                    continue;
+                }
+                tokio::select! {
+                    biased;
+                    batch = records.recv() => match batch {
+                        Some(batch) => ingest_graph_record_batch(&captured, sampler.as_ref(), batch),
+                        None => return,
+                    },
+                    () = &mut stopped => {}
+                }
+            }
+        }));
+        Ok(())
+    }
+}
+
+fn ingest_graph_record_batch(
+    captured: &Rc<RefCell<Vec<CapturedRecord>>>,
+    sampler: Option<&SharedWindowSampler>,
+    batch: Vec<CapturedRecord>,
+) {
+    if let Some(sampler) = sampler {
+        let mut sampler = sampler.borrow_mut();
+        for record in &batch {
+            sampler.on_record(&record.ingest);
+        }
+    }
+    captured.borrow_mut().extend(batch);
+}
+
+impl PhaseExecution for GraphPhaseExecution {
+    fn configure(&self, config: &PhaseConfig) -> Result<(), PhaseExecutionError> {
+        if let Some(error) = &self.setup_error {
+            return Err(PhaseExecutionError::new(error.clone()));
+        }
+        if let (Some(limit), Some(slots)) = (config.concurrency, &self.session_slots) {
+            slots.set_limit(limit);
+        }
+        if let Some(limit) = self.prefill_initial {
+            self.placement
+                .set_prefill_limit(limit)
+                .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn start_ramps(&self) -> Result<(), PhaseExecutionError> {
+        self.start_record_drain()
+            .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
+        self.controller
+            .start()
+            .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
+        if let Some(error) = self.failures.first() {
+            return Err(PhaseExecutionError::new(error));
+        }
+        Ok(())
+    }
+
+    fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let workload = self.workload.clone();
+        let context = self.context.clone();
+        let controller = self.controller.clone();
+        let failures = self.failures.clone();
+        Box::pin(async move {
+            let execute = workload.execute();
+            let adaptive_stop = controller.wait_until_stop();
+            let failed = failures.wait();
+            tokio::pin!(execute);
+            tokio::pin!(adaptive_stop);
+            tokio::pin!(failed);
+            tokio::select! {
+                biased;
+                () = &mut failed => Err(PhaseExecutionError::new(
+                    failures.first().unwrap_or_else(|| "graph phase failed".into())
+                )),
+                () = &mut adaptive_stop => {
+                    workload.cancel();
+                    context.mark_all_sent();
+                    Ok(())
+                }
+                result = &mut execute => result
+                    .map(|_| ())
+                    .map_err(|error| PhaseExecutionError::new(error.to_string())),
+            }
+        })
+    }
+
+    fn stop_issuing(&self) {
+        self.workload.cancel();
+    }
+
+    fn cancel_inflight(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        self.local_cancelling.set(true);
+        let result = self
+            .placement
+            .cancel_inflight()
+            .map_err(|error| PhaseExecutionError::new(error.to_string()));
+        Box::pin(async move { result })
+    }
+
+    fn stop_ramps(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let controller = self.controller.clone();
+        let failures = self.failures.clone();
+        Box::pin(async move {
+            controller
+                .stop()
+                .await
+                .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
+            match failures.first() {
+                Some(error) => Err(PhaseExecutionError::new(error)),
+                None => Ok(()),
+            }
+        })
+    }
+
+    fn finalize(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        self.drain_stop.stop();
+        let drain = self.drain_task.borrow_mut().take();
+        let failures = self.failures.clone();
+        Box::pin(async move {
+            if let Some(drain) = drain {
+                drain.await.map_err(|error| {
+                    PhaseExecutionError::new(format!("graph record drain failed: {error}"))
+                })?;
+            }
+            match failures.first() {
+                Some(error) => Err(PhaseExecutionError::new(error)),
+                None => Ok(()),
+            }
+        })
+    }
+}
+
+struct GraphPhaseExecutionFactory {
+    phases: RefCell<HashMap<String, PreparedGraphPhase>>,
+    placements: Vec<Rc<dyn GraphTraceExecutionBackend>>,
+    captured: Rc<RefCell<Vec<CapturedRecord>>>,
+    run_cancelling: Rc<Cell<bool>>,
+}
+
+impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
+    fn create(&self, config: &PhaseConfig, context: PhaseContext) -> Rc<dyn PhaseExecution> {
+        let Some(prepared) = self.phases.borrow_mut().remove(&config.id) else {
+            return Rc::new(FailedGraphPhaseExecution {
+                error: format!("graph phase {:?} has no prepared execution plan", config.id),
+            });
+        };
+        let local_cancelling = Rc::new(Cell::new(false));
+        let observer = Rc::new(GraphPhaseWorkloadObserver {
+            context: context.clone(),
+            trace_nodes: RefCell::new(HashMap::new()),
+            failures: prepared.failures.clone(),
+            local_cancelling: local_cancelling.clone(),
+            run_cancelling: self.run_cancelling.clone(),
+        });
+        let workload = Rc::new(prepared.workload.with_observer(observer));
+        let mut setup_error = None;
+        let mut controller = prepared.controller;
+        let adaptive_sampler = prepared.adaptive.map(|adaptive| {
+            let sampler: SharedWindowSampler = Rc::new(RefCell::new(Box::new(
+                TumblingWindowSampler::new(context.clock().now_ns()),
+            )));
+            match graph_adaptive_actuator(
+                &adaptive,
+                prepared.session_slots.clone(),
+                prepared.intervals.clone(),
+                prepared.placement.clone(),
+            )
+            .and_then(|actuator| {
+                build_adaptive_scale(adaptive, context.clock(), actuator, sampler.clone())
+            }) {
+                Ok(scale) => {
+                    controller = Rc::new(AdaptiveScheduledPhaseController::new(
+                        scale,
+                        controller.clone(),
+                    ));
+                }
+                Err(error) => setup_error = Some(error.to_string()),
+            }
+            sampler
+        });
+        Rc::new(GraphPhaseExecution {
+            context,
+            workload,
+            placement: prepared.placement,
+            session_slots: prepared.session_slots,
+            prefill_initial: prepared.prefill_initial,
+            controller,
+            failures: prepared.failures,
+            local_cancelling,
+            records: RefCell::new(Some(prepared.records)),
+            captured: self.captured.clone(),
+            adaptive_sampler,
+            drain_stop: Rc::new(GraphRecordDrainStop::default()),
+            drain_task: RefCell::new(None),
+            setup_error,
+        })
+    }
+
+    fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        self.run_cancelling.set(true);
+        let result = self
+            .placements
+            .iter()
+            .try_for_each(|placement| placement.cancel_inflight())
+            .map_err(|error| PhaseExecutionError::new(error.to_string()));
+        Box::pin(async move { result })
+    }
+}
+
+struct FailedGraphPhaseExecution {
+    error: String,
+}
+
+impl PhaseExecution for FailedGraphPhaseExecution {
+    fn configure(&self, _config: &PhaseConfig) -> Result<(), PhaseExecutionError> {
+        Err(PhaseExecutionError::new(self.error.clone()))
+    }
+
+    fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let error = PhaseExecutionError::new(self.error.clone());
+        Box::pin(async move { Err(error) })
+    }
+}
+
+fn graph_adaptive_actuator(
+    config: &AdaptiveRunConfig,
+    session_slots: Option<Rc<SlotPool>>,
+    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    placement: Rc<dyn GraphTraceExecutionBackend>,
+) -> Result<Rc<dyn ControlActuator>> {
+    Ok(match config.control_variable {
+        AdaptiveControlVariable::Concurrency => Rc::new(SessionConcurrencyActuator::new(
+            session_slots
+                .ok_or_else(|| anyhow!("adaptive graph concurrency requires session admission"))?,
+            integer_adaptive_bound(config.minimum, "concurrency minimum")?,
+            integer_adaptive_bound(config.maximum, "concurrency maximum")?,
+        )?),
+        AdaptiveControlVariable::PrefillConcurrency => Rc::new(GraphPrefillActuator::new(
+            placement,
+            integer_adaptive_bound(config.minimum, "prefill minimum")?,
+            integer_adaptive_bound(config.maximum, "prefill maximum")?,
+        )?),
+        AdaptiveControlVariable::RequestRate => Rc::new(RequestRateActuator::new(
+            intervals,
+            config.minimum,
+            config.maximum,
+        )?),
+        AdaptiveControlVariable::Users => {
+            bail!("adaptive users is not defined for Graph-IR phases")
+        }
+    })
+}
+
+struct GraphPrefillActuator {
+    placement: Rc<dyn GraphTraceExecutionBackend>,
+    minimum: usize,
+    maximum: usize,
+    current: Cell<usize>,
+}
+
+impl GraphPrefillActuator {
+    fn new(
+        placement: Rc<dyn GraphTraceExecutionBackend>,
+        minimum: usize,
+        maximum: usize,
+    ) -> Result<Self> {
+        ensure!(
+            minimum > 0,
+            "adaptive graph prefill minimum must be positive"
+        );
+        ensure!(
+            maximum > minimum,
+            "adaptive graph prefill maximum must be greater than minimum"
+        );
+        Ok(Self {
+            placement,
+            minimum,
+            maximum,
+            current: Cell::new(minimum),
+        })
+    }
+}
+
+impl ControlActuator for GraphPrefillActuator {
+    fn variable(&self) -> &'static str {
+        "prefill_concurrency"
+    }
+
+    fn minimum(&self) -> f64 {
+        self.minimum as f64
+    }
+
+    fn maximum(&self) -> f64 {
+        self.maximum as f64
+    }
+
+    fn current(&self) -> f64 {
+        self.current.get() as f64
+    }
+
+    fn set(&self, value: f64) -> Result<f64, AdaptiveError> {
+        if !value.is_finite() {
+            return Err(AdaptiveError::Actuator(format!(
+                "graph prefill control value must be finite, got {value}"
+            )));
+        }
+        let value = value
+            .clamp(self.minimum as f64, self.maximum as f64)
+            .trunc() as usize;
+        self.placement
+            .set_prefill_limit(value)
+            .map_err(|error| AdaptiveError::Actuator(error.to_string()))?;
+        self.current.set(value);
+        Ok(value as f64)
+    }
+
+    fn snapshot(&self) -> ControlSnapshot {
+        ControlSnapshot {
+            target_value: self.current(),
+            actual_value: self.current(),
+            active_users: None,
+            retiring_users: None,
+            cancelled: None,
+        }
+    }
 }
 
 async fn execute_graph_native(
@@ -1592,6 +2074,12 @@ async fn execute_graph_native(
     let start_ns = clock.now_ns();
     let rng_root = RngRoot::new(graph_random_seed.or(request.run.random_seed));
     let trace_instances = GraphTraceInstanceSequence::default();
+    let session_slots = request
+        .run
+        .phases
+        .iter()
+        .any(graph_phase_uses_session_admission)
+        .then(|| Rc::new(SlotPool::new(1)));
 
     // Construct every phase's placement workers before the first root can be
     // admitted. Any parser, policy, transport, or worker setup error therefore
@@ -1612,32 +2100,44 @@ async fn execute_graph_native(
             default_output_tokens,
             rng_root,
             trace_instances.clone(),
+            session_slots.clone(),
             graph_placement,
         )?);
     }
 
     create_run_artifacts(&request.run)?;
-
-    let mut captured = Vec::new();
-    for prepared in phases {
-        let report = prepared.workload.execute().await?;
-        let failure = report.traces.iter().find_map(|trace| {
-            trace
-                .result
-                .as_ref()
-                .err()
-                .map(|error| format!("graph trace {:?} failed: {error}", trace.trace_id))
-        });
-        drop(prepared.workload);
-        captured.extend(prepared.records.into_iter().flatten());
-        if report.failed > 0 {
-            bail!(
-                "graph phase aborted after {} failed trace(s): {}",
-                report.failed,
-                failure.unwrap_or_else(|| "unknown trace failure".into())
-            );
-        }
-    }
+    let captured = Rc::new(RefCell::new(Vec::new()));
+    let placements = phases.iter().map(|phase| phase.placement.clone()).collect();
+    let phases = phases
+        .into_iter()
+        .zip(&request.run.phases)
+        .map(|(prepared, spec)| Ok((phase_config(spec)?.id, prepared)))
+        .collect::<Result<HashMap<_, _>>>()?;
+    let run_cancelling = Rc::new(Cell::new(false));
+    let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
+        phases: RefCell::new(phases),
+        placements,
+        captured: captured.clone(),
+        run_cancelling,
+    });
+    let phase_observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
+    let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
+        clock.clone(),
+        phase_observer.clone(),
+        execution_factory,
+    ));
+    let orchestrator = ClockPhaseOrchestrator::new(
+        request
+            .run
+            .phases
+            .iter()
+            .map(phase_config)
+            .collect::<Result<Vec<_>>>()?,
+        runner_factory,
+        phase_observer,
+    )?;
+    let phase_stats = orchestrator.run_all().await?;
+    let mut captured = std::mem::take(&mut *captured.borrow_mut());
     captured.sort_by(|left, right| {
         left.ingest
             .start_ns
@@ -1676,7 +2176,7 @@ async fn execute_graph_native(
         duration_s: start_time
             .zip(end_time)
             .map(|(start, end)| end.saturating_sub(start) as f64 / 1_000_000_000.0),
-        was_cancelled: false,
+        was_cancelled: phase_stats.iter().any(|phase| phase.was_cancelled),
         endpoints_configured,
         endpoints_successful,
         server_metrics: None,
@@ -1708,6 +2208,7 @@ fn prepare_graph_phase(
     default_output_tokens: usize,
     rng_root: RngRoot,
     trace_instances: GraphTraceInstanceSequence,
+    session_slots: Option<Rc<SlotPool>>,
     graph_placement: &dyn RunnerGraphPlacementFactory,
 ) -> Result<PreparedGraphPhase> {
     let phase_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
@@ -1727,22 +2228,39 @@ fn prepare_graph_phase(
             common.requests,
             trace_instances,
         )?);
+    let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
+    let intervals = Rc::new(RefCell::new(match phase.request_arrival() {
+        Some((pattern, rate, smoothness)) => {
+            make_interval_generator(pattern, rate, smoothness, seed)
+        }
+        None => make_interval_generator(
+            aiperf_timing::ArrivalPattern::ConcurrencyBurst,
+            None,
+            None,
+            seed,
+        ),
+    }));
     let arrival: Rc<dyn GraphArrivalPolicy> = match phase {
         PhaseSpec::Concurrency { .. } => Rc::new(ImmediateGraphArrival),
         PhaseSpec::Poisson { .. } | PhaseSpec::Gamma { .. } | PhaseSpec::Constant { .. } => {
-            let (pattern, rate, smoothness) = phase
-                .request_arrival()
-                .expect("validated graph rate phase has an arrival policy");
-            let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
-            Rc::new(IntervalGraphArrival::new(Rc::new(RefCell::new(
-                make_interval_generator(pattern, rate, smoothness, seed),
-            ))))
+            Rc::new(IntervalGraphArrival::new(intervals.clone()))
         }
         PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } => {
             unreachable!("unsupported graph phase rejected before input acquisition")
         }
     };
-    let (records_tx, records_rx) = mpsc::channel();
+    let (records_tx, records_rx) = mpsc::unbounded_channel();
+    let adaptive =
+        graph_adaptive_config(phase, &request.run.benchmark_id, &request.run.artifact_dir)?;
+    let prefill_initial = match (common.prefill_concurrency, adaptive.as_ref()) {
+        (Some(limit), _) => Some(limit),
+        (None, Some(config))
+            if config.control_variable == AdaptiveControlVariable::PrefillConcurrency =>
+        {
+            Some(integer_adaptive_bound(config.minimum, "prefill minimum")?)
+        }
+        (None, _) => None,
+    };
     let cancellation = common
         .cancellation
         .map(|cancellation| GraphCancellationConfig {
@@ -1765,29 +2283,159 @@ fn prepare_graph_phase(
             segments: input.segments.clone(),
             metrics,
             phase: metrics_phase(phase)?,
-            prefill_concurrency: common.prefill_concurrency,
+            prefill_concurrency: prefill_initial,
             cancellation,
             raw_enabled: request.run.artifacts.raw_path.is_some(),
             captured: records_tx,
         },
     ));
     let placement = graph_placement.build(request.run.workers, worker_factory)?;
-    let mut workload = GraphWorkload::new(clock, source, placement)
+    let failures = Rc::new(GraphPhaseFailures::default());
+    let controller = graph_ramp_controller(
+        phase,
+        clock.clone(),
+        intervals.clone(),
+        session_slots.clone(),
+        placement.clone(),
+        phase_rng.derive_root(namespace::TIMING_RAMP_POISSON),
+        failures.clone(),
+    )?;
+    let mut workload = GraphWorkload::new(clock, source, placement.clone())
         .with_arrival(arrival)
         .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
-    if let Some(concurrency) = phase.concurrency() {
-        workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(Rc::new(
-            SlotPool::new(concurrency),
-        ))));
-    }
-    if let Some(duration) = common.duration {
-        workload =
-            workload.with_stop_policy(Rc::new(DurationGraphStop::new(seconds_to_ns(duration)?)?));
+    if graph_phase_uses_session_admission(phase) {
+        workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(
+            session_slots
+                .clone()
+                .ok_or_else(|| anyhow!("graph phase requires shared session admission"))?,
+        )));
     }
     Ok(PreparedGraphPhase {
         workload,
+        placement,
         records: records_rx,
+        intervals,
+        session_slots,
+        prefill_initial,
+        controller,
+        failures,
+        adaptive,
     })
+}
+
+fn graph_phase_uses_session_admission(phase: &PhaseSpec) -> bool {
+    phase.concurrency().is_some()
+        || phase
+            .common()
+            .adaptive_scale
+            .as_ref()
+            .is_some_and(|adaptive| {
+                matches!(
+                    adaptive.control_variable,
+                    AdaptiveControlVariableSpec::Concurrency
+                )
+            })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn graph_ramp_controller(
+    spec: &PhaseSpec,
+    clock: Rc<dyn Clock>,
+    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    session_slots: Option<Rc<SlotPool>>,
+    placement: Rc<dyn GraphTraceExecutionBackend>,
+    rng_root: RngRoot,
+    failures: Rc<GraphPhaseFailures>,
+) -> Result<Rc<dyn ScheduledPhaseController>> {
+    let common = spec.common();
+    let target_rate = spec
+        .request_arrival()
+        .and_then(|(_, target_rate, _)| target_rate);
+    let mut drivers = Vec::new();
+    if let Some(ramp) = &common.concurrency_ramp {
+        let target = spec
+            .concurrency()
+            .ok_or_else(|| anyhow!("concurrency_ramp requires a concurrency target"))?;
+        let slots = session_slots
+            .clone()
+            .ok_or_else(|| anyhow!("concurrency_ramp requires graph session admission"))?;
+        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+        drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
+            slots.set_limit(value.round() as usize)
+        }));
+    }
+    if let Some(ramp) = &common.prefill_ramp {
+        let target = common
+            .prefill_concurrency
+            .ok_or_else(|| anyhow!("prefill_ramp requires prefill_concurrency"))?;
+        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+        let placement = placement.clone();
+        let failures = failures.clone();
+        drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
+            if let Err(error) = placement.set_prefill_limit(value.round() as usize) {
+                failures.record(format!("applying graph prefill ramp: {error}"));
+            }
+        }));
+    }
+    if let Some(ramp) = &common.rate_ramp {
+        let target = target_rate.ok_or_else(|| anyhow!("rate_ramp requires a rate phase"))?;
+        let duration_ns = seconds_to_u64_ns(ramp.duration)?;
+        let start = target * RATE_RAMP_UPDATE_INTERVAL_NS as f64 / duration_ns as f64;
+        let strategy = ramp_strategy(ramp, start, target, true, rng_root)?;
+        drivers.push(RampDriver::new(clock, strategy, move |value| {
+            intervals.borrow_mut().set_rate(value)
+        }));
+    }
+    if drivers.is_empty() {
+        Ok(Rc::new(aiperf::phase_runtime::NoopScheduledPhaseController))
+    } else {
+        Ok(Rc::new(RampScheduledPhaseController::new(drivers)))
+    }
+}
+
+fn graph_adaptive_config(
+    phase: &PhaseSpec,
+    benchmark_id: &str,
+    artifact_dir: &Path,
+) -> Result<Option<AdaptiveRunConfig>> {
+    let Some(config) = adaptive_run_config(phase, benchmark_id, artifact_dir)? else {
+        return Ok(None);
+    };
+    match config.control_variable {
+        AdaptiveControlVariable::Concurrency => {
+            ensure!(
+                phase.common().concurrency_ramp.is_none(),
+                "adaptive graph concurrency cannot be combined with concurrency_ramp"
+            );
+        }
+        AdaptiveControlVariable::PrefillConcurrency => {
+            ensure!(
+                phase.common().prefill_ramp.is_none(),
+                "adaptive graph prefill_concurrency cannot be combined with prefill_ramp"
+            );
+            let session_target = phase.concurrency().ok_or_else(|| {
+                anyhow!("adaptive graph prefill_concurrency requires a session concurrency cap")
+            })?;
+            ensure!(
+                config.maximum <= session_target as f64,
+                "adaptive graph prefill_concurrency maximum must be <= concurrency"
+            );
+        }
+        AdaptiveControlVariable::RequestRate => {
+            ensure!(
+                phase.request_arrival().is_some(),
+                "adaptive graph request_rate requires a rate-controlled phase"
+            );
+            ensure!(
+                phase.common().rate_ramp.is_none(),
+                "adaptive graph request_rate cannot be combined with rate_ramp"
+            );
+        }
+        AdaptiveControlVariable::Users => {
+            bail!("adaptive users is not defined for Graph-IR phases")
+        }
+    }
+    Ok(Some(config))
 }
 
 fn write_graph_artifacts(
@@ -3360,24 +4008,11 @@ fn adaptive_runtime_extension(
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
 ) -> Result<Option<Rc<dyn ScheduledRuntimeExtension>>> {
-    let Some(spec) = phase.common().adaptive_scale.as_ref() else {
+    let Some(config) = adaptive_run_config(phase, benchmark_id, artifact_dir)? else {
         return Ok(None);
     };
-    ensure!(
-        phase.common().name == "profiling",
-        "adaptive_scale is supported only on profiling phases"
-    );
-    ensure!(
-        phase.common().duration.is_some(),
-        "adaptive_scale requires a phase duration"
-    );
-    ensure!(
-        !matches!(phase, PhaseSpec::FixedSchedule { .. }),
-        "adaptive_scale is not defined for fixed_schedule phases"
-    );
-
-    let control_variable = match spec.control_variable {
-        AdaptiveControlVariableSpec::Concurrency => {
+    match config.control_variable {
+        AdaptiveControlVariable::Concurrency => {
             ensure!(
                 session_slots.is_some(),
                 "adaptive concurrency requires session admission"
@@ -3386,9 +4021,8 @@ fn adaptive_runtime_extension(
                 phase.common().concurrency_ramp.is_none(),
                 "adaptive concurrency cannot be combined with concurrency_ramp"
             );
-            AdaptiveControlVariable::Concurrency
         }
-        AdaptiveControlVariableSpec::PrefillConcurrency => {
+        AdaptiveControlVariable::PrefillConcurrency => {
             ensure!(
                 !matches!(phase, PhaseSpec::UserCentric { .. }),
                 "user_centric phases do not expose prefill admission"
@@ -3405,12 +4039,11 @@ fn adaptive_runtime_extension(
                 anyhow!("adaptive prefill_concurrency requires a session concurrency cap")
             })?;
             ensure!(
-                spec.maximum <= session_target as f64,
+                config.maximum <= session_target as f64,
                 "adaptive prefill_concurrency maximum must be <= concurrency"
             );
-            AdaptiveControlVariable::PrefillConcurrency
         }
-        AdaptiveControlVariableSpec::RequestRate => {
+        AdaptiveControlVariable::RequestRate => {
             ensure!(
                 matches!(
                     phase,
@@ -3424,15 +4057,52 @@ fn adaptive_runtime_extension(
                 phase.common().rate_ramp.is_none(),
                 "adaptive request_rate cannot be combined with rate_ramp"
             );
-            AdaptiveControlVariable::RequestRate
         }
-        AdaptiveControlVariableSpec::Users => {
+        AdaptiveControlVariable::Users => {
             ensure!(
                 matches!(phase, PhaseSpec::UserCentric { .. }) && user_target.is_some(),
                 "adaptive users requires a user_centric phase"
             );
-            AdaptiveControlVariable::Users
         }
+    }
+    Ok(Some(Rc::new(AdaptiveRuntimeExtension {
+        config,
+        intervals,
+        session_slots,
+        prefill_slots,
+        user_target,
+        session_target: phase.concurrency(),
+        prefill_target: phase.common().prefill_concurrency,
+    })))
+}
+
+fn adaptive_run_config(
+    phase: &PhaseSpec,
+    benchmark_id: &str,
+    artifact_dir: &Path,
+) -> Result<Option<AdaptiveRunConfig>> {
+    let Some(spec) = phase.common().adaptive_scale.as_ref() else {
+        return Ok(None);
+    };
+    ensure!(
+        phase.common().name == "profiling",
+        "adaptive_scale is supported only on profiling phases"
+    );
+    ensure!(
+        phase.common().duration.is_some(),
+        "adaptive_scale requires a phase duration"
+    );
+    ensure!(
+        !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+        "adaptive_scale is not defined for fixed_schedule phases"
+    );
+    let control_variable = match spec.control_variable {
+        AdaptiveControlVariableSpec::Concurrency => AdaptiveControlVariable::Concurrency,
+        AdaptiveControlVariableSpec::PrefillConcurrency => {
+            AdaptiveControlVariable::PrefillConcurrency
+        }
+        AdaptiveControlVariableSpec::RequestRate => AdaptiveControlVariable::RequestRate,
+        AdaptiveControlVariableSpec::Users => AdaptiveControlVariable::Users,
     };
     let step = match spec.step_policy {
         AdaptiveStepPolicySpec::SlaMargin => AdaptiveStepConfig::SlaMargin {
@@ -3456,7 +4126,7 @@ fn adaptive_runtime_extension(
             .map_err(Into::into)
         })
         .collect::<Result<Vec<_>>>()?;
-    let config = AdaptiveRunConfig {
+    Ok(Some(AdaptiveRunConfig {
         control_variable,
         minimum: spec.minimum,
         maximum: spec.maximum,
@@ -3478,16 +4148,7 @@ fn adaptive_runtime_extension(
             phase_name: Some(phase.common().name.clone()),
             ..CorrelationContext::default()
         },
-    };
-    Ok(Some(Rc::new(AdaptiveRuntimeExtension {
-        config,
-        intervals,
-        session_slots,
-        prefill_slots,
-        user_target,
-        session_target: phase.concurrency(),
-        prefill_target: phase.common().prefill_concurrency,
-    })))
+    }))
 }
 
 fn integer_adaptive_bound(value: f64, label: &str) -> Result<usize> {
@@ -4097,6 +4758,7 @@ mod tests {
     struct RecordingGraphPlacement {
         builds: Arc<AtomicUsize>,
         traces: Arc<AtomicUsize>,
+        prefill_updates: Arc<AtomicUsize>,
     }
 
     impl RunnerGraphPlacementFactory for RecordingGraphPlacement {
@@ -4110,12 +4772,14 @@ mod tests {
             self.builds.fetch_add(1, Ordering::SeqCst);
             Ok(Rc::new(RecordingGraphBackend {
                 traces: self.traces.clone(),
+                prefill_updates: self.prefill_updates.clone(),
             }))
         }
     }
 
     struct RecordingGraphBackend {
         traces: Arc<AtomicUsize>,
+        prefill_updates: Arc<AtomicUsize>,
     }
 
     #[test]
@@ -4188,6 +4852,11 @@ mod tests {
             self.traces.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+
+        fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
+            self.prefill_updates.store(limit, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     #[test]
@@ -4227,9 +4896,11 @@ mod tests {
         .unwrap();
         let builds = Arc::new(AtomicUsize::new(0));
         let traces = Arc::new(AtomicUsize::new(0));
+        let prefill_updates = Arc::new(AtomicUsize::new(0));
         let placement = RecordingGraphPlacement {
             builds: builds.clone(),
             traces: traces.clone(),
+            prefill_updates,
         };
         let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
 
@@ -4246,6 +4917,166 @@ mod tests {
         assert_eq!(builds.load(Ordering::SeqCst), 1);
         assert_eq!(traces.load(Ordering::SeqCst), 1);
         assert!(artifacts.path().join("native-v2.json").is_file());
+    }
+
+    #[test]
+    fn graph_uses_shared_phase_lifecycle_for_seamless_ramps_and_prefill_control() {
+        let artifacts = tempfile::tempdir().unwrap();
+        let request: RunRequest = serde_json::from_value(json!({
+            "protocol_version": 1,
+            "run": {
+                "benchmark_id": "graph-phase-lifecycle",
+                "workers": 3,
+                "artifact_dir": artifacts.path(),
+                "models": {"items": [{"name": "fixture-model"}]},
+                "endpoint": {
+                    "urls": ["http://127.0.0.1:1"],
+                    "type": "chat",
+                    "streaming": true
+                },
+                "dataset": {
+                    "type": "file",
+                    "format": "dag_jsonl",
+                    "records": [{
+                        "session_id": "root",
+                        "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
+                    }]
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "warmup",
+                    "exclude_from_results": true,
+                    "sessions": 1,
+                    "concurrency": 2,
+                    "seamless": true,
+                    "concurrency_ramp": {"duration": 0.001, "strategy": "linear"}
+                }, {
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "sessions": 1,
+                    "concurrency": 2,
+                    "prefill_concurrency": 2,
+                    "prefill_ramp": {"duration": 0.001, "strategy": "linear"},
+                    "grace_period": 0.01
+                }],
+                "metrics": {},
+                "artifacts": {}
+            }
+        }))
+        .unwrap();
+        let builds = Arc::new(AtomicUsize::new(0));
+        let traces = Arc::new(AtomicUsize::new(0));
+        let prefill_updates = Arc::new(AtomicUsize::new(0));
+        let placement = RecordingGraphPlacement {
+            builds: builds.clone(),
+            traces: traces.clone(),
+            prefill_updates: prefill_updates.clone(),
+        };
+        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+
+        let terminal = execute_run_with_all_factories(
+            request,
+            &UnusedHttpPlacement,
+            &graph_inputs,
+            &placement,
+            &BuiltinAiperfRegistryFactory,
+        )
+        .unwrap();
+
+        assert!(terminal.success, "{:?}", terminal.error);
+        assert_eq!(builds.load(Ordering::SeqCst), 2);
+        assert_eq!(traces.load(Ordering::SeqCst), 2);
+        assert!(prefill_updates.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[test]
+    fn graph_adaptive_prefill_uses_the_shared_controller_and_artifact_contract() {
+        let artifacts = tempfile::tempdir().unwrap();
+        let request: RunRequest = serde_json::from_value(json!({
+            "protocol_version": 1,
+            "run": {
+                "benchmark_id": "graph-adaptive-prefill",
+                "workers": 3,
+                "artifact_dir": artifacts.path(),
+                "models": {"items": [{"name": "fixture-model"}]},
+                "endpoint": {
+                    "urls": ["http://127.0.0.1:1"],
+                    "type": "chat",
+                    "streaming": true
+                },
+                "dataset": {
+                    "type": "file",
+                    "format": "dag_jsonl",
+                    "records": [{
+                        "session_id": "root",
+                        "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
+                    }]
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "sessions": 1,
+                    "duration": 0.01,
+                    "concurrency": 2,
+                    "adaptive_scale": {
+                        "control_variable": "prefill_concurrency",
+                        "minimum": 1.0,
+                        "maximum": 2.0,
+                        "assessment_period_seconds": 1.0,
+                        "sustain_duration_seconds": 1.0,
+                        "min_completed_requests": 1,
+                        "strategy_type": "ramp_until_fail",
+                        "step_policy": "fixed_percent_step",
+                        "base_step": 1,
+                        "max_step_multiplier": 1,
+                        "step_percent": 100.0,
+                        "sla_filters": [{
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 1000.0
+                        }]
+                    }
+                }],
+                "metrics": {},
+                "artifacts": {}
+            }
+        }))
+        .unwrap();
+        let builds = Arc::new(AtomicUsize::new(0));
+        let traces = Arc::new(AtomicUsize::new(0));
+        let prefill_updates = Arc::new(AtomicUsize::new(0));
+        let placement = RecordingGraphPlacement {
+            builds,
+            traces,
+            prefill_updates: prefill_updates.clone(),
+        };
+
+        let terminal = execute_run_with_all_factories(
+            request,
+            &UnusedHttpPlacement,
+            &GraphInputAdapterRegistry::with_builtin_adapters(),
+            &placement,
+            &BuiltinAiperfRegistryFactory,
+        )
+        .unwrap();
+
+        assert!(terminal.success, "{:?}", terminal.error);
+        assert_eq!(prefill_updates.load(Ordering::SeqCst), 1);
+        assert!(
+            artifacts
+                .path()
+                .join("adaptive_scale_events.jsonl")
+                .is_file()
+        );
+        assert!(
+            artifacts
+                .path()
+                .join("adaptive_scale_summary.json")
+                .is_file()
+        );
     }
 
     #[test]
