@@ -11,6 +11,7 @@ description = "Clock-injected native gRPC transport with open endpoint bindings 
 [dependencies]
 aiperf-clock.workspace = true
 aiperf-endpoints.workspace = true
+base64.workspace = true
 bytes.workspace = true
 futures.workspace = true
 half.workspace = true
@@ -19,6 +20,7 @@ prost.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 tokio = { version = "1", features = ["rt", "net", "macros", "sync"] }
+tokio-stream = "0.1"
 tonic.workspace = true
 url.workspace = true
 

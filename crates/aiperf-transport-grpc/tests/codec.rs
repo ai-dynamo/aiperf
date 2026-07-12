@@ -247,6 +247,15 @@ fn binding_registry_is_open_and_only_advertises_grpc_capable_v2_dialects() {
             "kserve_v2_infer",
             "kserve_v2_rankings",
             "kserve_v2_vlm",
+            "riva_analyze_entities",
+            "riva_analyze_intent",
+            "riva_asr",
+            "riva_natural_query",
+            "riva_punctuate_text",
+            "riva_text_classify",
+            "riva_token_classify",
+            "riva_transform_text",
+            "riva_tts",
         ]
     );
     assert!(

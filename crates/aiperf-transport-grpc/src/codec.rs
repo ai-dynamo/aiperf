@@ -28,7 +28,8 @@ pub struct CodecError {
 }
 
 impl CodecError {
-    fn new(message: impl Into<String>) -> Self {
+    /// Construct an extension-owned codec failure.
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }

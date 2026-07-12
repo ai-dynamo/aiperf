@@ -23,7 +23,7 @@ const MODEL_INFER: &str = "/inference.GRPCInferenceService/ModelInfer";
 const MODEL_STREAM_INFER: &str = "/inference.GRPCInferenceService/ModelStreamInfer";
 const MODEL_READY: &str = "/inference.GRPCInferenceService/ModelReady";
 
-/// One decoded server-streaming message.
+/// One decoded server- or bidirectional-streaming response message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GrpcStreamChunk {
     /// In-band server error.
@@ -41,9 +41,17 @@ pub trait GrpcEndpointBinding: fmt::Debug {
     /// Unary inference method path.
     fn unary_method(&self) -> &'static PathAndQuery;
     /// Streaming method path, if supported by this endpoint.
-    fn streaming_method(&self) -> Option<&'static PathAndQuery>;
-    /// Readiness method path.
-    fn readiness_method(&self) -> &'static PathAndQuery;
+    fn streaming_method(&self) -> Option<&'static PathAndQuery> {
+        None
+    }
+    /// Bidirectional streaming method path, if supported by this endpoint.
+    fn bidi_streaming_method(&self) -> Option<&'static PathAndQuery> {
+        None
+    }
+    /// Readiness method path, if this protocol defines one.
+    fn readiness_method(&self) -> Option<&'static PathAndQuery> {
+        None
+    }
     /// Encode one canonical endpoint payload.
     fn encode_request(
         &self,
@@ -51,14 +59,33 @@ pub trait GrpcEndpointBinding: fmt::Debug {
         model_name: &str,
         request_id: &str,
     ) -> Result<Bytes, CodecError>;
+    /// Encode the ordered config-first messages for a bidirectional request.
+    fn encode_bidi_requests(
+        &self,
+        _payload: &Value,
+        _model_name: &str,
+        _request_id: &str,
+    ) -> Result<Vec<Bytes>, CodecError> {
+        Err(CodecError::new(format!(
+            "endpoint {} does not support bidirectional gRPC requests",
+            self.endpoint_id()
+        )))
+    }
     /// Decode one unary response.
     fn decode_response(&self, bytes: &[u8]) -> Result<Value, CodecError>;
     /// Decode one streaming response.
     fn decode_stream_response(&self, bytes: &[u8]) -> Result<GrpcStreamChunk, CodecError>;
     /// Encode a model-readiness request.
-    fn encode_readiness_request(&self, model_name: &str) -> Bytes;
+    fn encode_readiness_request(&self, _model_name: &str) -> Bytes {
+        Bytes::new()
+    }
     /// Decode a model-readiness response.
-    fn decode_readiness_response(&self, bytes: &[u8]) -> Result<bool, CodecError>;
+    fn decode_readiness_response(&self, _bytes: &[u8]) -> Result<bool, CodecError> {
+        Err(CodecError::new(format!(
+            "endpoint {} does not define a gRPC readiness response",
+            self.endpoint_id()
+        )))
+    }
 }
 
 /// Startup factory for worker-local gRPC endpoint bindings.
@@ -130,10 +157,11 @@ impl GrpcBindingRegistryBuilder {
         Self::default()
     }
 
-    /// Construct the stock KServe v2 catalog.
+    /// Construct the stock KServe v2 and NVIDIA Riva catalog.
     pub fn with_builtins() -> Result<Self, GrpcEndpointBindingRegistryError> {
         let mut builder = Self::new();
         builder.register(KServeV2GrpcBindingFactory)?;
+        crate::riva_binding::register_builtins(&mut builder)?;
         Ok(builder)
     }
 
@@ -263,9 +291,9 @@ impl GrpcEndpointBinding for KServeV2GrpcBinding {
         self.streaming.then_some(&PATH)
     }
 
-    fn readiness_method(&self) -> &'static PathAndQuery {
+    fn readiness_method(&self) -> Option<&'static PathAndQuery> {
         static PATH: PathAndQuery = PathAndQuery::from_static(MODEL_READY);
-        &PATH
+        Some(&PATH)
     }
 
     fn encode_request(

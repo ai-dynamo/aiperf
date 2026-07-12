@@ -7,8 +7,8 @@
 //! `src/aiperf/transports/grpc/grpc_transport.py:72-750`: pooled, never, and
 //! sticky-user-session channels; lowercase metadata; a 30-second capped
 //! channel-ready stage; cancellation armed only after the RPC is submitted;
-//! unary and server-streaming calls; in-band stream errors; and native-to-HTTP
-//! status mapping. Tonic replaces Python `grpc.aio`; application-visible time
+//! unary, server-streaming, and bidirectional calls; in-band stream errors; and
+//! native-to-HTTP status mapping. Tonic replaces Python `grpc.aio`; application-visible time
 //! and deadlines use only [`aiperf_clock::Clock`].
 
 use std::cell::RefCell;
@@ -232,8 +232,30 @@ impl GrpcTransport {
         let start_ns = self.clock.now_ns();
         let mut record = GrpcRequestRecord::started(start_ns);
         let request_id = request.request_id.as_deref().unwrap_or_default();
-        let encoded = match binding.encode_request(payload, &request.model_name, request_id) {
-            Ok(encoded) => encoded,
+        let bidi_method = request
+            .streaming
+            .then(|| binding.bidi_streaming_method())
+            .flatten();
+        let messages = match bidi_method {
+            Some(_) => binding.encode_bidi_requests(payload, &request.model_name, request_id),
+            None => binding
+                .encode_request(payload, &request.model_name, request_id)
+                .map(|message| vec![message]),
+        };
+        let messages = match messages {
+            Ok(messages) if !messages.is_empty() => messages,
+            Ok(_) => {
+                finish_error(
+                    &mut record,
+                    self.clock.now_ns(),
+                    GrpcTransportError::new(
+                        GrpcErrorKind::InvalidRequest,
+                        "encode gRPC request produced no protobuf messages",
+                        400,
+                    ),
+                );
+                return record;
+            }
             Err(error) => {
                 finish_error(
                     &mut record,
@@ -247,7 +269,10 @@ impl GrpcTransport {
                 return record;
             }
         };
-        if encoded.len() > self.config.max_send_message_size {
+        if let Some(encoded) = messages
+            .iter()
+            .find(|message| message.len() > self.config.max_send_message_size)
+        {
             finish_error(
                 &mut record,
                 self.clock.now_ns(),
@@ -263,7 +288,8 @@ impl GrpcTransport {
             );
             return record;
         }
-        record.request_body = encoded.clone();
+        record.request_body = messages[0].clone();
+        record.request_messages = messages.clone();
         let metadata = match self.build_metadata(request) {
             Ok(metadata) => metadata,
             Err(error) => {
@@ -290,23 +316,39 @@ impl GrpcTransport {
 
         record.trace.request_send_start_ns = Some(self.clock.now_ns());
         record.trace.request_headers_sent_ns = record.trace.request_send_start_ns;
-        record.trace.request_chunks_count = 1;
-        record.trace.request_bytes_total = encoded.len() as u64;
+        record.trace.request_chunks_count = u32::try_from(messages.len()).unwrap_or(u32::MAX);
+        record.trace.request_bytes_total = messages.iter().fold(0_u64, |total, message| {
+            total.saturating_add(message.len() as u64)
+        });
         if self.config.trace_chunks {
-            record.trace.request_chunks.push((
-                record.trace.request_send_start_ns.unwrap_or(start_ns),
-                encoded.len() as u64,
-            ));
+            let at_ns = record.trace.request_send_start_ns.unwrap_or(start_ns);
+            record
+                .trace
+                .request_chunks
+                .extend(messages.iter().map(|message| (at_ns, message.len() as u64)));
         }
 
         let result = if request.streaming {
-            if let Some(method) = binding.streaming_method() {
+            if let Some(method) = bidi_method {
+                self.dispatch_bidi_streaming(
+                    channel,
+                    method.clone(),
+                    metadata,
+                    messages,
+                    binding,
+                    request,
+                    total_deadline,
+                    &mut record,
+                    first_response_filter,
+                )
+                .await
+            } else if let Some(method) = binding.streaming_method() {
                 self.dispatch_streaming(
                     RpcDispatchContext {
                         channel,
                         method: method.clone(),
                         metadata,
-                        body: encoded,
+                        body: messages[0].clone(),
                         binding,
                         request,
                         total_deadline,
@@ -330,7 +372,7 @@ impl GrpcTransport {
                 channel,
                 method: binding.unary_method().clone(),
                 metadata,
-                body: encoded,
+                body: messages[0].clone(),
                 binding,
                 request,
                 total_deadline,
@@ -347,7 +389,7 @@ impl GrpcTransport {
         record
     }
 
-    /// Query KServe model readiness over the same native channel substrate.
+    /// Query dialect-defined model readiness over the same native channel substrate.
     pub async fn model_ready(
         &self,
         binding: &dyn GrpcEndpointBinding,
@@ -356,6 +398,16 @@ impl GrpcTransport {
         metadata: BTreeMap<String, String>,
     ) -> Result<bool, GrpcTransportError> {
         let start_ns = self.clock.now_ns();
+        let method = binding.readiness_method().ok_or_else(|| {
+            GrpcTransportError::new(
+                GrpcErrorKind::InvalidRequest,
+                format!(
+                    "endpoint {} does not define a gRPC readiness method",
+                    binding.endpoint_id()
+                ),
+                400,
+            )
+        })?;
         let request = GrpcRequestConfig {
             metadata,
             url_index,
@@ -378,7 +430,7 @@ impl GrpcTransport {
             }),
             raw_unary(
                 channel,
-                binding.readiness_method().clone(),
+                method.clone(),
                 request_metadata,
                 bytes,
                 self.config.max_send_message_size,
@@ -551,6 +603,104 @@ impl GrpcTransport {
                 .get_or_insert(perf_ns);
             if !first_token_acquired {
                 first_token_acquired = first_response_filter(perf_ns - record.start_ns, &json);
+            }
+            record.responses.push(GrpcResponse {
+                perf_ns,
+                json,
+                wire_size: chunk.response_size,
+            });
+        }
+        let end_ns = self.clock.now_ns();
+        record.trace.response_receive_end_ns = Some(end_ns);
+        if let Ok(Some(trailers)) = stream.trailers().await {
+            record
+                .trace
+                .response_metadata
+                .extend(metadata_to_map(&trailers));
+        }
+        finish_ok(record, end_ns);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_bidi_streaming(
+        &self,
+        channel: Channel,
+        method: PathAndQuery,
+        metadata: MetadataMap,
+        messages: Vec<Bytes>,
+        binding: &dyn GrpcEndpointBinding,
+        request: &GrpcRequestConfig,
+        total_deadline: Option<i64>,
+        record: &mut GrpcRequestRecord,
+        first_response_filter: &mut dyn FnMut(i64, &Value) -> bool,
+    ) -> Result<(), GrpcTransportError> {
+        let mut rpc = Box::pin(raw_bidi_streaming(
+            channel,
+            method,
+            metadata,
+            messages,
+            self.config.max_send_message_size,
+            self.config.max_receive_message_size,
+        ));
+        let immediate = poll_once(rpc.as_mut()).await;
+        let send_anchor = self.clock.now_ns();
+        record.trace.request_send_end_ns = Some(send_anchor);
+        let deadline = request_deadline(request, send_anchor, total_deadline);
+        let (mut stream, initial_metadata) = match immediate {
+            Some(result) => result.map_err(GrpcTransportError::from_status)?,
+            None => await_deadline(self.clock.clone(), deadline, rpc)
+                .await
+                .map_err(deadline_error)?
+                .map_err(GrpcTransportError::from_status)?,
+        };
+        record.trace.response_metadata = metadata_to_map(&initial_metadata);
+        record.trace.response_headers_received_ns = Some(self.clock.now_ns());
+        let mut first_response_acquired = false;
+        loop {
+            let next = await_deadline(self.clock.clone(), deadline, stream.message())
+                .await
+                .map_err(deadline_error)?
+                .map_err(GrpcTransportError::from_status)?;
+            let Some(bytes) = next else {
+                break;
+            };
+            let perf_ns = self.clock.now_ns();
+            let chunk = binding.decode_stream_response(&bytes).map_err(|error| {
+                GrpcTransportError::new(
+                    GrpcErrorKind::Decode,
+                    format!("decode gRPC bidirectional response: {error}"),
+                    500,
+                )
+            })?;
+            record.trace.response_chunks_count =
+                record.trace.response_chunks_count.saturating_add(1);
+            record.trace.response_bytes_total = record
+                .trace
+                .response_bytes_total
+                .saturating_add(chunk.response_size as u64);
+            if self.config.trace_chunks {
+                record
+                    .trace
+                    .response_chunks
+                    .push((perf_ns, chunk.response_size as u64));
+            }
+            if let Some(error_message) = chunk.error_message {
+                return Err(GrpcTransportError::new(
+                    GrpcErrorKind::Stream,
+                    error_message,
+                    500,
+                ));
+            }
+            let Some(json) = chunk.response else {
+                continue;
+            };
+            record
+                .trace
+                .response_receive_start_ns
+                .get_or_insert(perf_ns);
+            if !first_response_acquired {
+                first_response_acquired = first_response_filter(perf_ns - record.start_ns, &json);
             }
             record.responses.push(GrpcResponse {
                 perf_ns,
@@ -778,6 +928,27 @@ async fn raw_server_streaming(
     let response = grpc
         .server_streaming(request, method, RawBytesCodec)
         .await?;
+    let metadata = response.metadata().clone();
+    Ok((response.into_inner(), metadata))
+}
+
+async fn raw_bidi_streaming(
+    channel: Channel,
+    method: PathAndQuery,
+    metadata: MetadataMap,
+    messages: Vec<Bytes>,
+    max_send_message_size: usize,
+    max_receive_message_size: usize,
+) -> Result<(Streaming<Bytes>, MetadataMap), Status> {
+    let mut grpc = Grpc::new(channel)
+        .max_encoding_message_size(max_send_message_size)
+        .max_decoding_message_size(max_receive_message_size);
+    grpc.ready()
+        .await
+        .map_err(|error| Status::unavailable(format!("gRPC channel is not ready: {error}")))?;
+    let mut request = Request::new(tokio_stream::iter(messages));
+    *request.metadata_mut() = metadata;
+    let response = grpc.streaming(request, method, RawBytesCodec).await?;
     let metadata = response.metadata().clone();
     Ok((response.into_inner(), metadata))
 }

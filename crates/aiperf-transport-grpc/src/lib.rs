@@ -14,6 +14,9 @@ pub mod codec;
 pub mod models;
 pub mod proto;
 mod raw_codec;
+mod riva_binding;
+mod riva_codec;
+pub mod riva_proto;
 pub mod transport;
 
 pub use binding::{
@@ -28,5 +31,12 @@ pub use codec::{
 pub use models::{
     ConnectionReuseStrategy, GrpcClientConfig, GrpcErrorDetails, GrpcErrorKind, GrpcRequestConfig,
     GrpcRequestRecord, GrpcResponse, GrpcTraceData,
+};
+pub use riva_binding::{
+    RivaAnalyzeEntitiesGrpcBindingFactory, RivaAnalyzeIntentGrpcBindingFactory,
+    RivaAsrGrpcBindingFactory, RivaNaturalQueryGrpcBindingFactory,
+    RivaPunctuateTextGrpcBindingFactory, RivaTextClassifyGrpcBindingFactory,
+    RivaTokenClassifyGrpcBindingFactory, RivaTransformTextGrpcBindingFactory,
+    RivaTtsGrpcBindingFactory,
 };
 pub use transport::{GrpcTransport, GrpcTransportError, grpc_status_to_http};

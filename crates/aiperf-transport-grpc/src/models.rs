@@ -58,7 +58,7 @@ pub struct GrpcRequestConfig {
     pub cancel_after_ns: Option<i64>,
     /// Correlation ID used by sticky channel reuse and metadata.
     pub correlation_id: Option<String>,
-    /// Request ID carried in metadata and the OIP request.
+    /// Request ID carried in metadata and the dialect protobuf request.
     pub request_id: Option<String>,
     /// Whether this is the final turn in a correlated session.
     pub is_final_turn: bool,
@@ -289,6 +289,11 @@ pub struct GrpcRequestRecord {
     pub trace: GrpcTraceData,
     /// Exact unframed request protobuf bytes for artifacts.
     pub request_body: Bytes,
+    /// Exact ordered unframed protobuf request messages.
+    ///
+    /// Unary and server-streaming requests contain one entry. Bidirectional
+    /// requests retain the config message followed by every client chunk.
+    pub request_messages: Vec<Bytes>,
 }
 
 impl GrpcRequestRecord {
@@ -303,6 +308,7 @@ impl GrpcRequestRecord {
             error: None,
             trace: GrpcTraceData::new(),
             request_body: Bytes::new(),
+            request_messages: Vec::new(),
         }
     }
 }
