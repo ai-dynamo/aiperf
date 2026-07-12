@@ -504,6 +504,8 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
                 "worker rootfs cannot expose the host filesystem root".to_string(),
             ));
         }
+        let mountpoint_identities =
+            validate_rootfs_mountpoints(&worker_root, context.proxy.is_some())?;
         let staging = std::fs::canonicalize(&context.staging_dir).map_err(|error| {
             EvaluationProviderError::Launch(format!("failed to resolve staging root: {error}"))
         })?;
@@ -536,8 +538,6 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             OsString::from("--new-session"),
             OsString::from("--unshare-all"),
             OsString::from("--clearenv"),
-            OsString::from("--preserve-fds"),
-            OsString::from("2"),
             OsString::from("--ro-bind"),
             worker_root.as_os_str().to_owned(),
             OsString::from("/"),
@@ -570,7 +570,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         args.extend(launch.args.iter().cloned());
 
         let proof_input = format!(
-            "aiperf-bwrap-rootfs-v2\n{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}",
+            "aiperf-bwrap-rootfs-v2\n{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}\n{}",
             self.bubblewrap_sha256,
             attestation.launch_closure_sha256,
             context
@@ -583,6 +583,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
                 .proxy
                 .as_ref()
                 .map(|binding| &binding.grant.process_scope_sha256),
+            mountpoint_identities.join(","),
         );
         let evidence = EvaluatorIsolationEvidence {
             profile_id: "linux-bubblewrap-rootfs-process-tree-v2".to_string(),
@@ -632,26 +633,96 @@ fn bind_proxy_socket(
     args: &mut Vec<OsString>,
 ) -> Result<(), EvaluationProviderError> {
     proxy.validate()?;
-    let Some(path) = proxy.local_locator.strip_prefix("unix://") else {
+    let Some(destination) = proxy.local_locator.strip_prefix("unix://") else {
         return Err(EvaluationProviderError::Launch(
             "network-denied Bubblewrap workers require a scoped Unix-domain proxy locator"
                 .to_string(),
         ));
     };
-    let host_path = Path::new(path);
-    if !host_path.is_absolute() {
+    let host_path = &proxy.host_socket_path;
+    if !host_path.is_absolute() || destination != "/run/aiperf/evaluator-proxy.sock" {
         return Err(EvaluationProviderError::Launch(
-            "scoped proxy Unix socket path was not absolute".to_string(),
+            "scoped proxy host/source socket mapping was invalid".to_string(),
         ));
     }
-    args.push(OsString::from("--dir"));
-    args.push(OsString::from("/run"));
-    args.push(OsString::from("--dir"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt as _;
+        let metadata = std::fs::symlink_metadata(host_path).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "failed to inspect scoped proxy host socket: {error}"
+            ))
+        })?;
+        if !metadata.file_type().is_socket() || metadata.file_type().is_symlink() {
+            return Err(EvaluationProviderError::Launch(
+                "scoped proxy bind source was not a real Unix socket".to_string(),
+            ));
+        }
+    }
+    // The attested rootfs is mounted read-only. A private empty tmpfs supplies
+    // the destination inode for the one read-only socket bind without exposing
+    // the host socket directory or any sibling host paths.
+    args.push(OsString::from("--tmpfs"));
     args.push(OsString::from("/run/aiperf"));
     args.push(OsString::from("--ro-bind"));
     args.push(host_path.as_os_str().to_owned());
-    args.push(OsString::from("/run/aiperf/evaluator-proxy.sock"));
+    args.push(OsString::from(destination));
     Ok(())
+}
+
+fn validate_rootfs_mountpoints(
+    worker_root: &Path,
+    proxy_enabled: bool,
+) -> Result<Vec<String>, EvaluationProviderError> {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let required = if proxy_enabled {
+        &["staging", "proc", "dev", "run/aiperf"][..]
+    } else {
+        &["staging", "proc", "dev"][..]
+    };
+    let mut identities = Vec::with_capacity(required.len());
+    for relative in required {
+        let path = worker_root.join(relative);
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "required rootfs mountpoint {relative:?} was unavailable: {error}"
+            ))
+        })?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(EvaluationProviderError::Launch(format!(
+                "required rootfs mountpoint {relative:?} was not a real directory"
+            )));
+        }
+        let canonical = std::fs::canonicalize(&path).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "failed to resolve rootfs mountpoint {relative:?}: {error}"
+            ))
+        })?;
+        if canonical != path
+            || std::fs::read_dir(&path)
+                .map_err(|error| {
+                    EvaluationProviderError::Launch(format!(
+                        "failed to enumerate rootfs mountpoint {relative:?}: {error}"
+                    ))
+                })?
+                .next()
+                .is_some()
+        {
+            return Err(EvaluationProviderError::Launch(format!(
+                "required rootfs mountpoint {relative:?} was not normalized and empty"
+            )));
+        }
+        #[cfg(unix)]
+        identities.push(format!(
+            "{relative}:{:o}",
+            metadata.permissions().mode() & 0o7777
+        ));
+        #[cfg(not(unix))]
+        identities.push(relative.to_string());
+    }
+    Ok(identities)
 }
 
 fn normalize_absolute(path: &Path) -> Result<PathBuf, EvaluationProviderError> {
@@ -717,11 +788,21 @@ impl std::error::Error for IsolationError {}
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::io::{Read as _, Write};
+    use std::os::fd::AsRawFd as _;
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::os::unix::process::CommandExt as _;
+    use std::process::{Command, Stdio};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     use super::*;
-    use crate::provider_protocol::{EvaluationDistributionId, EvaluationSessionId};
+    use crate::provider::{EvaluatorProcessRootBinder, ProviderRegistryError};
+    use crate::provider_protocol::{
+        EvaluationDistributionId, EvaluationSessionId, LogicalServiceId, OperationPurpose,
+        ScopedProxyGrant, ScopedProxySecret, SemanticOperationId,
+    };
 
     #[test]
     fn launch_attestation_hashes_files_not_worker_claims() {
@@ -813,6 +894,408 @@ mod tests {
         assert!(launch.validate().is_err());
     }
 
+    #[derive(Debug)]
+    struct NoopProcessRootBinder;
+
+    impl EvaluatorProcessRootBinder for NoopProcessRootBinder {
+        fn bind_attested_root(&self, _root_pid: u32) -> Result<(), ProviderRegistryError> {
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn registered_bubblewrap() -> (PathBuf, String, EvaluatorResourceLimits) {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/aiperf/accuracy/evaluation/manifests/stock_distributions.json");
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(manifest_path).unwrap()).unwrap();
+        let distributions = manifest["distributions"].as_array().unwrap();
+        let first = &distributions[0]["isolation"];
+        let path = PathBuf::from(first["bubblewrap"].as_str().unwrap());
+        let digest = first["bubblewrap_sha256"].as_str().unwrap().to_string();
+        let limits: EvaluatorResourceLimits =
+            serde_json::from_value(first["resource_limits"].clone()).unwrap();
+        for distribution in distributions {
+            let isolation = &distribution["isolation"];
+            assert_eq!(isolation["bubblewrap"].as_str(), path.to_str());
+            assert_eq!(
+                isolation["bubblewrap_sha256"].as_str(),
+                Some(digest.as_str())
+            );
+            assert_eq!(
+                isolation["profile_id"].as_str(),
+                Some("linux-bubblewrap-rootfs-process-tree-v2")
+            );
+        }
+        (path, digest, limits)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn find_executable(name: &str) -> PathBuf {
+        std::env::var_os("PATH")
+            .and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|directory| directory.join(name))
+                    .find(|candidate| candidate.is_file())
+            })
+            .and_then(|path| std::fs::canonicalize(path).ok())
+            .unwrap_or_else(|| panic!("{name} must be available for the Bubblewrap e2e test"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn copy_regular_file(source: &Path, worker_root: &Path, destination: &Path) {
+        assert!(destination.is_absolute());
+        let target = worker_root.join(destination.strip_prefix("/").unwrap());
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::copy(source, target).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn copy_regular_tree(source: &Path, worker_root: &Path, destination: &Path) {
+        let target = worker_root.join(destination.strip_prefix("/").unwrap());
+        std::fs::create_dir_all(&target).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            if matches!(
+                entry.file_name().to_str(),
+                Some("site-packages" | "__pycache__")
+            ) {
+                continue;
+            }
+            let file_type = entry.file_type().unwrap();
+            let child_destination = destination.join(entry.file_name());
+            if file_type.is_dir() {
+                copy_regular_tree(&entry.path(), worker_root, &child_destination);
+            } else if file_type.is_file() {
+                copy_regular_file(&entry.path(), worker_root, &child_destination);
+            } else {
+                panic!("Python runtime fixture contained a non-regular entry");
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn copy_dynamic_dependencies(binary: &Path, worker_root: &Path) {
+        let output = Command::new("ldd").arg(binary).output().unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut copied = BTreeSet::new();
+        for token in stdout.split_ascii_whitespace() {
+            let dependency = Path::new(token.trim_end_matches(':'));
+            if dependency.is_absolute()
+                && dependency.is_file()
+                && copied.insert(dependency.to_path_buf())
+            {
+                copy_regular_file(dependency, worker_root, dependency);
+                if dependency
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("ld-linux"))
+                {
+                    let loader = Path::new("/lib64").join(dependency.file_name().unwrap());
+                    copy_regular_file(dependency, worker_root, &loader);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn materialize_minimal_python(worker_root: &Path) -> PathBuf {
+        let python = if Path::new("/usr/bin/python3").is_file() {
+            std::fs::canonicalize("/usr/bin/python3").unwrap()
+        } else {
+            find_executable("python3")
+        };
+        let query = Command::new(&python)
+            .args([
+                "-S",
+                "-c",
+                "import encodings,_socket; print(encodings.__path__[0]); print(_socket.__file__)",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            query.status.success(),
+            "querying the Python runtime failed: {}",
+            String::from_utf8_lossy(&query.stderr)
+        );
+        let paths = String::from_utf8(query.stdout).unwrap();
+        let mut paths = paths.lines();
+        let encodings = PathBuf::from(paths.next().unwrap());
+        let socket_extension = PathBuf::from(paths.next().unwrap());
+        assert!(paths.next().is_none());
+
+        let contained_python = PathBuf::from("/usr/bin/python3");
+        copy_regular_file(&python, worker_root, &contained_python);
+        copy_dynamic_dependencies(&python, worker_root);
+        let stdlib = encodings.parent().unwrap();
+        copy_regular_tree(
+            stdlib,
+            worker_root,
+            &Path::new("/usr/lib")
+                .join(stdlib.file_name().expect("Python stdlib version directory")),
+        );
+        copy_dynamic_dependencies(&socket_extension, worker_root);
+        worker_root.join(contained_python.strip_prefix("/").unwrap())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn peer_credentials(stream: &UnixStream) -> (u32, u32) {
+        let mut credentials = std::mem::MaybeUninit::<libc::ucred>::uninit();
+        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: the output buffer and its exact byte length remain valid for
+        // the duration of the `SO_PEERCRED` syscall.
+        let result = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                credentials.as_mut_ptr().cast(),
+                &mut length,
+            )
+        };
+        assert_eq!(result, 0);
+        assert_eq!(length as usize, std::mem::size_of::<libc::ucred>());
+        // SAFETY: successful `getsockopt` initialized the complete structure.
+        let credentials = unsafe { credentials.assume_init() };
+        (credentials.pid as u32, credentials.uid)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_descendant(mut pid: u32, root_pid: u32) -> bool {
+        for _ in 0..256 {
+            if pid == root_pid {
+                return true;
+            }
+            if pid <= 1 {
+                return false;
+            }
+            let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+                return false;
+            };
+            let Some(parent) = status.lines().find_map(|line| {
+                line.strip_prefix("PPid:")
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+            }) else {
+                return false;
+            };
+            pid = parent;
+        }
+        false
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn registered_bubblewrap_ro_bound_proxy_preserves_host_peer_ancestry() {
+        let (bubblewrap, digest, limits) = registered_bubblewrap();
+        let isolation = BubblewrapEvaluatorIsolation::new(&bubblewrap, digest, limits).unwrap();
+        if let Err(error) = isolation.check_available() {
+            eprintln!("skipping unavailable immutable Bubblewrap profile: {error}");
+            return;
+        }
+
+        let base = std::env::temp_dir().join(format!(
+            "aiperf-real-bwrap-proxy-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let worker_root = base.join("rootfs");
+        let staging = base.join("staging");
+        for mountpoint in ["staging", "proc", "dev", "run/aiperf"] {
+            std::fs::create_dir_all(worker_root.join(mountpoint)).unwrap();
+        }
+        std::fs::create_dir_all(&staging).unwrap();
+        let contained_python = materialize_minimal_python(&worker_root);
+        let socket_path = base.join("evaluator-proxy.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+
+        let session_id = EvaluationSessionId::new("real-bwrap-e2e").unwrap();
+        let proxy = ScopedProxyBinding {
+            local_locator: "unix:///run/aiperf/evaluator-proxy.sock".to_string(),
+            host_socket_path: socket_path.clone(),
+            grant: ScopedProxyGrant {
+                grant_id: "real-bwrap-grant".to_string(),
+                session_id: session_id.clone(),
+                secret: ScopedProxySecret::new("s".repeat(48)).unwrap(),
+                service_ids: vec![LogicalServiceId::new("candidate").unwrap()],
+                semantic_operation_ids: vec![SemanticOperationId::new("model.generate").unwrap()],
+                purposes: vec![OperationPurpose::new("primary").unwrap()],
+                process_scope_sha256: "a".repeat(64),
+                max_operations: 2,
+                max_concurrent_operations: 1,
+                max_request_bytes: 1024,
+                max_response_bytes: 1024,
+                max_stream_events: 8,
+                expires_after_ms: 10_000,
+            },
+        };
+        let script = r#"
+import posix as os
+os.fstat(3)
+os.fstat(4)
+try:
+    import _socket
+except BaseException as error:
+    os.write(2, (type(error).__name__ + ': ' + str(error)).encode())
+    os._exit(34)
+try:
+    stream = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    stream.connect('/run/aiperf/evaluator-proxy.sock')
+    stream.sendall(b'I')
+    reply = stream.recv(1)
+    os._exit(0 if reply == b'A' else 31)
+except BaseException as error:
+    os.write(2, (type(error).__name__ + ': ' + str(error)).encode())
+    os._exit(33)
+"#;
+        let launch = AttestedWorkerLaunch {
+            distribution_id: EvaluationDistributionId::new("real-bwrap-fixture").unwrap(),
+            program: contained_python.clone(),
+            args: vec![
+                OsString::from("-S"),
+                OsString::from("-c"),
+                OsString::from(script),
+            ],
+            environment: BTreeMap::from([(OsString::from("PYTHONHOME"), OsString::from("/usr"))]),
+            current_dir: worker_root.clone(),
+            worker_root: worker_root.clone(),
+            closure: vec![LaunchClosureFile {
+                path: contained_python.clone(),
+                artifact_content_sha256: hash_file(&contained_python).unwrap(),
+            }],
+        };
+        let context = ProviderLaunchContext {
+            session_id,
+            staging_dir: staging,
+            proxy: Some(proxy),
+            process_root_binder: Some(Arc::new(NoopProcessRootBinder)),
+            protocol_limits: crate::provider::EvaluatorProtocolLimits::default(),
+            launch_nonce: "real-bwrap-e2e-nonce-0123456789abcdef".to_string(),
+        };
+        let prepared = isolation
+            .prepare(
+                &launch,
+                &LaunchAttestation {
+                    distribution_id: launch.distribution_id.clone(),
+                    executable_sha256: hash_file(&contained_python).unwrap(),
+                    launch_closure_sha256: "b".repeat(64),
+                    verified_files: 1,
+                },
+                &context,
+            )
+            .unwrap();
+
+        let control_read = File::open("/dev/null").unwrap();
+        let control_write = File::open("/dev/null").unwrap();
+        let control_read_fd = control_read.as_raw_fd();
+        let control_write_fd = control_write.as_raw_fd();
+        let mut command = Command::new(&prepared.program);
+        command
+            .args(&prepared.args)
+            .env_clear()
+            .envs(&prepared.environment)
+            .current_dir(&prepared.current_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // SAFETY: only descriptor duplication/close syscalls run between fork
+        // and exec, and every captured value is a plain descriptor integer.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(control_read_fd, 3) < 0 || libc::dup2(control_write_fd, 4) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                for descriptor in [control_read_fd, control_write_fd] {
+                    if descriptor > 4 {
+                        libc::close(descriptor);
+                    }
+                }
+                Ok(())
+            });
+        }
+        let mut isolated = command.spawn().unwrap();
+        let root_pid = isolated.id();
+        drop(control_read);
+        drop(control_write);
+
+        let sibling_script = r#"
+import os, socket
+stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+stream.connect(os.environ['AIPERF_TEST_SOCKET'])
+stream.sendall(b'S')
+raise SystemExit(0 if stream.recv(1) == b'D' else 41)
+"#;
+        let mut sibling = Command::new(find_executable("python3"))
+            .args(["-S", "-c", sibling_script])
+            .env("AIPERF_TEST_SOCKET", &socket_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let expected_uid = unsafe { libc::geteuid() };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut isolated_authorized = None;
+        let mut sibling_authorized = None;
+        while isolated_authorized.is_none() || sibling_authorized.is_none() {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut marker = [0_u8; 1];
+                    stream.read_exact(&mut marker).unwrap();
+                    let (peer_pid, peer_uid) = peer_credentials(&stream);
+                    let authorized = peer_uid == expected_uid && is_descendant(peer_pid, root_pid);
+                    match marker[0] {
+                        b'I' => {
+                            let duplicate = isolated_authorized.replace(authorized).is_some();
+                            stream
+                                .write_all(if authorized && !duplicate { b"A" } else { b"D" })
+                                .unwrap();
+                        }
+                        b'S' => {
+                            let duplicate = sibling_authorized.replace(authorized).is_some();
+                            stream
+                                .write_all(if authorized || duplicate { b"A" } else { b"D" })
+                                .unwrap();
+                        }
+                        other => panic!("unexpected proxy fixture marker {other}"),
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        let _ = isolated.kill();
+                        let _ = sibling.kill();
+                        let isolated_output = isolated.wait_with_output().unwrap();
+                        let sibling_output = sibling.wait_with_output().unwrap();
+                        panic!(
+                            "Bubblewrap proxy fixture timed out; isolated stderr: {}; sibling stderr: {}",
+                            String::from_utf8_lossy(&isolated_output.stderr),
+                            String::from_utf8_lossy(&sibling_output.stderr)
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accepting proxy fixture connection failed: {error}"),
+            }
+        }
+        let isolated_output = isolated.wait_with_output().unwrap();
+        let sibling_output = sibling.wait_with_output().unwrap();
+        assert_eq!(isolated_authorized, Some(true));
+        assert_eq!(sibling_authorized, Some(false));
+        assert!(
+            isolated_output.status.success(),
+            "isolated Python failed: {}",
+            String::from_utf8_lossy(&isolated_output.stderr)
+        );
+        assert!(
+            sibling_output.status.success(),
+            "host sibling failed: {}",
+            String::from_utf8_lossy(&sibling_output.stderr)
+        );
+        isolation.verify_quiescent(root_pid).unwrap();
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn bubblewrap_availability_requires_exact_regular_executable() {
@@ -844,6 +1327,9 @@ mod tests {
         let program = worker_root.join("bin/worker");
         let bubblewrap = base.join("bwrap");
         std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        for mountpoint in ["staging", "proc", "dev", "run/aiperf"] {
+            std::fs::create_dir_all(worker_root.join(mountpoint)).unwrap();
+        }
         std::fs::create_dir_all(&staging).unwrap();
         std::fs::write(&program, b"worker").unwrap();
         std::fs::write(&bubblewrap, b"bwrap").unwrap();
@@ -871,6 +1357,7 @@ mod tests {
             session_id: EvaluationSessionId::new("fixture-session").unwrap(),
             staging_dir: staging,
             proxy: None,
+            process_root_binder: None,
             protocol_limits: crate::provider::EvaluatorProtocolLimits::default(),
             launch_nonce: "fixture-bwrap-nonce-0123456789abcdef".to_string(),
         };
@@ -903,6 +1390,21 @@ mod tests {
         assert_eq!(
             prepared.evidence.profile_id,
             "linux-bubblewrap-rootfs-process-tree-v2"
+        );
+        std::fs::write(worker_root.join("dev/undeclared"), b"not-empty").unwrap();
+        assert!(
+            isolation
+                .prepare(
+                    &launch,
+                    &LaunchAttestation {
+                        distribution_id: launch.distribution_id.clone(),
+                        executable_sha256: "a".repeat(64),
+                        launch_closure_sha256: "b".repeat(64),
+                        verified_files: 1,
+                    },
+                    &context,
+                )
+                .is_err()
         );
         let _ = std::fs::remove_dir_all(base);
     }

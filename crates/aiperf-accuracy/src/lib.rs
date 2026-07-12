@@ -42,10 +42,10 @@ pub use provider::{
     EvaluationDistributionDescriptor, EvaluationOperationDescriptor, EvaluationProvider,
     EvaluationProviderDescriptor, EvaluationProviderError, EvaluationProviderFactory,
     EvaluationProviderLauncher, EvaluationProviderRegistry, EvaluationProviderRegistryBuilder,
-    EvaluatorIsolationRequirements, EvaluatorProtocolLimits, NemoEvaluatorProviderFactory,
-    OpenBenchProviderFactory, PreparedEvaluationProviderLaunch, ProviderConfigValidator,
-    ProviderLaunchContext, ProviderRegistryError, STOCK_EVALUATION_OPERATION_SCHEMAS,
-    StockEvaluationOperationSchema, ValidatedProviderConfig,
+    EvaluatorIsolationRequirements, EvaluatorProcessRootBinder, EvaluatorProtocolLimits,
+    NemoEvaluatorProviderFactory, OpenBenchProviderFactory, PreparedEvaluationProviderLaunch,
+    ProviderConfigValidator, ProviderLaunchContext, ProviderRegistryError,
+    STOCK_EVALUATION_OPERATION_SCHEMAS, StockEvaluationOperationSchema, ValidatedProviderConfig,
 };
 pub use provider_protocol::{
     AggregateMetric, AggregationPolicy, ArtifactRef, ArtifactVisibility, CaseOutcome,
