@@ -772,11 +772,13 @@ digest(domain, fields...) =
     BLAKE3(domain_utf8 || 0x00 || each(u64_be(length) || exact_bytes))
 ```
 
-Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.frame.v1`, `.series-display.v1`,
+Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.projection-reservation.v1`, `.frame.v1`,
+`.wal-frame.v1`, `.wal-prefix.v1`, `.wal-segment.v1`,
 `.series-source.v1`, `.attribute-epoch.v1`, `.body-encoded.v1`, `.body-decoded.v1`,
 `.logical-row.v1`, `.projection-multiset.v1`, `.projection-coverage.v1`, `.raw-object.v1`,
-`.loss-overflow.v1`, `.receipt-observer-epoch.v1`, `.receipt-target.v1`, `.receipt-event.v1`,
-`.receipt-batch.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
+`.loss-overflow.v1`, `.loss-saturation-slot.v1`, `.receipt-observer-epoch.v1`,
+`.receipt-target.v1`, `.receipt-event.v1`, `.receipt-batch.v1`,
+`.receipt-range-coverage.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
 Canonical maps sort by UTF-8 key bytes and reject duplicate
 keys. Genesis stores an `archive_identity_digest` over the fully validated secret-free persistent
 collection config: every source/policy/writer factory ID plus normalized config, accepted-format/
@@ -883,12 +885,19 @@ All other child combinations are invalid. Cross-language goldens cover halfway c
 minimum normals and subnormals, positive/negative underflow, signed zero, overflow rejection, 2⁵³
 neighbors, and wider integers.
 
-`SourceTimestamp.status` is `absent`, `exact_ns`, `sub_ns_precision`, or `out_of_range` and never
-rounds silently. Prometheus 0.0.4 accepts its specified integer Unix milliseconds and checked-
+`SourceTimestamp.status` is `absent`, `exact_ns`, `sub_ns_precision`, `out_of_range`, or
+`sub_ns_out_of_range` and never rounds silently. Prometheus 0.0.4 accepts its specified integer Unix milliseconds and checked-
 multiplies by 1,000,000. OpenMetrics 1.0 parses decimal Unix seconds and normalizes only when exact
 integer nanoseconds fit `EpochNs`; otherwise the lexeme remains authoritative and normalized value
 is null. The attempt records declared media type and actual strict parser grammar/version, so a
 reader never infers timestamp units from a metric type.
+
+Timestamp child validity is closed: `absent` has null lexeme/value; `exact_ns` has non-null lexeme
+and normalized value; every other status has a non-null exact lexeme and null normalized value.
+`sub_ns_precision` means the exact temporal rational is within the `EpochNs` range but not integral
+nanoseconds; `out_of_range` means integral nanoseconds outside it; `sub_ns_out_of_range` means both
+range and precision fail. The exact-rational range test occurs before any rounding. The same matrix
+applies to `CreatedTimestamp`.
 
 `CreatedTimestamp` has the same physical child types and status vocabulary but a distinct logical
 alias/schema field so readers cannot treat a creation epoch as a sample observation timestamp.
@@ -986,9 +995,14 @@ Actual UUID zero, empty source IDs, and numeric ID zero are invalid, reserving a
 `none`. `source_key` is byte `0x00` for global/no source and `0x01 || u32_be(length) || utf8` for a
 source. Table partitions are homogeneous in session and source; a builder rotates before either
 changes, so plural `source_ids` never choose a key. Every frame header carries
-`authoritative_frame_clock_ns`: scrape outcome/capture observation, lifecycle-transition Clock, or
-loss-range sealing observation as appropriate. Coverage and clockless family/raw-reference rows use
-that value. Signed Clock value `t` sorts as `u64_be((t as u64) XOR 0x8000000000000000)`; the raw
+`authoritative_frame_clock_ns` selected by this closed matrix: successful/empty scrape uses required
+`capture_ns`; every HTTP/transport/timeout/parse/unsupported/disabled/shutdown attempt uses required
+`outcome_observed_ns`; lifecycle-only frames use marker `clock_ns`; loss frames use required
+`loss_observed_ns`; topology/raw-reference projections sharing a scrape frame inherit that scrape
+value. The attempt role matrix requires capture for success/empty and a non-null terminal outcome
+observation for every outcome. A one-frame coverage entry has equal min/max at this header value;
+partition min/max reduce only those header values. Coverage and clockless family/raw-reference rows
+use that value. Signed Clock value `t` sorts as `u64_be((t as u64) XOR 0x8000000000000000)`; the raw
 none sentinel is all zero and is unambiguous under its object kind.
 
 A leaf stores sorted partition, raw-object, or projection-coverage descriptors. A root leaf stores
@@ -1053,6 +1067,7 @@ of impersonating requests. Field order and nullability are normative:
 | `declared_media_type`, `strict_parser_format`, `native_compatibility_format` | `Utf8` | yes |
 | `native_compatibility_fallback` | `Boolean` | no |
 | `scheduled_ns`, `request_start_ns`, `first_byte_ns`, `capture_ns`, `parse_done_ns`, `archive_enqueue_ns` | `Int64` | yes |
+| `outcome_observed_ns` | `Int64` | no |
 | `unix_epoch_ns` | `EpochNs` | yes |
 | `http_status` | `UInt16` | yes |
 | `latency_ns` | `Int64` | yes |
@@ -1070,6 +1085,11 @@ attempts still have complete family/sample rows. `source_record_seq` advances on
 source event; `request_attempt_seq` advances only when network IO is issued and may be null for a
 pre-IO timeout/disable. `record_seq` is the archive-owner global frame sequence. Failed and empty
 scrapes are queryable rather than inferred from absence.
+
+`outcome_observed_ns` is the LocalSet Clock instant at which the terminal attempt classification and
+all outcome facts become immutable; it exists even when no network IO began. Attempt
+`unix_epoch_ns` derives from the frame Clock chosen by the §8.3 matrix, not whichever optional
+transport timestamp happened to be present.
 
 The keyed decoded-exposition digest drives unchanged detection and batch identity, so two different
 gzip encodings of identical decoded exposition are unchanged. Encoded-body digest is stored only
@@ -1238,11 +1258,14 @@ columns. The exact loss schema is:
 | `first_request_attempt_seq`, `last_request_attempt_seq` | `UInt64` | yes |
 | `first_tick`, `last_tick` | `UInt64` | yes |
 | `first_deadline_ns`, `last_deadline_ns` | `Int64` | yes |
+| `loss_observed_ns` | `Int64` | no |
 | `boundary_refs` | `List<BoundaryReference non-null>` | no |
 | `boundary_overflow_count` | `UInt64` | no |
 | `boundary_overflow_digest` | `Digest` | yes |
 | `range_completeness` | `Enum8` | no |
-| `omitted_range_count`, `omitted_entry_count` | `UInt64` | no |
+| `saturation_slot_id` | `Digest` | yes |
+| `saturation_snapshot_seq` | `UInt64` | yes |
+| `cumulative_omitted_range_count`, `cumulative_omitted_entry_count` | `UInt64` | no |
 | `omitted_rolling_digest` | `Digest` | yes |
 
 `loss_kind` is exactly one of `missed_cadence` (nothing issued), `archive_rejected` (native
@@ -1259,24 +1282,33 @@ The checked-in loss descriptor enumerates every v1 kind/reason and the complete 
 matrix, including `count` equations for inclusive contiguous ranges and legal boundary roles.
 `loss_seq` is session-global, assigned monotonically by the archive owner to every loss row whether
 source-scoped or global; it is never reset per source. Unknown enum values require a schema-version
-upgrade rather than an implementation-local string.
+upgrade rather than an implementation-local string. `loss_observed_ns` is the LocalSet Clock value
+when the exact range/saturation snapshot is sealed for handoff; scheduled deadlines remain separate
+facts.
 
 The fixed-memory attached ledger has a validated `max_exact_ranges`. Once those slots are full, a
 new non-coalescible entry updates one preallocated saturation slot keyed by the bounded tuple
 `(source_id_or_none, loss_kind, reason)` instead of allocating. Frozen loss/reason registries and
-the maximum source count make the number of slots a validation-time constant. A saturation row has
-`range_completeness=overflow_summary`, exact omitted range/entry totals, the first/last applicable
-identity and Clock facts, and this order-sensitive accumulator:
+the maximum source count make the number of slots a validation-time constant.
+`saturation_slot_id` is a domain hash of archive/session plus that tuple. A slot never resets. Each
+new omitted entry increments its cumulative totals, updates first/last applicable identity/Clock
+facts, and advances this order-sensitive accumulator:
 
 ```text
 D0 = digest("aiperf.archive.loss-overflow.v1", archive_id, session_id, source, kind, reason)
 D(n+1) = digest("aiperf.archive.loss-overflow.v1", D(n), canonical_omitted_loss_entry)
 ```
 
-Ordinary rows use `range_completeness=exact`, both omitted counts zero, and a null digest. While the
-reserved lane remains healthy it checkpoints exact ranges and saturation snapshots; orderly writer
-failure keeps the fixed summaries for report/diagnostic output with `complete_ranges=false` and
-`lossy=true`. The design does not claim that an in-memory suffix after total writer failure survives
+An immutable saturation snapshot uses `range_completeness=overflow_summary`, the stable slot ID,
+the next slot-local `saturation_snapshot_seq`, cumulative counts/digest, and cumulative first/last
+facts; `count` equals `cumulative_omitted_entry_count`. Snapshots monotonically supersede earlier
+snapshots for that slot. Queries/reports select only the greatest snapshot sequence per slot and
+never sum cumulative rows; recovery validates monotone sequences/counts and resumes the in-memory
+slot from the latest durable snapshot's stored accumulator. Ordinary exact rows have null slot/snapshot IDs,
+both cumulative counts zero, and a null digest. While the reserved lane remains healthy it
+checkpoints exact ranges and current saturation snapshots; orderly writer failure keeps the fixed
+latest summaries for report/diagnostic output with `complete_ranges=false` and `lossy=true`. The
+design does not claim that an in-memory suffix after total writer failure survives
 a simultaneous process crash; such a guarantee would require a separate emergency journal and is
 deferred. Alternating kind/reason/boundary tests must reach a stable memory ceiling without silent
 counter loss or request-path blocking.
@@ -1313,9 +1345,9 @@ session, WAL, or collection marker. Receipt targets are a closed discriminated u
 
 - `wal_range` targets archive/session, WAL segment ID, exact durable-prefix hash, inclusive first/
   last global `record_seq`, and the digest of those frames' declared projection coverage;
-- `publication` targets the sealed generation hash, index-root hash, installed head hash, verified
+- `remote_publication` targets the sealed generation hash, index-root hash, installed head hash, verified
   CAS object version, resulting archive state, and resulting writer-claim state. A terminal
-  publication target requires `writer_claim_state=absent` because the same final head CAS clears
+  remote-publication target requires `writer_claim_state=absent` because the same final head CAS clears
   the active claim; there is no second claim-release CAS.
 
 The adapter converts its opaque CAS version to
@@ -1344,18 +1376,36 @@ A crash between steps 1 and 2 leaves durable data but no response observation. R
 its new observer epoch, verifies the target, and may create `recovery_verified`; OS-worker
 completion time and a prior execution's Clock origin are never substituted.
 
-Receipts are stored in immutable descriptor-encoded canonical batches of at most 1,024 events and
+Receipts are stored in immutable descriptor-encoded canonical batches of at most 1,024 records and
 at most 1 MiB. A batch carries sorted, deduplicated observer-epoch and target records followed by
 events in `receipt_seq` order; every referenced target/epoch is in that batch or an earlier indexed
-batch.
-Contiguous WAL targets from one session/segment may coalesce before batching when their record
-ranges and declared-coverage digests compose exactly. A separate content-addressed persistent
-B-tree uses the §8.3 page format and deterministic split rule, keyed lexicographically by
-`(target_kind_u8, session_id_or_zero_16, first_record_seq_or_zero_u64,
-generation_hash_or_zero_32, receipt_seq_u64, event_id_32)`. The unused discriminator fields must be
-all-zero bytes, so two writers cannot choose different encodings. A checksummed
-`LOCAL-RECEIPTS` pointer contains current and preceding receipt-head descriptors; each head binds
-the receipt root hash, logical event count, and last receipt sequence. Batch, copied index pages,
+batch. An epoch-only batch is valid and is the mandatory bootstrap transaction before an execution
+can observe a completion.
+
+The owner may coalesce contiguous WAL frames only while forming one aggregate
+`DurabilityCompletion`, before that immutable target crosses the Clock bridge. Its coverage digest
+is `digest("aiperf.archive.receipt-range-coverage.v1", each ascending(record_seq,
+declared_projection_coverage_digest))`. The one aggregate receives one later observation event.
+Once a completion token, target ID, or event draft exists, its range is immutable: separately
+observed ranges remain separate; recovery may append a newly verified aggregate target/event but
+never rebind an earlier event or backdate later durability.
+
+A separate content-addressed persistent B-tree uses the §8.3 page/split/delete rules and these
+lexicographic tagged keys:
+
+```text
+observer epoch = 0x01 || observer_epoch_id_32
+target         = 0x02 || target_kind_u8 || session_id_or_zero_16
+                      || first_record_seq_or_zero_u64 || generation_hash_or_zero_32
+                      || receipt_target_id_32
+event          = 0x03 || receipt_target_id_32 || receipt_seq_u64 || event_id_32
+```
+
+Unused target discriminator fields are all zero. A checksummed `LOCAL-RECEIPTS` pointer contains
+current and preceding receipt-head descriptors; each head binds the receipt root hash, logical
+observer-epoch/target/event counts, and last receipt sequence. Epoch bootstrap writes its batch,
+epoch index entry, copied pages, head, and pointer with the same file/directory-fsync transaction;
+it needs no fabricated target/event. Batch, copied index pages,
 receipt head, pointer replacement, and parent directory are flushed/fsynced in the same order as
 the primary manifest protocol. Readers start at this pointer and never glob receipt files, so
 lookup and restart work remain bounded as the archive grows.
@@ -1363,9 +1413,9 @@ lookup and restart work remain bounded as the archive grows.
 Each receipt attests only an earlier WAL range or sealed generation, never its own durability.
 Loss of a receipt cannot remove covered data; it makes response observation unknown. If remote CAS
 succeeds but its response is uncertain, sync-only rereads and verifies the exact head/version/
-absent-claim state, then appends a `recovery_verified` publication event. `remotely_finalized`
-requires a durable local publication event. Receipt heads may advance after the primary generation
-is sealed and do not reopen frame admission. Query adapters expose targets/events as the bounded,
+absent-claim state, then appends a `recovery_verified` remote-publication event. `remotely_finalized`
+requires that event to be durable in the local receipt journal. Receipt heads may advance after the primary generation
+is sealed and do not reopen frame admission. Query adapters expose observer epochs/targets/events as the bounded,
 joinable `durability_receipts` relation.
 
 The query relation has these exact logical columns: archive ID, receipt/event/target IDs and
@@ -1558,11 +1608,30 @@ header contains the verified current
 head/genesis hashes, schema fingerprints, archive/session IDs, writer compatibility ID, and first
 global record sequence. No frame is valid under an unknown authoritative session.
 
-WAL files are numbered immutable segments. One `.open` segment is append-only; complete segments
-are footer-checksummed, file-fsynced, renamed `.wal`, and directory-fsynced. A frame is
-length-delimited and contains wire version, frame/batch ID, global record sequence, payload kind,
-payload, and CRC. A corrupt/truncated final frame is never guessed past. A segment is never
-front-truncated or rewritten to remove a prefix.
+WAL files are numbered immutable segments. One `.open` segment is append-only. A frame is encoded
+as length, canonical final header, payload, 32-byte `frame_digest`, and CRC32C. The final header
+includes wire/schema version, terminal frame/batch/reservation IDs, global record sequence,
+authoritative frame Clock, payload kind, required projection declarations/evidence, raw-reference/
+material declarations, and payload length. The digest is
+`digest("aiperf.archive.wal-frame.v1", exact_final_header_bytes, exact_payload_bytes)`; CRC32C covers
+the whole encoded frame only as a fast torn-write/corruption check and is never integrity authority.
+
+Each segment maintains an ordered cryptographic prefix:
+
+```text
+P0 = digest("aiperf.archive.wal-prefix.v1", exact_segment_header_bytes)
+P(n+1) = digest("aiperf.archive.wal-prefix.v1", P(n), record_seq, frame_digest)
+```
+
+A local-durability completion identifies segment, durable byte offset, first/last record sequence,
+and exact `P(n)`; this is the WAL receipt target's durable-prefix hash. Complete segments add a
+canonical footer with frame count, first/last sequence, final prefix, and segment digest over exact
+segment header/final prefix/footer fields excluding that digest, then file-
+fsync, rename `.open` to `.wal`, and directory-fsync. Recovery verifies length, CRC, final header/
+payload BLAKE3, record ordering, and recomputed prefix for every complete open frame even when no
+receipt/footer exists; sealed recovery additionally verifies the footer/segment digest. A corrupt/
+truncated final frame is never guessed past. A segment is never front-truncated or rewritten to
+remove a prefix.
 
 Acknowledgment vocabulary is exact:
 
@@ -1619,9 +1688,10 @@ tables to share a physical rotation size. No mutable Arrow checkpoint participat
 
 Data and reserved control channels do not define commit order by receive order. Graceful stop:
 
-1. stops source issuance and closes new shared/archive reservations;
-2. waits for every outstanding permit/job to resolve into native delivery plus a frame draft or a
-   coalesced loss entry;
+1. stops source issuance, lowers every active fetch's cancellation deadline, and closes new shared/
+   archive reservations;
+2. joins every active fetch and waits for every outstanding permit/job to resolve into native
+   delivery plus a frame draft or a coalesced loss entry;
 3. submits exact terminal lifecycle and loss-ledger frame drafts;
 4. closes persisted-frame admission entirely; the sole archive owner assigns the remaining
    sequences and captures inclusive `final_record_seq`;
@@ -1722,6 +1792,15 @@ BLAKE3, while a provider checksum is accepted only when the adapter proves a nam
 algorithm covers the exact bytes. Credentials come from provider references/environment and never
 serializable archive config.
 
+The integrity threat model has explicit trust roots: the qualified canonical spool plus its open-
+descriptor lock, a previously verified local/remote head hash and object version, and the object
+provider's authenticated TLS/credentials/ACL/linearizable CAS boundary. Unkeyed BLAKE3 detects bit
+rot, incomplete writes, and object substitution relative to those trusted roots. It does not detect
+a malicious store administrator who can rewrite `LATEST`, every reachable object, CAS history, and
+the caller's trusted version, nor total rollback with no external checkpoint. Such an adversary is
+out of v1 scope; deployments requiring it need a separately provisioned signature/MAC or external
+transparency checkpoint design.
+
 The adapter declares named-object read-after-write visibility. A weaker store may be accepted only
 with an authored consistency horizon: transient missing/unavailable referenced immutable objects
 retry within that bound; hash mismatch fails immediately; expiry fails closed and reports
@@ -1806,11 +1885,16 @@ transaction is bounded by configured maximum input partitions, output bytes, log
 index subtrees; larger work becomes a sequence of exact-parent generations. It binds to one parent
 generation/root, writes and verifies immutable replacements, and proves per-projection logical row
 count/multiset-digest equality. The generation atomically swaps only those bounded descriptors in
-its copy-on-write index. A changed local head leaves outputs as unreferenced orphans.
+its copy-on-write index, including every affected `ProjectionCoverage` entry and its descriptor-
+defined inverse partition evidence. A changed local head leaves outputs as unreferenced orphans.
 
 Remote publication first verifies that remote `LATEST` is an ancestor of the compaction parent,
 uploads the complete immutable descendant path, and may CAS directly to the compaction generation;
-it need not publish each intermediate head separately. Divergence fails. Old partitions remain
+it need not publish each intermediate head separately. For an already remotely finalized parent,
+that CAS expects the exact terminal object version plus absent claim and installs another
+`remotely_finalized` absent-claim head; any version/claim change fails or rebases from a newly locked
+parent. The canonical-spool exclusive lock and exact-parent CAS are the fence—no maintenance claim
+is introduced. Divergence fails. Old partitions remain
 authoritative until the replacement head commits and are retained until a separate GC policy proves
 no retained head references them.
 
@@ -2418,7 +2502,8 @@ LocalSet-owned fixed-memory loss ledger. Writer death therefore still yields a s
 benchmark report with `writer_alive=false`, `lossy=true`, and structured ranges. Primary watch or
 required attachment instead follows the failed diagnostic path below. Ledger saturation adds its
 typed summaries, sets `complete_ranges=false`, and preserves exact omitted totals/digests without
-pretending individual ranges remain enumerable.
+pretending individual ranges remain enumerable; only each slot's greatest cumulative snapshot
+sequence contributes.
 
 If `archive.required=true` fails during the reporting/finalization stage, `RunTerminalV2` returns
 `success=false`, `stage="reporting"`, and no authoritative `report_path`. Runner-v2 gains an
@@ -2451,6 +2536,7 @@ The first documentation examples use DuckDB/Polars/Arrow to:
 - inspect metadata-only families and repeated MetricPoints;
 - compute counter deltas with reset handling explicitly;
 - inspect scrape failure/missed-tick intervals;
+- reduce saturation rows by stable slot and greatest snapshot sequence;
 - join phase markers to telemetry;
 - join optional local/remote durability receipts to their covered frame ranges;
 - compare source cadence and response latency;
@@ -2560,7 +2646,8 @@ version or material schema/writer change invalidates the profile until rerun.
    point-owned wire samples/timestamps round-trip distinctly; classic all-absent/uniform/mixed/
    partial component timestamps produce the exact point status without losing component lexemes,
    and numerically equal differently spelled/sub-ns/out-of-range timestamps choose the first wire
-   representative deterministically;
+   representative deterministically; combined sub-ns-plus-out-of-range cases use the combined
+   status for both sample and Created timestamps;
 4. multiple histogram/gauge-histogram base label sets remain isolated and structured while native
    declared-format compatibility fallback retains pinned old semantics without creating archive
    success rows; format goldens distinguish emitted-and-validated count from OpenMetrics `+Inf`-
@@ -2568,8 +2655,8 @@ version or material schema/writer change invalidates the profile until rerun.
 5. `100000001`, values around 2⁵³, `u64::MAX`, values outside analytical f64 range, exact numeric
    lexemes, correctly rounded ties-to-even binary64 bits, signed underflow zero, overflow rejection,
    and the exact/rounded/unavailable validity matrix survive every pinned reader; Prometheus-ms/
-   OpenMetrics-seconds exact/sub-ns/out-of-range timestamp cases retain format and normalization
-   status;
+   OpenMetrics-seconds exact/sub-ns/out-of-range/combined timestamp cases retain format and
+   normalization status;
 6. the per-format/per-role semantic matrix accepts every legal NaN/Inf case, atomically rejects
    every illegal count/sum/bucket/state/info/metadata case, and emits no raw non-finite boundary;
 7. deterministic keyed pre-redaction identity, post-redaction identity, map order, digest domains,
@@ -2580,7 +2667,9 @@ version or material schema/writer change invalidates the profile until rerun.
 8. exact field/type/nullability/dictionary/metadata compatibility through pinned Arrow, Parquet,
    DuckDB, Polars, and pyarrow versions;
 9. streaming size/cardinality limits, property parse/encode/decode round trips, and malformed-input
-   atomic failure.
+   atomic failure;
+10. every success/failure/pre-IO-timeout/lifecycle/loss frame kind pins its non-null outcome/
+    authoritative Clock field and identical coverage/index key in independent writers.
 
 ### 18.2 Scheduling gates
 
@@ -2588,8 +2677,10 @@ version or material schema/writer change invalidates the profile until rerun.
 2. overrun skips debt without drift or catch-up bursts;
 3. slow source A cannot shift source B deadlines;
 4. one source never has two scrapes in flight;
-5. absolute Clock timeout cancels/reclaims transport and yields one timeout attempt;
-6. only an orchestrator-issued shared coalescing group reuses a boundary attempt while exact phase
+5. absolute Clock timeout and a dynamically earlier shutdown latch cancel/reclaim active transport,
+   yield one terminal attempt, and join before the final fence;
+6. only one atomically sealed orchestrator command containing every subscriber reuses a boundary
+   attempt; duplicate/late/inconsistent group membership is rejected while exact phase
    markers remain distinct; structured boundary references join every marker to that physical
    attempt without timestamps, including coalesced end/start transitions;
 7. one physical attempt with multi-phase membership preserves phase and run-level native parity
@@ -2604,7 +2695,8 @@ version or material schema/writer change invalidates the profile until rerun.
     `record_seq`;
 11. failed/empty/unchanged attempt outcomes and missed/rejected loss ranges have exact counters/
    records, alternating non-coalescible losses saturate at the fixed memory bound with exact summary
-   totals/digest and `complete_ranges=false`, and unchanged success retains full family/MetricPoint rows;
+   totals/digest and `complete_ranges=false`; repeated cumulative snapshots use monotonic per-slot
+   sequence and latest-wins reduction, and unchanged success retains full family/MetricPoint rows;
 12. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
     owner-assigned record-sequence watermark before drain;
 13. archive-off/archive-on projections over one captured/deterministically replayed event stream
@@ -2617,19 +2709,23 @@ version or material schema/writer change invalidates the profile until rerun.
 1. filesystem/lock capability rejection plus crash before/after create genesis, resume
    `session_started`, every WAL append/fsync/seal, raw/partition/index/generation/receipt-batch/
    receipt-index/receipt-head write, file/directory fsync, pointer replacement, lagged WAL unlink,
-   watermark, and finalization edge;
+   watermark, and finalization edge; an epoch-only receipt transaction remains reachable before the
+   first target/event;
 2. receipt-observed durable projections are recovered exactly once; a complete fsynced but
    unobserved frame is recovered as an uncertain operation under the same ID. Crashes between
    fsync/CAS completion, LocalSet Clock observation, receipt-draft return, and receipt-head
    durability preserve absent response time and a distinct recovery-verification event bound to a
-   newly durable observer epoch; sync-only Clock values resolve only through that epoch's anchor;
+   newly durable observer epoch; sync-only Clock values resolve only through that epoch's anchor,
+   and separately observed WAL ranges never coalesce into a backdated event;
 3. independently rotated multi-table projections cannot make global dedup omit a table, and stale/
    repeated WAL frames cannot duplicate logical projection evidence; empty exposition and metadata-
    only cases persist zero-row coverage with the empty multiset digest; authoritative hashes are
-   computed only after owner identity and a crash cannot expose preliminary coverage;
+   computed only after owner identity and terminal kind; projection failure derives a distinct loss
+   frame ID under the same sequence, and a crash cannot expose preliminary coverage;
 4. finalize on the reserved control lane cannot overtake accepted data or loss-ledger frames;
-5. only incomplete physical WAL tails discard; complete checksum failures restore/fail closed, and
-   one-generation-lag WAL makes preceding-head rollback complete without directory guessing;
+5. only incomplete physical WAL tails discard; every complete open/sealed frame verifies final
+   header/payload BLAKE3 plus ordered prefix/footer before replay, checksum failures restore/fail
+   closed, and one-generation-lag WAL makes preceding-head rollback complete without directory guessing;
 6. transaction-reserve exhaustion and real ENOSPC/inode exhaustion fail before destroying the only
    durable copy;
 7. raw-reference coverage, one randomized bytes-only physical envelope per equality ID, duplicate/
@@ -2664,13 +2760,16 @@ version or material schema/writer change invalidates the profile until rerun.
 5. raw-body retention is off by default; opt-in requires classification, key provider, restrictive
    permissions, authenticated encryption locally and remotely, and artifact-wide secret scanning;
 6. path traversal and unsafe artifact/spool/target aliasing fail validation;
-7. partition/index/generation/head hashes detect tampering/corruption;
+7. relative to the authenticated spool/head/store trust roots, frame/partition/index/generation/
+   head hashes detect corruption and substitution; malicious total namespace rewrite/rollback is
+   explicitly not claimed without an external signed/MACed checkpoint;
 8. arbitrary endpoint labels are treated as potentially sensitive source data; configured
    sanitizers/access policy—not an impossible universal secret detector—govern them.
 
 ### 18.5 Product subprocess gates
 
-1. the complete §14.1 watch envelope and §14.2 attached scheduled envelope validate/deserialize;
+1. the complete §14.1 collect and source-free finalize-remote envelopes plus §14.2 attached
+   scheduled envelope validate/deserialize;
    missing required scheduled resources, forbidden watch resources, empty/duplicate/unknown
    attachment source IDs, and repeated source configuration fail before preparation;
 2. Python `aiperf watch` -> exact packaged runner -> in-process HTTP Prometheus mock -> durable
@@ -2679,7 +2778,8 @@ version or material schema/writer change invalidates the profile until rerun.
    deadlines over profile-bound native control handles isolated from inference capacity;
 4. HTTP 500 with metric-looking body remains an HTTP failure record, not a sample;
 5. SIGINT/SIGTERM graceful finalization, forced-crash exact resume, and local-final/sync-only remote
-   completion, with a persisted receipt-only observer epoch and no fabricated telemetry session;
+   completion, with a persisted receipt-only observer epoch, no fabricated telemetry session, and
+   no requirement for removed/expired source or endpoint credentials;
 6. object-store emulator visibility lag, outage, conflicting CAS, restart, and finalization;
 7. ordinary scheduled benchmark with attached server/GPU archive proves one physical run-owned
    driver/source feeds report and archive across seamless phases, `PhaseObserver` markers align
@@ -2697,7 +2797,7 @@ local/remote heads, verify immutable generation/root hashes, walk the persistent
 bounded source/time page pruning, metadata-only family discovery, repeated-point ordering,
 structured label filtering, every semantic payload, phase joins, durability-receipt joins,
 cross-observer receipt time placement, nullable-source total ordering, failure/loss-range discovery,
-unchanged-success continuity, and partition pruning. No directory
+latest-wins saturation-slot reduction, unchanged-success continuity, and partition pruning. No directory
 glob supplies file lists.
 
 ### 18.7 Performance/capacity gates
@@ -2725,13 +2825,14 @@ for passing standalone and attached profile artifacts rather than trusting docum
 ### Increment 2 — local writer and recovery
 
 1. implement erased prepared drivers, bounded shared decode and owner-sequenced per-source
-   projection strands, fixed-memory loss ledger/saturation summaries, Clock maintenance/virtual-
+   projection strands, fixed-memory loss ledger/latest-wins saturation snapshots, Clock maintenance/virtual-
    inline strategies, the fsync/CAS-to-LocalSet receipt Clock bridge, and the single mutable archive
    owner;
-2. add qualified lifetime lock, create-only genesis/resumed-session transaction, sealed WAL with
+2. add qualified lifetime lock, create-only genesis/resumed-session transaction, cryptographically
+   bound final frames/prefixes in sealed WAL with
    lagged retirement, persistent zero/nonzero table coverage, shared raw-object registry plus raw-
    reference rows with per-response encoding, immutable Parquet/index/generations/head, and the
-   bounded indexed non-self-referential receipt journal with observer epochs;
+   bounded indexed non-self-referential receipt journal with epoch-only bootstrap;
 3. add every-step crash/property/corruption recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
 
@@ -2739,15 +2840,17 @@ for passing standalone and attached profile artifacts rather than trusting docum
 
 1. revise runner-v2 resources/requirements and implement the profile-bound
    `ControlPlaneHttpProvider` capability over isolated control capacity;
-2. implement strict secured source factories and one run-owned fixed-deadline driver per physical
-   source;
-3. register `telemetry_watch`, add strict Python Config-v2 projection and `aiperf watch` command;
+2. implement strict secured source factories, one run-owned fixed-deadline/cancellation-aware driver
+   per physical source, and source-free sync-only preparation;
+3. register both strict `telemetry_watch` variants, add Python Config-v2 projections and
+   `aiperf watch` command;
 4. add local archive, signal, failure, and query subprocess gates.
 
 ### Increment 4 — benchmark attachment
 
-1. replace phase-owned cadence loops with run-owned source subscriptions, orchestrator coalescing
-   groups, physical attempt/phase-membership delivery, and all-outcome tees;
+1. replace phase-owned cadence loops with run-owned source subscriptions, atomically sealed
+   orchestrator coalescing-group commands, physical attempt/phase-membership delivery, and all-
+   outcome tees;
 2. emit exact lifecycle markers and structured attempt-marker boundary joins through a
    `PhaseObserver` tee;
 3. add typed archive provenance/health and failure diagnostic-artifact protocol;
@@ -2860,30 +2963,34 @@ structured attributes with stable core columns.
 This design is complete only when:
 
 - Python exposes `aiperf watch` and no second Rust executable exists;
-- the revised workload-scoped runner-v2 DTO deserializes the complete watch envelope and rejects
-  required/forbidden resource violations; the strict attached scheduled DTO resolves unique
-  existing telemetry source IDs without duplicating their configuration;
+- the revised workload-scoped runner-v2 DTO deserializes complete collect/source-free-sync
+  envelopes and rejects mode-specific required/forbidden resources; the strict attached scheduled
+  DTO resolves unique existing telemetry source IDs without duplicating their configuration;
 - the exact runner derives and validates `online_http + telemetry_watch` from frozen factories and
-  the typed `ControlPlaneHttpProvider` capability;
+  requires the typed `ControlPlaneHttpProvider` capability only for collection;
 - every physical source uses the injected Clock/native transport, one run-owned fixed-deadline
-  driver, absolute deadline, and bounded ordered decode path;
+  driver, dynamically tightened shutdown deadline/cancellation join, atomically sealed boundary
+  groups, and bounded ordered decode path;
 - Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves strict grammar, every valid role,
   zero-point families, repeated MetricPoints, numeric/timestamp lexemes, exemplars, and a separately
   named native fallback without changing benchmark semantics;
 - canonical Arrow/head/generation/index/receipt/logical-row/parity descriptors and canonical JSON,
   keyed pre/post-redaction/body identities, exact payload/wire projection, correctly rounded
-  analytical numbers, component timestamp status, per-kind index keys/deletion, attribute epochs,
-  and native-v2 DTO are deterministic and readable/prunable by the pinned query ecosystem;
+  analytical numbers, combined component timestamp status, authoritative per-outcome frame Clock,
+  per-kind index keys/deletion, attribute epochs, and native-v2 DTO are deterministic and readable/
+  prunable by the pinned query ecosystem;
 - qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
   persistent zero/nonzero projection coverage, shared encrypted raw objects with per-frame
   references and reference-owned content encoding, immutable partitions/generations/index/head,
-  and bounded indexed receipt journal with per-execution observer epochs
+  cryptographically bound final WAL frames/prefixes, and bounded indexed receipt journal with
+  independently reachable per-execution observer epochs
   recover every complete durable projection exactly once across all injected crash/finalization
   points;
 - remote sync verifies create-only partition/raw/index/generation objects, owns a pre-activation
   writer claim, and advances a linearizable conditional head without flat rewrites; uncertain CAS
   and exact/sync-only resume reconcile ancestry fail-closed;
-- exact resume fails closed on identity/config/schema/key/writer mismatch and concurrent writers;
+- exact collect-resume fails closed on archive-identity/schema/key/writer mismatch and concurrent
+  writers, while source-free sync verifies genesis identity without source credentials;
 - failures, gaps, unchanged bodies, misses, drops/loss ranges and bounded saturation summaries,
   local durability, visibility lag, and remote publication are observable;
 - enrichment is API-limited to attributes, sanitization covers every structured surface, source
@@ -2893,7 +3000,8 @@ This design is complete only when:
   produces byte-identical archive-off/archive-on `NativeMeasurementParityV1` bytes from one
   captured/deterministic event stream, preserves real-run formula/order invariants, emits the archive
   block only when enabled, and passes the numeric §17 regression profile;
-- primary watch and attached modes have real Python-to-runner subprocess proofs;
+- primary collect, source-free sync-only, and attached modes have real Python-to-runner subprocess
+  proofs;
 - the five reproduced Tachometer defects are permanent regression tests;
 - native-v2 2.0 additively identifies archive provenance/completeness without treating archived
   samples as native metrics, while required reporting failure emits no authoritative report path;
