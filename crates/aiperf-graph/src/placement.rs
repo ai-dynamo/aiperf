@@ -42,6 +42,7 @@ pub trait GraphTraceExecutionBackendFactory: Send + Sync {
 /// Native thread-per-core whole-trace placement backend.
 pub struct ThreadPerCoreGraphTraceExecutionBackend {
     senders: Vec<mpsc::Sender<WorkerCommand>>,
+    controls: Vec<mpsc::UnboundedSender<WorkerControl>>,
     next_worker: Cell<usize>,
     threads: RefCell<Vec<JoinHandle<()>>>,
 }
@@ -73,34 +74,38 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
         }
 
         let mut senders = Vec::with_capacity(worker_count);
+        let mut controls = Vec::with_capacity(worker_count);
         let mut threads = Vec::with_capacity(worker_count);
         for worker_id in 0..worker_count {
             let (command_tx, command_rx) = mpsc::channel(queue_capacity);
+            let (control_tx, control_rx) = mpsc::unbounded_channel();
             let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
             let worker_factory = factory.clone();
             let thread = match std::thread::Builder::new()
                 .name(format!("aiperf-graph-{worker_id}"))
-                .spawn(move || worker_thread(worker_id, worker_factory, command_rx, ready_tx))
-            {
+                .spawn(move || {
+                    worker_thread(worker_id, worker_factory, command_rx, control_rx, ready_tx)
+                }) {
                 Ok(thread) => thread,
                 Err(error) => {
-                    stop_workers(senders, threads);
+                    stop_workers(senders, controls, threads);
                     return Err(GraphPlacementError(format!(
                         "failed to spawn graph worker {worker_id}: {error}"
                     )));
                 }
             };
             senders.push(command_tx);
+            controls.push(control_tx);
             threads.push(thread);
 
             match ready_rx.recv() {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    stop_workers(senders, threads);
+                    stop_workers(senders, controls, threads);
                     return Err(GraphPlacementError(error));
                 }
                 Err(error) => {
-                    stop_workers(senders, threads);
+                    stop_workers(senders, controls, threads);
                     return Err(GraphPlacementError(format!(
                         "graph worker {worker_id} exited during startup: {error}"
                     )));
@@ -110,6 +115,7 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
 
         Ok(Self {
             senders,
+            controls,
             next_worker: Cell::new(0),
             threads: RefCell::new(threads),
         })
@@ -144,11 +150,54 @@ impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
             ))
         })?
     }
+
+    fn cancel_inflight(&self) -> Result<(), TraceError> {
+        self.broadcast_control(|ack| WorkerControl::CancelInflight { ack })
+    }
+
+    fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
+        if limit == 0 {
+            return Err(TraceError::Other(
+                "graph prefill limit must be positive".into(),
+            ));
+        }
+        self.broadcast_control(|ack| WorkerControl::SetPrefillLimit { limit, ack })
+    }
+}
+
+impl ThreadPerCoreGraphTraceExecutionBackend {
+    fn broadcast_control(
+        &self,
+        control: impl Fn(std::sync::mpsc::SyncSender<Result<(), String>>) -> WorkerControl,
+    ) -> Result<(), TraceError> {
+        for (worker_id, sender) in self.controls.iter().enumerate() {
+            let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+            sender.send(control(ack_tx)).map_err(|_| {
+                TraceError::Other(format!(
+                    "graph placement worker {worker_id} is unavailable for control updates"
+                ))
+            })?;
+            ack_rx
+                .recv()
+                .map_err(|_| {
+                    TraceError::Other(format!(
+                        "graph placement worker {worker_id} exited before acknowledging its control update"
+                    ))
+                })?
+                .map_err(|error| {
+                    TraceError::Other(format!(
+                        "graph placement worker {worker_id} rejected its control update: {error}"
+                    ))
+                })?;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for ThreadPerCoreGraphTraceExecutionBackend {
     fn drop(&mut self) {
         self.senders.clear();
+        self.controls.clear();
         for thread in self.threads.get_mut().drain(..) {
             let _ = thread.join();
         }
@@ -162,10 +211,21 @@ enum WorkerCommand {
     },
 }
 
+enum WorkerControl {
+    CancelInflight {
+        ack: std::sync::mpsc::SyncSender<Result<(), String>>,
+    },
+    SetPrefillLimit {
+        limit: usize,
+        ack: std::sync::mpsc::SyncSender<Result<(), String>>,
+    },
+}
+
 fn worker_thread(
     worker_id: usize,
     factory: Arc<dyn GraphTraceExecutionBackendFactory>,
     mut commands: mpsc::Receiver<WorkerCommand>,
+    mut controls: mpsc::UnboundedReceiver<WorkerControl>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -198,6 +258,20 @@ fn worker_thread(
         let mut active = JoinSet::new();
         loop {
             tokio::select! {
+                biased;
+                control = controls.recv() => match control {
+                    Some(WorkerControl::CancelInflight { ack }) => {
+                        active.abort_all();
+                        let _ = ack.send(Ok(()));
+                    }
+                    Some(WorkerControl::SetPrefillLimit { limit, ack }) => {
+                        let result = backend
+                            .set_prefill_limit(limit)
+                            .map_err(|error| error.to_string());
+                        let _ = ack.send(result);
+                    }
+                    None => break,
+                },
                 command = commands.recv() => match command {
                     Some(WorkerCommand::Execute { plan, result }) => {
                         let backend = backend.clone();
@@ -216,8 +290,13 @@ fn worker_thread(
     }));
 }
 
-fn stop_workers(senders: Vec<mpsc::Sender<WorkerCommand>>, threads: Vec<JoinHandle<()>>) {
+fn stop_workers(
+    senders: Vec<mpsc::Sender<WorkerCommand>>,
+    controls: Vec<mpsc::UnboundedSender<WorkerControl>>,
+    threads: Vec<JoinHandle<()>>,
+) {
     drop(senders);
+    drop(controls);
     for thread in threads {
         let _ = thread.join();
     }
@@ -245,6 +324,7 @@ mod tests {
 
     struct RecordingFactory {
         placements: Arc<Mutex<Vec<(usize, String)>>>,
+        prefill_limits: Arc<Mutex<Vec<(usize, usize)>>>,
     }
 
     impl GraphTraceExecutionBackendFactory for RecordingFactory {
@@ -255,6 +335,7 @@ mod tests {
             Ok(Rc::new(RecordingWorker {
                 worker_id,
                 placements: self.placements.clone(),
+                prefill_limits: self.prefill_limits.clone(),
             }))
         }
     }
@@ -262,6 +343,7 @@ mod tests {
     struct RecordingWorker {
         worker_id: usize,
         placements: Arc<Mutex<Vec<(usize, String)>>>,
+        prefill_limits: Arc<Mutex<Vec<(usize, usize)>>>,
     }
 
     #[async_trait(?Send)]
@@ -271,6 +353,14 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((self.worker_id, plan.trace.id));
+            Ok(())
+        }
+
+        fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
+            self.prefill_limits
+                .lock()
+                .unwrap()
+                .push((self.worker_id, limit));
             Ok(())
         }
     }
@@ -292,6 +382,7 @@ mod tests {
         let placements = Arc::new(Mutex::new(Vec::new()));
         let factory = Arc::new(RecordingFactory {
             placements: placements.clone(),
+            prefill_limits: Arc::new(Mutex::new(Vec::new())),
         });
         let backend = ThreadPerCoreGraphTraceExecutionBackend::new(2, factory).unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -317,9 +408,37 @@ mod tests {
     }
 
     #[test]
+    fn placement_broadcasts_prefill_control_to_every_worker() {
+        let placements = Arc::new(Mutex::new(Vec::new()));
+        let prefill_limits = Arc::new(Mutex::new(Vec::new()));
+        let factory = Arc::new(RecordingFactory {
+            placements,
+            prefill_limits: prefill_limits.clone(),
+        });
+        let backend = ThreadPerCoreGraphTraceExecutionBackend::new(2, factory).unwrap();
+        backend.set_prefill_limit(7).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(LocalSet::new().run_until(async {
+            backend.execute_trace(plan("a")).await.unwrap();
+            backend.execute_trace(plan("b")).await.unwrap();
+        }));
+        drop(backend);
+
+        let mut observed = prefill_limits.lock().unwrap().clone();
+        observed.sort_unstable();
+        assert_eq!(observed, vec![(0, 7), (1, 7)]);
+    }
+
+    #[test]
     fn bounded_placement_rejects_a_zero_capacity() {
         let placements = Arc::new(Mutex::new(Vec::new()));
-        let factory = Arc::new(RecordingFactory { placements });
+        let factory = Arc::new(RecordingFactory {
+            placements,
+            prefill_limits: Arc::new(Mutex::new(Vec::new())),
+        });
         let error = ThreadPerCoreGraphTraceExecutionBackend::new_with_queue_capacity(1, 0, factory)
             .err()
             .expect("zero capacity must fail closed");

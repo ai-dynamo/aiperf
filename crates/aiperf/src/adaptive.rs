@@ -214,6 +214,39 @@ pub fn build_adaptive_with_origins(
             integer_bound(config.maximum, "adaptive users maximum")?,
         )?),
     };
+    let sampler: SharedWindowSampler = Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(
+        window_start_ns,
+    ))));
+    let scale = build_adaptive_scale(config, clock.clone(), actuator, sampler.clone())?;
+    let observer: Rc<dyn RequestObserver> = Rc::new(AdaptiveObserver::new(
+        delegate,
+        sampler,
+        clock,
+        observer_origin_ns,
+    ));
+    Ok(BuiltAdaptive { scale, observer })
+}
+
+/// Build the controller runtime over an explicitly injected actuator and
+/// terminal-record sampler.
+///
+/// Scheduled workloads normally use [`build_adaptive_with_origins`] to create
+/// both from local issuer state. Graph and future remote placements instead
+/// inject placement-backed actuators and feed the same sampler from completed
+/// native records, leaving the controller and artifact contract unchanged.
+pub fn build_adaptive_scale(
+    config: AdaptiveRunConfig,
+    clock: Rc<dyn Clock>,
+    actuator: Rc<dyn ControlActuator>,
+    sampler: SharedWindowSampler,
+) -> Result<Rc<AdaptiveScale>> {
+    if actuator.variable() != control_variable_name(config.control_variable) {
+        bail!(
+            "adaptive actuator variable {:?} does not match configured {:?}",
+            actuator.variable(),
+            control_variable_name(config.control_variable)
+        );
+    }
     let step: Box<dyn StepPolicy> = match config.step {
         AdaptiveStepConfig::SlaMargin {
             base_step,
@@ -231,9 +264,6 @@ pub fn build_adaptive_with_origins(
             sustain_duration_ns: config.sustain_duration_ns,
         },
     )?;
-    let sampler: SharedWindowSampler = Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(
-        window_start_ns,
-    ))));
     let artifacts: SharedArtifactSink = Rc::new(RefCell::new(Box::new(FileArtifactSink::new(
         &config.artifact_dir,
     )?)));
@@ -248,13 +278,16 @@ pub fn build_adaptive_with_origins(
             correlation: config.correlation,
         },
     )?);
-    let observer: Rc<dyn RequestObserver> = Rc::new(AdaptiveObserver::new(
-        delegate,
-        sampler,
-        clock,
-        observer_origin_ns,
-    ));
-    Ok(BuiltAdaptive { scale, observer })
+    Ok(scale)
+}
+
+fn control_variable_name(variable: AdaptiveControlVariable) -> &'static str {
+    match variable {
+        AdaptiveControlVariable::Concurrency => "concurrency",
+        AdaptiveControlVariable::PrefillConcurrency => "prefill_concurrency",
+        AdaptiveControlVariable::RequestRate => "request_rate",
+        AdaptiveControlVariable::Users => "users",
+    }
 }
 
 fn integer_bound(value: f64, label: &str) -> Result<usize> {

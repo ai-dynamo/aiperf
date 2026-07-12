@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 
 use aiperf::http::{
     HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
@@ -51,6 +51,7 @@ use bytes::Bytes;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 use serde_json::{Map, Value};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::execute::NativePreparedEndpointPlan;
@@ -504,7 +505,7 @@ pub(crate) struct RunnerGraphBackendFactoryConfig {
     pub(crate) prefill_concurrency: Option<usize>,
     pub(crate) cancellation: Option<GraphCancellationConfig>,
     pub(crate) raw_enabled: bool,
-    pub(crate) captured: mpsc::Sender<Vec<CapturedRecord>>,
+    pub(crate) captured: mpsc::UnboundedSender<Vec<CapturedRecord>>,
 }
 
 /// Worker-local cancellation construction inputs.
@@ -541,16 +542,18 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
             .map_err(|error| GraphPlacementError(error.to_string()))?;
 
         let mut policies = Vec::<Rc<dyn NodeDispatchPolicy>>::new();
-        if let Some(limit) = self.config.prefill_concurrency {
+        let prefill_slots = if let Some(limit) = self.config.prefill_concurrency {
             if limit == 0 {
                 return Err(GraphPlacementError(
                     "graph prefill_concurrency must be positive".into(),
                 ));
             }
-            policies.push(Rc::new(PrefillSlotNodePolicy::new(Rc::new(SlotPool::new(
-                limit,
-            )))));
-        }
+            let slots = Rc::new(SlotPool::new(limit));
+            policies.push(Rc::new(PrefillSlotNodePolicy::new(slots.clone())));
+            Some(slots)
+        } else {
+            None
+        };
         if let Some(cancellation) = self.config.cancellation {
             let worker_index = u64::try_from(worker_id)
                 .map_err(|_| GraphPlacementError("graph worker index exceeds u64".to_string()))?;
@@ -585,6 +588,7 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
             raw_enabled: self.config.raw_enabled,
             captured: self.config.captured.clone(),
             node_policy,
+            prefill_slots,
             next_session: Cell::new(0),
         }))
     }
@@ -602,8 +606,9 @@ struct RunnerGraphWorkerBackend {
     default_max_tokens: usize,
     run_origin_ns: i64,
     raw_enabled: bool,
-    captured: mpsc::Sender<Vec<CapturedRecord>>,
+    captured: mpsc::UnboundedSender<Vec<CapturedRecord>>,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
+    prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
 }
 
@@ -657,6 +662,19 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
             .send(batch)
             .map_err(|_| TraceError::Other("graph metric capture receiver closed".into()))?;
         result
+    }
+
+    fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
+        if limit == 0 {
+            return Err(TraceError::Other(
+                "graph prefill limit must be positive".into(),
+            ));
+        }
+        let slots = self.prefill_slots.as_ref().ok_or_else(|| {
+            TraceError::Other("graph worker has no configured prefill admission pool".into())
+        })?;
+        slots.set_limit(limit);
+        Ok(())
     }
 }
 

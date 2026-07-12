@@ -34,6 +34,26 @@ use crate::wire::WireMessage;
 pub trait GraphTraceExecutionBackend {
     /// Execute one complete trace on one placement target.
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError>;
+
+    /// Cancel every trace currently executing through this placement.
+    ///
+    /// Local one-shot backends have no independently retained work to cancel;
+    /// thread-per-core and future remote placements override this control-plane
+    /// hook without changing graph scheduling.
+    fn cancel_inflight(&self) -> Result<(), TraceError> {
+        Ok(())
+    }
+
+    /// Update the placement-wide node-prefill limit.
+    ///
+    /// The default fails closed because silently accepting an actuator update
+    /// would make graph ramps and adaptive control inert. Placements that own
+    /// worker-local admission pools broadcast the new limit to every worker.
+    fn set_prefill_limit(&self, _limit: usize) -> Result<(), TraceError> {
+        Err(TraceError::Other(
+            "graph execution placement does not expose prefill control".into(),
+        ))
+    }
 }
 
 /// Local implementation backed by the canonical [`TraceExecutor`].
