@@ -50,7 +50,7 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic `SamplingRng` / `DistributionSampler` / `SequenceSampler` seams, cached cumulative weighted distributions, fixed-seed profile canary | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
 | `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline with exact raw/message replay, media, context, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity, never ground truth | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
 | `aiperf-metrics` | IO-free performance/accuracy engine: validated catalog, columns/ragged replay, formulas, SLO/phase/window/timeslice logic, sweeps, accuracy analysis, typed native-v2 reporter including exact evaluator identity | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
-| `aiperf-accuracy` | versioned JSONL protocol, `AccuracyEvaluator` trait, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path | `src/protocol.rs`, `src/worker.rs` |
+| `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. The pinned Harbor callback protocol is built; its application workload adapter remains unbuilt. | `src/protocol.rs`, `src/worker.rs` |
 | `aiperf-extensions` | cycle-free compile-time composition for dataset-format, sampler, and endpoint registries; accuracy is a directly injected process seam, not a Rust plugin category | `src/lib.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
@@ -125,7 +125,12 @@ early-issue/lateness statistics.
 - **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)
   → `aiperf/src/http.rs` (`TransportSink`) →
   `aiperf-core/src/observer.rs` (`CollectorObserver`).
-- **Where is accuracy ownership split?** `aiperf-accuracy/src/{protocol,worker}.rs` (supervised evaluator seam) → `src/aiperf/accuracy/worker.py` (canonical preparation/scoring) and `aiperf/src/accuracy.rs` (normal dataset lowering, response capture, batched correlation, accumulation/reporting).
+- **Where is accuracy ownership split?** `aiperf-accuracy/src/{protocol,worker}.rs`
+  (static + stateful supervised evaluator seams) → `src/aiperf/accuracy/{worker,agentic,harbor,harbor_agent}.py`
+  (canonical Python task/agent/environment/verifier ownership) and
+  `aiperf/src/accuracy.rs` (normal Rust static dataset lowering, response capture,
+  batched grade correlation, accumulation/reporting). The stateful agentic Rust
+  workload adapter is not yet built.
 - **Where do native TTFT/ITL/e2e/throughput/goodput and sweeps come from?**
   `aiperf/src/metrics.rs` (runtime join) → `aiperf-metrics/src/{store,accumulator,sweepline}.rs`.
   `aiperf/src/http.rs` also translates the real transport trace into HTTP metric facts;
@@ -216,7 +221,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
   unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
   by dedicated specs/addenda.
-- `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — **built + addenda**: Rust owns inference/timing/metrics/reporting and typed accumulation; a supervised pinned Python/Lighteval worker owns canonical preparation, hidden tests, execution, and scoring over opaque JSONL ids. Worker failure is infrastructure error and native v2 records exact evaluator identity.
+- `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — **partly built +
+  addenda**: Rust owns inference/timing/metrics/reporting and the typed
+  accumulator/analyzer; supervised pinned Python workers own canonical datasets,
+  environments, hidden tests, execution, and scoring over opaque JSONL IDs. Static
+  Lighteval runs are wired. The stateful `AgenticEvaluator` protocol and pinned
+  Harbor 0.18 callback adapter are built with exact source/lock/dataset provenance;
+  its normal Rust workload adapter, CLI/reporting, and real container E2E remain.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,

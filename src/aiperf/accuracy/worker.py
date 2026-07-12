@@ -34,8 +34,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TextIO
 
+from aiperf.accuracy.agentic import (
+    AgenticHarness,
+    AgenticModelResult,
+    require_identifier,
+    require_non_negative_int,
+    require_positive_int,
+)
+
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.2.2"
+WORKER_VERSION = "1.3.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -45,6 +53,7 @@ _LOCKED_PACKAGE_VERSIONS = {
     "sympy": "1.14.0",
     "word2number": "1.1",
 }
+_AGENTIC_LOCKED_PACKAGE_VERSIONS = {"harbor": "0.18.0"}
 _LCB_MAX_RELEASE = 6
 
 
@@ -183,6 +192,7 @@ class AccuracyWorker:
         self._grader: Any | None = None
         self._lighteval_task: Any | None = None
         self._dataset_identity: dict[str, Any] = {}
+        self._agentic: AgenticHarness | None = None
 
     def hello(self, protocol: int) -> dict[str, Any]:
         if protocol != PROTOCOL_VERSION:
@@ -199,8 +209,23 @@ class AccuracyWorker:
                 "sympy",
                 "latex2sympy2-extended",
                 "word2number",
+                "harbor",
             )
         }
+        capabilities = ["load", "next_problems", "grade_batch", "shutdown"]
+        capabilities.extend(
+            [
+                "load_agentic",
+                "next_episodes",
+                "start_episodes",
+                "poll_agentic",
+                "submit_model_results",
+                "cancel_episodes",
+                "finish_agentic",
+            ]
+        )
+        if packages["harbor"] == _AGENTIC_LOCKED_PACKAGE_VERSIONS["harbor"]:
+            capabilities.append("agentic_harbor")
         return {
             "protocol": PROTOCOL_VERSION,
             "worker_version": WORKER_VERSION,
@@ -210,10 +235,11 @@ class AccuracyWorker:
             "worker_source_sha256": _source_digest(),
             "dependency_lock_sha256": _dependency_lock_digest(),
             "container_digest": os.getenv("AIPERF_ACCURACY_WORKER_IMAGE_DIGEST"),
-            "capabilities": ["load", "next_problems", "grade_batch", "shutdown"],
+            "capabilities": capabilities,
         }
 
     async def load(self, request: dict[str, Any]) -> dict[str, Any]:
+        await self._close_agentic()
         self._benchmark = None
         self._problems = []
         self._by_id = {}
@@ -309,6 +335,89 @@ class AccuracyWorker:
             }
             results.append(result)
         return {"items": results}
+
+    async def load_agentic(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Load one canonical Harbor dataset without starting model inference."""
+        _reject_unknown_fields(
+            request, {"id", "op", "dataset", "model", "config"}, "load_agentic"
+        )
+        await self._close_agentic()
+        self._benchmark = None
+        self._problems = []
+        self._by_id = {}
+        self._grader = None
+        self._lighteval_task = None
+        self._dataset_identity = {}
+        _verify_agentic_environment()
+        dataset = _required_string(request, "dataset")
+        model = _required_string(request, "model")
+        self._agentic = await _create_agentic_harness(
+            dataset, model, request.get("config")
+        )
+        return dict(self._agentic.identity)
+
+    def next_episodes(self, offset: int, limit: int) -> dict[str, Any]:
+        """Return one ordered page of opaque agentic task instances."""
+        harness = self._require_agentic()
+        if offset < 0 or limit <= 0:
+            raise ValueError("next_episodes requires offset >= 0 and limit > 0")
+        page = harness.episodes[offset : offset + limit]
+        return {
+            "items": [episode.to_wire() for episode in page],
+            "next_offset": offset + len(page),
+            "done": offset + len(page) >= len(harness.episodes),
+        }
+
+    async def start_episodes(self, authored_ids: Any) -> dict[str, Any]:
+        """Begin environment setup for a scheduler-selected episode batch."""
+        harness = self._require_agentic()
+        episode_ids = _identifier_array(authored_ids, "start_episodes.episode_ids")
+        await harness.start_episodes(episode_ids)
+        return {"started": episode_ids}
+
+    async def poll_agentic(self, limit: Any, wait_ms: Any) -> dict[str, Any]:
+        """Long-poll ready model calls and terminal episode results."""
+        harness = self._require_agentic()
+        resolved_limit = require_positive_int(limit, "poll_agentic.limit")
+        resolved_wait = require_non_negative_int(wait_ms, "poll_agentic.wait_ms")
+        events = await harness.poll_events(resolved_limit, resolved_wait)
+        return {"events": [event.to_wire() for event in events]}
+
+    async def submit_model_results(self, authored_items: Any) -> dict[str, Any]:
+        """Resume evaluator-owned agent loops with Rust inference results."""
+        harness = self._require_agentic()
+        if not isinstance(authored_items, list) or not authored_items:
+            raise ValueError("submit_model_results.items must be a non-empty array")
+        items = [AgenticModelResult.from_wire(item) for item in authored_items]
+        await harness.submit_model_results(items)
+        return {"accepted": [item.call_id for item in items]}
+
+    async def cancel_episodes(self, authored_ids: Any) -> dict[str, Any]:
+        """Cancel active evaluator environments selected by the Rust scheduler."""
+        harness = self._require_agentic()
+        episode_ids = _identifier_array(authored_ids, "cancel_episodes.episode_ids")
+        await harness.cancel_episodes(episode_ids)
+        return {"cancelled": episode_ids}
+
+    async def finish_agentic(self) -> dict[str, Any]:
+        """Return all canonical verifier results in frozen dataset order."""
+        harness = self._require_agentic()
+        results = await harness.finish()
+        return {"items": [result.to_wire() for result in results]}
+
+    async def close(self) -> None:
+        """Release an active agent harness before process shutdown."""
+        await self._close_agentic()
+
+    async def _close_agentic(self) -> None:
+        if self._agentic is not None:
+            harness, self._agentic = self._agentic, None
+            await harness.close()
+
+    def _require_agentic(self) -> AgenticHarness:
+        if self._agentic is None:
+            raise RuntimeError("load_agentic must succeed before this operation")
+        return self._agentic
 
     async def _grade_lcb_batch(
         self, submitted: list[tuple[_Problem, str]]
@@ -666,7 +775,34 @@ async def _dispatch(
         ), False
     if op == "grade_batch":
         return await worker.grade_batch(request.get("items")), False
+    if op == "load_agentic":
+        return await worker.load_agentic(request), False
+    if op == "next_episodes":
+        _reject_unknown_fields(
+            request, {"id", "op", "offset", "limit"}, "next_episodes"
+        )
+        return worker.next_episodes(
+            int(request.get("offset", 0)), int(request.get("limit", 0))
+        ), False
+    if op == "start_episodes":
+        _reject_unknown_fields(request, {"id", "op", "episode_ids"}, op)
+        return await worker.start_episodes(request.get("episode_ids")), False
+    if op == "poll_agentic":
+        _reject_unknown_fields(request, {"id", "op", "limit", "wait_ms"}, op)
+        return await worker.poll_agentic(
+            request.get("limit", 0), request.get("wait_ms", 0)
+        ), False
+    if op == "submit_model_results":
+        _reject_unknown_fields(request, {"id", "op", "items"}, op)
+        return await worker.submit_model_results(request.get("items")), False
+    if op == "cancel_episodes":
+        _reject_unknown_fields(request, {"id", "op", "episode_ids"}, op)
+        return await worker.cancel_episodes(request.get("episode_ids")), False
+    if op == "finish_agentic":
+        _reject_unknown_fields(request, {"id", "op"}, op)
+        return await worker.finish_agentic(), False
     if op == "shutdown":
+        await worker.close()
         return {"shutdown": True}, True
     raise ValueError(f"unknown operation {op!r}")
 
@@ -716,6 +852,7 @@ def serve() -> int:
                 return 0
         return 0
     finally:
+        loop.run_until_complete(worker.close())
         loop.close()
         protocol_stdout.close()
 
@@ -745,6 +882,31 @@ def _required_string(value: dict[str, Any], field: str) -> str:
     if not isinstance(result, str) or not result.strip():
         raise ValueError(f"{field} must be a non-empty string")
     return result.strip()
+
+
+def _reject_unknown_fields(
+    value: dict[str, Any], allowed: set[str], operation: str
+) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"{operation} has unknown field(s): " + ", ".join(unknown))
+
+
+def _identifier_array(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{field} must be a non-empty array")
+    result = [require_identifier(item, f"{field} item") for item in value]
+    if len(set(result)) != len(result):
+        raise ValueError(f"{field} contains duplicate identifiers")
+    return result
+
+
+async def _create_agentic_harness(
+    dataset: str, model_name: str, config: Any
+) -> AgenticHarness:
+    from aiperf.accuracy.harbor import create_harbor_harness
+
+    return await create_harbor_harness(dataset, model_name, config)
 
 
 def _optional_positive_int(config: dict[str, Any], field: str) -> int | None:
@@ -865,9 +1027,18 @@ def _package_version(name: str) -> str | None:
 
 
 def _source_digest() -> str:
+    """Hash every Python source file that can define evaluator semantics."""
+    root = Path(__file__).resolve().parent
     try:
-        with open(__file__, "rb") as source:
-            return hashlib.sha256(source.read()).hexdigest()
+        digest = hashlib.sha256()
+        for path in sorted(root.rglob("*.py")):
+            relative = path.relative_to(root).as_posix().encode()
+            payload = path.read_bytes()
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            digest.update(len(payload).to_bytes(8, "big"))
+            digest.update(payload)
+        return digest.hexdigest()
     except OSError:
         return "unavailable"
 
@@ -876,7 +1047,12 @@ def _dependency_lock_digest() -> str | None:
     authored = os.getenv("AIPERF_ACCURACY_WORKER_LOCK_SHA256")
     if authored:
         return authored
-    lock = Path(__file__).resolve().parents[3] / "requirements/accuracy-worker.txt"
+    lock_name = (
+        "agentic-accuracy-worker.txt"
+        if _package_version("harbor") == _AGENTIC_LOCKED_PACKAGE_VERSIONS["harbor"]
+        else "accuracy-worker.txt"
+    )
+    lock = Path(__file__).resolve().parents[3] / "requirements" / lock_name
     try:
         return hashlib.sha256(lock.read_bytes()).hexdigest()
     except OSError:
@@ -893,6 +1069,20 @@ def _verify_locked_environment() -> None:
         raise RuntimeError(
             "accuracy evaluator environment does not match "
             "requirements/accuracy-worker.txt: " + ", ".join(mismatches)
+        )
+
+
+def _verify_agentic_environment() -> None:
+    _verify_locked_environment()
+    mismatches = []
+    for package, expected in _AGENTIC_LOCKED_PACKAGE_VERSIONS.items():
+        actual = _package_version(package)
+        if actual != expected:
+            mismatches.append(f"{package}={actual!r} (expected {expected!r})")
+    if mismatches:
+        raise RuntimeError(
+            "agentic evaluator environment does not match "
+            "requirements/agentic-accuracy-worker.txt: " + ", ".join(mismatches)
         )
 
 

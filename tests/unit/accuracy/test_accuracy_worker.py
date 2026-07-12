@@ -77,13 +77,19 @@ raise SystemExit(worker.serve())
 
 def test_handshake_reports_source_lock_packages_and_runtime() -> None:
     identity = AccuracyWorker().hello(1)
+    source_root = Path(worker_module.__file__).resolve().parent
+    source_digest = hashlib.sha256()
+    for source in sorted(source_root.rglob("*.py")):
+        relative = source.relative_to(source_root).as_posix().encode()
+        payload = source.read_bytes()
+        source_digest.update(len(relative).to_bytes(8, "big"))
+        source_digest.update(relative)
+        source_digest.update(len(payload).to_bytes(8, "big"))
+        source_digest.update(payload)
     lock = Path(worker_module.__file__).resolve().parents[3] / (
         "requirements/accuracy-worker.txt"
     )
-    assert (
-        identity["worker_source_sha256"]
-        == hashlib.sha256(Path(worker_module.__file__).read_bytes()).hexdigest()
-    )
+    assert identity["worker_source_sha256"] == source_digest.hexdigest()
     assert (
         identity["dependency_lock_sha256"]
         == hashlib.sha256(lock.read_bytes()).hexdigest()

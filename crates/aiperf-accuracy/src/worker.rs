@@ -21,13 +21,17 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::task::JoinHandle;
 
 use crate::protocol::{
-    EVALUATOR_PROTOCOL_VERSION, EvaluatorGradeBatch, EvaluatorGradeItem, EvaluatorIdentity,
-    EvaluatorLoadConfig, EvaluatorLoadResult, EvaluatorProblemPage, ShutdownResult, WorkerRequest,
-    WorkerResponse,
+    AcceptedModelResults, AgenticEpisodeOutcome, AgenticEpisodePage, AgenticEvaluatorEvent,
+    AgenticEvaluatorIdentity, AgenticEvaluatorLoadConfig, AgenticEventBatch,
+    AgenticInferenceStatus, AgenticModelResult, AgenticResultBatch, CancelledEpisodesResult,
+    EVALUATOR_PROTOCOL_VERSION, EpisodeId, EvaluatorGradeBatch, EvaluatorGradeItem,
+    EvaluatorIdentity, EvaluatorLoadConfig, EvaluatorLoadResult, EvaluatorProblemPage,
+    ShutdownResult, StartedEpisodesResult, WorkerRequest, WorkerResponse,
 };
 
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
+const AGENTIC_CAPABILITY: &str = "agentic_harbor";
 
 /// Sink for worker stderr lines.
 pub trait EvaluatorLogSink: Send + Sync {
@@ -155,6 +159,60 @@ pub trait AccuracyEvaluator {
 
     /// Ask the worker to shut down and wait for the child.
     async fn shutdown(&mut self) -> Result<(), EvaluatorWorkerError>;
+}
+
+/// Stateful agent-harness seam whose model calls remain owned by Rust.
+///
+/// Implementations prepare task environments and canonical verifiers, then
+/// publish model-call events. The application must dispatch those calls through
+/// the ordinary AIPerf transport and submit terminal results back here.
+#[async_trait(?Send)]
+pub trait AgenticEvaluator: AccuracyEvaluator {
+    /// Whether the worker reported the pinned Harbor capability.
+    fn supports_agentic(&self) -> bool;
+
+    /// Resolve and freeze one versioned agentic dataset.
+    async fn load_agentic(
+        &mut self,
+        dataset: &str,
+        model: &str,
+        config: &AgenticEvaluatorLoadConfig,
+    ) -> Result<AgenticEvaluatorIdentity, EvaluatorWorkerError>;
+
+    /// Retrieve one ordered page of opaque task episodes.
+    async fn next_episodes(
+        &mut self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<AgenticEpisodePage, EvaluatorWorkerError>;
+
+    /// Start evaluator-owned environment setup for selected episodes.
+    async fn start_episodes(
+        &mut self,
+        episode_ids: &[EpisodeId],
+    ) -> Result<(), EvaluatorWorkerError>;
+
+    /// Bounded long-poll for ready model calls and terminal episode results.
+    async fn poll_agentic(
+        &mut self,
+        limit: usize,
+        wait_ms: u64,
+    ) -> Result<AgenticEventBatch, EvaluatorWorkerError>;
+
+    /// Resume evaluator-owned agents with terminal responses produced by Rust.
+    async fn submit_model_results(
+        &mut self,
+        items: &[AgenticModelResult],
+    ) -> Result<(), EvaluatorWorkerError>;
+
+    /// Cancel active evaluator environments selected by Rust policy.
+    async fn cancel_episodes(
+        &mut self,
+        episode_ids: &[EpisodeId],
+    ) -> Result<(), EvaluatorWorkerError>;
+
+    /// Validate terminal state and return canonical results in dataset order.
+    async fn finish_agentic(&mut self) -> Result<AgenticResultBatch, EvaluatorWorkerError>;
 }
 
 /// Long-lived supervised Python evaluator process.
@@ -405,6 +463,180 @@ fn validate_identity(identity: &EvaluatorIdentity) -> Result<(), EvaluatorWorker
     Ok(())
 }
 
+fn validate_agentic_identity(
+    identity: &AgenticEvaluatorIdentity,
+) -> Result<(), EvaluatorWorkerError> {
+    for (field, value) in [
+        ("harness", identity.harness.as_str()),
+        ("harness_version", identity.harness_version.as_str()),
+        ("agent", identity.agent.as_str()),
+        ("agent_version", identity.agent_version.as_str()),
+        ("environment", identity.environment.as_str()),
+        ("verifier", identity.verifier.as_str()),
+        ("dataset.provider", identity.dataset.provider.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(EvaluatorWorkerError::Protocol(format!(
+                "agentic evaluator identity field {field} was empty"
+            )));
+        }
+    }
+    if !is_sha256(&identity.harness_source_sha256) {
+        return Err(EvaluatorWorkerError::Protocol(
+            "agentic harness_source_sha256 was not a 64-digit lowercase hex digest".to_string(),
+        ));
+    }
+    if identity.episode_count == 0 {
+        return Err(EvaluatorWorkerError::Protocol(
+            "agentic evaluator selected zero episodes".to_string(),
+        ));
+    }
+    if identity
+        .dataset
+        .revision
+        .as_deref()
+        .is_none_or(|revision| revision.trim().is_empty())
+    {
+        return Err(EvaluatorWorkerError::Protocol(
+            "agentic evaluator omitted immutable dataset revision".to_string(),
+        ));
+    }
+    if identity.dataset.evaluation_splits.is_empty()
+        || identity
+            .dataset
+            .evaluation_splits
+            .iter()
+            .any(|split| split.trim().is_empty())
+    {
+        return Err(EvaluatorWorkerError::Protocol(
+            "agentic evaluator reported no valid evaluation split".to_string(),
+        ));
+    }
+    if identity
+        .primary_reward
+        .as_ref()
+        .is_some_and(|reward| reward.trim().is_empty())
+    {
+        return Err(EvaluatorWorkerError::Protocol(
+            "agentic evaluator reported an empty primary_reward".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_agentic_result(
+    result: &crate::protocol::AgenticEpisodeResult,
+) -> Result<(), EvaluatorWorkerError> {
+    if result.task.trim().is_empty() {
+        return Err(EvaluatorWorkerError::Protocol(format!(
+            "agentic episode {:?} returned an empty task",
+            result.episode_id.as_str()
+        )));
+    }
+    if !result.duration_seconds.is_finite() || result.duration_seconds < 0.0 {
+        return Err(EvaluatorWorkerError::Protocol(format!(
+            "agentic episode {:?} returned invalid duration {}",
+            result.episode_id.as_str(),
+            result.duration_seconds
+        )));
+    }
+    if result.rewards.values().any(|reward| !reward.is_finite()) {
+        return Err(EvaluatorWorkerError::Protocol(format!(
+            "agentic episode {:?} returned a non-finite reward",
+            result.episode_id.as_str()
+        )));
+    }
+    match result.outcome {
+        AgenticEpisodeOutcome::Completed => {
+            if result.rewards.is_empty() {
+                return Err(EvaluatorWorkerError::Protocol(format!(
+                    "completed agentic episode {:?} returned no rewards",
+                    result.episode_id.as_str()
+                )));
+            }
+            if result.error_kind.is_some() || result.error_message.is_some() {
+                return Err(EvaluatorWorkerError::Protocol(format!(
+                    "completed agentic episode {:?} also returned an infrastructure error",
+                    result.episode_id.as_str()
+                )));
+            }
+        }
+        AgenticEpisodeOutcome::InfrastructureError | AgenticEpisodeOutcome::Cancelled => {
+            if !result.rewards.is_empty() || result.error_kind.is_none() {
+                return Err(EvaluatorWorkerError::Protocol(format!(
+                    "non-completed agentic episode {:?} must have no rewards and an error_kind",
+                    result.episode_id.as_str()
+                )));
+            }
+        }
+    }
+    if let Some(primary) = &result.primary_reward
+        && !result.rewards.contains_key(primary)
+    {
+        return Err(EvaluatorWorkerError::Protocol(format!(
+            "agentic episode {:?} selected absent primary reward {primary:?}",
+            result.episode_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_agentic_events(batch: &AgenticEventBatch) -> Result<(), EvaluatorWorkerError> {
+    for event in &batch.events {
+        match event {
+            AgenticEvaluatorEvent::ModelCall { call } => {
+                if call.prompt.trim().is_empty() || call.messages.is_empty() {
+                    return Err(EvaluatorWorkerError::Protocol(format!(
+                        "agentic call {:?} omitted its prompt or messages",
+                        call.call_id.as_str()
+                    )));
+                }
+                if call.generation.max_tokens == 0
+                    || !call.generation.temperature.is_finite()
+                    || call.generation.temperature < 0.0
+                    || !call.generation.top_p.is_finite()
+                    || !(0.0..=1.0).contains(&call.generation.top_p)
+                {
+                    return Err(EvaluatorWorkerError::Protocol(format!(
+                        "agentic call {:?} returned invalid generation controls",
+                        call.call_id.as_str()
+                    )));
+                }
+            }
+            AgenticEvaluatorEvent::EpisodeCompleted { result } => {
+                validate_agentic_result(result)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_submitted_model_result(item: &AgenticModelResult) -> Result<(), EvaluatorWorkerError> {
+    match item.status {
+        AgenticInferenceStatus::Completed => {
+            if item.error_kind.is_some() || item.error_message.is_some() {
+                return Err(EvaluatorWorkerError::Protocol(format!(
+                    "completed model call {:?} contained an infrastructure error",
+                    item.call_id.as_str()
+                )));
+            }
+        }
+        AgenticInferenceStatus::Failed | AgenticInferenceStatus::Cancelled => {
+            if item
+                .error_kind
+                .as_ref()
+                .is_none_or(|kind| kind.trim().is_empty())
+            {
+                return Err(EvaluatorWorkerError::Protocol(format!(
+                    "non-completed model call {:?} omitted error_kind",
+                    item.call_id.as_str()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn is_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -489,6 +721,170 @@ impl AccuracyEvaluator for PythonEvaluator {
     }
 }
 
+#[async_trait(?Send)]
+impl AgenticEvaluator for PythonEvaluator {
+    fn supports_agentic(&self) -> bool {
+        self.identity
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTIC_CAPABILITY)
+    }
+
+    async fn load_agentic(
+        &mut self,
+        dataset: &str,
+        model: &str,
+        config: &AgenticEvaluatorLoadConfig,
+    ) -> Result<AgenticEvaluatorIdentity, EvaluatorWorkerError> {
+        if !self.supports_agentic() {
+            return Err(EvaluatorWorkerError::Protocol(
+                "evaluator worker does not report agentic_harbor; launch it from the pinned agentic worker environment"
+                    .to_string(),
+            ));
+        }
+        if dataset.trim().is_empty() || model.trim().is_empty() {
+            return Err(EvaluatorWorkerError::Protocol(
+                "agentic dataset and model must not be empty".to_string(),
+            ));
+        }
+        let id = self.take_id()?;
+        let identity = self
+            .request(WorkerRequest::LoadAgentic {
+                id,
+                dataset,
+                model,
+                config,
+            })
+            .await?;
+        validate_agentic_identity(&identity)?;
+        Ok(identity)
+    }
+
+    async fn next_episodes(
+        &mut self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<AgenticEpisodePage, EvaluatorWorkerError> {
+        if limit == 0 {
+            return Err(EvaluatorWorkerError::Protocol(
+                "next_episodes limit must be positive".to_string(),
+            ));
+        }
+        let id = self.take_id()?;
+        let page: AgenticEpisodePage = self
+            .request(WorkerRequest::NextEpisodes { id, offset, limit })
+            .await?;
+        if page
+            .items
+            .iter()
+            .any(|episode| episode.task.trim().is_empty() || episode.source.trim().is_empty())
+        {
+            return Err(EvaluatorWorkerError::Protocol(
+                "agentic episode page contained an empty task or source".to_string(),
+            ));
+        }
+        Ok(page)
+    }
+
+    async fn start_episodes(
+        &mut self,
+        episode_ids: &[EpisodeId],
+    ) -> Result<(), EvaluatorWorkerError> {
+        if episode_ids.is_empty() {
+            return Err(EvaluatorWorkerError::Protocol(
+                "start_episodes requires at least one episode".to_string(),
+            ));
+        }
+        let id = self.take_id()?;
+        let result: StartedEpisodesResult = self
+            .request(WorkerRequest::StartEpisodes { id, episode_ids })
+            .await?;
+        if result.started != episode_ids {
+            return Err(EvaluatorWorkerError::Protocol(
+                "worker start_episodes acknowledgement did not match submitted IDs".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn poll_agentic(
+        &mut self,
+        limit: usize,
+        wait_ms: u64,
+    ) -> Result<AgenticEventBatch, EvaluatorWorkerError> {
+        if limit == 0 {
+            return Err(EvaluatorWorkerError::Protocol(
+                "poll_agentic limit must be positive".to_string(),
+            ));
+        }
+        let id = self.take_id()?;
+        let batch = self
+            .request(WorkerRequest::PollAgentic { id, limit, wait_ms })
+            .await?;
+        validate_agentic_events(&batch)?;
+        Ok(batch)
+    }
+
+    async fn submit_model_results(
+        &mut self,
+        items: &[AgenticModelResult],
+    ) -> Result<(), EvaluatorWorkerError> {
+        if items.is_empty() {
+            return Err(EvaluatorWorkerError::Protocol(
+                "submit_model_results requires at least one item".to_string(),
+            ));
+        }
+        for item in items {
+            validate_submitted_model_result(item)?;
+        }
+        let id = self.take_id()?;
+        let result: AcceptedModelResults = self
+            .request(WorkerRequest::SubmitModelResults { id, items })
+            .await?;
+        let submitted = items
+            .iter()
+            .map(|item| item.call_id.clone())
+            .collect::<Vec<_>>();
+        if result.accepted != submitted {
+            return Err(EvaluatorWorkerError::Protocol(
+                "worker submit_model_results acknowledgement did not match submitted calls"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn cancel_episodes(
+        &mut self,
+        episode_ids: &[EpisodeId],
+    ) -> Result<(), EvaluatorWorkerError> {
+        if episode_ids.is_empty() {
+            return Err(EvaluatorWorkerError::Protocol(
+                "cancel_episodes requires at least one episode".to_string(),
+            ));
+        }
+        let id = self.take_id()?;
+        let result: CancelledEpisodesResult = self
+            .request(WorkerRequest::CancelEpisodes { id, episode_ids })
+            .await?;
+        if result.cancelled != episode_ids {
+            return Err(EvaluatorWorkerError::Protocol(
+                "worker cancel_episodes acknowledgement did not match submitted IDs".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn finish_agentic(&mut self) -> Result<AgenticResultBatch, EvaluatorWorkerError> {
+        let id = self.take_id()?;
+        let batch: AgenticResultBatch = self.request(WorkerRequest::FinishAgentic { id }).await?;
+        for result in &batch.items {
+            validate_agentic_result(result)?;
+        }
+        Ok(batch)
+    }
+}
+
 /// Supervision, protocol, or remote evaluator failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EvaluatorWorkerError {
@@ -562,7 +958,10 @@ impl std::error::Error for EvaluatorWorkerError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{EvaluatorGradeItem, ProblemId};
+    use crate::protocol::{
+        AgenticEpisodeOutcome, AgenticEvaluatorEvent, AgenticInferenceStatus, EvaluatorGradeItem,
+        ModelCallId, ProblemId,
+    };
 
     const FAKE_WORKER: &str = r#"
 import json, sys
@@ -577,6 +976,38 @@ for line in sys.stdin:
         result = {'items': [{'problem_id': 'opaque-1', 'task': 'fixture', 'prompt': 'Question?', 'messages': [{'role': 'user', 'content': 'Question?'}], 'generation': {'max_tokens': 8, 'temperature': 0.0, 'top_p': 1.0, 'stop': []}}], 'next_offset': 1, 'done': True}
     elif op == 'grade_batch':
         result = {'items': [{'problem_id': item['problem_id'], 'task': 'fixture', 'correct': item['response'] == 'A', 'unparsed': False, 'confidence': 1.0 if item['response'] == 'A' else 0.0, 'reasoning': 'fixture', 'extracted_answer': item['response']} for item in request['items']]}
+    elif op == 'shutdown':
+        result = {'shutdown': True}
+    else:
+        raise RuntimeError(op)
+    print(json.dumps({'id': request['id'], 'ok': True, 'result': result}), flush=True)
+    if op == 'shutdown':
+        break
+"#;
+
+    const AGENTIC_FAKE_WORKER: &str = r#"
+import json, sys
+submitted = False
+for line in sys.stdin:
+    request = json.loads(line)
+    op = request['op']
+    if op == 'hello':
+        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'harbor': '0.18.0'}, 'worker_source_sha256': 'a' * 64, 'dependency_lock_sha256': 'b' * 64, 'container_digest': None, 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown', 'agentic_harbor']}
+    elif op == 'load_agentic':
+        result = {'harness': 'harbor', 'harness_version': '0.18.0', 'harness_source_sha256': 'c' * 64, 'dataset': {'provider': 'fixture', 'benchmark': request['dataset'], 'repository': request['dataset'], 'revision': 'd' * 64, 'evaluation_splits': ['tasks']}, 'agent': 'aiperf-terminus-2', 'agent_version': 'fixture', 'environment': 'fixture', 'verifier': 'fixture verifier', 'episode_count': 1, 'primary_reward': 'reward'}
+    elif op == 'next_episodes':
+        result = {'items': [{'episode_id': 'episode-1', 'task': 'swebench.task', 'source': 'fixture/swebench'}], 'next_offset': 1, 'done': True}
+    elif op == 'start_episodes':
+        result = {'started': request['episode_ids']}
+    elif op == 'poll_agentic' and not submitted:
+        result = {'events': [{'kind': 'model_call', 'call': {'episode_id': 'episode-1', 'call_id': 'call-1', 'turn_index': 0, 'prompt': 'fix it', 'messages': [{'role': 'user', 'content': 'fix it'}], 'generation': {'max_tokens': 64, 'temperature': 0.0, 'top_p': 1.0, 'stop': []}, 'tools': []}}]}
+    elif op == 'submit_model_results':
+        submitted = True
+        result = {'accepted': [item['call_id'] for item in request['items']]}
+    elif op == 'poll_agentic':
+        result = {'events': [{'kind': 'episode_completed', 'result': {'episode_id': 'episode-1', 'task': 'swebench.task', 'outcome': 'completed', 'rewards': {'reward': 1.0}, 'primary_reward': 'reward', 'duration_seconds': 1.0, 'model_calls': 1, 'prompt_tokens': 8, 'completion_tokens': 4}}]}
+    elif op == 'finish_agentic':
+        result = {'items': [{'episode_id': 'episode-1', 'task': 'swebench.task', 'outcome': 'completed', 'rewards': {'reward': 1.0}, 'primary_reward': 'reward', 'duration_seconds': 1.0, 'model_calls': 1, 'prompt_tokens': 8, 'completion_tokens': 4}]}
     elif op == 'shutdown':
         result = {'shutdown': True}
     else:
@@ -617,6 +1048,62 @@ for line in sys.stdin:
             .await
             .unwrap();
         assert!(grades.items[0].correct);
+        evaluator.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn supervises_agentic_episode_callbacks_without_python_http() {
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(AGENTIC_FAKE_WORKER))
+            .await
+            .unwrap();
+        assert!(AgenticEvaluator::supports_agentic(&evaluator));
+        let identity = evaluator
+            .load_agentic(
+                "fixture/swebench@locked",
+                "fixture-model",
+                &AgenticEvaluatorLoadConfig::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(identity.harness, "harbor");
+        assert_eq!(identity.episode_count, 1);
+        let page = evaluator.next_episodes(0, 10).await.unwrap();
+        assert!(page.done);
+        let episode_id = page.items[0].episode_id.clone();
+        evaluator
+            .start_episodes(std::slice::from_ref(&episode_id))
+            .await
+            .unwrap();
+        let events = evaluator.poll_agentic(10, 0).await.unwrap();
+        let AgenticEvaluatorEvent::ModelCall { call } = &events.events[0] else {
+            panic!("expected model call")
+        };
+        assert_eq!(call.prompt, "fix it");
+        evaluator
+            .submit_model_results(&[AgenticModelResult {
+                episode_id: episode_id.clone(),
+                call_id: ModelCallId::new("call-1").unwrap(),
+                status: AgenticInferenceStatus::Completed,
+                response: "fixed".to_string(),
+                reasoning: None,
+                prompt_tokens: Some(8),
+                completion_tokens: Some(4),
+                cached_tokens: None,
+                response_id: None,
+                finish_reason: Some("stop".to_string()),
+                error_kind: None,
+                error_message: None,
+            }])
+            .await
+            .unwrap();
+        let events = evaluator.poll_agentic(10, 0).await.unwrap();
+        let AgenticEvaluatorEvent::EpisodeCompleted { result } = &events.events[0] else {
+            panic!("expected terminal episode")
+        };
+        assert_eq!(result.outcome, AgenticEpisodeOutcome::Completed);
+        assert_eq!(result.rewards["reward"], 1.0);
+        let final_results = evaluator.finish_agentic().await.unwrap();
+        assert_eq!(final_results.items.len(), 1);
         evaluator.shutdown().await.unwrap();
     }
 

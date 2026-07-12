@@ -229,6 +229,333 @@ pub struct EvaluatorGradeBatch {
     pub items: Vec<EvaluatorGrade>,
 }
 
+/// Opaque identifier assigned by the evaluator to one stateful task episode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct EpisodeId(String);
+
+impl EpisodeId {
+    /// Build a validated opaque episode ID.
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            Err("evaluator episode_id must not be empty".to_string())
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    /// Borrow the wire value without interpreting it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for EpisodeId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
+
+/// Opaque identifier assigned by the evaluator to one requested model call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct ModelCallId(String);
+
+impl ModelCallId {
+    /// Build a validated opaque model-call ID.
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            Err("evaluator call_id must not be empty".to_string())
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    /// Borrow the wire value without interpreting it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelCallId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
+
+/// Configuration for a canonical stateful agent-harness run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticEvaluatorLoadConfig {
+    /// Optional exact task names/globs selected from the dataset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_names: Option<Vec<String>>,
+    /// Optional deterministic cap applied after task filtering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_episodes: Option<usize>,
+    /// Maximum evaluator environments active at once.
+    pub task_concurrency: usize,
+    /// Harbor environment provider, such as `docker` or `daytona`.
+    pub environment: String,
+    /// Directory for canonical harness artifacts and trajectories.
+    pub output_dir: String,
+    /// Optional Terminus-2 model-call limit per episode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<usize>,
+    /// Maximum generated tokens for each Rust inference call.
+    pub max_tokens: usize,
+    /// Explicit model context-window size used by the agent scaffold.
+    pub context_window: usize,
+    /// Canonical Terminus command protocol (`json` or `xml`).
+    pub parser: String,
+    /// Whether canonical Terminus context summarization is enabled.
+    pub enable_summarize: bool,
+    /// Optional verifier reward selected as the primary report metric.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_reward: Option<String>,
+    /// Whether Harbor may replace a cached task package.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+impl Default for AgenticEvaluatorLoadConfig {
+    fn default() -> Self {
+        Self {
+            task_names: None,
+            max_episodes: None,
+            task_concurrency: 1,
+            environment: "docker".to_string(),
+            output_dir: "artifacts/agentic".to_string(),
+            max_turns: None,
+            max_tokens: 4_096,
+            context_window: 131_072,
+            parser: "json".to_string(),
+            enable_summarize: true,
+            primary_reward: None,
+            overwrite: false,
+        }
+    }
+}
+
+/// Frozen harness, dataset, agent, environment, and verifier identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticEvaluatorIdentity {
+    /// Canonical harness name.
+    pub harness: String,
+    /// Exact harness package version.
+    pub harness_version: String,
+    /// SHA-256 over installed harness Python sources.
+    pub harness_source_sha256: String,
+    /// Immutable dataset package identity.
+    pub dataset: EvaluatorDatasetIdentity,
+    /// Agent scaffold name.
+    pub agent: String,
+    /// Exact agent adapter and inherited scaffold version.
+    pub agent_version: String,
+    /// Environment provider selected for task sandboxes.
+    pub environment: String,
+    /// Canonical verifier implementation description.
+    pub verifier: String,
+    /// Number of selected task episodes.
+    pub episode_count: usize,
+    /// Optional primary reward metric.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_reward: Option<String>,
+}
+
+/// Model-safe descriptor for one agentic task episode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticEpisode {
+    /// Opaque evaluator-owned episode identifier.
+    pub episode_id: EpisodeId,
+    /// Reporting task label.
+    pub task: String,
+    /// Dataset/source label.
+    pub source: String,
+}
+
+/// One ordered page of agentic task descriptors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticEpisodePage {
+    /// Episodes in canonical evaluator order.
+    pub items: Vec<AgenticEpisode>,
+    /// Offset for the next page request.
+    pub next_offset: usize,
+    /// Whether every selected episode has been returned.
+    pub done: bool,
+}
+
+/// One evaluator-authored inference call awaiting ordinary Rust dispatch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticModelCall {
+    /// Parent task episode.
+    pub episode_id: EpisodeId,
+    /// Opaque call correlation ID.
+    pub call_id: ModelCallId,
+    /// Zero-based model-call index within the episode.
+    pub turn_index: usize,
+    /// Flat prompt used by completion endpoints and token accounting.
+    pub prompt: String,
+    /// Full evaluator-authored message history.
+    pub messages: Vec<EvaluatorMessage>,
+    /// Canonical generation controls.
+    pub generation: EvaluatorGenerationConfig,
+    /// Optional OpenAI-compatible tool schemas.
+    #[serde(default)]
+    pub tools: Vec<Value>,
+    /// Optional OpenAI-compatible tool-choice value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<Value>,
+    /// Optional OpenAI-compatible response-format value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<Value>,
+}
+
+/// Rust inference terminal classification returned to the evaluator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgenticInferenceStatus {
+    /// Normal terminal response is available.
+    Completed,
+    /// Transport/provider dispatch failed.
+    Failed,
+    /// Rust scheduling policy cancelled the request.
+    Cancelled,
+}
+
+/// Terminal Rust inference data used to resume one evaluator-owned agent loop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticModelResult {
+    /// Parent task episode.
+    pub episode_id: EpisodeId,
+    /// Submitted model call.
+    pub call_id: ModelCallId,
+    /// Explicit terminal status.
+    pub status: AgenticInferenceStatus,
+    /// Parsed assistant response, including any partial text on failure.
+    pub response: String,
+    /// Optional parsed reasoning channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// Authoritative prompt-token usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    /// Authoritative completion-token usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    /// Prompt tokens served from cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    /// Provider response ID used by stateful endpoint dialects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    /// Endpoint-normalized finish reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
+    /// Infrastructure error category for non-completed calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    /// Infrastructure error detail for non-completed calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+/// Canonical terminal classification for one harness episode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgenticEpisodeOutcome {
+    /// Harness verification completed and rewards are available.
+    Completed,
+    /// Environment, harness, verifier, or inference infrastructure failed.
+    InfrastructureError,
+    /// Rust explicitly cancelled the episode.
+    Cancelled,
+}
+
+/// Complete canonical result for one agentic task episode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticEpisodeResult {
+    /// Opaque evaluator-owned episode ID.
+    pub episode_id: EpisodeId,
+    /// Reporting task label.
+    pub task: String,
+    /// Terminal episode classification.
+    pub outcome: AgenticEpisodeOutcome,
+    /// All finite verifier rewards keyed by canonical name.
+    pub rewards: BTreeMap<String, f64>,
+    /// Reward selected as the report's primary score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_reward: Option<String>,
+    /// End-to-end harness wall time.
+    pub duration_seconds: f64,
+    /// Number of Rust model calls made by the episode.
+    pub model_calls: usize,
+    /// Aggregate prompt tokens reported by Rust.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    /// Aggregate completion tokens reported by Rust.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    /// Aggregate cached prompt tokens reported by Rust.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    /// Infrastructure/cancellation error category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    /// Infrastructure/cancellation error detail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    /// Harness artifact directory for this episode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+}
+
+/// One state transition produced by the evaluator-owned harness.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgenticEvaluatorEvent {
+    /// A model call is ready for Rust's ordinary inference pipeline.
+    ModelCall {
+        /// Complete model-safe call authored by the agent scaffold.
+        call: AgenticModelCall,
+    },
+    /// One task episode reached verifier or infrastructure terminal.
+    EpisodeCompleted {
+        /// Canonical harness/verifier result.
+        result: AgenticEpisodeResult,
+    },
+}
+
+/// Batch returned by bounded agentic-event polling.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticEventBatch {
+    /// Ready state transitions, possibly empty after a poll timeout.
+    pub events: Vec<AgenticEvaluatorEvent>,
+}
+
+/// Canonical results returned after every selected episode reaches terminal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticResultBatch {
+    /// Results in frozen dataset order.
+    pub items: Vec<AgenticEpisodeResult>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum WorkerRequest<'a> {
@@ -250,6 +577,37 @@ pub(crate) enum WorkerRequest<'a> {
         id: u64,
         items: &'a [EvaluatorGradeItem],
     },
+    LoadAgentic {
+        id: u64,
+        dataset: &'a str,
+        model: &'a str,
+        config: &'a AgenticEvaluatorLoadConfig,
+    },
+    NextEpisodes {
+        id: u64,
+        offset: usize,
+        limit: usize,
+    },
+    StartEpisodes {
+        id: u64,
+        episode_ids: &'a [EpisodeId],
+    },
+    PollAgentic {
+        id: u64,
+        limit: usize,
+        wait_ms: u64,
+    },
+    SubmitModelResults {
+        id: u64,
+        items: &'a [AgenticModelResult],
+    },
+    CancelEpisodes {
+        id: u64,
+        episode_ids: &'a [EpisodeId],
+    },
+    FinishAgentic {
+        id: u64,
+    },
     Shutdown {
         id: u64,
     },
@@ -262,6 +620,13 @@ impl WorkerRequest<'_> {
             | Self::Load { id, .. }
             | Self::NextProblems { id, .. }
             | Self::GradeBatch { id, .. }
+            | Self::LoadAgentic { id, .. }
+            | Self::NextEpisodes { id, .. }
+            | Self::StartEpisodes { id, .. }
+            | Self::PollAgentic { id, .. }
+            | Self::SubmitModelResults { id, .. }
+            | Self::CancelEpisodes { id, .. }
+            | Self::FinishAgentic { id }
             | Self::Shutdown { id } => *id,
         }
     }
@@ -291,4 +656,22 @@ pub(crate) struct WorkerRemoteError {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ShutdownResult {
     pub(crate) shutdown: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StartedEpisodesResult {
+    pub(crate) started: Vec<EpisodeId>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AcceptedModelResults {
+    pub(crate) accepted: Vec<ModelCallId>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CancelledEpisodesResult {
+    pub(crate) cancelled: Vec<EpisodeId>,
 }

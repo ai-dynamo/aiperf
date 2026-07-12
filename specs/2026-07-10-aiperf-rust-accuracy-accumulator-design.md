@@ -272,3 +272,36 @@ deleted. `aiperf::accuracy::AccuracyRecordProcessor` only captures terminal text
 and timestamps through the generic `TurnRecordProcessor` seam; it cannot grade
 or dispatch. The existing `aiperf-metrics` accumulator/analyzer remains the
 trusted Rust owner of aggregation over canonical worker results.
+
+## Addendum — 2026-07-11 (stateful agentic evaluator boundary)
+
+The preceding fixed `load` → `next_problems` → `grade_batch` operation list is
+complete for single-response benchmarks but cannot express an agent that
+alternates model inference with evaluator-owned environment work. The evaluator
+control plane therefore now also has an optional, capability-gated stateful
+contract: `load_agentic`, `next_episodes`, `start_episodes`, `poll_agentic`,
+`submit_model_results`, `cancel_episodes`, and `finish_agentic`.
+
+This does not move dispatch into accuracy. `AgenticEvaluator` publishes
+model-safe calls with opaque episode/call IDs and waits for terminal results;
+the future application adapter must issue each call through the ordinary Rust
+`ScheduledRuntime` / `TurnDispatcher` / transport path. Python owns the task,
+agent scaffold, environment, trajectory, and verifier. Inference failures are
+returned explicitly and become episode infrastructure failures rather than
+incorrect answers.
+
+The first concrete harness adapter is pinned `harbor==0.18.0`. A queue-backed
+`AIPerfCallbackLLM` implements Harbor's `BaseLLM` interface and is injected into
+the canonical Terminus-2 scaffold, so Harbor never contacts the inference
+server. The worker records exact Harbor and Python package versions, a digest of
+all AIPerf evaluator sources, the fully hashed agentic dependency lock, Harbor's
+installed source digest, the resolved immutable dataset revision, environment,
+agent, verifier, and optional container digest. Harbor task packages retain
+their own setup and verifier semantics; AIPerf does not reproduce SWE-bench or
+any other task's scorer.
+
+As of this addendum's first implementation commit, the stateful Python/Rust
+protocol and Harbor callback adapter are built and tested. The application
+`Workload` adapter, CLI/report surface, and real task-container end-to-end proof
+remain explicitly unbuilt; the protocol alone must not be described as a
+working agentic benchmark run.

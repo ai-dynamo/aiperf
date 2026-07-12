@@ -147,6 +147,13 @@ accuracy = [
     # recipe ships.
     "deepeval>=2.9.0,<5.0.0",
 ]
+agentic-accuracy = [
+    # Harbor is the canonical task/environment/verifier substrate for agentic
+    # evaluations. Its 0.x APIs move quickly, so the worker imports only this
+    # exact release and records the fully hashed lock in every report.
+    # Harbor requires Python 3.12; static accuracy remains available on 3.11.
+    "harbor==0.18.0; python_version >= '3.12'",
+]
 
 [dependency-groups]
 dev = [
