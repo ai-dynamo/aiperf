@@ -7,7 +7,7 @@ use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
 use axum::{
-    Router,
+    Json, Router,
     http::header,
     response::IntoResponse,
     routing::{get, post},
@@ -63,16 +63,18 @@ fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
         "run": {
             "identity": {"benchmark_id": "online-v2-invalid-graph"},
             "artifact_target": artifact_target,
-            "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat",
-                "urls": ["http://127.0.0.1:1"],
-                "streaming": true,
-                "wait_for_model_timeout": 0.0,
-                "wait_for_model_interval": 5.0,
-                "wait_for_model_mode": "inference"
-            }]},
+            "resources": {
+                "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://127.0.0.1:1"],
+                    "streaming": true,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                }]}
+            },
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 1,
@@ -102,10 +104,7 @@ fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
                     "sessions": 1,
                     "concurrency": 1
                 }]
-            }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            }}
         }
     });
     let output = run_child(request, &[]);
@@ -143,6 +142,100 @@ async fn chat() -> impl IntoResponse {
         "data: [DONE]\n\n",
     );
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
+}
+
+async fn kserve_v1_predict(Json(payload): Json<Value>) -> impl IntoResponse {
+    let text = payload["instances"][0]["text"].as_str().unwrap();
+    assert!(!text.is_empty());
+    Json(json!({"predictions": [{"output": "answer"}]}))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
+    let app = Router::new().route("/v1/models/fixture-model:predict", post(kserve_v1_predict));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let capabilities = capabilities();
+    assert!(
+        capabilities["supported_pairs"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(["online_http", "scheduled"]))
+    );
+    let artifacts = tempfile::tempdir().unwrap();
+    let artifact_target = artifacts.path().join("kserve-v1-run");
+    let request = json!({
+        "protocol_version": 2,
+        "operation": "execute",
+        "expected_distribution_id": capabilities["distribution_id"],
+        "run": {
+            "identity": {"benchmark_id": "online-v2-kserve-v1", "random_seed": 9},
+            "artifact_target": artifact_target,
+            "resources": {
+                "models": {"items": [{"name": "fixture-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "kserve_v1_predict",
+                    "urls": [format!("http://{address}")],
+                    "streaming": false,
+                    "wait_for_model_timeout": 0.0
+                }]}
+            },
+            "backend": {"type": "online_http", "config": {}},
+            "workload": {"type": "scheduled", "config": {
+                "worker_count": 1,
+                "dataset": {
+                    "type": "synthetic",
+                    "entries": 1,
+                    "sampling": "sequential",
+                    "prompts": {
+                        "isl": {"value": 4.0},
+                        "osl": {"value": 1.0}
+                    }
+                },
+                "tokenizer": {
+                    "name": "cl100k_base",
+                    "revision": "main",
+                    "trust_remote_code": false,
+                    "apply_chat_template": false
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "requests": 1,
+                    "concurrency": 1
+                }]
+            }}
+        }
+    });
+    let output = tokio::task::spawn_blocking(move || run_child(request, &[]))
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(terminal["protocol_version"], 2);
+    assert_eq!(terminal["success"], true);
+    assert_eq!(terminal["provenance"]["backend"], "online_http");
+    assert_eq!(terminal["provenance"]["workload"], "scheduled");
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        report["run"]["endpoint_profiles"],
+        json!([{"profile_id": "default", "endpoint_id": "kserve_v1_predict"}])
+    );
+    assert_eq!(
+        report["metrics"]["request_count"]["series"][0]["stats"]["total"], 1.0,
+        "report={report}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -183,29 +276,31 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
         "run": {
             "identity": {"benchmark_id": "online-v2-graph", "random_seed": 7},
             "artifact_target": artifact_target,
-            "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
-            "endpoints": {"profiles": [
-                {
-                    "id": "judge",
-                    "type": "chat_completions",
-                    "urls": [endpoint],
-                    "streaming": true,
-                    "use_server_token_count": true,
-                    "wait_for_model_timeout": 0.0,
-                    "wait_for_model_interval": 5.0,
-                    "wait_for_model_mode": "inference"
-                },
-                {
-                    "id": "default",
-                    "type": "chat",
-                    "urls": [endpoint],
-                    "streaming": true,
-                    "use_server_token_count": true,
-                    "wait_for_model_timeout": 0.0,
-                    "wait_for_model_interval": 5.0,
-                    "wait_for_model_mode": "inference"
-                }
-            ]},
+            "resources": {
+                "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
+                "endpoints": {"profiles": [
+                    {
+                        "id": "judge",
+                        "type": "chat_completions",
+                        "urls": [endpoint],
+                        "streaming": true,
+                        "use_server_token_count": true,
+                        "wait_for_model_timeout": 0.0,
+                        "wait_for_model_interval": 5.0,
+                        "wait_for_model_mode": "inference"
+                    },
+                    {
+                        "id": "default",
+                        "type": "chat",
+                        "urls": [endpoint],
+                        "streaming": true,
+                        "use_server_token_count": true,
+                        "wait_for_model_timeout": 0.0,
+                        "wait_for_model_interval": 5.0,
+                        "wait_for_model_mode": "inference"
+                    }
+                ]}
+            },
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 1,
@@ -234,10 +329,7 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
                     "sessions": 1,
                     "concurrency": 1
                 }]
-            }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            }}
         }
     });
     let output = tokio::task::spawn_blocking(move || {

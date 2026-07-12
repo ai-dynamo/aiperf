@@ -263,8 +263,13 @@ def test_runner_installation_preflights_every_fixed_plan_endpoint() -> None:
     )
     plan = SimpleNamespace(
         configs=[
-            SimpleNamespace(endpoint=SimpleNamespace(type="chat")),
-            SimpleNamespace(endpoint=SimpleNamespace(type="future_compiled_endpoint")),
+            SimpleNamespace(
+                endpoint=SimpleNamespace(type="chat"), endpoint_profiles={}
+            ),
+            SimpleNamespace(
+                endpoint=SimpleNamespace(type="future_compiled_endpoint"),
+                endpoint_profiles={},
+            ),
         ]
     )
 
@@ -452,3 +457,39 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         narrowed[field].remove(value)
         with pytest.raises(RuntimeError, match=rf"{field}\.{value}"):
             runner_installation._require_request_capabilities(narrowed, request)
+
+
+def test_v2_request_capabilities_read_endpoint_profiles_from_resources() -> None:
+    capabilities = {
+        "supported_pairs": [["online_grpc", "scheduled"]],
+        "endpoint_types": ["kserve_v2_infer"],
+    }
+    request = {
+        "run": {
+            "backend": {"type": "online_grpc"},
+            "workload": {"type": "scheduled"},
+            "resources": {
+                "endpoints": {
+                    "profiles": [{"id": "default", "type": "kserve_v2_infer"}]
+                }
+            },
+        }
+    }
+
+    runner_installation._require_v2_request_capabilities(capabilities, request)
+
+
+def test_v2_request_capabilities_defer_resource_presence_to_workload_registry() -> None:
+    capabilities = {
+        "supported_pairs": [["telemetry_archive", "telemetry_watch"]],
+        "endpoint_types": [],
+    }
+    request = {
+        "run": {
+            "backend": {"type": "telemetry_archive"},
+            "workload": {"type": "telemetry_watch"},
+            "resources": {},
+        }
+    }
+
+    runner_installation._require_v2_request_capabilities(capabilities, request)

@@ -39,12 +39,6 @@ fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Va
                 "random_seed": 17
             },
             "artifact_target": artifact_target,
-            "models": {"items": [{"name": "mock-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat_completions",
-                "urls": ["http://127.0.0.1:9"]
-            }]},
             "backend": {
                 "type": "dynamo_offline",
                 "config": {
@@ -103,9 +97,17 @@ fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Va
                     }]
                 }
             },
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            "resources": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat_completions",
+                    "urls": ["http://127.0.0.1:9"]
+                }]},
+                "metrics": {},
+                "artifacts": {},
+                "sidecars": {}
+            }
         }
     })
 }

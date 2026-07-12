@@ -355,17 +355,19 @@ fn v2_scheduled_run_uses_injected_remote_turn_placement() {
         json!({
             "identity": {"benchmark_id": "v2-remote-turn-placement", "random_seed": 17},
             "artifact_target": artifact_target,
-            "models": {"items": [{"name": "remote-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "kserve_v1_predict",
-                "urls": ["http://must-not-be-contacted.invalid"],
-                "streaming": false,
-                "use_server_token_count": true,
-                "wait_for_model_timeout": 1.0,
-                "wait_for_model_interval": 0.01,
-                "wait_for_model_mode": "models"
-            }]},
+            "resources": {
+                "models": {"items": [{"name": "remote-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "kserve_v1_predict",
+                    "urls": ["http://must-not-be-contacted.invalid"],
+                    "streaming": false,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 1.0,
+                    "wait_for_model_interval": 0.01,
+                    "wait_for_model_mode": "models"
+                }]}
+            },
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 3,
@@ -391,10 +393,7 @@ fn v2_scheduled_run_uses_injected_remote_turn_placement() {
                     "requests": 3,
                     "concurrency": 2
                 }]
-            }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            }}
         }),
     );
 
@@ -432,15 +431,17 @@ fn v2_graph_run_uses_injected_whole_trace_placement() {
         json!({
             "identity": {"benchmark_id": "v2-remote-graph-placement", "random_seed": 19},
             "artifact_target": artifact_target,
-            "models": {"items": [{"name": "remote-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat",
-                "urls": ["http://must-not-be-contacted.invalid"],
-                "streaming": true,
-                "use_server_token_count": true,
-                "wait_for_model_timeout": 0.0
-            }]},
+            "resources": {
+                "models": {"items": [{"name": "remote-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://must-not-be-contacted.invalid"],
+                    "streaming": true,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 0.0
+                }]}
+            },
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 3,
@@ -469,10 +470,7 @@ fn v2_graph_run_uses_injected_whole_trace_placement() {
                     "sessions": 1,
                     "concurrency": 1
                 }]
-            }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            }}
         }),
     );
 
@@ -499,15 +497,17 @@ fn v2_backend_shutdown_runs_after_pre_artifact_origin_failure() {
         json!({
             "identity": {"benchmark_id": "v2-origin-failure", "random_seed": 23},
             "artifact_target": artifact_target,
-            "models": {"items": [{"name": "remote-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat",
-                "urls": ["http://must-not-be-contacted.invalid"],
-                "streaming": true,
-                "use_server_token_count": true,
-                "wait_for_model_timeout": 0.0
-            }]},
+            "resources": {
+                "models": {"items": [{"name": "remote-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://must-not-be-contacted.invalid"],
+                    "streaming": true,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 0.0
+                }]}
+            },
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
@@ -533,10 +533,7 @@ fn v2_backend_shutdown_runs_after_pre_artifact_origin_failure() {
                     "requests": 1,
                     "concurrency": 1
                 }]
-            }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            }}
         }),
     );
 

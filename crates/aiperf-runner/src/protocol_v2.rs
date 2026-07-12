@@ -151,31 +151,138 @@ impl RunnerEnvelopeV2 {
 }
 
 /// Authored identity and runner-owned execution inputs for one run.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// The wire shape places optional product resources under one strict
+/// `resources` object. Concrete values are retained in flat resolved fields so
+/// established prepared pair implementations cannot accidentally decode the
+/// authored JSON a second time; [`Self::resource_is_present`] preserves the
+/// required/optional/forbidden distinction for workload validation.
 pub struct AuthoredRunSpecV2 {
     /// Stable identity projected from the outer orchestrator.
     pub identity: RunIdentitySpecV2,
     /// Exclusive artifact target selected but not yet created by Python.
     pub artifact_target: PathBuf,
-    /// Model-selection policy.
+    /// Resolved model-selection policy; empty only when the resource was absent.
     pub models: ModelsSpec,
-    /// Raw endpoint profiles decoded by registered endpoint factories.
+    /// Resolved endpoint profiles; empty only when the resource was absent.
     pub endpoints: EndpointProfilesSpecV2,
     /// Open backend selection.
     pub backend: NamedRunnerComponentSpecV2,
     /// Open workload selection.
     pub workload: NamedRunnerComponentSpecV2,
-    /// Native metrics policy shared by workload implementations.
-    #[serde(default)]
+    /// Resolved native metrics policy.
     pub metrics: MetricsSpec,
     /// Runner-owned artifact policy.
-    #[serde(default)]
     pub artifacts: ArtifactSpecV2,
     /// Optional supervised sidecars, retained raw until their native factory
     /// performs its strict decode.
-    #[serde(default)]
     pub sidecars: SidecarSpecV2,
+    resource_presence: ResourcePresenceV2,
+}
+
+/// Optional authored resources classified by the selected workload factory.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRunResourcesV2 {
+    /// Inference model-selection policy.
+    #[serde(default)]
+    pub models: Option<ModelsSpec>,
+    /// Inference endpoint profiles.
+    #[serde(default)]
+    pub endpoints: Option<EndpointProfilesSpecV2>,
+    /// Native metric aggregation policy.
+    #[serde(default)]
+    pub metrics: Option<MetricsSpec>,
+    /// Generic runner-owned artifact policy.
+    #[serde(default)]
+    pub artifacts: Option<ArtifactSpecV2>,
+    /// Optional prepared telemetry/process sidecars.
+    #[serde(default)]
+    pub sidecars: Option<SidecarSpecV2>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoredRunWireV2 {
+    identity: RunIdentitySpecV2,
+    artifact_target: PathBuf,
+    backend: NamedRunnerComponentSpecV2,
+    workload: NamedRunnerComponentSpecV2,
+    #[serde(default)]
+    resources: AuthoredRunResourcesV2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ResourcePresenceV2 {
+    models: bool,
+    endpoints: bool,
+    metrics: bool,
+    artifacts: bool,
+    sidecars: bool,
+}
+
+impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = AuthoredRunWireV2::deserialize(deserializer)?;
+        let resource_presence = ResourcePresenceV2 {
+            models: wire.resources.models.is_some(),
+            endpoints: wire.resources.endpoints.is_some(),
+            metrics: wire.resources.metrics.is_some(),
+            artifacts: wire.resources.artifacts.is_some(),
+            sidecars: wire.resources.sidecars.is_some(),
+        };
+        Ok(Self {
+            identity: wire.identity,
+            artifact_target: wire.artifact_target,
+            models: wire.resources.models.unwrap_or_else(empty_models),
+            endpoints: wire.resources.endpoints.unwrap_or_default(),
+            backend: wire.backend,
+            workload: wire.workload,
+            metrics: wire.resources.metrics.unwrap_or_default(),
+            artifacts: wire.resources.artifacts.unwrap_or_default(),
+            sidecars: wire.resources.sidecars.unwrap_or_default(),
+            resource_presence,
+        })
+    }
+}
+
+fn empty_models() -> ModelsSpec {
+    ModelsSpec {
+        strategy: ModelSelectionStrategy::RoundRobin,
+        items: Vec::new(),
+    }
+}
+
+/// Resource fields whose presence is workload-classified.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum RunResourceV2 {
+    /// Model-selection policy.
+    Models,
+    /// Endpoint profiles.
+    Endpoints,
+    /// Native metrics policy.
+    Metrics,
+    /// Generic artifact policy.
+    Artifacts,
+    /// Sidecar resources.
+    Sidecars,
+}
+
+impl RunResourceV2 {
+    /// Stable authored field name.
+    #[must_use]
+    pub const fn field_name(self) -> &'static str {
+        match self {
+            Self::Models => "models",
+            Self::Endpoints => "endpoints",
+            Self::Metrics => "metrics",
+            Self::Artifacts => "artifacts",
+            Self::Sidecars => "sidecars",
+        }
+    }
 }
 
 impl AuthoredRunSpecV2 {
@@ -189,18 +296,36 @@ impl AuthoredRunSpecV2 {
             !self.artifact_target.as_os_str().is_empty(),
             "artifact_target cannot be empty"
         );
-        ensure!(
-            !self.models.items.is_empty(),
-            "at least one model is required"
-        );
-        self.endpoints.validate_outer()?;
         self.backend.validate_outer("backend")?;
         self.workload.validate_outer("workload")?;
-        validate_models(&self.models)?;
-        validate_metrics(&self.metrics)?;
-        self.artifacts.validate_outer()?;
-        self.sidecars.validate_outer()?;
+        if self.resource_is_present(RunResourceV2::Models) {
+            validate_models(&self.models)?;
+        }
+        if self.resource_is_present(RunResourceV2::Endpoints) {
+            self.endpoints.validate_outer()?;
+        }
+        if self.resource_is_present(RunResourceV2::Metrics) {
+            validate_metrics(&self.metrics)?;
+        }
+        if self.resource_is_present(RunResourceV2::Artifacts) {
+            self.artifacts.validate_outer()?;
+        }
+        if self.resource_is_present(RunResourceV2::Sidecars) {
+            self.sidecars.validate_outer()?;
+        }
         Ok(())
+    }
+
+    /// Whether one resource block was explicitly present on the wire.
+    #[must_use]
+    pub const fn resource_is_present(&self, resource: RunResourceV2) -> bool {
+        match resource {
+            RunResourceV2::Models => self.resource_presence.models,
+            RunResourceV2::Endpoints => self.resource_presence.endpoints,
+            RunResourceV2::Metrics => self.resource_presence.metrics,
+            RunResourceV2::Artifacts => self.resource_presence.artifacts,
+            RunResourceV2::Sidecars => self.resource_presence.sidecars,
+        }
     }
 }
 
@@ -303,7 +428,7 @@ impl NamedRunnerComponentSpecV2 {
 }
 
 /// Authored endpoint profiles shared by every backend/workload pair.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointProfilesSpecV2 {
     /// Non-empty raw profiles. Each object must carry `id` and `type`; the
@@ -627,17 +752,19 @@ mod tests {
             "run": {
                 "identity": {"benchmark_id": "run-1"},
                 "artifact_target": "/tmp/not-created",
-                "models": {"items": [{"name": "model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
-                    "type": "future_endpoint",
-                    "extension_field": {"kept": true}
-                }]},
                 "backend": {"type": "future_backend", "config": {"node": 7}},
                 "workload": {"type": "future_workload", "config": {"mode": "x"}},
-                "metrics": {},
-                "artifacts": {},
-                "sidecars": {}
+                "resources": {
+                    "models": {"items": [{"name": "model"}]},
+                    "endpoints": {"profiles": [{
+                        "id": "default",
+                        "type": "future_endpoint",
+                        "extension_field": {"kept": true}
+                    }]},
+                    "metrics": {},
+                    "artifacts": {},
+                    "sidecars": {}
+                }
             }
         })
     }
@@ -683,8 +810,8 @@ mod tests {
     #[test]
     fn duplicate_endpoint_profile_ids_fail_static_validation() {
         let mut value = request();
-        let duplicate = value["run"]["endpoints"]["profiles"][0].clone();
-        value["run"]["endpoints"]["profiles"]
+        let duplicate = value["run"]["resources"]["endpoints"]["profiles"][0].clone();
+        value["run"]["resources"]["endpoints"]["profiles"]
             .as_array_mut()
             .unwrap()
             .push(duplicate);
@@ -708,11 +835,36 @@ mod tests {
     #[test]
     fn artifact_paths_reject_dot_components_and_alias_collisions() {
         let mut value = request();
-        value["run"]["artifacts"] = serde_json::json!({
+        value["run"]["resources"]["artifacts"] = serde_json::json!({
             "records_path": "./records.jsonl"
         });
         let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
         let error = decoded.validate_outer().unwrap_err().to_string();
         assert!(error.contains("normal relative path components"), "{error}");
+    }
+
+    #[test]
+    fn empty_resource_block_is_intentional_and_flat_legacy_fields_fail() {
+        let mut value = request();
+        value["run"]["resources"] = serde_json::json!({});
+        let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
+        decoded.validate_outer().unwrap();
+        for resource in [
+            RunResourceV2::Models,
+            RunResourceV2::Endpoints,
+            RunResourceV2::Metrics,
+            RunResourceV2::Artifacts,
+            RunResourceV2::Sidecars,
+        ] {
+            assert!(!decoded.run.resource_is_present(resource));
+        }
+
+        let mut legacy = request();
+        legacy["run"]["models"] = legacy["run"]["resources"]["models"].take();
+        let error = serde_json::from_value::<RunnerEnvelopeV2>(legacy)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("unknown field `models`"), "{error}");
     }
 }

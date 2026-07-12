@@ -128,12 +128,6 @@ fn envelope(
                 "random_seed": 41
             },
             "artifact_target": artifact_target,
-            "models": {"items": [{"name": "mock-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat_completions",
-                "urls": ["http://127.0.0.1:9"]
-            }]},
             "backend": {
                 "type": "dynamo_offline",
                 "config": {
@@ -158,12 +152,20 @@ fn envelope(
                     "phases": phases
                 }
             },
-            "metrics": {
-                "slice_duration_seconds": 0.1,
-                "slos": {"request_latency": 1000.0}
-            },
-            "artifacts": {},
-            "sidecars": {}
+            "resources": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat_completions",
+                    "urls": ["http://127.0.0.1:9"]
+                }]},
+                "metrics": {
+                    "slice_duration_seconds": 0.1,
+                    "slos": {"request_latency": 1000.0}
+                },
+                "artifacts": {},
+                "sidecars": {}
+            }
         }
     })
 }

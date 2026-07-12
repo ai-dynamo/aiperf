@@ -731,24 +731,26 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
         "run": {
             "identity": {"benchmark_id": "agentic-v2-stdio"},
             "artifact_target": artifact_target.clone(),
-            "models": {"items": [{"name": "primary-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat_completions",
-                "urls": [server.base_url.clone()],
-                "streaming": true,
-                "use_legacy_max_tokens": false,
-                "use_server_token_count": true,
-                "timeout_seconds": 30.0,
-                "connection_reuse": "pooled",
-                "download_video_content": false,
-                "extra": {},
-                "headers": {},
-                "http2": false,
-                "wait_for_model_timeout": 0.0,
-                "wait_for_model_interval": 5.0,
-                "wait_for_model_mode": "inference"
-            }]},
+            "resources": {
+                "models": {"items": [{"name": "primary-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat_completions",
+                    "urls": [server.base_url.clone()],
+                    "streaming": true,
+                    "use_legacy_max_tokens": false,
+                    "use_server_token_count": true,
+                    "timeout_seconds": 30.0,
+                    "connection_reuse": "pooled",
+                    "download_video_content": false,
+                    "extra": {},
+                    "headers": {},
+                    "http2": false,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                }]}
+            },
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "agentic", "config": {
                 "worker_count": 2,
@@ -774,10 +776,7 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
                 "max_tokens": 64,
                 "context_window": 4096,
                 "inference_gateway_host": "127.0.0.1"
-            }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            }}
         }
     });
 

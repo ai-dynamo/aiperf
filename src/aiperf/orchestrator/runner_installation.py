@@ -645,7 +645,12 @@ def _require_v2_request_capabilities(
             capabilities, backend["type"], workload
         )
 
-    endpoints = run.get("endpoints")
+    resources = run.get("resources")
+    if not isinstance(resources, dict):
+        raise ValueError("protocol-v2 request omitted run.resources")
+    endpoints = resources.get("endpoints")
+    if endpoints is None:
+        return
     profiles = endpoints.get("profiles") if isinstance(endpoints, dict) else None
     if not isinstance(profiles, list) or not profiles:
         raise ValueError("protocol-v2 request requires at least one endpoint profile")

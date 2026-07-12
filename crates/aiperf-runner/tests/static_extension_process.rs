@@ -70,14 +70,6 @@ fn envelope(artifact_dir: &Path) -> RunnerEnvelopeV2 {
                 "random_seed": 37
             },
             "artifact_target": artifact_dir,
-            "models": {"items": [{"name": "extension-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": PREPARED_ONLY_ENDPOINT_ID,
-                "urls": ["http://must-not-be-contacted.invalid"],
-                "streaming": true,
-                "use_server_token_count": true
-            }]},
             "backend": {
                 "type": "dynamo_offline",
                 "config": {}
@@ -124,9 +116,19 @@ fn envelope(artifact_dir: &Path) -> RunnerEnvelopeV2 {
                     ]
                 }
             },
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            "resources": {
+                "models": {"items": [{"name": "extension-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": PREPARED_ONLY_ENDPOINT_ID,
+                    "urls": ["http://must-not-be-contacted.invalid"],
+                    "streaming": true,
+                    "use_server_token_count": true
+                }]},
+                "metrics": {},
+                "artifacts": {},
+                "sidecars": {}
+            }
         }
     }))
     .expect("fixture envelope is valid")

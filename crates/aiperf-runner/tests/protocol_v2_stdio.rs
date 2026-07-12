@@ -25,24 +25,6 @@ fn request(operation: &str, distribution_id: &str) -> Value {
         "run": {
             "identity": {"benchmark_id": "v2-process-proof"},
             "artifact_target": "/tmp/aiperf-v2-never-created",
-            "models": {"items": [{"name": "mock-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat",
-                "urls": ["http://127.0.0.1:9"],
-                "streaming": true,
-                "use_legacy_max_tokens": false,
-                "use_server_token_count": true,
-                "timeout_seconds": 10.0,
-                "connection_reuse": "pooled",
-                "download_video_content": false,
-                "extra": {},
-                "headers": {},
-                "http2": false,
-                "wait_for_model_timeout": 0.0,
-                "wait_for_model_interval": 5.0,
-                "wait_for_model_mode": "inference"
-            }]},
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
@@ -55,11 +37,44 @@ fn request(operation: &str, distribution_id: &str) -> Value {
                     "concurrency": 1
                 }]
             }},
-            "metrics": {},
-            "artifacts": {},
-            "sidecars": {}
+            "resources": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://127.0.0.1:9"],
+                    "streaming": true,
+                    "use_legacy_max_tokens": false,
+                    "use_server_token_count": true,
+                    "timeout_seconds": 10.0,
+                    "connection_reuse": "pooled",
+                    "download_video_content": false,
+                    "extra": {},
+                    "headers": {},
+                    "http2": false,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                }]},
+                "metrics": {},
+                "artifacts": {},
+                "sidecars": {}
+            }
         }
     })
+}
+
+fn unregistered_pair_request(operation: &str, distribution_id: &str) -> Value {
+    let mut request = request(operation, distribution_id);
+    request["run"]["backend"]["type"] = json!("online_grpc");
+    request["run"]["workload"]["type"] = json!("graph");
+    request["run"]["workload"]["config"]["dataset"] = json!({
+        "type": "file",
+        "format": "dag_jsonl",
+        "sampling": "sequential",
+        "records": []
+    });
+    request
 }
 
 fn run(request: &Value) -> Output {
@@ -117,11 +132,11 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
             .contains(&json!(["online_http", "scheduled"]))
     );
     assert!(
-        !capabilities["supported_pairs"]
+        capabilities["supported_pairs"]
             .as_array()
             .unwrap()
             .contains(&json!(["online_http", "scheduled"])),
-        "protocol-v1 reachability must not masquerade as protocol-v2 execution support"
+        "the protocol-v2 scheduled adapter must be product-reachable"
     );
     assert!(
         capabilities["supported_pairs"]
@@ -135,7 +150,7 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
 #[test]
 fn validate_emits_one_typed_failure_for_a_recognized_but_unregistered_pair() {
     let capabilities = runner_capabilities();
-    let output = run(&request(
+    let output = run(&unregistered_pair_request(
         "validate",
         capabilities["distribution_id"].as_str().unwrap(),
     ));
@@ -197,7 +212,7 @@ fn unknown_v2_fields_fail_as_protocol_errors_without_side_effects() {
 #[test]
 fn execute_uses_typed_terminal_and_validation_exit_one() {
     let capabilities = runner_capabilities();
-    let output = run(&request(
+    let output = run(&unregistered_pair_request(
         "execute",
         capabilities["distribution_id"].as_str().unwrap(),
     ));
