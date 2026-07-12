@@ -347,9 +347,8 @@ impl<'de> Deserialize<'de> for TelemetryWatchConfigV2 {
 }
 
 impl TelemetryWatchConfigV2 {
-    /// Performs side-effect-free strict workload validation.
-    pub fn validate_static(&self, artifact_target: &Path) -> Result<()> {
-        validate_absolute_normal_path(artifact_target, "artifact_target")?;
+    /// Performs side-effect-free strict workload-local validation.
+    pub fn validate_workload_static(&self) -> Result<()> {
         match self {
             Self::Collect {
                 duration_ns,
@@ -383,10 +382,6 @@ impl TelemetryWatchConfigV2 {
                     archive.admission.id.as_str() == "primary_durable",
                     "standalone telemetry_watch requires primary_durable admission"
                 );
-                ensure!(
-                    archive.local_spool != artifact_target,
-                    "archive.local_spool must not alias artifact_target"
-                );
             }
             Self::FinalizeRemote {
                 shutdown_timeout_ns,
@@ -397,13 +392,29 @@ impl TelemetryWatchConfigV2 {
                     "telemetry_watch shutdown_timeout_ns must be positive"
                 );
                 archive.validate_static()?;
-                ensure!(
-                    archive.local_spool != artifact_target,
-                    "archive.local_spool must not alias artifact_target"
-                );
             }
         }
         Ok(())
+    }
+
+    /// Validates run-level path safety once the common artifact target is known.
+    pub fn validate_run_paths(&self, artifact_target: &Path) -> Result<()> {
+        validate_absolute_normal_path(artifact_target, "artifact_target")?;
+        let local_spool = match self {
+            Self::Collect { archive, .. } => &archive.local_spool,
+            Self::FinalizeRemote { archive, .. } => &archive.local_spool,
+        };
+        ensure!(
+            local_spool != artifact_target,
+            "archive.local_spool must not alias artifact_target"
+        );
+        Ok(())
+    }
+
+    /// Performs the complete strict workload and run-path validation.
+    pub fn validate_static(&self, artifact_target: &Path) -> Result<()> {
+        self.validate_workload_static()?;
+        self.validate_run_paths(artifact_target)
     }
 
     /// Whether this mode must prepare source/control-plane capabilities.

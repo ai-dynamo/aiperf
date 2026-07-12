@@ -80,7 +80,7 @@ impl Debug for ArchiveSourcePrepareContext {
 }
 
 /// Factory-owned validated source ready for one preparation.
-pub trait ValidatedArchiveSource: Debug + Send {
+pub trait ValidatedArchiveSource: Debug + Send + Sync {
     /// Prepare the complete already-typed driver without a concrete downcast.
     fn prepare(
         self: Box<Self>,
