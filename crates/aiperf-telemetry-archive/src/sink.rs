@@ -12,17 +12,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::path::Path;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use crate::spool::ImmutableClass;
+use crate::spool::OwnedLocalWalWriter;
 use crate::{
-    ArchiveId, ArchiveSchemasV1, ArchiveState, Digest, DurabilityFaultInjector, FrameId,
-    FrameTableProjectionV1, LocalWalWriter, ParquetPartitionBuilderV1, ParquetProjectionError,
-    ParquetRotationConfigV1, PartitionBuildOutputV1, QualifiedSpool, ReceiptError, ReceiptEventId,
-    ReceiptEventV1, ReceiptJournal, ReceiptObserverEpochId, ReceiptObserverEpochV1,
-    ReceiptTargetId, ReceiptTargetV1, SealedWalSegment, SessionId, SpoolError, WalError, WalFrame,
-    WalSegmentBuilder, WalSegmentHeaderV1, domain_digest, receipt_range_coverage,
+    ArchiveId, ArchiveSchemasV1, ArchiveState, CompositeIndexKeyV1, Digest,
+    DurabilityFaultInjector, FrameId, FrameTableProjectionV1, GenerationTransactionKind,
+    IndexMutationSetV1, LocalArchiveRepository, LocalWalWriter, ParquetPartitionBuilderV1,
+    ParquetProjectionError, ParquetRotationConfigV1, PartitionBuildOutputV1, ProjectionCoverageV1,
+    QualifiedSpool, ReceiptError, ReceiptEventId, ReceiptEventV1, ReceiptJournal,
+    ReceiptObserverEpochId, ReceiptObserverEpochV1, ReceiptTargetId, ReceiptTargetV1,
+    SealedWalSegment, SessionId, SourceFrameCodecError, SourceFrameCodecV1, SpoolError, WalError,
+    WalFrame, WalSegmentBuilder, WalSegmentHeaderV1, domain_digest, receipt_range_coverage,
 };
 
 /// One finalized WAL frame and all required table projections as one append.
@@ -32,6 +36,29 @@ pub struct ArchiveWalFrame {
     pub wal_frame: WalFrame,
     /// Exactly one projection for every table declared in the WAL header.
     pub table_projections: Vec<FrameTableProjectionV1>,
+}
+
+/// Rebuilds complete physical projections from one verified WAL payload.
+pub trait ArchiveWalFrameDecoder: Debug + Send + Sync {
+    /// Decodes without changing frame identity, ordering, or declared evidence.
+    fn decode(
+        &self,
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        frame: WalFrame,
+    ) -> Result<ArchiveWalFrame, ArchiveSinkError>;
+}
+
+impl ArchiveWalFrameDecoder for SourceFrameCodecV1 {
+    fn decode(
+        &self,
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        frame: WalFrame,
+    ) -> Result<ArchiveWalFrame, ArchiveSinkError> {
+        self.decode_source_frame(archive_id, session_id, frame)
+            .map_err(|error| ArchiveSinkError::FrameDecode(Box::new(error)))
+    }
 }
 
 /// Local durability authority returned only after a complete frame is stable.
@@ -103,6 +130,8 @@ pub struct CheckpointCompletion {
     pub durable_prefix_hash: Digest,
     /// Last durable record, absent before the first frame.
     pub last_record_seq: Option<u64>,
+    /// Installed local manifest head when this sink owns the repository transaction.
+    pub local_head: Option<crate::HeadDescriptorV1>,
 }
 
 /// Closed finalization reasons serialized by the owning runtime.
@@ -131,6 +160,8 @@ pub struct FinalizeCompletion {
     pub reason: TerminationReason,
     /// Resulting local state.
     pub archive_state: ArchiveState,
+    /// Installed terminal local head when this sink owns the repository.
+    pub local_head: Option<crate::HeadDescriptorV1>,
 }
 
 /// Narrow archive durability/physical-projection extension point.
@@ -159,6 +190,17 @@ pub trait ArchiveSink: Debug + Send {
         &mut self,
         reason: TerminationReason,
     ) -> Result<FinalizeCompletion, ArchiveSinkError>;
+
+    /// Consumes a finalized sink and transfers its still-held local repository.
+    ///
+    /// Non-local and borrowed adapters return `None`. The consuming hook keeps
+    /// the qualified spool lock continuous across collection, finalization,
+    /// and remote publication without cloning a detached authority snapshot.
+    fn into_local_repository(
+        self: Box<Self>,
+    ) -> Result<Option<LocalArchiveRepository>, ArchiveSinkError> {
+        Ok(None)
+    }
 }
 
 /// One deterministic failure injected after a memory mutation is authoritative.
@@ -251,6 +293,7 @@ impl MemoryArchiveSink {
             physical: output,
             durable_prefix_hash: wal.prefix(),
             last_record_seq: wal.last_record_seq(),
+            local_head: None,
         };
         self.checkpoint_seq = next_checkpoint_seq;
         Ok(completion)
@@ -363,6 +406,7 @@ impl ArchiveSink for MemoryArchiveSink {
             sealed_wal,
             reason,
             archive_state: self.state,
+            local_head: None,
         })
     }
 }
@@ -466,6 +510,7 @@ impl<'a> LocalParquetArchiveSink<'a> {
             physical: output,
             durable_prefix_hash: wal.durable_prefix(),
             last_record_seq: wal.last_record_seq(),
+            local_head: None,
         };
         self.checkpoint_seq = next_checkpoint_seq;
         Ok(completion)
@@ -570,7 +615,533 @@ impl ArchiveSink for LocalParquetArchiveSink<'_> {
             sealed_wal,
             reason,
             archive_state: self.state,
+            local_head: None,
         })
+    }
+}
+
+/// Receipt-journal preparation selected by an owned local sink invocation.
+#[derive(Clone, Debug)]
+pub enum OwnedReceiptJournalMode {
+    /// Do not prepare receipt recording for this sink.
+    Disabled,
+    /// Create the mandatory epoch-only receipt transaction.
+    Bootstrap(ReceiptObserverEpochV1),
+    /// Recover the journal and optionally register this execution's epoch.
+    Recover {
+        /// New execution epoch to persist before observing completions.
+        observer_epoch: Option<ReceiptObserverEpochV1>,
+    },
+}
+
+/// Prepared factory for a fully owned repository/WAL/Parquet sink.
+#[derive(Clone)]
+pub struct OwnedLocalArchiveSinkFactory {
+    schemas: ArchiveSchemasV1,
+    rotation: ParquetRotationConfigV1,
+    faults: Arc<dyn DurabilityFaultInjector>,
+}
+
+impl Debug for OwnedLocalArchiveSinkFactory {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OwnedLocalArchiveSinkFactory")
+            .field("rotation", &self.rotation)
+            .field("faults", &self.faults)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OwnedLocalArchiveSinkFactory {
+    /// Validates physical policy and captures the owned durability dependencies.
+    pub fn new(
+        schemas: ArchiveSchemasV1,
+        rotation: ParquetRotationConfigV1,
+        faults: Arc<dyn DurabilityFaultInjector>,
+    ) -> Result<Self, ArchiveSinkError> {
+        // Construction proves the rotation policy against the actual schemas.
+        ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?;
+        Ok(Self {
+            schemas,
+            rotation,
+            faults,
+        })
+    }
+
+    /// Consumes a repository and creates one WAL-backed owned sink.
+    pub fn prepare(
+        &self,
+        repository: LocalArchiveRepository,
+        header: WalSegmentHeaderV1,
+        receipt_mode: OwnedReceiptJournalMode,
+    ) -> Result<OwnedLocalArchiveSink, ArchiveSinkError> {
+        if repository.head().archive_state != ArchiveState::Open {
+            return Err(ArchiveSinkError::Finalized);
+        }
+        let archive_id = header.archive_id;
+        let session_id = header.session_id;
+        let receipts_enabled = prepare_receipt_journal(
+            repository.spool(),
+            archive_id,
+            receipt_mode,
+            self.faults.as_ref(),
+        )?;
+        let wal = repository.create_owned_wal(header, Arc::clone(&self.faults))?;
+        OwnedLocalArchiveSink::new(
+            repository,
+            wal,
+            self.schemas.clone(),
+            self.rotation,
+            Arc::clone(&self.faults),
+            archive_id,
+            session_id,
+            receipts_enabled,
+        )
+    }
+
+    /// Recovers one open WAL and rebuilds every projection not already indexed.
+    pub fn resume(
+        &self,
+        repository: LocalArchiveRepository,
+        header: WalSegmentHeaderV1,
+        maximum_frame_bytes: u64,
+        receipt_mode: OwnedReceiptJournalMode,
+        decoder: &dyn ArchiveWalFrameDecoder,
+    ) -> Result<OwnedLocalArchiveSink, ArchiveSinkError> {
+        if repository.head().archive_state != ArchiveState::Open {
+            return Err(ArchiveSinkError::Finalized);
+        }
+        let archive_id = header.archive_id;
+        let session_id = header.session_id;
+        let receipts_enabled = prepare_receipt_journal(
+            repository.spool(),
+            archive_id,
+            receipt_mode,
+            self.faults.as_ref(),
+        )?;
+        let (wal, recovered) =
+            repository.resume_owned_wal(&header, maximum_frame_bytes, Arc::clone(&self.faults))?;
+        OwnedLocalArchiveSink::from_recovered(
+            repository,
+            wal,
+            recovered.frames,
+            self.schemas.clone(),
+            self.rotation,
+            Arc::clone(&self.faults),
+            archive_id,
+            session_id,
+            receipts_enabled,
+            decoder,
+        )
+    }
+}
+
+/// Product-usable local sink owning repository, spool lock, WAL, and builders.
+pub struct OwnedLocalArchiveSink {
+    repository: LocalArchiveRepository,
+    wal: Option<OwnedLocalWalWriter>,
+    faults: Arc<dyn DurabilityFaultInjector>,
+    schemas: ArchiveSchemasV1,
+    rotation: ParquetRotationConfigV1,
+    parquet: Option<ParquetPartitionBuilderV1>,
+    pending_physical: PartitionBuildOutputV1,
+    archive_id: ArchiveId,
+    session_id: SessionId,
+    state: ArchiveState,
+    frames: Vec<WalFrame>,
+    completions: Vec<DurabilityCompletion>,
+    checkpoint_seq: u64,
+    receipts_enabled: bool,
+    poisoned: bool,
+}
+
+impl Debug for OwnedLocalArchiveSink {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OwnedLocalArchiveSink")
+            .field("archive_id", &self.archive_id)
+            .field("session_id", &self.session_id)
+            .field("state", &self.state)
+            .field("frames", &self.frames.len())
+            .field("checkpoint_seq", &self.checkpoint_seq)
+            .field("receipts_enabled", &self.receipts_enabled)
+            .field("poisoned", &self.poisoned)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OwnedLocalArchiveSink {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        repository: LocalArchiveRepository,
+        wal: OwnedLocalWalWriter,
+        schemas: ArchiveSchemasV1,
+        rotation: ParquetRotationConfigV1,
+        faults: Arc<dyn DurabilityFaultInjector>,
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        receipts_enabled: bool,
+    ) -> Result<Self, ArchiveSinkError> {
+        Ok(Self {
+            repository,
+            wal: Some(wal),
+            faults,
+            parquet: Some(ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?),
+            schemas,
+            rotation,
+            pending_physical: PartitionBuildOutputV1::default(),
+            archive_id,
+            session_id,
+            state: ArchiveState::Open,
+            frames: Vec::new(),
+            completions: Vec::new(),
+            checkpoint_seq: 0,
+            receipts_enabled,
+            poisoned: false,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_recovered(
+        repository: LocalArchiveRepository,
+        wal: OwnedLocalWalWriter,
+        recovered_frames: Vec<WalFrame>,
+        schemas: ArchiveSchemasV1,
+        rotation: ParquetRotationConfigV1,
+        faults: Arc<dyn DurabilityFaultInjector>,
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        receipts_enabled: bool,
+        decoder: &dyn ArchiveWalFrameDecoder,
+    ) -> Result<Self, ArchiveSinkError> {
+        let mut parquet = ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?;
+        let mut pending_physical = PartitionBuildOutputV1::default();
+        let mut completions = Vec::with_capacity(recovered_frames.len());
+        let mut prefix = WalSegmentBuilder::new(wal.header().clone())?;
+        for frame in &recovered_frames {
+            prefix.append(frame)?;
+            let decoded = decoder.decode(archive_id, session_id, frame.clone())?;
+            validate_archive_frame(&decoded, wal.header(), &schemas)?;
+            let missing = unindexed_recovered_projections(&repository, decoded, &schemas)?;
+            if !missing.is_empty() {
+                let output = parquet.append_frame(missing)?;
+                merge_physical(&mut pending_physical, output);
+            }
+            completions.push(durability_completion(&prefix, frame));
+        }
+        if prefix.prefix() != wal.durable_prefix()
+            || prefix.last_record_seq() != wal.last_record_seq()
+        {
+            return Err(ArchiveSinkError::RecoveredWalMismatch);
+        }
+        Ok(Self {
+            repository,
+            wal: Some(wal),
+            faults,
+            schemas,
+            rotation,
+            parquet: Some(parquet),
+            pending_physical,
+            archive_id,
+            session_id,
+            state: ArchiveState::Open,
+            frames: recovered_frames,
+            completions,
+            checkpoint_seq: 0,
+            receipts_enabled,
+            poisoned: false,
+        })
+    }
+
+    /// Returns the current authoritative local repository/head.
+    #[must_use]
+    pub const fn repository(&self) -> &LocalArchiveRepository {
+        &self.repository
+    }
+
+    /// Consumes a finalized sink and returns its repository for publication.
+    pub fn into_repository(self) -> Result<LocalArchiveRepository, ArchiveSinkError> {
+        if self.state != ArchiveState::LocallyFinalized || self.wal.is_some() || self.poisoned {
+            return Err(ArchiveSinkError::NotLocallyFinalized);
+        }
+        Ok(self.repository)
+    }
+
+    fn ensure_operable(&self) -> Result<(), ArchiveSinkError> {
+        if self.poisoned {
+            return Err(ArchiveSinkError::Poisoned);
+        }
+        ensure_operable(self.state, false)
+    }
+
+    fn checkpoint_sync(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError> {
+        self.ensure_operable()?;
+        let next_checkpoint_seq = self
+            .checkpoint_seq
+            .checked_add(1)
+            .ok_or(ArchiveSinkError::SequenceOverflow)?;
+        let output = finish_and_reset_parquet(
+            &mut self.parquet,
+            &self.schemas,
+            self.rotation,
+            &mut self.pending_physical,
+        )?;
+        let transaction = (|| {
+            persist_partitions(self.repository.spool(), &output, self.faults.as_ref())?;
+            let additions = physical_index_entries(&output)?;
+            let head = if additions.is_empty() {
+                self.repository.head().clone()
+            } else {
+                let mutation = IndexMutationSetV1::new(Vec::new(), additions)?;
+                self.repository
+                    .commit(
+                        &mutation,
+                        GenerationTransactionKind::Checkpoint,
+                        ArchiveState::Open,
+                        Some(self.session_id),
+                        None,
+                        self.faults.as_ref(),
+                    )?
+                    .clone()
+            };
+            Ok::<_, ArchiveSinkError>(head)
+        })();
+        let local_head = match transaction {
+            Ok(head) => head,
+            Err(error) => {
+                self.pending_physical = output;
+                self.poisoned = true;
+                return Err(error);
+            }
+        };
+        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
+        let completion = CheckpointCompletion {
+            checkpoint_seq: self.checkpoint_seq,
+            physical: output,
+            durable_prefix_hash: wal.durable_prefix(),
+            last_record_seq: wal.last_record_seq(),
+            local_head: Some(local_head),
+        };
+        self.checkpoint_seq = next_checkpoint_seq;
+        Ok(completion)
+    }
+}
+
+#[async_trait]
+impl ArchiveSink for OwnedLocalArchiveSink {
+    async fn recover(&mut self) -> Result<RecoveredArchive, ArchiveSinkError> {
+        self.ensure_operable()?;
+        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
+        recovered_archive(
+            self.archive_id,
+            self.session_id,
+            self.state,
+            &self.frames,
+            &BTreeSet::new(),
+            wal.durable_prefix(),
+            wal.header().first_record_seq,
+        )
+    }
+
+    async fn append_frame(
+        &mut self,
+        frame: ArchiveWalFrame,
+    ) -> Result<DurabilityCompletion, ArchiveSinkError> {
+        self.ensure_operable()?;
+        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
+        validate_archive_frame(&frame, wal.header(), &self.schemas)?;
+        let output = self
+            .parquet
+            .as_mut()
+            .ok_or(ArchiveSinkError::Finalized)?
+            .append_frame(frame.table_projections)?;
+        merge_physical(&mut self.pending_physical, output);
+        let wal = self.wal.as_mut().ok_or(ArchiveSinkError::Finalized)?;
+        if let Err(error) = wal.append(&frame.wal_frame) {
+            self.poisoned = true;
+            return Err(ArchiveSinkError::Spool(error));
+        }
+        let completion = DurabilityCompletion {
+            wal_segment_id: wal.header().segment_id,
+            durable_prefix_hash: wal.durable_prefix(),
+            frame_id: frame.wal_frame.header().frame_id,
+            first_record_seq: frame.wal_frame.header().record_seq,
+            last_record_seq: frame.wal_frame.header().record_seq,
+            projection_coverage_digest: declared_projection_coverage_digest(&frame.wal_frame),
+        };
+        self.frames.push(frame.wal_frame);
+        self.completions.push(completion.clone());
+        Ok(completion)
+    }
+
+    async fn record_receipt(
+        &mut self,
+        draft: ReceiptEventDraft,
+    ) -> Result<AppendReceipt, ArchiveSinkError> {
+        self.ensure_operable()?;
+        if !self.receipts_enabled {
+            return Err(ArchiveSinkError::ReceiptJournalUnavailable);
+        }
+        let mut journal = ReceiptJournal::recover(
+            self.repository.spool(),
+            self.archive_id,
+            self.faults.as_ref(),
+        )?;
+        validate_receipt_draft(
+            self.archive_id,
+            &draft,
+            next_receipt_sequence(journal.last_receipt_seq())?,
+        )?;
+        validate_receipt_target(self.session_id, &draft.target, &self.completions)?;
+        if let Some(epoch) = draft.observer_epoch {
+            journal.append_observer_epoch(epoch, self.faults.as_ref())?;
+        }
+        let receipt = AppendReceipt {
+            receipt_target_id: draft.target.receipt_target_id,
+            event_id: draft.event.event_id,
+            receipt_seq: draft.event.receipt_seq,
+        };
+        journal.record_event(draft.target, draft.event, self.faults.as_ref())?;
+        Ok(receipt)
+    }
+
+    async fn checkpoint(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError> {
+        self.checkpoint_sync()
+    }
+
+    async fn finalize(
+        &mut self,
+        reason: TerminationReason,
+    ) -> Result<FinalizeCompletion, ArchiveSinkError> {
+        self.ensure_operable()?;
+        if self.frames.is_empty() {
+            return Err(ArchiveSinkError::EmptyFinalization);
+        }
+        let checkpoint = self.checkpoint_sync()?;
+        let wal = self.wal.take().ok_or(ArchiveSinkError::Finalized)?;
+        let sealed_wal = match wal.seal() {
+            Ok(sealed) => sealed,
+            Err(error) => {
+                self.poisoned = true;
+                return Err(ArchiveSinkError::Spool(error));
+            }
+        };
+        let terminal_head = match self.repository.commit(
+            &IndexMutationSetV1::new(Vec::new(), Vec::new())?,
+            GenerationTransactionKind::LocalFinalization,
+            ArchiveState::LocallyFinalized,
+            Some(self.session_id),
+            Some(termination_reason_name(reason).to_owned()),
+            self.faults.as_ref(),
+        ) {
+            Ok(head) => head.clone(),
+            Err(error) => {
+                self.poisoned = true;
+                return Err(ArchiveSinkError::Spool(error));
+            }
+        };
+        self.state = ArchiveState::LocallyFinalized;
+        Ok(FinalizeCompletion {
+            checkpoint,
+            sealed_wal,
+            reason,
+            archive_state: self.state,
+            local_head: Some(terminal_head),
+        })
+    }
+
+    fn into_local_repository(
+        self: Box<Self>,
+    ) -> Result<Option<LocalArchiveRepository>, ArchiveSinkError> {
+        Ok(Some(OwnedLocalArchiveSink::into_repository(*self)?))
+    }
+}
+
+fn prepare_receipt_journal(
+    spool: &QualifiedSpool,
+    archive_id: ArchiveId,
+    mode: OwnedReceiptJournalMode,
+    faults: &dyn DurabilityFaultInjector,
+) -> Result<bool, ArchiveSinkError> {
+    match mode {
+        OwnedReceiptJournalMode::Disabled => Ok(false),
+        OwnedReceiptJournalMode::Bootstrap(epoch) => {
+            ReceiptJournal::bootstrap(spool, archive_id, epoch, faults)?;
+            Ok(true)
+        }
+        OwnedReceiptJournalMode::Recover { observer_epoch } => {
+            let mut journal = ReceiptJournal::recover(spool, archive_id, faults)?;
+            if let Some(epoch) = observer_epoch {
+                journal.append_observer_epoch(epoch, faults)?;
+            }
+            Ok(true)
+        }
+    }
+}
+
+fn unindexed_recovered_projections(
+    repository: &LocalArchiveRepository,
+    frame: ArchiveWalFrame,
+    schemas: &ArchiveSchemasV1,
+) -> Result<Vec<FrameTableProjectionV1>, ArchiveSinkError> {
+    let mut missing = Vec::new();
+    for projection in frame.table_projections {
+        let evidence = projection.validate(schemas)?;
+        let table = [projection.table as u8];
+        let logical_id = domain_digest(
+            "aiperf.archive.projection-coverage.v1",
+            &[projection.frame_id.digest().as_bytes(), &table],
+        );
+        let key = CompositeIndexKeyV1::projection_coverage(
+            projection.table,
+            projection.session_id,
+            projection.source_id.as_deref(),
+            projection.authoritative_frame_clock_ns,
+            logical_id,
+        )?;
+        let Some(entry) = repository.index().get(&key) else {
+            missing.push(projection);
+            continue;
+        };
+        let coverage = ProjectionCoverageV1::from_canonical_bytes(entry.descriptor_bytes())?;
+        if coverage.archive_id != projection.archive_id
+            || coverage.session_id != projection.session_id
+            || coverage.source_id != projection.source_id
+            || coverage.frame_id != projection.frame_id
+            || coverage.table != projection.table
+            || coverage.authoritative_frame_clock_ns != projection.authoritative_frame_clock_ns
+            || coverage.row_count != evidence.row_count
+            || coverage.logical_multiset_digest != evidence.logical_multiset_digest
+        {
+            return Err(ArchiveSinkError::RecoveredCoverageMismatch);
+        }
+    }
+    Ok(missing)
+}
+
+fn physical_index_entries(
+    output: &PartitionBuildOutputV1,
+) -> Result<Vec<crate::IndexEntry>, ArchiveSinkError> {
+    let mut entries = Vec::new();
+    for partition in &output.partitions {
+        entries.push(partition.descriptor.index_entry()?);
+        for coverage in &partition.coverage {
+            entries.push(coverage.index_entry()?);
+        }
+    }
+    for coverage in &output.zero_row_coverage {
+        entries.push(coverage.index_entry()?);
+    }
+    Ok(entries)
+}
+
+const fn termination_reason_name(reason: TerminationReason) -> &'static str {
+    match reason {
+        TerminationReason::Requested => "requested",
+        TerminationReason::Signal => "signal",
+        TerminationReason::Duration => "duration",
+        TerminationReason::Failure => "failure",
+        TerminationReason::SyncOnly => "sync_only",
     }
 }
 
@@ -817,10 +1388,14 @@ fn ensure_operable(state: ArchiveState, recovery_required: bool) -> Result<(), A
 /// Append, projection, receipt, checkpoint, or finalization failure.
 #[derive(Debug)]
 pub enum ArchiveSinkError {
+    /// Persistent index mutation validation failed.
+    Index(crate::IndexError),
     /// Canonical WAL validation/assembly failed.
     Wal(WalError),
     /// Physical projection/Parquet encoding failed.
     Parquet(ParquetProjectionError),
+    /// Verified WAL payload could not rebuild its source-frame projections.
+    FrameDecode(Box<SourceFrameCodecError>),
     /// Qualified-spool durability failed.
     Spool(SpoolError),
     /// Receipt journal failed.
@@ -831,10 +1406,16 @@ pub enum ArchiveSinkError {
     ProjectionSetMismatch,
     /// WAL-declared logical evidence differs from physical/canonical rows.
     ProjectionEvidenceMismatch,
+    /// Recovered coverage descriptor disagrees with WAL-declared evidence.
+    RecoveredCoverageMismatch,
+    /// Rebuilt recovered prefix differs from the owned WAL writer.
+    RecoveredWalMismatch,
     /// A previous response was uncertain and recovery must run first.
     RecoveryRequired,
     /// Sink has already finalized.
     Finalized,
+    /// Repository ownership was requested before successful local finalization.
+    NotLocallyFinalized,
     /// Local writer failed after potentially mutating durable state.
     Poisoned,
     /// Outcome is uncertain; the caller must recover under the same identity.
@@ -872,6 +1453,12 @@ impl From<WalError> for ArchiveSinkError {
     }
 }
 
+impl From<crate::IndexError> for ArchiveSinkError {
+    fn from(value: crate::IndexError) -> Self {
+        Self::Index(value)
+    }
+}
+
 impl From<ParquetProjectionError> for ArchiveSinkError {
     fn from(value: ParquetProjectionError) -> Self {
         Self::Parquet(value)
@@ -893,8 +1480,12 @@ impl From<ReceiptError> for ArchiveSinkError {
 impl Display for ArchiveSinkError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Index(error) => write!(formatter, "archive sink index failed: {error}"),
             Self::Wal(error) => write!(formatter, "archive sink WAL failed: {error}"),
             Self::Parquet(error) => write!(formatter, "archive sink Parquet failed: {error}"),
+            Self::FrameDecode(error) => {
+                write!(formatter, "archive sink frame decode failed: {error}")
+            }
             Self::Spool(error) => write!(formatter, "archive sink spool failed: {error}"),
             Self::Receipt(error) => write!(formatter, "archive sink receipt failed: {error}"),
             Self::FrameIdentityMismatch => formatter.write_str("archive frame identity mismatch"),
@@ -902,8 +1493,17 @@ impl Display for ArchiveSinkError {
             Self::ProjectionEvidenceMismatch => {
                 formatter.write_str("archive projection evidence mismatch")
             }
+            Self::RecoveredCoverageMismatch => {
+                formatter.write_str("recovered indexed coverage disagrees with WAL evidence")
+            }
+            Self::RecoveredWalMismatch => {
+                formatter.write_str("recovered WAL prefix reconstruction mismatch")
+            }
             Self::RecoveryRequired => formatter.write_str("archive sink recovery is required"),
             Self::Finalized => formatter.write_str("archive sink is finalized"),
+            Self::NotLocallyFinalized => {
+                formatter.write_str("owned local sink is not locally finalized")
+            }
             Self::Poisoned => formatter.write_str("archive sink is poisoned"),
             Self::Uncertain(message) => {
                 write!(formatter, "archive sink outcome uncertain: {message}")
@@ -932,8 +1532,10 @@ impl Display for ArchiveSinkError {
 impl std::error::Error for ArchiveSinkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Index(error) => Some(error),
             Self::Wal(error) => Some(error),
             Self::Parquet(error) => Some(error),
+            Self::FrameDecode(error) => Some(error.as_ref()),
             Self::Spool(error) => Some(error),
             Self::Receipt(error) => Some(error),
             _ => None,
@@ -947,10 +1549,48 @@ mod tests {
 
     use super::*;
     use crate::{
-        BatchId, ExecutionId, NoDurabilityFaults, ObservationKind, ProjectionEvidence,
-        ProjectionReservationId, ReceiptObserverEpochV1, RequiredProjection, TableId, TerminalKind,
-        TimeDomain, WalFrameHeaderV1, WalRangeTargetV1,
+        BatchId, CanonicalJsonValue, EpochAnchor, ExecutionId, GenesisV1, NoDurabilityFaults,
+        ObservationKind, ProjectionEvidence, ProjectionReservationId, ReceiptObserverEpochV1,
+        RecoveryExpectation, RequiredProjection, TableId, TerminalKind, TimeDomain,
+        WalFrameHeaderV1, WalRangeTargetV1,
     };
+
+    #[derive(Debug)]
+    struct ZeroFrameDecoder {
+        schemas: ArchiveSchemasV1,
+    }
+
+    impl ArchiveWalFrameDecoder for ZeroFrameDecoder {
+        fn decode(
+            &self,
+            archive_id: ArchiveId,
+            session_id: SessionId,
+            frame: WalFrame,
+        ) -> Result<ArchiveWalFrame, ArchiveSinkError> {
+            let required = frame
+                .header()
+                .required_projections
+                .first()
+                .ok_or(ArchiveSinkError::ProjectionSetMismatch)?;
+            let schema = self
+                .schemas
+                .table(required.table)
+                .map_err(|_| ArchiveSinkError::ProjectionSetMismatch)?;
+            Ok(ArchiveWalFrame {
+                table_projections: vec![FrameTableProjectionV1 {
+                    archive_id,
+                    session_id,
+                    source_id: Some("source-a".to_owned()),
+                    frame_id: frame.header().frame_id,
+                    authoritative_frame_clock_ns: frame.header().authoritative_frame_clock_ns,
+                    table: required.table,
+                    batch: RecordBatch::new_empty(schema.schema().clone()),
+                    logical_rows: vec![],
+                }],
+                wal_frame: frame,
+            })
+        }
+    }
 
     fn archive() -> ArchiveId {
         ArchiveId::new([0x11; 16]).unwrap()
@@ -967,6 +1607,49 @@ mod tests {
             Digest::from_bytes([1; 32]),
             Digest::from_bytes([2; 32]),
             Digest::from_bytes([3; 32]),
+            0,
+            schemas
+                .iter()
+                .map(|schema| (schema.table(), schema.fingerprint()))
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    fn genesis() -> GenesisV1 {
+        GenesisV1 {
+            archive_id: archive(),
+            canonical_spool_id: Digest::from_bytes([1; 32]),
+            archive_identity_digest: Digest::from_bytes([2; 32]),
+            archive_key_digest: Digest::from_bytes([3; 32]),
+            writer_compatibility_id: Digest::from_bytes([4; 32]),
+            runner_distribution_id: Digest::from_bytes([5; 32]),
+            source_descriptors: CanonicalJsonValue::Array(vec![]),
+            persistent_writer_identity: CanonicalJsonValue::object([(
+                "writer".to_owned(),
+                CanonicalJsonValue::String("parquet-v1".to_owned()),
+            )])
+            .unwrap(),
+            initial_session_id: Some(session()),
+            time_domain: TimeDomain::Real,
+            epoch_anchor: Some(EpochAnchor {
+                clock_ns: 0,
+                unix_epoch_ns: 1_700_000_000_000_000_000,
+                capture_uncertainty_ns: 1,
+            }),
+        }
+    }
+
+    fn repository_segment(
+        repository: &LocalArchiveRepository,
+        schemas: &ArchiveSchemasV1,
+    ) -> WalSegmentHeaderV1 {
+        WalSegmentHeaderV1::new(
+            archive(),
+            session(),
+            repository.head().generation_hash,
+            repository.head().genesis_hash,
+            repository.genesis().writer_compatibility_id,
             0,
             schemas
                 .iter()
@@ -1022,6 +1705,56 @@ mod tests {
             },
             evidence,
         )
+    }
+
+    fn two_zero_projection_frame(schemas: &ArchiveSchemasV1) -> ArchiveWalFrame {
+        let reservation = ProjectionReservationId::new(domain_digest(
+            "aiperf.archive.sink-test-reservation.v1",
+            &[&0_u64.to_be_bytes()],
+        ));
+        let evidence = ProjectionEvidence::empty();
+        let header = WalFrameHeaderV1::new(
+            BatchId::new(domain_digest(
+                "aiperf.archive.sink-test-batch.v1",
+                &[&0_u64.to_be_bytes()],
+            )),
+            reservation,
+            0,
+            0,
+            TerminalKind::SourceScrape,
+            vec![
+                RequiredProjection {
+                    table: TableId::Families,
+                    evidence,
+                },
+                RequiredProjection {
+                    table: TableId::Samples,
+                    evidence,
+                },
+            ],
+            vec![],
+            vec![],
+            0,
+        )
+        .unwrap();
+        let frame_id = header.frame_id;
+        let table_projections = [TableId::Families, TableId::Samples]
+            .into_iter()
+            .map(|table| FrameTableProjectionV1 {
+                archive_id: archive(),
+                session_id: session(),
+                source_id: Some("source-a".to_owned()),
+                frame_id,
+                authoritative_frame_clock_ns: 0,
+                table,
+                batch: RecordBatch::new_empty(schemas.table(table).unwrap().schema().clone()),
+                logical_rows: vec![],
+            })
+            .collect();
+        ArchiveWalFrame {
+            wal_frame: WalFrame::new(header, vec![]).unwrap(),
+            table_projections,
+        }
     }
 
     #[tokio::test]
@@ -1131,10 +1864,193 @@ mod tests {
         assert_eq!(finalized.archive_state, ArchiveState::LocallyFinalized);
     }
 
+    #[tokio::test]
+    async fn owned_sink_installs_coverage_and_returns_finalized_repository() {
+        let directory = tempfile::tempdir().unwrap();
+        let spool = QualifiedSpool::open(directory.path().join("archive")).unwrap();
+        let faults: Arc<dyn DurabilityFaultInjector> = Arc::new(NoDurabilityFaults);
+        let repository =
+            LocalArchiveRepository::create_new(spool, genesis(), faults.as_ref()).unwrap();
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let header = repository_segment(&repository, &schemas);
+        let factory = OwnedLocalArchiveSinkFactory::new(
+            schemas.clone(),
+            ParquetRotationConfigV1::default(),
+            Arc::clone(&faults),
+        )
+        .unwrap();
+        let mut sink = factory
+            .prepare(repository, header, OwnedReceiptJournalMode::Disabled)
+            .unwrap();
+        let (frame, _) = zero_frame(0, &schemas);
+        sink.append_frame(frame).await.unwrap();
+        let checkpoint = sink.checkpoint().await.unwrap();
+        assert_eq!(checkpoint.physical.zero_row_coverage.len(), 1);
+        assert_eq!(sink.repository().index().root().logical_entry_count, 1);
+        assert_eq!(sink.repository().head().archive_state, ArchiveState::Open);
+        let finalized = sink.finalize(TerminationReason::Requested).await.unwrap();
+        assert_eq!(finalized.sealed_wal.frame_count(), 1);
+        assert_eq!(
+            finalized.local_head.as_ref().unwrap().archive_state,
+            ArchiveState::LocallyFinalized
+        );
+        let sink: Box<dyn ArchiveSink> = Box::new(sink);
+        let repository = sink.into_local_repository().unwrap().unwrap();
+        assert_eq!(
+            repository.head().archive_state,
+            ArchiveState::LocallyFinalized
+        );
+        assert_eq!(
+            repository.head().local_commit_seq,
+            checkpoint.local_head.unwrap().local_commit_seq + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn owned_factory_resumes_open_wal_and_rebuilds_unindexed_projection() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive_path = directory.path().join("archive");
+        let spool = QualifiedSpool::open(&archive_path).unwrap();
+        let faults: Arc<dyn DurabilityFaultInjector> = Arc::new(NoDurabilityFaults);
+        let genesis = genesis();
+        let expectation = RecoveryExpectation::from_genesis(&genesis);
+        let repository =
+            LocalArchiveRepository::create_new(spool, genesis, faults.as_ref()).unwrap();
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let header = repository_segment(&repository, &schemas);
+        let factory = OwnedLocalArchiveSinkFactory::new(
+            schemas.clone(),
+            ParquetRotationConfigV1::default(),
+            Arc::clone(&faults),
+        )
+        .unwrap();
+        let mut sink = factory
+            .prepare(
+                repository,
+                header.clone(),
+                OwnedReceiptJournalMode::Disabled,
+            )
+            .unwrap();
+        let (frame, _) = zero_frame(0, &schemas);
+        let expected_frame_id = frame.wal_frame.header().frame_id;
+        sink.append_frame(frame).await.unwrap();
+        drop(sink);
+
+        let spool = QualifiedSpool::open(&archive_path).unwrap();
+        let repository =
+            LocalArchiveRepository::recover(spool, expectation, faults.as_ref()).unwrap();
+        let decoder = ZeroFrameDecoder {
+            schemas: schemas.clone(),
+        };
+        let mut resumed = factory
+            .resume(
+                repository,
+                header,
+                1 << 20,
+                OwnedReceiptJournalMode::Disabled,
+                &decoder,
+            )
+            .unwrap();
+        let recovered = resumed.recover().await.unwrap();
+        assert_eq!(recovered.frames.len(), 1);
+        assert_eq!(recovered.frames[0].header().frame_id, expected_frame_id);
+        let checkpoint = resumed.checkpoint().await.unwrap();
+        assert_eq!(checkpoint.physical.zero_row_coverage.len(), 1);
+        assert_eq!(resumed.repository().index().root().logical_entry_count, 1);
+        let finalized = resumed
+            .finalize(TerminationReason::Requested)
+            .await
+            .unwrap();
+        assert_eq!(finalized.sealed_wal.frame_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn owned_resume_skips_projection_already_committed_after_wal_header() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive_path = directory.path().join("archive");
+        let spool = QualifiedSpool::open(&archive_path).unwrap();
+        let faults: Arc<dyn DurabilityFaultInjector> = Arc::new(NoDurabilityFaults);
+        let genesis = genesis();
+        let expectation = RecoveryExpectation::from_genesis(&genesis);
+        let repository =
+            LocalArchiveRepository::create_new(spool, genesis, faults.as_ref()).unwrap();
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let header = repository_segment(&repository, &schemas);
+        let factory = OwnedLocalArchiveSinkFactory::new(
+            schemas.clone(),
+            ParquetRotationConfigV1::default(),
+            Arc::clone(&faults),
+        )
+        .unwrap();
+        let mut sink = factory
+            .prepare(
+                repository,
+                header.clone(),
+                OwnedReceiptJournalMode::Disabled,
+            )
+            .unwrap();
+        let (frame, _) = zero_frame(0, &schemas);
+        sink.append_frame(frame).await.unwrap();
+        sink.checkpoint().await.unwrap();
+        drop(sink);
+
+        let spool = QualifiedSpool::open(&archive_path).unwrap();
+        let repository =
+            LocalArchiveRepository::recover(spool, expectation, faults.as_ref()).unwrap();
+        assert_eq!(repository.index().root().logical_entry_count, 1);
+        let decoder = ZeroFrameDecoder {
+            schemas: schemas.clone(),
+        };
+        let mut resumed = factory
+            .resume(
+                repository,
+                header,
+                1 << 20,
+                OwnedReceiptJournalMode::Disabled,
+                &decoder,
+            )
+            .unwrap();
+        let checkpoint = resumed.checkpoint().await.unwrap();
+        assert!(checkpoint.physical.partitions.is_empty());
+        assert!(checkpoint.physical.zero_row_coverage.is_empty());
+        assert_eq!(resumed.repository().index().root().logical_entry_count, 1);
+    }
+
+    #[test]
+    fn recovery_replays_only_the_missing_subset_of_frame_coverage() {
+        let directory = tempfile::tempdir().unwrap();
+        let spool = QualifiedSpool::open(directory.path().join("archive")).unwrap();
+        let mut repository =
+            LocalArchiveRepository::create_new(spool, genesis(), &NoDurabilityFaults).unwrap();
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let frame = two_zero_projection_frame(&schemas);
+        let covered = ProjectionCoverageV1::new(
+            &frame.table_projections[0],
+            ProjectionEvidence::empty(),
+            None,
+        )
+        .unwrap();
+        repository
+            .commit(
+                &IndexMutationSetV1::new(vec![], vec![covered.index_entry().unwrap()]).unwrap(),
+                GenerationTransactionKind::Checkpoint,
+                ArchiveState::Open,
+                Some(session()),
+                None,
+                &NoDurabilityFaults,
+            )
+            .unwrap();
+
+        let missing = unindexed_recovered_projections(&repository, frame, &schemas).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].table, TableId::Samples);
+    }
+
     #[test]
     fn local_sink_type_is_send_and_default_faults_are_usable() {
         fn assert_send<T: Send>() {}
         assert_send::<MemoryArchiveSink>();
+        assert_send::<OwnedLocalArchiveSink>();
         assert_send::<LocalParquetArchiveSink<'static>>();
         let _: &dyn DurabilityFaultInjector = &NoDurabilityFaults;
     }

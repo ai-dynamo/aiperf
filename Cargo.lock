@@ -151,6 +151,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-content-server"
+version = "0.0.0"
+dependencies = [
+ "aiperf-dataset",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "http-body 1.0.1",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+ "url",
+]
+
+[[package]]
 name = "aiperf-core"
 version = "0.0.0"
 dependencies = [
@@ -193,6 +212,7 @@ dependencies = [
 name = "aiperf-endpoints"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "jmespath",
  "minijinja",
  "serde",
@@ -301,6 +321,7 @@ dependencies = [
  "aiperf-accuracy",
  "aiperf-adaptive",
  "aiperf-clock",
+ "aiperf-content-server",
  "aiperf-dataset",
  "aiperf-endpoints",
  "aiperf-extensions",
@@ -370,6 +391,7 @@ dependencies = [
  "aiperf-clock",
  "aiperf-prometheus",
  "arrow-array",
+ "arrow-ipc",
  "arrow-schema",
  "arrow-select",
  "async-trait",
@@ -413,6 +435,7 @@ version = "0.0.0"
 dependencies = [
  "aiperf-clock",
  "aiperf-endpoints",
+ "base64 0.22.1",
  "bytes",
  "futures",
  "half",
@@ -3145,6 +3168,12 @@ dependencies = [
  "http-body 1.0.1",
  "pin-project-lite",
 ]
+
+[[package]]
+name = "http-range-header"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
 
 [[package]]
 name = "httparse"
@@ -7123,11 +7152,19 @@ dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.0",
  "bytes",
+ "futures-core",
  "futures-util",
  "http 1.4.2",
  "http-body 1.0.1",
+ "http-body-util",
+ "http-range-header",
+ "httpdate",
  "mime",
+ "mime_guess",
+ "percent-encoding",
  "pin-project-lite",
+ "tokio",
+ "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",

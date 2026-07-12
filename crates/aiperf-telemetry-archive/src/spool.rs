@@ -11,6 +11,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::manifest::{generation_key, index_root_key};
@@ -501,7 +502,7 @@ impl RecoveryExpectation {
 /// Authoritative local head/index/genesis state under one qualified lock.
 #[derive(Debug)]
 pub struct LocalArchiveRepository {
-    spool: QualifiedSpool,
+    spool: Arc<QualifiedSpool>,
     head: HeadDescriptorV1,
     index: IndexSnapshot,
     genesis: GenesisV1,
@@ -518,6 +519,7 @@ impl LocalArchiveRepository {
         if spool.root.join(LOCAL_LATEST).exists() {
             return Err(SpoolError::ArchiveAlreadyExists);
         }
+        let spool = Arc::new(spool);
         genesis.validate().map_err(SpoolError::Manifest)?;
         let index = IndexSnapshot::empty().map_err(SpoolError::Index)?;
         persist_index(&spool, &index, faults)?;
@@ -567,6 +569,24 @@ impl LocalArchiveRepository {
         expectation: RecoveryExpectation,
         faults: &dyn DurabilityFaultInjector,
     ) -> Result<Self, SpoolError> {
+        let repository = Self::recover_existing(spool, expectation.archive_id, faults)?;
+        verify_expectation(&repository.genesis, expectation)?;
+        Ok(repository)
+    }
+
+    /// Recovers a sealed/sync-only archive while discovering genesis-owned identities.
+    ///
+    /// This path still verifies the complete pointer, generation ancestry,
+    /// index graph, and embedded genesis under the qualified spool lock. It
+    /// relaxes only caller-supplied identity knowledge: source-free remote
+    /// finalization authors the archive ID, while spool/key/writer identities
+    /// remain immutable facts discovered from the verified genesis.
+    pub fn recover_existing(
+        spool: QualifiedSpool,
+        expected_archive_id: ArchiveId,
+        faults: &dyn DurabilityFaultInjector,
+    ) -> Result<Self, SpoolError> {
+        let spool = Arc::new(spool);
         let pointer_path = spool.root.join(LOCAL_LATEST);
         let pointer_bytes = fs::read(&pointer_path)
             .map_err(|error| io_error("read LOCAL-LATEST", &pointer_path, error))?;
@@ -601,7 +621,9 @@ impl LocalArchiveRepository {
                 }
             }
         };
-        verify_expectation(&verified.genesis, expectation)?;
+        if verified.genesis.archive_id != expected_archive_id {
+            return Err(SpoolError::IdentityMismatch("archive ID"));
+        }
         Ok(Self {
             spool,
             head: verified.head,
@@ -637,7 +659,7 @@ impl LocalArchiveRepository {
 
     /// Returns the held qualified spool.
     #[must_use]
-    pub const fn spool(&self) -> &QualifiedSpool {
+    pub fn spool(&self) -> &QualifiedSpool {
         &self.spool
     }
 
@@ -720,6 +742,22 @@ impl LocalArchiveRepository {
         LocalWalWriter::create(&self.spool, header, faults)
     }
 
+    /// Creates an owned WAL writer that keeps the spool lock and fault policy alive.
+    pub fn create_owned_wal(
+        &self,
+        header: WalSegmentHeaderV1,
+        faults: Arc<dyn DurabilityFaultInjector>,
+    ) -> Result<OwnedLocalWalWriter, SpoolError> {
+        if header.archive_id != self.head.archive_id
+            || header.previous_head_hash != self.head.generation_hash
+            || header.genesis_hash != self.head.genesis_hash
+            || header.writer_compatibility_id != self.genesis.writer_compatibility_id
+        {
+            return Err(SpoolError::IdentityMismatch("WAL header"));
+        }
+        OwnedLocalWalWriter::create(Arc::clone(&self.spool), header, faults)
+    }
+
     /// Recovers one known segment, completing a valid interrupted seal or truncating only a tail.
     pub fn recover_wal(
         &self,
@@ -769,6 +807,34 @@ impl LocalArchiveRepository {
             faults.after(DurabilityEdge::WalTailSynced)?;
         }
         Ok(recovered)
+    }
+
+    /// Recovers and reopens one unsealed WAL under owned spool/fault lifetimes.
+    pub fn resume_owned_wal(
+        &self,
+        header: &WalSegmentHeaderV1,
+        maximum_frame_bytes: u64,
+        faults: Arc<dyn DurabilityFaultInjector>,
+    ) -> Result<(OwnedLocalWalWriter, RecoveredWal), SpoolError> {
+        if header.archive_id != self.head.archive_id
+            || header.genesis_hash != self.head.genesis_hash
+            || header.writer_compatibility_id != self.genesis.writer_compatibility_id
+            || !generation_is_ancestor(&self.spool, &self.head, header.previous_head_hash)?
+        {
+            return Err(SpoolError::IdentityMismatch("recovered WAL header"));
+        }
+        let recovered = self.recover_wal(header, maximum_frame_bytes, faults.as_ref())?;
+        if recovered.header != *header {
+            return Err(SpoolError::IdentityMismatch("recovered WAL header bytes"));
+        }
+        if recovered.segment_digest.is_some() {
+            return Err(SpoolError::InvalidTransaction(
+                "sealed WAL cannot resume frame admission",
+            ));
+        }
+        let writer =
+            OwnedLocalWalWriter::resume(Arc::clone(&self.spool), &recovered, Arc::clone(&faults))?;
+        Ok((writer, recovered))
     }
 }
 
@@ -884,6 +950,202 @@ impl<'a> LocalWalWriter<'a> {
     }
 
     /// Seals, fsyncs, create-only renames, and directory-fsyncs the whole segment.
+    pub fn seal(mut self) -> Result<SealedWalSegment, SpoolError> {
+        if self.poisoned {
+            return Err(SpoolError::WalPoisoned);
+        }
+        let sealed = self.builder.clone().seal().map_err(SpoolError::Wal)?;
+        let open_len = self.builder.open_bytes().len();
+        let footer = &sealed.bytes()[open_len..];
+        self.file
+            .seek(SeekFrom::End(0))
+            .map_err(|error| io_error("seek WAL footer", &self.open_path, error))?;
+        self.file
+            .write_all(footer)
+            .map_err(|error| io_error("write WAL footer", &self.open_path, error))?;
+        self.faults.after(DurabilityEdge::WalFooterWritten)?;
+        self.file
+            .sync_all()
+            .map_err(|error| io_error("fsync sealed WAL", &self.open_path, error))?;
+        self.faults.after(DurabilityEdge::WalSealSynced)?;
+        drop(self.file);
+        match rename_noreplace(&self.open_path, &self.sealed_path)? {
+            true => self.faults.after(DurabilityEdge::WalRenamed)?,
+            false => {
+                verify_exact_file(&self.sealed_path, sealed.bytes())?;
+                if self.open_path.exists() {
+                    fs::remove_file(&self.open_path).map_err(|error| {
+                        io_error("remove redundant open WAL", &self.open_path, error)
+                    })?;
+                }
+            }
+        }
+        sync_directory(self.sealed_path.parent().expect("WAL has parent"))?;
+        self.faults.after(DurabilityEdge::WalSealDirectorySynced)?;
+        Ok(sealed)
+    }
+}
+
+/// File-backed WAL writer owning the qualified spool lock and fault policy.
+pub struct OwnedLocalWalWriter {
+    _spool: Arc<QualifiedSpool>,
+    faults: Arc<dyn DurabilityFaultInjector>,
+    open_path: PathBuf,
+    sealed_path: PathBuf,
+    file: File,
+    builder: WalSegmentBuilder,
+    poisoned: bool,
+}
+
+impl Debug for OwnedLocalWalWriter {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OwnedLocalWalWriter")
+            .field("open_path", &self.open_path)
+            .field("sealed_path", &self.sealed_path)
+            .field("poisoned", &self.poisoned)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OwnedLocalWalWriter {
+    fn create(
+        spool: Arc<QualifiedSpool>,
+        header: WalSegmentHeaderV1,
+        faults: Arc<dyn DurabilityFaultInjector>,
+    ) -> Result<Self, SpoolError> {
+        let (open_relative, sealed_relative) = wal_paths(header.segment_id);
+        let open_path = spool.root.join(open_relative);
+        let sealed_path = spool.root.join(sealed_relative);
+        if sealed_path.exists() || open_path.exists() {
+            return Err(SpoolError::WalAlreadyExists(header.segment_id));
+        }
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(&open_path)
+            .map_err(|error| io_error("create open WAL", &open_path, error))?;
+        faults.after(DurabilityEdge::WalFileCreated)?;
+        let builder = WalSegmentBuilder::new(header).map_err(SpoolError::Wal)?;
+        let header_bytes = builder.open_bytes();
+        file.write_all(&header_bytes)
+            .map_err(|error| io_error("write WAL header", &open_path, error))?;
+        faults.after(DurabilityEdge::WalHeaderWritten)?;
+        file.sync_all()
+            .map_err(|error| io_error("fsync WAL header", &open_path, error))?;
+        faults.after(DurabilityEdge::WalHeaderSynced)?;
+        sync_directory(open_path.parent().expect("WAL has parent"))?;
+        faults.after(DurabilityEdge::WalDirectorySynced)?;
+        Ok(Self {
+            _spool: spool,
+            faults,
+            open_path,
+            sealed_path,
+            file,
+            builder,
+            poisoned: false,
+        })
+    }
+
+    fn resume(
+        spool: Arc<QualifiedSpool>,
+        recovered: &RecoveredWal,
+        faults: Arc<dyn DurabilityFaultInjector>,
+    ) -> Result<Self, SpoolError> {
+        let (open_relative, sealed_relative) = wal_paths(recovered.header.segment_id);
+        let open_path = spool.root.join(open_relative);
+        let sealed_path = spool.root.join(sealed_relative);
+        if sealed_path.exists() || recovered.segment_digest.is_some() {
+            return Err(SpoolError::InvalidTransaction(
+                "sealed WAL cannot resume frame admission",
+            ));
+        }
+        let mut builder =
+            WalSegmentBuilder::new(recovered.header.clone()).map_err(SpoolError::Wal)?;
+        for frame in &recovered.frames {
+            builder.append(frame).map_err(SpoolError::Wal)?;
+        }
+        if builder.open_bytes().len() != recovered.valid_len
+            || builder.prefix() != recovered.final_prefix
+        {
+            return Err(SpoolError::IdentityMismatch("recovered WAL builder"));
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&open_path)
+            .map_err(|error| io_error("reopen recovered WAL", &open_path, error))?;
+        let physical_len = usize::try_from(
+            file.metadata()
+                .map_err(|error| io_error("stat recovered WAL", &open_path, error))?
+                .len(),
+        )
+        .map_err(|_| SpoolError::SequenceOverflow)?;
+        if physical_len != recovered.valid_len {
+            return Err(SpoolError::IdentityMismatch("recovered WAL length"));
+        }
+        Ok(Self {
+            _spool: spool,
+            faults,
+            open_path,
+            sealed_path,
+            file,
+            builder,
+            poisoned: false,
+        })
+    }
+
+    /// Appends and fsyncs one complete frame before updating writer state.
+    pub fn append(&mut self, frame: &WalFrame) -> Result<(), SpoolError> {
+        if self.poisoned {
+            return Err(SpoolError::WalPoisoned);
+        }
+        let mut next = self.builder.clone();
+        next.append(frame).map_err(SpoolError::Wal)?;
+        let encoded = frame.encode().map_err(SpoolError::Wal)?;
+        let result = (|| {
+            self.file
+                .seek(SeekFrom::End(0))
+                .map_err(|error| io_error("seek open WAL", &self.open_path, error))?;
+            self.file
+                .write_all(&encoded)
+                .map_err(|error| io_error("append WAL frame", &self.open_path, error))?;
+            self.faults.after(DurabilityEdge::WalFrameWritten)?;
+            self.file
+                .sync_all()
+                .map_err(|error| io_error("fsync WAL frame", &self.open_path, error))?;
+            self.faults.after(DurabilityEdge::WalFrameSynced)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.poisoned = true;
+            return Err(error);
+        }
+        self.builder = next;
+        Ok(())
+    }
+
+    /// Returns the immutable segment header bound at file creation.
+    #[must_use]
+    pub const fn header(&self) -> &WalSegmentHeaderV1 {
+        self.builder.header()
+    }
+
+    /// Returns the durable cryptographic prefix after the last fsynced frame.
+    #[must_use]
+    pub const fn durable_prefix(&self) -> Digest {
+        self.builder.prefix()
+    }
+
+    /// Returns the final durable record sequence, absent before the first frame.
+    #[must_use]
+    pub const fn last_record_seq(&self) -> Option<u64> {
+        self.builder.last_record_seq()
+    }
+
+    /// Seals, fsyncs, create-only renames, and directory-fsyncs the segment.
     pub fn seal(mut self) -> Result<SealedWalSegment, SpoolError> {
         if self.poisoned {
             return Err(SpoolError::WalPoisoned);
@@ -1230,6 +1492,37 @@ fn verify_ancestry(
             return Err(SpoolError::IdentityMismatch("generation parent bytes"));
         }
         generation = parent;
+    }
+}
+
+fn generation_is_ancestor(
+    spool: &QualifiedSpool,
+    current: &HeadDescriptorV1,
+    candidate: Digest,
+) -> Result<bool, SpoolError> {
+    let mut sequence = current.local_commit_seq;
+    let mut hash = current.generation_hash;
+    loop {
+        if hash == candidate {
+            return Ok(true);
+        }
+        if sequence == 0 {
+            return Ok(false);
+        }
+        let key = generation_key(sequence, hash);
+        let bytes = spool.read_relative(Path::new(&key))?;
+        let generation = GenerationObjectV1::decode(&bytes).map_err(SpoolError::Manifest)?;
+        if generation.hash != hash
+            || generation.key != key
+            || generation.generation.local_commit_seq != sequence
+        {
+            return Err(SpoolError::IdentityMismatch("generation ancestry"));
+        }
+        hash = generation
+            .generation
+            .parent_generation_hash
+            .ok_or(SpoolError::IdentityMismatch("generation parent"))?;
+        sequence -= 1;
     }
 }
 
@@ -1740,6 +2033,31 @@ mod tests {
                 &NoDurabilityFaults,
             ),
             Err(SpoolError::IdentityMismatch("archive key digest"))
+        ));
+    }
+
+    #[test]
+    fn source_free_recovery_discovers_genesis_identity_but_pins_archive_id() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("spool");
+        drop(create(&path));
+        let recovered = LocalArchiveRepository::recover_existing(
+            QualifiedSpool::open(&path).unwrap(),
+            archive(),
+            &NoDurabilityFaults,
+        )
+        .unwrap();
+        assert_eq!(recovered.genesis(), &genesis());
+        drop(recovered);
+
+        let other_archive = ArchiveId::new([0x99; 16]).unwrap();
+        assert!(matches!(
+            LocalArchiveRepository::recover_existing(
+                QualifiedSpool::open(&path).unwrap(),
+                other_archive,
+                &NoDurabilityFaults,
+            ),
+            Err(SpoolError::IdentityMismatch("archive ID"))
         ));
     }
 

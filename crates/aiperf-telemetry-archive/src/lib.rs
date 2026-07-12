@@ -17,6 +17,7 @@ pub mod descriptor;
 pub mod digest;
 pub mod driver;
 pub mod evidence;
+pub mod frame_codec;
 pub mod identity;
 pub mod index;
 pub mod key;
@@ -33,6 +34,7 @@ pub mod scheduling;
 pub mod schema;
 pub mod sink;
 pub mod spool;
+pub mod sync;
 pub mod time;
 pub mod wal;
 
@@ -62,6 +64,7 @@ pub use evidence::{
     CanonicalLogicalRow, LogicalField, LogicalRowError, LogicalSchema, LogicalType, LogicalValue,
     ProjectionEvidence, RequiredProjection, TableId,
 };
+pub use frame_codec::{SourceFrameCodecError, SourceFrameCodecV1};
 pub use identity::{
     ArchiveId, BatchId, ExactLossBatchInput, FrameId, FrameIdentityError, FrameIdentityV1,
     LifecycleBatchInput, ProjectionReservationId, ReservationKind, SaturationBatchInput, SessionId,
@@ -147,14 +150,19 @@ pub use schema::{
     arrow_schema_fingerprint, table_id, table_name,
 };
 pub use sink::{
-    AppendReceipt, ArchiveSink, ArchiveSinkError, ArchiveWalFrame, CheckpointCompletion,
-    DurabilityCompletion, FinalizeCompletion, LocalParquetArchiveSink, MemoryArchiveSink,
-    MemoryArchiveSinkFault, ReceiptEventDraft, RecoveredArchive, TerminationReason,
+    AppendReceipt, ArchiveSink, ArchiveSinkError, ArchiveWalFrame, ArchiveWalFrameDecoder,
+    CheckpointCompletion, DurabilityCompletion, FinalizeCompletion, LocalParquetArchiveSink,
+    MemoryArchiveSink, MemoryArchiveSinkFault, OwnedLocalArchiveSink, OwnedLocalArchiveSinkFactory,
+    OwnedReceiptJournalMode, ReceiptEventDraft, RecoveredArchive, TerminationReason,
 };
 pub use spool::{
     DurabilityEdge, DurabilityFaultInjector, FailAtDurabilityEdge, FilesystemKind,
-    LocalArchiveRepository, LocalWalWriter, NoDurabilityFaults, QualifiedSpool,
-    RecoveryExpectation, SpoolError, SpoolQualification,
+    LocalArchiveRepository, LocalWalWriter, NoDurabilityFaults, OwnedLocalWalWriter,
+    QualifiedSpool, RecoveryExpectation, SpoolError, SpoolQualification,
+};
+pub use sync::{
+    ArchiveRemoteSynchronizer, ArchiveSyncError, RemoteLatestV1, RemotePublicationCompletionV1,
+    RemotePublicationObservationV1, WriterClaimV1,
 };
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
 pub use wal::{

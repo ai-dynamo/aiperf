@@ -556,6 +556,16 @@ impl HeadDescriptorV1 {
         domain_digest("aiperf.archive.manifest.v1", &[&self.canonical_bytes()])
     }
 
+    /// Decodes one exact canonical head descriptor without a pointer envelope.
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ManifestError> {
+        let value = CanonicalJsonValue::parse_canonical(bytes).map_err(ManifestError::Canonical)?;
+        let head = Self::from_value(&value)?;
+        if head.canonical_bytes() != bytes {
+            return Err(ManifestError::InvalidField("head descriptor fields"));
+        }
+        Ok(head)
+    }
+
     fn to_value(&self) -> CanonicalJsonValue {
         object(vec![
             ("archive_id", string(uuid(self.archive_id.as_bytes()))),

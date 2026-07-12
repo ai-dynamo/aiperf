@@ -158,6 +158,47 @@ impl ProjectionCoverageV1 {
             logical_id,
         )
     }
+
+    /// Validates the v1 no-split coverage and identity invariants.
+    pub fn validate(&self) -> Result<(), ParquetProjectionError> {
+        if self.source_id.as_deref() == Some("") {
+            return Err(ParquetProjectionError::EmptySourceId);
+        }
+        if self.fragment_ids.len() > 1
+            || (self.row_count == 0) != self.fragment_ids.is_empty()
+            || (self.row_count == 0
+                && self.logical_multiset_digest
+                    != ProjectionEvidence::empty().logical_multiset_digest)
+        {
+            return Err(ParquetProjectionError::CoverageFragmentCardinality);
+        }
+        Ok(())
+    }
+
+    /// Encodes the exact canonical projection-coverage descriptor.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, ParquetProjectionError> {
+        self.validate()?;
+        let ordinary = serde_json::to_vec(&ProjectionCoverageWireV1::from(self))
+            .map_err(ParquetProjectionError::Json)?;
+        Ok(CanonicalJsonValue::parse(&ordinary)
+            .map_err(ParquetProjectionError::Canonical)?
+            .to_bytes())
+    }
+
+    /// Produces one persistent primary-index coverage entry.
+    pub fn index_entry(&self) -> Result<IndexEntry, ParquetProjectionError> {
+        Ok(IndexEntry::new(self.index_key()?, self.canonical_bytes()?)?)
+    }
+
+    /// Decodes and validates exact canonical coverage bytes.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, ParquetProjectionError> {
+        CanonicalJsonValue::parse_canonical(bytes).map_err(ParquetProjectionError::Canonical)?;
+        let wire: ProjectionCoverageWireV1 =
+            serde_json::from_slice(bytes).map_err(ParquetProjectionError::Json)?;
+        let coverage = Self::try_from(wire)?;
+        coverage.validate()?;
+        Ok(coverage)
+    }
 }
 
 /// One frame's logical evidence stored in an immutable partition descriptor.
@@ -1100,6 +1141,72 @@ struct PartitionDescriptorWireV1 {
     table: String,
     time_bucket: i64,
     version: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectionCoverageWireV1 {
+    archive_id: String,
+    authoritative_frame_clock_ns: i64,
+    fragment_ids: Vec<String>,
+    frame_id: String,
+    logical_multiset_digest: String,
+    row_count: u64,
+    session_id: String,
+    source_id: Option<String>,
+    table: String,
+    version: u8,
+}
+
+impl From<&ProjectionCoverageV1> for ProjectionCoverageWireV1 {
+    fn from(value: &ProjectionCoverageV1) -> Self {
+        Self {
+            archive_id: hex(value.archive_id.as_bytes()),
+            authoritative_frame_clock_ns: value.authoritative_frame_clock_ns,
+            fragment_ids: value
+                .fragment_ids
+                .iter()
+                .map(|digest| digest.to_hex())
+                .collect(),
+            frame_id: value.frame_id.digest().to_hex(),
+            logical_multiset_digest: value.logical_multiset_digest.to_hex(),
+            row_count: value.row_count,
+            session_id: hex(value.session_id.as_bytes()),
+            source_id: value.source_id.clone(),
+            table: table_name(value.table).to_owned(),
+            version: PARTITION_DESCRIPTOR_VERSION,
+        }
+    }
+}
+
+impl TryFrom<ProjectionCoverageWireV1> for ProjectionCoverageV1 {
+    type Error = ParquetProjectionError;
+
+    fn try_from(value: ProjectionCoverageWireV1) -> Result<Self, Self::Error> {
+        if value.version != PARTITION_DESCRIPTOR_VERSION {
+            return Err(ParquetProjectionError::DescriptorVersion(value.version));
+        }
+        Ok(Self {
+            archive_id: ArchiveId::new(hex_array(&value.archive_id)?)
+                .map_err(ParquetProjectionError::FrameIdentity)?,
+            session_id: SessionId::new(hex_array(&value.session_id)?)
+                .map_err(ParquetProjectionError::FrameIdentity)?,
+            source_id: value.source_id,
+            frame_id: FrameId::new(
+                Digest::parse(&value.frame_id).map_err(ParquetProjectionError::Digest)?,
+            ),
+            table: crate::table_id(&value.table)?,
+            authoritative_frame_clock_ns: value.authoritative_frame_clock_ns,
+            row_count: value.row_count,
+            logical_multiset_digest: Digest::parse(&value.logical_multiset_digest)
+                .map_err(ParquetProjectionError::Digest)?,
+            fragment_ids: value
+                .fragment_ids
+                .into_iter()
+                .map(|digest| Digest::parse(&digest).map_err(ParquetProjectionError::Digest))
+                .collect::<Result<_, _>>()?,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
