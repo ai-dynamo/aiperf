@@ -313,56 +313,6 @@
     line-height: 1.65;
   }
 
-  .handoff-rail {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(7rem, 1fr));
-    margin-block-start: clamp(3rem, 7cqi, 6rem);
-    border-block: 1px solid var(--line-subtle);
-  }
-
-  .handoff-rail span {
-    position: relative;
-    display: flex;
-    align-items: center;
-    min-block-size: 5rem;
-    border-inline-end: 1px solid var(--line-subtle);
-    color: var(--text-secondary);
-    padding: var(--space-4);
-    font-family: var(--font-data);
-    font-size: 0.7rem;
-    line-height: 1.45;
-  }
-
-  .handoff-rail span::before {
-    content: "";
-    position: absolute;
-    inset-block-start: -1px;
-    inset-inline: 0;
-    block-size: 2px;
-    background: var(--accent-flow);
-    scale: 0 1;
-    transform-origin: left;
-    transition: scale 180ms ease-out;
-  }
-
-  .handoff-rail span:hover::before {
-    scale: 1;
-  }
-
-  .handoff-rail span:last-child {
-    border-inline-end: 0;
-  }
-
-  .foundation-note {
-    max-inline-size: 44rem;
-    border-inline-start: 2px solid var(--status-conditional);
-    margin-block-start: var(--space-6);
-    color: var(--text-muted);
-    padding-inline-start: var(--space-4);
-    font-size: 0.82rem;
-    line-height: 1.6;
-  }
-
   .guided-header {
     display: grid;
     grid-template-columns: minmax(0, 1.25fr) minmax(18rem, 0.75fr);
@@ -1288,10 +1238,6 @@
     padding-block: var(--space-5);
   }
 
-  .source-paths code {
-    overflow-wrap: anywhere;
-  }
-
   .not-found-actions {
     display: flex;
     gap: var(--space-3);
@@ -1442,20 +1388,6 @@
     .crate-directory {
       position: static;
       max-block-size: 20rem;
-    }
-
-    .handoff-rail {
-      grid-template-columns: 1fr;
-    }
-
-    .handoff-rail span {
-      min-block-size: 3.5rem;
-      border-inline-end: 0;
-      border-block-end: 1px solid var(--line-subtle);
-    }
-
-    .handoff-rail span:last-child {
-      border-block-end: 0;
     }
 
     .stage-rail,

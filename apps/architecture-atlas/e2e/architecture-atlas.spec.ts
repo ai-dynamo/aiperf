@@ -259,6 +259,22 @@ test.describe("Architecture Atlas production build", () => {
     await expect(trigger).toBeFocused();
   });
 
+  test("opens the evidence drawer without movement when reduced motion is requested", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await open(page, "/atlas?audience=developer");
+    await page.getByText("Text inventory").click();
+    await page.getByRole("button", { name: /^Injected execution clock/u }).click();
+
+    const drawer = page.getByRole("dialog");
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveCSS("transform", "none");
+    await expect(
+      page.getByRole("button", { name: "Clear selected component" }),
+    ).toBeFocused();
+  });
+
   test("supports node and crate deep links including unknown crates", async ({
     page,
   }) => {

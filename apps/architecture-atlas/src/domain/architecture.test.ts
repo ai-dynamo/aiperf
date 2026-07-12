@@ -98,6 +98,14 @@ describe("architecture catalog schema", () => {
     ).toBe(true);
   });
 
+  it("places durable telemetry history in the measurement lifecycle", () => {
+    expect(
+      architectureCatalog.components.find(
+        ({ id }) => id === "component.telemetry-archive",
+      )?.lifecycleBand,
+    ).toBe("measurement");
+  });
+
   it("models Cargo dependency kinds explicitly", () => {
     const source = architectureCatalog.crates.find(
       ({ packageName }) => packageName === "aiperf-extensions",

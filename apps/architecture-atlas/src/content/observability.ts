@@ -47,7 +47,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.telemetry-archive",
     kind: "component",
     owner: "rust",
-    lifecycleBand: "presentation",
+    lifecycleBand: "measurement",
     status: "built",
     title: copy("Durable telemetry history", "Telemetry archive and recovery", "aiperf-telemetry-archive WAL and store seams"),
     summary: copy(

@@ -20,6 +20,7 @@ import {
 } from "@xyflow/react";
 import { Link } from "@tanstack/react-router";
 import "@xyflow/react/dist/style.css";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { architectureCatalog } from "../../content";
@@ -221,6 +222,7 @@ function ComponentDrawer({
   downstream: readonly string[];
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const reduceMotion = useReducedMotion();
   useEffect(() => {
     closeRef.current?.focus();
   }, [component.id]);
@@ -248,11 +250,14 @@ function ComponentDrawer({
   );
 
   return (
-    <div
+    <motion.div
+      animate={reduceMotion ? undefined : { opacity: 1, x: 0 }}
       aria-label={component.title[audience]}
       aria-modal="false"
       className="atlas-drawer"
+      initial={reduceMotion ? false : { opacity: 0, x: 24 }}
       role="dialog"
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: "easeOut" }}
     >
       <header>
         <p className="route-eyebrow">{ownerLabels[component.owner]}</p>
@@ -348,7 +353,7 @@ function ComponentDrawer({
         )}
       </section>
       <EvidenceCitation evidence={component.evidence} />
-    </div>
+    </motion.div>
   );
 }
 
