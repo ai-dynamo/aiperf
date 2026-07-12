@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use aiperf::report::finalize_and_write_native_report_json;
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory};
 use aiperf_graph::input::GraphInputAdapterResolver;
 use anyhow::{Context, Result, ensure};
@@ -213,6 +214,26 @@ impl RunnerV2Coordinator {
                 1,
             );
         }
+        let backend_id = selection.backend_id().to_owned();
+        let workload_id = selection.workload_id().to_owned();
+        let report_provenance = match context.report_provenance(
+            self.distribution_id.clone(),
+            backend_id.clone(),
+            workload_id.clone(),
+        ) {
+            Ok(provenance) => provenance,
+            Err(error) => {
+                return failure(
+                    operation,
+                    self.distribution_id.clone(),
+                    benchmark_id,
+                    RunnerFailureStageV2::Validation,
+                    "invalid_report_provenance",
+                    format!("{error:#}"),
+                    1,
+                );
+            }
+        };
 
         if operation == RunnerOperationV2::Validate {
             return RunnerProcessResultV2 {
@@ -235,6 +256,7 @@ impl RunnerV2Coordinator {
             };
         }
 
+        let report_path = envelope.run.artifact_target.join("native-v2.json");
         let operation =
             match self
                 .runner_registry
@@ -253,20 +275,52 @@ impl RunnerV2Coordinator {
                 }
             };
         match operation.execute() {
-            Ok(outcome) => RunnerProcessResultV2 {
-                response: RunnerResponseV2::Terminal(RunTerminalV2 {
-                    protocol_version: RUNNER_PROTOCOL_V2,
-                    event: "run_terminal",
-                    distribution_id: self.distribution_id.clone(),
-                    benchmark_id,
-                    success: true,
-                    report_path: Some(outcome.report_path),
-                    stage: None,
-                    errors: Vec::new(),
-                    provenance: outcome.provenance,
-                }),
-                exit_code: 0,
-            },
+            Ok(mut outcome) => {
+                if report_path.exists() {
+                    return terminal_failure(
+                        self.distribution_id.clone(),
+                        benchmark_id,
+                        RunnerFailureStageV2::Reporting,
+                        "report_target_exists",
+                        format!(
+                            "native-v2 report target already exists: {}",
+                            report_path.display()
+                        ),
+                        1,
+                    );
+                }
+                if let Err(error) = finalize_and_write_native_report_json(
+                    outcome.native_report,
+                    report_provenance,
+                    outcome.report_facts,
+                    &report_path,
+                ) {
+                    return terminal_failure(
+                        self.distribution_id.clone(),
+                        benchmark_id,
+                        RunnerFailureStageV2::Reporting,
+                        "reporting_failed",
+                        format!("{error:#}"),
+                        1,
+                    );
+                }
+                outcome.provenance.insert("backend".into(), backend_id);
+                outcome.provenance.insert("workload".into(), workload_id);
+                RunnerProcessResultV2 {
+                    response: RunnerResponseV2::Terminal(RunTerminalV2 {
+                        protocol_version: RUNNER_PROTOCOL_V2,
+                        event: "run_terminal",
+                        distribution_id: self.distribution_id.clone(),
+                        benchmark_id,
+                        success: true,
+                        report_path: Some(report_path),
+                        stage: None,
+                        errors: Vec::new(),
+                        provenance: outcome.provenance,
+                    }),
+                    exit_code: 0,
+                }
+            }
             Err(error) => terminal_failure(
                 self.distribution_id.clone(),
                 benchmark_id,

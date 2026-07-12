@@ -13,13 +13,15 @@
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_graph::input::GraphInputAdapterResolver;
-use aiperf_metrics::{ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportRunProvenance};
+use aiperf_metrics::{
+    NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
+    ReportRunProvenance,
+};
 use aiperf_transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
@@ -139,8 +141,10 @@ pub trait RunnerWorkloadFactory: Debug + Send + Sync {
 /// Result returned after one prepared pair executes successfully.
 #[derive(Debug)]
 pub struct PreparedRunOutcome {
-    /// Authoritative native-v2 report path.
-    pub report_path: PathBuf,
+    /// Uncommitted native-v2 report returned to the process coordinator.
+    pub native_report: NativeReport,
+    /// Typed backend/workload facts joined during coordinator finalization.
+    pub report_facts: ReportPairRunFacts,
     /// Additive backend/workload provenance for the terminal response.
     pub provenance: BTreeMap<String, String>,
 }
@@ -150,7 +154,7 @@ pub struct PreparedRunOutcome {
 /// This trait intentionally has no `Send` bound: current high-performance
 /// implementations own `Rc`/`RefCell` state on a current-thread Tokio runtime.
 pub trait PreparedRunnerOperation: Debug {
-    /// Execute the prepared run and commit its authoritative report.
+    /// Execute the prepared run without serializing the authoritative report.
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome>;
 }
 
@@ -1345,8 +1349,12 @@ mod tests {
     impl PreparedRunnerOperation for Operation {
         fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
             Ok(PreparedRunOutcome {
-                report_path: PathBuf::from(format!("{}-{}.json", self.node, self.message)),
-                provenance: BTreeMap::new(),
+                native_report: NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None),
+                report_facts: ReportPairRunFacts::new(),
+                provenance: BTreeMap::from([(
+                    "fixture".into(),
+                    format!("{}-{}", self.node, self.message),
+                )]),
             })
         }
     }

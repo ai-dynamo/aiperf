@@ -638,14 +638,39 @@ pub(crate) fn execute_native_plan_with_factories(
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<PathBuf> {
-    validate_plan(&plan)?;
     let artifact_dir = plan.run.artifact_dir.clone();
+    let native = execute_native_plan_uncommitted_with_factories(
+        plan,
+        backend_factory,
+        graph_inputs,
+        graph_placement,
+        registry,
+    )?;
+    let report_path = artifact_dir.join("native-v2.json");
+    write_native_report_json(&native, &report_path)?;
+    Ok(report_path)
+}
+
+/// Execute one native plan and return its in-memory report without serializing it.
+///
+/// Protocol v2 uses this entry point so the process coordinator can stamp its
+/// frozen registry identity and perform the sole authoritative report write.
+/// Protocol v1 retains [`execute_native_plan_with_factories`] as a compatibility
+/// wrapper around this same execution path.
+pub(crate) fn execute_native_plan_uncommitted_with_factories(
+    plan: NativeRunPlan,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
+) -> Result<NativeReport> {
+    validate_plan(&plan)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("creating native single-run Tokio runtime")?;
     let local = tokio::task::LocalSet::new();
-    let native = local.block_on(
+    local.block_on(
         &runtime,
         prepare_and_execute_native(
             plan,
@@ -654,10 +679,7 @@ pub(crate) fn execute_native_plan_with_factories(
             graph_placement,
             registry,
         ),
-    )?;
-    let report_path = artifact_dir.join("native-v2.json");
-    write_native_report_json(&native, &report_path)?;
-    Ok(report_path)
+    )
 }
 
 fn materialize_user_files(

@@ -20,6 +20,7 @@ use aiperf_dataset::{
 };
 use aiperf_endpoints::Modality;
 use aiperf_graph::input::GraphInputAdapterResolver;
+use aiperf_metrics::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::Deserialize;
@@ -31,8 +32,8 @@ use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeGraphInputPlan,
     NativePreparedEndpointPlan, NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec,
     NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
-    StaticAccuracyEvaluatorProcessSpec, distribution, execute_native_plan_with_factories,
-    load_tokenizer,
+    StaticAccuracyEvaluatorProcessSpec, distribution,
+    execute_native_plan_uncommitted_with_factories, load_tokenizer,
 };
 use crate::graph_execution::NativeRunnerGraphPlacementFactory;
 use crate::protocol::{ArtifactSpec, DistributionSpec, PhaseSpec, TokenizerSpec};
@@ -221,11 +222,11 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
 /// load. Implementations own their canonical prepared state; the registry and
 /// pair coordinator do not inspect it.
 trait PreparedOnlineHarness: fmt::Debug {
-    /// Execute through the selected backend and return the authoritative report.
+    /// Execute through the selected backend and return an uncommitted report.
     fn execute(
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
-    ) -> Result<PathBuf>;
+    ) -> Result<(NativeReport, ReportPairRunFacts)>;
 }
 
 #[derive(Clone)]
@@ -1095,15 +1096,34 @@ impl PreparedOnlineHarness for NativePlanHarness {
     fn execute(
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
-    ) -> Result<PathBuf> {
-        execute_native_plan_with_factories(
+    ) -> Result<(NativeReport, ReportPairRunFacts)> {
+        let report_facts = native_plan_report_facts(&self.plan)?;
+        let native_report = execute_native_plan_uncommitted_with_factories(
             self.plan,
             &NativeHttpExecutionBackendFactory,
             self.graph_inputs.as_ref(),
             &NativeRunnerGraphPlacementFactory,
             product_registry,
-        )
+        )?;
+        Ok((native_report, report_facts))
     }
+}
+
+fn native_plan_report_facts(plan: &NativeRunPlan) -> Result<ReportPairRunFacts> {
+    let NativeDatasetPlan::Graph(graph) = &plan.run.dataset else {
+        return Ok(ReportPairRunFacts::new());
+    };
+    let NativeGraphInputPlan::Prepared(input) = &graph.input else {
+        bail!("protocol-v2 graph report facts require one retained prepared input bundle")
+    };
+    let graph = ReportGraphRunInfo::new(
+        input.metadata.format.clone(),
+        input.metadata.root_count,
+        input.metadata.node_count,
+        plan.run.workers,
+        plan.run.phases.len(),
+    )?;
+    Ok(ReportPairRunFacts::new().with_graph(graph))
 }
 
 struct PreparedOnlineOperation {
@@ -1124,13 +1144,11 @@ impl fmt::Debug for PreparedOnlineOperation {
 
 impl PreparedRunnerOperation for PreparedOnlineOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let report_path = self.harness.execute(self.product_registry.as_ref())?;
+        let (native_report, report_facts) = self.harness.execute(self.product_registry.as_ref())?;
         Ok(PreparedRunOutcome {
-            report_path,
-            provenance: BTreeMap::from([
-                ("backend".into(), BACKEND_ID.into()),
-                ("workload".into(), self.workload_id.into()),
-            ]),
+            native_report,
+            report_facts,
+            provenance: BTreeMap::new(),
         })
     }
 }
