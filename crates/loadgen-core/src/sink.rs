@@ -30,7 +30,7 @@ pub enum ObservedTokenKind {
 }
 
 /// Authoritative server-reported token usage for one request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ObservedUsage {
     /// Prompt-token count, when the endpoint returned it.
     pub prompt_tokens: Option<usize>,
@@ -46,6 +46,18 @@ pub struct ObservedUsage {
     pub prompt_cache_write_tokens: Option<usize>,
     /// Explicit prompt cache misses, when reported separately.
     pub prompt_cache_miss_tokens: Option<usize>,
+    /// Prompt audio tokens reported in provider usage details.
+    pub prompt_audio_tokens: Option<usize>,
+    /// Completion audio tokens reported in provider usage details.
+    pub completion_audio_tokens: Option<usize>,
+    /// Accepted predicted-output tokens.
+    pub accepted_prediction_tokens: Option<usize>,
+    /// Rejected predicted-output tokens.
+    pub rejected_prediction_tokens: Option<usize>,
+    /// Tool-definition prompt tokens reported separately by the provider.
+    pub tool_use_prompt_tokens: Option<usize>,
+    /// Prompt audio duration in seconds, distinct from audio-token counts.
+    pub prompt_audio_seconds: Option<f64>,
 }
 
 /// Endpoint-specific modality facts that feed native metrics without exposing

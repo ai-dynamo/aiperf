@@ -560,6 +560,29 @@ fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
         .prompt_cache_miss_tokens()
         .and_then(|value| usize::try_from(value).ok())
         .or(observed.prompt_cache_miss_tokens);
+    observed.prompt_audio_tokens = usage
+        .prompt_audio_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.prompt_audio_tokens);
+    observed.completion_audio_tokens = usage
+        .completion_audio_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.completion_audio_tokens);
+    observed.accepted_prediction_tokens = usage
+        .accepted_prediction_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.accepted_prediction_tokens);
+    observed.rejected_prediction_tokens = usage
+        .rejected_prediction_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.rejected_prediction_tokens);
+    observed.tool_use_prompt_tokens = usage
+        .tool_use_prompt_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.tool_use_prompt_tokens);
+    observed.prompt_audio_seconds = usage
+        .prompt_audio_seconds()
+        .or(observed.prompt_audio_seconds);
 }
 
 fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMetrics) {
@@ -711,4 +734,37 @@ fn compatibility_http_record(record: &GrpcRequestRecord) -> RequestRecord {
 
 fn nonzero_usize(value: usize) -> Option<usize> {
     (value > 0).then_some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_absorption_retains_extended_endpoint_facts() {
+        let parsed = ParsedResponse {
+            perf_ns: 1,
+            data: None,
+            usage: Some(serde_json::json!({
+                "prompt_tokens_details": {"audio_tokens": 2},
+                "completion_tokens_details": {
+                    "audio_tokens": 3,
+                    "accepted_prediction_tokens": 4,
+                    "rejected_prediction_tokens": 5
+                },
+                "toolUsePromptTokenCount": 6,
+                "prompt_audio_seconds": 1.5
+            })),
+            sources: None,
+        };
+        let mut observed = ObservedUsage::default();
+        absorb_usage(&parsed, &mut observed);
+
+        assert_eq!(observed.prompt_audio_tokens, Some(2));
+        assert_eq!(observed.completion_audio_tokens, Some(3));
+        assert_eq!(observed.accepted_prediction_tokens, Some(4));
+        assert_eq!(observed.rejected_prediction_tokens, Some(5));
+        assert_eq!(observed.tool_use_prompt_tokens, Some(6));
+        assert_eq!(observed.prompt_audio_seconds, Some(1.5));
+    }
 }

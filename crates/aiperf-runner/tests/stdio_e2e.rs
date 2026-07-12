@@ -143,7 +143,7 @@ async fn chat_handler() -> impl IntoResponse {
     let body = concat!(
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\n",
-        "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":1}}\n\n",
+        "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":1,\"prompt_tokens_details\":{\"audio_tokens\":2},\"completion_tokens_details\":{\"audio_tokens\":3,\"accepted_prediction_tokens\":4,\"rejected_prediction_tokens\":5},\"toolUsePromptTokenCount\":6,\"prompt_audio_seconds\":1.5}}\n\n",
         "data: [DONE]\n\n",
     );
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
@@ -383,6 +383,30 @@ async fn stdio_child_runs_http_and_commits_native_report() {
     assert_eq!(
         report["metrics"]["total_output_tokens"]["series"][0]["stats"]["value"],
         4.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_prompt_audio_tokens"]["series"][0]["stats"]["value"],
+        8.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_completion_audio_tokens"]["series"][0]["stats"]["value"],
+        12.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_accepted_prediction_tokens"]["series"][0]["stats"]["value"],
+        16.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_rejected_prediction_tokens"]["series"][0]["stats"]["value"],
+        20.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_tool_use_prompt_tokens"]["series"][0]["stats"]["value"],
+        24.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_prompt_audio_seconds"]["series"][0]["stats"]["value"],
+        6.0
     );
     assert_eq!(
         report["metrics"]["good_request_count"]["series"][0]["stats"]["total"],

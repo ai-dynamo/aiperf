@@ -571,6 +571,29 @@ fn absorb_usage(parsed: &ParsedResponse, observed: &mut ObservedUsage) {
         .prompt_cache_miss_tokens()
         .and_then(|value| usize::try_from(value).ok())
         .or(observed.prompt_cache_miss_tokens);
+    observed.prompt_audio_tokens = usage
+        .prompt_audio_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.prompt_audio_tokens);
+    observed.completion_audio_tokens = usage
+        .completion_audio_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.completion_audio_tokens);
+    observed.accepted_prediction_tokens = usage
+        .accepted_prediction_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.accepted_prediction_tokens);
+    observed.rejected_prediction_tokens = usage
+        .rejected_prediction_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.rejected_prediction_tokens);
+    observed.tool_use_prompt_tokens = usage
+        .tool_use_prompt_tokens()
+        .and_then(|value| usize::try_from(value).ok())
+        .or(observed.tool_use_prompt_tokens);
+    observed.prompt_audio_seconds = usage
+        .prompt_audio_seconds()
+        .or(observed.prompt_audio_seconds);
 }
 
 fn http_trace(record: &RequestRecord) -> HttpTrace {
@@ -676,5 +699,28 @@ mod tests {
         assert_eq!(observed.prompt_tokens, Some(12));
         assert_eq!(observed.prompt_cache_read_tokens, Some(7));
         assert_eq!(observed.prompt_cache_write_tokens, Some(2));
+
+        let parsed = ParsedResponse {
+            perf_ns: 3,
+            data: None,
+            usage: Some(serde_json::json!({
+                "prompt_tokens_details": {"audio_tokens": 11},
+                "completion_tokens_details": {
+                    "audio_tokens": 13,
+                    "accepted_prediction_tokens": 17,
+                    "rejected_prediction_tokens": 19
+                },
+                "toolUsePromptTokenCount": 23,
+                "prompt_audio_seconds": 2.5
+            })),
+            sources: None,
+        };
+        absorb_usage(&parsed, &mut observed);
+        assert_eq!(observed.prompt_audio_tokens, Some(11));
+        assert_eq!(observed.completion_audio_tokens, Some(13));
+        assert_eq!(observed.accepted_prediction_tokens, Some(17));
+        assert_eq!(observed.rejected_prediction_tokens, Some(19));
+        assert_eq!(observed.tool_use_prompt_tokens, Some(23));
+        assert_eq!(observed.prompt_audio_seconds, Some(2.5));
     }
 }

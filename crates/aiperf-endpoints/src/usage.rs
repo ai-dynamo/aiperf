@@ -31,22 +31,17 @@ impl<'a> UsageView<'a> {
             "inputTokens",
             "input_token_count",
         ] {
-            let Some(value) = self.usage.get(key) else {
+            let Some(value) = self.value(key) else {
                 continue;
             };
             let value = value.as_u64()?;
             if matches!(key, "input_tokens" | "inputTokens")
                 && DISJOINT_CACHE_KEYS
                     .iter()
-                    .any(|cache_key| self.usage.contains_key(*cache_key))
+                    .any(|cache_key| self.value(cache_key).is_some())
             {
                 return Some(DISJOINT_CACHE_KEYS.iter().fold(value, |total, cache_key| {
-                    total.saturating_add(
-                        self.usage
-                            .get(*cache_key)
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                    )
+                    total.saturating_add(self.value(cache_key).and_then(Value::as_u64).unwrap_or(0))
                 }));
             }
             return Some(value);
@@ -63,15 +58,15 @@ impl<'a> UsageView<'a> {
             "inputTokens",
             "input_token_count",
         ] {
-            if !self.usage.contains_key(key) {
+            if self.value(key).is_none() {
                 continue;
             }
             if matches!(key, "input_tokens" | "inputTokens")
                 && DISJOINT_CACHE_KEYS
                     .iter()
-                    .any(|cache_key| self.usage.contains_key(*cache_key))
+                    .any(|cache_key| self.value(cache_key).is_some())
             {
-                return self.usage.get(key).and_then(Value::as_u64);
+                return self.value(key).and_then(Value::as_u64);
             }
             return None;
         }
@@ -80,68 +75,132 @@ impl<'a> UsageView<'a> {
 
     /// Completion/output token count.
     pub fn completion_tokens(self) -> Option<u64> {
-        first_u64(
-            self.usage,
-            &[
-                "completion_tokens",
-                "output_tokens",
-                "candidatesTokenCount",
-                "outputTokens",
-                "generated_token_count",
-            ],
-        )
+        self.first_u64(&[
+            "completion_tokens",
+            "output_tokens",
+            "candidatesTokenCount",
+            "outputTokens",
+            "generated_token_count",
+        ])
     }
 
     /// Provider-reported total token count, when explicitly present.
     pub fn total_tokens(self) -> Option<u64> {
-        first_u64(
-            self.usage,
-            &["total_tokens", "totalTokenCount", "totalTokens"],
-        )
+        self.first_u64(&["total_tokens", "totalTokenCount", "totalTokens"])
     }
 
     /// Cached prompt tokens read from a prior prefix.
     pub fn prompt_cache_read_tokens(self) -> Option<u64> {
-        first_nested_u64(
-            self.usage,
+        self.first_nested_u64(
             &["prompt_tokens_details", "input_tokens_details"],
             "cached_tokens",
         )
         .or_else(|| {
-            first_u64(
-                self.usage,
-                &[
-                    "cache_read_input_tokens",
-                    "prompt_cache_hit_tokens",
-                    "cachedContentTokenCount",
-                    "cacheReadInputTokens",
-                    "cached_tokens",
-                ],
-            )
+            self.first_u64(&[
+                "cache_read_input_tokens",
+                "prompt_cache_hit_tokens",
+                "cachedContentTokenCount",
+                "cacheReadInputTokens",
+                "cached_tokens",
+            ])
         })
     }
 
     /// Prompt tokens written into a provider cache.
     pub fn prompt_cache_write_tokens(self) -> Option<u64> {
-        first_u64(
-            self.usage,
-            &["cache_creation_input_tokens", "cacheWriteInputTokens"],
-        )
+        self.first_u64(&["cache_creation_input_tokens", "cacheWriteInputTokens"])
     }
 
     /// Explicit prompt cache-miss count.
     pub fn prompt_cache_miss_tokens(self) -> Option<u64> {
-        first_u64(self.usage, &["prompt_cache_miss_tokens"])
+        self.first_u64(&["prompt_cache_miss_tokens"])
     }
 
     /// Provider-reported reasoning token count.
     pub fn reasoning_tokens(self) -> Option<u64> {
-        first_nested_u64(
-            self.usage,
+        self.first_nested_u64(
             &["completion_tokens_details", "output_tokens_details"],
             "reasoning_tokens",
         )
-        .or_else(|| first_u64(self.usage, &["thoughtsTokenCount"]))
+        .or_else(|| self.first_u64(&["thoughtsTokenCount"]))
+    }
+
+    /// Audio-token count attributed to the prompt.
+    pub fn prompt_audio_tokens(self) -> Option<u64> {
+        self.first_nested_u64(
+            &["prompt_tokens_details", "input_tokens_details"],
+            "audio_tokens",
+        )
+    }
+
+    /// Audio-token count attributed to model output.
+    pub fn completion_audio_tokens(self) -> Option<u64> {
+        self.first_nested_u64(
+            &["completion_tokens_details", "output_tokens_details"],
+            "audio_tokens",
+        )
+    }
+
+    /// Accepted predicted-output tokens reported by OpenAI-compatible APIs.
+    pub fn accepted_prediction_tokens(self) -> Option<u64> {
+        self.first_nested_u64(
+            &["completion_tokens_details", "output_tokens_details"],
+            "accepted_prediction_tokens",
+        )
+    }
+
+    /// Rejected predicted-output tokens reported by OpenAI-compatible APIs.
+    pub fn rejected_prediction_tokens(self) -> Option<u64> {
+        self.first_nested_u64(
+            &["completion_tokens_details", "output_tokens_details"],
+            "rejected_prediction_tokens",
+        )
+    }
+
+    /// Gemini tool-definition tokens reported separately from prompt content.
+    pub fn tool_use_prompt_tokens(self) -> Option<u64> {
+        self.first_u64(&["toolUsePromptTokenCount"])
+    }
+
+    /// Mistral prompt-audio duration in seconds, distinct from audio tokens.
+    pub fn prompt_audio_seconds(self) -> Option<f64> {
+        self.first_value(&["prompt_audio_seconds"])
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+    }
+
+    fn first_u64(self, keys: &[&str]) -> Option<u64> {
+        keys.iter()
+            .find_map(|key| self.value(key).map(Value::as_u64))
+            .flatten()
+    }
+
+    fn first_value(self, keys: &[&str]) -> Option<&'a Value> {
+        keys.iter().find_map(|key| self.value(key))
+    }
+
+    fn first_nested_u64(self, detail_keys: &[&str], field: &str) -> Option<u64> {
+        detail_keys
+            .iter()
+            .find_map(|key| {
+                self.value(key)
+                    .and_then(Value::as_object)
+                    .and_then(|details| details.get(field).map(Value::as_u64))
+            })
+            .flatten()
+    }
+
+    fn value(self, key: &str) -> Option<&'a Value> {
+        self.usage
+            .get(key)
+            .or_else(|| nested_object(self.usage, "usageMetadata")?.get(key))
+            .or_else(|| {
+                let meta = nested_object(self.usage, "meta")?;
+                nested_object(meta, "tokens")
+                    .and_then(|tokens| tokens.get(key))
+                    .or_else(|| (key == "cached_tokens").then(|| meta.get(key)).flatten())
+            })
+            .or_else(|| nested_object(self.usage, "tokens")?.get(key))
     }
 }
 
@@ -152,22 +211,8 @@ const DISJOINT_CACHE_KEYS: &[&str] = &[
     "cacheWriteInputTokens",
 ];
 
-fn first_u64(usage: &Map<String, Value>, keys: &[&str]) -> Option<u64> {
-    keys.iter()
-        .find_map(|key| usage.get(*key).map(Value::as_u64))
-        .flatten()
-}
-
-fn first_nested_u64(usage: &Map<String, Value>, detail_keys: &[&str], field: &str) -> Option<u64> {
-    detail_keys
-        .iter()
-        .find_map(|key| {
-            usage
-                .get(*key)
-                .and_then(Value::as_object)
-                .and_then(|details| details.get(field).map(Value::as_u64))
-        })
-        .flatten()
+fn nested_object<'a>(object: &'a Map<String, Value>, key: &str) -> Option<&'a Map<String, Value>> {
+    object.get(key).and_then(Value::as_object)
 }
 
 #[cfg(test)]
@@ -214,5 +259,66 @@ mod tests {
         let usage = UsageView::from_value(&value).unwrap();
         assert_eq!(usage.completion_tokens(), None);
         assert_eq!(usage.prompt_cache_read_tokens(), None);
+    }
+
+    #[test]
+    fn extended_usage_fields_preserve_zero_and_detail_precedence() {
+        let value = json!({
+            "prompt_tokens_details": {"audio_tokens": 0},
+            "input_tokens_details": {"audio_tokens": 99},
+            "completion_tokens_details": {
+                "audio_tokens": 20,
+                "accepted_prediction_tokens": 0,
+                "rejected_prediction_tokens": 5
+            },
+            "toolUsePromptTokenCount": 30,
+            "prompt_audio_seconds": 12
+        });
+        let usage = UsageView::from_value(&value).unwrap();
+        assert_eq!(usage.prompt_audio_tokens(), Some(0));
+        assert_eq!(usage.completion_audio_tokens(), Some(20));
+        assert_eq!(usage.accepted_prediction_tokens(), Some(0));
+        assert_eq!(usage.rejected_prediction_tokens(), Some(5));
+        assert_eq!(usage.tool_use_prompt_tokens(), Some(30));
+        assert_eq!(usage.prompt_audio_seconds(), Some(12.0));
+    }
+
+    #[test]
+    fn gemini_and_cohere_envelopes_are_read_without_materializing_a_copy() {
+        let value = json!({
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "toolUsePromptTokenCount": 30
+            },
+            "meta": {
+                "tokens": {"output_tokens": 52},
+                "cached_tokens": 25
+            }
+        });
+        let usage = UsageView::from_value(&value).unwrap();
+        assert_eq!(usage.prompt_tokens(), Some(10));
+        assert_eq!(usage.completion_tokens(), Some(52));
+        assert_eq!(usage.prompt_cache_read_tokens(), Some(25));
+        assert_eq!(usage.tool_use_prompt_tokens(), Some(30));
+
+        let top_level_wins = json!({
+            "promptTokenCount": 999,
+            "usageMetadata": {"promptTokenCount": 10}
+        });
+        assert_eq!(
+            UsageView::from_value(&top_level_wins)
+                .unwrap()
+                .prompt_tokens(),
+            Some(999)
+        );
+    }
+
+    #[test]
+    fn prompt_audio_seconds_rejects_non_numeric_sentinels() {
+        for value in [json!({}), json!([]), json!("12.5"), Value::Null] {
+            let usage_value = json!({"prompt_audio_seconds": value});
+            let usage = UsageView::from_value(&usage_value).unwrap();
+            assert_eq!(usage.prompt_audio_seconds(), None);
+        }
     }
 }

@@ -111,8 +111,9 @@ struct PendingResponseMetadata {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactObservedUsage {
-    values: [usize; 7],
-    present: u8,
+    values: [usize; 12],
+    present: u16,
+    prompt_audio_seconds: Option<f64>,
 }
 
 impl CompactObservedUsage {
@@ -125,6 +126,11 @@ impl CompactObservedUsage {
             usage.prompt_cache_read_tokens,
             usage.prompt_cache_write_tokens,
             usage.prompt_cache_miss_tokens,
+            usage.prompt_audio_tokens,
+            usage.completion_audio_tokens,
+            usage.accepted_prediction_tokens,
+            usage.rejected_prediction_tokens,
+            usage.tool_use_prompt_tokens,
         ]
         .into_iter()
         .enumerate()
@@ -133,6 +139,9 @@ impl CompactObservedUsage {
                 self.values[index] = value;
                 self.present |= 1 << index;
             }
+        }
+        if let Some(value) = usage.prompt_audio_seconds.filter(|value| value.is_finite()) {
+            self.prompt_audio_seconds = Some(value);
         }
     }
 
@@ -495,7 +504,12 @@ impl PendingRequest {
                 prompt_cache_read_tokens: self.observed_usage.get(4).map(|value| value as u64),
                 prompt_cache_write_tokens: self.observed_usage.get(5).map(|value| value as u64),
                 prompt_cache_miss_tokens: self.observed_usage.get(6).map(|value| value as u64),
-                ..UsageMetrics::default()
+                prompt_audio_tokens: self.observed_usage.get(7).map(|value| value as u64),
+                completion_audio_tokens: self.observed_usage.get(8).map(|value| value as u64),
+                accepted_prediction_tokens: self.observed_usage.get(9).map(|value| value as u64),
+                rejected_prediction_tokens: self.observed_usage.get(10).map(|value| value as u64),
+                tool_use_prompt_tokens: self.observed_usage.get(11).map(|value| value as u64),
+                prompt_audio_seconds: self.observed_usage.prompt_audio_seconds,
             },
             http: self.response.http.map(|http| *http).unwrap_or_default(),
             audio_duration_s: self.metadata.audio_duration_s,
@@ -694,6 +708,15 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(8),
                 completion_tokens: Some(2),
+                prompt_cache_read_tokens: Some(3),
+                prompt_cache_write_tokens: Some(4),
+                prompt_cache_miss_tokens: Some(5),
+                prompt_audio_tokens: Some(6),
+                completion_audio_tokens: Some(7),
+                accepted_prediction_tokens: Some(8),
+                rejected_prediction_tokens: Some(9),
+                tool_use_prompt_tokens: Some(10),
+                prompt_audio_seconds: Some(1.25),
                 ..ObservedUsage::default()
             },
         );
@@ -724,6 +747,24 @@ mod tests {
         assert_eq!(collection.records[0].session_num, 9);
         assert_eq!(collection.records[0].turn_index, 2);
         assert_eq!(
+            collection.records[0].usage,
+            UsageMetrics {
+                prompt_tokens: Some(8),
+                completion_tokens: Some(2),
+                total_tokens: Some(10),
+                reasoning_tokens: None,
+                prompt_audio_tokens: Some(6),
+                completion_audio_tokens: Some(7),
+                accepted_prediction_tokens: Some(8),
+                rejected_prediction_tokens: Some(9),
+                prompt_cache_read_tokens: Some(3),
+                prompt_cache_write_tokens: Some(4),
+                prompt_cache_miss_tokens: Some(5),
+                tool_use_prompt_tokens: Some(10),
+                prompt_audio_seconds: Some(1.25),
+            }
+        );
+        assert_eq!(
             collection.records[0].token_arrival_ns,
             vec![10_000_000, 20_000_000]
         );
@@ -752,6 +793,30 @@ mod tests {
         assert_eq!(
             summary.finite_value(MetricTag::TotalUsageTotalTokens),
             Some(10.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalUsagePromptAudioTokens),
+            Some(6.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalUsageCompletionAudioTokens),
+            Some(7.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalUsageAcceptedPredictionTokens),
+            Some(8.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalUsageRejectedPredictionTokens),
+            Some(9.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalUsageToolUsePromptTokens),
+            Some(10.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalUsagePromptAudioSeconds),
+            Some(1.25)
         );
         assert_eq!(summary.finite_value(MetricTag::NumImages), Some(2.0));
         assert_eq!(
