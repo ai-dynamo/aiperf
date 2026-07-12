@@ -60,6 +60,7 @@ def _write_manifest(
         cargo_lock=cargo_lock,
         source_revision=_REVISION,
         features=["dynamo-offline"] if offline else [],
+        dependency_revisions=({"dynamo-aiperf-native": "b" * 40} if offline else {}),
     )
     manifest_path = tmp_path / "runner-build.json"
     manifest_path.write_text(json.dumps(manifest))
@@ -89,6 +90,9 @@ def test_release_input_binds_exact_image_lock_and_capability_profile(
 
     assert verified["profile"] == profile
     assert verified["features"] == (["dynamo-offline"] if offline else [])
+    assert verified["dependency_revisions"] == (
+        {"dynamo-aiperf-native": "b" * 40} if offline else {}
+    )
     assert verified["distribution_id"] == runner_release_input._distribution_id(binary)
 
 

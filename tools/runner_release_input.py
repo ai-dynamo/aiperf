@@ -23,12 +23,14 @@ RunnerProfile = Literal["online", "offline"]
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+_DEPENDENCY_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _MANIFEST_FIELDS = {
     "schema_version",
     "distribution_id",
     "source_revision",
     "cargo_lock_sha256",
     "features",
+    "dependency_revisions",
 }
 _OFFLINE_PAIRS = {
     ("dynamo_offline", "graph"),
@@ -52,11 +54,13 @@ def create_manifest(
     cargo_lock: Path,
     source_revision: str,
     features: list[str],
+    dependency_revisions: dict[str, str],
 ) -> dict[str, Any]:
     """Create a manifest bound to one exact executable and Cargo lock."""
     _validate_native_binary(binary)
     _validate_source_revision(source_revision)
     normalized_features = _validate_features(features)
+    normalized_dependencies = _validate_dependency_revisions(dependency_revisions)
     capabilities = _load_capabilities(binary)
     distribution_id = _distribution_id(binary)
     if capabilities.get("distribution_id") != distribution_id:
@@ -64,11 +68,12 @@ def create_manifest(
             "runner capabilities distribution_id disagrees with its exact image bytes"
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "distribution_id": distribution_id,
         "source_revision": source_revision,
         "cargo_lock_sha256": _cargo_lock_digest(cargo_lock),
         "features": normalized_features,
+        "dependency_revisions": normalized_dependencies,
     }
 
 
@@ -102,13 +107,19 @@ def verify_release_input(
         raise RuntimeError(
             "runner capabilities distribution_id disagrees with the immutable manifest"
         )
-    _verify_profile(profile, manifest["features"], capabilities)
+    _verify_profile(
+        profile,
+        manifest["features"],
+        manifest["dependency_revisions"],
+        capabilities,
+    )
     return {
         "profile": profile,
         "distribution_id": distribution_id,
         "source_revision": source_revision,
         "cargo_lock_sha256": manifest["cargo_lock_sha256"],
         "features": manifest["features"],
+        "dependency_revisions": manifest["dependency_revisions"],
         "supported_pairs": capabilities.get("supported_pairs", []),
     }
 
@@ -123,10 +134,10 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_FIELDS:
         raise RuntimeError(
             "runner build manifest requires exactly schema_version, distribution_id, "
-            "source_revision, cargo_lock_sha256, and features"
+            "source_revision, cargo_lock_sha256, features, and dependency_revisions"
         )
-    if manifest["schema_version"] != 1:
-        raise RuntimeError("runner build manifest schema_version must be 1")
+    if manifest["schema_version"] != 2:
+        raise RuntimeError("runner build manifest schema_version must be 2")
     _validate_source_revision(manifest["source_revision"])
     distribution_id = manifest["distribution_id"]
     if (
@@ -147,6 +158,9 @@ def _load_manifest(path: Path) -> dict[str, Any]:
             "runner build manifest cargo_lock_sha256 must be sha256: plus 64 lowercase hex digits"
         )
     manifest["features"] = _validate_features(manifest["features"])
+    manifest["dependency_revisions"] = _validate_dependency_revisions(
+        manifest["dependency_revisions"]
+    )
     return manifest
 
 
@@ -174,6 +188,22 @@ def _validate_features(features: object) -> list[str]:
     ):
         raise RuntimeError("features must be sorted unique non-empty strings")
     return list(features)
+
+
+def _validate_dependency_revisions(revisions: object) -> dict[str, str]:
+    if not isinstance(revisions, dict):
+        raise RuntimeError("dependency_revisions must be an object")
+    normalized: dict[str, str] = {}
+    for name, revision in revisions.items():
+        if not isinstance(name, str) or _DEPENDENCY_NAME.fullmatch(name) is None:
+            raise RuntimeError(
+                "dependency_revisions keys must be lowercase dependency names"
+            )
+        _validate_source_revision(revision)
+        normalized[name] = revision
+    if list(revisions) != sorted(revisions):
+        raise RuntimeError("dependency_revisions keys must be sorted")
+    return normalized
 
 
 def _distribution_id(binary: Path) -> str:
@@ -225,6 +255,7 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
 def _verify_profile(
     profile: RunnerProfile,
     features: list[str],
+    dependency_revisions: dict[str, str],
     capabilities: dict[str, Any],
 ) -> None:
     if profile not in ("online", "offline"):
@@ -246,6 +277,10 @@ def _verify_profile(
             raise RuntimeError(
                 "offline runner manifest must include the dynamo-offline Cargo feature"
             )
+        if "dynamo-aiperf-native" not in dependency_revisions:
+            raise RuntimeError(
+                "offline runner manifest must identify the dynamo-aiperf-native revision"
+            )
         if not _OFFLINE_PAIRS.issubset(pairs) or "dynamo_offline" not in backend_ids:
             raise RuntimeError(
                 "offline runner must advertise executable Dynamo scheduled and graph pairs"
@@ -255,10 +290,26 @@ def _verify_profile(
         raise RuntimeError(
             "online runner manifest cannot include Dynamo Cargo features"
         )
+    if dependency_revisions:
+        raise RuntimeError(
+            "online runner manifest cannot contain external dependency revisions"
+        )
     if any(backend == "dynamo_offline" for backend, _workload in pairs):
         raise RuntimeError("online runner unexpectedly advertises an offline pair")
     if "dynamo_offline" in backend_ids:
         raise RuntimeError("online runner unexpectedly advertises the offline backend")
+
+
+def _parse_dependency_revisions(values: list[str]) -> dict[str, str]:
+    revisions: dict[str, str] = {}
+    for value in values:
+        name, separator, revision = value.partition("=")
+        if not separator or name in revisions:
+            raise RuntimeError(
+                "--dependency-revision requires unique NAME=REVISION values"
+            )
+        revisions[name] = revision
+    return _validate_dependency_revisions(dict(sorted(revisions.items())))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -270,6 +321,12 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--cargo-lock", type=Path, required=True)
     create.add_argument("--source-revision", required=True)
     create.add_argument("--feature", action="append", default=[])
+    create.add_argument(
+        "--dependency-revision",
+        action="append",
+        default=[],
+        metavar="NAME=REVISION",
+    )
     create.add_argument("--output", type=Path, required=True)
 
     verify = subparsers.add_parser("verify", help="verify one immutable runner input")
@@ -290,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
             cargo_lock=arguments.cargo_lock,
             source_revision=arguments.source_revision,
             features=arguments.feature,
+            dependency_revisions=_parse_dependency_revisions(
+                arguments.dependency_revision
+            ),
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(

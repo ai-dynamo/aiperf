@@ -15,7 +15,9 @@ The trusted native build job supplies two release inputs in `bin/`:
 - `aiperf-runner` (or `aiperf-runner.exe`);
 - `runner-build.json`, containing the exact domain-separated BLAKE3
   `distribution_id`, 40-digit source revision, `sha256:` Cargo-lock digest, and
-  sorted linked Cargo feature list.
+  sorted linked Cargo feature list. Offline manifests additionally bind the
+  exact `dynamo-aiperf-native` source revision; online manifests carry an empty
+  dependency-revision map.
 
 After staging those inputs, build the wheel:
 
@@ -31,8 +33,8 @@ On Windows, copy `aiperf-runner.exe` instead. The build fails unless `bin/`
 contains exactly one native ELF, Mach-O, or PE executable and the manifest's
 content ID matches its bytes. The resulting wheel uses a
 `py3-none-<platform>` tag, installs the binary directly into the environment's
-scripts directory, and retains the source/lock/feature manifest in wheel
-metadata.
+scripts directory, and retains the source/lock/feature/dependency manifest in
+wheel metadata.
 
 `AIPERF_RUNNER_WHEEL_PLATFORM_TAG` may be set by a controlled cross-build to
 override the host-derived platform tag. The release pipeline must still execute

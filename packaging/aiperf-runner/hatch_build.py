@@ -20,6 +20,7 @@ _BINARY_NAMES = ("aiperf-runner", "aiperf-runner.exe")
 _PLATFORM_TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.]*$")
 _LOWER_HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 _LOWER_HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+_DEPENDENCY_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _NATIVE_MAGICS = (
     b"\x7fELF",
@@ -96,13 +97,14 @@ def _validate_build_manifest(manifest_path: Path, binary: Path) -> None:
         "source_revision",
         "cargo_lock_sha256",
         "features",
+        "dependency_revisions",
     }:
         raise RuntimeError(
             "runner build manifest requires exactly schema_version, distribution_id, "
-            "source_revision, cargo_lock_sha256, and features"
+            "source_revision, cargo_lock_sha256, features, and dependency_revisions"
         )
-    if manifest["schema_version"] != 1:
-        raise RuntimeError("runner build manifest schema_version must be 1")
+    if manifest["schema_version"] != 2:
+        raise RuntimeError("runner build manifest schema_version must be 2")
     if (
         not isinstance(manifest["source_revision"], str)
         or _LOWER_HEX_40.fullmatch(manifest["source_revision"]) is None
@@ -128,6 +130,24 @@ def _validate_build_manifest(manifest_path: Path, binary: Path) -> None:
         raise RuntimeError(
             "runner build manifest features must be sorted unique non-empty strings"
         )
+    dependency_revisions = manifest["dependency_revisions"]
+    if not isinstance(dependency_revisions, dict) or list(
+        dependency_revisions
+    ) != sorted(dependency_revisions):
+        raise RuntimeError(
+            "runner build manifest dependency_revisions must be a key-sorted object"
+        )
+    for dependency, revision in dependency_revisions.items():
+        if (
+            not isinstance(dependency, str)
+            or _DEPENDENCY_NAME.fullmatch(dependency) is None
+            or not isinstance(revision, str)
+            or _LOWER_HEX_40.fullmatch(revision) is None
+        ):
+            raise RuntimeError(
+                "runner build manifest dependency revisions require lowercase names "
+                "and 40-digit lowercase hexadecimal revisions"
+            )
     expected = manifest["distribution_id"]
     if not isinstance(expected, str) or not expected.startswith("blake3:"):
         raise RuntimeError(
