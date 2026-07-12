@@ -735,13 +735,27 @@ impl TransportSink {
         })?;
         match endpoint_path {
             None => Ok(selected_url.clone()),
-            Some(path) if path.starts_with('/') => Ok(format!(
-                "{}{}",
-                self.base_urls
+            Some(path) if path.starts_with('/') => {
+                // Python parity: `src/aiperf/transports/aiohttp_transport.py:170-199`
+                // at commit `530c6db43` expands the sole supported path
+                // template and removes a duplicate `/v1` prefix.
+                let template_remainder = path.replace("{model_name}", "");
+                anyhow::ensure!(
+                    !template_remainder.contains('{') && !template_remainder.contains('}'),
+                    "endpoint path {path:?} contains an unsupported template placeholder"
+                );
+                let rendered = path.replace("{model_name}", &self.model);
+                let base_url = self
+                    .base_urls
                     .get(selected_index)
-                    .expect("base/default URL vectors have equal length"),
-                path
-            )),
+                    .expect("base/default URL vectors have equal length");
+                let rendered = if base_url.ends_with("/v1") && rendered.starts_with("/v1/") {
+                    &rendered[3..]
+                } else {
+                    rendered.as_str()
+                };
+                Ok(format!("{base_url}{rendered}"))
+            }
             Some(url) if url::Url::parse(url).is_ok() => Ok(url.to_string()),
             Some(value) => {
                 anyhow::bail!("dataset endpoint target {value:?} must be an absolute path or URL")
@@ -1427,6 +1441,55 @@ mod tests {
         }
 
         fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
+    }
+
+    #[test]
+    fn endpoint_path_expands_primary_model_name() {
+        let sink = TransportSink::new(
+            RealClock::new(),
+            0,
+            "http://localhost:8000",
+            "sklearn-iris",
+            false,
+        );
+        assert_eq!(
+            sink.selected_url(None, Some("/v1/models/{model_name}:predict"))
+                .unwrap(),
+            "http://localhost:8000/v1/models/sklearn-iris:predict"
+        );
+    }
+
+    #[test]
+    fn endpoint_path_deduplicates_v1_base_prefix() {
+        let sink = TransportSink::new(
+            RealClock::new(),
+            0,
+            "http://localhost:8000/v1",
+            "sklearn-iris",
+            false,
+        );
+        assert_eq!(
+            sink.selected_url(None, Some("/v1/models/{model_name}:predict"))
+                .unwrap(),
+            "http://localhost:8000/v1/models/sklearn-iris:predict"
+        );
+    }
+
+    #[test]
+    fn endpoint_path_rejects_unknown_template_placeholders() {
+        let sink = TransportSink::new(
+            RealClock::new(),
+            0,
+            "http://localhost:8000",
+            "fixture-model",
+            false,
+        );
+        assert!(
+            sink.selected_url(None, Some("/v1/models/{unknown}:predict"))
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported template placeholder")
+        );
     }
 
     #[test]
