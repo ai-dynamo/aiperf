@@ -51,7 +51,7 @@ pub struct FrameTableProjectionV1 {
     pub table: TableId,
     /// Arrow rows under the exact table schema.
     pub batch: RecordBatch,
-    /// Canonical logical rows in any order; the multiset is authoritative.
+    /// Canonical logical rows in any order; their multiset must equal the Arrow rows.
     pub logical_rows: Vec<CanonicalLogicalRow>,
 }
 
@@ -84,8 +84,15 @@ impl FrameTableProjectionV1 {
             }
         }
         validate_row_identity_and_clock(self)?;
-        ProjectionEvidence::from_rows(&self.logical_rows)
-            .map_err(ParquetProjectionError::LogicalRow)
+        let physical_rows = table_schema.canonical_rows(&self.batch)?;
+        let physical_evidence = ProjectionEvidence::from_rows(&physical_rows)
+            .map_err(ParquetProjectionError::LogicalRow)?;
+        let supplied_evidence = ProjectionEvidence::from_rows(&self.logical_rows)
+            .map_err(ParquetProjectionError::LogicalRow)?;
+        if physical_evidence != supplied_evidence {
+            return Err(ParquetProjectionError::PhysicalLogicalEvidenceMismatch);
+        }
+        Ok(physical_evidence)
     }
 }
 
@@ -1120,6 +1127,8 @@ pub enum ParquetProjectionError {
     LogicalRowTableMismatch,
     /// Logical row carries another schema fingerprint.
     LogicalRowSchemaMismatch,
+    /// Caller-supplied logical evidence does not describe the exact Arrow rows.
+    PhysicalLogicalEvidenceMismatch,
     /// One append call contained no required table projections.
     EmptyFrameProjectionSet,
     /// One append call mixed terminal frame identities.
@@ -1226,6 +1235,9 @@ impl Display for ParquetProjectionError {
             ),
             Self::LogicalRowTableMismatch => formatter.write_str("logical row table mismatch"),
             Self::LogicalRowSchemaMismatch => formatter.write_str("logical row schema mismatch"),
+            Self::PhysicalLogicalEvidenceMismatch => {
+                formatter.write_str("Arrow rows do not match supplied logical evidence")
+            }
             Self::EmptyFrameProjectionSet => formatter.write_str("frame projection set is empty"),
             Self::MixedFrameIdentity => {
                 formatter.write_str("frame projection set mixes identities")
@@ -1416,7 +1428,36 @@ mod tests {
         assert_eq!(decoded.index_entry().unwrap().descriptor_bytes(), bytes);
     }
 
+    #[test]
+    fn projection_rejects_logical_evidence_not_derived_from_arrow_rows() {
+        let (schemas, mut projection) = family_projection();
+        projection.logical_rows[0] = projection.logical_rows[1].clone();
+        assert!(matches!(
+            projection.validate(&schemas),
+            Err(ParquetProjectionError::PhysicalLogicalEvidenceMismatch)
+        ));
+    }
+
     fn build_family_partition() -> CompletedPartitionV1 {
+        let (schemas, projection) = family_projection();
+        let mut builder = ParquetPartitionBuilderV1::new(
+            schemas,
+            ParquetRotationConfigV1 {
+                target_rows: 2,
+                target_uncompressed_bytes: 1 << 20,
+                hard_rows: 10,
+                hard_bytes: 1 << 20,
+                time_bucket_ns: 100,
+            },
+        )
+        .unwrap();
+        let mut output = builder.append_frame(vec![projection]).unwrap();
+        assert!(builder.finish().unwrap().partitions.is_empty());
+        assert_eq!(output.partitions.len(), 1);
+        output.partitions.remove(0)
+    }
+
+    fn family_projection() -> (ArchiveSchemasV1, FrameTableProjectionV1) {
         let schemas = ArchiveSchemasV1::load().unwrap();
         let (archive_id, session_id, frame_id) = ids();
         let table = schemas.table(TableId::Families).unwrap();
@@ -1490,20 +1531,6 @@ mod tests {
             batch,
             logical_rows: vec![row("z_family", 2), row("a_family", 1)],
         };
-        let mut builder = ParquetPartitionBuilderV1::new(
-            schemas,
-            ParquetRotationConfigV1 {
-                target_rows: 2,
-                target_uncompressed_bytes: 1 << 20,
-                hard_rows: 10,
-                hard_bytes: 1 << 20,
-                time_bucket_ns: 100,
-            },
-        )
-        .unwrap();
-        let mut output = builder.append_frame(vec![projection]).unwrap();
-        assert!(builder.finish().unwrap().partitions.is_empty());
-        assert_eq!(output.partitions.len(), 1);
-        output.partitions.remove(0)
+        (schemas, projection)
     }
 }

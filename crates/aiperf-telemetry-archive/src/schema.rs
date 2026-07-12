@@ -13,12 +13,17 @@ use std::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 
 use arrow_array::types::Int8Type;
-use arrow_array::{Array, DictionaryArray, ListArray, RecordBatch, StringArray, StructArray};
+use arrow_array::{
+    Array, BinaryArray, BooleanArray, Decimal128Array, DictionaryArray, FixedSizeBinaryArray,
+    Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, ListArray, MapArray, RecordBatch,
+    StringArray, StructArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+};
 use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
 use serde_json::Value;
 
 use crate::{
-    CanonicalDescriptor, DescriptorError, Digest, LogicalField, LogicalSchema, LogicalType, TableId,
+    CanonicalDescriptor, CanonicalLogicalRow, DescriptorError, Digest, LogicalField, LogicalSchema,
+    LogicalType, LogicalValue, TableId,
 };
 
 const SCHEMA_VERSION: &str = "1.0";
@@ -140,6 +145,26 @@ impl ArchiveTableSchemaV1 {
             validate_enum_array(array.as_ref(), nested, path, allowed)?;
         }
         Ok(())
+    }
+
+    /// Derives canonical logical rows from the exact Arrow values.
+    pub fn canonical_rows(
+        &self,
+        batch: &RecordBatch,
+    ) -> Result<Vec<CanonicalLogicalRow>, SchemaError> {
+        self.validate_record_batch(batch)?;
+        (0..batch.num_rows())
+            .map(|row| {
+                let values = batch
+                    .columns()
+                    .iter()
+                    .zip(self.schema.fields())
+                    .map(|(array, field)| logical_value(array.as_ref(), row, field.data_type()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                CanonicalLogicalRow::encode(&self.logical_schema, &values)
+                    .map_err(SchemaError::LogicalRow)
+            })
+            .collect()
     }
 }
 
@@ -620,6 +645,118 @@ fn enum8_type() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8))
 }
 
+fn logical_value(
+    array: &dyn Array,
+    row: usize,
+    data_type: &DataType,
+) -> Result<LogicalValue, SchemaError> {
+    if array.is_null(row) {
+        return Ok(LogicalValue::Null);
+    }
+    macro_rules! primitive {
+        ($array:ty, $variant:ident, $convert:expr) => {{
+            let array = array
+                .as_any()
+                .downcast_ref::<$array>()
+                .ok_or_else(|| SchemaError::PhysicalArrayType(data_type.clone()))?;
+            LogicalValue::$variant($convert(array.value(row)))
+        }};
+    }
+    Ok(match data_type {
+        DataType::Boolean => primitive!(BooleanArray, Bool, |value| value),
+        DataType::Int8 => primitive!(Int8Array, Signed, i128::from),
+        DataType::Int16 => primitive!(Int16Array, Signed, i128::from),
+        DataType::Int32 => primitive!(Int32Array, Signed, i128::from),
+        DataType::Int64 => primitive!(Int64Array, Signed, i128::from),
+        DataType::UInt8 => primitive!(UInt8Array, Unsigned, u128::from),
+        DataType::UInt16 => primitive!(UInt16Array, Unsigned, u128::from),
+        DataType::UInt32 => primitive!(UInt32Array, Unsigned, u128::from),
+        DataType::UInt64 => primitive!(UInt64Array, Unsigned, u128::from),
+        DataType::Float64 => primitive!(Float64Array, Float64, |value| value),
+        DataType::Decimal128(38, 0) => {
+            primitive!(Decimal128Array, Decimal128, |value| value)
+        }
+        DataType::Utf8 => {
+            let array = downcast::<StringArray>(array, data_type)?;
+            LogicalValue::String(array.value(row).to_string())
+        }
+        DataType::Binary => {
+            let array = downcast::<BinaryArray>(array, data_type)?;
+            LogicalValue::Binary(array.value(row).to_vec())
+        }
+        DataType::FixedSizeBinary(_) => {
+            let array = downcast::<FixedSizeBinaryArray>(array, data_type)?;
+            LogicalValue::Binary(array.value(row).to_vec())
+        }
+        DataType::Dictionary(index, values)
+            if index.as_ref() == &DataType::Int8 && values.as_ref() == &DataType::Utf8 =>
+        {
+            let array = downcast::<DictionaryArray<Int8Type>>(array, data_type)?;
+            let values = downcast::<StringArray>(array.values().as_ref(), &DataType::Utf8)?;
+            let key = usize::try_from(array.keys().value(row))
+                .map_err(|_| SchemaError::PhysicalArrayType(data_type.clone()))?;
+            if key >= values.len() || values.is_null(key) {
+                return Err(SchemaError::PhysicalArrayType(data_type.clone()));
+            }
+            LogicalValue::String(values.value(key).to_string())
+        }
+        DataType::Struct(fields) => {
+            let array = downcast::<StructArray>(array, data_type)?;
+            let children = fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| {
+                    logical_value(array.column(index).as_ref(), row, field.data_type())
+                })
+                .collect::<Result<_, _>>()?;
+            LogicalValue::Struct(children)
+        }
+        DataType::List(element) => {
+            let array = downcast::<ListArray>(array, data_type)?;
+            let values = array.value(row);
+            let items = (0..values.len())
+                .map(|index| logical_value(values.as_ref(), index, element.data_type()))
+                .collect::<Result<_, _>>()?;
+            LogicalValue::List(items)
+        }
+        DataType::Map(_, true) => {
+            let array = downcast::<MapArray>(array, data_type)?;
+            let entries = array.value(row);
+            let keys = entries
+                .column_by_name("key")
+                .ok_or_else(|| SchemaError::PhysicalArrayType(data_type.clone()))?;
+            let values = entries
+                .column_by_name("value")
+                .ok_or_else(|| SchemaError::PhysicalArrayType(data_type.clone()))?;
+            let keys = downcast::<StringArray>(keys.as_ref(), &DataType::Utf8)?;
+            let values = downcast::<StringArray>(values.as_ref(), &DataType::Utf8)?;
+            let entries = (0..entries.len())
+                .map(|index| {
+                    if keys.is_null(index) || values.is_null(index) {
+                        return Err(SchemaError::PhysicalArrayType(data_type.clone()));
+                    }
+                    Ok((
+                        keys.value(index).to_string(),
+                        values.value(index).to_string(),
+                    ))
+                })
+                .collect::<Result<_, _>>()?;
+            LogicalValue::StringMap(entries)
+        }
+        _ => return Err(SchemaError::UnsupportedArrowType(data_type.clone())),
+    })
+}
+
+fn downcast<'a, T: 'static>(
+    array: &'a dyn Array,
+    data_type: &DataType,
+) -> Result<&'a T, SchemaError> {
+    array
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or_else(|| SchemaError::PhysicalArrayType(data_type.clone()))
+}
+
 fn logical_field(field: &Field) -> Result<LogicalField, SchemaError> {
     Ok(LogicalField {
         nullable: field.is_nullable(),
@@ -709,6 +846,10 @@ pub enum SchemaError {
     UnknownType(String),
     /// Aliases recursively refer to one another.
     AliasCycle(String),
+    /// Exact Arrow values could not be encoded as one canonical logical row.
+    LogicalRow(crate::LogicalRowError),
+    /// A physical Arrow array disagrees with its exact schema data type.
+    PhysicalArrayType(DataType),
     /// A generated Arrow type has no v1 logical-row encoding.
     UnsupportedArrowType(DataType),
 }
@@ -752,6 +893,15 @@ impl Display for SchemaError {
             }
             Self::UnknownType(name) => write!(formatter, "unknown schema type {name:?}"),
             Self::AliasCycle(name) => write!(formatter, "schema alias cycle at {name:?}"),
+            Self::LogicalRow(error) => {
+                write!(formatter, "canonical logical row failed: {error}")
+            }
+            Self::PhysicalArrayType(data_type) => {
+                write!(
+                    formatter,
+                    "physical Arrow array does not match {data_type:?}"
+                )
+            }
             Self::UnsupportedArrowType(data_type) => {
                 write!(formatter, "unsupported Arrow type {data_type:?}")
             }
