@@ -12,6 +12,7 @@
 pub mod attempt;
 pub mod boundary;
 pub mod canonical_json;
+pub mod control_frame_codec;
 pub mod decode;
 pub mod descriptor;
 pub mod digest;
@@ -22,6 +23,8 @@ pub mod frame_codec;
 pub mod identity;
 pub mod index;
 pub mod key;
+pub mod lifecycle;
+pub mod loss;
 pub mod manifest;
 pub mod object_store;
 pub mod owner;
@@ -47,6 +50,7 @@ pub use boundary::{
     BoundaryReferenceKey, BoundaryRole, SealedBoundaryCapturePlan, SourceBoundarySnapshotCommand,
 };
 pub use canonical_json::{CanonicalJsonError, CanonicalJsonValue};
+pub use control_frame_codec::{ControlFrameCodecError, ControlFrameCodecV1};
 pub use decode::{
     AttemptDecoder, AttemptFacts, CompatibilityFallback, DecodeConfigError, DecodeLimits,
     DecodedAttempt, ExactEntityLease, FetchDisposition, FetchedAttempt, NativeDecodeOutcome,
@@ -83,6 +87,14 @@ pub use key::{
     ArchiveKeyError, ArchiveKeyProvider, ArchiveSubkey, Blake3ArchiveKeyProvider,
     keyed_domain_digest,
 };
+pub use lifecycle::{
+    LifecycleCompletionReasonV1, LifecycleMarkerError, LifecycleMarkerKindV1, LifecycleMarkerV1,
+    LifecyclePhaseStateV1,
+};
+pub use loss::{
+    ExactLossRangeV1, LossKindV1, LossReasonV1, LossSaturationSnapshotV1, LossValidationError,
+    loss_saturation_slot_id_v1,
+};
 pub use manifest::{
     ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
     GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
@@ -114,7 +126,8 @@ pub use projection::{
     ArchiveInfoLabelPartitionStatus, ArchiveSampleView, ArchiveSanitizer, AttributeMap,
     EnrichmentError, ExpositionProjectionContextV1, ExpositionProjectionError, ExpositionRowsV1,
     MetricFamilyRowV1, MetricPointRowV1, NoopEnricher, NoopSanitizer, SanitizationError,
-    SanitizedSample, StaticLabelEnricher, TelemetryEnricher, project_exposition_v1,
+    SanitizedSample, StaticLabelEnricher, TelemetryEnricher, TelemetryEnricherChain,
+    project_exposition_v1,
 };
 pub use query::{
     CompactionLogicalProofV1, MemoryPartitionObjectSourceV1, PartitionDiscoveryV1,
