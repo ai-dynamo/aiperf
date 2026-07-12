@@ -17,12 +17,18 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::evaluation::host::{
-    EvaluationRoute, EvaluationRouteTable, HostExecutorRegistryBuilder, HostExecutorRuntime,
-    HostOperationDescriptor,
+    CompatibilityProxyIngress, EvaluationRoute, EvaluationRouteTable, HostExecutorRegistryBuilder,
+    HostExecutorRuntime, HostOperationDescriptor, HostOperationFamily, RegisteredOperationId,
 };
 use aiperf::evaluation::inference::{
     DatasetEvaluationInferenceMaterializer, EvaluationInferenceMaterializer,
     PreparedEvaluationRoute, register_scheduled_inference_host_executors,
+};
+use aiperf::evaluation::proxy::{
+    CompatibilityProxyDialect, CompatibilityProxyDialectRegistry, CompatibilityProxyRoute,
+    EVALUATOR_PROXY_LOCAL_LOCATOR, EvaluatorCompatibilityProxy, LinuxProcessSubtreeAuthorizer,
+    OpenAiChatCompatibilityDialect, ProxyOperationReceiver, ProxyProcessScopeAuthorizer,
+    ProxyTimingRuntime, start_evaluator_compatibility_proxy,
 };
 use aiperf::evaluation::report::build_evaluation_report;
 use aiperf::evaluation::retry::OperationCancellation;
@@ -38,11 +44,12 @@ use aiperf::scheduled::{
 use aiperf_accuracy::{
     ArtifactProjectionPolicy, ArtifactSealLimits, CanonicalJson, EvaluationArtifactSealer,
     EvaluationAssetRequirement, EvaluationDistributionId, EvaluationExecutionGranularity,
-    EvaluationHostBinding, EvaluationHostIdentity, EvaluationProviderId,
+    EvaluationHostBinding, EvaluationHostIdentity, EvaluationProvider, EvaluationProviderId,
     EvaluationProviderRegistry, EvaluationQueueCredits, EvaluationSchedulingMode,
     EvaluationSessionId, EvaluatorProtocolLimits, HostCapabilityId, LogicalServiceId,
     OperationPurpose, ProviderLaunchContext, ResolvedEvaluationAsset,
-    STOCK_EVALUATION_OPERATION_SCHEMAS, ValidatedProviderConfig, artifact_content_sha256,
+    STOCK_EVALUATION_OPERATION_SCHEMAS, ScopedProxyBinding, ScopedProxyGrant, ScopedProxySecret,
+    SemanticOperationId, ValidatedProviderConfig, artifact_content_sha256,
 };
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
@@ -50,7 +57,10 @@ use aiperf_endpoints::{
     EndpointDescriptor, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable,
     RawEndpointConfig,
 };
-use aiperf_metrics::{MetricsConfig, NativeReport, ReportPairRunFacts, ReportRunInfo, RunOutcome};
+use aiperf_metrics::{
+    MetricsConfig, NativeReport, ReportEvaluationCompatibilityGrantLimits,
+    ReportEvaluationCompatibilityInfo, ReportPairRunFacts, ReportRunInfo, RunOutcome,
+};
 use aiperf_timing::StopConfig;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
@@ -477,6 +487,30 @@ fn operation_matches_host(
                 .collect::<BTreeSet<_>>()
 }
 
+pub(crate) fn stock_evaluation_host_operation_descriptors(
+    operation_ids: &BTreeSet<String>,
+) -> Result<Vec<HostOperationDescriptor>> {
+    STOCK_EVALUATION_OPERATION_SCHEMAS
+        .iter()
+        .filter(|schema| operation_ids.contains(schema.operation_id))
+        .map(|schema| {
+            Ok(HostOperationDescriptor {
+                operation_id: RegisteredOperationId::new(schema.operation_id)?,
+                family: HostOperationFamily::new("inference")?,
+                request_schema_fingerprint: schema.request_schema_sha256.to_string(),
+                response_schema_fingerprint: schema.response_schema_sha256.to_string(),
+                stream_schema_fingerprint: schema
+                    .true_streaming
+                    .then(|| schema.canonical_stream_schema_sha256.to_string()),
+                true_streaming: schema.true_streaming,
+                max_request_bytes: 8 * 1024 * 1024,
+                max_response_bytes: 8 * 1024 * 1024,
+                endpoint_capabilities: BTreeSet::from([schema.endpoint_capability.to_string()]),
+            })
+        })
+        .collect()
+}
+
 /// Immutable provider-asset catalog selected by the runner distribution.
 ///
 /// Production implementations bind only files already materialized inside the
@@ -556,6 +590,347 @@ pub trait EvaluationEndpointCapabilityResolver: fmt::Debug + Send + Sync {
     fn capabilities(&self, descriptor: &EndpointDescriptor) -> Result<BTreeSet<String>>;
 }
 
+/// Manifest-owned maximum local authority for one exact stock distribution.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EvaluationCompatibilityGrantLimits {
+    pub(crate) max_operations: u64,
+    pub(crate) max_concurrent_operations: u64,
+    pub(crate) max_request_bytes: u64,
+    pub(crate) max_response_bytes: u64,
+    pub(crate) max_stream_events: u64,
+    pub(crate) expires_after_ms: u64,
+}
+
+impl EvaluationCompatibilityGrantLimits {
+    pub(crate) fn validate(self) -> Result<()> {
+        ensure!(
+            self.max_operations > 0
+                && self.max_operations <= 10_000_000
+                && self.max_concurrent_operations > 0
+                && self.max_concurrent_operations <= self.max_operations
+                && self.max_concurrent_operations <= 255
+                && self.max_request_bytes > 0
+                && self.max_request_bytes <= 16 * 1024 * 1024 * 1024
+                && self.max_response_bytes > 0
+                && self.max_response_bytes <= 16 * 1024 * 1024 * 1024
+                && self.max_stream_events > 0
+                && self.max_stream_events <= 10_000_000
+                && self.expires_after_ms > 0
+                && self.expires_after_ms <= 24 * 60 * 60 * 1_000,
+            "evaluation compatibility grant limits exceed the Rust proxy envelope"
+        );
+        Ok(())
+    }
+}
+
+/// Manifest-owned compatibility requirement for one exact stock distribution.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EvaluationCompatibilityRouteGrant {
+    #[serde(rename = "dialect")]
+    pub(crate) dialect_id: String,
+    pub(crate) selector: String,
+    pub(crate) service_id: LogicalServiceId,
+    pub(crate) purpose: OperationPurpose,
+    pub(crate) semantic_operation_id: SemanticOperationId,
+    pub(crate) restricted_payload: bool,
+}
+
+impl EvaluationCompatibilityRouteGrant {
+    pub(crate) fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.dialect_id.is_empty() && self.dialect_id.trim() == self.dialect_id,
+            "evaluation compatibility route has an invalid dialect ID"
+        );
+        self.to_proxy_route()?;
+        Ok(())
+    }
+
+    fn to_proxy_route(&self) -> Result<CompatibilityProxyRoute> {
+        if self.restricted_payload {
+            CompatibilityProxyRoute::restricted(
+                self.selector.clone(),
+                self.service_id.clone(),
+                self.purpose.clone(),
+                self.semantic_operation_id.clone(),
+            )
+        } else {
+            CompatibilityProxyRoute::new(
+                self.selector.clone(),
+                self.service_id.clone(),
+                self.purpose.clone(),
+                self.semantic_operation_id.clone(),
+            )
+        }
+    }
+}
+
+/// Manifest-owned compatibility requirement for one exact stock distribution.
+#[derive(Clone, Debug)]
+pub(crate) struct EvaluationCompatibilityPolicyEntry {
+    pub(crate) provider_id: EvaluationProviderId,
+    pub(crate) distribution_id: EvaluationDistributionId,
+    pub(crate) dialect_ids: Vec<String>,
+    pub(crate) route_grants: Vec<EvaluationCompatibilityRouteGrant>,
+    pub(crate) grant_limits: Option<EvaluationCompatibilityGrantLimits>,
+}
+
+/// Open factory for one local compatibility dialect family.
+pub(crate) trait EvaluationCompatibilityDialectFactory: fmt::Debug + Send + Sync {
+    /// Stable manifest-facing dialect identity.
+    fn id(&self) -> &'static str;
+
+    /// Bind one adapter to exact prepared logical routes.
+    fn prepare(
+        &self,
+        routes: &EvaluationRouteTable,
+        grants: &[EvaluationCompatibilityRouteGrant],
+    ) -> Result<Arc<dyn CompatibilityProxyDialect>>;
+}
+
+/// Immutable manifest-driven proxy policy injected into pair preparation.
+pub trait EvaluationCompatibilityPolicy: fmt::Debug + Send + Sync {
+    /// Prepare no proxy for an explicitly pipe-only distribution, or one exact
+    /// frozen adapter registry for a distribution that requires compatibility.
+    fn prepare(
+        &self,
+        selection: &EvaluationProviderSelectionV2,
+        routes: &EvaluationRouteTable,
+    ) -> Result<Option<PreparedEvaluationCompatibility>>;
+}
+
+/// Frozen per-run compatibility composition and safe provenance identity.
+#[derive(Clone, Debug)]
+pub struct PreparedEvaluationCompatibility {
+    dialects: CompatibilityProxyDialectRegistry,
+    dialect_ids: Vec<String>,
+    descriptor_sha256: String,
+    grant_limits: EvaluationCompatibilityGrantLimits,
+}
+
+impl PreparedEvaluationCompatibility {
+    fn dialects(&self) -> CompatibilityProxyDialectRegistry {
+        self.dialects.clone()
+    }
+}
+
+#[derive(Debug)]
+struct FrozenEvaluationCompatibilityPolicy {
+    entries: BTreeMap<(String, String), FrozenEvaluationCompatibilityEntry>,
+    factories: BTreeMap<String, Arc<dyn EvaluationCompatibilityDialectFactory>>,
+}
+
+#[derive(Debug)]
+struct FrozenEvaluationCompatibilityEntry {
+    dialect_ids: Vec<String>,
+    route_grants: Vec<EvaluationCompatibilityRouteGrant>,
+    grant_limits: Option<EvaluationCompatibilityGrantLimits>,
+}
+
+impl FrozenEvaluationCompatibilityPolicy {
+    fn new(
+        entries: impl IntoIterator<Item = EvaluationCompatibilityPolicyEntry>,
+        factories: impl IntoIterator<Item = Arc<dyn EvaluationCompatibilityDialectFactory>>,
+    ) -> Result<Self> {
+        let mut by_factory = BTreeMap::new();
+        for factory in factories {
+            let id = factory.id().to_string();
+            ensure!(
+                by_factory.insert(id.clone(), factory).is_none(),
+                "duplicate evaluation compatibility dialect factory {id:?}"
+            );
+        }
+        let mut by_distribution = BTreeMap::new();
+        for entry in entries {
+            let key = (
+                entry.provider_id.as_str().to_string(),
+                entry.distribution_id.as_str().to_string(),
+            );
+            let dialects = entry.dialect_ids.into_iter().collect::<BTreeSet<_>>();
+            let route_grants = entry
+                .route_grants
+                .into_iter()
+                .map(|grant| {
+                    grant.validate()?;
+                    Ok(grant)
+                })
+                .collect::<Result<BTreeSet<_>>>()?;
+            if let Some(limits) = entry.grant_limits {
+                limits.validate()?;
+            }
+            ensure!(
+                dialects.is_empty() == route_grants.is_empty()
+                    && dialects.is_empty() == entry.grant_limits.is_none(),
+                "pipe-only and proxy-enabled compatibility policy fields disagree"
+            );
+            ensure!(
+                dialects.iter().all(|id| by_factory.contains_key(id)),
+                "evaluation compatibility policy references an unregistered dialect"
+            );
+            ensure!(
+                route_grants
+                    .iter()
+                    .all(|grant| dialects.contains(&grant.dialect_id)),
+                "evaluation compatibility route references an undeclared dialect"
+            );
+            ensure!(
+                dialects.iter().all(|dialect| route_grants
+                    .iter()
+                    .any(|grant| &grant.dialect_id == dialect)),
+                "evaluation compatibility dialect has no exact route grant"
+            );
+            ensure!(
+                by_distribution
+                    .insert(
+                        key.clone(),
+                        FrozenEvaluationCompatibilityEntry {
+                            dialect_ids: dialects.into_iter().collect(),
+                            route_grants: route_grants.into_iter().collect(),
+                            grant_limits: entry.grant_limits,
+                        },
+                    )
+                    .is_none(),
+                "duplicate evaluation compatibility policy for {key:?}"
+            );
+        }
+        ensure!(
+            !by_distribution.is_empty(),
+            "evaluation compatibility policy cannot be empty"
+        );
+        Ok(Self {
+            entries: by_distribution,
+            factories: by_factory,
+        })
+    }
+}
+
+impl EvaluationCompatibilityPolicy for FrozenEvaluationCompatibilityPolicy {
+    fn prepare(
+        &self,
+        selection: &EvaluationProviderSelectionV2,
+        routes: &EvaluationRouteTable,
+    ) -> Result<Option<PreparedEvaluationCompatibility>> {
+        let key = (
+            selection.provider_id.as_str().to_string(),
+            selection.distribution.as_str().to_string(),
+        );
+        let entry = self.entries.get(&key).ok_or_else(|| {
+            anyhow!("stock evaluator distribution has no compatibility-policy entry")
+        })?;
+        if entry.dialect_ids.is_empty() {
+            return Ok(None);
+        }
+        let grant_limits = entry
+            .grant_limits
+            .expect("nonempty policy requires validated grant limits");
+        let dialects = entry
+            .dialect_ids
+            .iter()
+            .map(|id| {
+                let grants = entry
+                    .route_grants
+                    .iter()
+                    .filter(|grant| &grant.dialect_id == id)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                self.factories
+                    .get(id)
+                    .expect("policy constructor validated dialect IDs")
+                    .prepare(routes, &grants)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let dialects = CompatibilityProxyDialectRegistry::new(dialects)?;
+        let descriptor_sha256 = canonical_sha256(json!({
+            "dialect_ids": entry.dialect_ids,
+            "allowed_routes": entry.route_grants.iter().map(|grant| json!({
+                "dialect_id": grant.dialect_id,
+                "purpose": grant.purpose.as_str(),
+                "restricted_payload": grant.restricted_payload,
+                "selector": grant.selector,
+                "semantic_operation_id": grant.semantic_operation_id.as_str(),
+                "service_id": grant.service_id.as_str(),
+            })).collect::<Vec<_>>(),
+            "dialects": dialects
+                .descriptors()
+                .into_iter()
+                .map(|(path, routes)| json!({
+                    "path": path,
+                    "routes": routes.into_iter().map(|route| json!({
+                        "purpose": route.purpose.as_str(),
+                        "selector": route.selector,
+                        "semantic_operation_id": route.semantic_operation_id.as_str(),
+                        "service_id": route.service_id.as_str(),
+                    })).collect::<Vec<_>>(),
+                }))
+                .collect::<Vec<_>>(),
+            "grant_limits": {
+                "expires_after_ms": grant_limits.expires_after_ms,
+                "max_concurrent_operations": grant_limits.max_concurrent_operations,
+                "max_operations": grant_limits.max_operations,
+                "max_request_bytes": grant_limits.max_request_bytes,
+                "max_response_bytes": grant_limits.max_response_bytes,
+                "max_stream_events": grant_limits.max_stream_events,
+            },
+        }))?;
+        Ok(Some(PreparedEvaluationCompatibility {
+            dialects,
+            dialect_ids: entry.dialect_ids.clone(),
+            descriptor_sha256,
+            grant_limits,
+        }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct OpenAiChatCompatibilityDialectFactory;
+
+impl EvaluationCompatibilityDialectFactory for OpenAiChatCompatibilityDialectFactory {
+    fn id(&self) -> &'static str {
+        "openai_chat_completions"
+    }
+
+    fn prepare(
+        &self,
+        routes: &EvaluationRouteTable,
+        grants: &[EvaluationCompatibilityRouteGrant],
+    ) -> Result<Arc<dyn CompatibilityProxyDialect>> {
+        let routes = grants
+            .iter()
+            .map(|grant| {
+                ensure!(
+                    grant.dialect_id == self.id()
+                        && grant.semantic_operation_id.as_str() == "model.generate",
+                    "OpenAI chat compatibility grant has an incompatible dialect or semantic operation"
+                );
+                let route = routes.resolve(grant.service_id.as_str())?;
+                ensure!(
+                    route.purpose == grant.purpose.as_str(),
+                    "OpenAI chat compatibility route {:?} purpose drifted from the manifest grant",
+                    route.service_id
+                );
+                ensure!(
+                    route.endpoint_capabilities.contains("chat"),
+                    "OpenAI chat compatibility route {:?} requires a chat-capable endpoint",
+                    route.service_id
+                );
+                grant.to_proxy_route()
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Arc::new(OpenAiChatCompatibilityDialect::new(routes)?))
+    }
+}
+
+pub(crate) fn stock_evaluation_compatibility_policy(
+    entries: impl IntoIterator<Item = EvaluationCompatibilityPolicyEntry>,
+) -> Result<Arc<dyn EvaluationCompatibilityPolicy>> {
+    Ok(Arc::new(FrozenEvaluationCompatibilityPolicy::new(
+        entries,
+        [Arc::new(OpenAiChatCompatibilityDialectFactory)
+            as Arc<dyn EvaluationCompatibilityDialectFactory>],
+    )?))
+}
+
 /// Built-in endpoint capability projection for stock evaluator operations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeEvaluationEndpointCapabilityResolver;
@@ -588,11 +963,13 @@ pub fn register_online_http_evaluation_pair(
     builder: &mut RunnerRegistryBuilder,
     providers: Arc<EvaluationProviderRegistry>,
     assets: Arc<dyn EvaluationAssetCatalog>,
+    compatibility: Arc<dyn EvaluationCompatibilityPolicy>,
 ) -> Result<()> {
     register_evaluation_workload(builder, providers.clone())?;
     builder.register_pair(Arc::new(OnlineHttpEvaluationPairFactory {
         providers,
         assets,
+        compatibility,
         endpoint_capabilities: Arc::new(NativeEvaluationEndpointCapabilityResolver),
     }))
 }
@@ -601,6 +978,7 @@ pub fn register_online_http_evaluation_pair(
 struct OnlineHttpEvaluationPairFactory {
     providers: Arc<EvaluationProviderRegistry>,
     assets: Arc<dyn EvaluationAssetCatalog>,
+    compatibility: Arc<dyn EvaluationCompatibilityPolicy>,
     endpoint_capabilities: Arc<dyn EvaluationEndpointCapabilityResolver>,
 }
 
@@ -643,7 +1021,10 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
         self.validate_pair(backend, workload)?;
         let workload = validated_evaluation_workload(workload)?;
         validate_evaluation_authored_run(run, context, workload)?;
-        prepare_evaluation_routes(context, workload, self.endpoint_capabilities.as_ref())?;
+        let routes =
+            prepare_evaluation_routes(context, workload, self.endpoint_capabilities.as_ref())?;
+        self.compatibility
+            .prepare(&workload.authored().provider, &routes.routes)?;
         Ok(())
     }
 
@@ -667,6 +1048,9 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
         let workload = validated_evaluation_workload(workload.as_ref())?.clone();
         let routes =
             prepare_evaluation_routes(context, &workload, self.endpoint_capabilities.as_ref())?;
+        let compatibility = self
+            .compatibility
+            .prepare(&workload.authored().provider, &routes.routes)?;
         let readiness = crate::online_execution::prepare_online_readiness(run, context)?;
         let metrics = crate::execute::metrics_config(&run.metrics)?;
         Ok(Box::new(PreparedOnlineEvaluationOperation {
@@ -676,6 +1060,7 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
             providers: self.providers.clone(),
             assets: self.assets.clone(),
             routes,
+            compatibility,
             backend_factory: context.execution_factories().http_handle(),
             readiness,
             readiness_transport: context.execution_factories().readiness_transport_handle(),
@@ -999,6 +1384,7 @@ struct PreparedOnlineEvaluationOperation {
     providers: Arc<EvaluationProviderRegistry>,
     assets: Arc<dyn EvaluationAssetCatalog>,
     routes: PreparedEvaluationRoutes,
+    compatibility: Option<PreparedEvaluationCompatibility>,
     backend_factory: Arc<dyn HttpExecutionBackendFactory>,
     readiness: Box<dyn PreparedOnlineReadiness>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
@@ -1053,6 +1439,10 @@ async fn execute_online_evaluation(
         ),
         "validated evaluator distribution is no longer available"
     );
+    let public_config = factory
+        .project_public_config(operation.workload.provider_config().config())
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("projecting factory-reviewed public evaluator config")?;
 
     let artifact_roots = prepare_evaluation_artifact_roots(
         &operation.artifact_target,
@@ -1066,54 +1456,6 @@ async fn execute_online_evaluation(
 
     let session_id = EvaluationSessionId::new(format!("evaluation_{}", Uuid::new_v4().simple()))
         .map_err(|error| anyhow!(error.to_string()))?;
-    let launch_nonce = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let launch_context = ProviderLaunchContext {
-        session_id: session_id.clone(),
-        staging_dir: staging_root.clone(),
-        proxy: None,
-        process_root_binder: None,
-        protocol_limits: EvaluatorProtocolLimits::default(),
-        launch_nonce,
-    };
-    let prepared_launch = factory
-        .prepare_launch(&authored.provider.distribution, launch_context)
-        .map_err(|error| anyhow!(error.to_string()))
-        .context("preparing attested evaluator launch")?;
-    ensure!(
-        prepared_launch.distribution_id() == &authored.provider.distribution,
-        "prepared evaluator launch changed distribution identity"
-    );
-    ensure!(
-        aiperf_accuracy::is_sha256(prepared_launch.prelaunch_context_sha256()),
-        "prepared evaluator launch returned an invalid prelaunch digest"
-    );
-    let isolation_proof_sha256 = prepared_launch.isolation_evidence().proof_sha256.clone();
-    let (host_capabilities, capability_inventory_sha256, schema_inventory_sha256) =
-        evaluation_host_capabilities()?;
-    let host_binding = EvaluationHostBinding {
-        host: EvaluationHostIdentity {
-            runner_sha256: current_executable_sha256()?,
-            capability_inventory_sha256,
-            schema_inventory_sha256,
-            isolation_proof_sha256,
-        },
-        route_map_sha256: operation.routes.route_map_sha256.clone(),
-        prepared_endpoints_sha256: operation.routes.prepared_endpoints_sha256.clone(),
-        sandbox_sha256: None,
-    };
-    host_binding
-        .validate()
-        .map_err(|error| anyhow!(error.to_string()))?;
-    let provider = factory
-        .launch(
-            prepared_launch,
-            operation.workload.provider_config(),
-            host_binding,
-        )
-        .await
-        .map_err(|error| anyhow!(error.to_string()))
-        .context("launching supervised evaluator provider")?;
-
     let start_ns = clock.now_ns();
     let workers = std::thread::available_parallelism()
         .map(usize::from)
@@ -1140,7 +1482,7 @@ async fn execute_online_evaluation(
         default_model: operation.routes.default_model.clone(),
     });
     let scheduled = ScheduledRuntime::new_with_metrics_config(
-        clock,
+        clock.clone(),
         start_ns,
         dispatcher,
         StopConfig::default(),
@@ -1185,13 +1527,183 @@ async fn execute_online_evaluation(
         event_batch_size: 4_096,
         idle_poll_ns: 1_000_000,
     };
+    limits.validate()?;
+    let (host_capabilities, capability_inventory_sha256, schema_inventory_sha256) =
+        evaluation_host_capabilities()?;
+    let runner_sha256 = current_executable_sha256()?;
+
+    let mut proxy_binding = None;
+    let mut process_authorizer = None;
+    let mut proxy_server: Option<EvaluatorCompatibilityProxy> = None;
+    let mut proxy_receiver: Option<ProxyOperationReceiver> = None;
+    if let Some(compatibility) = &operation.compatibility {
+        let routes = compatibility.dialects.routes();
+        let scope_nonce = Uuid::new_v4().simple().to_string();
+        let process_scope_sha256 = canonical_sha256(json!({
+            "compatibility_descriptor_sha256": compatibility.descriptor_sha256,
+            "scope_nonce": scope_nonce,
+            "session_id": session_id.as_str(),
+        }))?;
+        let grant = ScopedProxyGrant {
+            grant_id: format!("grant-{}", Uuid::new_v4().simple()),
+            session_id: session_id.clone(),
+            secret: ScopedProxySecret::new(format!(
+                "{}{}",
+                Uuid::new_v4().simple(),
+                Uuid::new_v4().simple()
+            ))
+            .map_err(|error| anyhow!(error.to_string()))?,
+            service_ids: routes
+                .iter()
+                .map(|route| route.service_id.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            semantic_operation_ids: routes
+                .iter()
+                .map(|route| route.semantic_operation_id.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            purposes: routes
+                .iter()
+                .map(|route| route.purpose.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            process_scope_sha256: process_scope_sha256.clone(),
+            max_operations: compatibility.grant_limits.max_operations,
+            max_concurrent_operations: compatibility.grant_limits.max_concurrent_operations,
+            max_request_bytes: compatibility.grant_limits.max_request_bytes,
+            max_response_bytes: compatibility.grant_limits.max_response_bytes,
+            max_stream_events: compatibility.grant_limits.max_stream_events,
+            expires_after_ms: compatibility.grant_limits.expires_after_ms,
+        };
+        let binding = ScopedProxyBinding {
+            local_locator: EVALUATOR_PROXY_LOCAL_LOCATOR.to_string(),
+            host_socket_path: staging_root
+                .parent()
+                .expect("evaluation staging root has a parent")
+                .join("evaluator-proxy.sock"),
+            grant,
+        };
+        binding
+            .validate()
+            .map_err(|error| anyhow!(error.to_string()))?;
+        let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(process_scope_sha256)?);
+        let started = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            clock.now_ns(),
+            authorizer.clone() as Arc<dyn ProxyProcessScopeAuthorizer>,
+            compatibility.dialects(),
+            ProxyTimingRuntime::from_clock(clock.clone()),
+        )
+        .await;
+        let (server, receiver) = match started {
+            Ok(started) => started,
+            Err(error) => {
+                let shutdown = execution_backend.shutdown();
+                return match shutdown {
+                    Ok(()) => Err(error).context("starting evaluator compatibility proxy"),
+                    Err(shutdown) => Err(error).context(format!(
+                        "starting evaluator compatibility proxy; HTTP backend shutdown also failed: {shutdown:#}"
+                    )),
+                };
+            }
+        };
+        proxy_binding = Some(binding);
+        process_authorizer = Some(authorizer);
+        proxy_server = Some(server);
+        proxy_receiver = Some(receiver);
+    }
+
+    let launch_nonce = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let launch_context = ProviderLaunchContext {
+        session_id: session_id.clone(),
+        staging_dir: staging_root.clone(),
+        proxy: proxy_binding.clone(),
+        process_root_binder: process_authorizer
+            .clone()
+            .map(|authorizer| authorizer as Arc<dyn aiperf_accuracy::EvaluatorProcessRootBinder>),
+        protocol_limits: EvaluatorProtocolLimits::default(),
+        launch_nonce,
+    };
+    let prepared_launch = match factory
+        .prepare_launch(&authored.provider.distribution, launch_context)
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("preparing attested evaluator launch")
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return Err(cleanup_evaluation_setup_failure(
+                error,
+                None,
+                &mut proxy_server,
+                &execution_backend,
+            )
+            .await);
+        }
+    };
+    if prepared_launch.distribution_id() != &authored.provider.distribution
+        || !aiperf_accuracy::is_sha256(prepared_launch.prelaunch_context_sha256())
+    {
+        return Err(cleanup_evaluation_setup_failure(
+            anyhow!("prepared evaluator launch returned invalid distribution/digest evidence"),
+            None,
+            &mut proxy_server,
+            &execution_backend,
+        )
+        .await);
+    }
+    let host_binding = EvaluationHostBinding {
+        host: EvaluationHostIdentity {
+            runner_sha256,
+            capability_inventory_sha256,
+            schema_inventory_sha256,
+            isolation_proof_sha256: prepared_launch.isolation_evidence().proof_sha256.clone(),
+        },
+        route_map_sha256: operation.routes.route_map_sha256.clone(),
+        prepared_endpoints_sha256: operation.routes.prepared_endpoints_sha256.clone(),
+        sandbox_sha256: None,
+    };
+    if let Err(error) = host_binding.validate() {
+        return Err(cleanup_evaluation_setup_failure(
+            anyhow!(error.to_string()).context("validating evaluator host binding"),
+            None,
+            &mut proxy_server,
+            &execution_backend,
+        )
+        .await);
+    }
+    let provider = match factory
+        .launch(
+            prepared_launch,
+            operation.workload.provider_config(),
+            host_binding,
+        )
+        .await
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("launching supervised evaluator provider")
+    {
+        Ok(provider) => provider,
+        Err(error) => {
+            return Err(cleanup_evaluation_setup_failure(
+                error,
+                None,
+                &mut proxy_server,
+                &execution_backend,
+            )
+            .await);
+        }
+    };
+
     let plan_request = operation.workload.provider_config().plan_request(
         session_id,
         authored.provider.distribution.clone(),
         true,
     );
     let public_score_projection_policy = factory.public_score_projection_policy().clone();
-    let workload = EvaluationWorkload::new(
+    let mut workload = EvaluationWorkload::new(
         provider,
         plan_request,
         operation.routes.routes.clone(),
@@ -1200,11 +1712,23 @@ async fn execute_online_evaluation(
         asset_resolver,
         host_capabilities,
         public_score_projection_policy,
+        public_config,
         None,
         finalizer,
         limits,
         OperationCancellation::default(),
-    )?;
+    )
+    .expect("evaluation workload limits were prevalidated");
+    if let Some(server) = proxy_server.take() {
+        workload = workload
+            .with_compatibility_proxy(
+                server,
+                proxy_receiver
+                    .take()
+                    .expect("proxy server and receiver are prepared together"),
+            )
+            .expect("prepared proxy server and receiver share one authority");
+    }
     let execution = workload.execute().await;
     let shutdown = execution_backend.shutdown();
     let execution = match (execution, shutdown) {
@@ -1237,29 +1761,121 @@ async fn execute_online_evaluation(
             ..RunOutcome::default()
         },
     );
+    let mut provenance = BTreeMap::from([
+        ("backend".to_string(), "online_http".to_string()),
+        (
+            "provider".to_string(),
+            authored.provider.provider_id.to_string(),
+        ),
+        (
+            "distribution".to_string(),
+            authored.provider.distribution.to_string(),
+        ),
+        ("evaluation_cases".to_string(), case_count.to_string()),
+        (
+            "evaluation_host_operations".to_string(),
+            operation_count.to_string(),
+        ),
+    ]);
+    match &operation.compatibility {
+        Some(compatibility) => {
+            provenance.insert(
+                "evaluation_compatibility_proxy".to_string(),
+                compatibility.dialect_ids.join(","),
+            );
+            provenance.insert(
+                "evaluation_compatibility_descriptor_sha256".to_string(),
+                compatibility.descriptor_sha256.clone(),
+            );
+        }
+        None => {
+            provenance.insert(
+                "evaluation_compatibility_proxy".to_string(),
+                "none".to_string(),
+            );
+        }
+    }
+    let report_facts = match &operation.compatibility {
+        Some(compatibility) => {
+            let grant = execution.compatibility_grant.ok_or_else(|| {
+                anyhow!("proxy-enabled evaluation omitted its post-plan effective grant")
+            })?;
+            ReportPairRunFacts::new().with_evaluation_compatibility(
+                ReportEvaluationCompatibilityInfo::new(
+                    compatibility.dialect_ids.clone(),
+                    compatibility.descriptor_sha256.clone(),
+                    ReportEvaluationCompatibilityGrantLimits {
+                        max_operations: grant.max_operations,
+                        max_concurrent_operations: grant.max_concurrent_operations,
+                        max_request_bytes: grant.max_request_bytes,
+                        max_response_bytes: grant.max_response_bytes,
+                        max_stream_events: grant.max_stream_events,
+                        expires_after_ms: grant.expires_after_ms,
+                    },
+                )?,
+            )
+        }
+        None => {
+            ensure!(
+                execution.compatibility_grant.is_none(),
+                "pipe-only evaluation unexpectedly installed a compatibility grant"
+            );
+            ReportPairRunFacts::new()
+        }
+    };
     Ok(PreparedRunOutcome {
         native_report,
-        report_facts: ReportPairRunFacts::new(),
-        provenance: BTreeMap::from([
-            ("backend".to_string(), "online_http".to_string()),
-            (
-                "provider".to_string(),
-                authored.provider.provider_id.to_string(),
-            ),
-            (
-                "distribution".to_string(),
-                authored.provider.distribution.to_string(),
-            ),
-            ("evaluation_cases".to_string(), case_count.to_string()),
-            (
-                "evaluation_host_operations".to_string(),
-                operation_count.to_string(),
-            ),
-        ]),
+        report_facts,
+        provenance,
         report_commit: Some(Box::new(PendingEvaluationReportCommit(
             execution.report_commit,
         ))),
     })
+}
+
+async fn cleanup_evaluation_setup_failure(
+    primary: anyhow::Error,
+    provider: Option<&mut dyn EvaluationProvider>,
+    proxy: &mut Option<EvaluatorCompatibilityProxy>,
+    execution_backend: &Rc<dyn HttpTurnExecutionBackend>,
+) -> anyhow::Error {
+    let abort_error = match provider {
+        Some(provider) => provider
+            .abort()
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
+            .err(),
+        None => None,
+    };
+    let proxy_error = match proxy.take() {
+        Some(proxy) => proxy
+            .shutdown()
+            .await
+            .context("shutting down evaluator compatibility proxy during setup cleanup")
+            .err(),
+        None => None,
+    };
+    let backend_error = execution_backend.shutdown().err();
+    if let Some(abort_error) = abort_error {
+        return anyhow!(
+            "evaluator provider abort/quiescence failed: {abort_error:#}; original setup failure: {primary:#}"
+        );
+    }
+    let mut cleanup = Vec::new();
+    if let Some(error) = proxy_error {
+        cleanup.push(format!("compatibility proxy: {error:#}"));
+    }
+    if let Some(error) = backend_error {
+        cleanup.push(format!("HTTP backend: {error:#}"));
+    }
+    if cleanup.is_empty() {
+        primary
+    } else {
+        anyhow!(
+            "{primary:#}; evaluator setup cleanup also failed: {}",
+            cleanup.join("; ")
+        )
+    }
 }
 
 struct EvaluationArtifactRoots {
@@ -1702,6 +2318,77 @@ mod tests {
         let mut untyped_resource = authored();
         untyped_resource["resources"]["workspace"] = serde_json::json!({"config": {}});
         assert!(decode(untyped_resource).is_err());
+    }
+
+    #[test]
+    fn compatibility_policy_grants_only_the_manifest_route() {
+        let grant = EvaluationCompatibilityRouteGrant {
+            dialect_id: "openai_chat_completions".to_string(),
+            selector: "candidate".to_string(),
+            service_id: LogicalServiceId::new("candidate").unwrap(),
+            purpose: OperationPurpose::new("primary").unwrap(),
+            semantic_operation_id: SemanticOperationId::new("model.generate").unwrap(),
+            restricted_payload: false,
+        };
+        assert!(!grant.to_proxy_route().unwrap().carries_restricted_payload());
+        let mut restricted = grant.clone();
+        restricted.restricted_payload = true;
+        assert!(
+            restricted
+                .to_proxy_route()
+                .unwrap()
+                .carries_restricted_payload()
+        );
+        let policy = stock_evaluation_compatibility_policy([EvaluationCompatibilityPolicyEntry {
+            provider_id: EvaluationProviderId::new("openbench").unwrap(),
+            distribution_id: EvaluationDistributionId::new("openbench-locked").unwrap(),
+            dialect_ids: vec!["openai_chat_completions".to_string()],
+            route_grants: vec![grant],
+            grant_limits: Some(EvaluationCompatibilityGrantLimits {
+                max_operations: 1,
+                max_concurrent_operations: 1,
+                max_request_bytes: 1024,
+                max_response_bytes: 1024,
+                max_stream_events: 1,
+                expires_after_ms: 1000,
+            }),
+        }])
+        .unwrap();
+        let routes = EvaluationRouteTable::new([
+            EvaluationRoute {
+                service_id: "candidate".to_string(),
+                purpose: "primary".to_string(),
+                model: "server-candidate".to_string(),
+                endpoint_profile: "candidate".to_string(),
+                prepared_identity_sha256: "a".repeat(64),
+                endpoint_capabilities: BTreeSet::from(["chat".to_string()]),
+            },
+            EvaluationRoute {
+                service_id: "judge".to_string(),
+                purpose: "judge".to_string(),
+                model: "server-judge".to_string(),
+                endpoint_profile: "judge".to_string(),
+                prepared_identity_sha256: "b".repeat(64),
+                endpoint_capabilities: BTreeSet::from(["completion".to_string()]),
+            },
+        ])
+        .unwrap();
+        let prepared = policy
+            .prepare(
+                &EvaluationProviderSelectionV2 {
+                    provider_id: EvaluationProviderId::new("openbench").unwrap(),
+                    distribution: EvaluationDistributionId::new("openbench-locked").unwrap(),
+                },
+                &routes,
+            )
+            .unwrap()
+            .unwrap();
+        let granted = prepared.dialects.routes();
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted[0].selector, "candidate");
+        assert_eq!(granted[0].service_id.as_str(), "candidate");
+        assert_eq!(prepared.dialect_ids, ["openai_chat_completions"]);
+        assert_eq!(prepared.descriptor_sha256.len(), 64);
     }
 
     #[test]
