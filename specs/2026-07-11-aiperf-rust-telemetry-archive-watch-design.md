@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Codex
-**Status:** design — not built
+**Status:** reviewed design — implementation-ready, not built
 **Decision:** adopt the useful operational ideas demonstrated by Tachometer—an always-on watch
 surface, per-source cadence/failure isolation, topology enrichment, immutable columnar history,
 and periodic object-store durability—without importing Tachometer's parser, row schema, filter
@@ -3301,3 +3301,36 @@ This design is complete only when:
 
 Until these gates pass, the existing phase-bounded native telemetry pipeline remains code truth and
 no `watch` capability should be advertised.
+
+---
+
+## 22. Adversarial review record and implementation handoff
+
+Three independent reviewer roles—architecture/runtime, durability/security, and schema/query—read
+each frozen target in full. Claims were committed before edits. A reviewer who did not author a
+claim family then adjudicated it under a default-refute rule: preferences and already-satisfied
+requirements were rejected; only a concrete contradiction, interoperability ambiguity, or
+executable failure trace survived. Corrections were committed before the next target was frozen.
+
+| Cycle | Frozen target | Claims and default-refute record | Correction commits |
+|---:|---|---|---|
+| 1 | `89c505900` | [claims](../artifacts/telemetry-archive-spec-review/cycle-1-claims.md), [adjudication](../artifacts/telemetry-archive-spec-review/cycle-1-adjudication.md) | `f05aa5a16`, `625136210`, `9e74a4816` |
+| 2 | `9e74a4816` | [claims](../artifacts/telemetry-archive-spec-review/cycle-2-claims.md), [adjudication](../artifacts/telemetry-archive-spec-review/cycle-2-adjudication.md) | `e8b6cb873`, `9632fb41c`, `25183e4bc` |
+| 3 | `25183e4bc` | [claims](../artifacts/telemetry-archive-spec-review/cycle-3-claims.md), [adjudication](../artifacts/telemetry-archive-spec-review/cycle-3-adjudication.md) | `716ec6235`, `a8d05345d`, `bfa45bd47` |
+| 4 | `bfa45bd47` | [claims](../artifacts/telemetry-archive-spec-review/cycle-4-claims.md), [adjudication](../artifacts/telemetry-archive-spec-review/cycle-4-adjudication.md) | `66603cc7f`, `3162c4b7c`, `78c4ce8a6` |
+| 5 | `78c4ce8a6` | [claims](../artifacts/telemetry-archive-spec-review/cycle-5-claims.md), [adjudication](../artifacts/telemetry-archive-spec-review/cycle-5-adjudication.md) | `e97f939d1`, `50b595405` |
+| 6 | `50b595405` | [claims](../artifacts/telemetry-archive-spec-review/cycle-6-claims.md), [adjudication](../artifacts/telemetry-archive-spec-review/cycle-6-adjudication.md) | `463f20134`, `c386cc647`, `52c33f5a8` |
+
+The review closed after cycle 6 by explicit implementation handoff, not by claiming that unlimited
+review could never find another question. No cycle 7 is planned. The remaining risk is managed by
+the executable gates in §18 and by building in the dependency order in §19. The first implementation
+slice should freeze the parser/model, canonical descriptors, `FrameIdentityV1`, and cross-reader
+goldens before writer/runtime IO; later slices must consume those authorities rather than revise
+them opportunistically.
+
+The Tachometer defect boundary remains separate. The only findings attributed to PR 1036 are the
+five source- and runtime-reproduced issues in
+[`artifacts/code-review.md`](../artifacts/code-review.md): histogram cross-label contamination,
+stale-checkpoint duplication, Float32 precision loss, quoted-label truncation, and acceptance of
+non-2xx metric bodies. Review cycles 1–6 challenged this new AIPerf design and do not enlarge that
+bug list.
