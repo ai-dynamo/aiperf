@@ -168,10 +168,11 @@ def export_python_compatibility_reports(
         error_request_count=failed,
         error_summary=errors,
     )
+    telemetry_results = _project_gpu_telemetry(payload, native_summary)
     exporter_config = ExporterConfig(
         results=results,
         cfg=run.cfg,
-        telemetry_results=None,
+        telemetry_results=telemetry_results,
         run=run,
     )
 
@@ -182,6 +183,109 @@ def export_python_compatibility_reports(
     for exporter in exporters:
         destination = exporter.get_export_info().file_path
         _atomic_write_text(destination, exporter.render())
+
+
+def _project_gpu_telemetry(
+    payload: dict[str, Any], native_summary: dict[str, Any]
+) -> Any | None:
+    """Serialize Rust-labeled GPU series through the established Python model."""
+    from datetime import datetime
+
+    from aiperf.common.models import (
+        EndpointData,
+        GpuSummary,
+        TelemetryExportData,
+        TelemetrySummary,
+    )
+    from aiperf.exporters.utils import normalize_endpoint_display
+
+    metrics = _mapping(payload.get("metrics"), "native report metrics")
+    grouped: dict[str, dict[str, dict[str, Any]]] = {}
+    endpoint_order: list[str] = []
+    for name, authored_entry in metrics.items():
+        entry = _mapping(authored_entry, f"metric {name!r}")
+        metric_type = entry.get("type")
+        unit = entry.get("unit")
+        if not isinstance(unit, str):
+            raise NativeReportError(f"metric {name!r} unit must be a string")
+        authored_series = entry.get("series")
+        if not isinstance(authored_series, list) or not authored_series:
+            raise NativeReportError(f"metric {name!r} must contain at least one series")
+        for index, authored in enumerate(authored_series):
+            series = _mapping(authored, f"metric {name!r} series[{index}]")
+            labels = series.get("labels")
+            endpoint_url = series.get("endpoint_url")
+            if not isinstance(labels, dict) or not isinstance(endpoint_url, str):
+                continue
+            required = ("gpu", "gpu_uuid", "model_name")
+            if not all(isinstance(labels.get(field), str) for field in required):
+                continue
+            try:
+                gpu_index = int(labels["gpu"])
+            except ValueError as error:
+                raise NativeReportError(
+                    f"metric {name!r} GPU index must be an integer string"
+                ) from error
+            if gpu_index < 0:
+                raise NativeReportError(
+                    f"metric {name!r} GPU index must be non-negative"
+                )
+            stats = _mapping(series.get("stats"), f"metric {name!r} stats")
+            values = JsonMetricResult(
+                unit=unit,
+                **_legacy_stats(metric_type, stats, name),
+            )
+            if endpoint_url not in endpoint_order:
+                endpoint_order.append(endpoint_url)
+            endpoint = grouped.setdefault(endpoint_url, {})
+            gpu_uuid = labels["gpu_uuid"]
+            gpu = endpoint.setdefault(
+                gpu_uuid,
+                {
+                    "gpu_index": gpu_index,
+                    "gpu_name": labels["model_name"],
+                    "gpu_uuid": gpu_uuid,
+                    "hostname": labels.get("hostname"),
+                    "namespace": labels.get("namespace"),
+                    "pod_name": labels.get("pod"),
+                    "metrics": {},
+                },
+            )
+            identity = (gpu["gpu_index"], gpu["gpu_name"], gpu["gpu_uuid"])
+            if identity != (gpu_index, labels["model_name"], gpu_uuid):
+                raise NativeReportError(
+                    f"GPU metadata changed across native series for {gpu_uuid!r}"
+                )
+            gpu["metrics"][name] = values
+
+    if not grouped:
+        return None
+    endpoints = {
+        normalize_endpoint_display(endpoint_url): EndpointData(
+            gpus={
+                f"gpu_{gpu['gpu_index']}": GpuSummary.model_validate(gpu)
+                for gpu in gpus.values()
+            }
+        )
+        for endpoint_url, gpus in grouped.items()
+    }
+
+    def native_time(field: str) -> datetime:
+        value = native_summary.get(field)
+        if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+            value = 0
+        return datetime.fromtimestamp(float(value) / 1_000_000_000)
+
+    return TelemetryExportData(
+        summary=TelemetrySummary(
+            endpoints_configured=endpoint_order,
+            endpoints_successful=endpoint_order,
+            start_time=native_time("start_time"),
+            end_time=native_time("end_time"),
+        ),
+        endpoints=endpoints,
+        error_summary=None,
+    )
 
 
 def _atomic_write_text(path: Path, content: str) -> None:

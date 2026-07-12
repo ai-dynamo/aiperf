@@ -201,6 +201,25 @@ def test_rejects_contract_drift(mutation, message: str) -> None:
 def test_python_report_generators_serialize_native_values_without_recomputing(
     tmp_path,
 ) -> None:
+    gpu_power = _entry(
+        "distribution",
+        "W",
+        {
+            "count": 3,
+            "avg": 250.0,
+            "min": 240.0,
+            "max": 260.0,
+            "std": 10.0,
+            "percentiles": {"p50": 250.0, "p99": 260.0},
+        },
+        labels={
+            "gpu": "0",
+            "gpu_uuid": "GPU-native",
+            "model_name": "H100",
+            "hostname": "node-a",
+        },
+    )
+    gpu_power["series"][0]["endpoint_url"] = "http://dcgm:9400/metrics"
     report = {
         "schema_version": "2.0",
         "aiperf_version": "0.0.0",
@@ -220,6 +239,7 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
                 },
             ),
             "request_count": _entry("counter", "requests", {"total": 2.0, "rate": 4.0}),
+            "gpu_power_usage": gpu_power,
         },
         "warmup_metrics": {
             "request_count": _entry("counter", "requests", {"total": 1.0, "rate": 1.0})
@@ -270,9 +290,27 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
     assert exported["warmup_metrics"]["request_count"]["avg"] == 1.0
     assert exported["run_info"]["random_seed"] == 7
     assert exported["input_config"]["endpoint"]["urls"] == ["http://127.0.0.1:8000"]
+    assert exported["telemetry_data"]["summary"]["endpoints_successful"] == [
+        "http://dcgm:9400/metrics"
+    ]
+    gpu = exported["telemetry_data"]["endpoints"]["dcgm:9400"]["gpus"]["gpu_0"]
+    assert gpu["gpu_uuid"] == "GPU-native"
+    assert gpu["hostname"] == "node-a"
+    assert gpu["metrics"]["gpu_power_usage"] == {
+        "unit": "W",
+        "avg": 250.0,
+        "p50": 250.0,
+        "p99": 260.0,
+        "min": 240.0,
+        "max": 260.0,
+        "std": 10.0,
+        "count": 3,
+    }
     csv = (tmp_path / "profile_export_aiperf.csv").read_text()
     assert "Request Latency (ms)" in csv
     assert "12.50" in csv
+    assert "GPU Power Usage (W)" in csv
+    assert "GPU-native" in csv
     (tmp_path / "profile_export.jsonl").write_text("{}\n")
     from aiperf.plot.core.mode_detector import ModeDetector, VisualizationMode
 
