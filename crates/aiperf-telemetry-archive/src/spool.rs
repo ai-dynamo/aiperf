@@ -19,8 +19,8 @@ use crate::{
     ArchiveId, ArchiveState, Digest, GenerationMutationV1, GenerationObjectV1,
     GenerationTransactionKind, GenerationV1, GenesisV1, HeadDescriptorV1, IndexError,
     IndexMutationSetV1, IndexPageSource, IndexSnapshot, LocalLatestV1, ManifestError, MutationMode,
-    RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment, WAL_FOOTER_MAGIC, WalError, WalFrame,
-    WalSegmentBuilder, WalSegmentHeaderV1,
+    RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment, SessionId, TableId, WAL_FOOTER_MAGIC,
+    WalError, WalFrame, WalSegmentBuilder, WalSegmentHeaderV1,
 };
 
 const LOCAL_LATEST: &str = "LOCAL-LATEST";
@@ -506,7 +506,18 @@ pub struct LocalArchiveRepository {
     head: HeadDescriptorV1,
     index: IndexSnapshot,
     genesis: GenesisV1,
+    latest_collection_session_id: Option<SessionId>,
     rolled_back_current: bool,
+}
+
+struct GenerationCommit<'a> {
+    mutation_set: &'a IndexMutationSetV1,
+    transaction_kind: GenerationTransactionKind,
+    archive_state: ArchiveState,
+    session_id: Option<SessionId>,
+    termination_reason: Option<String>,
+    next_record_seq: u64,
+    active_wal_segment_id: Option<Digest>,
 }
 
 impl LocalArchiveRepository {
@@ -532,6 +543,8 @@ impl LocalArchiveRepository {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Genesis,
             session_id: genesis.initial_session_id,
+            next_record_seq: 0,
+            active_wal_segment_id: None,
             mutations: vec![],
             genesis: Some(genesis.clone()),
             termination_reason: None,
@@ -558,6 +571,7 @@ impl LocalArchiveRepository {
             spool,
             head,
             index,
+            latest_collection_session_id: generation.generation.session_id,
             genesis,
             rolled_back_current: false,
         })
@@ -629,6 +643,7 @@ impl LocalArchiveRepository {
             head: verified.head,
             index: verified.index,
             genesis: verified.genesis,
+            latest_collection_session_id: verified.latest_collection_session_id,
             rolled_back_current,
         })
     }
@@ -651,6 +666,74 @@ impl LocalArchiveRepository {
         &self.genesis
     }
 
+    /// Returns the latest collection session from the verified current generation.
+    #[must_use]
+    pub const fn latest_collection_session_id(&self) -> Option<SessionId> {
+        self.latest_collection_session_id
+    }
+
+    /// Reconstructs the exact manifest-named open WAL header without directory discovery.
+    pub fn active_wal_header(
+        &self,
+        table_schema_fingerprints: Vec<(TableId, Digest)>,
+    ) -> Result<Option<WalSegmentHeaderV1>, SpoolError> {
+        let Some(active_segment_id) = self.head.active_wal_segment_id else {
+            return Ok(None);
+        };
+        let mut sequence = self.head.local_commit_seq;
+        let mut hash = self.head.generation_hash;
+        loop {
+            let key = generation_key(sequence, hash);
+            let bytes = self.spool.read_relative(Path::new(&key))?;
+            let object = GenerationObjectV1::decode(&bytes).map_err(SpoolError::Manifest)?;
+            if object.hash != hash || object.key != key {
+                return Err(SpoolError::IdentityMismatch("active WAL generation"));
+            }
+            if object.generation.transaction_kind == GenerationTransactionKind::SessionStarted
+                && object.generation.active_wal_segment_id == Some(active_segment_id)
+            {
+                let session_id = object
+                    .generation
+                    .session_id
+                    .ok_or(SpoolError::IdentityMismatch("active WAL session"))?;
+                let previous_head_hash = object
+                    .generation
+                    .parent_generation_hash
+                    .ok_or(SpoolError::IdentityMismatch("active WAL parent"))?;
+                let genesis_hash = object
+                    .generation
+                    .genesis_hash
+                    .ok_or(SpoolError::IdentityMismatch("active WAL genesis"))?;
+                let header = WalSegmentHeaderV1::new(
+                    self.head.archive_id,
+                    session_id,
+                    previous_head_hash,
+                    genesis_hash,
+                    self.genesis.writer_compatibility_id,
+                    object.generation.next_record_seq,
+                    table_schema_fingerprints,
+                )
+                .map_err(SpoolError::Wal)?;
+                if header.segment_id != active_segment_id {
+                    return Err(SpoolError::IdentityMismatch(
+                        "active WAL schema fingerprints",
+                    ));
+                }
+                return Ok(Some(header));
+            }
+            if sequence == 0 {
+                return Err(SpoolError::IdentityMismatch(
+                    "active WAL session generation",
+                ));
+            }
+            sequence -= 1;
+            hash = object
+                .generation
+                .parent_generation_hash
+                .ok_or(SpoolError::IdentityMismatch("active WAL ancestry"))?;
+        }
+    }
+
     /// Reports whether recovery replaced a bad current head with its preceding head.
     #[must_use]
     pub const fn rolled_back_current(&self) -> bool {
@@ -663,26 +746,162 @@ impl LocalArchiveRepository {
         &self.spool
     }
 
-    /// Commits one canonical index mutation and hash-linked generation transaction.
-    pub fn commit(
+    /// Installs one exact session/WAL authority before the WAL file is opened.
+    pub fn start_session(
         &mut self,
-        mutation_set: &IndexMutationSetV1,
-        transaction_kind: GenerationTransactionKind,
-        archive_state: ArchiveState,
-        session_id: Option<crate::SessionId>,
-        termination_reason: Option<String>,
+        header: &WalSegmentHeaderV1,
         faults: &dyn DurabilityFaultInjector,
     ) -> Result<&HeadDescriptorV1, SpoolError> {
-        if transaction_kind == GenerationTransactionKind::Genesis {
+        if self.head.active_wal_segment_id == Some(header.segment_id) {
+            if self.head.archive_state == ArchiveState::Open
+                && self.head.parent_generation_hash == Some(header.previous_head_hash)
+                && self.head.next_record_seq == header.first_record_seq
+            {
+                return Ok(&self.head);
+            }
+            return Err(SpoolError::IdentityMismatch("active WAL session"));
+        }
+        if self.head.archive_state != ArchiveState::Open
+            || self.head.active_wal_segment_id.is_some()
+            || header.archive_id != self.head.archive_id
+            || header.previous_head_hash != self.head.generation_hash
+            || header.genesis_hash != self.head.genesis_hash
+            || header.writer_compatibility_id != self.genesis.writer_compatibility_id
+            || header.first_record_seq != self.head.next_record_seq
+        {
+            return Err(SpoolError::IdentityMismatch("session WAL header"));
+        }
+        let mutation_set =
+            IndexMutationSetV1::new(Vec::new(), Vec::new()).map_err(SpoolError::Index)?;
+        self.commit_generation(
+            GenerationCommit {
+                mutation_set: &mutation_set,
+                transaction_kind: GenerationTransactionKind::SessionStarted,
+                archive_state: ArchiveState::Open,
+                session_id: Some(header.session_id),
+                termination_reason: None,
+                next_record_seq: self.head.next_record_seq,
+                active_wal_segment_id: Some(header.segment_id),
+            },
+            faults,
+        )
+    }
+
+    /// Advances indexed coverage and the authoritative global sequence watermark.
+    pub fn checkpoint(
+        &mut self,
+        mutation_set: &IndexMutationSetV1,
+        session_id: SessionId,
+        next_record_seq: u64,
+        faults: &dyn DurabilityFaultInjector,
+    ) -> Result<&HeadDescriptorV1, SpoolError> {
+        let active_wal_segment_id =
+            self.head
+                .active_wal_segment_id
+                .ok_or(SpoolError::InvalidTransaction(
+                    "checkpoint requires one active WAL segment",
+                ))?;
+        if next_record_seq < self.head.next_record_seq {
+            return Err(SpoolError::InvalidTransaction(
+                "checkpoint cannot regress next record sequence",
+            ));
+        }
+        self.commit_generation(
+            GenerationCommit {
+                mutation_set,
+                transaction_kind: GenerationTransactionKind::Checkpoint,
+                archive_state: self.head.archive_state,
+                session_id: Some(session_id),
+                termination_reason: None,
+                next_record_seq,
+                active_wal_segment_id: Some(active_wal_segment_id),
+            },
+            faults,
+        )
+    }
+
+    /// Clears one sealed session WAL while preserving an open archive for rotation.
+    pub fn close_session(
+        &mut self,
+        session_id: SessionId,
+        next_record_seq: u64,
+        sealed_wal: &SealedWalSegment,
+        faults: &dyn DurabilityFaultInjector,
+    ) -> Result<&HeadDescriptorV1, SpoolError> {
+        let expected_next_record_seq = sealed_wal
+            .last_record_seq()
+            .checked_add(1)
+            .ok_or(SpoolError::SequenceOverflow)?;
+        if self.head.archive_state != ArchiveState::Open
+            || self.head.active_wal_segment_id != Some(sealed_wal.segment_id())
+            || self.latest_collection_session_id != Some(session_id)
+            || next_record_seq != expected_next_record_seq
+            || next_record_seq != self.head.next_record_seq
+        {
+            return Err(SpoolError::InvalidTransaction(
+                "session close requires its sealed, fully checkpointed active WAL",
+            ));
+        }
+        let mutation_set =
+            IndexMutationSetV1::new(Vec::new(), Vec::new()).map_err(SpoolError::Index)?;
+        self.commit_generation(
+            GenerationCommit {
+                mutation_set: &mutation_set,
+                transaction_kind: GenerationTransactionKind::SessionClosed,
+                archive_state: ArchiveState::Open,
+                session_id: Some(session_id),
+                termination_reason: None,
+                next_record_seq,
+                active_wal_segment_id: None,
+            },
+            faults,
+        )
+    }
+
+    /// Closes the named WAL authority at an already-checkpointed final watermark.
+    pub fn finalize_local(
+        &mut self,
+        session_id: SessionId,
+        next_record_seq: u64,
+        termination_reason: String,
+        faults: &dyn DurabilityFaultInjector,
+    ) -> Result<&HeadDescriptorV1, SpoolError> {
+        if self.head.active_wal_segment_id.is_none() || next_record_seq != self.head.next_record_seq
+        {
+            return Err(SpoolError::InvalidTransaction(
+                "local finalization requires the checkpointed active WAL watermark",
+            ));
+        }
+        let mutation_set =
+            IndexMutationSetV1::new(Vec::new(), Vec::new()).map_err(SpoolError::Index)?;
+        self.commit_generation(
+            GenerationCommit {
+                mutation_set: &mutation_set,
+                transaction_kind: GenerationTransactionKind::LocalFinalization,
+                archive_state: ArchiveState::LocallyFinalized,
+                session_id: Some(session_id),
+                termination_reason: Some(termination_reason),
+                next_record_seq,
+                active_wal_segment_id: None,
+            },
+            faults,
+        )
+    }
+
+    fn commit_generation(
+        &mut self,
+        commit: GenerationCommit<'_>,
+        faults: &dyn DurabilityFaultInjector,
+    ) -> Result<&HeadDescriptorV1, SpoolError> {
+        if commit.transaction_kind == GenerationTransactionKind::Genesis {
             return Err(SpoolError::InvalidTransaction(
                 "descendant commit cannot use genesis transaction kind",
             ));
         }
         let next_index = self
             .index
-            .apply(mutation_set, MutationMode::Normal)
+            .apply(commit.mutation_set, MutationMode::Normal)
             .map_err(SpoolError::Index)?;
-        persist_index(&self.spool, &next_index, faults)?;
         let commit_seq = self
             .head
             .local_commit_seq
@@ -694,14 +913,25 @@ impl LocalArchiveRepository {
             parent_generation_hash: Some(self.head.generation_hash),
             genesis_hash: Some(self.head.genesis_hash),
             index_root: next_index.root().clone(),
-            archive_state,
-            transaction_kind,
-            session_id,
-            mutations: GenerationMutationV1::from_set(mutation_set),
+            archive_state: commit.archive_state,
+            transaction_kind: commit.transaction_kind,
+            session_id: commit.session_id,
+            next_record_seq: commit.next_record_seq,
+            active_wal_segment_id: commit.active_wal_segment_id,
+            mutations: GenerationMutationV1::from_set(commit.mutation_set),
             genesis: None,
-            termination_reason,
+            termination_reason: commit.termination_reason,
         })
         .map_err(SpoolError::Manifest)?;
+        let parent_bytes = self
+            .spool
+            .read_relative(Path::new(&self.head.generation_key))?;
+        let parent = GenerationObjectV1::decode(&parent_bytes).map_err(SpoolError::Manifest)?;
+        generation
+            .generation
+            .validate_descendant_of(&parent.generation)
+            .map_err(SpoolError::Manifest)?;
+        persist_index(&self.spool, &next_index, faults)?;
         self.spool.write_immutable(
             Path::new(&generation.key),
             &generation.bytes,
@@ -722,6 +952,7 @@ impl LocalArchiveRepository {
         )?;
         self.head = next_head;
         self.index = next_index;
+        self.latest_collection_session_id = generation.generation.session_id;
         self.rolled_back_current = false;
         Ok(&self.head)
     }
@@ -733,7 +964,10 @@ impl LocalArchiveRepository {
         faults: &'a dyn DurabilityFaultInjector,
     ) -> Result<LocalWalWriter<'a>, SpoolError> {
         if header.archive_id != self.head.archive_id
-            || header.previous_head_hash != self.head.generation_hash
+            || self.head.archive_state != ArchiveState::Open
+            || self.head.active_wal_segment_id != Some(header.segment_id)
+            || self.head.parent_generation_hash != Some(header.previous_head_hash)
+            || self.head.next_record_seq != header.first_record_seq
             || header.genesis_hash != self.head.genesis_hash
             || header.writer_compatibility_id != self.genesis.writer_compatibility_id
         {
@@ -749,7 +983,10 @@ impl LocalArchiveRepository {
         faults: Arc<dyn DurabilityFaultInjector>,
     ) -> Result<OwnedLocalWalWriter, SpoolError> {
         if header.archive_id != self.head.archive_id
-            || header.previous_head_hash != self.head.generation_hash
+            || self.head.archive_state != ArchiveState::Open
+            || self.head.active_wal_segment_id != Some(header.segment_id)
+            || self.head.parent_generation_hash != Some(header.previous_head_hash)
+            || self.head.next_record_seq != header.first_record_seq
             || header.genesis_hash != self.head.genesis_hash
             || header.writer_compatibility_id != self.genesis.writer_compatibility_id
         {
@@ -817,6 +1054,12 @@ impl LocalArchiveRepository {
         faults: Arc<dyn DurabilityFaultInjector>,
     ) -> Result<(OwnedLocalWalWriter, RecoveredWal), SpoolError> {
         if header.archive_id != self.head.archive_id
+            || !matches!(
+                self.head.archive_state,
+                ArchiveState::Open | ArchiveState::StopRequested
+            )
+            || self.head.active_wal_segment_id != Some(header.segment_id)
+            || header.first_record_seq > self.head.next_record_seq
             || header.genesis_hash != self.head.genesis_hash
             || header.writer_compatibility_id != self.genesis.writer_compatibility_id
             || !generation_is_ancestor(&self.spool, &self.head, header.previous_head_hash)?
@@ -832,9 +1075,50 @@ impl LocalArchiveRepository {
                 "sealed WAL cannot resume frame admission",
             ));
         }
+        let recovered_next_record_seq =
+            recovered
+                .frames
+                .last()
+                .map_or(Ok(header.first_record_seq), |frame| {
+                    frame
+                        .header()
+                        .record_seq
+                        .checked_add(1)
+                        .ok_or(SpoolError::SequenceOverflow)
+                })?;
+        if recovered_next_record_seq < self.head.next_record_seq {
+            return Err(SpoolError::IdentityMismatch(
+                "WAL is behind the manifest sequence watermark",
+            ));
+        }
         let writer =
             OwnedLocalWalWriter::resume(Arc::clone(&self.spool), &recovered, Arc::clone(&faults))?;
         Ok((writer, recovered))
+    }
+
+    /// Reopens or creates an empty WAL named by a just-installed session generation.
+    ///
+    /// This is the idempotent crash-retry path between `session_started` and
+    /// source activation. It consults only the exact manifest-derived paths.
+    pub fn resume_or_create_empty_owned_wal(
+        &self,
+        header: &WalSegmentHeaderV1,
+        maximum_frame_bytes: u64,
+        faults: Arc<dyn DurabilityFaultInjector>,
+    ) -> Result<OwnedLocalWalWriter, SpoolError> {
+        let (open_relative, sealed_relative) = wal_paths(header.segment_id);
+        let open_exists = self.spool.root.join(open_relative).exists();
+        let sealed_exists = self.spool.root.join(sealed_relative).exists();
+        if !open_exists && !sealed_exists {
+            return self.create_owned_wal(header.clone(), faults);
+        }
+        let (writer, recovered) = self.resume_owned_wal(header, maximum_frame_bytes, faults)?;
+        if !recovered.frames.is_empty() {
+            return Err(SpoolError::InvalidTransaction(
+                "installed session WAL was already activated",
+            ));
+        }
+        Ok(writer)
     }
 }
 
@@ -1418,6 +1702,7 @@ struct VerifiedHead {
     head: HeadDescriptorV1,
     index: IndexSnapshot,
     genesis: GenesisV1,
+    latest_collection_session_id: Option<SessionId>,
 }
 
 fn verify_head(
@@ -1433,6 +1718,8 @@ fn verify_head(
         || generation.generation.index_root.root_hash != head.index_root_hash
         || generation.generation.parent_generation_hash != head.parent_generation_hash
         || generation.generation.archive_state != head.archive_state
+        || generation.generation.next_record_seq != head.next_record_seq
+        || generation.generation.active_wal_segment_id != head.active_wal_segment_id
     {
         return Err(SpoolError::IdentityMismatch("head/generation"));
     }
@@ -1458,6 +1745,7 @@ fn verify_head(
         head: head.clone(),
         index,
         genesis,
+        latest_collection_session_id: generation.generation.session_id,
     })
 }
 
@@ -1491,6 +1779,10 @@ fn verify_ancestry(
         {
             return Err(SpoolError::IdentityMismatch("generation parent bytes"));
         }
+        generation
+            .generation
+            .validate_descendant_of(&parent.generation)
+            .map_err(SpoolError::Manifest)?;
         generation = parent;
     }
 }
@@ -1845,10 +2137,18 @@ mod tests {
             repository.head.generation_hash,
             repository.head.genesis_hash,
             repository.genesis.writer_compatibility_id,
-            1,
+            repository.head.next_record_seq,
             vec![(TableId::Attempts, Digest::from_bytes([9; 32]))],
         )
         .unwrap()
+    }
+
+    fn start_session(repository: &mut LocalArchiveRepository) -> WalSegmentHeaderV1 {
+        let header = wal_header(repository);
+        repository
+            .start_session(&header, &NoDurabilityFaults)
+            .unwrap();
+        header
     }
 
     fn wal_frame() -> WalFrame {
@@ -1867,14 +2167,14 @@ mod tests {
             ReservationKind::SourceScrape,
             Some("source"),
             batch,
-            1,
+            0,
         )
         .unwrap();
         WalFrame::new(
             WalFrameHeaderV1::new(
                 batch,
                 reservation,
-                1,
+                0,
                 10,
                 TerminalKind::SourceScrape,
                 vec![RequiredProjection {
@@ -1953,6 +2253,53 @@ mod tests {
     }
 
     #[test]
+    fn session_start_is_old_or_exact_named_wal_after_every_crash_edge() {
+        let edges = [
+            DurabilityEdge::GenerationTempWritten,
+            DurabilityEdge::GenerationFileSynced,
+            DurabilityEdge::GenerationRenamed,
+            DurabilityEdge::GenerationDirectorySynced,
+            DurabilityEdge::PointerTempWritten,
+            DurabilityEdge::PointerFileSynced,
+            DurabilityEdge::PointerRenamed,
+            DurabilityEdge::PointerDirectorySynced,
+        ];
+        for edge in edges {
+            let temp = TempDir::new().unwrap();
+            let path = temp.path().join("spool");
+            let mut repository = create(&path);
+            let header = wal_header(&repository);
+            let result = repository.start_session(&header, &FailAtDurabilityEdge::first(edge));
+            assert!(matches!(result, Err(SpoolError::FaultInjected(actual)) if actual == edge));
+            drop(repository);
+
+            let mut recovered = recover(&path);
+            match recovered.head.local_commit_seq {
+                0 => {
+                    assert_eq!(recovered.head.active_wal_segment_id, None);
+                    assert_eq!(recovered.head.next_record_seq, 0);
+                }
+                1 => {
+                    assert_eq!(
+                        recovered.head.active_wal_segment_id,
+                        Some(header.segment_id)
+                    );
+                    assert_eq!(recovered.head.next_record_seq, header.first_record_seq);
+                }
+                sequence => panic!("unexpected recovered session sequence {sequence}"),
+            }
+            recovered
+                .start_session(&header, &NoDurabilityFaults)
+                .unwrap();
+            assert_eq!(recovered.head.local_commit_seq, 1);
+            assert_eq!(
+                recovered.head.active_wal_segment_id,
+                Some(header.segment_id)
+            );
+        }
+    }
+
+    #[test]
     fn descendant_commit_is_old_or_new_after_every_transaction_edge_never_partial() {
         let edges = [
             DurabilityEdge::IndexTempWritten,
@@ -1972,22 +2319,20 @@ mod tests {
             let temp = TempDir::new().unwrap();
             let path = temp.path().join("spool");
             let mut repository = create(&path);
+            start_session(&mut repository);
             let mutation = IndexMutationSetV1::new(vec![], vec![index_entry(1)]).unwrap();
-            let result = repository.commit(
-                &mutation,
-                GenerationTransactionKind::Checkpoint,
-                ArchiveState::Open,
-                Some(session()),
-                None,
-                &FailAtDurabilityEdge::first(edge),
-            );
+            let result =
+                repository.checkpoint(&mutation, session(), 0, &FailAtDurabilityEdge::first(edge));
             assert!(matches!(result, Err(SpoolError::FaultInjected(actual)) if actual == edge));
             drop(repository);
             let recovered = recover(&path);
-            assert!(recovered.head.local_commit_seq <= 1, "edge={edge:?}");
+            assert!(
+                (1..=2).contains(&recovered.head.local_commit_seq),
+                "edge={edge:?}"
+            );
             assert_eq!(
                 recovered.index.entries().count(),
-                usize::try_from(recovered.head.local_commit_seq).unwrap(),
+                usize::try_from(recovered.head.local_commit_seq - 1).unwrap(),
                 "edge={edge:?}"
             );
         }
@@ -1998,13 +2343,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("spool");
         let mut repository = create(&path);
+        start_session(&mut repository);
         repository
-            .commit(
+            .checkpoint(
                 &IndexMutationSetV1::new(vec![], vec![index_entry(1)]).unwrap(),
-                GenerationTransactionKind::Checkpoint,
-                ArchiveState::Open,
-                Some(session()),
-                None,
+                session(),
+                0,
                 &NoDurabilityFaults,
             )
             .unwrap();
@@ -2015,7 +2359,7 @@ mod tests {
         fs::write(&current_path, bytes).unwrap();
         let recovered = recover(&path);
         assert!(recovered.rolled_back_current());
-        assert_eq!(recovered.head.local_commit_seq, 0);
+        assert_eq!(recovered.head.local_commit_seq, 1);
         assert_eq!(recovered.index.entries().count(), 0);
     }
 
@@ -2069,8 +2413,8 @@ mod tests {
         ] {
             let temp = TempDir::new().unwrap();
             let path = temp.path().join("spool");
-            let repository = create(&path);
-            let header = wal_header(&repository);
+            let mut repository = create(&path);
+            let header = start_session(&mut repository);
             let injector = FailAtDurabilityEdge::first(edge);
             let mut writer = repository.create_wal(header.clone(), &injector).unwrap();
             assert!(matches!(
@@ -2086,7 +2430,7 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(recovered.frames.len(), 1, "edge={edge:?}");
-            assert_eq!(recovered.frames[0].header().record_seq, 1);
+            assert_eq!(recovered.frames[0].header().record_seq, 0);
         }
     }
 
@@ -2100,8 +2444,8 @@ mod tests {
         ] {
             let temp = TempDir::new().unwrap();
             let path = temp.path().join("spool");
-            let repository = create(&path);
-            let header = wal_header(&repository);
+            let mut repository = create(&path);
+            let header = start_session(&mut repository);
             let injector = FailAtDurabilityEdge::first(edge);
             let mut writer = repository.create_wal(header.clone(), &injector).unwrap();
             writer.append(&wal_frame()).unwrap();

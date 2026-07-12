@@ -86,6 +86,8 @@ pub enum GenerationTransactionKind {
     Genesis,
     /// A new collection session became authoritative.
     SessionStarted,
+    /// A recovered session WAL was sealed without finalizing the archive.
+    SessionClosed,
     /// Index/object coverage advanced.
     Checkpoint,
     /// Local admission closed and all covered frames were sealed.
@@ -101,6 +103,7 @@ impl GenerationTransactionKind {
         match self {
             Self::Genesis => "genesis",
             Self::SessionStarted => "session_started",
+            Self::SessionClosed => "session_closed",
             Self::Checkpoint => "checkpoint",
             Self::LocalFinalization => "local_finalization",
             Self::RetentionCheckpoint => "retention_checkpoint",
@@ -112,6 +115,7 @@ impl GenerationTransactionKind {
         match value {
             "genesis" => Ok(Self::Genesis),
             "session_started" => Ok(Self::SessionStarted),
+            "session_closed" => Ok(Self::SessionClosed),
             "checkpoint" => Ok(Self::Checkpoint),
             "local_finalization" => Ok(Self::LocalFinalization),
             "retention_checkpoint" => Ok(Self::RetentionCheckpoint),
@@ -326,6 +330,10 @@ pub struct GenerationV1 {
     pub transaction_kind: GenerationTransactionKind,
     /// Session made current by this transaction when applicable.
     pub session_id: Option<SessionId>,
+    /// First global record sequence after the manifest-verified durable WAL prefix.
+    pub next_record_seq: u64,
+    /// Exact open WAL segment authorized for recovery, absent outside collection.
+    pub active_wal_segment_id: Option<Digest>,
     /// Canonical index mutations in removals-then-additions order.
     pub mutations: Vec<GenerationMutationV1>,
     /// Full generation-zero identity, present only for genesis.
@@ -343,6 +351,10 @@ impl GenerationV1 {
                 || self.genesis_hash.is_some()
                 || self.genesis.as_ref().map(|value| value.archive_id) != Some(self.archive_id)
                 || !self.mutations.is_empty()
+                || self.next_record_seq != 0
+                || self.active_wal_segment_id.is_some()
+                || self.archive_state != ArchiveState::Open
+                || self.termination_reason.is_some()
             {
                 return Err(ManifestError::InvalidGenesisShape);
             }
@@ -356,6 +368,51 @@ impl GenerationV1 {
             || self.genesis.is_some()
         {
             return Err(ManifestError::InvalidDescendantShape);
+        }
+        if self.local_commit_seq != 0 {
+            let valid_continuation_shape = match self.transaction_kind {
+                GenerationTransactionKind::Genesis => false,
+                GenerationTransactionKind::SessionStarted => {
+                    self.archive_state == ArchiveState::Open
+                        && self.session_id.is_some()
+                        && self.active_wal_segment_id.is_some()
+                        && self.mutations.is_empty()
+                        && self.termination_reason.is_none()
+                }
+                GenerationTransactionKind::SessionClosed => {
+                    self.archive_state == ArchiveState::Open
+                        && self.session_id.is_some()
+                        && self.active_wal_segment_id.is_none()
+                        && self.mutations.is_empty()
+                        && self.termination_reason.is_none()
+                }
+                GenerationTransactionKind::Checkpoint => {
+                    matches!(
+                        self.archive_state,
+                        ArchiveState::Open | ArchiveState::StopRequested
+                    ) && self.session_id.is_some()
+                        && self.active_wal_segment_id.is_some()
+                        && self.termination_reason.is_none()
+                }
+                GenerationTransactionKind::LocalFinalization => {
+                    self.archive_state == ArchiveState::LocallyFinalized
+                        && self.session_id.is_some()
+                        && self.active_wal_segment_id.is_none()
+                        && self.mutations.is_empty()
+                        && self.termination_reason.is_some()
+                }
+                GenerationTransactionKind::RetentionCheckpoint => {
+                    matches!(
+                        self.archive_state,
+                        ArchiveState::LocallyFinalized | ArchiveState::RemotelyFinalized
+                    ) && self.active_wal_segment_id.is_none()
+                        && self.mutations.is_empty()
+                }
+                GenerationTransactionKind::StateTransition => true,
+            };
+            if !valid_continuation_shape {
+                return Err(ManifestError::InvalidContinuationTransition);
+            }
         }
         let mut additions_started = false;
         let mut preceding: Option<&IndexKey> = None;
@@ -379,9 +436,82 @@ impl GenerationV1 {
         Ok(())
     }
 
+    /// Validates continuation and session authority against one verified parent.
+    pub fn validate_descendant_of(&self, parent: &Self) -> Result<(), ManifestError> {
+        self.validate()?;
+        parent.validate()?;
+        if parent.local_commit_seq.checked_add(1) != Some(self.local_commit_seq)
+            || self.archive_id != parent.archive_id
+            || self.next_record_seq < parent.next_record_seq
+        {
+            return Err(ManifestError::InvalidContinuationTransition);
+        }
+        let valid = match self.transaction_kind {
+            GenerationTransactionKind::Genesis => false,
+            GenerationTransactionKind::SessionStarted => {
+                parent.archive_state == ArchiveState::Open
+                    && parent.active_wal_segment_id.is_none()
+                    && (parent.transaction_kind == GenerationTransactionKind::Genesis
+                        || self.session_id != parent.session_id)
+                    && self.next_record_seq == parent.next_record_seq
+                    && self.index_root == parent.index_root
+            }
+            GenerationTransactionKind::SessionClosed => {
+                parent.archive_state == ArchiveState::Open
+                    && parent.active_wal_segment_id.is_some()
+                    && self.active_wal_segment_id.is_none()
+                    && self.session_id == parent.session_id
+                    && self.next_record_seq == parent.next_record_seq
+                    && self.index_root == parent.index_root
+            }
+            GenerationTransactionKind::Checkpoint => {
+                parent.active_wal_segment_id.is_some()
+                    && self.active_wal_segment_id == parent.active_wal_segment_id
+                    && self.session_id == parent.session_id
+                    && self.archive_state == parent.archive_state
+            }
+            GenerationTransactionKind::LocalFinalization => {
+                matches!(
+                    parent.archive_state,
+                    ArchiveState::Open | ArchiveState::StopRequested
+                ) && parent.active_wal_segment_id.is_some()
+                    && self.active_wal_segment_id.is_none()
+                    && self.session_id == parent.session_id
+                    && self.next_record_seq == parent.next_record_seq
+                    && self.index_root == parent.index_root
+            }
+            GenerationTransactionKind::RetentionCheckpoint => {
+                parent.active_wal_segment_id.is_none()
+                    && self.active_wal_segment_id.is_none()
+                    && self.session_id == parent.session_id
+                    && self.next_record_seq == parent.next_record_seq
+                    && self.index_root == parent.index_root
+                    && self.archive_state == parent.archive_state
+            }
+            GenerationTransactionKind::StateTransition => {
+                self.session_id == parent.session_id
+                    && self.next_record_seq == parent.next_record_seq
+                    && (self.active_wal_segment_id == parent.active_wal_segment_id
+                        || (self.active_wal_segment_id.is_none()
+                            && matches!(
+                                self.archive_state,
+                                ArchiveState::Failed | ArchiveState::RemotelyFinalized
+                            )))
+            }
+        };
+        if !valid {
+            return Err(ManifestError::InvalidContinuationTransition);
+        }
+        Ok(())
+    }
+
     fn to_value(&self) -> Result<CanonicalJsonValue, ManifestError> {
         self.validate()?;
         Ok(object(vec![
+            (
+                "active_wal_segment_id",
+                optional_digest(self.active_wal_segment_id),
+            ),
             ("archive_id", string(uuid(self.archive_id.as_bytes()))),
             ("archive_state", string(self.archive_state.as_str())),
             (
@@ -407,6 +537,7 @@ impl GenerationV1 {
                         .collect(),
                 ),
             ),
+            ("next_record_seq", integer(i128::from(self.next_record_seq))),
             (
                 "parent_generation_hash",
                 optional_digest(self.parent_generation_hash),
@@ -441,6 +572,8 @@ impl GenerationV1 {
             archive_state: ArchiveState::parse(text(object, "archive_state")?)?,
             transaction_kind: GenerationTransactionKind::parse(text(object, "transaction_kind")?)?,
             session_id: parse_optional_session(object.get("session_id"))?,
+            next_record_seq: unsigned(object, "next_record_seq")?,
+            active_wal_segment_id: parse_optional_digest(object.get("active_wal_segment_id"))?,
             mutations,
             genesis: match object.get("genesis") {
                 Some(CanonicalJsonValue::Null) => None,
@@ -450,6 +583,9 @@ impl GenerationV1 {
             termination_reason: optional_text(object.get("termination_reason"))?,
         };
         generation.validate()?;
+        if generation.to_value()? != *value {
+            return Err(ManifestError::InvalidField("generation fields"));
+        }
         Ok(generation)
     }
 }
@@ -518,6 +654,10 @@ pub struct HeadDescriptorV1 {
     pub genesis_hash: Digest,
     /// Resulting archive state.
     pub archive_state: ArchiveState,
+    /// First global record sequence after the manifest-verified durable WAL prefix.
+    pub next_record_seq: u64,
+    /// Exact open WAL segment authorized for recovery, when collection is active.
+    pub active_wal_segment_id: Option<Digest>,
 }
 
 impl HeadDescriptorV1 {
@@ -541,6 +681,8 @@ impl HeadDescriptorV1 {
             parent_generation_hash: generation.parent_generation_hash,
             genesis_hash,
             archive_state: generation.archive_state,
+            next_record_seq: generation.next_record_seq,
+            active_wal_segment_id: generation.active_wal_segment_id,
         })
     }
 
@@ -568,6 +710,10 @@ impl HeadDescriptorV1 {
 
     fn to_value(&self) -> CanonicalJsonValue {
         object(vec![
+            (
+                "active_wal_segment_id",
+                optional_digest(self.active_wal_segment_id),
+            ),
             ("archive_id", string(uuid(self.archive_id.as_bytes()))),
             ("archive_state", string(self.archive_state.as_str())),
             ("generation_hash", string(self.generation_hash.to_hex())),
@@ -579,6 +725,7 @@ impl HeadDescriptorV1 {
                 "local_commit_seq",
                 integer(i128::from(self.local_commit_seq)),
             ),
+            ("next_record_seq", integer(i128::from(self.next_record_seq))),
             (
                 "parent_generation_hash",
                 optional_digest(self.parent_generation_hash),
@@ -598,11 +745,14 @@ impl HeadDescriptorV1 {
             parent_generation_hash: parse_optional_digest(object.get("parent_generation_hash"))?,
             genesis_hash: digest(object, "genesis_hash")?,
             archive_state: ArchiveState::parse(text(object, "archive_state")?)?,
+            next_record_seq: unsigned(object, "next_record_seq")?,
+            active_wal_segment_id: parse_optional_digest(object.get("active_wal_segment_id"))?,
         };
         if head.generation_key != generation_key(head.local_commit_seq, head.generation_hash)
             || head.index_root_key != index_root_key(head.index_root_hash)
+            || head.to_value() != *value
         {
-            return Err(ManifestError::InvalidField("content-addressed key"));
+            return Err(ManifestError::InvalidField("head fields"));
         }
         Ok(head)
     }
@@ -649,16 +799,31 @@ impl LocalLatestV1 {
         };
         if let Some(preceding) = &preceding {
             if current.archive_id != preceding.archive_id
-                || current.local_commit_seq != preceding.local_commit_seq + 1
+                || preceding.local_commit_seq.checked_add(1) != Some(current.local_commit_seq)
                 || current.parent_generation_hash != Some(preceding.generation_hash)
                 || current.genesis_hash != preceding.genesis_hash
+                || current.next_record_seq < preceding.next_record_seq
             {
                 return Err(ManifestError::InvalidHeadLink);
             }
         } else if current.local_commit_seq != 0 {
             // A repaired rollback pointer may intentionally retain only its current head.
         }
-        Ok(Self { current, preceding })
+        let latest = Self { current, preceding };
+        let expected = object(vec![
+            ("current", latest.current.to_value()),
+            (
+                "preceding",
+                latest
+                    .preceding
+                    .as_ref()
+                    .map_or(CanonicalJsonValue::Null, HeadDescriptorV1::to_value),
+            ),
+        ]);
+        if expected != payload {
+            return Err(ManifestError::InvalidField("local latest fields"));
+        }
+        Ok(latest)
     }
 }
 
@@ -675,6 +840,8 @@ pub enum ManifestError {
     InvalidDescendantShape,
     /// Generation mutation ordering is not removals then additions, each ascending.
     NonCanonicalMutationOrder,
+    /// Session/WAL continuation authority is malformed or regresses its parent.
+    InvalidContinuationTransition,
     /// Envelope type/magic/version is wrong.
     EnvelopeType,
     /// Envelope payload byte length is wrong.
@@ -700,6 +867,9 @@ impl Display for ManifestError {
             }
             Self::NonCanonicalMutationOrder => {
                 formatter.write_str("non-canonical generation mutation order")
+            }
+            Self::InvalidContinuationTransition => {
+                formatter.write_str("invalid generation continuation transition")
             }
             Self::EnvelopeType => {
                 formatter.write_str("manifest envelope magic/type/version mismatch")
@@ -1034,6 +1204,8 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Genesis,
             session_id: Some(session()),
+            next_record_seq: 0,
+            active_wal_segment_id: None,
             mutations: vec![],
             genesis: Some(GenesisV1 {
                 archive_id: archive(),
@@ -1066,6 +1238,16 @@ mod tests {
         let object = GenerationObjectV1::new(genesis(root)).unwrap();
         assert_eq!(GenerationObjectV1::decode(&object.bytes).unwrap(), object);
         let head = HeadDescriptorV1::from_generation(&object).unwrap();
+        assert_eq!(
+            object.hash.to_hex(),
+            "753973287c188274480a0bf148d966ef0936b1c80d6d419fc92dc623a2734453"
+        );
+        assert_eq!(
+            head.hash().to_hex(),
+            "d185167ed74f3ce8b3a611872d730e34812a84e4f6834a1e46092e6bed3031af"
+        );
+        assert_eq!(head.next_record_seq, 0);
+        assert_eq!(head.active_wal_segment_id, None);
         let pointer = LocalLatestV1 {
             current: head,
             preceding: None,
@@ -1074,6 +1256,131 @@ mod tests {
             LocalLatestV1::decode(&pointer.canonical_bytes()).unwrap(),
             pointer
         );
+    }
+
+    #[test]
+    fn continuation_transitions_pin_sequence_and_named_wal_authority() {
+        let root = IndexSnapshot::empty().unwrap().root().clone();
+        let genesis_object = GenerationObjectV1::new(genesis(root.clone())).unwrap();
+        let segment_id = Digest::from_bytes([0x77; 32]);
+        let session_started = GenerationObjectV1::new(GenerationV1 {
+            archive_id: archive(),
+            local_commit_seq: 1,
+            parent_generation_hash: Some(genesis_object.hash),
+            genesis_hash: Some(genesis_object.hash),
+            index_root: root.clone(),
+            archive_state: ArchiveState::Open,
+            transaction_kind: GenerationTransactionKind::SessionStarted,
+            session_id: Some(session()),
+            next_record_seq: 0,
+            active_wal_segment_id: Some(segment_id),
+            mutations: vec![],
+            genesis: None,
+            termination_reason: None,
+        })
+        .unwrap();
+        session_started
+            .generation
+            .validate_descendant_of(&genesis_object.generation)
+            .unwrap();
+
+        let checkpoint = GenerationObjectV1::new(GenerationV1 {
+            archive_id: archive(),
+            local_commit_seq: 2,
+            parent_generation_hash: Some(session_started.hash),
+            genesis_hash: Some(genesis_object.hash),
+            index_root: root.clone(),
+            archive_state: ArchiveState::Open,
+            transaction_kind: GenerationTransactionKind::Checkpoint,
+            session_id: Some(session()),
+            next_record_seq: 3,
+            active_wal_segment_id: Some(segment_id),
+            mutations: vec![],
+            genesis: None,
+            termination_reason: None,
+        })
+        .unwrap();
+        checkpoint
+            .generation
+            .validate_descendant_of(&session_started.generation)
+            .unwrap();
+
+        let session_closed = GenerationObjectV1::new(GenerationV1 {
+            archive_id: archive(),
+            local_commit_seq: 3,
+            parent_generation_hash: Some(checkpoint.hash),
+            genesis_hash: Some(genesis_object.hash),
+            index_root: root.clone(),
+            archive_state: ArchiveState::Open,
+            transaction_kind: GenerationTransactionKind::SessionClosed,
+            session_id: Some(session()),
+            next_record_seq: 3,
+            active_wal_segment_id: None,
+            mutations: vec![],
+            genesis: None,
+            termination_reason: None,
+        })
+        .unwrap();
+        session_closed
+            .generation
+            .validate_descendant_of(&checkpoint.generation)
+            .unwrap();
+        let next_session = GenerationObjectV1::new(GenerationV1 {
+            archive_id: archive(),
+            local_commit_seq: 4,
+            parent_generation_hash: Some(session_closed.hash),
+            genesis_hash: Some(genesis_object.hash),
+            index_root: root.clone(),
+            archive_state: ArchiveState::Open,
+            transaction_kind: GenerationTransactionKind::SessionStarted,
+            session_id: Some(SessionId::new([0x33; 16]).unwrap()),
+            next_record_seq: 3,
+            active_wal_segment_id: Some(Digest::from_bytes([0x99; 32])),
+            mutations: vec![],
+            genesis: None,
+            termination_reason: None,
+        })
+        .unwrap();
+        next_session
+            .generation
+            .validate_descendant_of(&session_closed.generation)
+            .unwrap();
+
+        let mut invalid = checkpoint.generation.clone();
+        invalid.next_record_seq = 0;
+        let mut advanced_parent = session_started.generation.clone();
+        advanced_parent.next_record_seq = 1;
+        assert!(matches!(
+            invalid.validate_descendant_of(&advanced_parent),
+            Err(ManifestError::InvalidContinuationTransition)
+        ));
+        let mut invalid = checkpoint.generation.clone();
+        invalid.active_wal_segment_id = Some(Digest::from_bytes([0x88; 32]));
+        assert!(matches!(
+            invalid.validate_descendant_of(&session_started.generation),
+            Err(ManifestError::InvalidContinuationTransition)
+        ));
+
+        let finalized = GenerationObjectV1::new(GenerationV1 {
+            archive_id: archive(),
+            local_commit_seq: 3,
+            parent_generation_hash: Some(checkpoint.hash),
+            genesis_hash: Some(genesis_object.hash),
+            index_root: root,
+            archive_state: ArchiveState::LocallyFinalized,
+            transaction_kind: GenerationTransactionKind::LocalFinalization,
+            session_id: Some(session()),
+            next_record_seq: 3,
+            active_wal_segment_id: None,
+            mutations: vec![],
+            genesis: None,
+            termination_reason: Some("requested".to_owned()),
+        })
+        .unwrap();
+        finalized
+            .generation
+            .validate_descendant_of(&checkpoint.generation)
+            .unwrap();
     }
 
     #[test]
@@ -1107,6 +1414,8 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Checkpoint,
             session_id: Some(session()),
+            next_record_seq: 0,
+            active_wal_segment_id: Some(Digest::from_bytes([9; 32])),
             mutations: vec![],
             genesis: None,
             termination_reason: None,

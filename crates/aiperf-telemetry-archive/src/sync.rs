@@ -538,7 +538,10 @@ fn writer_claim(
 ) -> Result<WriterClaimV1, ArchiveSyncError> {
     for (_, bytes, generation_hash) in generation_chain(repository)? {
         let generation = crate::GenerationObjectV1::decode(&bytes)?;
-        if generation.generation.session_id == Some(writer_session_id) {
+        if generation.generation.transaction_kind
+            == crate::GenerationTransactionKind::SessionStarted
+            && generation.generation.session_id == Some(writer_session_id)
+        {
             return Ok(WriterClaimV1 {
                 claim_epoch: generation.generation.local_commit_seq,
                 writer_session_id,
@@ -785,9 +788,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        ArchiveId, CanonicalJsonValue, EpochAnchor, ExecutionId, GenerationTransactionKind,
-        GenesisV1, IndexMutationSetV1, MemoryArchiveObjectStore, MemoryStoreFault, QualifiedSpool,
-        ReceiptObserverEpochV1, TimeDomain,
+        ArchiveId, CanonicalJsonValue, EpochAnchor, ExecutionId, GenesisV1,
+        MemoryArchiveObjectStore, MemoryStoreFault, QualifiedSpool, ReceiptObserverEpochV1,
+        TimeDomain, WalSegmentHeaderV1,
     };
     use aiperf_clock::SimClock;
 
@@ -853,15 +856,21 @@ mod tests {
             &NoDurabilityFaults,
         )
         .unwrap();
+        let header = WalSegmentHeaderV1::new(
+            repository.head().archive_id,
+            session_id,
+            repository.head().generation_hash,
+            repository.head().genesis_hash,
+            repository.genesis().writer_compatibility_id,
+            repository.head().next_record_seq,
+            vec![],
+        )
+        .unwrap();
         repository
-            .commit(
-                &IndexMutationSetV1::new(vec![], vec![]).unwrap(),
-                GenerationTransactionKind::LocalFinalization,
-                ArchiveState::LocallyFinalized,
-                Some(session_id),
-                Some("requested".to_owned()),
-                &NoDurabilityFaults,
-            )
+            .start_session(&header, &NoDurabilityFaults)
+            .unwrap();
+        repository
+            .finalize_local(session_id, 0, "requested".to_owned(), &NoDurabilityFaults)
             .unwrap();
         (directory, repository, session_id, epoch_id)
     }

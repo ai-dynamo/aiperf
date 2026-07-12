@@ -1427,6 +1427,8 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Genesis,
             session_id: Some(session()),
+            next_record_seq: 0,
+            active_wal_segment_id: None,
             mutations: vec![],
             genesis: Some(GenesisV1 {
                 archive_id: archive(),

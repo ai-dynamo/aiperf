@@ -19,14 +19,15 @@ use async_trait::async_trait;
 use crate::spool::ImmutableClass;
 use crate::spool::OwnedLocalWalWriter;
 use crate::{
-    ArchiveId, ArchiveSchemasV1, ArchiveState, CompositeIndexKeyV1, Digest,
-    DurabilityFaultInjector, FrameId, FrameTableProjectionV1, GenerationTransactionKind,
+    ArchiveId, ArchiveSchemasV1, ArchiveState, CompositeIndexKeyV1, ControlFrameCodecError,
+    ControlFrameCodecV1, Digest, DurabilityFaultInjector, FrameId, FrameTableProjectionV1,
     IndexMutationSetV1, LocalArchiveRepository, LocalWalWriter, ParquetPartitionBuilderV1,
     ParquetProjectionError, ParquetRotationConfigV1, PartitionBuildOutputV1, ProjectionCoverageV1,
     QualifiedSpool, ReceiptError, ReceiptEventId, ReceiptEventV1, ReceiptJournal,
     ReceiptObserverEpochId, ReceiptObserverEpochV1, ReceiptTargetId, ReceiptTargetV1,
-    SealedWalSegment, SessionId, SourceFrameCodecError, SourceFrameCodecV1, SpoolError, WalError,
-    WalFrame, WalSegmentBuilder, WalSegmentHeaderV1, domain_digest, receipt_range_coverage,
+    SealedWalSegment, SessionId, SourceFrameCodecError, SourceFrameCodecV1, SpoolError,
+    TerminalKind, WalError, WalFrame, WalSegmentBuilder, WalSegmentHeaderV1, domain_digest,
+    receipt_range_coverage,
 };
 
 /// One finalized WAL frame and all required table projections as one append.
@@ -58,6 +59,55 @@ impl ArchiveWalFrameDecoder for SourceFrameCodecV1 {
     ) -> Result<ArchiveWalFrame, ArchiveSinkError> {
         self.decode_source_frame(archive_id, session_id, frame)
             .map_err(|error| ArchiveSinkError::FrameDecode(Box::new(error)))
+    }
+}
+
+impl ArchiveWalFrameDecoder for ControlFrameCodecV1 {
+    fn decode(
+        &self,
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        frame: WalFrame,
+    ) -> Result<ArchiveWalFrame, ArchiveSinkError> {
+        self.decode_control_frame(archive_id, session_id, frame)
+            .map_err(|error| ArchiveSinkError::ControlFrameDecode(Box::new(error)))
+    }
+}
+
+/// Closed v1 recovery decoder dispatching every durable terminal frame kind.
+#[derive(Clone, Debug)]
+pub struct CanonicalArchiveWalFrameDecoderV1 {
+    source: SourceFrameCodecV1,
+    control: ControlFrameCodecV1,
+}
+
+impl CanonicalArchiveWalFrameDecoderV1 {
+    /// Shares one loaded schema authority across source and control codecs.
+    #[must_use]
+    pub fn with_schemas(schemas: ArchiveSchemasV1) -> Self {
+        Self {
+            source: SourceFrameCodecV1::with_schemas(schemas.clone()),
+            control: ControlFrameCodecV1::with_schemas(schemas),
+        }
+    }
+}
+
+impl ArchiveWalFrameDecoder for CanonicalArchiveWalFrameDecoderV1 {
+    fn decode(
+        &self,
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        frame: WalFrame,
+    ) -> Result<ArchiveWalFrame, ArchiveSinkError> {
+        match frame.header().terminal_kind {
+            TerminalKind::SourceScrape => self.source.decode(archive_id, session_id, frame),
+            TerminalKind::LifecycleMarker
+            | TerminalKind::LossExact
+            | TerminalKind::LossSaturation
+            | TerminalKind::SourceProjectionFailed => {
+                self.control.decode(archive_id, session_id, frame)
+            }
+        }
     }
 }
 
@@ -190,6 +240,14 @@ pub trait ArchiveSink: Debug + Send {
         &mut self,
         reason: TerminationReason,
     ) -> Result<FinalizeCompletion, ArchiveSinkError>;
+
+    /// Borrows the live qualified repository when the sink owns local authority.
+    ///
+    /// Remote-claim preparation uses this after `session_started` and before
+    /// source activation without releasing the lifetime spool lock.
+    fn local_repository(&self) -> Option<&LocalArchiveRepository> {
+        None
+    }
 
     /// Consumes a finalized sink and transfers its still-held local repository.
     ///
@@ -671,7 +729,7 @@ impl OwnedLocalArchiveSinkFactory {
     /// Consumes a repository and creates one WAL-backed owned sink.
     pub fn prepare(
         &self,
-        repository: LocalArchiveRepository,
+        mut repository: LocalArchiveRepository,
         header: WalSegmentHeaderV1,
         receipt_mode: OwnedReceiptJournalMode,
     ) -> Result<OwnedLocalArchiveSink, ArchiveSinkError> {
@@ -680,6 +738,7 @@ impl OwnedLocalArchiveSinkFactory {
         }
         let archive_id = header.archive_id;
         let session_id = header.session_id;
+        repository.start_session(&header, self.faults.as_ref())?;
         let receipts_enabled = prepare_receipt_journal(
             repository.spool(),
             archive_id,
@@ -699,11 +758,16 @@ impl OwnedLocalArchiveSinkFactory {
         )
     }
 
-    /// Recovers one open WAL and rebuilds every projection not already indexed.
+    /// Recovers and closes the manifest-named prior WAL, then opens a fresh session.
+    ///
+    /// The prior segment is never selected by directory enumeration. Recovery
+    /// replays missing projection coverage, checkpoints the resulting global
+    /// sequence, seals that exact segment, and commits `session_closed` before
+    /// a fresh `session_started` transaction can authorize source activation.
     pub fn resume(
         &self,
-        repository: LocalArchiveRepository,
-        header: WalSegmentHeaderV1,
+        mut repository: LocalArchiveRepository,
+        new_session_id: SessionId,
         maximum_frame_bytes: u64,
         receipt_mode: OwnedReceiptJournalMode,
         decoder: &dyn ArchiveWalFrameDecoder,
@@ -711,28 +775,121 @@ impl OwnedLocalArchiveSinkFactory {
         if repository.head().archive_state != ArchiveState::Open {
             return Err(ArchiveSinkError::Finalized);
         }
-        let archive_id = header.archive_id;
-        let session_id = header.session_id;
+        let archive_id = repository.head().archive_id;
         let receipts_enabled = prepare_receipt_journal(
             repository.spool(),
             archive_id,
             receipt_mode,
             self.faults.as_ref(),
         )?;
-        let (wal, recovered) =
-            repository.resume_owned_wal(&header, maximum_frame_bytes, Arc::clone(&self.faults))?;
-        OwnedLocalArchiveSink::from_recovered(
+        let schema_fingerprints = self
+            .schemas
+            .iter()
+            .map(|schema| (schema.table(), schema.fingerprint()))
+            .collect::<Vec<_>>();
+        if let Some(active_header) = repository.active_wal_header(schema_fingerprints.clone())? {
+            let unactivated_retry = active_header.session_id == new_session_id
+                && repository.head().parent_generation_hash
+                    == Some(active_header.previous_head_hash)
+                && repository.head().next_record_seq == active_header.first_record_seq;
+            if unactivated_retry {
+                let wal = repository.resume_or_create_empty_owned_wal(
+                    &active_header,
+                    maximum_frame_bytes,
+                    Arc::clone(&self.faults),
+                )?;
+                return OwnedLocalArchiveSink::new(
+                    repository,
+                    wal,
+                    self.schemas.clone(),
+                    self.rotation,
+                    Arc::clone(&self.faults),
+                    archive_id,
+                    new_session_id,
+                    receipts_enabled,
+                );
+            }
+            repository = self.close_recovered_session(
+                repository,
+                active_header,
+                maximum_frame_bytes,
+                decoder,
+            )?;
+        }
+        let header = WalSegmentHeaderV1::new(
+            archive_id,
+            new_session_id,
+            repository.head().generation_hash,
+            repository.head().genesis_hash,
+            repository.genesis().writer_compatibility_id,
+            repository.head().next_record_seq,
+            schema_fingerprints,
+        )?;
+        repository.start_session(&header, self.faults.as_ref())?;
+        let wal = repository.create_owned_wal(header, Arc::clone(&self.faults))?;
+        OwnedLocalArchiveSink::new(
             repository,
             wal,
-            recovered.frames,
             self.schemas.clone(),
             self.rotation,
             Arc::clone(&self.faults),
             archive_id,
-            session_id,
+            new_session_id,
             receipts_enabled,
-            decoder,
         )
+    }
+
+    fn close_recovered_session(
+        &self,
+        mut repository: LocalArchiveRepository,
+        header: WalSegmentHeaderV1,
+        maximum_frame_bytes: u64,
+        decoder: &dyn ArchiveWalFrameDecoder,
+    ) -> Result<LocalArchiveRepository, ArchiveSinkError> {
+        let recovered =
+            repository.recover_wal(&header, maximum_frame_bytes, self.faults.as_ref())?;
+        if recovered.header != header {
+            return Err(ArchiveSinkError::RecoveredWalMismatch);
+        }
+        let sealed_wal = if recovered.segment_digest.is_some() {
+            checkpoint_recovered_frames(
+                &mut repository,
+                &recovered.frames,
+                &header,
+                &self.schemas,
+                self.rotation,
+                self.faults.as_ref(),
+                decoder,
+            )?;
+            rebuilt_sealed_wal(&recovered)?
+        } else {
+            let (wal, recovered) = repository.resume_owned_wal(
+                &header,
+                maximum_frame_bytes,
+                Arc::clone(&self.faults),
+            )?;
+            checkpoint_recovered_frames(
+                &mut repository,
+                &recovered.frames,
+                &header,
+                &self.schemas,
+                self.rotation,
+                self.faults.as_ref(),
+                decoder,
+            )?;
+            wal.seal()?
+        };
+        let next_record_seq = sealed_wal
+            .last_record_seq()
+            .checked_add(1)
+            .ok_or(ArchiveSinkError::SequenceOverflow)?;
+        repository.close_session(
+            header.session_id,
+            next_record_seq,
+            &sealed_wal,
+            self.faults.as_ref(),
+        )?;
+        Ok(repository)
     }
 }
 
@@ -801,58 +958,6 @@ impl OwnedLocalArchiveSink {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn from_recovered(
-        repository: LocalArchiveRepository,
-        wal: OwnedLocalWalWriter,
-        recovered_frames: Vec<WalFrame>,
-        schemas: ArchiveSchemasV1,
-        rotation: ParquetRotationConfigV1,
-        faults: Arc<dyn DurabilityFaultInjector>,
-        archive_id: ArchiveId,
-        session_id: SessionId,
-        receipts_enabled: bool,
-        decoder: &dyn ArchiveWalFrameDecoder,
-    ) -> Result<Self, ArchiveSinkError> {
-        let mut parquet = ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?;
-        let mut pending_physical = PartitionBuildOutputV1::default();
-        let mut completions = Vec::with_capacity(recovered_frames.len());
-        let mut prefix = WalSegmentBuilder::new(wal.header().clone())?;
-        for frame in &recovered_frames {
-            prefix.append(frame)?;
-            let decoded = decoder.decode(archive_id, session_id, frame.clone())?;
-            validate_archive_frame(&decoded, wal.header(), &schemas)?;
-            let missing = unindexed_recovered_projections(&repository, decoded, &schemas)?;
-            if !missing.is_empty() {
-                let output = parquet.append_frame(missing)?;
-                merge_physical(&mut pending_physical, output);
-            }
-            completions.push(durability_completion(&prefix, frame));
-        }
-        if prefix.prefix() != wal.durable_prefix()
-            || prefix.last_record_seq() != wal.last_record_seq()
-        {
-            return Err(ArchiveSinkError::RecoveredWalMismatch);
-        }
-        Ok(Self {
-            repository,
-            wal: Some(wal),
-            faults,
-            schemas,
-            rotation,
-            parquet: Some(parquet),
-            pending_physical,
-            archive_id,
-            session_id,
-            state: ArchiveState::Open,
-            frames: recovered_frames,
-            completions,
-            checkpoint_seq: 0,
-            receipts_enabled,
-            poisoned: false,
-        })
-    }
-
     /// Returns the current authoritative local repository/head.
     #[must_use]
     pub const fn repository(&self) -> &LocalArchiveRepository {
@@ -886,20 +991,23 @@ impl OwnedLocalArchiveSink {
             self.rotation,
             &mut self.pending_physical,
         )?;
+        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
+        let next_record_seq =
+            next_record_seq(wal.header().first_record_seq, wal.last_record_seq())?;
         let transaction = (|| {
             persist_partitions(self.repository.spool(), &output, self.faults.as_ref())?;
             let additions = physical_index_entries(&output)?;
-            let head = if additions.is_empty() {
+            let head = if additions.is_empty()
+                && self.repository.head().next_record_seq == next_record_seq
+            {
                 self.repository.head().clone()
             } else {
                 let mutation = IndexMutationSetV1::new(Vec::new(), additions)?;
                 self.repository
-                    .commit(
+                    .checkpoint(
                         &mutation,
-                        GenerationTransactionKind::Checkpoint,
-                        ArchiveState::Open,
-                        Some(self.session_id),
-                        None,
+                        self.session_id,
+                        next_record_seq,
                         self.faults.as_ref(),
                     )?
                     .clone()
@@ -914,7 +1022,6 @@ impl OwnedLocalArchiveSink {
                 return Err(error);
             }
         };
-        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
         let completion = CheckpointCompletion {
             checkpoint_seq: self.checkpoint_seq,
             physical: output,
@@ -1026,12 +1133,14 @@ impl ArchiveSink for OwnedLocalArchiveSink {
                 return Err(ArchiveSinkError::Spool(error));
             }
         };
-        let terminal_head = match self.repository.commit(
-            &IndexMutationSetV1::new(Vec::new(), Vec::new())?,
-            GenerationTransactionKind::LocalFinalization,
-            ArchiveState::LocallyFinalized,
-            Some(self.session_id),
-            Some(termination_reason_name(reason).to_owned()),
+        let final_next_record_seq = sealed_wal
+            .last_record_seq()
+            .checked_add(1)
+            .ok_or(ArchiveSinkError::SequenceOverflow)?;
+        let terminal_head = match self.repository.finalize_local(
+            self.session_id,
+            final_next_record_seq,
+            termination_reason_name(reason).to_owned(),
             self.faults.as_ref(),
         ) {
             Ok(head) => head.clone(),
@@ -1048,6 +1157,10 @@ impl ArchiveSink for OwnedLocalArchiveSink {
             archive_state: self.state,
             local_head: Some(terminal_head),
         })
+    }
+
+    fn local_repository(&self) -> Option<&LocalArchiveRepository> {
+        Some(&self.repository)
     }
 
     fn into_local_repository(
@@ -1077,6 +1190,64 @@ fn prepare_receipt_journal(
             Ok(true)
         }
     }
+}
+
+fn checkpoint_recovered_frames(
+    repository: &mut LocalArchiveRepository,
+    frames: &[WalFrame],
+    header: &WalSegmentHeaderV1,
+    schemas: &ArchiveSchemasV1,
+    rotation: ParquetRotationConfigV1,
+    faults: &dyn DurabilityFaultInjector,
+    decoder: &dyn ArchiveWalFrameDecoder,
+) -> Result<(), ArchiveSinkError> {
+    let mut parquet = ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?;
+    let mut physical = PartitionBuildOutputV1::default();
+    for frame in frames {
+        let decoded = decoder.decode(header.archive_id, header.session_id, frame.clone())?;
+        validate_archive_frame(&decoded, header, schemas)?;
+        let missing = unindexed_recovered_projections(repository, decoded, schemas)?;
+        if !missing.is_empty() {
+            merge_physical(&mut physical, parquet.append_frame(missing)?);
+        }
+    }
+    merge_physical(&mut physical, parquet.finish()?);
+    persist_partitions(repository.spool(), &physical, faults)?;
+    let additions = physical_index_entries(&physical)?;
+    let next_record_seq = frames.last().map_or(Ok(header.first_record_seq), |frame| {
+        frame
+            .header()
+            .record_seq
+            .checked_add(1)
+            .ok_or(ArchiveSinkError::SequenceOverflow)
+    })?;
+    if !additions.is_empty() || repository.head().next_record_seq != next_record_seq {
+        repository.checkpoint(
+            &IndexMutationSetV1::new(Vec::new(), additions)?,
+            header.session_id,
+            next_record_seq,
+            faults,
+        )?;
+    }
+    Ok(())
+}
+
+fn rebuilt_sealed_wal(
+    recovered: &crate::RecoveredWal,
+) -> Result<SealedWalSegment, ArchiveSinkError> {
+    let expected_digest = recovered
+        .segment_digest
+        .ok_or(ArchiveSinkError::RecoveredWalMismatch)?;
+    let mut builder = WalSegmentBuilder::new(recovered.header.clone())?;
+    for frame in &recovered.frames {
+        builder.append(frame)?;
+    }
+    let sealed = builder.seal()?;
+    if sealed.segment_digest() != expected_digest || sealed.final_prefix() != recovered.final_prefix
+    {
+        return Err(ArchiveSinkError::RecoveredWalMismatch);
+    }
+    Ok(sealed)
 }
 
 fn unindexed_recovered_projections(
@@ -1248,6 +1419,16 @@ fn recovered_archive(
     })
 }
 
+fn next_record_seq(
+    first_record_seq: u64,
+    last_record_seq: Option<u64>,
+) -> Result<u64, ArchiveSinkError> {
+    last_record_seq.map_or(Ok(first_record_seq), |last| {
+        last.checked_add(1)
+            .ok_or(ArchiveSinkError::SequenceOverflow)
+    })
+}
+
 fn finish_and_reset_parquet(
     builder: &mut Option<ParquetPartitionBuilderV1>,
     schemas: &ArchiveSchemasV1,
@@ -1396,6 +1577,8 @@ pub enum ArchiveSinkError {
     Parquet(ParquetProjectionError),
     /// Verified WAL payload could not rebuild its source-frame projections.
     FrameDecode(Box<SourceFrameCodecError>),
+    /// Verified WAL payload could not rebuild its control-frame projection.
+    ControlFrameDecode(Box<ControlFrameCodecError>),
     /// Qualified-spool durability failed.
     Spool(SpoolError),
     /// Receipt journal failed.
@@ -1486,6 +1669,12 @@ impl Display for ArchiveSinkError {
             Self::FrameDecode(error) => {
                 write!(formatter, "archive sink frame decode failed: {error}")
             }
+            Self::ControlFrameDecode(error) => {
+                write!(
+                    formatter,
+                    "archive sink control-frame decode failed: {error}"
+                )
+            }
             Self::Spool(error) => write!(formatter, "archive sink spool failed: {error}"),
             Self::Receipt(error) => write!(formatter, "archive sink receipt failed: {error}"),
             Self::FrameIdentityMismatch => formatter.write_str("archive frame identity mismatch"),
@@ -1536,6 +1725,7 @@ impl std::error::Error for ArchiveSinkError {
             Self::Wal(error) => Some(error),
             Self::Parquet(error) => Some(error),
             Self::FrameDecode(error) => Some(error.as_ref()),
+            Self::ControlFrameDecode(error) => Some(error.as_ref()),
             Self::Spool(error) => Some(error),
             Self::Receipt(error) => Some(error),
             _ => None,
@@ -1549,10 +1739,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        BatchId, CanonicalJsonValue, EpochAnchor, ExecutionId, GenesisV1, NoDurabilityFaults,
-        ObservationKind, ProjectionEvidence, ProjectionReservationId, ReceiptObserverEpochV1,
-        RecoveryExpectation, RequiredProjection, TableId, TerminalKind, TimeDomain,
-        WalFrameHeaderV1, WalRangeTargetV1,
+        BatchId, CanonicalJsonValue, DurabilityEdge, EpochAnchor, ExecutionId,
+        FailAtDurabilityEdge, GenerationObjectV1, GenerationTransactionKind, GenesisV1,
+        NoDurabilityFaults, ObservationKind, ProjectionEvidence, ProjectionReservationId,
+        ReceiptObserverEpochV1, RecoveryExpectation, RequiredProjection, TableId, TerminalKind,
+        TimeDomain, WalFrameHeaderV1, WalRangeTargetV1,
     };
 
     #[derive(Debug)]
@@ -1598,6 +1789,10 @@ mod tests {
 
     fn session() -> SessionId {
         SessionId::new([0x22; 16]).unwrap()
+    }
+
+    fn resumed_session() -> SessionId {
+        SessionId::new([0x33; 16]).unwrap()
     }
 
     fn segment(schemas: &ArchiveSchemasV1) -> WalSegmentHeaderV1 {
@@ -1873,6 +2068,7 @@ mod tests {
             LocalArchiveRepository::create_new(spool, genesis(), faults.as_ref()).unwrap();
         let schemas = ArchiveSchemasV1::load().unwrap();
         let header = repository_segment(&repository, &schemas);
+        let segment_id = header.segment_id;
         let factory = OwnedLocalArchiveSinkFactory::new(
             schemas.clone(),
             ParquetRotationConfigV1::default(),
@@ -1882,12 +2078,27 @@ mod tests {
         let mut sink = factory
             .prepare(repository, header, OwnedReceiptJournalMode::Disabled)
             .unwrap();
+        assert_eq!(
+            sink.repository().head().active_wal_segment_id,
+            Some(segment_id)
+        );
+        assert_eq!(sink.repository().head().next_record_seq, 0);
+        let sink_view: &dyn ArchiveSink = &sink;
+        assert_eq!(
+            sink_view.local_repository().unwrap().head().generation_hash,
+            sink.repository().head().generation_hash
+        );
         let (frame, _) = zero_frame(0, &schemas);
         sink.append_frame(frame).await.unwrap();
         let checkpoint = sink.checkpoint().await.unwrap();
         assert_eq!(checkpoint.physical.zero_row_coverage.len(), 1);
         assert_eq!(sink.repository().index().root().logical_entry_count, 1);
         assert_eq!(sink.repository().head().archive_state, ArchiveState::Open);
+        assert_eq!(sink.repository().head().next_record_seq, 1);
+        assert_eq!(
+            sink.repository().head().active_wal_segment_id,
+            Some(segment_id)
+        );
         let finalized = sink.finalize(TerminationReason::Requested).await.unwrap();
         assert_eq!(finalized.sealed_wal.frame_count(), 1);
         assert_eq!(
@@ -1900,6 +2111,9 @@ mod tests {
             repository.head().archive_state,
             ArchiveState::LocallyFinalized
         );
+        assert_eq!(repository.head().next_record_seq, 1);
+        assert_eq!(repository.head().active_wal_segment_id, None);
+        assert_eq!(repository.latest_collection_session_id(), Some(session()));
         assert_eq!(
             repository.head().local_commit_seq,
             checkpoint.local_head.unwrap().local_commit_seq + 1
@@ -1907,7 +2121,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owned_factory_resumes_open_wal_and_rebuilds_unindexed_projection() {
+    async fn owned_factory_rotates_named_open_wal_and_ignores_decoy() {
         let directory = tempfile::tempdir().unwrap();
         let archive_path = directory.path().join("archive");
         let spool = QualifiedSpool::open(&archive_path).unwrap();
@@ -1932,36 +2146,73 @@ mod tests {
             )
             .unwrap();
         let (frame, _) = zero_frame(0, &schemas);
-        let expected_frame_id = frame.wal_frame.header().frame_id;
         sink.append_frame(frame).await.unwrap();
         drop(sink);
+
+        let decoy_segment = Digest::from_bytes([0xdd; 32]);
+        std::fs::write(
+            archive_path
+                .join("wal")
+                .join(format!("{}.open", decoy_segment.to_hex())),
+            b"unrelated decoy",
+        )
+        .unwrap();
 
         let spool = QualifiedSpool::open(&archive_path).unwrap();
         let repository =
             LocalArchiveRepository::recover(spool, expectation, faults.as_ref()).unwrap();
+        assert_eq!(
+            repository.head().active_wal_segment_id,
+            Some(header.segment_id)
+        );
+        assert_eq!(repository.head().next_record_seq, 0);
         let decoder = ZeroFrameDecoder {
             schemas: schemas.clone(),
         };
         let mut resumed = factory
             .resume(
                 repository,
-                header,
+                resumed_session(),
                 1 << 20,
                 OwnedReceiptJournalMode::Disabled,
                 &decoder,
             )
             .unwrap();
         let recovered = resumed.recover().await.unwrap();
-        assert_eq!(recovered.frames.len(), 1);
-        assert_eq!(recovered.frames[0].header().frame_id, expected_frame_id);
-        let checkpoint = resumed.checkpoint().await.unwrap();
-        assert_eq!(checkpoint.physical.zero_row_coverage.len(), 1);
+        assert!(recovered.frames.is_empty());
+        assert_eq!(recovered.session_id, resumed_session());
+        assert_eq!(recovered.next_record_seq, 1);
         assert_eq!(resumed.repository().index().root().logical_entry_count, 1);
-        let finalized = resumed
-            .finalize(TerminationReason::Requested)
-            .await
+        assert_eq!(resumed.repository().head().next_record_seq, 1);
+        assert_eq!(resumed.repository().head().local_commit_seq, 4);
+        assert_eq!(
+            resumed.repository().latest_collection_session_id(),
+            Some(resumed_session())
+        );
+        let active = resumed
+            .repository()
+            .active_wal_header(
+                schemas
+                    .iter()
+                    .map(|schema| (schema.table(), schema.fingerprint()))
+                    .collect(),
+            )
+            .unwrap()
             .unwrap();
-        assert_eq!(finalized.sealed_wal.frame_count(), 1);
+        assert_eq!(active.session_id, resumed_session());
+        assert_ne!(active.segment_id, header.segment_id);
+        assert!(
+            archive_path
+                .join("wal")
+                .join(format!("{}.wal", header.segment_id.to_hex()))
+                .is_file()
+        );
+        assert!(
+            archive_path
+                .join("wal")
+                .join(format!("{}.open", decoy_segment.to_hex()))
+                .is_file()
+        );
     }
 
     #[tokio::test]
@@ -2004,16 +2255,143 @@ mod tests {
         let mut resumed = factory
             .resume(
                 repository,
-                header,
+                resumed_session(),
                 1 << 20,
                 OwnedReceiptJournalMode::Disabled,
                 &decoder,
             )
             .unwrap();
+        assert_eq!(resumed.repository().head().local_commit_seq, 4);
+        assert_eq!(resumed.repository().head().next_record_seq, 1);
         let checkpoint = resumed.checkpoint().await.unwrap();
         assert!(checkpoint.physical.partitions.is_empty());
         assert!(checkpoint.physical.zero_row_coverage.is_empty());
         assert_eq!(resumed.repository().index().root().logical_entry_count, 1);
+    }
+
+    #[tokio::test]
+    async fn exact_resume_retries_after_seal_close_and_new_session_crashes() {
+        let crash_cases = [
+            (DurabilityEdge::WalSealDirectorySynced, 1, "prior seal"),
+            (DurabilityEdge::PointerDirectorySynced, 1, "session close"),
+            (DurabilityEdge::PointerDirectorySynced, 2, "new session"),
+        ];
+        for (edge, occurrence, stage) in crash_cases {
+            let directory = tempfile::tempdir().unwrap();
+            let archive_path = directory.path().join("archive");
+            let safe_faults: Arc<dyn DurabilityFaultInjector> = Arc::new(NoDurabilityFaults);
+            let genesis = genesis();
+            let expectation = RecoveryExpectation::from_genesis(&genesis);
+            let repository = LocalArchiveRepository::create_new(
+                QualifiedSpool::open(&archive_path).unwrap(),
+                genesis,
+                safe_faults.as_ref(),
+            )
+            .unwrap();
+            let schemas = ArchiveSchemasV1::load().unwrap();
+            let prior_header = repository_segment(&repository, &schemas);
+            let safe_factory = OwnedLocalArchiveSinkFactory::new(
+                schemas.clone(),
+                ParquetRotationConfigV1::default(),
+                Arc::clone(&safe_faults),
+            )
+            .unwrap();
+            let mut prior = safe_factory
+                .prepare(
+                    repository,
+                    prior_header.clone(),
+                    OwnedReceiptJournalMode::Disabled,
+                )
+                .unwrap();
+            prior.append_frame(zero_frame(0, &schemas).0).await.unwrap();
+            prior.checkpoint().await.unwrap();
+            drop(prior);
+
+            let repository = LocalArchiveRepository::recover(
+                QualifiedSpool::open(&archive_path).unwrap(),
+                expectation,
+                safe_faults.as_ref(),
+            )
+            .unwrap();
+            let crash_faults: Arc<dyn DurabilityFaultInjector> =
+                Arc::new(FailAtDurabilityEdge::occurrence(edge, occurrence));
+            let crash_factory = OwnedLocalArchiveSinkFactory::new(
+                schemas.clone(),
+                ParquetRotationConfigV1::default(),
+                crash_faults,
+            )
+            .unwrap();
+            let decoder = ZeroFrameDecoder {
+                schemas: schemas.clone(),
+            };
+            let result = crash_factory.resume(
+                repository,
+                resumed_session(),
+                1 << 20,
+                OwnedReceiptJournalMode::Disabled,
+                &decoder,
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(ArchiveSinkError::Spool(SpoolError::FaultInjected(actual)))
+                        if actual == edge
+                ),
+                "stage={stage}"
+            );
+
+            let repository = LocalArchiveRepository::recover(
+                QualifiedSpool::open(&archive_path).unwrap(),
+                expectation,
+                safe_faults.as_ref(),
+            )
+            .unwrap();
+            let mut resumed = safe_factory
+                .resume(
+                    repository,
+                    resumed_session(),
+                    1 << 20,
+                    OwnedReceiptJournalMode::Disabled,
+                    &decoder,
+                )
+                .unwrap();
+            let recovered = resumed.recover().await.unwrap();
+            assert!(recovered.frames.is_empty(), "stage={stage}");
+            assert_eq!(recovered.next_record_seq, 1, "stage={stage}");
+            assert_eq!(
+                resumed.repository().latest_collection_session_id(),
+                Some(resumed_session()),
+                "stage={stage}"
+            );
+            assert_eq!(
+                resumed.repository().head().local_commit_seq,
+                4,
+                "stage={stage}"
+            );
+            let closed_hash = resumed.repository().head().parent_generation_hash.unwrap();
+            let closed_key = crate::manifest::generation_key(3, closed_hash);
+            let closed = GenerationObjectV1::decode(
+                &resumed
+                    .repository()
+                    .spool()
+                    .read_relative(Path::new(&closed_key))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                closed.generation.transaction_kind,
+                GenerationTransactionKind::SessionClosed,
+                "stage={stage}"
+            );
+            assert_eq!(closed.generation.active_wal_segment_id, None);
+            assert!(
+                archive_path
+                    .join("wal")
+                    .join(format!("{}.wal", prior_header.segment_id.to_hex()))
+                    .is_file(),
+                "stage={stage}"
+            );
+        }
     }
 
     #[test]
@@ -2024,6 +2402,10 @@ mod tests {
             LocalArchiveRepository::create_new(spool, genesis(), &NoDurabilityFaults).unwrap();
         let schemas = ArchiveSchemasV1::load().unwrap();
         let frame = two_zero_projection_frame(&schemas);
+        let header = repository_segment(&repository, &schemas);
+        repository
+            .start_session(&header, &NoDurabilityFaults)
+            .unwrap();
         let covered = ProjectionCoverageV1::new(
             &frame.table_projections[0],
             ProjectionEvidence::empty(),
@@ -2031,12 +2413,10 @@ mod tests {
         )
         .unwrap();
         repository
-            .commit(
+            .checkpoint(
                 &IndexMutationSetV1::new(vec![], vec![covered.index_entry().unwrap()]).unwrap(),
-                GenerationTransactionKind::Checkpoint,
-                ArchiveState::Open,
-                Some(session()),
-                None,
+                session(),
+                1,
                 &NoDurabilityFaults,
             )
             .unwrap();
