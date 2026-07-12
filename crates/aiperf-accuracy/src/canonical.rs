@@ -520,7 +520,7 @@ fn write_canonical(value: &Value, output: &mut Vec<u8>) {
         Value::Bool(true) => output.extend_from_slice(b"true"),
         Value::Bool(false) => output.extend_from_slice(b"false"),
         Value::Number(number) => {
-            if number.as_f64() == Some(-0.0) && number.to_string().starts_with('-') {
+            if number.as_f64() == Some(0.0) {
                 output.push(b'0');
             } else {
                 output.extend_from_slice(number.to_string().as_bytes());
@@ -707,15 +707,28 @@ mod tests {
     }
 
     #[test]
-    fn canonical_bytes_sort_utf8_keys_and_normalize_negative_zero() {
+    fn canonical_bytes_sort_utf8_keys_and_normalize_both_float_zeros() {
         let value = CanonicalJson::from_slice(
-            r#"{"z":-0.0,"é":2,"a":1.0}"#.as_bytes(),
+            r#"{"z":-0.0,"é":2,"a":1.0,"p":0.0}"#.as_bytes(),
             CanonicalJsonLimits::default(),
         )
         .unwrap();
         assert_eq!(
             String::from_utf8(value.to_bytes()).unwrap(),
-            r#"{"a":1.0,"z":0,"é":2}"#
+            r#"{"a":1.0,"p":0,"z":0,"é":2}"#
+        );
+    }
+
+    #[test]
+    fn public_score_schema_matches_python_canonical_float_zero_golden() {
+        let schema = CanonicalJson::from_slice(
+            br#"{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"value":{"maximum":1.0,"minimum":0.0,"type":"number"}},"required":["value"],"type":"object"}"#,
+            CanonicalJsonLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            schema.normalized_result_sha256(),
+            "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9"
         );
     }
 
