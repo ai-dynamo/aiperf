@@ -701,8 +701,10 @@ The concrete system provider reads wall time only while creating the injected an
 timestamp derives from the monotonic `Clock`, so NTP steps cannot reorder a session. Derived Unix
 time is approximate placement after capture; it is not advertised as a continuously bounded UTC
 clock. Optional later wall observations are diagnostic markers only and never remap samples. Each
-restart creates a new `archive_session_id` and anchor; the manifest retains both. Virtual sessions
-set `time_domain="virtual"` and omit Unix time.
+collection restart creates a new `archive_session_id` and anchor; the manifest retains both. Every
+execution, including receipt-only sync/recovery, also creates the §8.9 observer epoch used solely to
+interpret its receipt events. Virtual sessions/observer epochs set `time_domain="virtual"` and omit
+Unix time.
 
 ### 7.3 Timestamp vocabulary
 
@@ -741,7 +743,8 @@ digest(domain, fields...) =
 Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.frame.v1`, `.series-display.v1`,
 `.series-source.v1`, `.attribute-epoch.v1`, `.body-encoded.v1`, `.body-decoded.v1`,
 `.logical-row.v1`, `.projection-multiset.v1`, `.projection-coverage.v1`, `.raw-object.v1`,
-`.receipt-target.v1`, `.receipt-event.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
+`.loss-overflow.v1`, `.receipt-observer-epoch.v1`, `.receipt-target.v1`, `.receipt-event.v1`,
+`.receipt-batch.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
 Canonical maps sort by UTF-8 key bytes and reject duplicate
 keys. The configuration digest covers the fully validated secret-free authored config, every
 selected factory ID plus normalized config, accepted-format/role-validity matrix, source
@@ -1111,6 +1114,9 @@ columns. The exact loss schema is:
 | `boundary_refs` | `List<BoundaryReference non-null>` | no |
 | `boundary_overflow_count` | `UInt64` | no |
 | `boundary_overflow_digest` | `Digest` | yes |
+| `range_completeness` | `Enum8` | no |
+| `omitted_range_count`, `omitted_entry_count` | `UInt64` | no |
+| `omitted_rolling_digest` | `Digest` | yes |
 
 `loss_kind` distinguishes at least `missed_cadence` (nothing issued), `archive_rejected` (native
 work issued/delivered but archive projection denied), `projection_failed`, `writer_failed`, and
@@ -1122,11 +1128,55 @@ overflow is counted and digested over canonical `BoundaryReference` bytes, never
 truncated. The reserved control lane persists loss frames even
 when ordinary archive admission is exhausted.
 
+The fixed-memory attached ledger has a validated `max_exact_ranges`. Once those slots are full, a
+new non-coalescible entry updates one preallocated saturation slot keyed by the bounded tuple
+`(source_id_or_none, loss_kind, reason)` instead of allocating. Frozen loss/reason registries and
+the maximum source count make the number of slots a validation-time constant. A saturation row has
+`range_completeness=overflow_summary`, exact omitted range/entry totals, the first/last applicable
+identity and Clock facts, and this order-sensitive accumulator:
+
+```text
+D0 = digest("aiperf.archive.loss-overflow.v1", archive_id, session_id, source, kind, reason)
+D(n+1) = digest("aiperf.archive.loss-overflow.v1", D(n), canonical_omitted_loss_entry)
+```
+
+Ordinary rows use `range_completeness=exact`, both omitted counts zero, and a null digest. While the
+reserved lane remains healthy it checkpoints exact ranges and saturation snapshots; orderly writer
+failure keeps the fixed summaries for report/diagnostic output with `complete_ranges=false` and
+`lossy=true`. The design does not claim that an in-memory suffix after total writer failure survives
+a simultaneous process crash; such a guarantee would require a separate emergency journal and is
+deferred. Alternating kind/reason/boundary tests must reach a stable memory ceiling without silent
+counter loss or request-path blocking.
+
 ### 8.9 Non-self-referential durability receipts
 
 Attempt/family/sample rows never predict their own local durability or later remote reference.
 These observations live in a separate append-only receipt relation discovered through
-`LOCAL-RECEIPTS`. Receipt targets are a closed discriminated union:
+`LOCAL-RECEIPTS`. The repository checks in fingerprinted canonical descriptors for
+`ReceiptObserverEpochV1`, `ReceiptTargetV1`, `ReceiptEventV1`, `ReceiptBatchV1`, receipt-index
+pages/head/pointer, and the `durability_receipts` query relation. They freeze field order, integer/
+binary widths, nullability, discriminant IDs, and `canonical-json.v1` bytes just as §8.2–8.3 do for
+the primary archive.
+
+Every runner execution that can observe a durability/publication completion—including sync-only—
+first persists one receipt observer epoch through the receipt index:
+
+```text
+ReceiptObserverEpochV1 {
+  observer_epoch_id: Digest,
+  execution_id: Uuid,
+  telemetry_session_id: Uuid?,
+  time_domain: real | virtual,
+  anchor_clock_ns: Int64,
+  anchor_unix_epoch_ns: EpochNs?,
+  capture_uncertainty_ns: UInt64,
+  runner_distribution_id: Digest
+}
+```
+
+Real executions use the bracketed `EpochAnchorProvider`; virtual tests use an explicit virtual
+domain and omit Unix time. Sync-only creates this receipt-only epoch without fabricating a telemetry
+session, WAL, or collection marker. Receipt targets are a closed discriminated union:
 
 - `wal_range` targets archive/session, WAL segment ID, exact durable-prefix hash, inclusive first/
   last global `record_seq`, and the digest of those frames' declared projection coverage;
@@ -1135,12 +1185,19 @@ These observations live in a separate append-only receipt relation discovered th
   publication target requires `writer_claim_state=absent` because the same final head CAS clears
   the active claim; there is no second claim-release CAS.
 
-`receipt_target_id` is a domain-separated digest of that immutable semantic target and never
-contains an observation time. A separate immutable `ReceiptEvent` contains `receipt_seq`, target
-ID, observation kind (`response_observed` or `recovery_verified`), exactly one of
-`response_observed_ns`/`recovery_verified_ns`, and an `event_id` that hashes target, kind, and time.
-Both times come from the injected `Clock`. Recovery never invents or backfills a response-observed
-time; it may append a distinct recovery-verification event after independently proving the target.
+The adapter converts its opaque CAS version to
+`StableObjectVersion { adapter_id: Utf8, kind: Enum8, value: Binary }`; JSON uses unpadded base64url
+for `value`. Adapter ID/kind define byte equality and are bound into the target ID. A receipt never
+serializes an SDK object, display string with unstable quoting, credential, or provider-specific
+JSON fragment.
+
+`receipt_target_id` is a domain-separated digest of the exact descriptor-encoded immutable target
+and never contains an observation time. A separate immutable `ReceiptEvent` contains archive ID,
+`receipt_seq`, target ID, observer epoch ID, observation kind (`response_observed` or
+`recovery_verified`), exactly one of `response_observed_ns`/`recovery_verified_ns`, and an
+`event_id` that hashes target, observer epoch, kind, and Clock value. Recovery never invents or
+backfills a response-observed time; it may append a distinct recovery-verification event after
+independently proving the target.
 
 Owner/worker completion crosses a Clock bridge before becoming a receipt:
 
@@ -1150,10 +1207,14 @@ Owner/worker completion crosses a Clock bridge before becoming a receipt:
    `ReceiptEventDraft` to the receipt owner;
 3. the receipt owner durably indexes the event, then resolves the caller's `AppendReceipt`.
 
-A crash between steps 1 and 2 leaves durable data but no response observation. Recovery verifies
-the target and may create `recovery_verified`; OS-worker completion time is never substituted.
+A crash between steps 1 and 2 leaves durable data but no response observation. Recovery persists
+its new observer epoch, verifies the target, and may create `recovery_verified`; OS-worker
+completion time and a prior execution's Clock origin are never substituted.
 
-Receipts are stored in immutable canonical batches of at most 1,024 events and at most 1 MiB.
+Receipts are stored in immutable descriptor-encoded canonical batches of at most 1,024 events and
+at most 1 MiB. A batch carries sorted, deduplicated observer-epoch and target records followed by
+events in `receipt_seq` order; every referenced target/epoch is in that batch or an earlier indexed
+batch.
 Contiguous WAL targets from one session/segment may coalesce before batching when their record
 ranges and declared-coverage digests compose exactly. A separate content-addressed persistent
 B-tree uses the §8.3 page format and deterministic split rule, keyed lexicographically by
@@ -1174,6 +1235,14 @@ requires a durable local publication event. Receipt heads may advance after the 
 is sealed and do not reopen frame admission. Query adapters expose targets/events as the bounded,
 joinable `durability_receipts` relation.
 
+The query relation has these exact logical columns: archive ID, receipt/event/target IDs and
+sequence, target kind, nullable telemetry session/WAL segment/durable-prefix hash/record range/
+coverage digest, nullable generation/root/head hashes, nullable stable object-version adapter/kind/
+bytes, resulting archive/claim state, observer epoch/execution IDs and time domain, observation
+kind, nullable response/recovery Clock values, nullable derived Unix epoch, and capture uncertainty.
+The checked-in Arrow descriptor owns their physical child layout. Derived Unix time uses only the
+referenced observer epoch; queries never compare naked Clock values across epochs.
+
 ### 8.10 Optional exact raw-body retention
 
 The default stores only the keyed decoded-exposition digest used for unchanged detection.
@@ -1185,7 +1254,8 @@ because doing so would destroy exactness. They are a separately classified artif
   an `ArchiveRawKeyProvider` reference;
 - every retained body uses an AEAD envelope. The equality ID uses the raw-object subkey over exact
   encoded bytes. Its public header contains envelope version, algorithm, key ID, and random nonce;
-  exact plaintext digest/length/content-encoding are inside encrypted plaintext metadata, not AAD;
+  exact plaintext digest/length are inside encrypted plaintext metadata, not AAD. The shared
+  physical object contains no response-specific media or content-encoding interpretation;
 - key material, plaintext digest, and bodies never appear in manifests/reports/logs;
 - raw-body bytes count against receive, spool, transaction-reserve, and retention quotas.
 
@@ -1214,15 +1284,22 @@ Every retained frame has one row in the `raw_references` table:
 | `frame_id`, `batch_id`, `raw_object_id` | `Digest` | no |
 | `record_seq`, `source_record_seq` | `UInt64` | no |
 | `retention_reason` | `Enum8` | no |
+| `content_encoding_present` | `Boolean` | no |
+| `content_encoding_chain` | `List<Utf8 non-null>` | no |
 
 The frame declares `raw_references` as a required table projection with normal §8.3 coverage. The
+reference owns response-specific interpretation: absent `Content-Encoding` is
+`content_encoding_present=false` with an empty chain, while an explicit `identity` is true with
+`["identity"]`; other validated tokens are lowercase in wire application order. Equal bytes with
+different chains deliberately share one physical object and retain distinct references. The
 physical raw-object index descriptor is shared and contains only object ID/key, ciphertext digest/
 bytes, envelope algorithm/key ID, and required local/remote coverage—never a frame ID, plaintext
 digest, or key material. The attempt row repeats the opaque object ID for convenient joins. WAL
 retirement, requested finalization, and remote head CAS wait for every reference projection plus
 the one applicable verified physical object. Compaction preserves references and descriptors;
 head reachability drives GC. Crash tests cover first-object creation, duplicate frames before and
-after indexing, concurrent candidates, and every envelope/register boundary. Raw bodies are never
+after indexing, concurrent candidates, both arrival orders for equal bytes with absent/identity/
+gzip interpretation, and every envelope/register boundary. Raw bodies are never
 embedded in other Parquet rows. A report may state policy ID and retained-byte count, not a signed
 access URL.
 
@@ -1294,7 +1371,8 @@ The same runtime supports two explicit policies:
   once the telemetry attempt is accepted and native delivery occurs first. Archive projection then
   tries a nonblocking byte/frame/WAL reservation using its validated upper bound. Rejection
   updates a fixed-memory per-source loss ledger that coalesces contiguous attempt/deadline ranges
-  by reason. The reserved control lane persists those ranges at checkpoint/finalize. If the writer
+  by reason, then updates the preallocated §8.8 saturation slots when exact-range capacity is full.
+  The reserved control lane persists those ranges/summaries at checkpoint/finalize. If the writer
   itself is dead, the LocalSet-owned ledger reaches `ReportTelemetryArchive.health` on best-effort
   success; primary/required failures place it in the typed diagnostic artifact. The request
   path never waits. `archive.required=true` may convert archive degradation into a reporting-stage
@@ -1338,7 +1416,9 @@ fsynced `LOCAL-LATEST`.
 Exact-resume verifies—not rewrites—genesis. Under the lock and any remote writer fence, it rereads/
 reconciles heads, completes recovery of every prior WAL, creates a new session/anchor, and commits a
 hash-linked `session_started` generation before opening that session's WAL or activating sources.
-Sync-only resume creates no session or WAL. A new session WAL header contains the verified current
+Sync-only resume creates no telemetry session or WAL, but every execution durably registers its
+receipt observer epoch before it can record recovery/publication observations. A new session WAL
+header contains the verified current
 head/genesis hashes, schema fingerprints, archive/session IDs, writer compatibility ID, and first
 global record sequence. No frame is valid under an unknown authoritative session.
 
@@ -2039,7 +2119,8 @@ remote store capabilities/reachability where configured, filesystem reserve/capa
 credential-provider availability without creating an authoritative archive. Only after complete
 preparation does it acquire the qualified lifetime archive lock and reread authoritative state
 under that lock. Create-new commits genesis; exact-resume reconciles/replays prior WAL and commits
-`session_started`; sync-only creates no session. Remote exact-resume acquires its conditional writer
+`session_started`; sync-only creates no telemetry session. Every path persists its receipt observer
+epoch before observing durability/publication. Remote exact-resume acquires its conditional writer
 claim before sources; create-new follows the unique-ID first-publication rule in §11.3. Only after
 the applicable transactions does it start IO/decode workers and Clock maintenance and activate
 sources.
@@ -2102,7 +2183,12 @@ block remain required.
     "finalized_local": true,
     "finalized_remote": true,
     "lossy": false,
-    "health": {"loss_ranges": [], "writer_alive": true}
+    "health": {
+      "loss_ranges": [],
+      "loss_saturation_summaries": [],
+      "complete_ranges": true,
+      "writer_alive": true
+    }
   }
 }
 ```
@@ -2116,7 +2202,9 @@ health but cannot reinterpret it as native metrics.
 For attached best-effort mode, `health` is assembled from both the writer snapshot and the
 LocalSet-owned fixed-memory loss ledger. Writer death therefore still yields a successful native
 benchmark report with `writer_alive=false`, `lossy=true`, and structured ranges. Primary watch or
-required attachment instead follows the failed diagnostic path below.
+required attachment instead follows the failed diagnostic path below. Ledger saturation adds its
+typed summaries, sets `complete_ranges=false`, and preserves exact omitted totals/digests without
+pretending individual ranges remain enumerable.
 
 If `archive.required=true` fails during the reporting/finalization stage, `RunTerminalV2` returns
 `success=false`, `stage="reporting"`, and no authoritative `report_path`. Runner-v2 gains an
@@ -2294,7 +2382,8 @@ version or material schema/writer change invalidates the profile until rerun.
     while distinct source strands still run in parallel and final WAL order follows global
     `record_seq`;
 11. failed/empty/unchanged attempt outcomes and missed/rejected loss ranges have exact counters/
-   records, and unchanged success retains full family/MetricPoint rows;
+   records, alternating non-coalescible losses saturate at the fixed memory bound with exact summary
+   totals/digest and `complete_ranges=false`, and unchanged success retains full family/MetricPoint rows;
 12. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
     owner-assigned record-sequence watermark before drain;
 13. archive-off/archive-on runs over the run-owned fixed-deadline driver have byte-exact
@@ -2310,7 +2399,8 @@ version or material schema/writer change invalidates the profile until rerun.
 2. receipt-observed durable projections are recovered exactly once; a complete fsynced but
    unobserved frame is recovered as an uncertain operation under the same ID. Crashes between
    fsync/CAS completion, LocalSet Clock observation, receipt-draft return, and receipt-head
-   durability preserve absent response time and a distinct recovery-verification event;
+   durability preserve absent response time and a distinct recovery-verification event bound to a
+   newly durable observer epoch; sync-only Clock values resolve only through that epoch's anchor;
 3. independently rotated multi-table projections cannot make global dedup omit a table, and stale/
    repeated WAL frames cannot duplicate logical projection evidence; empty exposition and metadata-
    only cases persist zero-row coverage with the empty multiset digest;
@@ -2319,8 +2409,9 @@ version or material schema/writer change invalidates the profile until rerun.
    one-generation-lag WAL makes preceding-head rollback complete without directory guessing;
 6. transaction-reserve exhaustion and real ENOSPC/inode exhaustion fail before destroying the only
    durable copy;
-7. raw-reference coverage, one randomized physical envelope per equality ID, duplicate/concurrent
-   candidate reuse, create-if-absent retries with byte-identical ciphertext, exact-byte verification,
+7. raw-reference coverage, one randomized bytes-only physical envelope per equality ID, duplicate/
+   concurrent candidate reuse, both arrival orders for equal bytes with distinct normalized
+   content-encoding chains, create-if-absent retries with byte-identical ciphertext, exact-byte verification,
    named-object visibility horizon, pre-activation writer claims, and uncertain/success/conflict
    `LATEST` CAS reconciliation are idempotent under competing writers;
 8. every equal/ancestor/divergent local/remote reconciliation cell and sync-only finalization path;
@@ -2331,7 +2422,8 @@ version or material schema/writer change invalidates the profile until rerun.
     work rather than flat full-history rewrites; receipt batches/index pages remain bounded with the
     same asymptotic property;
 12. terminal publication clears the writer claim in the same CAS, and its receipt binds the exact
-    resulting object version, head hash, state, and absent claim.
+    resulting stable object version, head hash, state, and absent claim; active bootstrap creation
+    followed by terminal CAS is exercised when remote publication begins after local sealing.
 
 ### 18.4 Security gates
 
@@ -2363,7 +2455,7 @@ version or material schema/writer change invalidates the profile until rerun.
    deadlines over profile-bound native control handles isolated from inference capacity;
 4. HTTP 500 with metric-looking body remains an HTTP failure record, not a sample;
 5. SIGINT/SIGTERM graceful finalization, forced-crash exact resume, and local-final/sync-only remote
-   completion;
+   completion, with a persisted receipt-only observer epoch and no fabricated telemetry session;
 6. object-store emulator visibility lag, outage, conflicting CAS, restart, and finalization;
 7. ordinary scheduled benchmark with attached server/GPU archive proves one physical run-owned
    driver/source feeds report and archive across seamless phases, `PhaseObserver` markers align
@@ -2554,15 +2646,16 @@ This design is complete only when:
   ecosystem;
 - qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
   persistent zero/nonzero projection coverage, shared encrypted raw objects with per-frame
-  references, immutable partitions/generations/index/head, and bounded indexed receipt journal
+  references and reference-owned content encoding, immutable partitions/generations/index/head,
+  and bounded indexed receipt journal with per-execution observer epochs
   recover every complete durable projection exactly once across all injected crash/finalization
   points;
 - remote sync verifies create-only partition/raw/index/generation objects, owns a pre-activation
   writer claim, and advances a linearizable conditional head without flat rewrites; uncertain CAS
   and exact/sync-only resume reconcile ancestry fail-closed;
 - exact resume fails closed on identity/config/schema/key/writer mismatch and concurrent writers;
-- failures, gaps, unchanged bodies, misses, drops/loss ranges, local durability, visibility lag, and
-  remote publication are observable;
+- failures, gaps, unchanged bodies, misses, drops/loss ranges and bounded saturation summaries,
+  local durability, visibility lag, and remote publication are observable;
 - enrichment is API-limited to attributes, sanitization covers every structured surface, source
   identity survives redaction, and raw retention is separately protected;
 - attached mode reuses one source attempt across continuous phase membership and explicit boundary
