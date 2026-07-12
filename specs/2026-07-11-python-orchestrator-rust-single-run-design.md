@@ -152,3 +152,34 @@ These are process proofs, not mocked executor tests.
 - Post-run replay presented as live streaming.
 - Passing arbitrary Python objects, pickles or an unversioned config dump to
   Rust.
+
+## Addendum — 2026-07-11 (the runner is the only Rust product executable)
+
+The process boundary described above is now structural. The `aiperf` Rust
+package is a library only: its `[[bin]]` target, `src/main.rs`, Clap schema,
+console logger, and native-CLI acceptance suites are deleted. The human-facing
+entry point is the Python `aiperf` command, and the only native executable it
+may launch for an AIPerf benchmark is the strict `aiperf-runner` child. Direct
+`cargo run -p aiperf` commands are intentionally invalid.
+
+This removes a second configuration and orchestration surface; it does not move
+hot-path work into Python. The runner still owns online scheduled execution,
+all four adaptive actuators, datasets and endpoint dialects, static Python-
+evaluated accuracy, telemetry, request artifacts, metrics, and native-v2 output.
+The `aiperf` library retains the underlying runtime implementations and tests.
+Human-readable tables, accuracy CSV, plots, and other presentation/export work
+belong to the Python parent after it reads Rust-owned results.
+
+Two formerly CLI-reachable library families are not yet product-reachable
+through runner protocol v1: stateful agentic evaluation and feature-gated
+Dynamo offline co-simulation. Their Rust implementations and focused library
+tests remain, but the removed Harbor/BrowserGym/MCPMark live CLI canaries and
+the exhaustive offline CLI suite no longer prove an end-user path. They must be
+reintroduced as runner requests and runner subprocess tests before the product
+can claim those modes. The Python `aiperf dynosim` facade remains a separate
+canonical Dynamo-owned product path and does not make the AIPerf runner offline.
+
+This addendum supersedes every older reference in the design record to a native
+`aiperf` CLI, its flags, `src/main.rs`, or `CARGO_BIN_EXE_aiperf`. The runtime,
+transport, scheduling, metrics, evaluator, and backend algorithm decisions in
+those records are unchanged.

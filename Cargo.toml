@@ -34,7 +34,6 @@ blake3 = "1"
 bytes = "1"
 chrono = "0.4"
 csv = "1"
-clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 itoa = "1"
@@ -53,6 +52,5 @@ smallvec = { version = "1", features = ["serde"] }
 tiktoken-rs = "0.9"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"

@@ -98,68 +98,6 @@ async fn round_robin_resolves_to_real_endpoints_and_keeps_sessions_sticky() {
 }
 
 #[tokio::test]
-async fn cli_accepts_and_runs_the_complete_ancillary_flag_surface() {
-    let (first_url, first_count) = spawn_counting_endpoint().await;
-    let (second_url, second_count) = spawn_counting_endpoint().await;
-    let output_path = std::env::temp_dir().join(format!(
-        "aiperf_ancillary_cli_{}_{}.json",
-        std::process::id(),
-        first_url.rsplit(':').next().unwrap()
-    ));
-    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_aiperf"))
-        .arg(format!("{first_url},{second_url}"))
-        .arg("fixture-model")
-        .arg("--requests")
-        .arg("4")
-        .arg("--request-rate")
-        .arg("1000")
-        .arg("--arrival")
-        .arg("constant")
-        .arg("--concurrency")
-        .arg("2")
-        .arg("--prefill-concurrency")
-        .arg("2")
-        .arg("--request-rate-ramp-duration")
-        .arg("0.2")
-        .arg("--concurrency-ramp-duration")
-        .arg("0.01")
-        .arg("--prefill-concurrency-ramp-duration")
-        .arg("0.01")
-        .arg("--request-cancellation-rate")
-        .arg("0")
-        .arg("--request-cancellation-delay")
-        .arg("0")
-        .arg("--isl")
-        .arg("1")
-        .arg("--osl")
-        .arg("1")
-        .arg("--json")
-        .arg(&output_path)
-        .output()
-        .await
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(first_count.load(Ordering::SeqCst), 2);
-    assert_eq!(second_count.load(Ordering::SeqCst), 2);
-    let report: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&output_path).unwrap()).unwrap();
-    assert_eq!(report["schema_version"], "2.0");
-    assert_eq!(
-        report["summary"]["endpoints_configured"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    std::fs::remove_file(output_path).unwrap();
-}
-
-#[tokio::test]
 async fn post_send_disconnect_is_reported_as_a_canceled_terminal() {
     let local = tokio::task::LocalSet::new();
     local

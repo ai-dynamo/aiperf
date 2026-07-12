@@ -333,3 +333,13 @@ code. `Clock` exposes `now_ns`, `sleep`, and `is_virtual`; DES controls such as
 not carry no-op virtual APIs. Treat this spec as the historical north-star rationale;
 use `CLAUDE.md`, `llms.txt`, `crates/aiperf-clock`, and `crates/loadgen-core` for the
 current symbol names.
+
+## Addendum — 2026-07-11 (application layer is Python plus the strict runner)
+
+The native `aiperf` App/CLI layer sketched in Layer 8 no longer exists as an
+executable. Python Config v2 and the Python `aiperf` command select and fully
+resolve a run; `aiperf-runner` is the sole Rust process composition root; and
+the `aiperf` crate supplies library-only runtime composition. This supersedes
+the diagram's `bin` node and all references to selecting modes through native
+flags. It does not change the orthogonal clock, transport, workload, or backend
+seams: the runner must still compose those injected boundaries once per child.

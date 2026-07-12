@@ -333,3 +333,18 @@ the whole sink layer. The native CSV serializer, opt-in genai-perf-v1 JSON/CSV a
 record/replay, and `TimedUploader` seam remain unbuilt. The built code stays in the
 IO-free metrics leaf plus the binary writer for now; the proposed `aiperf-report`
 crate can still be extracted when a second IO sink is implemented.
+
+## Addendum — 2026-07-11 (presentation leaves the Rust runtime library)
+
+The `aiperf` crate is now library-only and its native CLI console tables,
+accuracy-summary CSV writer, legacy aggregate/timing JSON helpers, and logger
+are deleted. `aiperf::report` retains only native-v2 JSON persistence used by
+`aiperf-runner`; the typed IO-free reporter in `aiperf-metrics` remains the
+authoritative Rust result model.
+
+This supersedes the preceding addendum's `--json`/binary-writer wording and the
+claim that accuracy CSV is a built Rust product sink. The Python `aiperf`
+parent owns human presentation and compatibility/export generation after it
+validates the runner's native report. Native CSV, genai-perf-v1 compatibility,
+warnings/insights, console replay, and timed uploads remain unbuilt in Rust
+unless a future runner-owned sink has a demonstrated hot-path reason to exist.

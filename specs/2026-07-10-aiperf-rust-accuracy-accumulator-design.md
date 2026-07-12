@@ -610,3 +610,21 @@ AIPERF_MCPMARK_FILESYSTEM_ROOT=/path/to/prepared/environments \
 This proves MCPMark's canonical provider and filesystem verifier path. It does
 not claim OSWorld/OSWorld-Verified or AppWorld; those still require their own
 canonical providers and proofs.
+
+## Addendum — 2026-07-11 (accuracy product reachability after native CLI removal)
+
+Static evaluator-backed accuracy is product-reachable through
+`aiperf-runner` protocol v1 and retains a real subprocess proof: Rust loads
+opaque evaluator-authored problems, owns normal inference transport, and sends
+terminal response text to the supervised Python grader.
+
+Stateful agentic execution remains implemented in the `aiperf` library, but it
+is not represented in the current runner request DTO. Deleting the native Rust
+CLI therefore removes the end-user route and the compiled-CLI Harbor,
+BrowserGym, and MCPMark canaries described above. Those provider claims now
+mean library/provider implementation evidence, not current product
+availability. A future runner protocol addition must restore primary and
+callback call routing, provenance/reward reports, cancellation semantics, and
+real provider subprocess canaries before agentic accuracy is again described as
+product-reachable. This addendum does not weaken the canonical-provider rule or
+authorize reimplementing any evaluator in Rust.

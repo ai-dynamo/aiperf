@@ -474,3 +474,18 @@ field allowlist is used.
 Canonical accuracy remains an intentional online-only AIPerf capability because
 the mocker models timing/KV behavior and emits token IDs, not semantic model text;
 it is not a DynoSim/Mocker feature gap.
+
+## Addendum — 2026-07-11 (offline library retained; runner projection pending)
+
+The steppable engine adapter, virtual-clock pump, topology/router/trace support,
+parity checks, and artifact APIs remain implemented behind the `aiperf`
+library's `dynamo-offline` feature. The native `aiperf --offline` executable and
+its CLI test matrix are deleted with the native CLI. Runner protocol v1 does
+not yet carry an offline backend request, so this implementation is currently
+library-only and must not be presented as an AIPerf end-user execution mode.
+
+The Python `aiperf dynosim` commands in the preceding addendum remain available
+because they delegate to Dynamo's canonical Python-owned parsers and products;
+they are not a substitute for exposing AIPerf's Rust offline adapter through
+`aiperf-runner`. Restoring that path requires a versioned runner DTO and runner
+subprocess coverage for the full fail-closed capability/parity matrix.
