@@ -10,12 +10,14 @@
 //! traits so additional exposition dialects and engines remain injectable.
 
 pub mod accumulator;
+pub mod atlas;
 pub mod histogram;
 pub mod model;
 pub mod parser;
 pub mod source;
 pub mod units;
 
+pub use atlas::{DerivedServerMetric, ServerMetricAtlas, ServerMetricView, VllmSglangMetricAtlas};
 pub use histogram::{
     BucketStatistics, HistogramSnapshot, accumulate_bucket_statistics,
     compute_estimated_percentiles, compute_prometheus_percentiles,

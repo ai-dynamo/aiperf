@@ -16,6 +16,7 @@ use aiperf_metrics::{
     SidecarTimeslice, Unit, linear_distribution,
 };
 
+use crate::atlas::{ServerMetricAtlas, ServerMetricView, VllmSglangMetricAtlas};
 use crate::histogram::{
     HistogramSnapshot, accumulate_bucket_statistics, compute_estimated_percentiles,
 };
@@ -23,6 +24,9 @@ use crate::model::{HistogramValue, MetricSample, PrometheusMetricType, ServerMet
 use crate::units::infer_unit;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+type ScalarLabelKey = Vec<(String, String)>;
+type LatestGaugeKey = (String, ScalarLabelKey);
+type LatestGaugeMap = BTreeMap<LatestGaugeKey, (i64, f64)>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct SeriesKey {
@@ -158,6 +162,16 @@ impl ServerMetricsAccumulator {
         phase: Phase,
         slice_duration_ns: Option<i64>,
     ) -> ServerMetricsSummary {
+        self.summarize_phase_with_atlas(phase, slice_duration_ns, &VllmSglangMetricAtlas)
+    }
+
+    /// Summarize one phase with an injected backend metric atlas.
+    pub fn summarize_phase_with_atlas(
+        &self,
+        phase: Phase,
+        slice_duration_ns: Option<i64>,
+        atlas: &dyn ServerMetricAtlas,
+    ) -> ServerMetricsSummary {
         let Some(boundary) = self.boundaries.get(&phase) else {
             return ServerMetricsSummary::default();
         };
@@ -216,7 +230,7 @@ impl ServerMetricsAccumulator {
                 .or_insert_with(|| (unit, vec![series]));
         }
 
-        let sidecar_metrics = metrics
+        let mut sidecar_metrics = metrics
             .into_iter()
             .map(|(name, (unit, mut series))| {
                 series.sort_by(|left, right| {
@@ -226,7 +240,32 @@ impl ServerMetricsAccumulator {
                 });
                 (name, SidecarMetric::new(unit, series))
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        let atlas_view = PhaseMetricView {
+            phase,
+            records: &self.records,
+            boundary,
+        };
+        for (name, metric) in atlas.derive(&atlas_view) {
+            let Some(stats) = linear_distribution(&name, vec![metric.value], metric.value, 1)
+            else {
+                continue;
+            };
+            sidecar_metrics.insert(
+                name.clone(),
+                SidecarMetric::new(
+                    Some(metric.unit),
+                    vec![SidecarSeries {
+                        labels: None,
+                        endpoint_url: None,
+                        stats: SidecarStats::Gauge(stats),
+                        timeslices: Vec::new(),
+                    }],
+                ),
+            );
+            descriptions.insert(name.clone(), metric.description.to_string());
+            metric_types.insert(name, PrometheusMetricType::Gauge);
+        }
         let endpoints_successful = boundary
             .start_records
             .keys()
@@ -323,6 +362,152 @@ impl ServerMetricsAccumulator {
             ingest_series(record, &mut states);
         }
         states
+    }
+}
+
+struct PhaseMetricView<'a> {
+    phase: Phase,
+    records: &'a [ServerMetricsRecord],
+    boundary: &'a ServerMetricsPhaseBoundary,
+}
+
+impl PhaseMetricView<'_> {
+    fn latest_gauges_by_endpoint(&self, metric_name: &str) -> BTreeMap<String, f64> {
+        let mut latest = LatestGaugeMap::new();
+        for record in self.boundary.start_records.values() {
+            retain_latest_gauges(record, metric_name, self.boundary.start_ns, &mut latest);
+        }
+        for record in self.records.iter().filter(|record| {
+            record.benchmark_phase == Some(self.phase)
+                && record.timestamp_ns >= self.boundary.start_ns
+                && record.timestamp_ns <= self.boundary.end_ns
+        }) {
+            retain_latest_gauges(record, metric_name, record.timestamp_ns, &mut latest);
+        }
+        for record in self.boundary.end_records.values() {
+            retain_latest_gauges(record, metric_name, self.boundary.end_ns, &mut latest);
+        }
+
+        let mut endpoints = BTreeMap::<String, f64>::new();
+        for ((endpoint, _), (_, value)) in latest {
+            endpoints
+                .entry(endpoint)
+                .and_modify(|current| *current = current.max(value))
+                .or_insert(value);
+        }
+        endpoints
+    }
+}
+
+impl ServerMetricView for PhaseMetricView<'_> {
+    fn counter_delta(&self, metric_name: &str) -> Option<f64> {
+        let mut found = false;
+        let mut total = 0.0;
+        for (endpoint, start_record) in &self.boundary.start_records {
+            let Some(end_record) = self.boundary.end_records.get(endpoint) else {
+                continue;
+            };
+            let start =
+                typed_scalar_values(start_record, metric_name, PrometheusMetricType::Counter);
+            let end = typed_scalar_values(end_record, metric_name, PrometheusMetricType::Counter);
+            for (labels, start_value) in start {
+                let Some(end_value) = end.get(&labels) else {
+                    continue;
+                };
+                total += (*end_value - start_value).max(0.0);
+                found = true;
+            }
+        }
+        found.then_some(total)
+    }
+
+    fn counter_rate(&self, metric_name: &str) -> Option<f64> {
+        let duration_seconds = self.boundary.duration_seconds()?;
+        self.counter_delta(metric_name)
+            .map(|delta| delta / duration_seconds)
+    }
+
+    fn gauge_latest_max(&self, metric_name: &str) -> Option<f64> {
+        self.latest_gauges_by_endpoint(metric_name)
+            .into_values()
+            .max_by(f64::total_cmp)
+    }
+
+    fn max_endpoint_gauge_ratio(
+        &self,
+        numerator_name: &str,
+        denominator_name: &str,
+    ) -> Option<f64> {
+        let numerators = self.latest_gauges_by_endpoint(numerator_name);
+        let denominators = self.latest_gauges_by_endpoint(denominator_name);
+        numerators
+            .into_iter()
+            .filter_map(|(endpoint, numerator)| {
+                let denominator = *denominators.get(&endpoint)?;
+                (denominator > 0.0).then_some(numerator / denominator)
+            })
+            .max_by(f64::total_cmp)
+    }
+}
+
+fn typed_scalar_values(
+    record: &ServerMetricsRecord,
+    metric_name: &str,
+    metric_type: PrometheusMetricType,
+) -> BTreeMap<ScalarLabelKey, f64> {
+    let Some(family) = record
+        .metrics
+        .get(metric_name)
+        .filter(|family| family.metric_type == metric_type)
+    else {
+        return BTreeMap::new();
+    };
+    family
+        .samples
+        .iter()
+        .filter_map(|sample| match sample {
+            MetricSample::Scalar { labels, value } => Some((
+                labels
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect(),
+                *value,
+            )),
+            MetricSample::Histogram { .. } => None,
+        })
+        .collect()
+}
+
+fn retain_latest_gauges(
+    record: &ServerMetricsRecord,
+    metric_name: &str,
+    timestamp_ns: i64,
+    latest: &mut LatestGaugeMap,
+) {
+    let Some(family) = record
+        .metrics
+        .get(metric_name)
+        .filter(|family| family.metric_type == PrometheusMetricType::Gauge)
+    else {
+        return;
+    };
+    for sample in &family.samples {
+        let MetricSample::Scalar { labels, value } = sample else {
+            continue;
+        };
+        let key = (
+            record.endpoint_url.clone(),
+            labels
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        );
+        let should_replace = latest
+            .get(&key)
+            .is_none_or(|(previous_ns, _)| timestamp_ns >= *previous_ns);
+        if should_replace {
+            latest.insert(key, (timestamp_ns, *value));
+        }
     }
 }
 
@@ -777,6 +962,35 @@ mod tests {
         }
     }
 
+    fn insert_scalar(
+        record: &mut ServerMetricsRecord,
+        name: &str,
+        metric_type: PrometheusMetricType,
+        value: f64,
+    ) {
+        record.metrics.insert(
+            name.to_string(),
+            MetricFamily {
+                metric_type,
+                description: String::new(),
+                samples: vec![MetricSample::Scalar {
+                    labels: BTreeMap::new(),
+                    value,
+                }],
+            },
+        );
+    }
+
+    fn derived_value(summary: &ServerMetricsSummary, name: &str) -> f64 {
+        let SidecarStats::Gauge(stats) = &summary.sidecar_metrics()[name].series[0].stats else {
+            panic!("derived gauge")
+        };
+        let MetricValue::Finite(value) = stats.avg else {
+            panic!("finite derived gauge")
+        };
+        value
+    }
+
     #[test]
     fn boundary_deltas_gauges_histograms_and_timeslices_share_one_phase() {
         let start = record(0, 100.0, 2.0, 10.0);
@@ -915,5 +1129,54 @@ mod tests {
         let summary = accumulator.summarize_phase(Phase::Profiling, None);
 
         assert!(!summary.sidecar_metrics().contains_key("latency_seconds"));
+    }
+
+    #[test]
+    fn vllm_atlas_uses_exact_counter_boundaries_and_latest_gauges() {
+        let mut start = record(0, 100.0, 1.0, 10.0);
+        let mut end = record(2_000_000_000, 110.0, 1.0, 20.0);
+        for (name, value) in [
+            ("vllm:prefix_cache_hits", 100.0),
+            ("vllm:prefix_cache_queries", 200.0),
+            ("vllm:prompt_tokens", 1_000.0),
+            ("vllm:generation_tokens", 500.0),
+        ] {
+            insert_scalar(&mut start, name, PrometheusMetricType::Counter, value);
+        }
+        for (name, value) in [
+            ("vllm:prefix_cache_hits", 180.0),
+            ("vllm:prefix_cache_queries", 300.0),
+            ("vllm:prompt_tokens", 1_500.0),
+            ("vllm:generation_tokens", 750.0),
+        ] {
+            insert_scalar(&mut end, name, PrometheusMetricType::Counter, value);
+        }
+        insert_scalar(
+            &mut end,
+            "vllm:kv_cache_usage_perc",
+            PrometheusMetricType::Gauge,
+            0.8,
+        );
+        let mut accumulator = ServerMetricsAccumulator::new();
+        accumulator.ingest_record(start.clone());
+        accumulator.ingest_record(end.clone());
+        accumulator.set_phase_boundary(ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 2_000_000_000,
+            start_records: BTreeMap::from([(start.endpoint_url.clone(), start)]),
+            end_records: BTreeMap::from([(end.endpoint_url.clone(), end)]),
+        });
+
+        let summary = accumulator.summarize_phase(Phase::Profiling, None);
+
+        assert_eq!(derived_value(&summary, "prefix_cache_hit_rate"), 80.0);
+        assert_eq!(derived_value(&summary, "unique_input_tokens_srv"), 20.0);
+        assert_eq!(derived_value(&summary, "kv_cache_usage_pct"), 80.0);
+        assert_eq!(derived_value(&summary, "input_token_throughput_srv"), 250.0);
+        assert_eq!(
+            derived_value(&summary, "output_token_throughput_srv"),
+            125.0
+        );
     }
 }

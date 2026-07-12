@@ -72,6 +72,7 @@ impl MetricsTextParser for PrometheusTextParser {
 
 #[derive(Debug, Clone)]
 struct Metadata {
+    family_name: String,
     metric_type: PrometheusMetricType,
     description: String,
 }
@@ -185,7 +186,7 @@ fn parse_body(
     }
 
     let metadata = build_metadata(&declared_types, &descriptions);
-    let mut builders = BTreeMap::<String, FamilyBuilder>::new();
+    let mut builders = BTreeMap::<(String, PrometheusMetricType), FamilyBuilder>::new();
     for (offset, raw_line) in body.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -195,15 +196,12 @@ fn parse_body(
         if parsed.name.ends_with("_created") {
             continue;
         }
-        let (family_name, metric_type) = resolve_family(&parsed.name, &metadata);
+        let (family_name, metric_type, description) = resolve_family(&parsed.name, &metadata);
         if should_skip_family(&family_name) || metric_type == PrometheusMetricType::Summary {
             continue;
         }
-        let description = metadata
-            .get(&family_name)
-            .map_or_else(String::new, |metadata| metadata.description.clone());
         let builder = builders
-            .entry(family_name.clone())
+            .entry((family_name.clone(), metric_type))
             .or_insert_with(|| FamilyBuilder::new(metric_type, description));
         if !parsed.value.is_finite() {
             continue;
@@ -242,10 +240,25 @@ fn parse_body(
         }
     }
 
-    Ok(builders
-        .into_iter()
-        .filter_map(|(name, builder)| builder.finish().map(|family| (name, family)))
-        .collect())
+    let mut families = BTreeMap::<String, MetricFamily>::new();
+    for ((name, _), builder) in builders {
+        let Some(family) = builder.finish() else {
+            continue;
+        };
+        match families.entry(name) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(family);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry)
+                if family_priority(family.metric_type)
+                    > family_priority(entry.get().metric_type) =>
+            {
+                entry.insert(family);
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    Ok(families)
 }
 
 fn build_metadata(
@@ -261,8 +274,9 @@ fn build_metadata(
             .cloned()
             .unwrap_or_default();
         metadata.insert(
-            normalized,
+            raw_name.clone(),
             Metadata {
+                family_name: normalized,
                 metric_type: *metric_type,
                 description,
             },
@@ -282,27 +296,65 @@ fn normalize_declared_name(name: &str, metric_type: PrometheusMetricType) -> Str
 fn resolve_family(
     sample_name: &str,
     metadata: &BTreeMap<String, Metadata>,
-) -> (String, PrometheusMetricType) {
+) -> (String, PrometheusMetricType, String) {
     for suffix in ["_bucket", "_sum", "_count"] {
         if let Some(base) = sample_name.strip_suffix(suffix)
             && metadata
                 .get(base)
                 .is_some_and(|meta| meta.metric_type == PrometheusMetricType::Histogram)
         {
-            return (base.to_string(), PrometheusMetricType::Histogram);
+            let meta = &metadata[base];
+            return (
+                meta.family_name.clone(),
+                PrometheusMetricType::Histogram,
+                meta.description.clone(),
+            );
         }
     }
     if let Some(meta) = metadata.get(sample_name) {
-        return (sample_name.to_string(), meta.metric_type);
+        return (
+            meta.family_name.clone(),
+            meta.metric_type,
+            meta.description.clone(),
+        );
     }
     if let Some(base) = sample_name.strip_suffix("_total")
         && metadata
             .get(base)
             .is_some_and(|meta| meta.metric_type == PrometheusMetricType::Counter)
     {
-        return (base.to_string(), PrometheusMetricType::Counter);
+        let meta = &metadata[base];
+        return (
+            meta.family_name.clone(),
+            PrometheusMetricType::Counter,
+            meta.description.clone(),
+        );
     }
-    (sample_name.to_string(), PrometheusMetricType::Unknown)
+    if let Some(meta) = metadata
+        .values()
+        .find(|meta| meta.family_name == sample_name)
+    {
+        return (
+            meta.family_name.clone(),
+            meta.metric_type,
+            meta.description.clone(),
+        );
+    }
+    (
+        sample_name.to_string(),
+        PrometheusMetricType::Unknown,
+        String::new(),
+    )
+}
+
+fn family_priority(metric_type: PrometheusMetricType) -> u8 {
+    match metric_type {
+        PrometheusMetricType::Counter => 4,
+        PrometheusMetricType::Histogram => 3,
+        PrometheusMetricType::Gauge => 2,
+        PrometheusMetricType::Unknown => 1,
+        PrometheusMetricType::Summary => 0,
+    }
 }
 
 fn should_skip_family(name: &str) -> bool {
@@ -568,5 +620,24 @@ process_uptime_seconds 10
             metrics["node_netstat_Tcp_InSegs"].metric_type,
             PrometheusMetricType::Unknown
         );
+    }
+
+    #[test]
+    fn normalized_counter_wins_a_same_name_gauge_collision() {
+        let body = r#"
+# TYPE sglang:num_retracted_reqs_total counter
+sglang:num_retracted_reqs_total 7
+# TYPE sglang:num_retracted_reqs gauge
+sglang:num_retracted_reqs 99
+"#;
+
+        let metrics = PrometheusTextParser.parse_classic(body).unwrap();
+        let family = &metrics["sglang:num_retracted_reqs"];
+
+        assert_eq!(family.metric_type, PrometheusMetricType::Counter);
+        assert!(matches!(
+            family.samples[0],
+            MetricSample::Scalar { value: 7.0, .. }
+        ));
     }
 }

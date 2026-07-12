@@ -13,7 +13,7 @@ use aiperf_metrics::Phase;
 use serde::Serialize;
 
 /// Prometheus family semantics preserved through accumulation and export.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PrometheusMetricType {
     /// Monotonic scalar counter.
