@@ -341,6 +341,19 @@ impl NativeEndpointPlan {
             }
         }
     }
+
+    /// Server-token-count policy of the primary (default) endpoint, used for
+    /// run-level tokenizer-free input accounting. Mirrors Python's single
+    /// `cfg.endpoint.use_server_token_count`; falls back to `false` when no
+    /// default profile resolves.
+    pub(crate) fn use_server_token_count(&self) -> bool {
+        match self {
+            Self::Legacy(spec) => spec.use_server_token_count,
+            Self::Prepared(profiles) => default_prepared_endpoint_profile(profiles)
+                .map(|profile| profile.config.use_server_token_count)
+                .unwrap_or(false),
+        }
+    }
 }
 
 /// Conventional profile selected when a workload does not name one explicitly.
@@ -1175,7 +1188,7 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             .transpose()?;
         let live_metrics_config = live_spec
             .is_some()
-            .then(|| metrics_config(&run.metrics))
+            .then(|| metrics_config(&run.metrics, run.endpoint.use_server_token_count()))
             .transpose()?;
 
         let content_server = match content_server_spec {
@@ -1445,7 +1458,10 @@ async fn execute_graph_native(
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
-    let metrics_config = metrics_config(&request.run.metrics)?;
+    let metrics_config = metrics_config(
+        &request.run.metrics,
+        request.run.endpoint.use_server_token_count(),
+    )?;
     let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
@@ -1715,7 +1731,10 @@ async fn execute_native_inner(
             unreachable!("graph rejected above")
         }
     };
-    let metrics_config = metrics_config(&request.run.metrics)?;
+    let metrics_config = metrics_config(
+        &request.run.metrics,
+        request.run.endpoint.use_server_token_count(),
+    )?;
     let model_names = request
         .run
         .models
@@ -2994,7 +3013,10 @@ fn endpoint_config(spec: &EndpointSpec) -> Result<EndpointConfig> {
     .map_err(Into::into)
 }
 
-pub(crate) fn metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
+pub(crate) fn metrics_config(
+    spec: &MetricsSpec,
+    use_server_token_count: bool,
+) -> Result<MetricsConfig> {
     let slice_duration_ns = spec
         .slice_duration_seconds
         .map(|seconds| {
@@ -3021,6 +3043,7 @@ pub(crate) fn metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
     Ok(MetricsConfig {
         slice_duration_ns,
         slos,
+        use_server_token_count,
         ..MetricsConfig::default()
     })
 }

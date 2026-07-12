@@ -98,6 +98,9 @@ struct PendingRequest {
     observed_usage: CompactObservedUsage,
     terminal: Option<ReplayTerminalStatus>,
     metadata: RequestMetricMetadata,
+    /// Emit server `usage.prompt_tokens` as the input-sequence-length instead of
+    /// the client-tokenized `input_tokens`.
+    use_server_token_count: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -190,6 +193,9 @@ pub struct NativeMetricsObserver {
     state: RefCell<ObserverState>,
     accumulator: RefCell<MetricsAccumulator>,
     retain_record_dimensions: bool,
+    /// Source input accounting from server `usage.prompt_tokens` (tokenizer-free)
+    /// when the endpoint requested `use_server_token_count`.
+    use_server_token_count: bool,
 }
 
 /// Final aggregate plus the exact request records that produced it.
@@ -219,12 +225,14 @@ pub struct NativeMetricsFinalizer {
 impl NativeMetricsObserver {
     /// Creates an observer with explicit accumulator configuration.
     pub fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig) -> Self {
+        let use_server_token_count = config.use_server_token_count;
         Self {
             clock,
             origin_ns,
             state: RefCell::new(ObserverState::default()),
             accumulator: RefCell::new(MetricsAccumulator::with_config(config)),
             retain_record_dimensions: true,
+            use_server_token_count,
         }
     }
 
@@ -234,12 +242,14 @@ impl NativeMetricsObserver {
         origin_ns: i64,
         config: MetricsConfig,
     ) -> Self {
+        let use_server_token_count = config.use_server_token_count;
         Self {
             clock,
             origin_ns,
             state: RefCell::new(ObserverState::default()),
             accumulator: RefCell::new(MetricsAccumulator::with_config(config)),
             retain_record_dimensions: false,
+            use_server_token_count,
         }
     }
 
@@ -486,7 +496,16 @@ impl PendingRequest {
             ),
             canceled: terminal == ReplayTerminalStatus::Canceled,
             tokens: TokenCounts {
-                input: Some(self.input_tokens),
+                // Under `use_server_token_count`, input accounting is
+                // tokenizer-free: the ISL comes from the server's
+                // `usage.prompt_tokens` (absent when the server reports no
+                // usage), matching Python's `_compute_server_token_counts`.
+                // Otherwise use the client-tokenized dispatch count.
+                input: if self.use_server_token_count {
+                    prompt_tokens
+                } else {
+                    Some(self.input_tokens)
+                },
                 output: Some(self.output_tokens),
                 reasoning: (self.reasoning_tokens > 0).then_some(self.reasoning_tokens),
                 requested_output: Some(self.requested_output_tokens),
@@ -564,6 +583,7 @@ impl RequestObserver for NativeMetricsObserver {
                 observed_usage: CompactObservedUsage::default(),
                 terminal: None,
                 metadata,
+                use_server_token_count: self.use_server_token_count,
             },
         });
     }

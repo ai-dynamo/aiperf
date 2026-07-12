@@ -1092,7 +1092,7 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
             .compatibility
             .prepare(&workload.authored().provider, &routes.routes)?;
         let readiness = crate::online_execution::prepare_online_readiness(run, context)?;
-        let metrics = crate::execute::metrics_config(&run.metrics)?;
+        let metrics = crate::execute::metrics_config(&run.metrics, false)?;
         Ok(Box::new(PreparedOnlineEvaluationOperation {
             benchmark_id: run.identity.benchmark_id.clone(),
             artifact_target: run.artifact_target.clone(),
@@ -1126,7 +1126,7 @@ fn validate_evaluation_authored_run(
         workload.authored().resources.is_empty(),
         "this runner distribution registers no evaluator host-resource capabilities"
     );
-    crate::execute::metrics_config(&run.metrics)?;
+    crate::execute::metrics_config(&run.metrics, false)?;
     ensure!(
         run.artifacts.records_path.is_none()
             && run.artifacts.raw_path.is_none()

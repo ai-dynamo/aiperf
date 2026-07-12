@@ -1012,7 +1012,9 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
                     .load(&workload.dataset, &dataset_context),
             )
             .context("loading and validating authored offline scheduled dataset")?;
-        let metrics = metrics_config(&run.metrics)?;
+        // Offline co-simulation drives no real server, so server usage counts
+        // never arrive; input accounting stays on the client tokenizer.
+        let metrics = metrics_config(&run.metrics, false)?;
         let model = run
             .models
             .items

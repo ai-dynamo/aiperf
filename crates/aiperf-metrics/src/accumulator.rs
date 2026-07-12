@@ -117,6 +117,13 @@ pub struct MetricsConfig {
     pub osl_mismatch_threshold_pct: f64,
     /// Absolute OSL mismatch cap in tokens.
     pub osl_mismatch_max_tokens: f64,
+    /// Source input-token accounting from server-reported `usage.prompt_tokens`
+    /// instead of client-side tokenization. Mirrors the endpoint
+    /// `use_server_token_count` flag and Python's
+    /// `records/inference_result_parser.py::_compute_server_token_counts`, which
+    /// sets `TokenCounts.input = usage.prompt_tokens` (tokenizer-free); output
+    /// is already server-authoritative in the accumulator regardless.
+    pub use_server_token_count: bool,
 }
 
 impl Default for MetricsConfig {
@@ -127,6 +134,7 @@ impl Default for MetricsConfig {
             usage_diff_threshold_pct: DEFAULT_USAGE_DIFF_THRESHOLD_PCT,
             osl_mismatch_threshold_pct: DEFAULT_OSL_MISMATCH_THRESHOLD_PCT,
             osl_mismatch_max_tokens: DEFAULT_OSL_MISMATCH_MAX_TOKENS,
+            use_server_token_count: false,
         }
     }
 }
