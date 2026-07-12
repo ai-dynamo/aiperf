@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::ledger::HostTerminalClass;
-use super::retry::OperationCancellation;
+use super::retry::{InferenceTransportAttempt, OperationCancellation};
 use crate::scheduled::ScheduledRuntime;
 
 /// Per-run host executor context supplied after the scheduler is constructed.
@@ -215,6 +215,9 @@ pub struct HostExecutionTerminal {
     pub usage: HostOperationUsage,
     /// Whether registered route policy may retry this terminal.
     pub retryable: bool,
+    /// Exact Rust transport-attempt lineage. Queued cancellation is the only
+    /// logical terminal that legitimately contains no transport attempt.
+    pub transport_attempts: Vec<InferenceTransportAttempt>,
 }
 
 /// Typed streaming event sink supplied by the evaluation workload.
@@ -588,6 +591,7 @@ mod tests {
                 payload: serde_json::json!({"ok": true}),
                 usage: HostOperationUsage::default(),
                 retryable: false,
+                transport_attempts: Vec::new(),
             })
         }
     }

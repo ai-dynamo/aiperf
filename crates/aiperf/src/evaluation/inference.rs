@@ -34,7 +34,10 @@ use super::host::{
     HostOperationFamily, HostOperationSchemaValidator, RegisteredOperationId,
 };
 use super::ledger::HostTerminalClass;
-use super::retry::OperationCancellation;
+use super::retry::{
+    AttemptExecution, ClockedInferenceAttemptExecutor, ExponentialTransportRetryPolicy,
+    InferenceAttemptExecutor, OneAttemptInference, OperationCancellation,
+};
 use crate::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference, TurnToSend,
 };
@@ -577,8 +580,9 @@ impl HostOperationExecutorFactory for ScheduledInferenceHostExecutorFactory {
     ) -> Result<Rc<dyn HostOperationExecutor>> {
         self.materializer
             .validate_route(route, &self.descriptor.operation_id)?;
+        let runtime = runtime.require_scheduled()?;
         Ok(Rc::new(ScheduledInferenceHostExecutor::new_for_operation(
-            runtime.require_scheduled()?,
+            runtime,
             self.materializer.clone(),
             self.descriptor.operation_id.clone(),
         )))
@@ -965,6 +969,7 @@ pub struct ScheduledInferenceHostExecutor {
     runtime: Rc<ScheduledRuntime>,
     materializer: Rc<dyn EvaluationInferenceMaterializer>,
     operation_id: RegisteredOperationId,
+    attempt_executor: Rc<dyn InferenceAttemptExecutor>,
 }
 
 impl ScheduledInferenceHostExecutor {
@@ -986,29 +991,51 @@ impl ScheduledInferenceHostExecutor {
         materializer: Rc<dyn EvaluationInferenceMaterializer>,
         operation_id: RegisteredOperationId,
     ) -> Self {
+        let retry_policy = Rc::new(
+            ExponentialTransportRetryPolicy::new(
+                3,
+                100_000_000,
+                1_000_000_000,
+                [HostTerminalClass::Failed],
+            )
+            .expect("built-in inference retry policy is valid"),
+        );
+        let attempt_executor = Rc::new(ClockedInferenceAttemptExecutor::new(
+            runtime.clock(),
+            retry_policy,
+        ));
+        Self::new_for_operation_with_attempt_executor(
+            runtime,
+            materializer,
+            operation_id,
+            attempt_executor,
+        )
+    }
+
+    /// Compose one exact operation with an injected logical-attempt executor.
+    pub fn new_for_operation_with_attempt_executor(
+        runtime: Rc<ScheduledRuntime>,
+        materializer: Rc<dyn EvaluationInferenceMaterializer>,
+        operation_id: RegisteredOperationId,
+        attempt_executor: Rc<dyn InferenceAttemptExecutor>,
+    ) -> Self {
         Self {
             runtime,
             materializer,
             operation_id,
+            attempt_executor,
         }
     }
-}
 
-#[async_trait(?Send)]
-impl HostOperationExecutor for ScheduledInferenceHostExecutor {
-    async fn execute(
+    async fn execute_one_attempt(
         &self,
         operation: &HostOperationEnvelope,
         events: &dyn HostExecutionEventSink,
         cancellation: OperationCancellation,
-    ) -> Result<HostExecutionTerminal> {
-        ensure!(
-            operation.semantic_operation_id == self.operation_id,
-            "prepared inference executor received operation {}, expected {}",
-            operation.semantic_operation_id,
-            self.operation_id
-        );
-        let turn = self.materializer.materialize(operation)?;
+        attempt_id: &str,
+    ) -> Result<(HostExecutionTerminal, bool)> {
+        let mut turn = self.materializer.materialize(operation)?;
+        turn.request_correlation_id = attempt_id.to_string();
         let (terminal_tx, terminal_rx) = oneshot::channel();
         let completion = Box::new(move |_credit, outcome| {
             Box::pin(async move {
@@ -1030,7 +1057,7 @@ impl HostOperationExecutor for ScheduledInferenceHostExecutor {
             let outcome = terminal_rx
                 .await
                 .context("scheduled evaluator inference lost its terminal callback")?;
-            return normalized_terminal(outcome, &self.operation_id);
+            return Ok((normalized_terminal(outcome, &self.operation_id)?, false));
         }
 
         ensure!(
@@ -1087,7 +1114,72 @@ impl HostOperationExecutor for ScheduledInferenceHostExecutor {
         if let Some(failure) = response_failure.borrow_mut().take() {
             return Err(anyhow!(failure));
         }
-        normalized_terminal(outcome, &self.operation_id)
+        Ok((
+            normalized_terminal(outcome, &self.operation_id)?,
+            ordinal > 0,
+        ))
+    }
+}
+
+struct ScheduledOneAttempt<'a> {
+    executor: &'a ScheduledInferenceHostExecutor,
+    operation: &'a HostOperationEnvelope,
+    events: &'a dyn HostExecutionEventSink,
+}
+
+#[async_trait(?Send)]
+impl OneAttemptInference for ScheduledOneAttempt<'_> {
+    async fn execute_attempt(
+        &self,
+        _operation_id: &str,
+        attempt_id: &str,
+        _attempt_ordinal: usize,
+        cancellation: OperationCancellation,
+    ) -> Result<AttemptExecution> {
+        let (terminal, output_observed) = self
+            .executor
+            .execute_one_attempt(self.operation, self.events, cancellation, attempt_id)
+            .await?;
+        Ok(AttemptExecution {
+            terminal: terminal.class,
+            output_observed,
+            retryable: terminal.retryable,
+            payload: terminal.payload,
+            usage: terminal.usage,
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl HostOperationExecutor for ScheduledInferenceHostExecutor {
+    async fn execute(
+        &self,
+        operation: &HostOperationEnvelope,
+        events: &dyn HostExecutionEventSink,
+        cancellation: OperationCancellation,
+    ) -> Result<HostExecutionTerminal> {
+        ensure!(
+            operation.semantic_operation_id == self.operation_id,
+            "prepared inference executor received operation {}, expected {}",
+            operation.semantic_operation_id,
+            self.operation_id
+        );
+        let attempt = ScheduledOneAttempt {
+            executor: self,
+            operation,
+            events,
+        };
+        let result = self
+            .attempt_executor
+            .execute(&operation.operation_id, false, &attempt, cancellation)
+            .await?;
+        Ok(HostExecutionTerminal {
+            class: result.terminal,
+            payload: result.payload,
+            usage: result.usage,
+            retryable: false,
+            transport_attempts: result.attempts,
+        })
     }
 }
 
@@ -1221,7 +1313,8 @@ fn normalized_terminal(
             reasoning_tokens: None,
             cached_tokens: outcome.model_response.cached_prompt_tokens,
         },
-        retryable: false,
+        retryable: class == HostTerminalClass::Failed,
+        transport_attempts: Vec::new(),
     })
 }
 

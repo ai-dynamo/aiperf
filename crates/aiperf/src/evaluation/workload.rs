@@ -1726,6 +1726,7 @@ mod tests {
         HostOperationDescriptor, HostOperationExecutor, HostOperationExecutorFactory,
         HostOperationFamily, HostOperationSchemaValidator,
     };
+    use crate::evaluation::retry::InferenceTransportAttempt;
     use crate::multiturn::TurnToSend;
     use crate::scheduled::{ScheduledRuntime, TurnDispatchOutcome, TurnDispatcher};
 
@@ -2142,7 +2143,7 @@ mod tests {
     impl HostOperationExecutor for ProofHostExecutor {
         async fn execute(
             &self,
-            _operation: &HostOperationEnvelope,
+            operation: &HostOperationEnvelope,
             events: &dyn HostExecutionEventSink,
             _cancellation: OperationCancellation,
         ) -> Result<HostExecutionTerminal> {
@@ -2171,6 +2172,18 @@ mod tests {
                     cached_tokens: None,
                 },
                 retryable: false,
+                transport_attempts: vec![InferenceTransportAttempt {
+                    attempt_id: format!("{}:transport:0", operation.operation_id),
+                    ordinal: 0,
+                    terminal: HostTerminalClass::Completed,
+                    output_observed: true,
+                    usage: HostOperationUsage {
+                        prompt_tokens: Some(3),
+                        completion_tokens: Some(1),
+                        reasoning_tokens: None,
+                        cached_tokens: None,
+                    },
+                }],
             })
         }
     }
