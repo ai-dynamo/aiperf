@@ -5,12 +5,18 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::{
-    Router, extract::State, http::header, response::IntoResponse, routing::get, routing::post,
+    Router,
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, header},
+    response::IntoResponse,
+    routing::get,
+    routing::post,
 };
 
 #[test]
@@ -103,6 +109,32 @@ async fn chat_handler() -> impl IntoResponse {
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\n",
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":1}}\n\n",
         "data: [DONE]\n\n",
+    );
+    ([(header::CONTENT_TYPE, "text/event-stream")], body)
+}
+
+#[derive(Default)]
+struct AnthropicWireCapture {
+    request: Mutex<Option<(HeaderMap, Bytes)>>,
+}
+
+async fn anthropic_messages_handler(
+    State(capture): State<Arc<AnthropicWireCapture>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    *capture.request.lock().unwrap() = Some((headers, body));
+    let body = concat!(
+        "event: message_start\n",
+        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-20250514\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":25,\"cache_creation_input_tokens\":3,\"cache_read_input_tokens\":7,\"output_tokens\":1}}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"why\"}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n",
+        "event: message_delta\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":2}}\n\n",
+        "event: message_stop\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
     );
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
 }
@@ -300,6 +332,128 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             && row["metrics"]["output_sequence_length"] == 1.0
             && row["metrics"]["request_latency"].is_number()
     }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_child_sends_anthropic_messages_byte_exactly() {
+    let capture = Arc::new(AnthropicWireCapture::default());
+    let app = Router::new()
+        .route("/v1/messages", post(anthropic_messages_handler))
+        .with_state(capture.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let artifacts = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "anthropic-messages-wire-e2e",
+            "random_seed": 7,
+            "workers": 1,
+            "artifact_dir": artifacts.path(),
+            "models": {
+                "items": [{"name": "claude-sonnet-4-20250514"}]
+            },
+            "endpoint": {
+                "urls": [format!("http://{address}")],
+                "type": "messages",
+                "streaming": true,
+                "use_server_token_count": true,
+                "api_key": "sk-ant-e2e-secret",
+                "headers": {"anthropic-beta": "extended-thinking-test"},
+                "extra": {"temperature": 0.2}
+            },
+            "dataset": {
+                "type": "file",
+                "format": "single_turn",
+                "records": [{
+                    "text": "Hello!",
+                    "output_length": 2
+                }]
+            },
+            "phases": [{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": 1,
+                "concurrency": 1
+            }],
+            "artifacts": {
+                "raw_path": "anthropic-raw.jsonl",
+                "outputs_path": "anthropic-outputs.json",
+                "trace": true
+            }
+        }
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        output.status.success(),
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let terminal: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(terminal["success"], true);
+
+    let (headers, body) = capture.request.lock().unwrap().take().unwrap();
+    assert_eq!(
+        body.as_ref(),
+        br#"{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hello!"}],"max_tokens":2,"stream":true,"temperature":0.2}"#
+    );
+    assert_eq!(headers["x-api-key"], "sk-ant-e2e-secret");
+    assert_eq!(headers["anthropic-version"], "2023-06-01");
+    assert_eq!(headers["anthropic-beta"], "extended-thinking-test");
+    assert!(headers.get(header::AUTHORIZATION).is_none());
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(artifacts.path().join("native-v2.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        report["metrics"]["total_usage_prompt_tokens"]["series"][0]["stats"]["value"],
+        35.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_completion_tokens"]["series"][0]["stats"]["value"],
+        2.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_prompt_cache_read_tokens"]["series"][0]["stats"]["value"],
+        7.0
+    );
+    assert_eq!(
+        report["metrics"]["total_usage_prompt_cache_write_tokens"]["series"][0]["stats"]["value"],
+        3.0
+    );
+
+    let raw = std::fs::read_to_string(artifacts.path().join("anthropic-raw.jsonl")).unwrap();
+    assert!(!raw.contains("sk-ant-e2e-secret"));
+    let raw: serde_json::Value = serde_json::from_str(raw.trim()).unwrap();
+    assert_eq!(raw["request_headers"]["x-api-key"], "<redacted>");
+    assert_eq!(raw["request_headers"]["anthropic-version"], "2023-06-01");
+    assert_eq!(raw["responses"].as_array().unwrap().len(), 5);
+
+    let outputs: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(artifacts.path().join("anthropic-outputs.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(outputs["data"][0]["response_text"], "whyanswer");
+    assert_eq!(outputs["data"][0]["metrics"]["output_token_count"], 1.0);
+    assert_eq!(outputs["data"][0]["metrics"]["output_sequence_length"], 2.0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

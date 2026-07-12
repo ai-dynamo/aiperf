@@ -154,17 +154,20 @@ const DISJOINT_CACHE_KEYS: &[&str] = &[
 
 fn first_u64(usage: &Map<String, Value>, keys: &[&str]) -> Option<u64> {
     keys.iter()
-        .find_map(|key| usage.get(*key).and_then(Value::as_u64))
+        .find_map(|key| usage.get(*key).map(Value::as_u64))
+        .flatten()
 }
 
 fn first_nested_u64(usage: &Map<String, Value>, detail_keys: &[&str], field: &str) -> Option<u64> {
-    detail_keys.iter().find_map(|key| {
-        usage
-            .get(*key)
-            .and_then(Value::as_object)
-            .and_then(|details| details.get(field))
-            .and_then(Value::as_u64)
-    })
+    detail_keys
+        .iter()
+        .find_map(|key| {
+            usage
+                .get(*key)
+                .and_then(Value::as_object)
+                .and_then(|details| details.get(field).map(Value::as_u64))
+        })
+        .flatten()
 }
 
 #[cfg(test)]

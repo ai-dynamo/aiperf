@@ -513,9 +513,7 @@ pub(crate) enum PartShape {
 pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult<Vec<Value>> {
     let mut messages = Vec::new();
     for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages
-            && !raw_messages.is_empty()
-        {
+        if let Some(raw_messages) = &turn.raw_messages {
             messages.extend(raw_messages.clone());
             continue;
         }
@@ -527,9 +525,7 @@ pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult
 fn build_messages_responses(turns: &[Turn]) -> EndpointResult<Vec<Value>> {
     let mut messages = Vec::new();
     for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages
-            && !raw_messages.is_empty()
-        {
+        if let Some(raw_messages) = &turn.raw_messages {
             for item in raw_messages {
                 if item
                     .as_object()

@@ -237,8 +237,8 @@ fn normalized_eq(actual: &str, expected: &str) -> bool {
 
 fn parse_non_streaming(perf_ns: u64, object: &Map<String, Value>) -> Option<ParsedResponse> {
     let data = extract_content_data(object);
-    let usage = non_empty_field(object, "usage");
-    (data.is_some() || usage.is_some()).then_some(ParsedResponse {
+    let usage = object.get("usage").cloned();
+    (data.is_some() || usage.as_ref().is_some_and(python_truthy)).then_some(ParsedResponse {
         perf_ns,
         data,
         usage,
