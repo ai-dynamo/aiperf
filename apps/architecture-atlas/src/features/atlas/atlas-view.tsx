@@ -248,7 +248,7 @@ function ComponentDrawer({
   );
 
   return (
-    <aside
+    <div
       aria-label={component.title[audience]}
       aria-modal="false"
       className="atlas-drawer"
@@ -348,7 +348,7 @@ function ComponentDrawer({
         )}
       </section>
       <EvidenceCitation evidence={component.evidence} />
-    </aside>
+    </div>
   );
 }
 

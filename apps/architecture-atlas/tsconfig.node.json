@@ -15,6 +15,8 @@
   "include": [
     "vite.config.ts",
     "vitest.config.ts",
+    "playwright.config.ts",
+    "e2e/**/*.ts",
     "scripts/**/*.ts",
     "src/content/**/*.ts",
     "src/domain/architecture.ts",

@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Architecture Atlas
+
+on:
+  pull_request:
+    paths:
+      - "apps/architecture-atlas/**"
+      - ".github/workflows/architecture-atlas.yml"
+      - ".gitignore"
+      - "docs/aiperf-rust-architecture-atlas-design.md"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/architecture-atlas/**"
+      - ".github/workflows/architecture-atlas.yml"
+      - ".gitignore"
+      - "docs/aiperf-rust-architecture-atlas-design.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: architecture-atlas-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify and package static SPA
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/architecture-atlas
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/architecture-atlas/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate architecture content
+        run: npm run validate:content
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit and accessibility tests
+        run: npm test
+
+      - name: Build production SPA
+        run: npm run build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser tests
+        run: npm run e2e
+
+      - name: Upload static SPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiperf-architecture-atlas
+          path: apps/architecture-atlas/dist
+          if-no-files-found: error
+          retention-days: 14

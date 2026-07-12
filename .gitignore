@@ -60,3 +60,9 @@ tests/scripts/.chaos_runs/
 
 # Rust build artifacts
 target/
+
+# Architecture Atlas generated files
+apps/architecture-atlas/node_modules/
+apps/architecture-atlas/dist/
+apps/architecture-atlas/test-results/
+apps/architecture-atlas/playwright-report/
