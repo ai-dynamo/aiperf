@@ -26,6 +26,7 @@ pub mod offline_execution;
 pub mod online_execution;
 pub mod protocol;
 pub mod protocol_v2;
+pub mod readiness;
 mod records;
 pub mod redaction;
 pub mod registry;
