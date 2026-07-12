@@ -371,11 +371,9 @@ class ResolvedConfig(BaseModel):
     )
     dataset_root_count: dict[str, Annotated[int, Field(ge=0)]] | None = Field(
         default=None,
-        description="Root-conversation count per file-based dataset. "
-        "For forking datasets (dag_jsonl): sessions not referenced by any "
-        "other session's forks/spawns/pre_session_spawns lists — these are "
-        "the entries the loader actually samples standalone. "
-        "Other dataset types are not populated.",
+        description="Legacy optional root-conversation metadata. Direct graph "
+        "formats are opaque to Python, so product Config-v2 resolution leaves "
+        "this unset; the Rust graph adapter owns semantic root counts.",
     )
     dataset_is_forking: dict[str, bool] | None = Field(
         default=None,

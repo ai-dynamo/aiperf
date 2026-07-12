@@ -339,36 +339,25 @@ def _maybe_auto_promote_trace(
     prof["type"] = PhaseType.FIXED_SCHEDULE
 
 
-def _maybe_set_dag_root_sessions(
-    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
-) -> None:
-    """For dag_jsonl with no stop condition, set ``sessions`` from root count."""
-    from aiperf.plugin.enums import CustomDatasetType
-
-    dataset_type = cli.custom_dataset_type
-    is_dag = dataset_type is not None and str(dataset_type) == str(
-        CustomDatasetType.DAG_JSONL
-    )
-    if not is_dag or file_path is None:
-        return
-    if any(k in prof for k in ("requests", "duration", "sessions")):
-        return
-
-    from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
-
-    try:
-        all_ids, referenced = _collect_dag_session_and_fork_ids(str(file_path))
-    except (OSError, FileNotFoundError):
-        return
-    roots = len(all_ids - referenced)
-    if roots > 0:
-        prof["sessions"] = roots
+def _uses_runner_owned_graph_input(cli: CLIConfig) -> bool:
+    """Return whether Rust directly parses the complete authored graph input."""
+    return str(cli.custom_dataset_type) in {
+        "dag_jsonl",
+        "dynamo_trace",
+        "weka_trace",
+    }
 
 
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
-    """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
+    """Apply dataset-sensitive defaults only to Python-owned linear inputs."""
 
     from aiperf.config.phases import PhaseType
+
+    if _uses_runner_owned_graph_input(cli):
+        # Direct graph adapters receive the authored file unchanged. Python
+        # must not probe timing, count rows/roots, or derive a stop condition
+        # from formats whose complete semantics are owned by Rust.
+        return
 
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
 
@@ -383,8 +372,6 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
         records = _count_dataset_records(file_path)
         if records > 0:
             prof["requests"] = records
-
-    _maybe_set_dag_root_sessions(prof, cli, file_path)
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:
