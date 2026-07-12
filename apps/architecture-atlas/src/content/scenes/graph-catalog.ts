@@ -535,6 +535,7 @@ const graphNodesRaw = [
     ],
     seamPorts: [
       { id: "port.metrics.in", name: "observer-events", channel: "telemetry" },
+      { id: "port.metrics.token", name: "output-token", channel: "token" },
       {
         id: "port.metrics.out",
         name: "native-report",
@@ -685,6 +686,7 @@ const graphNodesRaw = [
     ],
     seamPorts: [
       { id: "port.sink.out", name: "observer", channel: "telemetry" },
+      { id: "port.sink.token", name: "output-token", channel: "token" },
     ],
     audience: fullAudience,
     footnotes: [],
@@ -1007,6 +1009,30 @@ const graphEdgesRaw = [
     footnotes: [],
   },
   {
+    id: "edge.request-sink.token.metrics",
+    source: {
+      nodeId: "node.request-sink-seam",
+      portId: "port.sink.token",
+    },
+    target: {
+      nodeId: "node.metrics-telemetry",
+      portId: "port.metrics.token",
+    },
+    channel: "token",
+    status: { state: "built", delivery: "unconditional" },
+    flavors: [...builtJourneyFlavors],
+    protocol: "RequestObserver::on_token",
+    evidence: [
+      source(
+        "crates/loadgen-core/src/sink.rs",
+        81,
+        104,
+        "RequestObserver::on_token",
+      ),
+    ],
+    footnotes: [],
+  },
+  {
     id: "edge.dataset.to.endpoint",
     source: {
       nodeId: "node.dataset-segment-pipeline",
@@ -1196,6 +1222,7 @@ const graphScenesRaw = [
     ],
     edgeIds: [
       "edge.runtime.dispatch.metrics",
+      "edge.request-sink.token.metrics",
       "edge.dynamo.online.replay-mode",
       "edge.dynamo.offline.runner.sim-clock",
       "edge.dynamo.offline.sim-clock.replay",

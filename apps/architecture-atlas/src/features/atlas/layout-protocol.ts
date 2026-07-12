@@ -7,8 +7,10 @@ import type {
   LifecycleBand,
   Ownership,
 } from "../../domain/architecture";
+import { z } from "zod";
 
 export type LayoutPerspective = "ownership" | "lifecycle";
+export const LAYOUT_PROTOCOL_VERSION = 1 as const;
 
 export interface LayoutHierarchyParent {
   id: string;
@@ -44,6 +46,7 @@ export interface LayoutRequest {
   nodes: Array<{ bandId: string; id: string; parentId?: string }>;
   partialRelayout?: LayoutPartialRelayout;
   perspective: LayoutPerspective;
+  version: typeof LAYOUT_PROTOCOL_VERSION;
 }
 
 export interface LayoutBandDefinition {
@@ -83,6 +86,198 @@ export interface LayoutResult {
   positions: LayoutPosition[];
   reason?: string;
 }
+
+const IdentifierSchema = z.string().min(1);
+const FiniteNumberSchema = z.number().finite();
+
+export const LayoutHierarchyParentSchema = z
+  .object({
+    id: IdentifierSchema,
+    parentId: IdentifierSchema,
+  })
+  .strict();
+
+export const LayoutHierarchySchema = z.array(LayoutHierarchyParentSchema);
+
+export const LayoutExpandedSubgraphSchema = z
+  .object({
+    nodeIds: z.array(IdentifierSchema).min(1),
+    rootId: IdentifierSchema,
+  })
+  .strict()
+  .refine(({ nodeIds, rootId }) => nodeIds.includes(rootId), {
+    message: "expanded subgraph rootId must be included in nodeIds",
+    path: ["rootId"],
+  });
+
+export const LayoutPartialRelayoutSchema = z
+  .object({
+    expandedSubgraphs: z.array(LayoutExpandedSubgraphSchema),
+    manualPositions: z.array(
+      z
+        .object({
+          id: IdentifierSchema,
+          x: FiniteNumberSchema,
+          y: FiniteNumberSchema,
+        })
+        .strict(),
+    ),
+    relayoutNodeIds: z.array(IdentifierSchema),
+  })
+  .strict();
+
+const LayoutBandDefinitionSchema = z
+  .object({
+    id: IdentifierSchema,
+    label: z.string(),
+    order: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const LayoutNodeSchema = z
+  .object({
+    bandId: IdentifierSchema,
+    id: IdentifierSchema,
+    parentId: IdentifierSchema.optional(),
+  })
+  .strict();
+
+const LayoutEdgeSchema = z
+  .object({
+    from: IdentifierSchema,
+    id: IdentifierSchema,
+    to: IdentifierSchema,
+  })
+  .strict();
+
+export const LayoutRequestSchema = z
+  .object({
+    bands: z.array(LayoutBandDefinitionSchema),
+    edges: z.array(LayoutEdgeSchema),
+    key: z.string(),
+    nodes: z.array(LayoutNodeSchema),
+    partialRelayout: LayoutPartialRelayoutSchema.optional(),
+    perspective: z.enum(["ownership", "lifecycle"]),
+    version: z.literal(LAYOUT_PROTOCOL_VERSION),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    const nodes = new Map(request.nodes.map((node) => [node.id, node]));
+    for (const [index, node] of request.nodes.entries()) {
+      if (!node.parentId) {
+        continue;
+      }
+      const parent = nodes.get(node.parentId);
+      if (!parent || parent.id === node.id || parent.bandId !== node.bandId) {
+        context.addIssue({
+          code: "custom",
+          message: "hierarchy parent must be a different node in the same band",
+          path: ["nodes", index, "parentId"],
+        });
+        continue;
+      }
+      const visited = new Set([node.id]);
+      let ancestor = parent;
+      while (ancestor.parentId) {
+        if (visited.has(ancestor.id)) {
+          context.addIssue({
+            code: "custom",
+            message: "hierarchy must not contain cycles",
+            path: ["nodes", index, "parentId"],
+          });
+          break;
+        }
+        visited.add(ancestor.id);
+        const next = nodes.get(ancestor.parentId);
+        if (!next) {
+          break;
+        }
+        ancestor = next;
+      }
+    }
+    const partial = request.partialRelayout;
+    if (!partial) {
+      return;
+    }
+    const nodeIds = new Set(nodes.keys());
+    const references = [
+      ...partial.relayoutNodeIds,
+      ...partial.manualPositions.map(({ id }) => id),
+      ...partial.expandedSubgraphs.flatMap(({ nodeIds: members, rootId }) => [
+        rootId,
+        ...members,
+      ]),
+    ];
+    if (references.some((id) => !nodeIds.has(id))) {
+      context.addIssue({
+        code: "custom",
+        message: "partial relayout references an unknown node",
+        path: ["partialRelayout"],
+      });
+    }
+  });
+
+const LayoutBandSchema = LayoutBandDefinitionSchema.extend({
+  height: FiniteNumberSchema.nonnegative(),
+  width: FiniteNumberSchema.nonnegative(),
+  x: FiniteNumberSchema,
+  y: FiniteNumberSchema,
+}).strict();
+
+const LayoutPositionSchema = z
+  .object({
+    bandId: IdentifierSchema,
+    id: IdentifierSchema,
+    x: FiniteNumberSchema,
+    y: FiniteNumberSchema,
+  })
+  .strict();
+
+export const LayoutResultSchema = z
+  .object({
+    bands: z.array(LayoutBandSchema),
+    degraded: z.boolean(),
+    partialRelayout: z
+      .object({
+        preservedManualNodeIds: z.array(IdentifierSchema),
+        relaidOutNodeIds: z.array(IdentifierSchema),
+      })
+      .strict()
+      .optional(),
+    positions: z.array(LayoutPositionSchema),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+const WorkerEnvelopeBase = {
+  requestId: z.number().int().nonnegative(),
+  version: z.literal(LAYOUT_PROTOCOL_VERSION),
+};
+
+export const LayoutWorkerRequestSchema = z
+  .object({
+    ...WorkerEnvelopeBase,
+    request: LayoutRequestSchema,
+  })
+  .strict();
+
+export const LayoutWorkerResponseSchema = z.union([
+  z
+    .object({
+      ...WorkerEnvelopeBase,
+      result: LayoutResultSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...WorkerEnvelopeBase,
+      error: z.string().min(1),
+    })
+    .strict(),
+]);
+
+export type LayoutWorkerRequest = z.infer<typeof LayoutWorkerRequestSchema>;
+export type LayoutWorkerResponse = z.infer<typeof LayoutWorkerResponseSchema>;
 
 const ownershipOrder: Ownership[] = ["python", "rust", "external", "legacy"];
 const ownershipLabels: Record<Ownership, string> = {
@@ -159,6 +354,7 @@ export function buildLayoutRequest(
     bands,
     edges: visibleEdges,
     key: [
+      `v${LAYOUT_PROTOCOL_VERSION}`,
       perspective,
       nodes.map(({ bandId, id }) => `${id}@${bandId}`).join(","),
       hierarchyKey,
@@ -168,6 +364,7 @@ export function buildLayoutRequest(
     nodes,
     partialRelayout,
     perspective,
+    version: LAYOUT_PROTOCOL_VERSION,
   };
 }
 

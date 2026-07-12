@@ -8,6 +8,11 @@ import {
   AtlasLayoutService,
   FitAfterLayoutScheduler,
   LayoutWorkerAdapter,
+  LAYOUT_PROTOCOL_VERSION,
+  LayoutHierarchySchema,
+  LayoutRequestSchema,
+  LayoutWorkerRequestSchema,
+  LayoutWorkerResponseSchema,
   buildLayoutRequest,
   composeBandLayouts,
   deterministicFallbackLayout,
@@ -51,6 +56,137 @@ function selectComponents(ids: readonly string[]) {
 }
 
 describe("semantic atlas layout", () => {
+  it("parses a valid versioned layout request", () => {
+    const request = buildLayoutRequest(
+      selectComponents(["component.clock-seam", "component.scheduling"]),
+      [],
+      "ownership",
+      {
+        hierarchy: [
+          {
+            id: "component.scheduling",
+            parentId: "component.clock-seam",
+          },
+        ],
+        partialRelayout: {
+          expandedSubgraphs: [
+            {
+              nodeIds: ["component.clock-seam", "component.scheduling"],
+              rootId: "component.clock-seam",
+            },
+          ],
+          manualPositions: [
+            { id: "component.clock-seam", x: 120, y: 240 },
+          ],
+          relayoutNodeIds: ["component.scheduling"],
+        },
+      },
+    );
+
+    expect(request.version).toBe(LAYOUT_PROTOCOL_VERSION);
+    expect(LayoutRequestSchema.parse(request)).toEqual(request);
+  });
+
+  it("rejects unknown layout protocol fields", () => {
+    const request = buildLayoutRequest([], [], "ownership");
+
+    expect(() =>
+      LayoutHierarchySchema.parse([
+        { id: "child", parentId: "parent", unexpected: true },
+      ]),
+    ).toThrow();
+    expect(() =>
+      LayoutRequestSchema.parse({ ...request, unexpected: true }),
+    ).toThrow();
+    expect(() =>
+      LayoutRequestSchema.parse({
+        ...request,
+        bands: [{ id: "ownership.rust", label: "Rust", order: 0, extra: true }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a stale layout protocol version", () => {
+    const request = buildLayoutRequest([], [], "ownership");
+
+    expect(() =>
+      LayoutRequestSchema.parse({ ...request, version: 0 }),
+    ).toThrow();
+    expect(() =>
+      LayoutWorkerRequestSchema.parse({
+        request,
+        requestId: 1,
+        version: 0,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects malformed hierarchy and partial relayout state", () => {
+    const request = buildLayoutRequest(
+      selectComponents(["component.clock-seam", "component.scheduling"]),
+      [],
+      "ownership",
+    );
+
+    expect(() =>
+      LayoutRequestSchema.parse({
+        ...request,
+        nodes: request.nodes.map((node) =>
+          node.id === "component.scheduling"
+            ? { ...node, parentId: "component.missing" }
+            : node,
+        ),
+      }),
+    ).toThrow();
+    expect(() =>
+      LayoutRequestSchema.parse({
+        ...request,
+        partialRelayout: {
+          expandedSubgraphs: [
+            {
+              nodeIds: ["component.scheduling"],
+              rootId: "component.clock-seam",
+            },
+          ],
+          manualPositions: [],
+          relayoutNodeIds: ["component.scheduling"],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("strictly parses worker request and response envelopes", () => {
+    const request = buildLayoutRequest([], [], "ownership");
+    const requestEnvelope = {
+      request,
+      requestId: 7,
+      version: LAYOUT_PROTOCOL_VERSION,
+    };
+    const responseEnvelope = {
+      requestId: 7,
+      result: deterministicFallbackLayout(request, "test"),
+      version: LAYOUT_PROTOCOL_VERSION,
+    };
+
+    expect(LayoutWorkerRequestSchema.parse(requestEnvelope)).toEqual(
+      requestEnvelope,
+    );
+    expect(LayoutWorkerResponseSchema.parse(responseEnvelope)).toEqual(
+      responseEnvelope,
+    );
+    expect(() =>
+      LayoutWorkerRequestSchema.parse({ ...requestEnvelope, extra: true }),
+    ).toThrow();
+    expect(() =>
+      LayoutWorkerResponseSchema.parse({
+        error: "bad",
+        requestId: 7,
+        result: responseEnvelope.result,
+        version: LAYOUT_PROTOCOL_VERSION,
+      }),
+    ).toThrow();
+  });
+
   it("assigns explicit ownership bands", () => {
     const request = buildLayoutRequest(
       architectureCatalog.components,
@@ -243,7 +379,11 @@ describe("layout worker adapter", () => {
         queueMicrotask(() =>
           receive?.(
             new MessageEvent("message", {
-              data: { requestId: message.requestId, result },
+              data: {
+                requestId: message.requestId,
+                result,
+                version: LAYOUT_PROTOCOL_VERSION,
+              },
             }),
           ),
         );
@@ -295,6 +435,7 @@ describe("layout worker adapter", () => {
         data: {
           requestId: replacementWorker.posted[0]?.requestId,
           result: deterministicFallbackLayout(request, "recovered"),
+          version: LAYOUT_PROTOCOL_VERSION,
         },
       }),
     );
@@ -327,6 +468,7 @@ describe("layout worker adapter", () => {
         data: {
           requestId: replacementWorker.posted[0]?.requestId,
           result: { bands: [], degraded: false, positions: [] },
+          version: LAYOUT_PROTOCOL_VERSION,
         },
       }),
     );

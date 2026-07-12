@@ -9,6 +9,7 @@ import {
   clampTimelinePosition,
   pauseTimeline,
   playTimeline,
+  resolveTimelineRenderingState,
   resolveTimelineSemanticState,
   scrubTimeline,
   type FlowTimelineEvent,
@@ -29,7 +30,7 @@ const ALL_FLAVORS: readonly ExecutionFlavor[] = [
   "dynamo_online",
 ];
 
-const ALL_CHANNELS: readonly FlowChannel[] = [
+const CATALOG_TIMELINE_CHANNELS: readonly FlowChannel[] = [
   "control",
   "request_data",
   "token",
@@ -58,7 +59,7 @@ describe("flow timeline", () => {
       expect(first.some((event) => event.flavor === flavor)).toBe(true);
       expect(first.some((event) => event.flavor === "shared")).toBe(true);
 
-      for (const channel of ALL_CHANNELS) {
+      for (const channel of CATALOG_TIMELINE_CHANNELS) {
         expect(channels.has(channel)).toBe(true);
       }
     }
@@ -80,9 +81,15 @@ describe("flow timeline", () => {
         const scene = scenes.get(event.sceneId);
         expect(scene, `${event.id} scene`).toBeDefined();
         if (event.reference.kind === "node") {
-          const node = nodes.get(event.reference.nodeId);
+          const reference = event.reference;
+          const node = nodes.get(reference.nodeId);
+          const port = node?.seamPorts.find(
+            ({ id }) => id === reference.portId,
+          );
           expect(node, `${event.id} node`).toBeDefined();
-          expect(scene?.nodeIds).toContain(event.reference.nodeId);
+          expect(scene?.nodeIds).toContain(reference.nodeId);
+          expect(port, `${event.id} port`).toBeDefined();
+          expect(event.channel).toBe(port?.channel);
           expect(event.label).toBe(node?.title.developer);
         } else {
           const edge = edges.get(event.reference.edgeId);
@@ -98,13 +105,62 @@ describe("flow timeline", () => {
   it("fails closed when a timeline reference is absent", () => {
     const catalog: ArchitectureCatalog = {
       ...architectureCatalog,
-      graphNodes: architectureCatalog.graphNodes.filter(
-        ({ id }) => id !== "node.request-sink-seam",
+      graphEdges: architectureCatalog.graphEdges.filter(
+        ({ id }) => id !== "edge.request-sink.token.metrics",
       ),
     };
 
     expect(() => buildFlowTimeline(catalog, "native_http")).toThrow(
-      /node\.request-sink-seam/,
+      /edge\.request-sink\.token\.metrics/,
+    );
+  });
+
+  it("fails closed when a referenced node port is missing", () => {
+    const catalog: ArchitectureCatalog = {
+      ...architectureCatalog,
+      graphNodes: architectureCatalog.graphNodes.map((node) =>
+        node.id === "node.runner-protocol-registries"
+          ? {
+              ...node,
+              seamPorts: node.seamPorts.filter(
+                ({ id }) => id !== "port.runner.in",
+              ),
+            }
+          : node,
+      ),
+    };
+
+    expect(() => buildFlowTimeline(catalog, "native_http")).toThrow(
+      /missing port port\.runner\.in/i,
+    );
+  });
+
+  it("fails closed when a node port belongs to another node", () => {
+    const runnerPort = architectureCatalog.graphNodes
+      .find(({ id }) => id === "node.runner-protocol-registries")
+      ?.seamPorts.find(({ id }) => id === "port.runner.in");
+    expect(runnerPort).toBeDefined();
+
+    const catalog: ArchitectureCatalog = {
+      ...architectureCatalog,
+      graphNodes: architectureCatalog.graphNodes.map((node) => {
+        if (node.id === "node.runner-protocol-registries") {
+          return {
+            ...node,
+            seamPorts: node.seamPorts.filter(
+              ({ id }) => id !== "port.runner.in",
+            ),
+          };
+        }
+        if (node.id === "node.scheduling-phase-lifecycle") {
+          return { ...node, seamPorts: [...node.seamPorts, runnerPort!] };
+        }
+        return node;
+      }),
+    };
+
+    expect(() => buildFlowTimeline(catalog, "native_http")).toThrow(
+      /port port\.runner\.in belongs to node node\.scheduling-phase-lifecycle/i,
     );
   });
 
@@ -131,6 +187,19 @@ describe("flow timeline", () => {
     expect(branchReferences.dynamo_online).toContain(
       "edge.dynamo.online.replay-mode",
     );
+  });
+
+  it("references the canonical RequestObserver token edge", () => {
+    const timeline = buildFlowTimeline(architectureCatalog, "native_http");
+    const tokenEvent = timeline.find(({ channel }) => channel === "token");
+
+    expect(tokenEvent).toMatchObject({
+      sceneId: "scene.runtime-composition",
+      reference: {
+        kind: "edge",
+        edgeId: "edge.request-sink.token.metrics",
+      },
+    });
   });
 
   it("clamps and applies pure playback helpers", () => {
@@ -168,6 +237,30 @@ describe("flow timeline", () => {
       expect(reducedMotionConsumer.completedEvents).toEqual(
         animatedConsumer.completedEvents,
       );
+    },
+  );
+
+  it.each([0.07, 0.23, 0.41, 0.58, 0.76, 0.94])(
+    "adapts one semantic state for motion preference at position %s",
+    (position) => {
+      const timeline = buildFlowTimeline(architectureCatalog, "native_http");
+      const semanticState = resolveTimelineSemanticState(timeline, position);
+      const animated = resolveTimelineRenderingState(semanticState, false);
+      const reduced = resolveTimelineRenderingState(semanticState, true);
+
+      expect(animated.eventIndex).toBe(reduced.eventIndex);
+      expect(animated.activeEvent.id).toBe(reduced.activeEvent.id);
+      expect(animated.completedEvents.map(({ id }) => id)).toEqual(
+        reduced.completedEvents.map(({ id }) => id),
+      );
+      expect(animated.presentation).toEqual({
+        motion: "animated",
+        animateTransitions: true,
+      });
+      expect(reduced.presentation).toEqual({
+        motion: "reduced",
+        animateTransitions: false,
+      });
     },
   );
 });

@@ -20,7 +20,7 @@ export interface FlowTimelineEvent {
 }
 
 export type FlowTimelineReference =
-  | { kind: "node"; nodeId: string }
+  | { kind: "node"; nodeId: string; portId: string }
   | { kind: "edge"; edgeId: string };
 
 export interface TimelinePlaybackState {
@@ -35,10 +35,16 @@ export interface TimelineSemanticState {
   completedEvents: FlowTimelineEvent[];
 }
 
+export interface TimelineRenderingState extends TimelineSemanticState {
+  presentation: {
+    motion: "animated" | "reduced";
+    animateTransitions: boolean;
+  };
+}
+
 type TimelineEventDefinition =
   | {
       sceneId: string;
-      channel: FlowChannel;
       reference: Extract<FlowTimelineReference, { kind: "node" }>;
     }
   | {
@@ -49,26 +55,26 @@ type TimelineEventDefinition =
 const SHARED_TIMELINE_PREFIX: readonly TimelineEventDefinition[] = [
   {
     sceneId: "scene.runner-protocol-registries",
-    channel: "control",
     reference: {
       kind: "node",
       nodeId: "node.runner-protocol-registries",
+      portId: "port.runner.in",
     },
   },
   {
     sceneId: "scene.scheduling-phase-lifecycle",
-    channel: "control",
     reference: {
       kind: "node",
       nodeId: "node.scheduling-phase-lifecycle",
+      portId: "port.schedule.in",
     },
   },
   {
     sceneId: "scene.dataset-segment-pipeline",
-    channel: "request_data",
     reference: {
       kind: "node",
       nodeId: "node.dataset-segment-pipeline",
+      portId: "port.dataset.out",
     },
   },
 ];
@@ -76,10 +82,9 @@ const SHARED_TIMELINE_PREFIX: readonly TimelineEventDefinition[] = [
 const SHARED_TIMELINE_SUFFIX: readonly TimelineEventDefinition[] = [
   {
     sceneId: "scene.runtime-composition",
-    channel: "token",
     reference: {
-      kind: "node",
-      nodeId: "node.request-sink-seam",
+      kind: "edge",
+      edgeId: "edge.request-sink.token.metrics",
     },
   },
   {
@@ -173,12 +178,10 @@ function resolveTimelineEvent(
       ({ id }) => id === reference.nodeId,
     );
     assertNodeInScene(scene.nodeIds, reference.nodeId, node);
-    if (!("channel" in definition)) {
-      throw new Error(`timeline node ${reference.nodeId} requires a channel`);
-    }
-    channel = definition.channel;
+    const port = resolveNodePort(catalog, node, reference.portId);
+    channel = port.channel;
     label = node.title.developer;
-    referenceId = node.id;
+    referenceId = `${node.id}.${port.id}`;
   } else {
     const edge = catalog.graphEdges.find(
       ({ id }) => id === reference.edgeId,
@@ -197,6 +200,26 @@ function resolveTimelineEvent(
     reference: definition.reference,
     label,
   };
+}
+
+function resolveNodePort(
+  catalog: ArchitectureCatalog,
+  node: GraphNode,
+  portId: string,
+): GraphNode["seamPorts"][number] {
+  const port = node.seamPorts.find(({ id }) => id === portId);
+  if (port) {
+    return port;
+  }
+  const owningNode = catalog.graphNodes.find((candidate) =>
+    candidate.seamPorts.some(({ id }) => id === portId),
+  );
+  if (owningNode) {
+    throw new Error(
+      `timeline port ${portId} belongs to node ${owningNode.id}, not ${node.id}`,
+    );
+  }
+  throw new Error(`timeline references missing port ${portId} on node ${node.id}`);
 }
 
 function assertNodeInScene(
@@ -296,5 +319,17 @@ export function resolveTimelineSemanticState(
     eventIndex,
     activeEvent: timeline[eventIndex],
     completedEvents: timeline.slice(0, eventIndex + 1),
+  };
+}
+
+export function resolveTimelineRenderingState(
+  semanticState: TimelineSemanticState,
+  reducedMotion: boolean,
+): TimelineRenderingState {
+  return {
+    ...semanticState,
+    presentation: reducedMotion
+      ? { motion: "reduced", animateTransitions: false }
+      : { motion: "animated", animateTransitions: true },
   };
 }

@@ -460,6 +460,41 @@ describe("graph-first catalog", () => {
     ).toHaveLength(3);
   });
 
+  it("models RequestObserver on_token as a source-grounded token edge", () => {
+    const edge = architectureCatalog.graphEdges.find(
+      ({ id }) => id === "edge.request-sink.token.metrics",
+    );
+    const scene = architectureCatalog.graphScenes.find(
+      ({ id }) => id === "scene.runtime-composition",
+    );
+
+    expect(edge).toMatchObject({
+      source: {
+        nodeId: "node.request-sink-seam",
+        portId: "port.sink.token",
+      },
+      target: {
+        nodeId: "node.metrics-telemetry",
+        portId: "port.metrics.token",
+      },
+      channel: "token",
+      protocol: "RequestObserver::on_token",
+    });
+    expect(edge?.evidence).toContainEqual({
+      path: "crates/loadgen-core/src/sink.rs",
+      lines: { start: 81, end: 104 },
+      role: "source",
+      symbol: "RequestObserver::on_token",
+    });
+    expect(scene?.nodeIds).toEqual(
+      expect.arrayContaining([
+        "node.request-sink-seam",
+        "node.metrics-telemetry",
+      ]),
+    );
+    expect(scene?.edgeIds).toContain("edge.request-sink.token.metrics");
+  });
+
   it("requires reciprocal parent and child declarations", async () => {
     const catalog = minimalGraphCatalog();
     catalog.graphNodes[0].childIds = [];

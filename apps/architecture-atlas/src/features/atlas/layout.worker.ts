@@ -6,6 +6,8 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 
 import {
+  LAYOUT_PROTOCOL_VERSION,
+  LayoutWorkerRequestSchema,
   composeBandLayouts,
   type LayoutRequest,
   type RelativeBandLayout,
@@ -108,22 +110,32 @@ async function layoutBand(
 
 self.addEventListener(
   "message",
-  async (
-    event: MessageEvent<{ request: LayoutRequest; requestId: number }>,
-  ) => {
-    const { request, requestId } = event.data;
+  async (event: MessageEvent<unknown>) => {
+    const candidate =
+      typeof event.data === "object" && event.data !== null
+        ? (event.data as { requestId?: unknown })
+        : undefined;
+    const fallbackRequestId =
+      typeof candidate?.requestId === "number" &&
+      Number.isInteger(candidate.requestId) &&
+      candidate.requestId >= 0
+        ? candidate.requestId
+        : 0;
     try {
+      const { request, requestId } = LayoutWorkerRequestSchema.parse(event.data);
       const layouts = await Promise.all(
         request.bands.map(({ id }) => layoutBand(request, id)),
       );
       self.postMessage({
         requestId,
         result: composeBandLayouts(request, layouts),
+        version: LAYOUT_PROTOCOL_VERSION,
       });
     } catch (error) {
       self.postMessage({
         error: error instanceof Error ? error.message : String(error),
-        requestId,
+        requestId: fallbackRequestId,
+        version: LAYOUT_PROTOCOL_VERSION,
       });
     }
   },

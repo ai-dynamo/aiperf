@@ -2,27 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  LAYOUT_PROTOCOL_VERSION,
+  LayoutWorkerResponseSchema,
   buildLayoutRequest,
   deterministicFallbackLayout,
   type LayoutRequest,
   type LayoutResult,
+  type LayoutWorkerRequest,
 } from "./layout-protocol";
 
 export * from "./layout-protocol";
 
 interface LayoutExecutor {
   layout(request: LayoutRequest): Promise<LayoutResult>;
-}
-
-interface WorkerRequest {
-  request: LayoutRequest;
-  requestId: number;
-}
-
-interface WorkerResponse {
-  error?: string;
-  requestId: number;
-  result?: LayoutResult;
 }
 
 export interface LayoutWorkerPort {
@@ -38,7 +30,7 @@ export interface LayoutWorkerPort {
     type: "messageerror",
     listener: (event: MessageEvent<unknown>) => void,
   ): void;
-  postMessage(message: WorkerRequest): void;
+  postMessage(message: LayoutWorkerRequest): void;
   removeEventListener(
     type: "message",
     listener: (event: MessageEvent<unknown>) => void,
@@ -67,14 +59,19 @@ export class LayoutWorkerAdapter implements LayoutExecutor {
   private disposed = false;
 
   private readonly receive = (event: MessageEvent<unknown>) => {
-    const response = event.data as WorkerResponse;
+    const parsed = LayoutWorkerResponseSchema.safeParse(event.data);
+    if (!parsed.success) {
+      this.poison("layout worker response validation failure");
+      return;
+    }
+    const response = parsed.data;
     const pending = this.pending.get(response.requestId);
     if (!pending) {
       return;
     }
     this.pending.delete(response.requestId);
-    if (response.error || !response.result) {
-      pending.reject(new Error(response.error ?? "layout worker returned no result"));
+    if ("error" in response) {
+      pending.reject(new Error(response.error));
     } else {
       pending.resolve(response.result);
     }
@@ -140,7 +137,11 @@ export class LayoutWorkerAdapter implements LayoutExecutor {
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { reject, resolve });
       try {
-        this.activeWorker().postMessage({ request, requestId });
+        this.activeWorker().postMessage({
+          request,
+          requestId,
+          version: LAYOUT_PROTOCOL_VERSION,
+        });
       } catch (error) {
         this.pending.delete(requestId);
         reject(error);
