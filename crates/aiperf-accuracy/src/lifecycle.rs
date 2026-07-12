@@ -793,6 +793,8 @@ mod tests {
             scheduling_mode: mode,
             finite_unit_count: (mode == EvaluationSchedulingMode::Finite).then_some(1),
             finite_case_count: (mode == EvaluationSchedulingMode::Finite).then_some(1),
+            max_total_host_operations: 2,
+            max_total_stream_events: 4,
             queue_credits: EvaluationQueueCredits {
                 units: 2,
                 host_operations: 2,

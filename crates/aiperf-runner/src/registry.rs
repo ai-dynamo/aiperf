@@ -757,6 +757,33 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     crate::online_execution::register_online_http_pairs(builder)?;
     crate::online_execution::register_online_http_scheduled_pair(builder)?;
     crate::online_execution::register_online_http_static_accuracy_pair(builder)?;
+    let evaluation = crate::stock_evaluation::stock_evaluation_composition()?;
+    let executable_evaluation_pair = evaluation.providers.descriptors().any(|descriptor| {
+        !evaluation
+            .providers
+            .available_distributions(&descriptor.provider_id)
+            .is_empty()
+    });
+    let host_operations = crate::evaluation_execution::stock_evaluation_host_operation_descriptors(
+        &evaluation.operation_ids,
+    )?;
+    builder.set_evaluation_capabilities(
+        crate::evaluation_execution::build_evaluation_capability_inventory(
+            evaluation.providers.as_ref(),
+            host_operations.iter(),
+            std::iter::empty(),
+            crate::stock_evaluation::STOCK_ISOLATION_PROFILE,
+            executable_evaluation_pair,
+        )?,
+    )?;
+    if executable_evaluation_pair {
+        crate::evaluation_execution::register_online_http_evaluation_pair(
+            builder,
+            evaluation.providers,
+            Arc::new(crate::evaluation_execution::StockEvaluationAssetCatalog),
+            evaluation.compatibility,
+        )?;
+    }
     crate::grpc_execution::register_online_grpc_pairs(builder)?;
     #[cfg(feature = "dynamo-offline")]
     crate::offline_execution::register_dynamo_offline_backend(builder)?;
@@ -1889,6 +1916,10 @@ mod tests {
     #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
+        let evaluation_available = !registry
+            .evaluation_capabilities()
+            .supported_combinations
+            .is_empty();
         #[cfg(feature = "dynamo-offline")]
         let expected_backends = vec!["dynamo_offline", "online_grpc", "online_http"];
         #[cfg(not(feature = "dynamo-offline"))]
@@ -1901,16 +1932,20 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_backends
         );
+        let mut expected_workloads = vec!["agentic", "graph", "scheduled", "static_accuracy"];
+        if evaluation_available {
+            expected_workloads.insert(1, "evaluation");
+        }
         assert_eq!(
             registry
                 .workload_descriptors()
                 .into_iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            vec!["agentic", "graph", "scheduled", "static_accuracy"]
+            expected_workloads
         );
         #[cfg(feature = "dynamo-offline")]
-        let expected_supported = vec![
+        let mut expected_supported = vec![
             ("dynamo_offline", "graph"),
             ("dynamo_offline", "scheduled"),
             ("online_grpc", "scheduled"),
@@ -1920,15 +1955,22 @@ mod tests {
             ("online_http", "static_accuracy"),
         ];
         #[cfg(not(feature = "dynamo-offline"))]
-        let expected_supported = vec![
+        let mut expected_supported = vec![
             ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),
             ("online_http", "static_accuracy"),
         ];
+        if evaluation_available {
+            let index = expected_supported
+                .iter()
+                .position(|pair| *pair == ("online_http", "graph"))
+                .unwrap();
+            expected_supported.insert(index, ("online_http", "evaluation"));
+        }
         #[cfg(feature = "dynamo-offline")]
-        let expected_static = vec![
+        let mut expected_static = vec![
             ("dynamo_offline", "graph"),
             ("dynamo_offline", "scheduled"),
             ("online_grpc", "graph"),
@@ -1939,7 +1981,7 @@ mod tests {
             ("online_http", "static_accuracy"),
         ];
         #[cfg(not(feature = "dynamo-offline"))]
-        let expected_static = vec![
+        let mut expected_static = vec![
             ("online_grpc", "graph"),
             ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
@@ -1947,6 +1989,13 @@ mod tests {
             ("online_http", "scheduled"),
             ("online_http", "static_accuracy"),
         ];
+        if evaluation_available {
+            let index = expected_static
+                .iter()
+                .position(|pair| *pair == ("online_http", "graph"))
+                .unwrap();
+            expected_static.insert(index, ("online_http", "evaluation"));
+        }
         assert_eq!(registry.supported_pairs(), expected_supported);
         assert_eq!(registry.statically_compatible_pairs(), expected_static);
     }

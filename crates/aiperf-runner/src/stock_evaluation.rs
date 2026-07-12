@@ -32,6 +32,8 @@ use uuid::Uuid;
 
 const STOCK_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../../src/aiperf/accuracy/evaluation/manifests/stock_distributions.json");
+const STOCK_MANIFEST_SHA256: &str =
+    "34c6ea5b253e6641a0ffaeda40f5f1567eb615f45d24f828fada560df7d1fe07";
 const STOCK_MANIFEST_SCHEMA: &str = "aiperf-stock-evaluator-distributions-v1";
 /// Exact isolation profile advertised for every executable stock evaluator.
 pub(crate) const STOCK_ISOLATION_PROFILE: &str = "linux-bubblewrap-rootfs-process-tree-v3";
@@ -48,7 +50,6 @@ const SOURCE_OVERLAY_POLICY: &str = "aiperf-unified-diff-overlay-v1";
 const SOURCE_TREE_DIGEST_POLICY: &str = "aiperf-semantic-source-tree-sha256-v1";
 const SOURCE_OVERLAY_MANIFEST_POLICY: &str = "pinned_source_overlay_v1";
 const SOURCE_ATTESTATION_FORMAT: &str = "aiperf-pinned-source-overlay-v1";
-const STOCK_SCALAR_SCORE_PROJECTION: &str = "gsm8k_scalar_score_v1";
 const ROOTFS_MOUNTPOINTS: &[&str] = &["work", "staging", "proc", "dev", "run/aiperf"];
 const STAGING_ENVIRONMENT_DIRECTORIES: &[&str] = &[
     "HOME",
@@ -184,6 +185,10 @@ struct StockDistributionManifest {
 
 impl StockDistributionManifest {
     fn embedded() -> Result<Self> {
+        ensure!(
+            accuracy::artifact_content_sha256(STOCK_MANIFEST_BYTES) == STOCK_MANIFEST_SHA256,
+            "embedded stock evaluator distribution manifest digest drifted"
+        );
         let manifest: Self = serde_json::from_slice(STOCK_MANIFEST_BYTES)
             .context("decoding embedded stock evaluator distribution manifest")?;
         manifest.validate()?;
@@ -735,8 +740,8 @@ impl StockPublicProjection {
                 .projection_id
                 .as_str()
             {
-                STOCK_SCALAR_SCORE_PROJECTION => {
-                    Arc::new(accuracy::Gsm8kScalarScoreProjectionValidator)
+                accuracy::GSM8K_BINARY_SCORE_PROJECTION_ID => {
+                    Arc::new(accuracy::Gsm8kBinaryScoreProjectionValidator)
                 }
                 projection => bail!(
                     "stock public score schema named unknown executable projection {projection:?}"
@@ -773,7 +778,7 @@ impl StockPublicScoreSchema {
     fn validate(&self) -> Result<()> {
         validate_open_manifest_id(&self.score_name, "stock public score name")?;
         ensure!(
-            self.projection_id == STOCK_SCALAR_SCORE_PROJECTION,
+            self.projection_id == accuracy::GSM8K_BINARY_SCORE_PROJECTION_ID,
             "stock public score named an unknown executable validator"
         );
         validate_sha256(&self.schema_sha256, "stock public score schema")?;
@@ -781,25 +786,24 @@ impl StockPublicScoreSchema {
             .map_err(|error| anyhow!(error.to_string()))?;
         ensure!(
             canonical.normalized_result_sha256() == self.schema_sha256
-                && self.schema_sha256 == accuracy::GSM8K_SCALAR_SCORE_SCHEMA_SHA256,
+                && self.schema_sha256 == accuracy::GSM8K_BINARY_SCORE_SCHEMA_SHA256,
             "stock public score schema has no executable validator"
         );
         ensure!(
-            self.schema == stock_scalar_score_schema(),
+            self.schema == stock_binary_score_schema(),
             "stock public score schema did not match the executable validator"
         );
         Ok(())
     }
 }
 
-fn stock_scalar_score_schema() -> serde_json::Value {
+fn stock_binary_score_schema() -> serde_json::Value {
     serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
             "value": {
-                "maximum": 1.0,
-                "minimum": 0.0,
+                "enum": [0, 1],
                 "type": "number",
             },
         },
@@ -3122,6 +3126,31 @@ mod tests {
                 serde_json::json!("unreviewed_projection_v1");
         });
         assert!(error.contains("unknown executable validator"), "{error}");
+    }
+
+    #[test]
+    fn manifest_binary_score_policy_rejects_fractional_projection() {
+        let manifest = StockDistributionManifest::embedded().unwrap();
+        for distribution in &manifest.distributions {
+            let policy = distribution.public_projection.score_policy().unwrap();
+            let score_name = &distribution.public_projection.score_schemas[0].score_name;
+            for value in [
+                serde_json::json!({"value": 0}),
+                serde_json::json!({"value": 1}),
+            ] {
+                policy
+                    .validate(score_name, &accuracy::CanonicalJson::new(value).unwrap())
+                    .unwrap();
+            }
+            assert!(
+                policy
+                    .validate(
+                        score_name,
+                        &accuracy::CanonicalJson::new(serde_json::json!({"value": 0.5})).unwrap(),
+                    )
+                    .is_err()
+            );
+        }
     }
 
     #[test]

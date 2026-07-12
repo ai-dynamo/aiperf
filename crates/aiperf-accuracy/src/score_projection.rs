@@ -24,23 +24,26 @@ pub trait PublicScoreProjectionValidator: Send + Sync {
     fn validate(&self, value: &CanonicalJson) -> Result<(), PublicScoreProjectionError>;
 }
 
-/// Canonical schema fingerprint for the reviewed GSM8K `{ "value": 0..1 }` projection.
-pub const GSM8K_SCALAR_SCORE_SCHEMA_SHA256: &str =
-    "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9";
+/// Stable projection ID for the reviewed object-wrapped GSM8K binary score.
+pub const GSM8K_BINARY_SCORE_PROJECTION_ID: &str = "gsm8k_binary_score_v1";
 
-/// Executable validator for the stock NeMo/OpenBench GSM8K public score object.
+/// SHA-256 of the canonical object-wrapped GSM8K binary JSON Schema.
+pub const GSM8K_BINARY_SCORE_SCHEMA_SHA256: &str =
+    "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5";
+
+/// Executable validator for the stock NeMo/OpenBench binary score object.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Gsm8kScalarScoreProjectionValidator;
+pub struct Gsm8kBinaryScoreProjectionValidator;
 
-impl PublicScoreProjectionValidator for Gsm8kScalarScoreProjectionValidator {
+impl PublicScoreProjectionValidator for Gsm8kBinaryScoreProjectionValidator {
     fn schema_sha256(&self) -> &str {
-        GSM8K_SCALAR_SCORE_SCHEMA_SHA256
+        GSM8K_BINARY_SCORE_SCHEMA_SHA256
     }
 
     fn validate(&self, value: &CanonicalJson) -> Result<(), PublicScoreProjectionError> {
         let Some(object) = value.value().as_object() else {
             return Err(PublicScoreProjectionError::rejected(
-                "expected the reviewed GSM8K scalar object",
+                "expected the reviewed GSM8K binary score object",
             ));
         };
         let Some(number) = object
@@ -52,9 +55,9 @@ impl PublicScoreProjectionValidator for Gsm8kScalarScoreProjectionValidator {
                 "expected exactly one finite numeric value field",
             ));
         };
-        if !(0.0..=1.0).contains(&number) {
+        if number != 0.0 && number != 1.0 {
             return Err(PublicScoreProjectionError::rejected(
-                "GSM8K public score was outside the reviewed zero-to-one range",
+                "GSM8K public score was not exactly zero or one",
             ));
         }
         Ok(())
@@ -266,14 +269,13 @@ mod tests {
     }
 
     #[test]
-    fn stock_gsm8k_validator_matches_manifest_schema_exactly() {
+    fn object_binary_validator_matches_stock_manifest_schema_exactly() {
         let schema = CanonicalJson::new(json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "additionalProperties": false,
             "properties": {
                 "value": {
-                    "maximum": 1.0,
-                    "minimum": 0.0,
+                    "enum": [0, 1],
                     "type": "number",
                 },
             },
@@ -283,26 +285,23 @@ mod tests {
         .unwrap();
         assert_eq!(
             sha256_hex(&schema.to_bytes()),
-            GSM8K_SCALAR_SCORE_SCHEMA_SHA256
+            GSM8K_BINARY_SCORE_SCHEMA_SHA256
         );
 
-        let validator = Gsm8kScalarScoreProjectionValidator;
-        assert_eq!(validator.schema_sha256(), GSM8K_SCALAR_SCORE_SCHEMA_SHA256);
-        for value in [
-            json!({"value": 0}),
-            json!({"value": 0.5}),
-            json!({"value": 1}),
-        ] {
+        let validator = Gsm8kBinaryScoreProjectionValidator;
+        assert_eq!(validator.schema_sha256(), GSM8K_BINARY_SCORE_SCHEMA_SHA256);
+        for value in [json!({"value": 0}), json!({"value": 1})] {
             validator
                 .validate(&CanonicalJson::new(value).unwrap())
                 .unwrap();
         }
         for value in [
-            json!(0),
-            json!({"value": -0.1}),
-            json!({"value": 1.1}),
-            json!({"value": 1, "answer": "hidden"}),
+            json!(1),
+            json!({"value": 0.5}),
+            json!({"value": -1}),
+            json!({"value": 2}),
             json!({"value": true}),
+            json!({"value": 1, "answer": "hidden"}),
         ] {
             assert!(
                 validator

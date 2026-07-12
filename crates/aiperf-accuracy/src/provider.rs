@@ -1437,21 +1437,26 @@ struct OpenBenchAuthoredConfig {
     limit: Option<usize>,
 }
 
+const OPENBENCH_GSM8K_SELECTION_COUNT: usize = 5;
+
 struct OpenBenchConfigValidator;
 
 impl ProviderConfigValidator for OpenBenchConfigValidator {
     fn validate(&self, config: &CanonicalJson) -> Result<CanonicalJson, ProviderRegistryError> {
-        let decoded: OpenBenchAuthoredConfig = serde_json::from_value(config.value().clone())
-            .map_err(|error| ProviderRegistryError::InvalidConfig(error.to_string()))?;
+        let mut decoded: OpenBenchAuthoredConfig =
+            serde_json::from_value(config.value().clone())
+                .map_err(|error| ProviderRegistryError::InvalidConfig(error.to_string()))?;
+        let limit = decoded.limit.unwrap_or(OPENBENCH_GSM8K_SELECTION_COUNT);
         if decoded.task != "gsm8k"
             || !decoded.task_args.is_empty()
             || !(1..=8).contains(&decoded.epochs)
-            || decoded.limit.is_some_and(|limit| !(1..=5).contains(&limit))
+            || !(1..=OPENBENCH_GSM8K_SELECTION_COUNT).contains(&limit)
         {
             return Err(ProviderRegistryError::InvalidConfig(
                 "OpenBench config did not match the frozen GSM8K/Inspect canary".to_string(),
             ));
         }
+        decoded.limit = Some(limit);
         normalize_config(decoded)
     }
 }
@@ -1844,6 +1849,50 @@ mod tests {
         .unwrap();
         assert!(factory.validate_authored_config(&unknown).is_err());
         assert!(factory.project_public_config(&unknown).is_err());
+    }
+
+    #[test]
+    fn openbench_missing_limit_normalizes_to_frozen_selection_count() {
+        let factory = OpenBenchProviderFactory::new(
+            vec![distribution("openbench-locked")],
+            Arc::new(NeverLaunch),
+        )
+        .unwrap();
+        let omitted = CanonicalJson::new(serde_json::json!({
+            "task": "gsm8k",
+            "task_args": {},
+            "epochs": 1
+        }))
+        .unwrap();
+        let explicit = CanonicalJson::new(serde_json::json!({
+            "task": "gsm8k",
+            "task_args": {},
+            "epochs": 1,
+            "limit": 5
+        }))
+        .unwrap();
+
+        let normalized_omitted = factory.validate_authored_config(&omitted).unwrap();
+        let normalized_explicit = factory.validate_authored_config(&explicit).unwrap();
+        assert_eq!(normalized_omitted.config(), normalized_explicit.config());
+        assert_eq!(
+            normalized_omitted.config_sha256(),
+            normalized_explicit.config_sha256()
+        );
+        assert_eq!(
+            normalized_omitted.config_sha256(),
+            "35d8749724567c702a0fd67c9973308312901e784099654c9740364da74e82cc"
+        );
+        assert_eq!(
+            normalized_omitted.config().value()["limit"],
+            serde_json::json!(5)
+        );
+        assert_eq!(
+            factory
+                .project_public_config(normalized_omitted.config())
+                .unwrap(),
+            normalized_omitted.config().clone()
+        );
     }
 
     #[test]
