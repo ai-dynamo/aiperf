@@ -17,14 +17,16 @@ use std::rc::Rc;
 use aiperf_accuracy::{
     CanonicalJson, EvaluationArtifactSealer, EvaluationAssetRequirement, EvaluationCaseId,
     EvaluationCaseTemplateId, EvaluationEvent, EvaluationFinishCandidate, EvaluationIdentity,
-    EvaluationPlan, EvaluationPlanRequest, EvaluationProvider, EvaluationQueueCredits,
-    EvaluationSchedulingMode, EvaluationStage, EvaluationUnitId, EvaluationUnitOccurrence,
-    EvaluationUnitOccurrenceRequest, HostCapabilityId, HostOperationDisposition,
-    HostOperationEvent, HostOperationId, HostOperationTerminal, HostOperationUsage,
-    HostResponseMode, ResolvedEvaluationAsset, SealedEvaluationArtifacts, SemanticAttemptId,
+    EvaluationPhaseId, EvaluationPlan, EvaluationPlanRequest, EvaluationProvider,
+    EvaluationQueueCredits, EvaluationSchedulingMode, EvaluationStage, EvaluationUnitId,
+    EvaluationUnitOccurrence, EvaluationUnitOccurrenceRequest, EvaluationUnitTemplateId,
+    HostCapabilityId, HostOperationDisposition, HostOperationEvent, HostOperationId,
+    HostOperationTerminal, HostOperationUsage, HostResponseMode, PublicScoreProjectionPolicy,
+    ResolvedEvaluationAsset, SealedEvaluationArtifacts, SemanticAttemptId,
 };
 use aiperf_clock::Clock;
 use aiperf_metrics::EvaluationRouteSummaryReport;
+use aiperf_timing::IntervalGenerator;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -108,6 +110,177 @@ pub trait EvaluationOccurrenceSource {
         &mut self,
         clock: Rc<dyn Clock>,
     ) -> Result<Option<EvaluationUnitOccurrenceRequest>>;
+}
+
+/// One Clock-paced phase for Rust-authored evaluator occurrences.
+pub struct EvaluationOccurrencePhase {
+    phase_id: EvaluationPhaseId,
+    intervals: Box<dyn IntervalGenerator>,
+    max_occurrences: Option<u64>,
+    duration_ns: Option<i64>,
+}
+
+impl EvaluationOccurrencePhase {
+    /// Build one phase. Either bound may be absent; external cancellation then
+    /// remains the stop authority for an otherwise unbounded phase.
+    pub fn new(
+        phase_id: EvaluationPhaseId,
+        intervals: Box<dyn IntervalGenerator>,
+        max_occurrences: Option<u64>,
+        duration_ns: Option<i64>,
+    ) -> Result<Self> {
+        ensure!(
+            max_occurrences != Some(0),
+            "evaluation phase occurrence bound must be positive"
+        );
+        ensure!(
+            duration_ns.is_none_or(|duration| duration > 0),
+            "evaluation phase duration must be positive"
+        );
+        Ok(Self {
+            phase_id,
+            intervals,
+            max_occurrences,
+            duration_ns,
+        })
+    }
+}
+
+struct ActiveOccurrencePhase {
+    definition: EvaluationOccurrencePhase,
+    start_ns: Option<i64>,
+    last_target_ns: Option<i64>,
+    issued: u64,
+}
+
+/// Normal Clock-paced occurrence source cycling frozen provider templates.
+pub struct ClockedEvaluationOccurrenceSource {
+    phases: VecDeque<ActiveOccurrencePhase>,
+    templates: Vec<EvaluationUnitTemplateId>,
+    issue_ordinal: u64,
+    cancellation: OperationCancellation,
+    bound: bool,
+}
+
+impl ClockedEvaluationOccurrenceSource {
+    /// Compose ordered phases and one shared run cancellation latch.
+    pub fn new(
+        phases: impl IntoIterator<Item = EvaluationOccurrencePhase>,
+        cancellation: OperationCancellation,
+    ) -> Result<Self> {
+        let phases = phases
+            .into_iter()
+            .map(|definition| ActiveOccurrencePhase {
+                definition,
+                start_ns: None,
+                last_target_ns: None,
+                issued: 0,
+            })
+            .collect::<VecDeque<_>>();
+        ensure!(
+            !phases.is_empty(),
+            "evaluation occurrence source requires at least one phase"
+        );
+        Ok(Self {
+            phases,
+            templates: Vec::new(),
+            issue_ordinal: 0,
+            cancellation,
+            bound: false,
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl EvaluationOccurrenceSource for ClockedEvaluationOccurrenceSource {
+    fn bind(&mut self, identity: &EvaluationIdentity) -> Result<()> {
+        ensure!(!self.bound, "evaluation occurrence source was bound twice");
+        ensure!(
+            !identity.unit_templates.is_empty(),
+            "Rust-occurrence evaluator identity contains no unit templates"
+        );
+        self.templates = identity
+            .unit_templates
+            .iter()
+            .map(|template| template.unit_template_id.clone())
+            .collect();
+        self.bound = true;
+        Ok(())
+    }
+
+    async fn next(
+        &mut self,
+        clock: Rc<dyn Clock>,
+    ) -> Result<Option<EvaluationUnitOccurrenceRequest>> {
+        ensure!(self.bound, "evaluation occurrence source is not bound");
+        loop {
+            if self.cancellation.is_cancelled() {
+                return Ok(None);
+            }
+            let Some(phase) = self.phases.front_mut() else {
+                return Ok(None);
+            };
+            let start_ns = *phase.start_ns.get_or_insert_with(|| clock.now_ns());
+            if phase
+                .definition
+                .max_occurrences
+                .is_some_and(|maximum| phase.issued >= maximum)
+            {
+                self.phases.pop_front();
+                continue;
+            }
+            let target_ns = if phase.issued == 0 {
+                start_ns
+            } else {
+                phase
+                    .last_target_ns
+                    .unwrap_or(start_ns)
+                    .saturating_add(phase.definition.intervals.next_interval_ns())
+            };
+            if phase
+                .definition
+                .duration_ns
+                .is_some_and(|duration| target_ns.saturating_sub(start_ns) >= duration)
+            {
+                self.phases.pop_front();
+                continue;
+            }
+            let wait_ns = target_ns.saturating_sub(clock.now_ns()).max(0);
+            if wait_ns > 0 {
+                let sleep = clock.clone().sleep(wait_ns);
+                let cancelled = self.cancellation.cancelled();
+                tokio::pin!(sleep);
+                tokio::pin!(cancelled);
+                tokio::select! {
+                    _ = &mut sleep => {}
+                    _ = &mut cancelled => return Ok(None),
+                }
+            }
+            if self.cancellation.is_cancelled() {
+                return Ok(None);
+            }
+            let template_count = u64::try_from(self.templates.len())
+                .map_err(|_| anyhow!("evaluation template count exceeds u64"))?;
+            let template_index = usize::try_from(self.issue_ordinal % template_count)
+                .expect("modulo template count fits usize");
+            let request = EvaluationUnitOccurrenceRequest {
+                unit_template_id: self.templates[template_index].clone(),
+                phase_id: phase.definition.phase_id.clone(),
+                issue_ordinal: self.issue_ordinal,
+                cycle_index: self.issue_ordinal / template_count,
+            };
+            phase.issued = phase
+                .issued
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("evaluation phase issue count overflow"))?;
+            phase.last_target_ns = Some(target_ns);
+            self.issue_ordinal = self
+                .issue_ordinal
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("evaluation issue ordinal overflow"))?;
+            return Ok(Some(request));
+        }
+    }
 }
 
 /// Quiescence-gated artifact finalization seam.
@@ -343,7 +516,7 @@ pub struct EvaluationWorkload {
     host_runtime: HostExecutorRuntime,
     asset_resolver: Rc<dyn EvaluationAssetResolver>,
     host_capabilities: EvaluationHostCapabilityInventory,
-    public_score_projection_schemas: BTreeMap<String, String>,
+    public_score_projection_policy: PublicScoreProjectionPolicy,
     occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
     finalizer: Rc<dyn EvaluationArtifactFinalizer>,
     limits: EvaluationWorkloadLimits,
@@ -361,19 +534,13 @@ impl EvaluationWorkload {
         host_runtime: HostExecutorRuntime,
         asset_resolver: Rc<dyn EvaluationAssetResolver>,
         host_capabilities: EvaluationHostCapabilityInventory,
-        public_score_projection_schemas: BTreeMap<String, String>,
+        public_score_projection_policy: PublicScoreProjectionPolicy,
         occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
         finalizer: Rc<dyn EvaluationArtifactFinalizer>,
         limits: EvaluationWorkloadLimits,
         cancellation: OperationCancellation,
     ) -> Result<Self> {
         limits.validate()?;
-        for (name, schema) in &public_score_projection_schemas {
-            ensure!(
-                !name.trim().is_empty() && is_sha256(schema),
-                "public score projection {name:?} has an invalid schema fingerprint"
-            );
-        }
         Ok(Self {
             provider,
             plan_request,
@@ -382,7 +549,7 @@ impl EvaluationWorkload {
             host_runtime,
             asset_resolver,
             host_capabilities,
-            public_score_projection_schemas,
+            public_score_projection_policy,
             occurrence_source,
             finalizer,
             limits,
@@ -472,21 +639,14 @@ impl EvaluationWorkload {
             let mut progressed = false;
             if self.cancellation.is_cancelled() && !state.run_cancellation_started {
                 state.run_cancellation_started = true;
-                let ids = state.active_units.iter().cloned().collect::<Vec<_>>();
-                if !ids.is_empty() {
-                    self.provider
-                        .cancel_units(&ids)
-                        .await
-                        .map_err(provider_error)
-                        .context("cancelling evaluator units")?;
-                }
-                for active in state.active_operations.values() {
-                    active.cancellation.cancel();
-                }
+                occurrence_rx = None;
+                occurrence_done = true;
                 progressed = true;
             }
 
-            if let Some(receiver) = occurrence_rx.as_mut() {
+            if !state.run_cancellation_started
+                && let Some(receiver) = occurrence_rx.as_mut()
+            {
                 loop {
                     match receiver.try_recv() {
                         Ok(OccurrenceMessage::Request(request)) => {
@@ -525,11 +685,11 @@ impl EvaluationWorkload {
                 }
             }
 
-            if !state.run_cancellation_started {
-                let available = plan
-                    .queue_credits
-                    .units
-                    .saturating_sub(state.active_units.len());
+            let available = plan
+                .queue_credits
+                .units
+                .saturating_sub(state.active_units.len());
+            if available > 0 {
                 let ids = pending_units
                     .iter()
                     .take(available)
@@ -550,6 +710,26 @@ impl EvaluationWorkload {
                 }
             }
 
+            if state.run_cancellation_started {
+                let ids = state
+                    .active_units
+                    .difference(&state.cancel_requested_units)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !ids.is_empty() {
+                    self.provider
+                        .cancel_units(&ids)
+                        .await
+                        .map_err(provider_error)
+                        .context("cancelling evaluator units")?;
+                    state.cancel_requested_units.extend(ids);
+                    progressed = true;
+                }
+                for active in state.active_operations.values() {
+                    progressed |= active.cancellation.cancel();
+                }
+            }
+
             while let Ok(message) = host_rx.try_recv() {
                 self.process_host_message(&mut state, message).await?;
                 progressed = true;
@@ -566,11 +746,53 @@ impl EvaluationWorkload {
                 progressed = true;
             }
             for sequenced in batch.events.drain(..) {
-                self.process_provider_event(&plan, &mut state, sequenced.event)
+                self.process_provider_event(&plan, &mut state, sequenced.event, &clock)
                     .await?;
             }
 
-            while state.active_operations.len() < plan.queue_credits.host_operations {
+            let expired = state
+                .operation_deadlines
+                .iter()
+                .filter_map(|(operation_id, deadline_ns)| {
+                    (*deadline_ns <= clock.now_ns()).then_some(operation_id.clone())
+                })
+                .collect::<Vec<_>>();
+            for operation_id in expired {
+                state.operation_deadlines.remove(&operation_id);
+                self.cancel_host_operation(&mut state, &operation_id, "deadline")
+                    .await?;
+                progressed = true;
+            }
+
+            if state.run_cancellation_started {
+                let queued = state.arbiter.drain();
+                for (_unit_id, queued) in queued {
+                    let operation_id = queued.operation_id.as_str().to_string();
+                    state.operation_deadlines.remove(&operation_id);
+                    state.ledger.request_cancel(&operation_id)?;
+                    state
+                        .ledger
+                        .finish_operation(&operation_id, HostTerminalClass::Cancelled)?;
+                    state
+                        .operation_usage
+                        .insert(operation_id, HostOperationUsage::default());
+                    self.submit_terminal(
+                        queued.operation_id,
+                        queued.semantic_attempt_id,
+                        cancelled_terminal_payload("queued", "run_cancelled")?,
+                        false,
+                    )
+                    .await?;
+                    progressed = true;
+                }
+                for active in state.active_operations.values() {
+                    progressed |= active.cancellation.cancel();
+                }
+            }
+
+            while !state.run_cancellation_started
+                && state.active_operations.len() < plan.queue_credits.host_operations
+            {
                 let Some((_unit_id, queued)) = state.arbiter.pop() else {
                     break;
                 };
@@ -602,7 +824,15 @@ impl EvaluationWorkload {
                 break;
             }
             if !progressed {
-                clock.clone().sleep(self.limits.idle_poll_ns).await;
+                let wait_ns = state
+                    .operation_deadlines
+                    .values()
+                    .map(|deadline_ns| deadline_ns.saturating_sub(clock.now_ns()).max(0))
+                    .min()
+                    .map_or(self.limits.idle_poll_ns, |deadline_wait_ns| {
+                        deadline_wait_ns.min(self.limits.idle_poll_ns)
+                    });
+                clock.clone().sleep(wait_ns).await;
             }
         }
 
@@ -629,7 +859,7 @@ impl EvaluationWorkload {
             &identity,
             &self.routes,
             self.plan_request.provider_config.value().clone(),
-            self.public_score_projection_schemas,
+            self.public_score_projection_policy,
         )?;
         let operations = state.ledger.operations().cloned().collect();
         let report_commit = EvaluationReportCommit {
@@ -651,9 +881,13 @@ impl EvaluationWorkload {
         plan: &EvaluationPlan,
         state: &mut ExecutionState,
         event: EvaluationEvent,
+        clock: &Rc<dyn Clock>,
     ) -> Result<()> {
         match event {
             EvaluationEvent::HostOperationRequested { request } => {
+                request
+                    .validate()
+                    .map_err(|error| anyhow!(error.to_string()))?;
                 ensure!(
                     request.context.session_id == self.plan_request.session_id,
                     "host operation referenced a different evaluation session"
@@ -688,6 +922,25 @@ impl EvaluationWorkload {
                     semantic_operation_id: envelope.semantic_operation_id.to_string(),
                     replay_safe_after_output: false,
                 })?;
+                if let Some(deadline_ms) = request.deadline_ms {
+                    let duration_ns = i64::try_from(deadline_ms)
+                        .ok()
+                        .and_then(|milliseconds| milliseconds.checked_mul(1_000_000))
+                        .ok_or_else(|| {
+                            anyhow!("host operation deadline exceeds i64 nanoseconds")
+                        })?;
+                    let deadline_ns = clock
+                        .now_ns()
+                        .checked_add(duration_ns)
+                        .ok_or_else(|| anyhow!("host operation deadline overflow"))?;
+                    ensure!(
+                        state
+                            .operation_deadlines
+                            .insert(request.operation_id.to_string(), deadline_ns)
+                            .is_none(),
+                        "duplicate host operation deadline identity"
+                    );
+                }
                 state
                     .arbiter
                     .push(
@@ -729,6 +982,7 @@ impl EvaluationWorkload {
                             .map_err(provider_error)?;
                     }
                     OperationState::Queued => {
+                        state.operation_deadlines.remove(operation_id);
                         state.ledger.request_cancel(operation_id)?;
                         let unit_id = EvaluationUnitId::new(record_unit)
                             .map_err(|error| anyhow!(error.to_string()))?;
@@ -756,6 +1010,7 @@ impl EvaluationWorkload {
                     | OperationState::Dispatching
                     | OperationState::Streaming
                     | OperationState::Cancelling => {
+                        state.operation_deadlines.remove(operation_id);
                         state.ledger.request_cancel(operation_id)?;
                         if let Some(active) = state.active_operations.get(operation_id) {
                             active.cancellation.cancel();
@@ -782,6 +1037,54 @@ impl EvaluationWorkload {
                 }
             }
             EvaluationEvent::Progress { .. } | EvaluationEvent::Diagnostic { .. } => {}
+        }
+        Ok(())
+    }
+
+    async fn cancel_host_operation(
+        &mut self,
+        state: &mut ExecutionState,
+        operation_id: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let (record_state, record_unit) = {
+            let record = state.ledger.operation(operation_id)?;
+            (record.state, record.registration.unit_id.clone())
+        };
+        match record_state {
+            OperationState::Terminal | OperationState::Cancelling => {}
+            OperationState::Queued => {
+                state.ledger.request_cancel(operation_id)?;
+                let unit_id = EvaluationUnitId::new(record_unit)
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                let queued = state
+                    .arbiter
+                    .remove_where(&unit_id, |queued| {
+                        queued.operation_id.as_str() == operation_id
+                    })
+                    .ok_or_else(|| anyhow!("queued cancellation lost its operation"))?;
+                state
+                    .ledger
+                    .finish_operation(operation_id, HostTerminalClass::Cancelled)?;
+                state
+                    .operation_usage
+                    .insert(operation_id.to_string(), HostOperationUsage::default());
+                self.submit_terminal(
+                    queued.operation_id,
+                    queued.semantic_attempt_id,
+                    cancelled_terminal_payload("queued", reason)?,
+                    false,
+                )
+                .await?;
+            }
+            OperationState::Admitted | OperationState::Dispatching | OperationState::Streaming => {
+                state.ledger.request_cancel(operation_id)?;
+                let active = state
+                    .active_operations
+                    .get(operation_id)
+                    .ok_or_else(|| anyhow!("active cancellation lost its operation"))?;
+                active.cancellation.cancel();
+            }
         }
         Ok(())
     }
@@ -815,10 +1118,22 @@ impl EvaluationWorkload {
             sender: host_tx.clone(),
         };
         tokio::task::spawn_local(async move {
-            let result = queued
+            let execution = queued
                 .executor
-                .execute(&queued.envelope, &sink, cancellation)
-                .await;
+                .execute(&queued.envelope, &sink, cancellation.clone());
+            let cancelled = cancellation.cancelled();
+            tokio::pin!(execution);
+            tokio::pin!(cancelled);
+            let result = tokio::select! {
+                biased;
+                _ = &mut cancelled => Ok(HostExecutionTerminal {
+                    class: HostTerminalClass::Cancelled,
+                    payload: serde_json::json!({"status":"cancelled"}),
+                    usage: HostOperationUsage::default(),
+                    retryable: false,
+                }),
+                result = &mut execution => result,
+            };
             let message = RuntimeHostMessage::Terminal {
                 operation_id: queued.operation_id,
                 semantic_attempt_id: queued.semantic_attempt_id,
@@ -883,6 +1198,7 @@ impl EvaluationWorkload {
                         retryable: false,
                     },
                 };
+                state.operation_deadlines.remove(operation_id.as_str());
                 if terminal.class == HostTerminalClass::Completed {
                     self.host_executors
                         .validate_response(&active.semantic_operation_id, &terminal.payload)?;
@@ -987,7 +1303,9 @@ struct ExecutionState {
     terminal_cases: BTreeSet<EvaluationCaseId>,
     active_operations: BTreeMap<String, ActiveOperation>,
     operation_usage: BTreeMap<String, HostOperationUsage>,
+    operation_deadlines: BTreeMap<String, i64>,
     run_cancellation_started: bool,
+    cancel_requested_units: BTreeSet<EvaluationUnitId>,
 }
 
 impl ExecutionState {
@@ -1005,7 +1323,9 @@ impl ExecutionState {
             terminal_cases: BTreeSet::new(),
             active_operations: BTreeMap::new(),
             operation_usage: BTreeMap::new(),
+            operation_deadlines: BTreeMap::new(),
             run_cancellation_started: false,
+            cancel_requested_units: BTreeSet::new(),
         })
     }
 
@@ -1041,7 +1361,7 @@ impl ExecutionState {
         identity: &EvaluationIdentity,
         routes: &EvaluationRouteTable,
         safe_config: serde_json::Value,
-        public_score_projection_schemas: BTreeMap<String, String>,
+        public_score_projection_policy: PublicScoreProjectionPolicy,
     ) -> Result<EvaluationReportFacts> {
         let templates = identity
             .case_templates
@@ -1108,7 +1428,7 @@ impl ExecutionState {
         Ok(EvaluationReportFacts {
             safe_config,
             cases,
-            public_score_projection_schemas,
+            public_score_projection_policy,
             route_summaries,
         })
     }
@@ -1368,4 +1688,809 @@ fn is_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use aiperf_accuracy::{
+        AggregateMetric, AggregationPolicy, ArtifactRef, ArtifactVisibility, CaseOutcome,
+        CaseOutcomeKind, CompletedCaseOutcome, EvaluationArtifactId,
+        EvaluationArtifactManifestEntry, EvaluationCaseOccurrenceDescriptor,
+        EvaluationCaseTemplateDescriptor, EvaluationDistributionId, EvaluationEventBatch,
+        EvaluationExecutionGranularity, EvaluationHostIdentity, EvaluationIdentityComponent,
+        EvaluationLifecycleState, EvaluationProviderError, EvaluationProviderId,
+        EvaluationUnitPage, EvaluationUnitTemplateDescriptor, EvaluationWorkerIdentity, FiniteF64,
+        HostCallContext, HostOperationRequest, IsolationQuiescenceProof, LogicalCallId,
+        LogicalServiceId, LogicalServiceRequirement, OperationPurpose, ProviderScore,
+        SemanticAttemptId, SemanticOperationId, SequencedEvaluationEvent,
+    };
+    use aiperf_clock::SimClock;
+    use aiperf_graph::runtime::drive_sim;
+    use aiperf_metrics::InferenceDimensions;
+    use aiperf_timing::StopConfig;
+    use aiperf_timing::intervals::Constant;
+    use async_trait::async_trait;
+    use loadgen_core::sink::RequestObserver;
+    use serde_json::json;
+
+    use super::*;
+    use crate::evaluation::host::{
+        EvaluationRoute, HostExecutionEventSink, HostExecutorRegistryBuilder,
+        HostOperationDescriptor, HostOperationExecutor, HostOperationExecutorFactory,
+        HostOperationFamily, HostOperationSchemaValidator,
+    };
+    use crate::multiturn::TurnToSend;
+    use crate::scheduled::{ScheduledRuntime, TurnDispatchOutcome, TurnDispatcher};
+
+    fn occurrence_identity() -> EvaluationIdentity {
+        let case_template = EvaluationCaseTemplateId::new("case-template").unwrap();
+        EvaluationIdentity {
+            canonical_json_codec: aiperf_accuracy::CANONICAL_JSON_CODEC.into(),
+            worker: EvaluationWorkerIdentity {
+                evaluator_protocol: 2,
+                provider_id: EvaluationProviderId::new("fixture").unwrap(),
+                distribution_id: EvaluationDistributionId::new("fixture_dist").unwrap(),
+                package: "fixture".into(),
+                package_version: "1".into(),
+                provider_source_sha256: "a".repeat(64),
+                worker_source_sha256: "b".repeat(64),
+                dependency_lock_sha256: "c".repeat(64),
+                python_version: "3.12".into(),
+                launch_nonce: "n".repeat(32),
+                oci_digest: None,
+                operations: [
+                    "plan_session",
+                    "bind_assets",
+                    "next_units",
+                    "instantiate_units",
+                    "start_units",
+                    "poll_events",
+                    "submit_host_events",
+                    "cancel_units",
+                    "finalize_session",
+                    "shutdown",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            },
+            config_schema_sha256: "d".repeat(64),
+            resolved_config_sha256: "e".repeat(64),
+            dataset: EvaluationIdentityComponent {
+                name: "dataset".into(),
+                version: "1".into(),
+                source_sha256: "f".repeat(64),
+            },
+            components: Vec::new(),
+            ordered_manifest_sha256: "1".repeat(64),
+            case_templates: vec![EvaluationCaseTemplateDescriptor {
+                template_id: case_template.clone(),
+                task: "fixture".into(),
+                source: "fixture_source".into(),
+            }],
+            unit_templates: ["unit-a", "unit-b"]
+                .into_iter()
+                .map(|id| EvaluationUnitTemplateDescriptor {
+                    unit_template_id: EvaluationUnitTemplateId::new(id).unwrap(),
+                    case_template_ids: vec![case_template.clone()],
+                    granularity: EvaluationExecutionGranularity::Case,
+                    scheduling_class: "paced".into(),
+                })
+                .collect(),
+            policies: CanonicalJson::new(json!({"schedule":"fixture"})).unwrap(),
+            host: EvaluationHostIdentity {
+                runner_sha256: "2".repeat(64),
+                capability_inventory_sha256: "3".repeat(64),
+                schema_inventory_sha256: "4".repeat(64),
+                isolation_proof_sha256: "5".repeat(64),
+            },
+            route_map_sha256: "6".repeat(64),
+            prepared_endpoints_sha256: "7".repeat(64),
+            sandbox_sha256: None,
+        }
+    }
+
+    #[test]
+    fn clocked_occurrences_cycle_templates_with_exact_phase_issue_and_time() {
+        let clock = Rc::new(SimClock::new());
+        let cancellation = OperationCancellation::default();
+        let phase = EvaluationOccurrencePhase::new(
+            EvaluationPhaseId::new("profiling").unwrap(),
+            Box::new(Constant::new(100_000_000.0)),
+            Some(3),
+            None,
+        )
+        .unwrap();
+        let mut source = ClockedEvaluationOccurrenceSource::new([phase], cancellation).unwrap();
+        source.bind(&occurrence_identity()).unwrap();
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let requests_for_run = requests.clone();
+        let clock_for_run = clock.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            while let Some(request) = source.next(clock_for_run.clone()).await.unwrap() {
+                requests_for_run
+                    .borrow_mut()
+                    .push((request, clock_for_run.now_ns()));
+            }
+        });
+        assert!(!outcome.deadlocked);
+        let requests = requests.borrow();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].0.unit_template_id.as_str(), "unit-a");
+        assert_eq!(requests[1].0.unit_template_id.as_str(), "unit-b");
+        assert_eq!(requests[2].0.unit_template_id.as_str(), "unit-a");
+        assert_eq!(requests[2].0.cycle_index, 1);
+        assert_eq!(requests[0].1, 0);
+        assert_eq!(requests[1].1, 10);
+        assert_eq!(requests[2].1, 20);
+    }
+
+    #[test]
+    fn occurrence_cancellation_interrupts_clock_sleep() {
+        let clock = Rc::new(SimClock::new());
+        let cancellation = OperationCancellation::default();
+        let phase = EvaluationOccurrencePhase::new(
+            EvaluationPhaseId::new("profiling").unwrap(),
+            Box::new(Constant::new(1.0)),
+            None,
+            None,
+        )
+        .unwrap();
+        let mut source =
+            ClockedEvaluationOccurrenceSource::new([phase], cancellation.clone()).unwrap();
+        source.bind(&occurrence_identity()).unwrap();
+        let result = Rc::new(RefCell::new(None));
+        let result_for_run = result.clone();
+        let clock_for_run = clock.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            assert!(source.next(clock_for_run.clone()).await.unwrap().is_some());
+            cancellation.cancel();
+            *result_for_run.borrow_mut() = Some(source.next(clock_for_run).await.unwrap());
+        });
+        assert!(!outcome.deadlocked);
+        assert!(result.borrow().as_ref().is_some_and(Option::is_none));
+    }
+
+    #[derive(Default)]
+    struct ProviderProofState {
+        submitted: Vec<HostOperationEvent>,
+        cancelled_units: Vec<EvaluationUnitId>,
+        shutdown: bool,
+        sealed: bool,
+        committed: bool,
+    }
+
+    struct ProofProvider {
+        identity: EvaluationIdentity,
+        plan: EvaluationPlan,
+        unit: EvaluationUnitOccurrence,
+        candidate: EvaluationFinishCandidate,
+        session_id: aiperf_accuracy::EvaluationSessionId,
+        events: VecDeque<SequencedEvaluationEvent>,
+        next_sequence: u64,
+        page_returned: bool,
+        terminal_submitted: bool,
+        operation_deadline_ms: Option<u64>,
+        state: Rc<RefCell<ProviderProofState>>,
+    }
+
+    impl ProofProvider {
+        fn enqueue(&mut self, event: EvaluationEvent) {
+            let sequence = self.next_sequence;
+            self.next_sequence += 1;
+            self.events.push_back(SequencedEvaluationEvent {
+                sequence,
+                idempotency_key: format!("event-{sequence}"),
+                event,
+            });
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl EvaluationProvider for ProofProvider {
+        fn identity(&self) -> &EvaluationWorkerIdentity {
+            &self.identity.worker
+        }
+
+        fn lifecycle_state(&self) -> EvaluationLifecycleState {
+            if self.state.borrow().committed {
+                EvaluationLifecycleState::ReportCommitted
+            } else if self.state.borrow().sealed {
+                EvaluationLifecycleState::ArtifactsSealed
+            } else if self.state.borrow().shutdown {
+                EvaluationLifecycleState::WorkerExited
+            } else {
+                EvaluationLifecycleState::Running
+            }
+        }
+
+        fn quiescence_proof(&self) -> Option<&IsolationQuiescenceProof> {
+            None
+        }
+
+        async fn plan(
+            &mut self,
+            _request: &EvaluationPlanRequest,
+        ) -> std::result::Result<EvaluationPlan, EvaluationProviderError> {
+            Ok(self.plan.clone())
+        }
+
+        async fn bind_assets(
+            &mut self,
+            assets: &[ResolvedEvaluationAsset],
+        ) -> std::result::Result<EvaluationIdentity, EvaluationProviderError> {
+            if !assets.is_empty() {
+                return Err(EvaluationProviderError::Protocol(
+                    "fixture received unexpected assets".into(),
+                ));
+            }
+            Ok(self.identity.clone())
+        }
+
+        async fn next_units(
+            &mut self,
+            offset: usize,
+            _limit: usize,
+        ) -> std::result::Result<EvaluationUnitPage, EvaluationProviderError> {
+            if offset == 0 && !self.page_returned {
+                self.page_returned = true;
+                Ok(EvaluationUnitPage {
+                    items: vec![self.unit.clone()],
+                    next_offset: 1,
+                    done: true,
+                })
+            } else {
+                Ok(EvaluationUnitPage {
+                    items: Vec::new(),
+                    next_offset: offset,
+                    done: true,
+                })
+            }
+        }
+
+        async fn instantiate_units(
+            &mut self,
+            _requests: &[EvaluationUnitOccurrenceRequest],
+        ) -> std::result::Result<Vec<EvaluationUnitOccurrence>, EvaluationProviderError> {
+            Err(EvaluationProviderError::Protocol(
+                "finite fixture cannot instantiate occurrences".into(),
+            ))
+        }
+
+        async fn start_units(
+            &mut self,
+            ids: &[EvaluationUnitId],
+        ) -> std::result::Result<(), EvaluationProviderError> {
+            if ids != [self.unit.unit_id.clone()] {
+                return Err(EvaluationProviderError::Protocol(
+                    "fixture start IDs changed".into(),
+                ));
+            }
+            self.enqueue(EvaluationEvent::HostOperationRequested {
+                request: Box::new(HostOperationRequest {
+                    operation_id: HostOperationId::new("operation-1").unwrap(),
+                    context: HostCallContext {
+                        session_id: self.session_id.clone(),
+                        unit_id: self.unit.unit_id.clone(),
+                        case_id: self.unit.cases[0].case_id.clone(),
+                        semantic_attempt_id: SemanticAttemptId::new("attempt-1").unwrap(),
+                        logical_call_id: LogicalCallId::new("call-1").unwrap(),
+                    },
+                    service_id: LogicalServiceId::new("primary").unwrap(),
+                    purpose: OperationPurpose::new("primary").unwrap(),
+                    semantic_operation_id: SemanticOperationId::new("model.generate").unwrap(),
+                    payload: CanonicalJson::new(json!({"prompt":"fixture"})).unwrap(),
+                    restricted_payload: None,
+                    response_mode: HostResponseMode::Streaming,
+                    deadline_ms: self.operation_deadline_ms,
+                    idempotency_key: "operation-1-key".into(),
+                }),
+            });
+            Ok(())
+        }
+
+        async fn poll_events(
+            &mut self,
+            limit: usize,
+            _wait_ms: u64,
+        ) -> std::result::Result<EvaluationEventBatch, EvaluationProviderError> {
+            let mut events = Vec::new();
+            while events.len() < limit
+                && let Some(event) = self.events.pop_front()
+            {
+                events.push(event);
+            }
+            Ok(EvaluationEventBatch {
+                events,
+                next_sequence: self.next_sequence,
+                drained: self.terminal_submitted && self.events.is_empty(),
+                remaining_credits: self.plan.queue_credits,
+            })
+        }
+
+        async fn submit_host_events(
+            &mut self,
+            events: &[HostOperationEvent],
+        ) -> std::result::Result<(), EvaluationProviderError> {
+            self.state.borrow_mut().submitted.extend_from_slice(events);
+            if events
+                .iter()
+                .any(|event| matches!(event, HostOperationEvent::Terminal { .. }))
+            {
+                self.terminal_submitted = true;
+                self.enqueue(EvaluationEvent::CaseTerminal {
+                    outcome: Box::new(self.candidate.outcomes[0].clone()),
+                });
+            }
+            Ok(())
+        }
+
+        async fn cancel_units(
+            &mut self,
+            ids: &[EvaluationUnitId],
+        ) -> std::result::Result<(), EvaluationProviderError> {
+            self.state
+                .borrow_mut()
+                .cancelled_units
+                .extend_from_slice(ids);
+            Ok(())
+        }
+
+        async fn finalize_candidate(
+            &mut self,
+        ) -> std::result::Result<EvaluationFinishCandidate, EvaluationProviderError> {
+            Ok(self.candidate.clone())
+        }
+
+        async fn shutdown(&mut self) -> std::result::Result<(), EvaluationProviderError> {
+            self.state.borrow_mut().shutdown = true;
+            Ok(())
+        }
+
+        fn mark_artifacts_sealed(&mut self) -> std::result::Result<(), EvaluationProviderError> {
+            if !self.state.borrow().shutdown {
+                return Err(EvaluationProviderError::Lifecycle(
+                    "fixture seal preceded shutdown".into(),
+                ));
+            }
+            self.state.borrow_mut().sealed = true;
+            Ok(())
+        }
+
+        fn mark_report_committed(&mut self) -> std::result::Result<(), EvaluationProviderError> {
+            if !self.state.borrow().sealed {
+                return Err(EvaluationProviderError::Lifecycle(
+                    "fixture commit preceded seal".into(),
+                ));
+            }
+            self.state.borrow_mut().committed = true;
+            Ok(())
+        }
+    }
+
+    struct EmptyAssetResolver;
+
+    #[async_trait(?Send)]
+    impl EvaluationAssetResolver for EmptyAssetResolver {
+        async fn resolve(
+            &self,
+            requirements: &[EvaluationAssetRequirement],
+        ) -> Result<Vec<ResolvedEvaluationAsset>> {
+            ensure!(requirements.is_empty(), "fixture expected no assets");
+            Ok(Vec::new())
+        }
+    }
+
+    struct ProofArtifactFinalizer;
+
+    #[async_trait(?Send)]
+    impl EvaluationArtifactFinalizer for ProofArtifactFinalizer {
+        async fn finalize(
+            &self,
+            provider: &mut dyn EvaluationProvider,
+            candidate: &mut EvaluationFinishCandidate,
+        ) -> Result<SealedEvaluationArtifacts> {
+            provider.shutdown().await.map_err(provider_error)?;
+            provider.mark_artifacts_sealed().map_err(provider_error)?;
+            let artifact = &candidate.artifacts[0];
+            Ok(SealedEvaluationArtifacts {
+                root: "/tmp/evaluation-proof-sealed".into(),
+                entries: vec![aiperf_accuracy::SealedEvaluationArtifact {
+                    artifact_id: artifact.artifact_id.clone(),
+                    path: artifact.path.clone(),
+                    media_type: artifact.media_type.clone(),
+                    visibility: artifact.visibility,
+                    size_bytes: artifact.size_bytes,
+                    artifact_content_sha256: artifact.artifact_content_sha256.clone(),
+                    public_projection_schema_sha256: None,
+                }],
+                provider_bundle_sha256: artifact.artifact_content_sha256.clone(),
+                quiescence_proof_sha256: "f".repeat(64),
+            })
+        }
+    }
+
+    struct ObjectSchema;
+
+    impl HostOperationSchemaValidator for ObjectSchema {
+        fn validate_request(&self, payload: &serde_json::Value) -> Result<()> {
+            ensure!(payload.is_object(), "fixture request must be an object");
+            Ok(())
+        }
+
+        fn validate_stream(&self, payload: &serde_json::Value) -> Result<()> {
+            ensure!(payload.is_object(), "fixture delta must be an object");
+            Ok(())
+        }
+
+        fn validate_response(&self, payload: &serde_json::Value) -> Result<()> {
+            ensure!(payload.is_object(), "fixture terminal must be an object");
+            Ok(())
+        }
+    }
+
+    struct ProofHostExecutor;
+
+    #[async_trait(?Send)]
+    impl HostOperationExecutor for ProofHostExecutor {
+        async fn execute(
+            &self,
+            _operation: &HostOperationEnvelope,
+            events: &dyn HostExecutionEventSink,
+            _cancellation: OperationCancellation,
+        ) -> Result<HostExecutionTerminal> {
+            events
+                .publish(HostExecutionDelta {
+                    ordinal: 0,
+                    payload: json!({
+                        "choice_index":0,
+                        "delta":{"role":"assistant","content":"ok"}
+                    }),
+                })
+                .await?;
+            Ok(HostExecutionTerminal {
+                class: HostTerminalClass::Completed,
+                payload: json!({
+                    "choices":[{
+                        "message":{"role":"assistant","content":"ok"},
+                        "stop_reason":"stop"
+                    }],
+                    "usage":{"prompt_tokens":3,"completion_tokens":1}
+                }),
+                usage: HostOperationUsage {
+                    prompt_tokens: Some(3),
+                    completion_tokens: Some(1),
+                    reasoning_tokens: None,
+                    cached_tokens: None,
+                },
+                retryable: false,
+            })
+        }
+    }
+
+    struct ProofHostFactory {
+        descriptor: HostOperationDescriptor,
+    }
+
+    impl HostOperationExecutorFactory for ProofHostFactory {
+        fn descriptor(&self) -> &HostOperationDescriptor {
+            &self.descriptor
+        }
+
+        fn validator(&self) -> &dyn HostOperationSchemaValidator {
+            &ObjectSchema
+        }
+
+        fn prepare(
+            &self,
+            _runtime: &HostExecutorRuntime,
+            _route: &EvaluationRoute,
+        ) -> Result<Rc<dyn HostOperationExecutor>> {
+            Ok(Rc::new(ProofHostExecutor))
+        }
+    }
+
+    struct UnusedDispatcher;
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for UnusedDispatcher {
+        fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
+            InferenceDimensions::default()
+        }
+
+        async fn dispatch_turn(
+            &self,
+            _turn: TurnToSend,
+            _observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            Err(anyhow!("fixture dispatcher must not be called"))
+        }
+    }
+
+    fn provider_proof_fixture(
+        state: Rc<RefCell<ProviderProofState>>,
+    ) -> (ProofProvider, EvaluationPlanRequest) {
+        let mut identity = occurrence_identity();
+        identity.unit_templates.truncate(1);
+        identity.case_templates[0].task = "gsm8k".into();
+        let session_id = aiperf_accuracy::EvaluationSessionId::new("session-1").unwrap();
+        let case_id = EvaluationCaseId::new("case-1").unwrap();
+        let unit = EvaluationUnitOccurrence {
+            unit_id: EvaluationUnitId::new("unit-1").unwrap(),
+            unit_template_id: identity.unit_templates[0].unit_template_id.clone(),
+            cases: vec![EvaluationCaseOccurrenceDescriptor {
+                case_id: case_id.clone(),
+                template_id: identity.case_templates[0].template_id.clone(),
+                issue_ordinal: 0,
+                phase_id: EvaluationPhaseId::new("finite").unwrap(),
+                cycle_index: 0,
+            }],
+        };
+        let credits = EvaluationQueueCredits {
+            units: 1,
+            host_operations: 2,
+            host_operations_per_unit: 2,
+            stream_events: 4,
+            sandboxes: 0,
+            processes: 0,
+            artifacts: 1,
+            artifact_bytes: 1024,
+        };
+        let plan = EvaluationPlan {
+            assets: Vec::new(),
+            host_requirements: Vec::new(),
+            logical_services: vec![LogicalServiceRequirement {
+                service_id: LogicalServiceId::new("primary").unwrap(),
+                purpose: OperationPurpose::new("primary").unwrap(),
+                operations: vec![SemanticOperationId::new("model.generate").unwrap()],
+                allows_restricted_payload: false,
+            }],
+            aggregation_policy: AggregationPolicy {
+                policy_id: "mean".into(),
+                exclude_infrastructure: true,
+                exclude_cancelled: true,
+                definition: CanonicalJson::new(json!({"reducer":"mean"})).unwrap(),
+            },
+            execution_granularity: EvaluationExecutionGranularity::Case,
+            scheduling_mode: EvaluationSchedulingMode::Finite,
+            finite_unit_count: Some(1),
+            finite_case_count: Some(1),
+            queue_credits: credits,
+        };
+        let artifact_id = EvaluationArtifactId::new("bundle").unwrap();
+        let candidate = EvaluationFinishCandidate {
+            identity: identity.clone(),
+            outcomes: vec![CaseOutcome {
+                case_id,
+                outcome: CaseOutcomeKind::Completed {
+                    completed: CompletedCaseOutcome {
+                        scores: BTreeMap::from([(
+                            "accuracy".into(),
+                            ProviderScore {
+                                value: CanonicalJson::new(json!(1)).unwrap(),
+                                public_projection: None,
+                            },
+                        )]),
+                        numeric_metrics: BTreeMap::from([(
+                            "accuracy".into(),
+                            FiniteF64::new(1.0).unwrap(),
+                        )]),
+                        primary_score: Some("accuracy".into()),
+                        annotations: None,
+                    },
+                },
+                artifact_refs: Vec::new(),
+            }],
+            aggregates: vec![AggregateMetric {
+                scorer: "gsm8k".into(),
+                reducer: "mean".into(),
+                metric: "accuracy".into(),
+                value: FiniteF64::new(1.0).unwrap(),
+                scored_count: 1,
+                unscored_count: 0,
+                definition: CanonicalJson::new(json!({"reducer":"mean"})).unwrap(),
+            }],
+            artifacts: vec![EvaluationArtifactManifestEntry {
+                artifact_id: artifact_id.clone(),
+                path: "bundle.json".into(),
+                media_type: "application/json".into(),
+                visibility: ArtifactVisibility::Restricted,
+                size_bytes: 2,
+                artifact_content_sha256: "9".repeat(64),
+            }],
+            provider_bundle: ArtifactRef {
+                artifact_id,
+                path: "bundle.json".into(),
+                visibility: ArtifactVisibility::Restricted,
+            },
+            normalized_result_sha256: "8".repeat(64),
+        };
+        let request = EvaluationPlanRequest {
+            session_id: session_id.clone(),
+            provider_id: identity.worker.provider_id.clone(),
+            distribution_id: identity.worker.distribution_id.clone(),
+            config_schema_version: 1,
+            config_schema_sha256: identity.config_schema_sha256.clone(),
+            provider_config: CanonicalJson::new(json!({"benchmark":"gsm8k"})).unwrap(),
+            reproducible: true,
+        };
+        (
+            ProofProvider {
+                identity,
+                plan,
+                unit,
+                candidate,
+                session_id,
+                events: VecDeque::new(),
+                next_sequence: 0,
+                page_returned: false,
+                terminal_submitted: false,
+                operation_deadline_ms: Some(1_000),
+                state,
+            },
+            request,
+        )
+    }
+
+    fn proof_workload(
+        provider: ProofProvider,
+        plan_request: EvaluationPlanRequest,
+        clock: Rc<SimClock>,
+        cancellation: OperationCancellation,
+    ) -> EvaluationWorkload {
+        let credits = provider.plan.queue_credits;
+        let scheduled = ScheduledRuntime::new(
+            clock,
+            0,
+            Rc::new(UnusedDispatcher),
+            StopConfig::default(),
+            false,
+        );
+        let mut host_builder = HostExecutorRegistryBuilder::default();
+        host_builder
+            .register(Rc::new(ProofHostFactory {
+                descriptor: HostOperationDescriptor {
+                    operation_id: RegisteredOperationId::new("model.generate").unwrap(),
+                    family: HostOperationFamily::new("inference").unwrap(),
+                    request_schema_fingerprint: "1".repeat(64),
+                    response_schema_fingerprint: "2".repeat(64),
+                    stream_schema_fingerprint: Some("3".repeat(64)),
+                    true_streaming: true,
+                    max_request_bytes: 1024,
+                    max_response_bytes: 4096,
+                    endpoint_capabilities: BTreeSet::from(["chat".into()]),
+                },
+            }))
+            .unwrap();
+        let routes = EvaluationRouteTable::new([EvaluationRoute {
+            service_id: "primary".into(),
+            purpose: "primary".into(),
+            model: "candidate".into(),
+            endpoint_profile: "candidate_profile".into(),
+            prepared_identity_sha256: "4".repeat(64),
+            endpoint_capabilities: BTreeSet::from(["chat".into()]),
+        }])
+        .unwrap();
+        EvaluationWorkload::new(
+            Box::new(provider),
+            plan_request,
+            routes,
+            host_builder.freeze().unwrap(),
+            HostExecutorRuntime::scheduled(scheduled),
+            Rc::new(EmptyAssetResolver),
+            EvaluationHostCapabilityInventory::default(),
+            PublicScoreProjectionPolicy::restricted_only(),
+            None,
+            Rc::new(ProofArtifactFinalizer),
+            EvaluationWorkloadLimits {
+                unit_concurrency: 1,
+                credit_ceiling: credits,
+                unit_page_size: 1,
+                event_batch_size: 8,
+                idle_poll_ns: 1,
+            },
+            cancellation,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn workload_drives_provider_host_stream_drain_seal_and_deferred_commit() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, plan_request) = provider_proof_fixture(state.clone());
+        let clock = Rc::new(SimClock::new());
+        let workload = proof_workload(
+            provider,
+            plan_request,
+            clock.clone(),
+            OperationCancellation::default(),
+        );
+        let result = Rc::new(RefCell::new(None));
+        let result_for_run = result.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            *result_for_run.borrow_mut() = Some(workload.execute().await.unwrap());
+        });
+        assert!(!outcome.deadlocked);
+        let result = result.borrow_mut().take().unwrap();
+        assert_eq!(result.operations.len(), 1);
+        assert_eq!(
+            result.report_facts.route_summaries["primary"].logical_operations,
+            1
+        );
+        assert_eq!(
+            result.report_facts.route_summaries["primary"].prompt_tokens,
+            Some(3)
+        );
+        assert!(state.borrow().shutdown);
+        assert!(state.borrow().sealed);
+        assert!(!state.borrow().committed);
+        assert!(matches!(
+            state.borrow().submitted.as_slice(),
+            [
+                HostOperationEvent::StreamDelta { .. },
+                HostOperationEvent::Terminal { .. }
+            ]
+        ));
+        result.report_commit.commit().unwrap();
+        assert!(state.borrow().committed);
+    }
+
+    #[test]
+    fn zero_deadline_cancels_queued_operation_before_executor_admission() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (mut provider, plan_request) = provider_proof_fixture(state.clone());
+        provider.operation_deadline_ms = Some(0);
+        let clock = Rc::new(SimClock::new());
+        let workload = proof_workload(
+            provider,
+            plan_request,
+            clock.clone(),
+            OperationCancellation::default(),
+        );
+        let result = Rc::new(RefCell::new(None));
+        let result_for_run = result.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            *result_for_run.borrow_mut() = Some(workload.execute().await.unwrap());
+        });
+        assert!(!outcome.deadlocked);
+        let result = result.borrow_mut().take().unwrap();
+        assert_eq!(
+            result.operations[0].terminal,
+            Some(HostTerminalClass::Cancelled)
+        );
+        assert!(result.operations[0].attempts.is_empty());
+        assert!(matches!(
+            state.borrow().submitted.as_slice(),
+            [HostOperationEvent::Terminal { .. }]
+        ));
+    }
+
+    #[test]
+    fn run_cancellation_starts_and_cancels_pending_units_and_drains_queued_work() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, plan_request) = provider_proof_fixture(state.clone());
+        let cancellation = OperationCancellation::default();
+        cancellation.cancel();
+        let clock = Rc::new(SimClock::new());
+        let workload = proof_workload(provider, plan_request, clock.clone(), cancellation);
+        let result = Rc::new(RefCell::new(None));
+        let result_for_run = result.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            *result_for_run.borrow_mut() = Some(workload.execute().await.unwrap());
+        });
+        assert!(!outcome.deadlocked);
+        let result = result.borrow_mut().take().unwrap();
+        assert_eq!(
+            result.operations[0].terminal,
+            Some(HostTerminalClass::Cancelled)
+        );
+        assert_eq!(state.borrow().cancelled_units.len(), 1);
+        assert!(matches!(
+            state.borrow().submitted.as_slice(),
+            [HostOperationEvent::Terminal { .. }]
+        ));
+    }
 }
