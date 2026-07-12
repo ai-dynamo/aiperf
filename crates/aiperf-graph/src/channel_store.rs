@@ -396,6 +396,29 @@ impl VersionedChannelStore {
         self.notify_channel(channel);
         Ok(())
     }
+
+    /// Abort every parked reader in this trace and wake it to observe the abort.
+    ///
+    /// Fail-fast can prevent a downstream producer from ever being scheduled.
+    /// Static producer accounting cannot decrement a node that never started,
+    /// so poisoning every channel is the only complete trace-wide wakeup edge.
+    pub fn abort_all(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        let channels = {
+            let mut inner = self.inner.borrow_mut();
+            let channels = inner.specs.keys().cloned().collect::<Vec<_>>();
+            for channel in &channels {
+                inner
+                    .orphaned
+                    .entry(channel.clone())
+                    .or_insert_with(|| reason.clone());
+            }
+            channels
+        };
+        for channel in channels {
+            self.notify_channel(&channel);
+        }
+    }
 }
 
 fn validate_write_channel(

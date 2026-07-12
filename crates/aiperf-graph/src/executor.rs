@@ -23,10 +23,14 @@ use crate::context::{NodeExecutionResult, TraceContext};
 use crate::errors::TraceError;
 use crate::materialize::PromptMaterializer;
 use crate::model::{ChannelType, Count, GraphRecord, LlmNode, TraceRecord};
+use crate::policy::{
+    NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
+    NodeFailurePolicy, NoopNodeDispatchPolicy, ResilientNodeFailurePolicy,
+};
 use crate::reducers::ChanVal;
 use crate::runtime::Handle;
 use crate::scheduler::Scheduler;
-use crate::sink::{GraphReply, GraphSink};
+use crate::sink::{GraphReply, GraphReplyStatus, GraphSink};
 use crate::wire::WireMessage;
 
 /// The post-run channel snapshot for one trace.
@@ -57,6 +61,8 @@ pub struct TraceExecutor<M: WireMessage> {
     producers: BTreeMap<String, i64>,
     materializer: Rc<dyn PromptMaterializer>,
     sink: Rc<dyn GraphSink<M>>,
+    node_policy: Rc<dyn NodeDispatchPolicy>,
+    failure_policy: Rc<dyn NodeFailurePolicy>,
     handle: Handle,
     compress_edge_delays: bool,
     ignore_edge_delays: bool,
@@ -72,6 +78,28 @@ impl<M: WireMessage> TraceExecutor<M> {
         handle: Handle,
         flags: ExecutorFlags,
     ) -> Result<Rc<Self>, TraceError> {
+        Self::new_with_policies(
+            graph,
+            materializer,
+            sink,
+            Rc::new(NoopNodeDispatchPolicy),
+            Rc::new(ResilientNodeFailurePolicy),
+            handle,
+            flags,
+        )
+    }
+
+    /// Construct with injected node admission/timing and failure semantics.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_policies(
+        graph: Rc<GraphRecord>,
+        materializer: Rc<dyn PromptMaterializer>,
+        sink: Rc<dyn GraphSink<M>>,
+        node_policy: Rc<dyn NodeDispatchPolicy>,
+        failure_policy: Rc<dyn NodeFailurePolicy>,
+        handle: Handle,
+        flags: ExecutorFlags,
+    ) -> Result<Rc<Self>, TraceError> {
         let scheduler =
             Rc::new(Scheduler::new(&graph).map_err(|e| TraceError::Other(e.to_string()))?);
         let producers = producers_per_channel(&graph);
@@ -81,6 +109,8 @@ impl<M: WireMessage> TraceExecutor<M> {
             producers,
             materializer,
             sink,
+            node_policy,
+            failure_policy,
             handle,
             compress_edge_delays: flags.compress_edge_delays,
             ignore_edge_delays: flags.ignore_edge_delays,
@@ -193,22 +223,105 @@ impl<M: WireMessage> TraceExecutor<M> {
             .build(node, &inputs)
             .map_err(|error| TraceError::Other(error.to_string()))?;
 
-        // Signal the node's first token the moment it streams in, so
-        // first-token-anchored successors gate on it (not on completion).
-        let on_first_token = || ctx.set_first_token(node_id, self.loop_wall_us());
+        let info = NodeDispatchInfo {
+            trace_id: ctx.trace.id.clone(),
+            node_id: node_id.to_string(),
+            max_tokens: node.max_tokens,
+        };
+        let admission = self.node_policy.admit(&info);
+        tokio::pin!(admission);
+        let permit = match tokio::select! {
+            biased;
+            () = ctx.await_abort() => None,
+            permit = &mut admission => Some(permit),
+        } {
+            None => return Ok(None),
+            Some(Ok(permit)) => permit,
+            Some(Err(error)) => {
+                self.mark_dispatch_start(node_id, ctx);
+                let failure = NodeFailure {
+                    trace_id: ctx.trace.id.clone(),
+                    node_id: node_id.to_string(),
+                    kind: NodeFailureKind::Admission,
+                    message: error.to_string(),
+                };
+                let value = self.value_after_failure(node, &failure)?;
+                self.publish_write(node_id, &node.output, value, ctx)?;
+                return Ok(Some(NodeExecutionResult));
+            }
+        };
+        self.mark_dispatch_start(node_id, ctx);
+        let options = permit.options();
+        let first_token_seen = Cell::new(false);
+        // Signal both the firing gate and injected prefill policy on the exact
+        // same first-token edge from the one sink dispatch.
+        let on_first_token = || {
+            if !first_token_seen.replace(true) {
+                permit.on_first_token();
+                ctx.set_first_token(node_id, self.loop_wall_us());
+            }
+        };
         let reply = self
             .sink
-            .dispatch(node_id, messages, node.max_tokens, &on_first_token)
+            .dispatch_with_options(node_id, messages, node.max_tokens, options, &on_first_token)
             .await;
         let value = match reply {
-            Ok(reply) => self.reply_value(node, reply),
-            // Mid-conversation resilience: a transport/dispatch failure is
-            // contained — write a type-correct empty so successors that splice
-            // it get omission instead of orphaning, and the trace continues.
-            Err(_e) => self.empty_value(node),
+            Ok(reply) if reply.status == GraphReplyStatus::Completed => {
+                permit.on_terminal(GraphReplyStatus::Completed);
+                self.reply_value(node, reply)
+            }
+            Ok(reply) => {
+                permit.on_terminal(reply.status);
+                let (kind, message) = match reply.status {
+                    GraphReplyStatus::Failed => (
+                        NodeFailureKind::FailedReply,
+                        "backend returned a failed reply",
+                    ),
+                    GraphReplyStatus::Cancelled => (
+                        NodeFailureKind::CancelledReply,
+                        "backend returned a cancelled reply",
+                    ),
+                    GraphReplyStatus::Completed => unreachable!("guarded above"),
+                };
+                self.value_after_failure(
+                    node,
+                    &NodeFailure {
+                        trace_id: ctx.trace.id.clone(),
+                        node_id: node_id.to_string(),
+                        kind,
+                        message: message.to_string(),
+                    },
+                )?
+            }
+            Err(error) => {
+                permit.on_terminal(GraphReplyStatus::Failed);
+                self.value_after_failure(
+                    node,
+                    &NodeFailure {
+                        trace_id: ctx.trace.id.clone(),
+                        node_id: node_id.to_string(),
+                        kind: NodeFailureKind::Sink,
+                        message: error.to_string(),
+                    },
+                )?
+            }
         };
         self.publish_write(node_id, &node.output, value, ctx)?;
         Ok(Some(NodeExecutionResult))
+    }
+
+    fn value_after_failure(
+        &self,
+        node: &LlmNode,
+        failure: &NodeFailure,
+    ) -> Result<ChanVal, TraceError> {
+        match self.failure_policy.on_failure(failure) {
+            NodeFailureDisposition::ContinueWithEmpty => Ok(self.empty_value(node)),
+            NodeFailureDisposition::AbortTrace => Err(TraceError::Other(format!(
+                "graph node {:?} failed ({:?}): {}",
+                failure.node_id, failure.kind, failure.message
+            ))),
+        }
     }
 
     /// The value written to a node's output channel for a reply. A messages-typed
@@ -266,6 +379,15 @@ impl<M: WireMessage> TraceExecutor<M> {
         Ok(())
     }
 
+    fn mark_dispatch_start(self: &Rc<Self>, node_id: &str, ctx: &Rc<TraceContext>) {
+        ctx.node_dispatch_wall_us
+            .borrow_mut()
+            .insert(node_id.to_string(), self.loop_wall_us());
+        for successor in self.scheduler.start_anchored_successors(node_id) {
+            self.clone().schedule(&successor, ctx);
+        }
+    }
+
     fn finalize_node(&self, node_id: &str, node: &LlmNode, ctx: &Rc<TraceContext>, success: bool) {
         ctx.node_finish_wall_us
             .borrow_mut()
@@ -303,12 +425,6 @@ impl<M: WireMessage> TraceExecutor<M> {
         let node_firable_wall_us = self.loop_wall_us();
         self.apply_firing_delay(node_id, ctx, node_firable_wall_us)
             .await;
-        ctx.node_dispatch_wall_us
-            .borrow_mut()
-            .insert(node_id.to_string(), self.loop_wall_us());
-        for succ_id in self.scheduler.start_anchored_successors(node_id) {
-            self.clone().schedule(&succ_id, ctx);
-        }
         Ok(gate_seq)
     }
 

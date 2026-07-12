@@ -25,7 +25,7 @@ use aiperf_transport::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 
-use crate::sink::{GraphReply, GraphSink};
+use crate::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use crate::wire::OpenAiChatMessage;
 
 /// Live OpenAI-chat sink over [`aiperf_transport`]. Single-threaded per trace
@@ -89,6 +89,24 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
         max_tokens: Option<usize>,
         on_first_token: &dyn Fn(),
     ) -> Result<GraphReply<OpenAiChatMessage>> {
+        self.dispatch_with_options(
+            _node_id,
+            messages,
+            max_tokens,
+            GraphDispatchOptions::default(),
+            on_first_token,
+        )
+        .await
+    }
+
+    async fn dispatch_with_options(
+        &self,
+        _node_id: &str,
+        messages: Vec<Bytes>,
+        max_tokens: Option<usize>,
+        options: GraphDispatchOptions,
+        on_first_token: &dyn Fn(),
+    ) -> Result<GraphReply<OpenAiChatMessage>> {
         let uuid = Uuid::new_v4();
         // No scheduler admission on the HTTP path; admit == dispatch time.
         let admit_ms = self.ms(self.clock.now_ns());
@@ -103,7 +121,8 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
         );
         let payload = build_message_body_from_wires(&messages, &overrides)?;
 
-        let cfg = RequestConfig::new(&self.url);
+        let mut cfg = RequestConfig::new(&self.url);
+        cfg.cancel_after_ns = options.cancel_after_ns;
         // The transport fires this at the first SSE message (first observed
         // token). Gate first-token-anchored successors the moment it arrives,
         // before the reply completes.
@@ -116,9 +135,17 @@ impl GraphSink<OpenAiChatMessage> for TransportChatSink {
 
         if let Some(err) = &rec.error {
             tracing::debug!("transport dispatch error: {:?}", err);
-            self.observer
-                .on_terminal(uuid, ReplayTerminalStatus::Failed);
-            return Ok(GraphReply::failed());
+            let terminal = if rec.was_cancelled() {
+                ReplayTerminalStatus::Canceled
+            } else {
+                ReplayTerminalStatus::Failed
+            };
+            self.observer.on_terminal(uuid, terminal);
+            return Ok(if terminal == ReplayTerminalStatus::Canceled {
+                GraphReply::cancelled()
+            } else {
+                GraphReply::failed()
+            });
         }
 
         // Parse the collected SSE messages into assistant text + token times.

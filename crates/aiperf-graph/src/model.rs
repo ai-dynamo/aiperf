@@ -131,6 +131,17 @@ pub struct LlmNode {
 pub enum PromptItem {
     /// A static, dense segment handle (resolved through the shared SegmentStore).
     Seg { seg: Handle },
+    /// An authored pre-serialized message array retained as one raw segment.
+    ///
+    /// Dataset formats such as `dag_jsonl` deliberately retain the complete
+    /// array wire. The graph materializer splits it into its exact object
+    /// slices once per prompt without inventing a second segment arena.
+    RawMessages { raw_messages: Handle },
+    /// A text-only dataset segment projected into a message with `role`.
+    ///
+    /// Shared system and user-context prompts use the text segment domain, so
+    /// this variant lets graph lowering reuse their real dense handles.
+    Text { text: Handle, role: String },
     /// Splice the dynamic reply captured on `splice` (a predecessor's output
     /// channel) at this position.
     Splice { splice: String },

@@ -38,6 +38,8 @@ pub struct TraceContext {
     first_token_notify: Rc<Notify>,
     /// First trace-stop error observed; makes the run halt.
     pub abort: RefCell<Option<TraceError>>,
+    /// Wakes node-policy admission futures when fail-fast aborts the trace.
+    abort_notify: Rc<Notify>,
 }
 
 impl TraceContext {
@@ -52,6 +54,7 @@ impl TraceContext {
             node_first_token_wall_us: RefCell::new(BTreeMap::new()),
             first_token_notify: Rc::new(Notify::new()),
             abort: RefCell::new(None),
+            abort_notify: Rc::new(Notify::new()),
         })
     }
 
@@ -64,13 +67,15 @@ impl TraceContext {
     }
 
     /// Park until `node_id`'s first-token status resolves — either a first token
-    /// was observed or the node finished. Re-checks existing state on each wake
-    /// (single-threaded, so the signal can't be lost between check and await).
+    /// was observed, the node finished, or the whole trace aborted. Re-checks
+    /// existing state on each wake (single-threaded, so the signal can't be lost
+    /// between check and await).
     pub async fn await_first_token(&self, node_id: &str) {
         loop {
             {
                 if self.node_first_token_wall_us.borrow().contains_key(node_id)
                     || self.completed_node_ids.borrow().contains(node_id)
+                    || self.is_aborted()
                 {
                     return;
                 }
@@ -96,7 +101,22 @@ impl TraceContext {
     pub fn set_abort(&self, err: TraceError) {
         let mut slot = self.abort.borrow_mut();
         if slot.is_none() {
+            let reason = err.to_string();
             *slot = Some(err);
+            drop(slot);
+            self.store.abort_all(reason);
+            self.notify_first_token();
+            self.abort_notify.notify_waiters();
+        }
+    }
+
+    /// Park until the trace abort latch is set.
+    pub async fn await_abort(&self) {
+        loop {
+            if self.is_aborted() {
+                return;
+            }
+            self.abort_notify.notified().await;
         }
     }
 

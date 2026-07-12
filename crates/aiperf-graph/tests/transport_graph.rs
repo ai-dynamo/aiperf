@@ -1,8 +1,11 @@
-// crates/aiperf-graph/tests/transport_graph.rs
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! End-to-end proof that the graph executor dispatches real OpenAI chat
 //! completions over HTTP via `TransportChatSink` (backed by `aiperf-transport`)
 //! against the REAL `aiperf-mock-rs` binary — not an in-process stub.
 
+use std::io::Read;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -10,13 +13,27 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aiperf_clock::clock::Clock;
 use aiperf_clock::real_clock::RealClock;
+use aiperf_dataset::loader::{
+    DagJsonlComposer, DagJsonlDatasetLoader, DatasetFormatRegistration, DatasetSource, LoadConfig,
+    LoaderRegistry,
+};
+use aiperf_dataset::{ComposeConfig, TiktokenTokenizer};
+use aiperf_graph::dataset_lowering::lower_dataset;
 use aiperf_graph::materialize::SegmentItemsMaterializer;
 use aiperf_graph::model::{GraphRecord, TraceRecord};
+use aiperf_graph::policy::{
+    AbortTraceNodeFailurePolicy, CancellationNodePolicy, FailFastRunFailurePolicy,
+};
 use aiperf_graph::reducers::ChanVal;
 use aiperf_graph::run::{TimeBase, run_trace};
 use aiperf_graph::segment::{Handle as SegmentHandle, SegmentPool, intern_message};
 use aiperf_graph::transport_sink::TransportChatSink;
 use aiperf_graph::wire::OpenAiChatMessage as Msg;
+use aiperf_graph::workload::{
+    GraphTracePlan, GraphTraceSource, GraphWorkload, VecGraphTraceSource,
+};
+use aiperf_rng::RngRoot;
+use aiperf_timing::{BernoulliFixedDelay, Phase};
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
 use serde_json::{Value, json};
@@ -84,6 +101,7 @@ struct CountObs {
     admits: AtomicUsize,
     tokens: AtomicUsize,
     completed: AtomicUsize,
+    canceled: AtomicUsize,
 }
 impl RequestObserver for CountObs {
     fn on_arrival(&self, _: Uuid, _: f64, _: usize, _: usize) {}
@@ -96,6 +114,80 @@ impl RequestObserver for CountObs {
     fn on_terminal(&self, _: Uuid, s: ReplayTerminalStatus) {
         if matches!(s, ReplayTerminalStatus::Completed) {
             self.completed.fetch_add(1, Ordering::Relaxed);
+        }
+        if matches!(s, ReplayTerminalStatus::Canceled) {
+            self.canceled.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// One accepted TCP request whose response is intentionally withheld so the
+/// graph's post-send cancellation policy must terminate it.
+struct HangingHttpServer {
+    base_url: String,
+}
+
+/// Minimal real TCP/OpenAI-SSE server used when the external mock binary is not
+/// installed. Each response closes its connection, exercising transport
+/// re-establishment while keeping the proof self-contained.
+struct SseHttpServer {
+    base_url: String,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SseHttpServer {
+    fn spawn(expected_requests: usize) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let thread = std::thread::spawn(move || {
+            for _ in 0..expected_requests {
+                let (mut stream, _) = listener.accept().unwrap();
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+                let mut request = [0_u8; 32 * 1024];
+                let _ = stream.read(&mut request);
+                let body = concat!(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+                    "data: [DONE]\n\n"
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                use std::io::Write;
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        Self {
+            base_url: format!("http://{address}"),
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for SseHttpServer {
+    fn drop(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
+    }
+}
+
+impl HangingHttpServer {
+    fn spawn() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+            let mut bytes = [0_u8; 16 * 1024];
+            let _ = stream.read(&mut bytes);
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        });
+        Self {
+            base_url: format!("http://{address}"),
         }
     }
 }
@@ -223,4 +315,118 @@ fn graph_dispatches_over_transport_h2c_to_real_mock() {
     assert!(
         matches!(result.channels.get("c0").and_then(ChanVal::as_value), Some(Value::Array(a)) if !a.is_empty())
     );
+}
+
+#[test]
+fn lowered_dataset_dag_dispatches_fanout_join_over_real_http() {
+    let server = SseHttpServer::spawn(3);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let dataset = runtime.block_on(async {
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(DagJsonlDatasetLoader),
+                Arc::new(DagJsonlComposer),
+            ))
+            .unwrap();
+        registry
+            .build_dataset(
+                Some("dag_jsonl"),
+                &LoadConfig::new(DatasetSource::Inline(json!([
+                    {"session_id":"root","turns":[
+                        {"messages":[{"role":"user","content":"root-0"}],"spawns":["child"]},
+                        {"messages":[{"role":"user","content":"root-1"}]}
+                    ]},
+                    {"session_id":"child","turns":[
+                        {"messages":[{"role":"user","content":"child-0"}]}
+                    ]}
+                ]))),
+                &ComposeConfig::new("gpt2", RngRoot::new(Some(2))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap()
+    });
+    drop(runtime);
+    let lowered = lower_dataset(&dataset).unwrap();
+    let trace = lowered.parsed.traces[0].clone();
+    let graph = Rc::new(lowered.parsed.resolve_trace_graph(&trace).clone());
+    let materializer = Rc::new(SegmentItemsMaterializer::new(lowered.segments));
+    let observer = Rc::new(CountObs::default());
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sink = Rc::new(TransportChatSink::new(
+        clock,
+        &server.base_url,
+        "gpt2",
+        observer.clone(),
+        8,
+        false,
+    ));
+
+    let result = run_trace(graph, trace, materializer, sink, TimeBase::Wall).unwrap();
+    assert_eq!(observer.admits.load(Ordering::Relaxed), 3);
+    assert_eq!(observer.completed.load(Ordering::Relaxed), 3);
+    assert!(
+        result
+            .channels
+            .values()
+            .filter_map(ChanVal::as_value)
+            .any(|value| matches!(value, Value::Array(messages) if !messages.is_empty()))
+    );
+}
+
+#[test]
+fn graph_policy_cancels_real_http_after_send_and_fail_fast_observes_it() {
+    let server = HangingHttpServer::spawn();
+    let tokenizer = aiperf_dataset::TiktokenTokenizer::builtin();
+    let mut pool = SegmentPool::new();
+    let user = intern_message(&mut pool, &Msg::new("user", "cancel"), None, &tokenizer).unwrap();
+    let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
+    let graph: GraphRecord = serde_json::from_value(json!({
+        "state": {"out": {"type": "messages", "reducer": "add_messages"}},
+        "nodes": {"n0": {"output": "out", "items": [{"seg": user}]}},
+        "edges": [{"source": "START", "target": "n0"}]
+    }))
+    .unwrap();
+    let source: Rc<dyn GraphTraceSource> = Rc::new(VecGraphTraceSource::new([GraphTracePlan {
+        graph: Rc::new(graph),
+        trace: TraceRecord {
+            id: "cancel-real".into(),
+            graph_ref: None,
+            initial_state: Default::default(),
+        },
+        arrival_offset_ns: None,
+    }]));
+    let observer = Rc::new(CountObs::default());
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let sink = Rc::new(TransportChatSink::new(
+        clock.clone(),
+        &server.base_url,
+        "gpt2",
+        observer.clone(),
+        16,
+        false,
+    ));
+    let cancellation = Rc::new(CancellationNodePolicy::new(
+        Box::new(BernoulliFixedDelay::new(Some(100.0), 0.001, RngRoot::new(Some(11))).unwrap()),
+        Phase::Profiling,
+    ));
+    let workload = GraphWorkload::new(clock, source, materializer, sink)
+        .with_node_policy(cancellation)
+        .with_node_failure(Rc::new(AbortTraceNodeFailurePolicy))
+        .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
+    let report = Rc::new(std::cell::RefCell::new(None));
+    let report_slot = report.clone();
+    let outcome = aiperf_graph::runtime::drive_real(move |_handle| async move {
+        *report_slot.borrow_mut() = Some(workload.execute().await.unwrap());
+    });
+    assert!(!outcome.deadlocked);
+    let report = report.borrow_mut().take().unwrap();
+    assert_eq!(report.admitted, 1);
+    assert_eq!(report.failed, 1);
+    assert_eq!(observer.canceled.load(Ordering::Relaxed), 1);
+    assert_eq!(observer.completed.load(Ordering::Relaxed), 0);
 }

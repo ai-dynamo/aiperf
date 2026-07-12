@@ -11,10 +11,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use aiperf_dataset::{
-    AssemblyItem, DatasetError, MessageSpliceResolver,
+    AssemblyItem, DatasetError, MessageSpliceResolver, Payload,
     SegmentItemsMaterializer as SharedMaterializer, SegmentStore,
 };
 use bytes::Bytes;
+use serde_json::value::RawValue;
 
 use crate::model::{LlmNode, PromptItem};
 use crate::reducers::ChanVal;
@@ -69,17 +70,80 @@ impl PromptMaterializer for SegmentItemsMaterializer {
         node: &LlmNode,
         inputs: &BTreeMap<String, ChanVal>,
     ) -> Result<Vec<Bytes>, DatasetError> {
-        let items: Vec<_> = node
-            .items
-            .iter()
-            .map(|item| match item {
-                PromptItem::Seg { seg } => AssemblyItem::Segment(*seg),
-                PromptItem::Splice { splice } => AssemblyItem::Splice(splice.clone()),
-            })
-            .collect();
-        self.inner
-            .materialize_messages(&items, &InputSplices(inputs))
+        let splices = InputSplices(inputs);
+        let mut messages = Vec::with_capacity(node.items.len());
+        for item in &node.items {
+            match item {
+                PromptItem::Seg { seg } => messages.extend(
+                    self.inner
+                        .materialize_messages(&[AssemblyItem::Segment(*seg)], &splices)?,
+                ),
+                PromptItem::RawMessages { raw_messages } => {
+                    messages.extend(raw_message_wires(
+                        self.inner.store().as_ref(),
+                        *raw_messages,
+                    )?);
+                }
+                PromptItem::Text { text, role } => {
+                    messages.push(text_message_wire(self.inner.store().as_ref(), *text, role)?);
+                }
+                PromptItem::Splice { splice } => messages.extend(splices.resolve(splice)?),
+            }
+        }
+        Ok(messages)
     }
+}
+
+fn raw_message_wires(
+    store: &dyn SegmentStore,
+    handle: aiperf_dataset::Handle,
+) -> Result<Vec<Bytes>, DatasetError> {
+    let Payload::Raw { wire } = store.get(handle)? else {
+        return Err(DatasetError::PayloadKind {
+            handle,
+            expected: "raw message array",
+            actual: store.get(handle)?.kind_name(),
+        });
+    };
+    let messages: Vec<Box<RawValue>> = serde_json::from_slice(wire)?;
+    if messages.is_empty() {
+        return Err(DatasetError::InvalidWire(format!(
+            "raw message-array handle {handle} is empty"
+        )));
+    }
+    messages
+        .into_iter()
+        .enumerate()
+        .map(|(index, message)| {
+            let value: serde_json::Value = serde_json::from_str(message.get())?;
+            if !value.is_object() {
+                return Err(DatasetError::InvalidWire(format!(
+                    "raw message-array handle {handle} entry {index} is not an object"
+                )));
+            }
+            Ok(Bytes::copy_from_slice(message.get().as_bytes()))
+        })
+        .collect()
+}
+
+fn text_message_wire(
+    store: &dyn SegmentStore,
+    handle: aiperf_dataset::Handle,
+    role: &str,
+) -> Result<Bytes, DatasetError> {
+    let Payload::Text { bytes, .. } = store.get(handle)? else {
+        return Err(DatasetError::PayloadKind {
+            handle,
+            expected: "text-only",
+            actual: store.get(handle)?.kind_name(),
+        });
+    };
+    let content = std::str::from_utf8(bytes).map_err(|error| {
+        DatasetError::InvalidWire(format!("text handle {handle} is not UTF-8: {error}"))
+    })?;
+    serde_json::to_vec(&serde_json::json!({"role": role, "content": content}))
+        .map(Bytes::from)
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -87,7 +151,7 @@ mod tests {
     use super::*;
     use crate::segment::{SegmentPool, intern_message};
     use crate::wire::OpenAiChatMessage as Msg;
-    use aiperf_dataset::TiktokenTokenizer;
+    use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
     use serde_json::json;
 
     #[test]
@@ -122,5 +186,61 @@ mod tests {
         let messages = materializer.build(&node, &inputs).unwrap();
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[1], reply_wire);
+    }
+
+    #[test]
+    fn expands_raw_message_arrays_without_reencoding_the_objects() {
+        let mut pool = SegmentPool::new();
+        let raw = pool
+            .intern_raw(
+                None,
+                Bytes::from_static(
+                    br#"[ { "role" : "system", "content" : "S" },{"role":"user","content":"U"}]"#,
+                ),
+            )
+            .unwrap();
+        let materializer = SegmentItemsMaterializer::new(Arc::new(pool.freeze()));
+        let node: LlmNode = serde_json::from_value(json!({
+            "output": "o",
+            "items": [{"raw_messages": raw}]
+        }))
+        .unwrap();
+
+        let messages = materializer.build(&node, &BTreeMap::new()).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0],
+            Bytes::from_static(br#"{ "role" : "system", "content" : "S" }"#)
+        );
+        assert_eq!(
+            messages[1],
+            Bytes::from_static(br#"{"role":"user","content":"U"}"#)
+        );
+    }
+
+    #[test]
+    fn projects_text_segments_with_the_authored_role() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                "system",
+                Bytes::from_static(b"shared"),
+                tokenizer.encode("shared").unwrap(),
+            )
+            .unwrap();
+        let materializer = SegmentItemsMaterializer::new(Arc::new(pool.freeze()));
+        let node: LlmNode = serde_json::from_value(json!({
+            "output": "o",
+            "items": [{"text": text, "role": "system"}]
+        }))
+        .unwrap();
+
+        let messages = materializer.build(&node, &BTreeMap::new()).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&messages[0]).unwrap(),
+            json!({"role": "system", "content": "shared"})
+        );
     }
 }

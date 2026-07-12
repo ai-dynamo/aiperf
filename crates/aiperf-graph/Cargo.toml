@@ -27,5 +27,8 @@ tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+aiperf-rng.workspace = true
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
