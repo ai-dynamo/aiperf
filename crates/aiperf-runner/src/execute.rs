@@ -117,6 +117,11 @@ use crate::records::{
     write_raw_records_jsonl, write_records_jsonl,
 };
 use crate::server_metrics::ServerMetricsRun;
+use crate::sidecar_input::{
+    GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec, LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec,
+    NETWORK_LATENCY_SIDECAR_ID, NetworkLatencySpec, PreparedSidecarInputs,
+    SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
+};
 use crate::turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
     NativeHttpExecutionBackendFactory,
@@ -214,11 +219,74 @@ pub(crate) struct NativeRunSpec {
     pub(crate) phases: Vec<PhaseSpec>,
     pub(crate) metrics: MetricsSpec,
     pub(crate) artifacts: crate::protocol::ArtifactSpec,
-    pub(crate) gpu_telemetry: Option<crate::protocol::GpuTelemetrySpec>,
-    pub(crate) network_latency: Option<crate::protocol::NetworkLatencySpec>,
-    pub(crate) server_metrics: Option<crate::protocol::ServerMetricsSpec>,
-    pub(crate) live_streaming: Option<crate::protocol::LiveStreamingSpec>,
+    pub(crate) sidecars: NativeSidecarPlan,
     pub(crate) user_files: Vec<crate::protocol_v2::UserFileSpecV2>,
+}
+
+/// Protocol-neutral retention of one run's already decoded sidecar inputs.
+///
+/// Protocol v1 keeps its compatibility values directly. Protocol v2 retains
+/// the exact adapter-produced bundle from [`RunnerRunContext`](crate::registry::RunnerRunContext)
+/// without projecting through v1 or decoding any body a second time.
+pub(crate) enum NativeSidecarPlan {
+    /// Protocol-v1 compatibility values decoded by its outer request.
+    Legacy {
+        gpu_telemetry: Option<GpuTelemetrySpec>,
+        network_latency: Option<NetworkLatencySpec>,
+        server_metrics: Option<ServerMetricsSpec>,
+        live_streaming: Option<LiveStreamingSpec>,
+    },
+    /// Protocol-v2 direct adapter outputs retained through execution.
+    Prepared(Arc<PreparedSidecarInputs>),
+}
+
+impl NativeSidecarPlan {
+    fn gpu_telemetry(&self) -> Result<Option<&GpuTelemetrySpec>> {
+        match self {
+            Self::Legacy { gpu_telemetry, .. } => Ok(gpu_telemetry.as_ref()),
+            Self::Prepared(inputs) => inputs.get(GPU_TELEMETRY_SIDECAR_ID),
+        }
+    }
+
+    fn network_latency(&self) -> Result<Option<&NetworkLatencySpec>> {
+        match self {
+            Self::Legacy {
+                network_latency, ..
+            } => Ok(network_latency.as_ref()),
+            Self::Prepared(inputs) => inputs.get(NETWORK_LATENCY_SIDECAR_ID),
+        }
+    }
+
+    fn server_metrics(&self) -> Result<Option<&ServerMetricsSpec>> {
+        match self {
+            Self::Legacy { server_metrics, .. } => Ok(server_metrics.as_ref()),
+            Self::Prepared(inputs) => inputs.get(SERVER_METRICS_SIDECAR_ID),
+        }
+    }
+
+    pub(crate) fn live_streaming(&self) -> Result<Option<&LiveStreamingSpec>> {
+        match self {
+            Self::Legacy { live_streaming, .. } => Ok(live_streaming.as_ref()),
+            Self::Prepared(inputs) => inputs.get(LIVE_STREAMING_SIDECAR_ID),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Legacy {
+                gpu_telemetry,
+                network_latency,
+                server_metrics,
+                live_streaming,
+            } => {
+                gpu_telemetry.is_none()
+                    && network_latency.is_none()
+                    && server_metrics.is_none()
+                    && live_streaming.is_none()
+            }
+            Self::Prepared(inputs) => inputs.is_empty(),
+        }
+    }
 }
 
 /// Endpoint preparation selected by the source protocol.
@@ -482,10 +550,12 @@ impl TryFrom<RunRequest> for NativeRunPlan {
                 phases: run.phases,
                 metrics: run.metrics,
                 artifacts: run.artifacts,
-                gpu_telemetry: run.gpu_telemetry,
-                network_latency: run.network_latency,
-                server_metrics: run.server_metrics,
-                live_streaming: run.live_streaming,
+                sidecars: NativeSidecarPlan::Legacy {
+                    gpu_telemetry: run.gpu_telemetry,
+                    network_latency: run.network_latency,
+                    server_metrics: run.server_metrics,
+                    live_streaming: run.live_streaming,
+                },
                 user_files: Vec::new(),
             },
         })
@@ -768,6 +838,10 @@ fn materialize_user_files(
 }
 
 fn validate_plan(request: &NativeRunPlan) -> Result<()> {
+    let gpu_telemetry = request.run.sidecars.gpu_telemetry()?;
+    let network_latency = request.run.sidecars.network_latency()?;
+    let server_metrics = request.run.sidecars.server_metrics()?;
+    let live_streaming = request.run.sidecars.live_streaming()?;
     ensure!(
         !request.run.benchmark_id.trim().is_empty(),
         "benchmark_id cannot be empty"
@@ -805,7 +879,7 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
             common.name
         );
     }
-    if request.run.gpu_telemetry.is_some() {
+    if gpu_telemetry.is_some() {
         ensure!(
             request
                 .run
@@ -817,7 +891,7 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
             "GPU telemetry requires exactly one profiling phase"
         );
     }
-    if request.run.network_latency.is_some() {
+    if network_latency.is_some() {
         ensure!(
             request
                 .run
@@ -829,7 +903,7 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
             "network latency calibration requires exactly one profiling phase"
         );
     }
-    if let Some(spec) = &request.run.server_metrics {
+    if let Some(spec) = server_metrics {
         ensure!(
             request
                 .run
@@ -863,7 +937,7 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
             "server metrics parquet_wire_path must be present exactly when Parquet is selected"
         );
     }
-    if let Some(spec) = &request.run.live_streaming {
+    if let Some(spec) = live_streaming {
         ensure!(
             spec.python_executable.is_absolute(),
             "live streaming python_executable must be absolute"
@@ -962,7 +1036,7 @@ async fn execute_scheduled_native(
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    let mut live_streaming = if request.run.live_streaming.is_some() {
+    let mut live_streaming = if request.run.sidecars.live_streaming()?.is_some() {
         match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
             .await
         {
@@ -988,10 +1062,7 @@ async fn execute_scheduled_native(
 
 fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
     ensure!(
-        request.run.gpu_telemetry.is_none()
-            && request.run.network_latency.is_none()
-            && request.run.server_metrics.is_none()
-            && request.run.live_streaming.is_none(),
+        request.run.sidecars.is_empty(),
         "authored Graph-IR runs do not yet support GPU, network, server, or live-streaming telemetry"
     );
     ensure!(
@@ -1683,15 +1754,15 @@ async fn execute_native_inner(
 
     let real_clock_anchor = RealClockAnchor::now();
     let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
-    let gpu_telemetry = if let Some(spec) = request.run.gpu_telemetry.as_ref() {
+    let gpu_telemetry_spec = request.run.sidecars.gpu_telemetry()?;
+    let network_latency_spec = request.run.sidecars.network_latency()?;
+    let server_metrics_spec = request.run.sidecars.server_metrics()?;
+    let gpu_telemetry = if let Some(spec) = gpu_telemetry_spec {
         Some(GpuTelemetryRun::new(spec, clock.clone()).await?)
     } else {
         None
     };
-    let network_latency = request
-        .run
-        .network_latency
-        .as_ref()
+    let network_latency = network_latency_spec
         .map(|spec| {
             NetworkLatencyRun::new(
                 &request.run.benchmark_id,
@@ -1701,16 +1772,10 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
-    let server_metrics = request
-        .run
-        .server_metrics
-        .as_ref()
+    let server_metrics = server_metrics_spec
         .map(|spec| ServerMetricsRun::new(spec, clock.clone()))
         .transpose()?;
-    let gpu_records_path = request
-        .run
-        .gpu_telemetry
-        .as_ref()
+    let gpu_records_path = gpu_telemetry_spec
         .map(|spec| {
             artifact_path(
                 &request.run.artifact_dir,
@@ -1719,10 +1784,7 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
-    let network_latency_records_path = request
-        .run
-        .network_latency
-        .as_ref()
+    let network_latency_records_path = network_latency_spec
         .and_then(|spec| spec.probe.as_ref())
         .map(|probe| {
             artifact_path(
@@ -1732,17 +1794,11 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
-    let server_metrics_jsonl_path = request
-        .run
-        .server_metrics
-        .as_ref()
+    let server_metrics_jsonl_path = server_metrics_spec
         .and_then(|spec| spec.jsonl_path.as_ref())
         .map(|path| artifact_path(&request.run.artifact_dir, path, "server_metrics.jsonl_path"))
         .transpose()?;
-    let server_metrics_parquet_wire_path = request
-        .run
-        .server_metrics
-        .as_ref()
+    let server_metrics_parquet_wire_path = server_metrics_spec
         .and_then(|spec| spec.parquet_wire_path.as_ref())
         .map(|path| {
             artifact_path(
@@ -1856,13 +1912,7 @@ async fn execute_native_inner(
     }
     if let Some(network_latency) = &network_latency {
         let mean_rtt_ns = network_latency.mean_rtt_ns();
-        if request
-            .run
-            .network_latency
-            .as_ref()
-            .is_some_and(|spec| spec.probe.is_some())
-            && mean_rtt_ns.is_none()
-        {
+        if network_latency_spec.is_some_and(|spec| spec.probe.is_some()) && mean_rtt_ns.is_none() {
             eprintln!(
                 "network latency calibration collected no successful probes; adjusted metrics are omitted"
             );

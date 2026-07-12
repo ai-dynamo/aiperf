@@ -126,8 +126,8 @@ impl PythonLiveStreamingRun {
     /// Spawn, initialize, and negotiate the strict extension worker.
     pub(crate) async fn spawn(run: &NativeRunSpec, metrics_config: MetricsConfig) -> Result<Self> {
         let spec = run
-            .live_streaming
-            .as_ref()
+            .sidecars
+            .live_streaming()?
             .ok_or_else(|| anyhow!("live streaming spec is absent"))?;
         ensure!(
             spec.python_executable.is_absolute(),

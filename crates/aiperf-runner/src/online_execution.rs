@@ -31,8 +31,8 @@ use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeGraphInputPlan,
     NativePreparedEndpointPlan, NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec,
-    NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
-    StaticAccuracyEvaluatorProcessSpec, distribution,
+    NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
+    StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec, distribution,
     execute_native_plan_uncommitted_with_factories, load_tokenizer,
 };
 use crate::graph_execution::NativeRunnerGraphPlacementFactory;
@@ -924,6 +924,7 @@ fn lower_scheduled(
         tokenizer,
         &workload.phases,
         NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
+        NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
 }
 
@@ -943,6 +944,7 @@ fn lower_graph(
         tokenizer,
         &workload.phases,
         NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
+        NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
 }
 
@@ -962,6 +964,7 @@ fn lower_static_accuracy(
         tokenizer,
         &workload.phases,
         NativeEndpointPlan::Prepared(lower_prepared_endpoint_plan(context)),
+        NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
 }
 
@@ -973,6 +976,7 @@ fn build_common_plan(
     tokenizer: TokenizerSpec,
     phases: &[PhaseSpec],
     endpoint: NativeEndpointPlan,
+    sidecars: NativeSidecarPlan,
 ) -> Result<NativeRunPlan> {
     Ok(NativeRunPlan {
         run: NativeRunSpec {
@@ -992,10 +996,7 @@ fn build_common_plan(
                 outputs_path: run.artifacts.outputs_path.clone(),
                 trace: run.artifacts.trace,
             },
-            gpu_telemetry: None,
-            network_latency: None,
-            server_metrics: None,
-            live_streaming: None,
+            sidecars,
             user_files: run.artifacts.user_files.clone(),
         },
     })
