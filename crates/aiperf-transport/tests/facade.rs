@@ -39,6 +39,18 @@ fn facade_streams_a_chat_completion() {
         assert_eq!(rec.status, Some(200));
         assert!(!rec.responses.is_empty());
         assert!(ttft.is_some());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&rec.request_body).unwrap(),
+            payload()
+        );
+        assert_eq!(
+            rec.request_headers.get("Accept").map(String::as_str),
+            Some("text/event-stream")
+        );
+        assert_eq!(
+            rec.request_headers.get("Content-Type").map(String::as_str),
+            Some("application/json")
+        );
     });
 }
 

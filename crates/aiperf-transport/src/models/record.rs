@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use bytes::Bytes;
+
 use crate::models::{ErrorDetails, Response, TraceData};
 
 /// A completed (or failed) request with its responses and timing.
@@ -12,6 +14,16 @@ use crate::models::{ErrorDetails, Response, TraceData};
 pub struct RequestRecord {
     /// Clock-ns when dispatch started.
     pub start_ns: i64,
+    /// Exact request body bytes handed to the HTTP client.
+    ///
+    /// Keeping the reference-counted [`Bytes`] handle beside the terminal
+    /// record lets optional raw exporters preserve the authored JSON without a
+    /// decode/re-encode pass. Empty-body requests, such as control-plane GETs,
+    /// retain an empty value.
+    pub request_body: Bytes,
+    /// Actual request headers after transport defaults and endpoint overrides
+    /// were composed.
+    pub request_headers: BTreeMap<String, String>,
     /// Clock-ns when the request completed, if it did.
     pub end_ns: Option<i64>,
     /// Clock-ns of the first response byte (streaming start).
@@ -60,6 +72,8 @@ mod tests {
     fn valid_when_has_response_and_no_error() {
         let r = RequestRecord {
             start_ns: 10,
+            request_body: bytes::Bytes::from_static(b"{\"prompt\":\"x\"}"),
+            request_headers: BTreeMap::from([("Content-Type".into(), "application/json".into())]),
             responses: vec![Response::Text(TextResponse {
                 perf_ns: 20,
                 text: "x".into(),
@@ -71,6 +85,11 @@ mod tests {
         assert!(r.is_valid());
         assert!(!r.has_error());
         assert!(!r.was_cancelled());
+        assert_eq!(r.request_body.as_ref(), b"{\"prompt\":\"x\"}");
+        assert_eq!(
+            r.request_headers.get("Content-Type").map(String::as_str),
+            Some("application/json")
+        );
     }
 
     #[test]

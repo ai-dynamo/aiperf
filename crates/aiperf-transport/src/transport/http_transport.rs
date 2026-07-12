@@ -165,35 +165,37 @@ impl HttpTransport {
         mut first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
-        let full = match build_url(&cfg.url, "", &cfg.params) {
-            Ok(f) => f,
-            Err(e) => {
-                let mut r = RequestRecord::started(start_ns);
-                r.error = Some(ErrorDetails::other(format!("bad url {}: {e}", cfg.url)));
-                r.end_ns = Some(self.clock.now_ns());
-                return r;
-            }
-        };
         let headers = build_headers(
             cfg,
             streaming,
             self.session_header.as_deref(),
             &self.user_agent,
         );
+        let mut record = RequestRecord {
+            request_body: body.clone(),
+            request_headers: headers.clone(),
+            ..RequestRecord::started(start_ns)
+        };
+        let full = match build_url(&cfg.url, "", &cfg.params) {
+            Ok(f) => f,
+            Err(e) => {
+                record.error = Some(ErrorDetails::other(format!("bad url {}: {e}", cfg.url)));
+                record.end_ns = Some(self.clock.now_ns());
+                return record;
+            }
+        };
         let url = match url::Url::parse(&full) {
             Ok(u) => u,
             Err(e) => {
-                let mut r = RequestRecord::started(start_ns);
-                r.error = Some(ErrorDetails::other(format!("bad url {full}: {e}")));
-                r.end_ns = Some(self.clock.now_ns());
-                return r;
+                record.error = Some(ErrorDetails::other(format!("bad url {full}: {e}")));
+                record.end_ns = Some(self.clock.now_ns());
+                return record;
             }
         };
         let body_len = body.len();
         let reuse = cfg.reuse;
         let corr = cfg.correlation_id.as_deref();
 
-        let mut record = RequestRecord::started(start_ns);
         let mut trace = TraceData::default();
         let send_completion = Rc::new(SendCompletion::new());
         let completion_for_dispatch = send_completion.clone();
