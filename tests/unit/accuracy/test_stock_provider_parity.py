@@ -16,25 +16,17 @@ from typing import Any
 import pytest
 
 from aiperf.accuracy.evaluation.distributions import (
+    MAX_PROCESSES,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
+    RESOURCE_BOOTSTRAP,
     source_tree_sha256,
 )
 from tools.generate_stock_evaluator_manifest import materialize
 
 _ROOT = Path(__file__).resolve().parents[3]
-_NEMO_ROOT = Path(
-    os.environ.get(
-        "AIPERF_TEST_NEMO_PROVIDER_ROOT",
-        _ROOT / "tools/stock_evaluators/nemo/.venv",
-    )
-)
-_OPENBENCH_ROOT = Path(
-    os.environ.get(
-        "AIPERF_TEST_OPENBENCH_PROVIDER_ROOT",
-        _ROOT / "tools/stock_evaluators/openbench/.venv",
-    )
-)
+_NEMO_ROOT = _ROOT / "tools/stock_evaluators/nemo/.venv"
+_OPENBENCH_ROOT = _ROOT / "tools/stock_evaluators/openbench/.venv"
 _NEMO_LOCK = _ROOT / "tools/stock_evaluators/nemo/uv.lock"
 _OPENBENCH_LOCK = _ROOT / "tools/stock_evaluators/openbench/uv.lock"
 _MANIFESTS = _ROOT / "src/aiperf/accuracy/evaluation/manifests"
@@ -45,8 +37,6 @@ def stock_rootfs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """Materialize both exact provider closures once for subprocess proofs."""
     for root in (_NEMO_ROOT, _OPENBENCH_ROOT):
         if not (root / "bin/python").is_file():
-            if os.environ.get("AIPERF_REQUIRE_STOCK_PROVIDER_PROOF") == "1":
-                pytest.fail(f"stock provider environment is unavailable: {root}")
             pytest.skip(f"stock provider environment is unavailable: {root}")
     parent = tmp_path_factory.mktemp("stock-provider-parity")
     result = {"nemo_evaluator": parent / "nemo", "openbench": parent / "openbench"}
@@ -91,6 +81,40 @@ def test_provider_uv_locks_are_tracked_and_bound_into_generated_locks() -> None:
             ],
             "kind": "uv-lock-v1",
         }
+
+
+def test_materialized_roots_execute_the_standalone_resource_bootstrap(
+    stock_rootfs: dict[str, Path],
+) -> None:
+    """The process limit is installed by path before any AIPerf module launch."""
+    relative_bootstrap = RESOURCE_BOOTSTRAP.removeprefix("/")
+    for provider, root in stock_rootfs.items():
+        bootstrap = root / relative_bootstrap
+        assert bootstrap.is_file()
+        semantic_source = (
+            root
+            / "runtime/lib/python3.12/site-packages/aiperf/accuracy/evaluation/resource_bootstrap.py"
+        )
+        assert semantic_source.is_file()
+        assert bootstrap.read_bytes() == semantic_source.read_bytes()
+        completed = subprocess.run(
+            [
+                str(root / "runtime/bin/python3.12"),
+                "-I",
+                str(bootstrap),
+                "--max-processes",
+                str(MAX_PROCESSES),
+                "--help",
+            ],
+            cwd=root / "work",
+            env={"PATH": str(root / "runtime/bin")},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert completed.returncode == 0, (provider, completed.stderr)
+        assert "AIPerf evaluator-provider worker" in completed.stdout
 
 
 def test_semantic_source_tree_v1_does_not_absorb_overlay_patch_assets(

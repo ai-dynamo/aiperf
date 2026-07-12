@@ -59,64 +59,16 @@
           {
             "score_name": "grade_school_math_scorer",
             "primary": true,
-            "projection_id": "finite_binary_number_v1",
-            "schema_sha256": "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9",
+            "projection_id": "gsm8k_binary_score_v1",
+            "schema_sha256": "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5",
             "schema": {
               "$schema": "https://json-schema.org/draft/2020-12/schema",
-              "enum": [0, 1],
-              "type": "number"
-            }
-          }
-        ],
-        "aggregate_schemas": [
-          {
-            "projection_id": "accuracy_mean",
-            "schema_sha256": "fa74629fee52533d6f210b2f2c2a4a8b7d9b48bd328b31aa90494be5d04e39d5",
-            "schema": {
-              "candidate_counts": {
-                "scored_count": "config.limit",
-                "unscored_count": 0
+              "additionalProperties": false,
+              "properties": {
+                "value": {"enum": [0, 1], "type": "number"}
               },
-              "comparison": {
-                "endpoints": "exact",
-                "max_ulps": 2,
-                "reference": "flat_binary_case_mean"
-              },
-              "configuration": {
-                "epochs": {"field": "epochs", "maximum": 8, "minimum": 1},
-                "sample_count": {
-                  "field": "limit",
-                  "maximum": 5,
-                  "minimum": 1
-                },
-                "task": {"field": "task", "value": "gsm8k"},
-                "task_args": {"field": "task_args", "value": {}}
-              },
-              "denominator": {
-                "cancelled": "absent",
-                "completed": "all_required",
-                "infrastructure_error": "absent"
-              },
-              "provider": {
-                "definition": {
-                  "metric_params": {},
-                  "params": {},
-                  "score_name": "grade_school_math_scorer"
-                },
-                "metric": "accuracy",
-                "reducer": "identity",
-                "scorer": "grade_school_math_scorer"
-              },
-              "public": {
-                "metric": "accuracy",
-                "reducer": "mean",
-                "scorer": "accuracy"
-              },
-              "schema": "aiperf-openbench-gsm8k-uniform-epoch-mean-v1",
-              "source_score": {
-                "name": "grade_school_math_scorer",
-                "schema_sha256": "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9"
-              }
+              "required": ["value"],
+              "type": "object"
             }
           }
         ],

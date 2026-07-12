@@ -77,8 +77,8 @@ _CURRENT_CALL_ORDINAL: contextvars.ContextVar[int] = contextvars.ContextVar(
 )
 
 
-def _binary_public_reward(value: object) -> float:
-    """Project one exact GSM8K binary reward as a direct public number."""
+def _binary_public_reward(value: object) -> dict[str, float]:
+    """Project one exact GSM8K binary reward into the reviewed public object."""
     if (
         not isinstance(value, int | float)
         or isinstance(value, bool)
@@ -86,7 +86,7 @@ def _binary_public_reward(value: object) -> float:
         or float(value) not in (0.0, 1.0)
     ):
         raise RuntimeError("NeMo Evaluator GSM8K reward is not binary")
-    return float(value)
+    return {"value": float(value)}
 
 
 class NemoEvaluatorAdapter:
@@ -415,7 +415,7 @@ class NemoGsm8kSession(BaseEvaluationSession):
                             public_projection=public_reward,
                         )
                     },
-                    numeric_metrics={"reward": public_reward},
+                    numeric_metrics={"reward": public_reward["value"]},
                     primary_score="reward",
                 ),
             )

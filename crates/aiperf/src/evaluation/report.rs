@@ -13,9 +13,9 @@ use std::sync::Arc;
 
 use aiperf_accuracy::{
     ArtifactVisibility, CanonicalJson, CaseOutcomeKind, EvaluationCaseId, EvaluationCaseTemplateId,
-    EvaluationFinishCandidate, EvaluationIdentityComponent, PublicAggregateProjectionPolicy,
-    PublicEvaluationMetadataProjector, PublicScoreProjectionPolicy, SealedEvaluationArtifacts,
-    ValidatedPublicCaseProjections, is_sha256, validate_no_secret_control_value,
+    EvaluationFinishCandidate, EvaluationIdentityComponent, PublicEvaluationMetadataProjector,
+    PublicScoreProjectionPolicy, SealedEvaluationArtifacts, is_sha256,
+    validate_no_secret_control_value,
 };
 use aiperf_metrics::{
     EvaluationAggregateMetricReport, EvaluationArtifactReport, EvaluationCaseErrorReport,
@@ -48,9 +48,7 @@ pub struct EvaluationReportFacts {
     pub cases: BTreeMap<EvaluationCaseId, EvaluationCaseReportFacts>,
     /// Factory-owned executable public score projection validators.
     pub public_score_projection_policy: PublicScoreProjectionPolicy,
-    /// Factory-owned executable public aggregate projection validators.
-    pub public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
-    /// Factory-owned executable case/numeric metadata projector.
+    /// Factory-owned executable case/numeric/aggregate metadata projector.
     pub public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     /// Rust-authoritative per-route accounting summaries.
     pub route_summaries: BTreeMap<String, EvaluationRouteSummaryReport>,
@@ -64,10 +62,6 @@ impl fmt::Debug for EvaluationReportFacts {
             .field(
                 "public_score_projection_policy",
                 &self.public_score_projection_policy,
-            )
-            .field(
-                "public_aggregate_projection_policy",
-                &self.public_aggregate_projection_policy,
             )
             .field(
                 "public_metadata_schema_sha256",
@@ -92,11 +86,6 @@ pub fn build_evaluation_report(
     let safe_config = CanonicalJson::new(facts.safe_config.clone())
         .map_err(|error| anyhow!(error.to_string()))?;
     validate_no_secret_control_value(&safe_config).map_err(|error| anyhow!(error.to_string()))?;
-    let public_cases = ValidatedPublicCaseProjections::new(
-        &candidate.outcomes,
-        &facts.public_score_projection_policy,
-    )
-    .map_err(|error| anyhow!(error.to_string()))?;
 
     let route_reports = build_routes(routes, &facts.route_summaries)?;
     validate_case_fact_manifest(&candidate, &facts.cases)?;
@@ -187,40 +176,35 @@ pub fn build_evaluation_report(
         let (kind, scores, numeric_metrics, primary_score, error) = match &outcome.outcome {
             CaseOutcomeKind::Completed { completed } => {
                 completed_count += 1;
-                let validated_scores = public_cases.scores(&outcome.case_id).ok_or_else(|| {
-                    anyhow!("completed case omitted its validated public projection set")
-                })?;
-                let mut scores = BTreeMap::new();
-                let mut public_score_names = BTreeMap::new();
+                let scores = completed
+                    .scores
+                    .iter()
+                    .filter_map(|(name, score)| {
+                        score
+                            .public_projection
+                            .as_ref()
+                            .map(|projection| (name, projection))
+                    })
+                    .map(|(name, projection)| {
+                        let schema = facts
+                            .public_score_projection_policy
+                            .validate(name, projection)
+                            .map_err(|error| anyhow!(error.to_string()))?;
+                        Ok((
+                            name.clone(),
+                            EvaluationPublicScoreReport {
+                                value: projection.value().clone(),
+                                projection_schema: schema.to_string(),
+                            },
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?;
+                let primary_score = completed
+                    .primary_score
+                    .as_ref()
+                    .filter(|name| scores.contains_key(*name))
+                    .cloned();
                 let mut numeric_metrics = BTreeMap::new();
-                for (provider_name, projection) in validated_scores {
-                    let public_name = facts
-                        .public_metadata_projector
-                        .project_numeric_metric(provider_name)
-                        .map_err(|error| anyhow!(error.to_string()))?
-                        .ok_or_else(|| {
-                            anyhow!("validated public score omitted its factory-owned report label")
-                        })?;
-                    ensure!(
-                        public_score_names
-                            .insert(provider_name.clone(), public_name.clone())
-                            .is_none()
-                            && scores
-                                .insert(
-                                    public_name.clone(),
-                                    EvaluationPublicScoreReport {
-                                        value: projection.value().value().clone(),
-                                        projection_schema: projection.schema_sha256().to_string(),
-                                    },
-                                )
-                                .is_none(),
-                        "public score projection produced a duplicate stable label"
-                    );
-                    let numeric_value = projection.value().value().as_f64().ok_or_else(|| {
-                        anyhow!("validated public score was not a direct JSON number")
-                    })?;
-                    numeric_metrics.insert(public_name, numeric_value);
-                }
                 for (name, value) in &completed.numeric_metrics {
                     let Some(public_name) = facts
                         .public_metadata_projector
@@ -229,23 +213,11 @@ pub fn build_evaluation_report(
                     else {
                         continue;
                     };
-                    if let Some(projected_score) = numeric_metrics.get(&public_name) {
-                        ensure!(
-                            *projected_score == value.get(),
-                            "public numeric metric disagreed with its validated public score"
-                        );
-                    } else {
-                        ensure!(
-                            numeric_metrics.insert(public_name, value.get()).is_none(),
-                            "public numeric metric projection produced a duplicate name"
-                        );
-                    }
+                    ensure!(
+                        numeric_metrics.insert(public_name, value.get()).is_none(),
+                        "public numeric metric projection produced a duplicate name"
+                    );
                 }
-                let primary_score = completed
-                    .primary_score
-                    .as_ref()
-                    .and_then(|name| public_score_names.get(name))
-                    .cloned();
                 (
                     EvaluationCaseOutcomeKind::Completed,
                     scores,
@@ -298,33 +270,42 @@ pub fn build_evaluation_report(
             artifact_refs,
         });
     }
-    ensure!(
-        case_reports.len() == public_cases.case_count()
-            && completed_count == public_cases.completed_count()
-            && infrastructure_error_count == public_cases.infrastructure_error_count()
-            && cancelled_count == public_cases.cancelled_count(),
-        "public case projection counts drifted during report construction"
-    );
 
-    let aggregates = facts
-        .public_aggregate_projection_policy
-        .project(&candidate.aggregates, &public_cases, &safe_config)
-        .map_err(|error| anyhow!(error.to_string()))?
-        .into_iter()
-        .map(|projection| {
-            Ok(EvaluationAggregateMetricReport {
-                scorer: projection.scorer().to_string(),
-                reducer: projection.reducer().to_string(),
-                metric: projection.metric().to_string(),
-                value: projection.value(),
-                scored_count: usize::try_from(projection.scored_count())
-                    .map_err(|_| anyhow!("aggregate scored count exceeded host size"))?,
-                unscored_count: usize::try_from(projection.unscored_count())
-                    .map_err(|_| anyhow!("aggregate unscored count exceeded host size"))?,
-                projection_schema: projection.schema_sha256().to_string(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut aggregates = Vec::<EvaluationAggregateMetricReport>::new();
+    let mut public_aggregate_keys = BTreeSet::new();
+    for aggregate in &candidate.aggregates {
+        let Some(projection) = facts
+            .public_metadata_projector
+            .project_aggregate(
+                &aggregate.scorer,
+                &aggregate.reducer,
+                &aggregate.metric,
+                &aggregate.definition,
+            )
+            .map_err(|error| anyhow!(error.to_string()))?
+        else {
+            continue;
+        };
+        ensure!(
+            public_aggregate_keys.insert((
+                projection.scorer.clone(),
+                projection.reducer.clone(),
+                projection.metric.clone(),
+            )),
+            "public aggregate projection produced duplicate labels"
+        );
+        aggregates.push(EvaluationAggregateMetricReport {
+            scorer: projection.scorer,
+            reducer: projection.reducer,
+            metric: projection.metric,
+            value: aggregate.value.get(),
+            scored_count: usize::try_from(aggregate.scored_count)
+                .map_err(|_| anyhow!("aggregate scored count exceeded host size"))?,
+            unscored_count: usize::try_from(aggregate.unscored_count)
+                .map_err(|_| anyhow!("aggregate unscored count exceeded host size"))?,
+            definition: aggregate.definition.value().clone(),
+        });
+    }
     let artifact_reports = sealed
         .entries
         .iter()
@@ -340,13 +321,11 @@ pub fn build_evaluation_report(
                 ArtifactVisibility::PublicProjection => "public",
             }
             .to_string(),
-            size_bytes: (artifact.visibility == ArtifactVisibility::PublicProjection)
-                .then_some(artifact.size_bytes),
-            artifact_content_sha256: (artifact.visibility == ArtifactVisibility::PublicProjection)
-                .then(|| artifact.artifact_content_sha256.clone()),
-            projection_schema: (artifact.visibility == ArtifactVisibility::PublicProjection)
-                .then(|| artifact.public_projection_schema_sha256.clone())
-                .flatten(),
+            size_bytes: artifact.size_bytes,
+            artifact_content_sha256: artifact.artifact_content_sha256.clone(),
+            normalized_result_sha256: (artifact.artifact_id
+                == candidate.provider_bundle.artifact_id)
+                .then(|| candidate.normalized_result_sha256.clone()),
         })
         .collect();
 
@@ -363,6 +342,8 @@ pub fn build_evaluation_report(
         aggregates,
         route_summaries: facts.route_summaries.clone(),
         artifacts: artifact_reports,
+        canonical_bundle_artifact_content_sha256: sealed.provider_bundle_sha256.clone(),
+        normalized_result_sha256: candidate.normalized_result_sha256,
     })
 }
 
@@ -577,14 +558,35 @@ mod tests {
         EvaluationHostIdentity, EvaluationIdentity, EvaluationIdentityComponent,
         EvaluationProviderId, EvaluationSourceOverlayIdentity, EvaluationStage,
         EvaluationUnitTemplateDescriptor, EvaluationUnitTemplateId, EvaluationWorkerIdentity,
-        ExactBinaryMeanAggregateValidator, FiniteBinaryNumberProjectionValidator, FiniteF64,
-        FrozenPublicEvaluationMetadataPolicy, ProviderScore, PublicAggregateMetadataRule,
-        PublicAggregateProjectionPolicy, PublicCaseMetadataRule, PublicNumericMetricRule,
-        SOURCE_OVERLAY_POLICY_V1, SealedEvaluationArtifact,
+        FiniteF64, FrozenPublicEvaluationMetadataPolicy, ProviderScore,
+        PublicAggregateMetadataRule, PublicCaseMetadataRule, PublicNumericMetricRule,
+        PublicScoreProjectionError, PublicScoreProjectionValidator, SOURCE_OVERLAY_POLICY_V1,
+        SealedEvaluationArtifact,
     };
 
     use super::*;
     use crate::evaluation::host::{EvaluationRoute, EvaluationRouteTable};
+
+    struct ZeroProjection;
+
+    impl PublicScoreProjectionValidator for ZeroProjection {
+        fn schema_sha256(&self) -> &str {
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+
+        fn validate(
+            &self,
+            value: &CanonicalJson,
+        ) -> std::result::Result<(), PublicScoreProjectionError> {
+            if value.value() == &json!(0) {
+                Ok(())
+            } else {
+                Err(PublicScoreProjectionError::rejected(
+                    "fixture schema permits only numeric zero",
+                ))
+            }
+        }
+    }
 
     fn worker() -> EvaluationWorkerIdentity {
         EvaluationWorkerIdentity {
@@ -690,17 +692,17 @@ mod tests {
                     outcome: CaseOutcomeKind::Completed {
                         completed: CompletedCaseOutcome {
                             scores: BTreeMap::from([(
-                                "hidden-score-name-sentinel".to_string(),
+                                "accuracy".to_string(),
                                 ProviderScore {
                                     value: CanonicalJson::new(json!(0)).unwrap(),
                                     public_projection: Some(CanonicalJson::new(json!(0)).unwrap()),
                                 },
                             )]),
                             numeric_metrics: BTreeMap::from([(
-                                "hidden-score-name-sentinel".to_string(),
+                                "hidden-numeric-metric-sentinel".to_string(),
                                 FiniteF64::new(0.0).unwrap(),
                             )]),
-                            primary_score: Some("hidden-score-name-sentinel".to_string()),
+                            primary_score: Some("accuracy".to_string()),
                             annotations: None,
                         },
                     },
@@ -809,38 +811,17 @@ mod tests {
             .collect();
         let mut public_score_projection_policy = PublicScoreProjectionPolicy::restricted_only();
         public_score_projection_policy
-            .register(
-                "hidden-score-name-sentinel",
-                Arc::new(FiniteBinaryNumberProjectionValidator),
-            )
-            .unwrap();
-        let mut public_aggregate_projection_policy =
-            PublicAggregateProjectionPolicy::restricted_only();
-        public_aggregate_projection_policy
-            .register(
-                "fixture_accuracy_mean",
-                Arc::new(
-                    ExactBinaryMeanAggregateValidator::accuracy(
-                        "hidden-aggregate-scorer-sentinel",
-                        "hidden-aggregate-reducer-sentinel",
-                        "hidden-aggregate-metric-sentinel",
-                        CanonicalJson::new(json!({"reducer": "mean"})).unwrap(),
-                        "hidden-score-name-sentinel",
-                    )
-                    .unwrap(),
-                ),
-            )
+            .register("accuracy", Arc::new(ZeroProjection))
             .unwrap();
         EvaluationReportFacts {
             safe_config: json!({"benchmark": "fixture"}),
             cases,
             public_score_projection_policy,
-            public_aggregate_projection_policy,
             public_metadata_projector: Arc::new(
                 FrozenPublicEvaluationMetadataPolicy::new(
                     Vec::new(),
                     vec![PublicNumericMetricRule {
-                        provider_name: "hidden-score-name-sentinel".to_string(),
+                        provider_name: "hidden-numeric-metric-sentinel".to_string(),
                         public_name: "accuracy".to_string(),
                     }],
                     Vec::new(),
@@ -862,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_factory_rules_project_case_score_and_validated_aggregate_facts() {
+    fn exact_factory_metadata_rules_project_case_numeric_and_aggregate_facts() {
         let candidate = candidate();
         let mut facts = facts(&candidate);
         facts.public_metadata_projector = Arc::new(
@@ -874,7 +855,7 @@ mod tests {
                     public_source: "openai/gsm8k@test".to_string(),
                 }],
                 vec![PublicNumericMetricRule {
-                    provider_name: "hidden-score-name-sentinel".to_string(),
+                    provider_name: "hidden-numeric-metric-sentinel".to_string(),
                     public_name: "accuracy".to_string(),
                 }],
                 vec![PublicAggregateMetadataRule {
@@ -900,21 +881,17 @@ mod tests {
         assert_eq!(report.aggregates[0].value, 0.0);
         assert_eq!(report.aggregates[0].scored_count, 1);
         assert_eq!(report.aggregates[0].unscored_count, 2);
-        assert!(is_sha256(&report.aggregates[0].projection_schema));
+        assert_eq!(report.aggregates[0].definition, json!({"reducer": "mean"}));
 
         let mut drifted = candidate;
         drifted.aggregates[0].definition =
             CanonicalJson::new(json!({"reducer": "private_weighted_mean"})).unwrap();
         let error = build_evaluation_report(&drifted, &sealed(), &routes(), &facts).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("tuple or definition did not match")
-        );
+        assert!(error.to_string().contains("aggregate definition drifted"));
     }
 
     #[test]
-    fn report_preserves_zero_infrastructure_cancel_and_closes_private_domains() {
+    fn report_preserves_zero_infrastructure_cancel_and_digest_domains() {
         let candidate = candidate();
         let report =
             build_evaluation_report(&candidate, &sealed(), &routes(), &facts(&candidate)).unwrap();
@@ -929,12 +906,9 @@ mod tests {
         assert!(
             !report.cases[0]
                 .numeric_metrics
-                .contains_key("hidden-score-name-sentinel")
+                .contains_key("hidden-numeric-metric-sentinel")
         );
-        assert_eq!(report.aggregates.len(), 1);
-        assert_eq!(report.aggregates[0].value, 0.0);
-        assert_eq!(report.aggregates[0].scored_count, 1);
-        assert_eq!(report.aggregates[0].unscored_count, 2);
+        assert!(report.aggregates.is_empty());
         assert_eq!(report.cases[0].case_id, "case-00000000");
         assert_eq!(report.cases[0].template_id, "template-00000000");
         assert_eq!(report.cases[0].task, "task-00000000");
@@ -949,12 +923,18 @@ mod tests {
             report.cases[2].outcome,
             EvaluationCaseOutcomeKind::Cancelled
         );
+        assert_eq!(
+            report.canonical_bundle_artifact_content_sha256,
+            "9".repeat(64)
+        );
+        assert_eq!(report.normalized_result_sha256, "0".repeat(64));
+        assert_eq!(
+            report.artifacts[0].normalized_result_sha256,
+            Some("0".repeat(64))
+        );
         assert_eq!(report.artifacts[0].artifact_ref, "artifact-00000000");
         assert_eq!(report.artifacts[0].path, None);
         assert_eq!(report.artifacts[0].media_type, None);
-        assert_eq!(report.artifacts[0].size_bytes, None);
-        assert_eq!(report.artifacts[0].artifact_content_sha256, None);
-        assert_eq!(report.artifacts[0].projection_schema, None);
         assert_eq!(report.cases[0].artifact_refs, ["artifact-00000000"]);
         let encoded = serde_json::to_string(&report).unwrap();
         assert!(!encoded.contains("HIDDEN_EXPECTED_ANSWER_INFRA_SENTINEL"));
@@ -968,9 +948,8 @@ mod tests {
         assert!(!encoded.contains("hidden-source"));
         assert!(!encoded.contains("hidden-dataset"));
         assert!(!encoded.contains("hidden-component"));
-        assert!(!encoded.contains("hidden-score"));
+        assert!(!encoded.contains("hidden-numeric"));
         assert!(!encoded.contains("hidden-aggregate"));
-        assert!(!encoded.contains("\"definition\""));
         assert!(!encoded.contains("hidden-overlay-id-sentinel"));
         assert_eq!(
             report.identity.components["component-00000000.overlay-00000000.artifact_content_sha256"],
@@ -980,104 +959,6 @@ mod tests {
             report.identity.components["component-00000000.overlay_policy"],
             SOURCE_OVERLAY_POLICY_V1
         );
-    }
-
-    #[test]
-    fn restricted_artifact_digests_are_not_public_dictionary_oracles() {
-        let candidate = candidate();
-        let original =
-            build_evaluation_report(&candidate, &sealed(), &routes(), &facts(&candidate)).unwrap();
-
-        let mut changed_candidate = candidate.clone();
-        changed_candidate.artifacts[0].size_bytes = 123_456;
-        changed_candidate.artifacts[0].artifact_content_sha256 = "d".repeat(64);
-        changed_candidate.normalized_result_sha256 = "e".repeat(64);
-        let mut changed_sealed = sealed();
-        changed_sealed.entries[0].size_bytes = 123_456;
-        changed_sealed.entries[0].artifact_content_sha256 = "d".repeat(64);
-        changed_sealed.provider_bundle_sha256 = "d".repeat(64);
-        let changed = build_evaluation_report(
-            &changed_candidate,
-            &changed_sealed,
-            &routes(),
-            &facts(&changed_candidate),
-        )
-        .unwrap();
-
-        assert_eq!(
-            serde_json::to_value(original).unwrap(),
-            serde_json::to_value(changed).unwrap()
-        );
-    }
-
-    #[test]
-    fn public_projection_artifact_exposes_only_factory_reviewed_fields() {
-        let mut candidate = candidate();
-        let public_id = EvaluationArtifactId::new("public-projection-result").unwrap();
-        candidate.artifacts.push(EvaluationArtifactManifestEntry {
-            artifact_id: public_id.clone(),
-            path: "public/result.json".to_string(),
-            media_type: "application/json".to_string(),
-            visibility: ArtifactVisibility::PublicProjection,
-            size_bytes: 11,
-            artifact_content_sha256: "d".repeat(64),
-        });
-        candidate.outcomes[0].artifact_refs.push(ArtifactRef {
-            artifact_id: public_id.clone(),
-            path: "public/result.json".to_string(),
-            visibility: ArtifactVisibility::PublicProjection,
-        });
-        let mut sealed = sealed();
-        sealed.entries.push(SealedEvaluationArtifact {
-            artifact_id: public_id,
-            path: "public/result.json".to_string(),
-            media_type: "application/json".to_string(),
-            visibility: ArtifactVisibility::PublicProjection,
-            size_bytes: 11,
-            artifact_content_sha256: "d".repeat(64),
-            public_projection_schema_sha256: Some("e".repeat(64)),
-        });
-
-        let report =
-            build_evaluation_report(&candidate, &sealed, &routes(), &facts(&candidate)).unwrap();
-        let artifact = &report.artifacts[1];
-        assert_eq!(artifact.artifact_ref, "artifact-00000001");
-        assert_eq!(artifact.path.as_deref(), Some("public/result.json"));
-        assert_eq!(artifact.media_type.as_deref(), Some("application/json"));
-        assert_eq!(artifact.visibility, "public");
-        assert_eq!(artifact.size_bytes, Some(11));
-        assert_eq!(artifact.artifact_content_sha256, Some("d".repeat(64)));
-        assert_eq!(artifact.projection_schema, Some("e".repeat(64)));
-    }
-
-    #[test]
-    fn metadata_allowlist_cannot_publish_an_unvalidated_aggregate_value() {
-        let candidate = candidate();
-        let mut facts = facts(&candidate);
-        facts.public_aggregate_projection_policy =
-            PublicAggregateProjectionPolicy::restricted_only();
-        facts.public_metadata_projector = Arc::new(
-            FrozenPublicEvaluationMetadataPolicy::new(
-                Vec::new(),
-                vec![PublicNumericMetricRule {
-                    provider_name: "hidden-score-name-sentinel".to_string(),
-                    public_name: "accuracy".to_string(),
-                }],
-                vec![PublicAggregateMetadataRule {
-                    provider_scorer: "hidden-aggregate-scorer-sentinel".to_string(),
-                    provider_reducer: "hidden-aggregate-reducer-sentinel".to_string(),
-                    provider_metric: "hidden-aggregate-metric-sentinel".to_string(),
-                    public_scorer: "accuracy".to_string(),
-                    public_reducer: "mean".to_string(),
-                    public_metric: "accuracy".to_string(),
-                    definition: CanonicalJson::new(json!({"reducer": "mean"})).unwrap(),
-                }],
-            )
-            .unwrap(),
-        );
-
-        let report = build_evaluation_report(&candidate, &sealed(), &routes(), &facts).unwrap();
-        assert!(report.aggregates.is_empty());
     }
 
     #[test]

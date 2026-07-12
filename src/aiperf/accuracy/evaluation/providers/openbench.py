@@ -67,8 +67,8 @@ from aiperf.accuracy.evaluation.session import (
 )
 
 
-def _binary_public_score(value: object) -> float:
-    """Project one exact Inspect GSM8K score as a direct public number."""
+def _binary_public_score(value: object) -> dict[str, float]:
+    """Project one exact Inspect GSM8K score into the reviewed public object."""
     if (
         not isinstance(value, int | float)
         or isinstance(value, bool)
@@ -76,7 +76,7 @@ def _binary_public_score(value: object) -> float:
         or float(value) not in (0.0, 1.0)
     ):
         raise RuntimeError("Inspect GSM8K score is not binary")
-    return float(value)
+    return {"value": float(value)}
 
 
 class OpenBenchAdapter:
@@ -209,7 +209,7 @@ class OpenBenchAdapter:
             )
         asset_path, _ = bind_gsm8k_asset(assets)
         config = self._request.provider_config
-        limit = config["limit"]
+        limit = config.get("limit", 5)
         epochs = config["epochs"]
         case_templates = tuple(
             CaseTemplateDescriptor(

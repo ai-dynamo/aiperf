@@ -37,11 +37,11 @@ from packaging.requirements import Requirement
 from aiperf.accuracy.evaluation.canonical import canonical_dumps, canonical_sha256
 from aiperf.accuracy.evaluation.distributions import (
     ISOLATION_PROFILE,
+    MAX_PROCESSES,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
     SOURCE_TREE_DIGEST_POLICY,
     STOCK_DISTRIBUTIONS,
-    STOCK_PROCESS_LIMIT,
     SourceComponentLock,
     SourceOverlayLock,
     StockDistributionDescriptor,
@@ -74,31 +74,27 @@ GSM8K_CANARY_SOURCE = (
 )
 GSM8K_CANARY_DESTINATION = "assets/gsm8k_canary.jsonl"
 SOURCE_OVERLAY_DIR = ROOT / "src/aiperf/accuracy/evaluation/source_overlays"
+RESOURCE_BOOTSTRAP_SOURCE = (
+    ROOT / "src/aiperf/accuracy/evaluation/resource_bootstrap.py"
+)
+RESOURCE_BOOTSTRAP_DESTINATION = (
+    "runtime/libexec/aiperf-evaluator-resource-bootstrap.py"
+)
 NEMO_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/nemo/uv.lock"
 OPENBENCH_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/openbench/uv.lock"
 AUDITED_DIRECT_DEPENDENCIES = {
     NEMO_EVALUATOR_DISTRIBUTION.distribution_id: ("orjson", "scipy"),
     OPENBENCH_DISTRIBUTION.distribution_id: ("orjson",),
 }
-GSM8K_SCORE_PROJECTION_ID = "finite_binary_number_v1"
+GSM8K_SCORE_PROJECTION_ID = "gsm8k_binary_score_v1"
 GSM8K_SCORE_SCHEMA_SHA256 = (
-    "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9"
+    "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5"
 )
 GSM8K_SCORE_SCHEMA_CANONICAL = (
     b'{"$schema":"https://json-schema.org/draft/2020-12/schema",'
-    b'"enum":[0,1],"type":"number"}'
+    b'"additionalProperties":false,"properties":{"value":{"enum":[0,1],'
+    b'"type":"number"}},"required":["value"],"type":"object"}'
 )
-ACCURACY_MEAN_PROJECTION_ID = "accuracy_mean"
-AGGREGATE_SCHEMA_BY_PROVIDER = {
-    "nemo_evaluator": (
-        "aiperf-exact-binary-mean-aggregate-v1",
-        "d523fa29449c207508f94e50fbe0540d5a0b50a5ba48fe66cc6540d9086c5f4b",
-    ),
-    "openbench": (
-        "aiperf-openbench-gsm8k-uniform-epoch-mean-v1",
-        "fa74629fee52533d6f210b2f2c2a4a8b7d9b48bd328b31aa90494be5d04e39d5",
-    ),
-}
 
 
 def _canonical_distribution_name(value: str) -> str:
@@ -198,17 +194,6 @@ def _provider_environment(prefix: Path, resolution_lock: Path) -> ProviderEnviro
 
 def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as source:
-            while chunk := source.read(1024 * 1024):
-                digest.update(chunk)
-    except OSError as error:
-        raise ManifestGenerationError(f"failed to hash {path}") from error
-    return digest.hexdigest()
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -969,18 +954,12 @@ def _elf_inputs(
     result: set[Path] = set()
     for item in runtime_files:
         source = runtime_root / str(item["source_relative_path"])
-        try:
-            with source.open("rb") as stream:
-                if stream.read(4) == b"\x7fELF":
-                    result.add(source)
-        except OSError as error:
-            raise ManifestGenerationError(f"failed to inspect ELF {source}") from error
+        if source.read_bytes()[:4] == b"\x7fELF":
+            result.add(source)
     for closure in record_closures:
         for _, source in _expand_record_closure(closure, environment):
             try:
-                with source.open("rb") as stream:
-                    is_elf = stream.read(4) == b"\x7fELF"
-                if is_elf:
+                if source.read_bytes()[:4] == b"\x7fELF":
                     result.add(source)
             except OSError as error:
                 raise ManifestGenerationError(
@@ -1160,10 +1139,8 @@ def _closure_sha256(inventory: Mapping[str, tuple[str, bool]]) -> str:
     return digest.hexdigest()
 
 
-def _validate_public_projection(
-    public_projection: Mapping[str, Any], provider_id: str
-) -> None:
-    """Bind every stock public result to its reviewed executable validator."""
+def _validate_public_projection(public_projection: Mapping[str, Any]) -> None:
+    """Bind every stock public score to the reviewed executable validator."""
     score_schemas = public_projection.get("score_schemas")
     if not isinstance(score_schemas, list) or len(score_schemas) != 1:
         raise ManifestGenerationError(
@@ -1190,38 +1167,6 @@ def _validate_public_projection(
         raise ManifestGenerationError(
             "stock GSM8K public score schema advertised the wrong digest"
         )
-    aggregate_schemas = public_projection.get("aggregate_schemas")
-    if not isinstance(aggregate_schemas, list) or len(aggregate_schemas) != 1:
-        raise ManifestGenerationError(
-            "stock public projection must contain exactly one aggregate schema"
-        )
-    aggregate = aggregate_schemas[0]
-    if not isinstance(aggregate, dict):
-        raise ManifestGenerationError("stock public aggregate schema must be an object")
-    if aggregate.get("projection_id") != ACCURACY_MEAN_PROJECTION_ID:
-        raise ManifestGenerationError(
-            "stock public aggregate named an unreviewed executable validator"
-        )
-    try:
-        schema_id, expected_sha256 = AGGREGATE_SCHEMA_BY_PROVIDER[provider_id]
-    except KeyError as error:
-        raise ManifestGenerationError(
-            f"unknown stock public aggregate provider {provider_id!r}"
-        ) from error
-    aggregate_schema = aggregate.get("schema")
-    if (
-        not isinstance(aggregate_schema, dict)
-        or aggregate_schema.get("schema") != schema_id
-    ):
-        raise ManifestGenerationError("stock public aggregate schema ID drifted")
-    actual_aggregate_sha256 = canonical_sha256(aggregate_schema)
-    if (
-        actual_aggregate_sha256 != expected_sha256
-        or aggregate.get("schema_sha256") != actual_aggregate_sha256
-    ):
-        raise ManifestGenerationError(
-            f"stock public aggregate schema digest drifted: {actual_aggregate_sha256}"
-        )
 
 
 def _distribution_entry(
@@ -1238,6 +1183,13 @@ def _distribution_entry(
         _embedded_file(path.relative_to(ROOT).as_posix(), destination, content)
         for path, destination, content in worker_resources
     ]
+    embedded_files.append(
+        _embedded_file(
+            RESOURCE_BOOTSTRAP_SOURCE.relative_to(ROOT).as_posix(),
+            RESOURCE_BOOTSTRAP_DESTINATION,
+            RESOURCE_BOOTSTRAP_SOURCE.read_bytes(),
+        )
+    )
     embedded_files.append(
         _embedded_file(
             GSM8K_CANARY_SOURCE.relative_to(ROOT).as_posix(),
@@ -1282,7 +1234,7 @@ def _distribution_entry(
     public_projection = next(iter(executable_entries.values())).get("public_projection")
     if not isinstance(public_projection, dict):
         raise ManifestGenerationError("executable task omitted public projection")
-    _validate_public_projection(public_projection, descriptor.provider_id)
+    _validate_public_projection(public_projection)
     operation = OPERATION_DIRECTION_SCHEMA_SHA256["model.generate"]
     worker_source_sha256 = _worker_source_digest(worker_resources)
     dependency_lock_sha256 = _sha256(lock_bytes)
@@ -1354,7 +1306,7 @@ def _distribution_entry(
                 "address_space_bytes": 16 * 1024 * 1024 * 1024,
                 "file_size_bytes": 8 * 1024 * 1024 * 1024,
                 "open_files": 4096,
-                "processes": STOCK_PROCESS_LIMIT,
+                "processes": MAX_PROCESSES,
                 "cpu_seconds": 86400,
             },
         },
@@ -1491,7 +1443,8 @@ def _verified_deployment_source_file(
             f"deployment source is not a regular non-symlink file: {source}"
         )
     source = source.resolve(strict=True)
-    if _sha256_file(source) != artifact_content_sha256:
+    content = source.read_bytes()
+    if _sha256(content) != artifact_content_sha256:
         raise ManifestGenerationError(f"deployment source digest drifted: {source}")
     if _is_executable(source) != executable:
         raise ManifestGenerationError(
@@ -1586,13 +1539,10 @@ def _manifest_shared_source_files(
             raise ManifestGenerationError(
                 f"shared closure destination drifted for {relative!r}"
             )
-        source = _source_for_shared(closure, runtime_root, item)
-        if closure["resolver"]["kind"] == "system_root":
-            source = source.resolve(strict=True)
         files.append(
             _verified_deployment_source_file(
                 relative_path=relative,
-                source=source,
+                source=_source_for_shared(closure, runtime_root, item),
                 artifact_content_sha256=str(item["artifact_content_sha256"]),
                 executable=bool(item["executable"]),
             )
