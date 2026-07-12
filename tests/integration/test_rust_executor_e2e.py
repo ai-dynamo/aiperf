@@ -151,6 +151,52 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert all("time_to_first_token" in row["metrics"] for row in rows)
         assert len(load_single_metric(tmp_path, "request_latency")) == 4
 
+        cli_artifacts = tmp_path / "single-cli-run"
+        cli_envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 1,
+                        "isl": 4,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                    },
+                    "artifacts": {"dir": str(cli_artifacts)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        cli_run = BenchmarkRun(
+            benchmark_id="python-cli-rust-e2e",
+            cfg=cli_envelope.benchmark,
+            artifact_dir=cli_artifacts,
+            label="native-cli",
+            random_seed=111,
+        )
+        from aiperf.cli_runner import _run_single_benchmark
+
+        with (
+            mock.patch.dict(os.environ, {"AIPERF_RUNNER_BIN": str(binary)}),
+            mock.patch("os._exit") as exit_process,
+        ):
+            _run_single_benchmark(cli_run)
+
+        exit_process.assert_called_once_with(0)
+        assert (cli_artifacts / "native-v2.json").is_file()
+
         dataset_path = tmp_path / "file-dataset.jsonl"
         dataset_path.write_bytes(
             b'{"text":"first","output_length":1}\n{"text":"second","output_length":1}\n'

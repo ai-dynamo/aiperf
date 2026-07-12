@@ -1,16 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Single-benchmark execution path for aiperf.cli_runner.
-
-One ``_run_single_benchmark`` call runs one BenchmarkRun under a fresh
-SystemController, then ``os._exit``-s to bypass Python's normal teardown
-(multiprocessing atexit + leftover ZMQ contexts can otherwise hang the
-interpreter under pytest-xdist).
-"""
+"""Single-benchmark execution through one fresh native runner process."""
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING
 
 from aiperf.cli_runner._callbacks import (
@@ -18,16 +11,17 @@ from aiperf.cli_runner._callbacks import (
     OnComplete,
     _invoke_callbacks,
 )
-from aiperf.cli_runner._process_setup import (
-    _configure_multiprocessing_start_method,
-    _configure_tokenizer_preload,
-    _setup_ui_queues,
-)
-from aiperf.cli_utils import raise_startup_error_and_exit
-from aiperf.plugin.enums import ServiceType, UIType
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
+    from aiperf.orchestrator.models import RunResult
+
+
+def _execute_native_run(run: BenchmarkRun) -> RunResult:
+    """Execute one resolved run through the canonical subprocess adapter."""
+    from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
+
+    return RustSubprocessExecutor(base_dir=run.artifact_dir).execute_sync(run)
 
 
 def _run_single_benchmark(
@@ -46,60 +40,33 @@ def _run_single_benchmark(
             still run. ``AIPERF_RAISE_ON_CALLBACK_ERROR=true`` opts into
             re-raising the first failure after all callbacks have run.
     """
-    config = run.cfg
-    using_dashboard = config.ui_type == UIType.DASHBOARD
-
-    _configure_multiprocessing_start_method(using_dashboard)
-    _configure_tokenizer_preload(run)
-
     from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-    from aiperf.config.resolution.resolvers import build_default_resolver_chain
+    from aiperf.common.logging import setup_rich_logging
 
+    setup_rich_logging(run)
     logger = AIPerfLogger(__name__)
 
-    # Create queues before UI initialization to minimize FD inheritance issues.
-    log_queue = _setup_ui_queues(using_dashboard, run, logger)
-
-    logger.info("Starting AIPerf System")
-
+    logger.info("Starting native AIPerf run")
     try:
-        chain = build_default_resolver_chain()
-        chain.resolve_all(run)
-    except Exception as e:  # resolver chain wraps every user-input error type
-        # ``logger.error`` over ``.exception``: user-input errors carry their
-        # own context; tracebacks trip chaos-harness crash heuristics.
-        logger.error(f"Configuration resolution failed: {e}")
-        raise_startup_error_and_exit(
-            f"Configuration resolution failed: {e}",
-            title="Configuration Error",
-        )
-
-    exit_code = 0
-    try:
-        bootstrap_and_run_service(
-            service_type=ServiceType.SYSTEM_CONTROLLER,
-            run=run,
-            log_queue=log_queue,
-        )
-    except SystemExit as e:
-        exit_code = int(e.code) if e.code is not None else 0
+        result = _execute_native_run(run)
     except Exception:
-        logger.exception("Error running AIPerf System")
+        logger.exception("Native AIPerf runner could not be started")
         exit_code = 1
-    finally:
-        logger.debug("AIPerf System exited")
+    else:
+        exit_code = 0 if result.success else 1
+        if result.success:
+            logger.info("Native AIPerf run completed")
+        else:
+            logger.error(f"Native AIPerf run failed: {result.error or 'unknown error'}")
 
     if exit_code == 0 and on_complete:
         completed = CompletedRun(artifact_dir=run.artifact_dir)
         exit_code = _invoke_callbacks(on_complete, completed, exit_code, logger)
 
-    # Bypass Python's normal teardown: multiprocessing atexit handlers,
-    # leftover ZMQ contexts, and daemon threads can otherwise block the
-    # interpreter from exiting — which is fatal under pytest-xdist where
-    # the parent waits on communicate(). The controller already flushed
-    # logs and wrote artifacts; killing the interpreter here is safe.
+    # Keep the established CLI termination contract. The benchmark itself has
+    # already completed in an isolated Rust child and all callbacks are flushed.
     import os as _os
+    import sys
 
     sys.stdout.flush()
     sys.stderr.flush()

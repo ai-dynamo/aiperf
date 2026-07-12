@@ -81,6 +81,13 @@ def _make_plan(
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_native_process():
+    """CLI policy tests inject the native executor instead of spawning it."""
+    with patch("aiperf.orchestrator.rust_executor.RustSubprocessExecutor") as executor:
+        yield executor
+
+
 class TestRunBenchmark:
     """Test run_benchmark routing for BenchmarkPlan inputs."""
 
@@ -170,47 +177,44 @@ class TestRunSingleBenchmark:
     """Test the _run_single_benchmark function."""
 
     @patch("os._exit")
-    @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
-    @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.setup_rich_logging")
-    def test_simple_ui_uses_rich_logging(
+    @patch("aiperf.cli_runner._single_run._execute_native_run")
+    def test_simple_ui_runs_native_subprocess(
         self,
+        mock_execute: Mock,
         mock_setup_rich: Mock,
-        mock_bootstrap: Mock,
-        mock_resolver_chain: Mock,
         mock_exit: Mock,
     ):
         from aiperf.cli_runner import _run_single_benchmark
 
         config = _make_config(runtime={"ui": UIType.SIMPLE})
         run = _make_run(config)
-        chain = MagicMock()
-        mock_resolver_chain.return_value = chain
+        mock_execute.return_value = RunResult(
+            label="native", success=True, artifacts_path=run.artifact_dir
+        )
 
         _run_single_benchmark(run)
 
         mock_setup_rich.assert_called_once_with(run)
-        chain.resolve_all.assert_called_once_with(run)
-        mock_bootstrap.assert_called_once()
-        call_kwargs = mock_bootstrap.call_args.kwargs
-        assert call_kwargs["run"] is run
-        assert call_kwargs.get("log_queue") is None
+        mock_execute.assert_called_once_with(run)
         mock_exit.assert_called_once_with(0)
 
     @patch("os._exit")
-    @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
-    @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
-    def test_bootstrap_exception_exits_nonzero(
+    @patch("aiperf.cli_runner._single_run._execute_native_run")
+    def test_native_failure_exits_nonzero(
         self,
-        mock_bootstrap: Mock,
-        mock_resolver_chain: Mock,
+        mock_execute: Mock,
         mock_exit: Mock,
     ):
         from aiperf.cli_runner import _run_single_benchmark
 
         run = _make_run(_make_config(runtime={"ui": UIType.SIMPLE}))
-        mock_resolver_chain.return_value = MagicMock()
-        mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
+        mock_execute.return_value = RunResult(
+            label="native",
+            success=False,
+            error="Rust child failed",
+            artifacts_path=run.artifact_dir,
+        )
 
         # Production: os._exit terminates the process. With os._exit mocked
         # to a no-op the runner falls through to sys.exit(exit_code) so the
@@ -219,6 +223,7 @@ class TestRunSingleBenchmark:
             _run_single_benchmark(run)
 
         assert excinfo.value.code == 1
+        mock_execute.assert_called_once_with(run)
         mock_exit.assert_called_once_with(1)
 
 
