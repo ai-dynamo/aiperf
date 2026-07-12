@@ -132,7 +132,8 @@ construction.
 - reusable per-source fixed-deadline scrape drivers;
 - generic Prometheus/OpenMetrics, native DCGM, and compile-time registered source factories;
 - structured enrichment and redaction policies;
-- an archive schema for scrape attempts, samples, lifecycle markers, and manifests;
+- an archive schema for scrape attempts, family metadata, MetricPoints, lifecycle markers, loss
+  ranges/saturation, raw references, manifests, and durability receipts;
 - a bounded single-owner archive writer with local WAL and immutable Parquet partitions;
 - local filesystem and object-store sinks behind traits;
 - restart recovery, exact-resume validation, orphan handling, and terminal finalization;
@@ -823,6 +824,28 @@ representation. Semantic OpenMetrics Created values use `CreatedTimestamp`; an a
 sample merely named `_created` remains an `ArchiveNumber` unless the selected semantic parser
 assigned the Created role. No raw non-finite Float64 is written.
 
+Finite analytical conversion is deterministic. Parse the source token to its exact mathematical
+integer/rational under the selected format, then round once to IEEE-754 binary64 using round-to-
+nearest, ties-to-even. Preserve a source negative sign when a nonzero negative value underflows to
+`-0.0`. `f64_status=exact` iff the resulting binary64 value (including zero sign) equals that exact
+value; otherwise it is `rounded`. Overflow is a semantic error for a grammar/role requiring a
+binary64 value. `unavailable` is permitted only for a separately classified wider integer
+production accepted by the checked-in OpenMetrics role matrix; it is never an alternative rounding
+choice for a binary64 token.
+
+The descriptor freezes this validity matrix:
+
+| `kind` | `source_lexeme` | `finite_value` | `exact_u64` | `f64_status` |
+|---|---|---|---|---|
+| `absent` | null | null | null | `not_applicable` |
+| `pos_inf`/`neg_inf`/`nan` | exact non-null token | null | null | `not_applicable` |
+| `finite`, binary64 production | exact non-null token | non-null correctly rounded bits | non-null only for a non-negative UInt64 integer production | `exact` or `rounded` |
+| `finite`, accepted wider integer | exact non-null token | null if not representable, otherwise correctly rounded bits | non-null iff it fits UInt64 | `unavailable` when null, otherwise `exact` or `rounded` |
+
+All other child combinations are invalid. Cross-language goldens cover halfway cases, maximum/
+minimum normals and subnormals, positive/negative underflow, signed zero, overflow rejection, 2⁵³
+neighbors, and wider integers.
+
 `SourceTimestamp.status` is `absent`, `exact_ns`, `sub_ns_precision`, or `out_of_range` and never
 rounds silently. Prometheus 0.0.4 accepts its specified integer Unix milliseconds and checked-
 multiplies by 1,000,000. OpenMetrics 1.0 parses decimal Unix seconds and normalizes only when exact
@@ -900,23 +923,53 @@ added/removed partition/raw-object IDs, exact logical projection evidence, healt
 termination reason. `unix_epoch_ns` is a decimal string in JSON.
 
 Head, generation, and index-node JSON each have a checked-in canonical descriptor/version/
-fingerprint. Canonical bytes are UTF-8, object keys in byte order, no insignificant whitespace,
-integers in minimal decimal, lowercase fixed-width hex digests, and no JSON floats. Each envelope
+fingerprint. All archive JSON uses `aiperf.archive.canonical-json.v1`: the input decoder rejects
+duplicate object keys and invalid Unicode; decoded Unicode scalar sequences are preserved without
+normalization; object keys sort recursively by their unescaped UTF-8 bytes; arrays preserve authored
+order. Output is UTF-8 with no insignificant whitespace. Quote/reverse-solidus and the five named
+control escapes use their shortest JSON escapes; other U+0000–U+001F controls use lowercase
+`\u00xx`; solidus and all non-control Unicode scalars remain unescaped. Integers use minimal decimal
+(`0` for zero, no leading plus/zeros), digests use lowercase fixed-width hex, and floats are
+forbidden. `true`, `false`, and `null` use those exact lowercase tokens. Each envelope
 stores magic/type/version, payload byte length, payload, and BLAKE3 checksum; its content key hashes
 those exact canonical bytes.
 
-The partition/raw-object/coverage descriptor set is a persistent content-addressed B-tree. Its composite search key
-is `(object_kind_u8, table_id_u8, source_id_utf8, min_clock_ns_sortable_i64,
-logical_object_id_digest)` with lexicographic byte comparison. A leaf stores 1–256 sorted partition
-raw-object, or projection-coverage descriptors. An internal page stores 2–256 ordered children, each with inclusive
+The partition/raw-object/coverage descriptor set is a persistent content-addressed B-tree. Its
+composite search key is `(object_kind_u8, table_id_u8, session_key_16, source_key,
+clock_key_u64_be, logical_object_id_digest_32)` with lexicographic byte comparison. Numeric kind/
+table IDs and digest inputs live in the checked-in index descriptor. The per-kind matrix is:
+
+| Object kind | Table | Session key | Source key | Clock key | Logical object digest |
+|---|---|---|---|---|---|
+| table partition | exact table | one actual session | one exact source/global sentinel | minimum included frame Clock | domain hash of table/schema/content/projection evidence |
+| projection coverage | exact table | frame session | frame source/global sentinel | authoritative frame Clock | domain hash of frame ID/table |
+| shared raw object | none sentinel | all-zero sentinel | global sentinel | none sentinel | `raw_object_id` |
+
+Actual UUID zero, empty source IDs, and numeric ID zero are invalid, reserving all-zero/zero for
+`none`. `source_key` is byte `0x00` for global/no source and `0x01 || u32_be(length) || utf8` for a
+source. Table partitions are homogeneous in session and source; a builder rotates before either
+changes, so plural `source_ids` never choose a key. Every frame header carries
+`authoritative_frame_clock_ns`: scrape outcome/capture observation, lifecycle-transition Clock, or
+loss-range sealing observation as appropriate. Coverage and clockless family/raw-reference rows use
+that value. Signed Clock value `t` sorts as `u64_be((t as u64) XOR 0x8000000000000000)`; the raw
+none sentinel is all zero and is unambiguous under its object kind.
+
+A leaf stores sorted partition, raw-object, or projection-coverage descriptors. A root leaf stores
+0–256 entries (zero is the one canonical empty root); a non-root leaf stores 128–256. A root internal page stores
+2–256 children and a non-root internal page stores 128–256. An internal page carries inclusive
 min/max composite key, child key/hash/byte length, exact sorted source IDs, table/object-kind mask,
 and per-table min/max Clock time for pruning. Insert overflow at 257 entries deterministically
-splits 128 left/129 right; deletion does not merge during normal append. Pages are at most 1 MiB;
+splits 128 left/129 right. Append never deletes or merges. Copy-on-write deletion repairs
+underflow bottom-up: it borrows one entry/child from the left sibling when that
+sibling exceeds 128, otherwise the right, and otherwise merges with the left sibling when present
+or the right. Parent underflow applies the same left-first rule; a one-child root collapses and an
+empty root becomes the canonical empty leaf. Separators and aggregate pruning summaries recompute
+from child contents after every borrow/merge. Pages are at most 1 MiB;
 validated source/cardinality limits make 256-entry worst cases fit. The root descriptor carries
 height, logical entry count, and the same aggregate pruning summary.
 
 Partition descriptors contain table, key, physical content hash/bytes/rows, min/max Clock time,
-source IDs, schema fingerprint, and per-projection evidence:
+one source/global sentinel, schema fingerprint, and per-projection evidence:
 
 ```text
 (frame_id, table, logical_row_count, logical_multiset_digest)
@@ -1043,11 +1096,39 @@ Branches use only `ArchiveNumber`, `StringMap`, lists, and these exact child str
 - counter: `total`, `created: CreatedTimestamp`, and scalar exemplar;
 - stateset: ordered list of `{state: Utf8, enabled: ArchiveNumber}`;
 - info: its point label map;
-- histogram/gauge-histogram: `sum`, `count`, `created: CreatedTimestamp`, and ordered buckets of
+- histogram/gauge-histogram: `sum`, `count`, `count_origin: Enum8`,
+  `created: CreatedTimestamp`, and ordered buckets of
   `{upper_bound_lexeme: Utf8, upper_bound: ArchiveNumber, cumulative_count: ArchiveNumber,
   exemplar: Exemplar}`;
 - summary: `sum`, `count`, `created: CreatedTimestamp`, and ordered quantiles of
   `{quantile_lexeme: Utf8, quantile: ArchiveNumber, value: ArchiveNumber}`.
+
+The checked-in per-format/per-role projection matrix is normative, not merely parser guidance:
+
+- `wire_samples` is the exact emitted source-order evidence. Payload children copy the exact
+  `ArchiveNumber`/Created/exemplar from their assigned role unless the matrix explicitly names a
+  derivation; payload never becomes evidence that a wire line existed.
+- Point identity removes only that format/role's declared component label (`le`, `quantile`, state,
+  or info value label); every other label must match exactly across components. Component-specific
+  labels remain on `wire_samples`. Ambiguous groups or duplicate semantic roles reject atomically.
+- Unknown/gauge scalar and counter total come from their emitted primary sample. Counter Created is
+  present only when the semantic Created role was emitted. A scalar/counter exemplar remains owned
+  by its exact primary wire sample.
+- Prometheus 0.0.4 histogram `_count` is emitted and must equal the `+Inf` cumulative bucket;
+  payload count copies `_count` with `count_origin=emitted_and_validated`. For OpenMetrics histogram
+  and gauge-histogram, the required `+Inf` bucket is count authority: an emitted count role must
+  equal it; when emitted the payload copies that value and uses `emitted_and_validated`, otherwise
+  it copies the `+Inf` value and uses `derived_from_pos_inf`. `wire_samples` still proves whether a
+  count line existed. Sum/Created are copied only when their roles are present. Bucket exemplars
+  remain on the exact bucket.
+- Summary sum/count copy their emitted roles; quantiles sort by exact numeric value with source
+  order as the tie-breaker, retain lexemes, and reject duplicate numeric quantiles. State-set
+  entries retain source order after role-label extraction; info payload retains the exact declared
+  info-value label map.
+
+No suffix heuristic may override the declared parser format/type. The matrix contains every
+accepted role, its required/optional cardinality, label-removal rule, payload destination,
+equality/derivation rule, and exemplar owner. Every other combination is a typed semantic failure.
 
 Absent optional numeric components use `ArchiveNumber(kind="absent")`; absent Created components
 use `CreatedTimestamp(status="absent")`. The enclosing semantic branch itself is nullable only for
@@ -1065,6 +1146,15 @@ is `absent` for `all_absent`, `mixed_components`, and `partial_components`; ever
 timestamp remains on its `wire_samples` entry. A classic histogram/summary assembled from unequal
 or partly present component timestamps remains a structured point, but readers may not interpret it
 as one source-time snapshot. `clock_ns` remains the authoritative capture timeline in all cases.
+
+Timestamp equality compares the exact parsed temporal value in the declared format's units, not
+lexeme spelling or normalized-nanosecond availability. If every component is explicit and those
+exact rationals are equal, status is `uniform_explicit` and the point-level timestamp is the first
+contributing wire sample's complete `SourceTimestamp` (including its original lexeme/status). If
+all are absent it is `all_absent`; if some are absent it is `partial_components` regardless of
+whether the present values differ; otherwise unequal exact rationals are `mixed_components`.
+Sub-nanosecond and out-of-range values use the same exact-rational comparison and never become equal
+merely because both normalized values are null.
 
 ### 8.7 Lifecycle marker table
 
@@ -1118,7 +1208,7 @@ columns. The exact loss schema is:
 | `omitted_range_count`, `omitted_entry_count` | `UInt64` | no |
 | `omitted_rolling_digest` | `Digest` | yes |
 
-`loss_kind` distinguishes at least `missed_cadence` (nothing issued), `archive_rejected` (native
+`loss_kind` is exactly one of `missed_cadence` (nothing issued), `archive_rejected` (native
 work issued/delivered but archive projection denied), `projection_failed`, `writer_failed`, and
 `shutdown_abandoned`. The role-validity matrix fixes which range pairs are required or forbidden:
 missed cadence uses tick/deadline ranges and has no source/request range; issued-work loss uses its
@@ -1127,6 +1217,12 @@ present identities are contiguous. Boundary references are retained up to a vali
 overflow is counted and digested over canonical `BoundaryReference` bytes, never silently
 truncated. The reserved control lane persists loss frames even
 when ordinary archive admission is exhausted.
+
+The checked-in loss descriptor enumerates every v1 kind/reason and the complete required/null field
+matrix, including `count` equations for inclusive contiguous ranges and legal boundary roles.
+`loss_seq` is session-global, assigned monotonically by the archive owner to every loss row whether
+source-scoped or global; it is never reset per source. Unknown enum values require a schema-version
+upgrade rather than an implementation-local string.
 
 The fixed-memory attached ledger has a validated `max_exact_ranges`. Once those slots are full, a
 new non-coalescible entry updates one preallocated saturation slot keyed by the bounded tuple
@@ -1313,7 +1409,7 @@ access URL.
 current-thread LocalSet
     +-- source fetch drivers and native accumulator delivery
     +-- Clock maintenance driver
-    `-- fixed-memory per-source loss ledger
+    `-- fixed-memory exact-range + saturation loss ledger
               | bounded owned bytes + shared-decode credit
               v
 bounded ordered decode CPU pool
@@ -2225,7 +2321,9 @@ object keys. Within each samples partition, rows sort by:
 Other partitions use total orders: attempts `(source_id, source_record_seq, record_seq)`, families
 `(source_id, record_seq, family_seq)`, markers `(clock_ns, record_seq, marker_seq)`, losses
 `(source_id, record_seq, loss_seq)`, and raw references `(source_id, record_seq)`. Parquet statistics
-and the manifest index's min/max/source metadata enable pruning. The query resolver starts from a
+and the manifest index's min/max/source metadata enable pruning. All nullable sort fields use
+`NULLS FIRST`; UTF-8 fields compare unsigned UTF-8 bytes and fixed binary compares unsigned bytes.
+The query resolver starts from a
 verified head/root and walks the persistent index; it never globs. `metric_name_clean` is
 unnecessary because family identity has its own column.
 
@@ -2276,8 +2374,8 @@ policy explicitly declares all sources required.
 ### 16.3 Parse failure
 
 Malformed exposition yields no partial successful sample batch by default. The scrape record keeps
-the typed error. An optional parser policy may accept a standards-defined partial document only if
-the outcome explicitly records partiality and exact rejected-line counts; the default is atomic.
+the typed error. V1 has no partial-document policy: accepting one requires a separately advertised
+format/parser descriptor and outcome schema rather than weakening either strict grammar.
 
 ### 16.4 Process crash
 
@@ -2342,12 +2440,16 @@ version or material schema/writer change invalidates the profile until rerun.
    not retyped without a semantic role;
 3. zero-point metadata-only families, empty MetricSets, repeated MetricPoints for one label set, and
    point-owned wire samples/timestamps round-trip distinctly; classic all-absent/uniform/mixed/
-   partial component timestamps produce the exact point status without losing component lexemes;
+   partial component timestamps produce the exact point status without losing component lexemes,
+   and numerically equal differently spelled/sub-ns/out-of-range timestamps choose the first wire
+   representative deterministically;
 4. multiple histogram/gauge-histogram base label sets remain isolated and structured while native
    declared-format compatibility fallback retains pinned old semantics without creating archive
-   success rows;
+   success rows; format goldens distinguish emitted-and-validated count from OpenMetrics `+Inf`-
+   derived count while retaining exact wire-role presence/exemplars;
 5. `100000001`, values around 2⁵³, `u64::MAX`, values outside analytical f64 range, exact numeric
-   lexemes, and exact/rounded/unavailable f64 status survive every pinned reader; Prometheus-ms/
+   lexemes, correctly rounded ties-to-even binary64 bits, signed underflow zero, overflow rejection,
+   and the exact/rounded/unavailable validity matrix survive every pinned reader; Prometheus-ms/
    OpenMetrics-seconds exact/sub-ns/out-of-range timestamp cases retain format and normalization
    status;
 6. the per-format/per-role semantic matrix accepts every legal NaN/Inf case, atomically rejects
@@ -2355,7 +2457,8 @@ version or material schema/writer change invalidates the profile until rerun.
 7. deterministic keyed pre-redaction identity, post-redaction identity, map order, digest domains,
    topology epochs, schema descriptors/fingerprints, manifest/index, and report goldens; independent
    Rust/Python logical-row fixtures cover every scalar/nested type, null, negative zero, map order,
-   and full semantic rows;
+   and full semantic rows; canonical-JSON fixtures cover duplicate/escape/slash/non-ASCII/control/
+   key-order cases, and index fixtures cover every object-kind sentinel/Clock/source mapping;
 8. exact field/type/nullability/dictionary/metadata compatibility through pinned Arrow, Parquet,
    DuckDB, Polars, and pyarrow versions;
 9. streaming size/cardinality limits, property parse/encode/decode round trips, and malformed-input
@@ -2403,7 +2506,8 @@ version or material schema/writer change invalidates the profile until rerun.
    newly durable observer epoch; sync-only Clock values resolve only through that epoch's anchor;
 3. independently rotated multi-table projections cannot make global dedup omit a table, and stale/
    repeated WAL frames cannot duplicate logical projection evidence; empty exposition and metadata-
-   only cases persist zero-row coverage with the empty multiset digest;
+   only cases persist zero-row coverage with the empty multiset digest; authoritative hashes are
+   computed only after owner identity and a crash cannot expose preliminary coverage;
 4. finalize on the reserved control lane cannot overtake accepted data or loss-ledger frames;
 5. only incomplete physical WAL tails discard; complete checksum failures restore/fail closed, and
    one-generation-lag WAL makes preceding-head rollback complete without directory guessing;
@@ -2418,6 +2522,7 @@ version or material schema/writer change invalidates the profile until rerun.
 9. exact-resume identity/writer mismatch fails before session/source activation;
 10. bounded exact-parent compaction verifies per-projection logical row counts/multiset digests;
     failure leaves the old head authoritative and cannot expose duplicate/missing replacement rows;
+    deletion goldens exhaust left/right borrow, merge cascades, and root collapse;
 11. the 24-hour profile produces immutable partitions and O(K log₂₅₆ P) manifest-index update
     work rather than flat full-history rewrites; receipt batches/index pages remain bounded with the
     same asymptotic property;
@@ -2472,7 +2577,8 @@ Golden archives are read by pinned Arrow, DuckDB, Polars, and pyarrow versions. 
 local/remote heads, verify immutable generation/root hashes, walk the persistent index, and prove
 bounded source/time page pruning, metadata-only family discovery, repeated-point ordering,
 structured label filtering, every semantic payload, phase joins, durability-receipt joins,
-failure/loss-range discovery, unchanged-success continuity, and partition pruning. No directory
+cross-observer receipt time placement, nullable-source total ordering, failure/loss-range discovery,
+unchanged-success continuity, and partition pruning. No directory
 glob supplies file lists.
 
 ### 18.7 Performance/capacity gates
@@ -2490,20 +2596,23 @@ for passing standalone and attached profile artifacts rather than trusting docum
 
 1. implement the bounded Prometheus 0.0.4/OpenMetrics 1.0.0 `aiperf-prometheus` model/parser seam;
 2. implement the frozen role-validity matrix, strict archive/native-fallback split, metadata-only
-   families, repeated MetricPoints, lexemes, timestamps, and preserve current server/DCGM parity;
-3. check in canonical Arrow/head/generation/index descriptors; implement logical-row evidence,
-   every digest/identity/epoch rule, sanitizer surface, and golden Parquet/index/manifest/report;
+   families, repeated MetricPoints, exact payload/wire projection, binary64 conversion, timestamps,
+   and preserve current server/DCGM parity;
+3. check in canonical Arrow/head/generation/index/receipt/parity descriptors; implement canonical
+   JSON, per-kind index keys/deletion, logical-row evidence, every digest/identity/epoch rule,
+   sanitizer surface, and golden Parquet/index/manifest/report;
 4. add the five Tachometer regression fixtures as mandatory tests.
 
 ### Increment 2 — local writer and recovery
 
-1. implement erased prepared drivers, bounded shared decode and archive-projection CPU stages,
-   fixed-memory loss ledger, Clock maintenance/virtual-inline strategies, the fsync/CAS-to-LocalSet
-   receipt Clock bridge, and the single mutable archive owner;
+1. implement erased prepared drivers, bounded shared decode and owner-sequenced per-source
+   projection strands, fixed-memory loss ledger/saturation summaries, Clock maintenance/virtual-
+   inline strategies, the fsync/CAS-to-LocalSet receipt Clock bridge, and the single mutable archive
+   owner;
 2. add qualified lifetime lock, create-only genesis/resumed-session transaction, sealed WAL with
    lagged retirement, persistent zero/nonzero table coverage, shared raw-object registry plus raw-
-   reference rows, immutable Parquet/index/generations/head, and the bounded indexed non-self-
-   referential receipt journal;
+   reference rows with per-response encoding, immutable Parquet/index/generations/head, and the
+   bounded indexed non-self-referential receipt journal with observer epochs;
 3. add every-step crash/property/corruption recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
 
@@ -2520,9 +2629,10 @@ for passing standalone and attached profile artifacts rather than trusting docum
 
 1. replace phase-owned cadence loops with run-owned source subscriptions, orchestrator coalescing
    groups, physical attempt/phase-membership delivery, and all-outcome tees;
-2. emit exact lifecycle markers through a `PhaseObserver` tee;
+2. emit exact lifecycle markers and structured attempt-marker boundary joins through a
+   `PhaseObserver` tee;
 3. add typed archive provenance/health and failure diagnostic-artifact protocol;
-4. prove no extra scrapes, no metric drift, and no request-path backpressure.
+4. prove no extra scrapes, byte-exact `NativeMeasurementParityV1`, and no request-path backpressure.
 
 ### Increment 5 — object-store durability and resume
 
@@ -2640,10 +2750,10 @@ This design is complete only when:
 - Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves strict grammar, every valid role,
   zero-point families, repeated MetricPoints, numeric/timestamp lexemes, exemplars, and a separately
   named native fallback without changing benchmark semantics;
-- canonical Arrow/head/generation/index/logical-row descriptors, keyed pre/post-redaction/body
-  identities, exact lexemes with optional analytical numbers, component timestamp status,
-  attribute epochs, and native-v2 DTO are deterministic and readable/prunable by the pinned query
-  ecosystem;
+- canonical Arrow/head/generation/index/receipt/logical-row/parity descriptors and canonical JSON,
+  keyed pre/post-redaction/body identities, exact payload/wire projection, correctly rounded
+  analytical numbers, component timestamp status, per-kind index keys/deletion, attribute epochs,
+  and native-v2 DTO are deterministic and readable/prunable by the pinned query ecosystem;
 - qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
   persistent zero/nonzero projection coverage, shared encrypted raw objects with per-frame
   references and reference-owned content encoding, immutable partitions/generations/index/head,
