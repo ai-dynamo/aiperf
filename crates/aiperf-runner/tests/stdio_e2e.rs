@@ -139,6 +139,27 @@ fn capabilities_are_a_single_versioned_json_line() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn mimalloc_preinit_default_preserves_legacy_case_insensitive_override() {
+    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
+        .arg("--capabilities")
+        .env("MIMALLOC_VERBOSE", "1")
+        .env("mimalloc_eager_region_commit", "1")
+        .output()
+        .expect("spawn native runner with mimalloc operator override");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("option 'arena_eager_commit': 1"),
+        "priority-100 default replaced mimalloc's legacy/case-insensitive environment override:\n{stderr}"
+    );
+}
+
 async fn chat_handler() -> impl IntoResponse {
     let body = concat!(
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",

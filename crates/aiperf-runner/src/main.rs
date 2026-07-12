@@ -29,17 +29,13 @@ static AIPERF_MIMALLOC_PREINIT: unsafe extern "C" fn() = configure_mimalloc_befo
 unsafe extern "C" fn configure_mimalloc_before_process_init() {
     const MI_OPTION_ARENA_EAGER_COMMIT: i32 = 4;
 
-    unsafe extern "C" {
-        fn getenv(name: *const std::ffi::c_char) -> *mut std::ffi::c_char;
-    }
     // mimalloc's own Linux constructor has priority 101. This priority-100 hook
-    // changes only its default before that constructor commits the initial arena;
-    // an explicit operator environment setting remains authoritative.
-    if unsafe { getenv(c"MIMALLOC_ARENA_EAGER_COMMIT".as_ptr()) }.is_null() {
-        // SAFETY: mimalloc has not run process initialization and no Rust heap
-        // allocation can precede an ELF init-array constructor.
-        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_ARENA_EAGER_COMMIT, 0) };
-    }
+    // changes only its uninitialized default before that constructor commits the
+    // initial arena. Leaving the option uninitialized lets mimalloc's own parser
+    // honor canonical, case-insensitive, and legacy environment spellings.
+    // SAFETY: mimalloc has not run process initialization and no Rust heap
+    // allocation can precede an ELF init-array constructor.
+    unsafe { libmimalloc_sys::mi_option_set_default(MI_OPTION_ARENA_EAGER_COMMIT, 0) };
 }
 
 fn main() {
