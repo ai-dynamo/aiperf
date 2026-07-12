@@ -313,9 +313,7 @@ def test_default_static_accuracy_selection(tmp_path: Path) -> None:
     assert workload["type"] == "static_accuracy"
     assert workload["config"]["accuracy"]["benchmark"] == "mmlu"
     assert Path(workload["config"]["accuracy"]["python_executable"]).is_absolute()
-    assert workload["config"]["accuracy"]["worker_module"] == (
-        "aiperf.accuracy.worker"
-    )
+    assert workload["config"]["accuracy"]["worker_module"] == ("aiperf.accuracy.worker")
 
 
 def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
@@ -348,6 +346,41 @@ def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
         "trust_remote_code": False,
         "apply_chat_template": False,
     }
+
+
+def test_v2_public_dataset_is_expanded_once_without_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aiperf.dataset.loader.sharegpt import ShareGPTLoader
+
+    source_url = "https://datasets.example.test/sharegpt.json"
+    monkeypatch.setattr(ShareGPTLoader, "url", source_url)
+    run = _run(
+        tmp_path / "not-created",
+        dataset={
+            "type": "public",
+            "dataset": "sharegpt",
+            "entries": 7,
+            "sampling": "shuffle",
+        },
+    )
+
+    dataset = build_authored_run_request(
+        run,
+        operation="validate",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["workload"]["config"]["dataset"]
+
+    assert dataset == {
+        "type": "public",
+        "name": "sharegpt",
+        "format": "sharegpt",
+        "source": {"type": "url", "url": source_url},
+        "sampling": "shuffle",
+        "options": {"max_conversations": 7},
+        "entries": 7,
+    }
+    assert not run.artifact_dir.exists()
 
 
 def test_component_ids_are_open_strings_not_enums() -> None:
@@ -448,8 +481,7 @@ def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
     assert terminal["stage"] == "validation"
     with pytest.raises(ValueError, match="distribution_id"):
         rust_executor._parse_terminal(
-            orjson.dumps({**terminal, "distribution_id": "blake3:wrong"})
-            + b"\n",
+            orjson.dumps({**terminal, "distribution_id": "blake3:wrong"}) + b"\n",
             SimpleNamespace(benchmark_id="bound-runner"),
             protocol_version=2,
             distribution_id=distribution_id,

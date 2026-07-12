@@ -119,7 +119,7 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
             "type": str(cfg.backend.type),
             "config": copy.deepcopy(cfg.backend.config),
         },
-        "workload": _authored_workload(cfg, dataset),
+        "workload": _authored_workload(run, dataset),
         "metrics": _authored_metrics(cfg),
         "artifacts": _authored_artifacts(cfg),
         "sidecars": sidecars,
@@ -175,8 +175,9 @@ def _authored_endpoint(
     return result
 
 
-def _authored_workload(cfg: Any, dataset: Any) -> dict[str, Any]:
+def _authored_workload(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
     """Build an open workload selection around unprepared authored inputs."""
+    cfg = run.cfg
     if cfg.workload is not None:
         workload_type = str(cfg.workload.type)
         workload_config = copy.deepcopy(cfg.workload.config)
@@ -188,7 +189,7 @@ def _authored_workload(cfg: Any, dataset: Any) -> dict[str, Any]:
     # scheduled fields fill only missing keys during the compatibility window.
     current_fields: dict[str, Any] = {
         "worker_count": _worker_count(cfg),
-        "dataset": _authored_dataset_v2(dataset),
+        "dataset": _authored_dataset_v2(run, dataset),
         "tokenizer": _authored_tokenizer_v2(cfg),
         "phases": [_phase(phase) for phase in cfg.phases],
     }
@@ -202,8 +203,17 @@ def _authored_workload(cfg: Any, dataset: Any) -> dict[str, Any]:
     return {"type": workload_type, "config": workload_config}
 
 
-def _authored_dataset_v2(dataset: Any) -> dict[str, Any]:
-    """Project authored dataset policy without loading or resolving its source."""
+def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
+    """Project one dataset without acquiring or parsing its source.
+
+    Named public datasets are part of the Python-owned Config catalog.  They
+    are expanded here exactly once into explicit source coordinates and the
+    selected native loader ID.  The Rust dataset adapter remains the sole
+    downloader/parser and therefore receives no Python-materialized rows.
+    """
+    if isinstance(dataset, PublicDataset):
+        return _public_dataset(run, dataset)
+
     result = _authored_model_dump(dataset)
     result.pop("name", None)
     if isinstance(dataset, SyntheticDataset) and "turn_delay" in result:
