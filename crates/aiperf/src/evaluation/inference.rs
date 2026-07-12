@@ -17,7 +17,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 
-use aiperf_accuracy::{HostOperationUsage, STOCK_EVALUATION_OPERATION_SCHEMAS};
+use aiperf_accuracy::{
+    CanonicalJson, HostOperationUsage, STOCK_EVALUATION_OPERATION_SCHEMAS,
+    validate_no_secret_host_payload,
+};
 use aiperf_dataset::{
     AccuracyAssociation, ContentGroup, Conversation, ConversationContextMode, CorrelationId,
     Dataset, MediaKind, ModelId, Role, SegmentPool, TextTokenizer, Turn,
@@ -613,6 +616,10 @@ pub fn register_scheduled_inference_host_executors(
 }
 
 fn validate_inference_request(operation_id: &str, payload: &Value) -> Result<()> {
+    let canonical = CanonicalJson::new(payload.clone())
+        .map_err(|error| anyhow!("{operation_id} request was not canonical: {error}"))?;
+    validate_no_secret_host_payload(&canonical)
+        .map_err(|error| anyhow!("{operation_id} request carried forbidden authority: {error}"))?;
     let object = payload
         .as_object()
         .ok_or_else(|| anyhow!("{operation_id} request must be an object"))?;
@@ -1075,6 +1082,19 @@ fn validate_content_block(block: &Value) -> Result<()> {
             );
             validate_optional_nonempty_string(block, "media_type")?;
             validate_enum(block, "detail", &["auto", "low", "high"])?;
+        }
+        Some("image_url") => {
+            require_only_fields(block, &["type", "image_url"], "image URL content block")?;
+            let image = block
+                .get("image_url")
+                .and_then(Value::as_object)
+                .ok_or_else(|| anyhow!("image URL content block requires image_url"))?;
+            require_only_fields(image, &["url", "detail"], "inline image URL")?;
+            ensure!(
+                image.get("url").is_some_and(Value::is_string),
+                "inline image URL requires a string URL"
+            );
+            validate_enum(image, "detail", &["auto", "low", "high"])?;
         }
         Some("tool_result") => {
             require_only_fields(
@@ -2530,6 +2550,7 @@ mod tests {
                     {"role":"user","content":[
                         {"type":"text","text":"hello"},
                         {"type":"image","asset_id":"image-1","media_type":"image/png","detail":"high"},
+                        {"type":"image_url","image_url":{"url":"data:image/png;base64,aW5lcnQ=","detail":"low"}},
                         {"type":"tool_result","tool_call_id":"call-0","content":{"ok":true}}
                     ]},
                     {"role":"assistant","content":"","tool_calls":[{
@@ -2564,15 +2585,24 @@ mod tests {
                 }))
                 .is_err()
         );
-        assert!(
-            factory
-                .validator()
-                .validate_request(&json!({
-                    "messages":[{"role":"user","content":[{"type":"image_url","url":"secret"}]}],
-                    "generation":{"max_tokens":8}
-                }))
-                .is_err()
-        );
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:11211/_stats",
+        ] {
+            assert!(
+                factory
+                    .validator()
+                    .validate_request(&json!({
+                        "messages":[{"role":"user","content":[{
+                            "type":"image_url","image_url":{"url":url}
+                        }]}],
+                        "generation":{"max_tokens":8}
+                    }))
+                    .is_err(),
+                "{url}"
+            );
+        }
         factory.validator().validate_stream(&Value::Null).unwrap();
         factory
             .validator()

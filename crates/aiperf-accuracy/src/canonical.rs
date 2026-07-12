@@ -190,13 +190,17 @@ pub fn is_sha256(value: &str) -> bool {
 /// inference bodies and scoped local-proxy grants use dedicated typed DTOs and
 /// must never be represented in this generic authored value.
 pub fn validate_no_secret_control_value(value: &CanonicalJson) -> Result<(), CanonicalJsonError> {
-    validate_no_secret_value(value.value(), "$", false)
+    validate_no_secret_value(value.value(), &mut Vec::new(), false)
 }
 
-/// Reject credentials and explicit upstream authority while permitting inert
-/// URL-shaped benchmark content inside a typed operation payload.
+/// Reject credentials and explicit upstream authority in a host-operation payload.
+///
+/// The sole `url` exception is a strict raster `data:` URI at the exact
+/// OpenAI-compatible `messages|input[*].content[*].image_url.url` shape. This
+/// keeps inline multimodal compatibility without granting the model server an
+/// attacker-selected network or filesystem locator.
 pub fn validate_no_secret_host_payload(value: &CanonicalJson) -> Result<(), CanonicalJsonError> {
-    validate_no_secret_value(value.value(), "$", true)
+    validate_no_secret_value(value.value(), &mut Vec::new(), true)
 }
 
 /// Produce a report-safe diagnostic without echoing authority or credential material.
@@ -234,10 +238,16 @@ pub fn redact_diagnostic(message: &str) -> String {
     format!("{}…[truncated]", &message[..end])
 }
 
-fn validate_no_secret_value(
-    value: &Value,
-    path: &str,
-    allow_inert_url_field: bool,
+#[derive(Clone, Copy)]
+enum ControlPathSegment<'a> {
+    Field(&'a str),
+    Index(usize),
+}
+
+fn validate_no_secret_value<'a>(
+    value: &'a Value,
+    path: &mut Vec<ControlPathSegment<'a>>,
+    allow_inline_image_data_url: bool,
 ) -> Result<(), CanonicalJsonError> {
     const FORBIDDEN_FIELDS: &[&str] = &[
         "api_key",
@@ -261,28 +271,98 @@ fn validate_no_secret_value(
         Value::Object(entries) => {
             for (key, child) in entries {
                 let normalized = key.to_ascii_lowercase().replace('-', "_");
-                if FORBIDDEN_FIELDS.contains(&normalized.as_str())
-                    && !(allow_inert_url_field && normalized == "url")
-                {
+                let safe_inline_image_url = allow_inline_image_data_url
+                    && normalized == "url"
+                    && is_inline_image_url_path(path)
+                    && is_safe_inline_image_data_url(child);
+                if FORBIDDEN_FIELDS.contains(&normalized.as_str()) && !safe_inline_image_url {
                     return Err(CanonicalJsonError::new(format!(
-                        "control field {path}.{key} may carry connection authority or a credential"
+                        "control field {} may carry connection authority or a credential",
+                        display_control_path(path, Some(key))
                     )));
                 }
-                validate_no_secret_value(child, &format!("{path}.{key}"), allow_inert_url_field)?;
+                path.push(ControlPathSegment::Field(key));
+                validate_no_secret_value(child, path, allow_inline_image_data_url)?;
+                path.pop();
             }
         }
         Value::Array(items) => {
             for (index, child) in items.iter().enumerate() {
-                validate_no_secret_value(
-                    child,
-                    &format!("{path}[{index}]"),
-                    allow_inert_url_field,
-                )?;
+                path.push(ControlPathSegment::Index(index));
+                validate_no_secret_value(child, path, allow_inline_image_data_url)?;
+                path.pop();
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+fn is_inline_image_url_path(path: &[ControlPathSegment<'_>]) -> bool {
+    matches!(
+        path,
+        [
+            ControlPathSegment::Field("messages" | "input"),
+            ControlPathSegment::Index(_),
+            ControlPathSegment::Field("content"),
+            ControlPathSegment::Index(_),
+            ControlPathSegment::Field("image_url"),
+        ]
+    )
+}
+
+fn is_safe_inline_image_data_url(value: &Value) -> bool {
+    const PREFIXES: &[&str] = &[
+        "data:image/gif;base64,",
+        "data:image/jpeg;base64,",
+        "data:image/png;base64,",
+        "data:image/webp;base64,",
+    ];
+    let Some(value) = value.as_str() else {
+        return false;
+    };
+    let Some(encoded) = PREFIXES
+        .iter()
+        .find_map(|prefix| value.strip_prefix(prefix))
+    else {
+        return false;
+    };
+    if encoded.is_empty() || encoded.len() % 4 != 0 {
+        return false;
+    }
+    let padding = encoded
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count();
+    padding <= 2
+        && encoded[..encoded.len() - padding]
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        && encoded[..encoded.len() - padding]
+            .bytes()
+            .any(|byte| byte != b'=')
+}
+
+fn display_control_path(path: &[ControlPathSegment<'_>], next_field: Option<&str>) -> String {
+    use std::fmt::Write as _;
+
+    let mut output = "$".to_string();
+    for segment in path {
+        match segment {
+            ControlPathSegment::Field(field) => {
+                let _ = write!(output, ".{field}");
+            }
+            ControlPathSegment::Index(index) => {
+                let _ = write!(output, "[{index}]");
+            }
+        }
+    }
+    if let Some(field) = next_field {
+        let _ = write!(output, ".{field}");
+    }
+    output
 }
 
 fn validate_value(
@@ -660,11 +740,23 @@ mod tests {
     fn no_secret_validation_is_field_aware_and_diagnostics_fail_closed() {
         let inert = CanonicalJson::new(serde_json::json!({
             "question": "read https://example.invalid without dereferencing it",
-            "url": "https://example.invalid/semantic-content"
         }))
         .unwrap();
-        assert!(validate_no_secret_control_value(&inert).is_err());
+        validate_no_secret_control_value(&inert).unwrap();
         validate_no_secret_host_payload(&inert).unwrap();
+
+        let inline_image = CanonicalJson::new(serde_json::json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aW5lcnQ="}
+                }]
+            }]
+        }))
+        .unwrap();
+        assert!(validate_no_secret_control_value(&inline_image).is_err());
+        validate_no_secret_host_payload(&inline_image).unwrap();
 
         let authority = CanonicalJson::new(serde_json::json!({
             "base_url": "https://model.invalid"
@@ -675,6 +767,36 @@ mod tests {
             redact_diagnostic("request failed at https://secret.invalid?token=sentinel"),
             "[redacted sensitive evaluator diagnostic]"
         );
+    }
+
+    #[test]
+    fn host_payload_rejects_remote_or_misplaced_url_authority() {
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "https://model.invalid/image.png",
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:11211/_stats",
+            "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+            "data:image/png;base64,not-base64!",
+        ] {
+            let payload = CanonicalJson::new(serde_json::json!({
+                "messages": [{
+                    "role": "user",
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": {"url": url}
+                    }]
+                }]
+            }))
+            .unwrap();
+            assert!(validate_no_secret_host_payload(&payload).is_err(), "{url}");
+        }
+
+        let misplaced = CanonicalJson::new(serde_json::json!({
+            "metadata": {"image_url": {"url": "data:image/png;base64,aW5lcnQ="}}
+        }))
+        .unwrap();
+        assert!(validate_no_secret_host_payload(&misplaced).is_err());
     }
 
     #[test]
