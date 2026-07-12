@@ -31,7 +31,9 @@ use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::PhaseSpec;
-use crate::protocol_v2::{AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunnerComponentId};
+use crate::protocol_v2::{
+    AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunResourceV2, RunnerComponentId,
+};
 use crate::sidecar_input::PreparedSidecarInputs;
 
 /// Clock family supplied by one prepared backend.
@@ -83,6 +85,76 @@ pub struct WorkloadRequirements {
     pub clock_kinds: BTreeSet<RunnerClockKind>,
     /// Required backend feature IDs.
     pub backend_features: BTreeSet<String>,
+    /// Required/optional/forbidden authored resource blocks.
+    pub resources: ResourceRequirementsV2,
+}
+
+/// Presence rule for one workload-scoped resource block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceRequirementV2 {
+    /// The selected workload cannot prepare without this resource.
+    Required,
+    /// The resource may be present or omitted.
+    Optional,
+    /// Presence would create inert or unsafe configuration and is rejected.
+    Forbidden,
+}
+
+/// Closed presence matrix returned by every workload factory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResourceRequirementsV2 {
+    /// Model-selection policy.
+    pub models: ResourceRequirementV2,
+    /// Endpoint profiles.
+    pub endpoints: ResourceRequirementV2,
+    /// Native metric policy.
+    pub metrics: ResourceRequirementV2,
+    /// Generic artifact policy.
+    pub artifacts: ResourceRequirementV2,
+    /// Sidecar resources.
+    pub sidecars: ResourceRequirementV2,
+}
+
+impl ResourceRequirementsV2 {
+    /// Resource matrix shared by inference workloads in protocol v2.
+    #[must_use]
+    pub const fn inference() -> Self {
+        Self {
+            models: ResourceRequirementV2::Required,
+            endpoints: ResourceRequirementV2::Required,
+            metrics: ResourceRequirementV2::Optional,
+            artifacts: ResourceRequirementV2::Optional,
+            sidecars: ResourceRequirementV2::Optional,
+        }
+    }
+
+    /// Source-only standalone workload matrix.
+    #[must_use]
+    pub const fn telemetry_watch() -> Self {
+        Self {
+            models: ResourceRequirementV2::Forbidden,
+            endpoints: ResourceRequirementV2::Forbidden,
+            metrics: ResourceRequirementV2::Forbidden,
+            artifacts: ResourceRequirementV2::Optional,
+            sidecars: ResourceRequirementV2::Forbidden,
+        }
+    }
+
+    fn entries(self) -> [(RunResourceV2, ResourceRequirementV2); 5] {
+        [
+            (RunResourceV2::Models, self.models),
+            (RunResourceV2::Endpoints, self.endpoints),
+            (RunResourceV2::Metrics, self.metrics),
+            (RunResourceV2::Artifacts, self.artifacts),
+            (RunResourceV2::Sidecars, self.sidecars),
+        ]
+    }
+}
+
+impl Default for ResourceRequirementsV2 {
+    fn default() -> Self {
+        Self::inference()
+    }
 }
 
 /// Type-erased, strictly validated backend configuration.
@@ -399,6 +471,24 @@ impl RunnerRegistry {
         backend: &NamedRunnerComponentSpecV2,
         workload: &NamedRunnerComponentSpecV2,
     ) -> Result<ValidatedRunnerSelection> {
+        self.validate_selection_inner(backend, workload, None)
+    }
+
+    /// Resolve components and enforce workload-specific resource presence
+    /// before backend preparation or any endpoint/sidecar work.
+    pub fn validate_selection_for_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+    ) -> Result<ValidatedRunnerSelection> {
+        self.validate_selection_inner(&run.backend, &run.workload, Some(run))
+    }
+
+    fn validate_selection_inner(
+        &self,
+        backend: &NamedRunnerComponentSpecV2,
+        workload: &NamedRunnerComponentSpecV2,
+        run: Option<&AuthoredRunSpecV2>,
+    ) -> Result<ValidatedRunnerSelection> {
         let workload_factory = self
             .workloads
             .get(workload.id.as_str())
@@ -407,6 +497,9 @@ impl RunnerRegistry {
             .validate(&workload.config)
             .map_err(|error| anyhow!("workload {:?}: {error:#}", workload.id.as_str()))?;
         let requirements = workload_factory.requirements(validated_workload.as_ref())?;
+        if let Some(run) = run {
+            validate_resource_requirements(run, requirements.resources)?;
+        }
 
         let backend_factory = self
             .backends
@@ -552,6 +645,35 @@ fn validate_requirements(
     Ok(())
 }
 
+fn validate_resource_requirements(
+    run: &AuthoredRunSpecV2,
+    requirements: ResourceRequirementsV2,
+) -> Result<()> {
+    for (resource, requirement) in requirements.entries() {
+        let present = run.resource_is_present(resource);
+        match (requirement, present) {
+            (ResourceRequirementV2::Required, false) => {
+                bail!(
+                    "workload {:?} requires run.resources.{}",
+                    run.workload.id.as_str(),
+                    resource.field_name()
+                );
+            }
+            (ResourceRequirementV2::Forbidden, true) => {
+                bail!(
+                    "workload {:?} forbids run.resources.{}",
+                    run.workload.id.as_str(),
+                    resource.field_name()
+                );
+            }
+            (ResourceRequirementV2::Required, true)
+            | (ResourceRequirementV2::Optional, _)
+            | (ResourceRequirementV2::Forbidden, false) => {}
+        }
+    }
+    Ok(())
+}
+
 fn unknown_component<'a>(
     kind: &str,
     requested: &RunnerComponentId,
@@ -605,6 +727,7 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     crate::agentic_execution::register_agentic_online_pair(builder)?;
     crate::online_execution::register_online_http_pairs(builder)?;
     crate::online_execution::register_online_http_scheduled_pair(builder)?;
+    crate::online_execution::register_online_http_static_accuracy_pair(builder)?;
     crate::grpc_execution::register_online_grpc_pairs(builder)?;
     #[cfg(feature = "dynamo-offline")]
     crate::offline_execution::register_dynamo_offline_backend(builder)?;
@@ -824,10 +947,6 @@ impl RunnerRunContext {
                 "duplicate validated endpoint profile ID {profile_id:?}"
             );
         }
-        ensure!(
-            !profiles.is_empty(),
-            "runner context requires at least one endpoint profile"
-        );
         Ok(Self {
             product_registry,
             execution_factories,
@@ -1277,6 +1396,7 @@ fn requirements_from_descriptor(descriptor: &RunnerWorkloadDescriptor) -> Worklo
             .iter()
             .map(|feature| (*feature).to_owned())
             .collect(),
+        resources: ResourceRequirementsV2::inference(),
     }
 }
 
@@ -1360,6 +1480,7 @@ mod tests {
                 semantic_responses: true,
                 clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
                 backend_features: BTreeSet::from(["http".to_owned()]),
+                resources: ResourceRequirementsV2::inference(),
             })
         }
     }
@@ -1448,6 +1569,20 @@ mod tests {
         }
     }
 
+    fn authored_run(resources: Value) -> AuthoredRunSpecV2 {
+        serde_json::from_str(
+            &serde_json::json!({
+                "identity": {"benchmark_id": "resource-test"},
+                "artifact_target": "/tmp/resource-test",
+                "backend": {"type": "acme_remote", "config": {"node": 4}},
+                "workload": {"type": "acme_workload", "config": {"message": "hello"}},
+                "resources": resources,
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn custom_pair_validates_without_a_core_enum_or_match() {
         let registry = registry();
@@ -1478,6 +1613,31 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("unknown field `unknown`"), "{error}");
+    }
+
+    #[test]
+    fn workload_resources_fail_required_and_forbidden_presence_before_backend_prepare() {
+        let missing = authored_run(serde_json::json!({}));
+        let error = registry()
+            .validate_selection_for_run(&missing)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("requires run.resources.models"), "{error}");
+
+        let source_only = authored_run(serde_json::json!({
+            "models": {"items": [{"name": "model"}]}
+        }));
+        let error =
+            validate_resource_requirements(&source_only, ResourceRequirementsV2::telemetry_watch())
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("forbids run.resources.models"), "{error}");
+
+        let inference = authored_run(serde_json::json!({
+            "models": {"items": [{"name": "model"}]},
+            "endpoints": {"profiles": [{}]}
+        }));
+        registry().validate_selection_for_run(&inference).unwrap();
     }
 
     #[test]
@@ -1587,6 +1747,7 @@ mod tests {
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),
+            ("online_http", "static_accuracy"),
         ];
         #[cfg(not(feature = "dynamo-offline"))]
         let expected_supported = vec![
@@ -1594,6 +1755,7 @@ mod tests {
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),
+            ("online_http", "static_accuracy"),
         ];
         #[cfg(feature = "dynamo-offline")]
         let expected_static = vec![
