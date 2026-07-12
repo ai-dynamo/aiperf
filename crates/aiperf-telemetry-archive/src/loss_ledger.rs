@@ -872,6 +872,17 @@ impl FixedLossLedgerV1 {
         self.exact_ranges
     }
 
+    /// Prepared physical source universe in deterministic byte order.
+    pub fn prepared_source_ids(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.sources.iter().map(String::as_str)
+    }
+
+    /// Exact boundary-reference capacity reserved in every enumerable row.
+    #[must_use]
+    pub const fn max_boundary_refs_per_range(&self) -> usize {
+        self.limits.max_boundary_refs_per_range
+    }
+
     /// Returns the number of saturation tuples that have observed omitted loss.
     #[must_use]
     pub const fn active_saturation_slot_count(&self) -> usize {
