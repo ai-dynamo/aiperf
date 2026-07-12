@@ -1907,6 +1907,48 @@ mod tests {
     }
 
     #[test]
+    fn nemo_validator_accepts_numeric_zero_across_value_and_byte_paths() {
+        // Regression guard for a byte-vs-value drift: the frozen canary uses
+        // `temperature: 0.0`, and protocol-v2 `validate` decodes authored config
+        // from raw bytes (`CanonicalJson::from_slice`) rather than a prebuilt
+        // `serde_json::Value`. A zero that direct value validation accepts must
+        // also pass the strict byte decode, and the two surfaces must normalize
+        // to identical validated bytes. `-0.0` is included because it is the
+        // other zero literal that can diverge across number representations.
+        let factory = NemoEvaluatorProviderFactory::new(
+            vec![distribution("nemo-locked")],
+            Arc::new(NeverLaunch),
+        )
+        .unwrap();
+        for literal in ["0.0", "-0.0", "0", "0.7"] {
+            let bytes = format!(
+                r#"{{"environment":"gsm8k","solver":"chat","solver_config":{{"max_tokens":64,"temperature":{literal},"top_p":{literal}}},"selection":{{"limit":1,"seed":0}}}}"#
+            );
+            let from_bytes = CanonicalJson::from_slice(bytes.as_bytes(), Default::default())
+                .expect("canary bytes must decode");
+            let from_value = CanonicalJson::new(
+                serde_json::from_slice::<serde_json::Value>(bytes.as_bytes()).unwrap(),
+            )
+            .expect("canary value must build");
+            let byte_result = factory.validate_authored_config(&from_bytes);
+            let value_result = factory.validate_authored_config(&from_value);
+            assert!(
+                byte_result.is_ok(),
+                "byte-decoded temperature={literal} was rejected: {byte_result:?}"
+            );
+            assert!(
+                value_result.is_ok(),
+                "value temperature={literal} was rejected: {value_result:?}"
+            );
+            assert_eq!(
+                byte_result.unwrap().config(),
+                value_result.unwrap().config(),
+                "byte and value validation drifted for temperature={literal}"
+            );
+        }
+    }
+
+    #[test]
     fn openbench_missing_limit_normalizes_to_frozen_selection_count() {
         let factory = OpenBenchProviderFactory::new(
             vec![distribution("openbench-locked")],

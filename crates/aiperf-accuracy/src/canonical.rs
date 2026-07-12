@@ -674,9 +674,33 @@ impl<'de> Visitor<'de> for StrictValueVisitor<'_> {
     where
         A: MapAccess<'de>,
     {
+        // serde_json's `arbitrary_precision` feature (enabled workspace-wide via
+        // aiperf-graph) does not route numbers through `visit_f64`/`visit_i64`
+        // when a `deserialize_any` visitor is used: it delivers each number as a
+        // single-entry map keyed by a private sentinel whose value is the raw
+        // lexeme. Without reconstructing the `Number` here, a byte-decoded float
+        // (e.g. an authored `temperature: 0.0`) would become a `Value::Object`
+        // and fail every downstream `is_number()` check. The sentinel key cannot
+        // be produced by ordinary decoded JSON, so this branch is inert when the
+        // feature is off.
+        const NUMBER_SENTINEL: &str = "$serde_json::private::Number";
         let mut entries = Map::new();
         let mut keys = BTreeSet::new();
+        let mut first = true;
         while let Some(key) = object.next_key::<String>()? {
+            if first && key == NUMBER_SENTINEL {
+                let lexeme: String = object.next_value()?;
+                if object.next_key::<String>()?.is_some() {
+                    return Err(de::Error::custom(
+                        "arbitrary-precision number carried unexpected extra keys",
+                    ));
+                }
+                let number = serde_json::from_str::<Number>(&lexeme)
+                    .map_err(|_| de::Error::custom("canonical JSON number lexeme was invalid"))?;
+                validate_number(&number).map_err(de::Error::custom)?;
+                return Ok(Value::Number(number));
+            }
+            first = false;
             validate_string(&key, self.limits).map_err(de::Error::custom)?;
             if !keys.insert(key.clone()) {
                 return Err(de::Error::custom(format!(
