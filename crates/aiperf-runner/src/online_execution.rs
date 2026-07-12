@@ -549,6 +549,13 @@ impl AuthoredTokenizerV2 {
     }
 }
 
+/// Strictly validate one authored tokenizer policy without resolving its
+/// source. Pair adapters use this during side-effect-free validation and call
+/// [`lower_authored_tokenizer`] exactly once during preparation.
+pub(crate) fn validate_authored_tokenizer(raw: &RawValue) -> Result<()> {
+    AuthoredTokenizerV2::decode(raw).map(|_| ())
+}
+
 /// Decode and resolve one authored tokenizer through an injected source
 /// resolver. Offline and future remote backends reuse this preparation without
 /// inheriting the online HTTP workload adapter.
