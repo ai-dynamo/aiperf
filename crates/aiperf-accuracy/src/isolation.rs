@@ -1291,7 +1291,7 @@ impl std::error::Error for IsolationError {}
 mod tests {
     use std::io::{Read as _, Write};
     use std::net::TcpListener;
-    use std::os::fd::AsRawFd as _;
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::os::unix::process::CommandExt as _;
@@ -1302,8 +1302,9 @@ mod tests {
     use super::*;
     use crate::provider::{EvaluatorProcessRootBinder, ProviderRegistryError};
     use crate::provider_protocol::{
-        EvaluationDistributionId, EvaluationSessionId, LogicalServiceId, OperationPurpose,
-        ScopedProxyGrant, ScopedProxySecret, SemanticOperationId,
+        EvaluationDistributionId, EvaluationIdentityComponent, EvaluationSessionId,
+        LogicalServiceId, OperationPurpose, ScopedProxyGrant, ScopedProxySecret,
+        SemanticOperationId,
     };
 
     #[test]
@@ -1342,6 +1343,15 @@ mod tests {
             provider_source_sha256: "a".repeat(64),
             worker_source_sha256: "b".repeat(64),
             dependency_lock_sha256: "c".repeat(64),
+            identity_components: vec![EvaluationIdentityComponent {
+                name: "fixture-worker".to_string(),
+                version: "1".to_string(),
+                source_sha256: "b".repeat(64),
+                source_commit: None,
+                base_source_sha256: None,
+                overlay_policy: None,
+                overlays: Vec::new(),
+            }],
             oci_digest: None,
             launch_closure_sha256: closure_digest,
         };
@@ -1800,10 +1810,15 @@ except BaseException as error:
     os.write(2, (type(error).__name__ + ': ' + str(error)).encode())
     os._exit(33)
 "#;
-        let unexpected = File::open(&host_secret_path).unwrap();
+        let secret = File::open(&host_secret_path).unwrap();
+        let unexpected_fd = unsafe { libc::fcntl(secret.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 5) };
+        assert!(unexpected_fd >= 5);
+        // SAFETY: successful `F_DUPFD_CLOEXEC` returned one new owned descriptor.
+        let unexpected = unsafe { File::from_raw_fd(unexpected_fd) };
+        drop(secret);
         let unexpected_fd = unexpected.as_raw_fd();
         let unexpected_flags = unsafe { libc::fcntl(unexpected_fd, libc::F_GETFD) };
-        assert!(unexpected_fd > 4 && unexpected_flags >= 0);
+        assert!(unexpected_flags >= 0);
         assert_eq!(
             unsafe {
                 libc::fcntl(

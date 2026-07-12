@@ -28,8 +28,8 @@ pub trait PublicScoreProjectionValidator: Send + Sync {
 pub const GSM8K_SCALAR_SCORE_SCHEMA_SHA256: &str =
     "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9";
 
-/// Executable validator for the stock NeMo/OpenBench GSM8K public score.
-#[derive(Debug, Clone, Copy, Default)]
+/// Executable validator for the stock NeMo/OpenBench GSM8K public score object.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Gsm8kScalarScoreProjectionValidator;
 
 impl PublicScoreProjectionValidator for Gsm8kScalarScoreProjectionValidator {
@@ -95,7 +95,9 @@ impl PublicScoreProjectionPolicy {
     ) -> Result<&mut Self, PublicScoreProjectionError> {
         let name = name.into();
         if name.trim().is_empty()
+            || name != name.trim()
             || name.len() > 256
+            || name.chars().any(char::is_control)
             || !is_sha256(validator.schema_sha256())
             || self.rules.contains_key(&name)
         {
@@ -116,9 +118,9 @@ impl PublicScoreProjectionPolicy {
         value: &CanonicalJson,
     ) -> Result<&'a str, PublicScoreProjectionError> {
         let rule = self.rules.get(name).ok_or_else(|| {
-            PublicScoreProjectionError::Policy(format!(
-                "provider exposed unregistered public score projection {name:?}"
-            ))
+            PublicScoreProjectionError::Policy(
+                "provider exposed an unregistered public score projection".to_string(),
+            )
         })?;
         validate_no_secret_control_value(value)
             .map_err(|error| PublicScoreProjectionError::Projection(error.to_string()))?;
@@ -205,6 +207,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::canonical::sha256_hex;
 
     struct ZeroOrOne;
 
@@ -264,6 +267,25 @@ mod tests {
 
     #[test]
     fn stock_gsm8k_validator_matches_manifest_schema_exactly() {
+        let schema = CanonicalJson::new(json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+                "value": {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "type": "number",
+                },
+            },
+            "required": ["value"],
+            "type": "object",
+        }))
+        .unwrap();
+        assert_eq!(
+            sha256_hex(&schema.to_bytes()),
+            GSM8K_SCALAR_SCORE_SCHEMA_SHA256
+        );
+
         let validator = Gsm8kScalarScoreProjectionValidator;
         assert_eq!(validator.schema_sha256(), GSM8K_SCALAR_SCORE_SCHEMA_SHA256);
         for value in [
@@ -288,5 +310,16 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn unknown_projection_diagnostic_does_not_echo_provider_label() {
+        let policy = PublicScoreProjectionPolicy::restricted_only();
+        let sentinel = "private-answer-score-42";
+        let error = policy
+            .validate(sentinel, &CanonicalJson::new(json!({"value": 1})).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(sentinel));
     }
 }

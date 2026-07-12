@@ -595,7 +595,8 @@ pub struct EvaluationIdentityComponent {
 }
 
 impl EvaluationIdentityComponent {
-    fn validate(&self) -> Result<(), EvaluationProtocolError> {
+    /// Validate immutable source, revision, and ordered overlay identity.
+    pub fn validate(&self) -> Result<(), EvaluationProtocolError> {
         validate_nonempty_bounded("evaluation component name", &self.name, 512)?;
         validate_nonempty_bounded("evaluation component version", &self.version, 512)?;
         if !is_sha256(&self.source_sha256)

@@ -19,14 +19,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::canonical::{CanonicalJson, is_sha256, sha256_hex, validate_no_secret_control_value};
+use crate::metadata_projection::{
+    FrozenPublicEvaluationMetadataPolicy, PublicEvaluationMetadataProjector,
+};
 use crate::provider_protocol::{
     EVALUATOR_WORKER_PROTOCOL_V2, EvaluationDistributionId, EvaluationEventBatch,
-    EvaluationExecutionGranularity, EvaluationFinishCandidate, EvaluationIdentity, EvaluationPlan,
-    EvaluationPlanRequest, EvaluationProtocolError, EvaluationProviderId, EvaluationSchedulingMode,
-    EvaluationSessionId, EvaluationUnitId, EvaluationUnitOccurrence,
-    EvaluationUnitOccurrenceRequest, EvaluationUnitPage, EvaluationWorkerIdentity,
-    HostOperationEvent, ResolvedEvaluationAsset, ScopedProxyBinding, ScopedProxyGrant,
-    SemanticOperationId,
+    EvaluationExecutionGranularity, EvaluationFinishCandidate, EvaluationIdentity,
+    EvaluationIdentityComponent, EvaluationPlan, EvaluationPlanRequest, EvaluationProtocolError,
+    EvaluationProviderId, EvaluationSchedulingMode, EvaluationSessionId, EvaluationUnitId,
+    EvaluationUnitOccurrence, EvaluationUnitOccurrenceRequest, EvaluationUnitPage,
+    EvaluationWorkerIdentity, HostOperationEvent, ResolvedEvaluationAsset, ScopedProxyBinding,
+    ScopedProxyGrant, SemanticOperationId,
 };
 use crate::score_projection::PublicScoreProjectionPolicy;
 
@@ -81,10 +84,10 @@ pub struct StockEvaluationOperationSchema {
 pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] = &[
     StockEvaluationOperationSchema {
         operation_id: "model.generate",
-        combined_schema_sha256: "d468bbc4f1fdbbc54360cede8194732b2ebaabbdfb55490bc572c4bb44f89cdf",
-        request_schema_sha256: "c2f30f5396f4af6e44025d80294b2685916492c23dd730cd1e2a6ebdb6ae5d21",
-        response_schema_sha256: "6c8d726e5a0c05a22de946ce2495d6a4bcf3b3b7bb7a48e5c39bad07ff954ca0",
-        canonical_stream_schema_sha256: "84a861ea0a983368cd48e6db2fa4ac71b8219d7685065718859f0bfc4ea49206",
+        combined_schema_sha256: "5077609c909bb093f7e1db8617318fffc90947f6799aae9f8d7aced35107f416",
+        request_schema_sha256: "0d89f49e356ebae5f637768b43dc0e957f25b1e5ee5a9148df3ddbb2e932c96d",
+        response_schema_sha256: "1c2284478c7e01acaa3a88e611cd7d09f38f8374e08213582898d94ad56cf297",
+        canonical_stream_schema_sha256: "025ddc6243a449525a8d9db0cf3afc4d311265329b96ea73e9014da224100582",
         true_streaming: true,
         endpoint_capability: "chat",
         modalities: &[
@@ -109,9 +112,9 @@ pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] 
     },
     StockEvaluationOperationSchema {
         operation_id: "model.responses",
-        combined_schema_sha256: "c58154fbc26e5a787a170b438eaccb391b00f2bc06a16ea6be82f9926c6e3286",
-        request_schema_sha256: "ecfbf3cb2741066d555df42e01c4c3c68d37c3674d818116feeaf8fdead2d5b3",
-        response_schema_sha256: "b1702513240975373a50c2720a9f1d39df8e2466560fe90174e63a0d631cd3e7",
+        combined_schema_sha256: "b7441ef4a0fd0ea2cbb2410c09f3f18ad8fab00fdcea08c59bfc34fb1368cc9b",
+        request_schema_sha256: "6afa8c604041566bb843367664c8ffff6961d0f17a5c25031b6a745991219f96",
+        response_schema_sha256: "530ae988b7935903f54292c9c20ec7118a02688402d18bd66e9e4a94df5e7086",
         canonical_stream_schema_sha256: "800695bec0f214e79c9eb0b469ce020fc2931167126cb0d4e0ca7cce2d2f262e",
         true_streaming: true,
         endpoint_capability: "responses",
@@ -220,6 +223,8 @@ pub struct EvaluationDistributionDescriptor {
     pub worker_source_sha256: String,
     /// Fully pinned dependency lock digest.
     pub dependency_lock_sha256: String,
+    /// Exact ordered provider/task-registry/worker/lock component identities.
+    pub identity_components: Vec<EvaluationIdentityComponent>,
     /// Optional immutable OCI image digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oci_digest: Option<String>,
@@ -235,6 +240,24 @@ impl EvaluationDistributionDescriptor {
                 "distribution {} had empty package identity",
                 self.distribution_id
             )));
+        }
+        if self.identity_components.is_empty() {
+            return Err(ProviderRegistryError::InvalidDescriptor(format!(
+                "distribution {} omitted its factory-attested identity components",
+                self.distribution_id
+            )));
+        }
+        let mut component_names = BTreeSet::new();
+        for component in &self.identity_components {
+            component
+                .validate()
+                .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
+            if !component_names.insert(&component.name) {
+                return Err(ProviderRegistryError::InvalidDescriptor(format!(
+                    "distribution {} duplicated an identity component",
+                    self.distribution_id
+                )));
+            }
         }
         for digest in [
             self.provider_source_sha256.as_str(),
@@ -312,6 +335,8 @@ pub struct EvaluationProviderDescriptor {
     /// Registered reviewed public-projection schemas by projection name.
     #[serde(default)]
     pub public_projection_schemas: BTreeMap<String, String>,
+    /// Fingerprint of the executable case/numeric/aggregate metadata projector.
+    pub public_metadata_schema_sha256: String,
     /// Immutable selectable worker distributions.
     pub distributions: Vec<EvaluationDistributionDescriptor>,
 }
@@ -326,6 +351,7 @@ impl EvaluationProviderDescriptor {
             || self.operations.is_empty()
             || self.config_schema_version == 0
             || !is_sha256(&self.config_schema_sha256)
+            || !is_sha256(&self.public_metadata_schema_sha256)
             || self.distributions.is_empty()
         {
             return Err(ProviderRegistryError::InvalidDescriptor(format!(
@@ -723,6 +749,9 @@ pub trait EvaluationProviderFactory: Send + Sync {
     /// Factory-owned executable validators for every public score schema.
     fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy;
 
+    /// Factory-owned executable projector for public case and aggregate metadata.
+    fn public_metadata_projector(&self) -> Arc<dyn PublicEvaluationMetadataProjector>;
+
     /// Strictly validate authored configuration without any external effect.
     fn validate_authored_config(
         &self,
@@ -764,6 +793,7 @@ struct RegisteredProviderFactory {
     descriptor: EvaluationProviderDescriptor,
     validator: Arc<dyn ProviderConfigValidator>,
     public_score_projection_policy: PublicScoreProjectionPolicy,
+    public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     launcher: Arc<dyn EvaluationProviderLauncher>,
 }
 
@@ -772,16 +802,24 @@ impl RegisteredProviderFactory {
         descriptor: EvaluationProviderDescriptor,
         validator: Arc<dyn ProviderConfigValidator>,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
         launcher: Arc<dyn EvaluationProviderLauncher>,
     ) -> Result<Self, ProviderRegistryError> {
         descriptor.validate()?;
         public_score_projection_policy
             .validate_descriptor_fingerprints(&descriptor.public_projection_schemas)
             .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
+        if public_metadata_projector.schema_sha256() != descriptor.public_metadata_schema_sha256 {
+            return Err(ProviderRegistryError::InvalidDescriptor(
+                "public metadata projector fingerprint did not match the provider descriptor"
+                    .to_string(),
+            ));
+        }
         Ok(Self {
             descriptor,
             validator,
             public_score_projection_policy,
+            public_metadata_projector,
             launcher,
         })
     }
@@ -795,6 +833,10 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
 
     fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy {
         &self.public_score_projection_policy
+    }
+
+    fn public_metadata_projector(&self) -> Arc<dyn PublicEvaluationMetadataProjector> {
+        Arc::clone(&self.public_metadata_projector)
     }
 
     fn validate_authored_config(
@@ -940,6 +982,13 @@ impl EvaluationProviderRegistryBuilder {
             .public_score_projection_policy()
             .validate_descriptor_fingerprints(&factory.descriptor().public_projection_schemas)
             .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
+        if factory.public_metadata_projector().schema_sha256()
+            != factory.descriptor().public_metadata_schema_sha256
+        {
+            return Err(ProviderRegistryError::InvalidDescriptor(
+                "provider metadata projector fingerprint drifted from its descriptor".to_string(),
+            ));
+        }
         let id = factory.descriptor().provider_id.clone();
         if self.factories.contains_key(&id) {
             return Err(ProviderRegistryError::DuplicateProvider(id.to_string()));
@@ -1019,6 +1068,16 @@ impl EvaluationProviderRegistry {
         self.factories
             .get(provider_id)
             .map(|factory| factory.public_score_projection_policy())
+    }
+
+    /// Clone the executable public metadata projector for one provider.
+    pub fn public_metadata_projector(
+        &self,
+        provider_id: &EvaluationProviderId,
+    ) -> Option<Arc<dyn PublicEvaluationMetadataProjector>> {
+        self.factories
+            .get(provider_id)
+            .map(|factory| factory.public_metadata_projector())
     }
 
     /// Strictly decode and validate authored JSON bytes for one provider/distribution.
@@ -1136,6 +1195,21 @@ impl NemoEvaluatorProviderFactory {
         distributions: Vec<EvaluationDistributionDescriptor>,
         launcher: Arc<dyn EvaluationProviderLauncher>,
     ) -> Result<Self, ProviderRegistryError> {
+        Self::with_public_projection_policies(
+            distributions,
+            launcher,
+            PublicScoreProjectionPolicy::restricted_only(),
+            Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
+        )
+    }
+
+    /// Build stock NeMo with exact manifest-decoded executable public policies.
+    pub fn with_public_projection_policies(
+        distributions: Vec<EvaluationDistributionDescriptor>,
+        launcher: Arc<dyn EvaluationProviderLauncher>,
+        public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
+    ) -> Result<Self, ProviderRegistryError> {
         let schema = nemo_schema();
         let descriptor = stock_descriptor(
             "nemo_evaluator",
@@ -1150,11 +1224,16 @@ impl NemoEvaluatorProviderFactory {
                 EvaluationSchedulingMode::Finite,
                 EvaluationSchedulingMode::RustOccurrences,
             ],
+            PublicProjectionDescriptorSet {
+                score_schemas: public_score_projection_policy.schema_fingerprints(),
+                metadata_schema_sha256: public_metadata_projector.schema_sha256().to_string(),
+            },
         )?;
         Ok(Self(RegisteredProviderFactory::new(
             descriptor,
             Arc::new(NemoConfigValidator),
-            PublicScoreProjectionPolicy::restricted_only(),
+            public_score_projection_policy,
+            public_metadata_projector,
             launcher,
         )?))
     }
@@ -1169,6 +1248,21 @@ impl OpenBenchProviderFactory {
         distributions: Vec<EvaluationDistributionDescriptor>,
         launcher: Arc<dyn EvaluationProviderLauncher>,
     ) -> Result<Self, ProviderRegistryError> {
+        Self::with_public_projection_policies(
+            distributions,
+            launcher,
+            PublicScoreProjectionPolicy::restricted_only(),
+            Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
+        )
+    }
+
+    /// Build stock OpenBench with exact manifest-decoded executable public policies.
+    pub fn with_public_projection_policies(
+        distributions: Vec<EvaluationDistributionDescriptor>,
+        launcher: Arc<dyn EvaluationProviderLauncher>,
+        public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
+    ) -> Result<Self, ProviderRegistryError> {
         let schema = openbench_schema();
         let descriptor = stock_descriptor(
             "openbench",
@@ -1177,11 +1271,16 @@ impl OpenBenchProviderFactory {
             distributions,
             vec![EvaluationExecutionGranularity::HostBatch],
             vec![EvaluationSchedulingMode::Finite],
+            PublicProjectionDescriptorSet {
+                score_schemas: public_score_projection_policy.schema_fingerprints(),
+                metadata_schema_sha256: public_metadata_projector.schema_sha256().to_string(),
+            },
         )?;
         Ok(Self(RegisteredProviderFactory::new(
             descriptor,
             Arc::new(OpenBenchConfigValidator),
-            PublicScoreProjectionPolicy::restricted_only(),
+            public_score_projection_policy,
+            public_metadata_projector,
             launcher,
         )?))
     }
@@ -1197,6 +1296,10 @@ macro_rules! delegate_factory {
 
             fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy {
                 self.0.public_score_projection_policy()
+            }
+
+            fn public_metadata_projector(&self) -> Arc<dyn PublicEvaluationMetadataProjector> {
+                self.0.public_metadata_projector()
             }
 
             fn validate_authored_config(
@@ -1414,6 +1517,11 @@ fn openbench_schema() -> CanonicalJson {
     .expect("stock schema is canonical JSON")
 }
 
+struct PublicProjectionDescriptorSet {
+    score_schemas: BTreeMap<String, String>,
+    metadata_schema_sha256: String,
+}
+
 fn stock_descriptor(
     provider: &str,
     display_name: &str,
@@ -1421,6 +1529,7 @@ fn stock_descriptor(
     distributions: Vec<EvaluationDistributionDescriptor>,
     execution_granularities: Vec<EvaluationExecutionGranularity>,
     scheduling_modes: Vec<EvaluationSchedulingMode>,
+    public_projection: PublicProjectionDescriptorSet,
 ) -> Result<EvaluationProviderDescriptor, ProviderRegistryError> {
     let operations = STOCK_EVALUATION_OPERATION_SCHEMAS
         .iter()
@@ -1455,7 +1564,8 @@ fn stock_descriptor(
         isolation: EvaluatorIsolationRequirements::strict_process_tree(),
         config_schema_version: 1,
         config_schema_sha256,
-        public_projection_schemas: BTreeMap::new(),
+        public_projection_schemas: public_projection.score_schemas,
+        public_metadata_schema_sha256: public_projection.metadata_schema_sha256,
         distributions,
     };
     descriptor.validate()?;
@@ -1687,6 +1797,15 @@ mod tests {
             provider_source_sha256: "a".repeat(64),
             worker_source_sha256: "b".repeat(64),
             dependency_lock_sha256: "c".repeat(64),
+            identity_components: vec![EvaluationIdentityComponent {
+                name: format!("{name}-worker"),
+                version: "1".to_string(),
+                source_sha256: "b".repeat(64),
+                source_commit: None,
+                base_source_sha256: None,
+                overlay_policy: None,
+                overlays: Vec::new(),
+            }],
             oci_digest: Some(format!("sha256:{}", "d".repeat(64))),
             launch_closure_sha256: "e".repeat(64),
         }
@@ -1859,7 +1978,7 @@ mod tests {
         );
         assert_eq!(
             STOCK_EVALUATION_OPERATION_SCHEMAS[0].combined_schema_sha256,
-            "d468bbc4f1fdbbc54360cede8194732b2ebaabbdfb55490bc572c4bb44f89cdf"
+            "5077609c909bb093f7e1db8617318fffc90947f6799aae9f8d7aced35107f416"
         );
     }
 
@@ -1879,6 +1998,7 @@ mod tests {
                 descriptor,
                 Arc::new(NemoConfigValidator),
                 PublicScoreProjectionPolicy::restricted_only(),
+                Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
                 Arc::new(NeverLaunch),
             )
             .is_err()
@@ -1907,6 +2027,7 @@ mod tests {
                 descriptor,
                 Arc::new(OpenBenchConfigValidator),
                 PublicScoreProjectionPolicy::restricted_only(),
+                Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
                 Arc::new(NeverLaunch),
             )
             .unwrap(),

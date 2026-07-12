@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use aiperf_accuracy::{
     CanonicalJson, EvaluationArtifactSealer, EvaluationAssetRequirement, EvaluationCaseId,
@@ -21,8 +22,9 @@ use aiperf_accuracy::{
     EvaluationQueueCredits, EvaluationSchedulingMode, EvaluationStage, EvaluationUnitId,
     EvaluationUnitOccurrence, EvaluationUnitOccurrenceRequest, EvaluationUnitTemplateId,
     HostCapabilityId, HostOperationDisposition, HostOperationEvent, HostOperationId,
-    HostOperationTerminal, HostOperationUsage, HostResponseMode, PublicScoreProjectionPolicy,
-    ResolvedEvaluationAsset, ScopedProxyGrant, SealedEvaluationArtifacts, SemanticAttemptId,
+    HostOperationTerminal, HostOperationUsage, HostResponseMode, PublicEvaluationMetadataProjector,
+    PublicScoreProjectionPolicy, ResolvedEvaluationAsset, ScopedProxyGrant,
+    SealedEvaluationArtifacts, SemanticAttemptId,
 };
 use aiperf_clock::Clock;
 use aiperf_metrics::EvaluationRouteSummaryReport;
@@ -587,6 +589,7 @@ pub struct EvaluationWorkload {
     asset_resolver: Rc<dyn EvaluationAssetResolver>,
     host_capabilities: EvaluationHostCapabilityInventory,
     public_score_projection_policy: PublicScoreProjectionPolicy,
+    public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     public_config: CanonicalJson,
     occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
     finalizer: Rc<dyn EvaluationArtifactFinalizer>,
@@ -608,6 +611,7 @@ impl EvaluationWorkload {
         asset_resolver: Rc<dyn EvaluationAssetResolver>,
         host_capabilities: EvaluationHostCapabilityInventory,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
         public_config: CanonicalJson,
         occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
         finalizer: Rc<dyn EvaluationArtifactFinalizer>,
@@ -624,6 +628,7 @@ impl EvaluationWorkload {
             asset_resolver,
             host_capabilities,
             public_score_projection_policy,
+            public_metadata_projector,
             public_config,
             occurrence_source,
             finalizer,
@@ -1047,6 +1052,7 @@ impl EvaluationWorkload {
             &self.routes,
             self.public_config.value().clone(),
             self.public_score_projection_policy.clone(),
+            Arc::clone(&self.public_metadata_projector),
         )?;
         let operations = state.ledger.operations().cloned().collect();
         Ok(EvaluationExecutionCore {
@@ -1751,6 +1757,7 @@ impl ExecutionState {
         routes: &EvaluationRouteTable,
         safe_config: serde_json::Value,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     ) -> Result<EvaluationReportFacts> {
         let templates = identity
             .case_templates
@@ -1818,6 +1825,7 @@ impl ExecutionState {
             safe_config,
             cases,
             public_score_projection_policy,
+            public_metadata_projector,
             route_summaries,
         })
     }
@@ -2980,6 +2988,7 @@ mod tests {
             Rc::new(EmptyAssetResolver),
             EvaluationHostCapabilityInventory::default(),
             PublicScoreProjectionPolicy::restricted_only(),
+            Arc::new(aiperf_accuracy::FrozenPublicEvaluationMetadataPolicy::restricted_only()),
             public_config,
             None,
             finalizer,

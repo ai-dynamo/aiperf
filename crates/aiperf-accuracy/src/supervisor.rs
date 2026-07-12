@@ -522,6 +522,7 @@ pub struct SupervisedEvaluationProvider {
     proxy: Option<crate::provider_protocol::ScopedProxyBinding>,
     proxy_grant_installed: bool,
     host_binding: crate::provider_protocol::EvaluationHostBinding,
+    expected_identity_components: Vec<crate::provider_protocol::EvaluationIdentityComponent>,
     plan_request: Option<EvaluationPlanRequest>,
     plan: Option<EvaluationPlan>,
     frozen_identity: Option<EvaluationIdentity>,
@@ -679,6 +680,7 @@ impl SupervisedEvaluationProvider {
             proxy: context.proxy.clone(),
             proxy_grant_installed: false,
             host_binding,
+            expected_identity_components: distribution.identity_components.clone(),
             plan_request: None,
             plan: None,
             frozen_identity: None,
@@ -928,13 +930,14 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
                 .as_ref()
                 .expect("plan and request set together");
             if identity.worker != self.identity
+                || identity.components != self.expected_identity_components
                 || identity.config_schema_sha256 != plan_request.config_schema_sha256
                 || identity.resolved_config_sha256
                     != plan_request.provider_config.normalized_result_sha256()
                 || !self.host_binding.matches(&identity)
             {
                 return Err(EvaluationProviderError::FactoryMismatch(
-                    "bound evaluation identity drifted from worker/schema/config evidence"
+                    "bound evaluation identity drifted from worker/components/schema/config evidence"
                         .to_string(),
                 ));
             }
@@ -1535,14 +1538,16 @@ mod tests {
         EvaluatorIsolationEvidence, EvaluatorResourceLimits, IsolationProcessTreeIdentity,
         IsolationQuiescenceProof, LaunchClosureFile, PreparedEvaluatorLaunch, Sha256LaunchAttestor,
     };
+    use crate::metadata_projection::PublicEvaluationMetadataProjector as _;
     use crate::provider::{
         EvaluationOperationDescriptor, EvaluationProviderFactory, EvaluatorIsolationRequirements,
         EvaluatorProcessRootBinder, NemoEvaluatorProviderFactory, ProviderRegistryError,
     };
     use crate::provider_protocol::{
-        EvaluationDistributionId, EvaluationExecutionGranularity, EvaluationProviderId,
-        EvaluationSchedulingMode, EvaluationSessionId, LogicalServiceId, OperationPurpose,
-        ScopedProxyBinding, ScopedProxyGrant, ScopedProxySecret, SemanticOperationId,
+        EvaluationDistributionId, EvaluationExecutionGranularity, EvaluationIdentityComponent,
+        EvaluationProviderId, EvaluationSchedulingMode, EvaluationSessionId, LogicalServiceId,
+        OperationPurpose, ScopedProxyBinding, ScopedProxyGrant, ScopedProxySecret,
+        SemanticOperationId,
     };
 
     #[derive(Default)]
@@ -1827,6 +1832,18 @@ mod tests {
             .expect("Python fixture executable must be on PATH")
     }
 
+    fn fixture_identity_components() -> Vec<EvaluationIdentityComponent> {
+        vec![EvaluationIdentityComponent {
+            name: "fixture-worker".to_string(),
+            version: "1".to_string(),
+            source_sha256: "b".repeat(64),
+            source_commit: None,
+            base_source_sha256: None,
+            overlay_policy: None,
+            overlays: Vec::new(),
+        }]
+    }
+
     #[tokio::test]
     async fn prepared_token_binds_context_and_must_match_host_isolation_proof() {
         let source_python = find_python();
@@ -1853,6 +1870,7 @@ mod tests {
             provider_source_sha256: "a".repeat(64),
             worker_source_sha256: "b".repeat(64),
             dependency_lock_sha256: "c".repeat(64),
+            identity_components: fixture_identity_components(),
             oci_digest: None,
             launch_closure_sha256: sha256_hex(&closure_bytes),
         };
@@ -1936,6 +1954,7 @@ mod tests {
             provider_source_sha256: "a".repeat(64),
             worker_source_sha256: "b".repeat(64),
             dependency_lock_sha256: "c".repeat(64),
+            identity_components: fixture_identity_components(),
             oci_digest: None,
             launch_closure_sha256: "d".repeat(64),
         };
@@ -1958,6 +1977,10 @@ mod tests {
             config_schema_version: 1,
             config_schema_sha256: "4".repeat(64),
             public_projection_schemas: BTreeMap::new(),
+            public_metadata_schema_sha256:
+                crate::metadata_projection::FrozenPublicEvaluationMetadataPolicy::restricted_only()
+                    .schema_sha256()
+                    .to_string(),
             distributions: vec![distribution.clone()],
         };
         (descriptor, distribution)

@@ -8,11 +8,14 @@
 //! route/accounting facts, and Rust-sealed artifacts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::sync::Arc;
 
 use aiperf_accuracy::{
     ArtifactVisibility, CanonicalJson, CaseOutcomeKind, EvaluationCaseId, EvaluationCaseTemplateId,
-    EvaluationFinishCandidate, EvaluationIdentityComponent, PublicScoreProjectionPolicy,
-    SealedEvaluationArtifacts, is_sha256, validate_no_secret_control_value,
+    EvaluationFinishCandidate, EvaluationIdentityComponent, PublicEvaluationMetadataProjector,
+    PublicScoreProjectionPolicy, SealedEvaluationArtifacts, is_sha256,
+    validate_no_secret_control_value,
 };
 use aiperf_metrics::{
     EvaluationAggregateMetricReport, EvaluationArtifactReport, EvaluationCaseErrorReport,
@@ -37,7 +40,7 @@ pub struct EvaluationCaseReportFacts {
 }
 
 /// Rust/provider facts required to build the generic native-v2 evaluation block.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub struct EvaluationReportFacts {
     /// Factory-schema-projected, secret-free resolved configuration.
     pub safe_config: Value,
@@ -45,8 +48,28 @@ pub struct EvaluationReportFacts {
     pub cases: BTreeMap<EvaluationCaseId, EvaluationCaseReportFacts>,
     /// Factory-owned executable public score projection validators.
     pub public_score_projection_policy: PublicScoreProjectionPolicy,
+    /// Factory-owned executable case/numeric/aggregate metadata projector.
+    pub public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     /// Rust-authoritative per-route accounting summaries.
     pub route_summaries: BTreeMap<String, EvaluationRouteSummaryReport>,
+}
+
+impl fmt::Debug for EvaluationReportFacts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EvaluationReportFacts")
+            .field("case_count", &self.cases.len())
+            .field(
+                "public_score_projection_policy",
+                &self.public_score_projection_policy,
+            )
+            .field(
+                "public_metadata_schema_sha256",
+                &self.public_metadata_projector.schema_sha256(),
+            )
+            .field("route_summary_count", &self.route_summaries.len())
+            .finish()
+    }
 }
 
 /// Convert one validated provider candidate and sealed tree into native-v2 output.
@@ -138,6 +161,18 @@ pub fn build_evaluation_report(
                     .ok_or_else(|| anyhow!("sealed artifact omitted its opaque report reference"))
             })
             .collect::<Result<Vec<_>>>()?;
+        let projected_case = facts
+            .public_metadata_projector
+            .project_case(&case_facts.task, &case_facts.source)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        let (task, source) = projected_case
+            .map(|projection| (projection.task, projection.source))
+            .unwrap_or_else(|| {
+                (
+                    format!("task-{template_ordinal:08}"),
+                    format!("source-{template_ordinal:08}"),
+                )
+            });
         let (kind, scores, numeric_metrics, primary_score, error) = match &outcome.outcome {
             CaseOutcomeKind::Completed { completed } => {
                 completed_count += 1;
@@ -169,12 +204,20 @@ pub fn build_evaluation_report(
                     .as_ref()
                     .filter(|name| scores.contains_key(*name))
                     .cloned();
-                let numeric_metrics = scores
-                    .iter()
-                    .filter_map(|(name, score)| {
-                        score.value.as_f64().map(|value| (name.clone(), value))
-                    })
-                    .collect();
+                let mut numeric_metrics = BTreeMap::new();
+                for (name, value) in &completed.numeric_metrics {
+                    let Some(public_name) = facts
+                        .public_metadata_projector
+                        .project_numeric_metric(name)
+                        .map_err(|error| anyhow!(error.to_string()))?
+                    else {
+                        continue;
+                    };
+                    ensure!(
+                        numeric_metrics.insert(public_name, value.get()).is_none(),
+                        "public numeric metric projection produced a duplicate name"
+                    );
+                }
                 (
                     EvaluationCaseOutcomeKind::Completed,
                     scores,
@@ -217,8 +260,8 @@ pub fn build_evaluation_report(
         case_reports.push(EvaluationCaseReport {
             case_id: format!("case-{case_ordinal:08}"),
             template_id: format!("template-{template_ordinal:08}"),
-            task: format!("task-{template_ordinal:08}"),
-            source: format!("source-{template_ordinal:08}"),
+            task,
+            source,
             outcome: kind,
             scores,
             numeric_metrics,
@@ -228,9 +271,41 @@ pub fn build_evaluation_report(
         });
     }
 
-    // Provider-native aggregate definitions and their labels remain restricted
-    // until a factory-owned executable aggregate projection policy is bound.
-    let aggregates = Vec::<EvaluationAggregateMetricReport>::new();
+    let mut aggregates = Vec::<EvaluationAggregateMetricReport>::new();
+    let mut public_aggregate_keys = BTreeSet::new();
+    for aggregate in &candidate.aggregates {
+        let Some(projection) = facts
+            .public_metadata_projector
+            .project_aggregate(
+                &aggregate.scorer,
+                &aggregate.reducer,
+                &aggregate.metric,
+                &aggregate.definition,
+            )
+            .map_err(|error| anyhow!(error.to_string()))?
+        else {
+            continue;
+        };
+        ensure!(
+            public_aggregate_keys.insert((
+                projection.scorer.clone(),
+                projection.reducer.clone(),
+                projection.metric.clone(),
+            )),
+            "public aggregate projection produced duplicate labels"
+        );
+        aggregates.push(EvaluationAggregateMetricReport {
+            scorer: projection.scorer,
+            reducer: projection.reducer,
+            metric: projection.metric,
+            value: aggregate.value.get(),
+            scored_count: usize::try_from(aggregate.scored_count)
+                .map_err(|_| anyhow!("aggregate scored count exceeded host size"))?,
+            unscored_count: usize::try_from(aggregate.unscored_count)
+                .map_err(|_| anyhow!("aggregate unscored count exceeded host size"))?,
+            definition: aggregate.definition.value().clone(),
+        });
+    }
     let artifact_reports = sealed
         .entries
         .iter()
@@ -483,8 +558,10 @@ mod tests {
         EvaluationHostIdentity, EvaluationIdentity, EvaluationIdentityComponent,
         EvaluationProviderId, EvaluationSourceOverlayIdentity, EvaluationStage,
         EvaluationUnitTemplateDescriptor, EvaluationUnitTemplateId, EvaluationWorkerIdentity,
-        FiniteF64, ProviderScore, PublicScoreProjectionError, PublicScoreProjectionValidator,
-        SOURCE_OVERLAY_POLICY_V1, SealedEvaluationArtifact,
+        FiniteF64, FrozenPublicEvaluationMetadataPolicy, ProviderScore,
+        PublicAggregateMetadataRule, PublicCaseMetadataRule, PublicNumericMetricRule,
+        PublicScoreProjectionError, PublicScoreProjectionValidator, SOURCE_OVERLAY_POLICY_V1,
+        SealedEvaluationArtifact,
     };
 
     use super::*;
@@ -740,6 +817,17 @@ mod tests {
             safe_config: json!({"benchmark": "fixture"}),
             cases,
             public_score_projection_policy,
+            public_metadata_projector: Arc::new(
+                FrozenPublicEvaluationMetadataPolicy::new(
+                    Vec::new(),
+                    vec![PublicNumericMetricRule {
+                        provider_name: "hidden-numeric-metric-sentinel".to_string(),
+                        public_name: "accuracy".to_string(),
+                    }],
+                    Vec::new(),
+                )
+                .unwrap(),
+            ),
             route_summaries: BTreeMap::from([(
                 "primary".to_string(),
                 EvaluationRouteSummaryReport {
@@ -752,6 +840,54 @@ mod tests {
                 },
             )]),
         }
+    }
+
+    #[test]
+    fn exact_factory_metadata_rules_project_case_numeric_and_aggregate_facts() {
+        let candidate = candidate();
+        let mut facts = facts(&candidate);
+        facts.public_metadata_projector = Arc::new(
+            FrozenPublicEvaluationMetadataPolicy::new(
+                vec![PublicCaseMetadataRule {
+                    provider_task: "hidden-task-completed-sentinel".to_string(),
+                    provider_source: "hidden-source-sentinel".to_string(),
+                    public_task: "gsm8k".to_string(),
+                    public_source: "openai/gsm8k@test".to_string(),
+                }],
+                vec![PublicNumericMetricRule {
+                    provider_name: "hidden-numeric-metric-sentinel".to_string(),
+                    public_name: "accuracy".to_string(),
+                }],
+                vec![PublicAggregateMetadataRule {
+                    provider_scorer: "hidden-aggregate-scorer-sentinel".to_string(),
+                    provider_reducer: "hidden-aggregate-reducer-sentinel".to_string(),
+                    provider_metric: "hidden-aggregate-metric-sentinel".to_string(),
+                    public_scorer: "accuracy".to_string(),
+                    public_reducer: "mean".to_string(),
+                    public_metric: "accuracy".to_string(),
+                    definition: CanonicalJson::new(json!({"reducer": "mean"})).unwrap(),
+                }],
+            )
+            .unwrap(),
+        );
+        let report = build_evaluation_report(&candidate, &sealed(), &routes(), &facts).unwrap();
+        assert_eq!(report.cases[0].task, "gsm8k");
+        assert_eq!(report.cases[0].source, "openai/gsm8k@test");
+        assert_eq!(report.cases[0].numeric_metrics["accuracy"], 0.0);
+        assert_eq!(report.aggregates.len(), 1);
+        assert_eq!(report.aggregates[0].scorer, "accuracy");
+        assert_eq!(report.aggregates[0].reducer, "mean");
+        assert_eq!(report.aggregates[0].metric, "accuracy");
+        assert_eq!(report.aggregates[0].value, 0.0);
+        assert_eq!(report.aggregates[0].scored_count, 1);
+        assert_eq!(report.aggregates[0].unscored_count, 2);
+        assert_eq!(report.aggregates[0].definition, json!({"reducer": "mean"}));
+
+        let mut drifted = candidate;
+        drifted.aggregates[0].definition =
+            CanonicalJson::new(json!({"reducer": "private_weighted_mean"})).unwrap();
+        let error = build_evaluation_report(&drifted, &sealed(), &routes(), &facts).unwrap_err();
+        assert!(error.to_string().contains("aggregate definition drifted"));
     }
 
     #[test]

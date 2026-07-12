@@ -1703,6 +1703,7 @@ async fn execute_online_evaluation(
         true,
     );
     let public_score_projection_policy = factory.public_score_projection_policy().clone();
+    let public_metadata_projector = factory.public_metadata_projector();
     let mut workload = EvaluationWorkload::new(
         provider,
         plan_request,
@@ -1712,6 +1713,7 @@ async fn execute_online_evaluation(
         asset_resolver,
         host_capabilities,
         public_score_projection_policy,
+        public_metadata_projector,
         public_config,
         None,
         finalizer,
@@ -2041,10 +2043,10 @@ mod tests {
 
     use aiperf::evaluation::host::{HostOperationFamily, RegisteredOperationId};
     use aiperf_accuracy::{
-        EvaluationDistributionDescriptor, EvaluationHostBinding, EvaluationProvider,
-        EvaluationProviderDescriptor, EvaluationProviderError, EvaluationProviderLauncher,
-        EvaluationProviderRegistryBuilder, NemoEvaluatorProviderFactory,
-        PreparedEvaluationProviderLaunch, ProviderLaunchContext,
+        EvaluationDistributionDescriptor, EvaluationHostBinding, EvaluationIdentityComponent,
+        EvaluationProvider, EvaluationProviderDescriptor, EvaluationProviderError,
+        EvaluationProviderLauncher, EvaluationProviderRegistryBuilder,
+        NemoEvaluatorProviderFactory, PreparedEvaluationProviderLaunch, ProviderLaunchContext,
     };
     use async_trait::async_trait;
 
@@ -2188,6 +2190,15 @@ mod tests {
             provider_source_sha256: digest.clone(),
             worker_source_sha256: digest.clone(),
             dependency_lock_sha256: digest.clone(),
+            identity_components: vec![EvaluationIdentityComponent {
+                name: "fixture-worker".to_owned(),
+                version: "1".to_owned(),
+                source_sha256: digest.clone(),
+                source_commit: None,
+                base_source_sha256: None,
+                overlay_policy: None,
+                overlays: Vec::new(),
+            }],
             oci_digest: None,
             launch_closure_sha256: digest,
         };

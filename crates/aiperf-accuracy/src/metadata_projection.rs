@@ -16,7 +16,9 @@ use std::fmt::{self, Display};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::canonical::{CanonicalJson, is_sha256, redact_diagnostic};
+use crate::canonical::{
+    CanonicalJson, is_sha256, redact_diagnostic, validate_no_secret_control_value,
+};
 
 /// Canonical schema ID for factory-owned public evaluation metadata rules.
 pub const PUBLIC_EVALUATION_METADATA_SCHEMA_V1: &str = "aiperf-public-evaluation-metadata-v1";
@@ -61,6 +63,8 @@ pub struct PublicAggregateMetadataRule {
     pub public_reducer: String,
     /// Factory-owned public metric label.
     pub public_metric: String,
+    /// Exact canonical provider aggregate definition approved for public output.
+    pub definition: CanonicalJson,
 }
 
 /// Factory-owned public case-label projection.
@@ -81,6 +85,12 @@ pub struct PublicAggregateMetadataProjection {
     pub reducer: String,
     /// Reviewed public metric label.
     pub metric: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct FrozenPublicAggregateMetadataRule {
+    projection: PublicAggregateMetadataProjection,
+    definition: CanonicalJson,
 }
 
 /// Replaceable factory validator/projector for public evaluator metadata.
@@ -107,16 +117,29 @@ pub trait PublicEvaluationMetadataProjector: Send + Sync {
         scorer: &str,
         reducer: &str,
         metric: &str,
+        definition: &CanonicalJson,
     ) -> Result<Option<PublicAggregateMetadataProjection>, PublicMetadataProjectionError>;
 }
 
 /// Deterministic declarative public-metadata policy used by stock factories.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct FrozenPublicEvaluationMetadataPolicy {
     schema_sha256: String,
     cases: BTreeMap<(String, String), PublicCaseMetadataProjection>,
     numeric_metrics: BTreeMap<String, String>,
-    aggregates: BTreeMap<(String, String, String), PublicAggregateMetadataProjection>,
+    aggregates: BTreeMap<(String, String, String), FrozenPublicAggregateMetadataRule>,
+}
+
+impl fmt::Debug for FrozenPublicEvaluationMetadataPolicy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FrozenPublicEvaluationMetadataPolicy")
+            .field("schema_sha256", &self.schema_sha256)
+            .field("case_rule_count", &self.cases.len())
+            .field("numeric_metric_rule_count", &self.numeric_metrics.len())
+            .field("aggregate_rule_count", &self.aggregates.len())
+            .finish()
+    }
 }
 
 impl FrozenPublicEvaluationMetadataPolicy {
@@ -179,6 +202,8 @@ impl FrozenPublicEvaluationMetadataPolicy {
             ] {
                 validate_label(value, label)?;
             }
+            validate_no_secret_control_value(&rule.definition)
+                .map_err(|error| PublicMetadataProjectionError::Policy(error.to_string()))?;
             if !public_aggregates.insert((
                 rule.public_scorer.clone(),
                 rule.public_reducer.clone(),
@@ -190,10 +215,13 @@ impl FrozenPublicEvaluationMetadataPolicy {
                         rule.provider_reducer.clone(),
                         rule.provider_metric.clone(),
                     ),
-                    PublicAggregateMetadataProjection {
-                        scorer: rule.public_scorer.clone(),
-                        reducer: rule.public_reducer.clone(),
-                        metric: rule.public_metric.clone(),
+                    FrozenPublicAggregateMetadataRule {
+                        projection: PublicAggregateMetadataProjection {
+                            scorer: rule.public_scorer.clone(),
+                            reducer: rule.public_reducer.clone(),
+                            metric: rule.public_metric.clone(),
+                        },
+                        definition: rule.definition.clone(),
                     },
                 )
                 .is_some()
@@ -227,14 +255,15 @@ impl FrozenPublicEvaluationMetadataPolicy {
         let canonical_aggregate_rules = aggregates
             .iter()
             .map(
-                |((provider_scorer, provider_reducer, provider_metric), projection)| {
+                |((provider_scorer, provider_reducer, provider_metric), rule)| {
                     json!({
                         "provider_metric": provider_metric,
                         "provider_reducer": provider_reducer,
                         "provider_scorer": provider_scorer,
-                        "public_metric": projection.metric,
-                        "public_reducer": projection.reducer,
-                        "public_scorer": projection.scorer,
+                        "public_metric": rule.projection.metric,
+                        "public_reducer": rule.projection.reducer,
+                        "public_scorer": rule.projection.scorer,
+                        "definition": rule.definition.value(),
                     })
                 },
             )
@@ -309,11 +338,20 @@ impl PublicEvaluationMetadataProjector for FrozenPublicEvaluationMetadataPolicy 
         scorer: &str,
         reducer: &str,
         metric: &str,
+        definition: &CanonicalJson,
     ) -> Result<Option<PublicAggregateMetadataProjection>, PublicMetadataProjectionError> {
-        Ok(self
-            .aggregates
-            .get(&(scorer.to_string(), reducer.to_string(), metric.to_string()))
-            .cloned())
+        let Some(rule) =
+            self.aggregates
+                .get(&(scorer.to_string(), reducer.to_string(), metric.to_string()))
+        else {
+            return Ok(None);
+        };
+        if &rule.definition != definition {
+            return Err(PublicMetadataProjectionError::rejected(
+                "provider aggregate definition drifted from the factory-reviewed canonical value",
+            ));
+        }
+        Ok(Some(rule.projection.clone()))
     }
 }
 
@@ -366,25 +404,34 @@ fn validate_label(value: &str, label: &str) -> Result<(), PublicMetadataProjecti
 mod tests {
     use super::*;
 
+    fn definition() -> CanonicalJson {
+        CanonicalJson::new(json!({
+            "exclude_cancelled": true,
+            "exclude_infrastructure": true,
+        }))
+        .unwrap()
+    }
+
     fn policy() -> FrozenPublicEvaluationMetadataPolicy {
         FrozenPublicEvaluationMetadataPolicy::new(
             vec![PublicCaseMetadataRule {
-                provider_task: "gsm8k".to_string(),
-                provider_source: "openai/gsm8k:main:test".to_string(),
+                provider_task: "provider_gsm8k".to_string(),
+                provider_source: "provider_gsm8k_source".to_string(),
                 public_task: "gsm8k".to_string(),
                 public_source: "openai/gsm8k:main:test".to_string(),
             }],
             vec![PublicNumericMetricRule {
-                provider_name: "accuracy".to_string(),
+                provider_name: "provider_reward".to_string(),
                 public_name: "accuracy".to_string(),
             }],
             vec![PublicAggregateMetadataRule {
-                provider_scorer: "grade_school_math".to_string(),
-                provider_reducer: "mean".to_string(),
-                provider_metric: "accuracy".to_string(),
-                public_scorer: "grade_school_math".to_string(),
+                provider_scorer: "provider_scorer".to_string(),
+                provider_reducer: "provider_reducer".to_string(),
+                provider_metric: "provider_metric".to_string(),
+                public_scorer: "accuracy".to_string(),
                 public_reducer: "mean".to_string(),
                 public_metric: "accuracy".to_string(),
+                definition: definition(),
             }],
         )
         .unwrap()
@@ -394,20 +441,26 @@ mod tests {
     fn exact_rules_project_and_unknown_metadata_stays_restricted() {
         let policy = policy();
         let case = policy
-            .project_case("gsm8k", "openai/gsm8k:main:test")
+            .project_case("provider_gsm8k", "provider_gsm8k_source")
             .unwrap()
             .unwrap();
         assert_eq!(case.task, "gsm8k");
         assert_eq!(
-            policy.project_numeric_metric("accuracy").unwrap(),
+            policy.project_numeric_metric("provider_reward").unwrap(),
             Some("accuracy".to_string())
         );
-        assert!(
-            policy
-                .project_aggregate("grade_school_math", "mean", "accuracy")
-                .unwrap()
-                .is_some()
-        );
+        let aggregate = policy
+            .project_aggregate(
+                "provider_scorer",
+                "provider_reducer",
+                "provider_metric",
+                &definition(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(aggregate.scorer, "accuracy");
+        assert_eq!(aggregate.reducer, "mean");
+        assert_eq!(aggregate.metric, "accuracy");
         assert!(policy.project_case("private", "hidden").unwrap().is_none());
         assert!(
             policy
@@ -417,7 +470,22 @@ mod tests {
         );
         assert!(
             policy
-                .project_aggregate("secret", "mean", "accuracy")
+                .project_aggregate(
+                    "provider_scorer",
+                    "provider_reducer",
+                    "provider_metric",
+                    &CanonicalJson::new(json!({"exclude_infrastructure": false})).unwrap(),
+                )
+                .is_err()
+        );
+        assert!(
+            policy
+                .project_aggregate(
+                    "secret",
+                    "mean",
+                    "accuracy",
+                    &CanonicalJson::new(json!({"private": true})).unwrap(),
+                )
                 .unwrap()
                 .is_none()
         );
@@ -428,28 +496,94 @@ mod tests {
         let first = policy();
         let second = FrozenPublicEvaluationMetadataPolicy::new(
             vec![PublicCaseMetadataRule {
-                provider_task: "gsm8k".to_string(),
-                provider_source: "openai/gsm8k:main:test".to_string(),
+                provider_task: "provider_gsm8k".to_string(),
+                provider_source: "provider_gsm8k_source".to_string(),
                 public_task: "gsm8k".to_string(),
                 public_source: "openai/gsm8k:main:test".to_string(),
             }],
             vec![PublicNumericMetricRule {
-                provider_name: "accuracy".to_string(),
+                provider_name: "provider_reward".to_string(),
                 public_name: "accuracy".to_string(),
             }],
             vec![PublicAggregateMetadataRule {
-                provider_scorer: "grade_school_math".to_string(),
-                provider_reducer: "mean".to_string(),
-                provider_metric: "accuracy".to_string(),
-                public_scorer: "grade_school_math".to_string(),
+                provider_scorer: "provider_scorer".to_string(),
+                provider_reducer: "provider_reducer".to_string(),
+                provider_metric: "provider_metric".to_string(),
+                public_scorer: "accuracy".to_string(),
                 public_reducer: "mean".to_string(),
                 public_metric: "accuracy".to_string(),
+                definition: definition(),
             }],
         )
         .unwrap();
         assert_eq!(first.schema_sha256(), second.schema_sha256());
         first.validate_schema_sha256(first.schema_sha256()).unwrap();
         assert!(first.validate_schema_sha256(&"0".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn stock_metadata_fingerprints_match_exact_task_manifest_rules() {
+        let source = "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866";
+        let case_rules = || {
+            vec![PublicCaseMetadataRule {
+                provider_task: "gsm8k".to_string(),
+                provider_source: source.to_string(),
+                public_task: "gsm8k".to_string(),
+                public_source: source.to_string(),
+            }]
+        };
+        let nemo = FrozenPublicEvaluationMetadataPolicy::new(
+            case_rules(),
+            vec![PublicNumericMetricRule {
+                provider_name: "reward".to_string(),
+                public_name: "accuracy".to_string(),
+            }],
+            vec![PublicAggregateMetadataRule {
+                provider_scorer: "nemo_evaluator.gsm8k_scorer".to_string(),
+                provider_reducer: "mean".to_string(),
+                provider_metric: "reward".to_string(),
+                public_scorer: "accuracy".to_string(),
+                public_reducer: "mean".to_string(),
+                public_metric: "accuracy".to_string(),
+                definition: CanonicalJson::new(json!({
+                    "exclude_cancelled": true,
+                    "exclude_infrastructure": true,
+                }))
+                .unwrap(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            nemo.schema_sha256(),
+            "6f410c2015a7139126bfd76e892da26a7e08ce45a28379da72f9299472b0234b"
+        );
+
+        let openbench = FrozenPublicEvaluationMetadataPolicy::new(
+            case_rules(),
+            vec![PublicNumericMetricRule {
+                provider_name: "grade_school_math_scorer".to_string(),
+                public_name: "accuracy".to_string(),
+            }],
+            vec![PublicAggregateMetadataRule {
+                provider_scorer: "grade_school_math_scorer".to_string(),
+                provider_reducer: "identity".to_string(),
+                provider_metric: "accuracy".to_string(),
+                public_scorer: "accuracy".to_string(),
+                public_reducer: "mean".to_string(),
+                public_metric: "accuracy".to_string(),
+                definition: CanonicalJson::new(json!({
+                    "metric_params": {},
+                    "params": {},
+                    "score_name": "grade_school_math_scorer",
+                }))
+                .unwrap(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            openbench.schema_sha256(),
+            "41dec64f73bd428308c6f8b39bd78b7fd11424768043d0ffa6384fb3df20b360"
+        );
     }
 
     #[test]
@@ -496,5 +630,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn debug_and_projection_never_expose_private_tuple_or_definition() {
+        let sentinel = "HIDDEN_EXPECTED_ANSWER_SENTINEL";
+        let policy = FrozenPublicEvaluationMetadataPolicy::new(
+            Vec::new(),
+            Vec::new(),
+            vec![PublicAggregateMetadataRule {
+                provider_scorer: "private_provider_scorer".to_string(),
+                provider_reducer: "private_provider_reducer".to_string(),
+                provider_metric: "private_provider_metric".to_string(),
+                public_scorer: "accuracy".to_string(),
+                public_reducer: "mean".to_string(),
+                public_metric: "accuracy".to_string(),
+                definition: CanonicalJson::new(json!({"private_note": sentinel})).unwrap(),
+            }],
+        )
+        .unwrap();
+        let debug = format!("{policy:?}");
+        assert!(!debug.contains(sentinel));
+        assert!(!debug.contains("private_provider_scorer"));
+        let projection = policy
+            .project_aggregate(
+                "private_provider_scorer",
+                "private_provider_reducer",
+                "private_provider_metric",
+                &CanonicalJson::new(json!({"private_note": sentinel})).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(projection.scorer, "accuracy");
+        assert_eq!(projection.reducer, "mean");
+        assert_eq!(projection.metric, "accuracy");
     }
 }
