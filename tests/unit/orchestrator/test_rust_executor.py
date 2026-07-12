@@ -137,6 +137,60 @@ def test_distribution_identity_algorithm_is_pinned(tmp_path: Path) -> None:
     )
 
 
+def test_protocol_v2_validation_response_is_bound_to_image_and_exit() -> None:
+    payload = {
+        "protocol_version": 2,
+        "event": "run_validation",
+        "distribution_id": _TEST_DISTRIBUTION_ID,
+        "benchmark_id": "validate-me",
+        "success": True,
+        "completeness": "static",
+        "deferred_checks": [
+            {
+                "code": "dataset_load",
+                "path": "run.workload",
+                "reason": "requires execution preparation",
+            }
+        ],
+    }
+
+    response = runner_installation._parse_validation_response(
+        orjson.dumps(payload) + b"\n",
+        benchmark_id="validate-me",
+        distribution_id=_TEST_DISTRIBUTION_ID,
+        returncode=0,
+    )
+
+    assert response["success"] is True
+    with pytest.raises(ValueError, match="exit code"):
+        runner_installation._parse_validation_response(
+            orjson.dumps(payload) + b"\n",
+            benchmark_id="validate-me",
+            distribution_id=_TEST_DISTRIBUTION_ID,
+            returncode=1,
+        )
+
+
+def test_protocol_v2_validation_failure_requires_typed_errors() -> None:
+    payload = {
+        "protocol_version": 2,
+        "event": "run_validation",
+        "distribution_id": _TEST_DISTRIBUTION_ID,
+        "benchmark_id": "validate-me",
+        "success": False,
+        "completeness": "static",
+        "errors": [],
+    }
+
+    with pytest.raises(ValueError, match="must contain errors"):
+        runner_installation._parse_validation_response(
+            orjson.dumps(payload) + b"\n",
+            benchmark_id="validate-me",
+            distribution_id=_TEST_DISTRIBUTION_ID,
+            returncode=1,
+        )
+
+
 def test_capabilities_reject_distribution_identity_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

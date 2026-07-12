@@ -167,6 +167,29 @@ class RunnerInstallation:
             check=False,
         )
 
+    def validate_authored_run(self, run: BenchmarkRun) -> dict[str, Any]:
+        """Run strict side-effect-free validation in one fresh native child."""
+        request = self.project_authored_request(run, operation="validate")
+        completed = self.execute(request)
+        response = _parse_validation_response(
+            completed.stdout,
+            benchmark_id=run.benchmark_id,
+            distribution_id=request["expected_distribution_id"],
+            returncode=completed.returncode,
+            stderr=completed.stderr,
+        )
+        if response["success"]:
+            return response
+        messages = [error["message"] for error in response["errors"]]
+        detail = redact_string("; ".join(messages) or "native validation failed")
+        stderr = redact_string(completed.stderr.decode(errors="replace")).strip()
+        if stderr:
+            detail = f"{detail}; Rust stderr: {stderr[-4000:]}"
+        raise RuntimeError(
+            f"aiperf-runner rejected authored run {run.benchmark_id!r} "
+            f"(exit {completed.returncode}): {detail}"
+        )
+
 
 def _resolve_runner_binary(explicit: Path | None) -> Path:
     candidates: list[Path] = []
@@ -306,6 +329,77 @@ def _validate_v2_capabilities(capabilities: dict[str, Any]) -> None:
         raise ValueError(
             "aiperf-runner capability extensions must be an array of non-empty strings"
         )
+
+
+def _parse_validation_response(
+    stdout: bytes,
+    *,
+    benchmark_id: str,
+    distribution_id: str,
+    returncode: int,
+    stderr: bytes = b"",
+) -> dict[str, Any]:
+    """Decode and bind the exactly-one-line protocol-v2 validation response."""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        diagnostic = redact_string(stderr.decode(errors="replace")).strip()
+        detail = f"; stderr: {diagnostic}" if diagnostic else ""
+        raise ValueError(
+            "aiperf-runner validate must write exactly one JSON line; "
+            f"received {len(lines)}; child exit code {returncode}{detail}"
+        )
+    try:
+        response = orjson.loads(lines[0])
+    except orjson.JSONDecodeError as error:
+        raise ValueError(f"aiperf-runner returned invalid validation JSON: {error}") from error
+    if not isinstance(response, dict):
+        raise ValueError("aiperf-runner validation response must be an object")
+    expected: dict[str, object] = {
+        "protocol_version": RUNNER_PROTOCOL_V2,
+        "event": "run_validation",
+        "distribution_id": distribution_id,
+        "benchmark_id": benchmark_id,
+    }
+    for field, value in expected.items():
+        if response.get(field) != value:
+            raise ValueError(
+                f"aiperf-runner validation {field}={response.get(field)!r}; "
+                f"expected {value!r}"
+            )
+    success = response.get("success")
+    if not isinstance(success, bool):
+        raise ValueError("aiperf-runner validation success must be a boolean")
+    if response.get("completeness") not in {"static", "complete"}:
+        raise ValueError(
+            "aiperf-runner validation completeness must be 'static' or 'complete'"
+        )
+    for field in ("deferred_checks", "errors"):
+        entries = response.get(field, [])
+        if not isinstance(entries, list) or not all(
+            isinstance(entry, dict) for entry in entries
+        ):
+            raise ValueError(f"aiperf-runner validation {field} must be an array of objects")
+    errors = response.get("errors", [])
+    if not all(
+        isinstance(error.get("code"), str)
+        and bool(error["code"])
+        and isinstance(error.get("message"), str)
+        and bool(error["message"])
+        for error in errors
+    ):
+        raise ValueError(
+            "aiperf-runner validation errors require non-empty code and message strings"
+        )
+    if success != (returncode == 0):
+        raise ValueError(
+            "aiperf-runner validation success disagrees with child exit code "
+            f"{returncode}"
+        )
+    if success and errors:
+        raise ValueError("successful aiperf-runner validation cannot contain errors")
+    if not success and not errors:
+        raise ValueError("failed aiperf-runner validation must contain errors")
+    return response
 
 
 def _runner_distribution_id(binary: Path) -> str:
