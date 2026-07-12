@@ -23,9 +23,7 @@ use crate::models::{
     EndpointResult, ExtractedPayload, ParsedResponse, RequestInfo, RequestRecord, ResponseData,
     ServerResponse, Turn,
 };
-use crate::registry::{
-    PreparedEndpointBehavior, PreparedRequest, format_legacy_payload,
-};
+use crate::registry::{PreparedEndpointBehavior, PreparedRequest, format_legacy_payload};
 use crate::{Endpoint, EndpointConfig, RawEndpointConfig};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";

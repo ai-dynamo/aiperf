@@ -143,7 +143,12 @@ const CHAT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     requires_form_data: false,
     requires_polling: false,
     requires_inline_media: false,
-    input_modalities: &[Modality::Text, Modality::Image, Modality::Audio, Modality::Video],
+    input_modalities: &[
+        Modality::Text,
+        Modality::Image,
+        Modality::Audio,
+        Modality::Video,
+    ],
     output_modalities: &[Modality::Tokens],
     metrics_title: "LLM Metrics",
     service_kind: "llm",
@@ -309,8 +314,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         endpoint: &RawEndpointConfig,
     ) -> EndpointResult<Value> {
         let turns = require_prepared_turns(request, "Chat endpoint requires at least one turn")?;
-        let mut messages =
-            format_chat_messages(request, build_messages(turns, PartShape::Chat)?);
+        let mut messages = format_chat_messages(request, build_messages(turns, PartShape::Chat)?);
         let last = turns.last().expect("non-empty turns");
         let mut payload = Map::new();
         payload.insert(
@@ -464,13 +468,14 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         request: &PreparedRequest<'_>,
         endpoint: &RawEndpointConfig,
     ) -> EndpointResult<Value> {
-        let turns = require_prepared_turns(
-            request,
-            "Responses endpoint requires at least one turn",
-        )?;
+        let turns =
+            require_prepared_turns(request, "Responses endpoint requires at least one turn")?;
         let last = turns.last().expect("non-empty turns");
         let mut input = Vec::new();
-        if let Some(context) = request.user_context_message().filter(|value| !value.is_empty()) {
+        if let Some(context) = request
+            .user_context_message()
+            .filter(|value| !value.is_empty())
+        {
             input.push(json!({"type": "message", "role": "user", "content": context}));
         }
         input.extend(build_messages_responses(turns)?);
