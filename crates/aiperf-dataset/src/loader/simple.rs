@@ -466,15 +466,23 @@ fn compose_simple_turn(
     parent: &mut Option<Handle>,
     state: &mut ComposeState<'_>,
 ) -> Result<Turn> {
-    let sampling_max_tokens = row
-        .extra
-        .as_ref()
-        .and_then(|extra| extra.get("sampling_params"))
-        .and_then(Value::as_object)
-        .and_then(|sampling| sampling.get("max_tokens"))
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .filter(|value| *value > 0);
+    let sampling_max_tokens = if state.config.requires_raw_token_ids {
+        token_native_sampling_max_tokens(row.extra.as_ref())?
+    } else {
+        row.extra
+            .as_ref()
+            .and_then(|extra| extra.get("sampling_params"))
+            .and_then(Value::as_object)
+            .and_then(|sampling| sampling.get("max_tokens"))
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+    };
+    let max_tokens = if state.config.requires_raw_token_ids {
+        sampling_max_tokens.or(row.output_length)
+    } else {
+        row.output_length.or(sampling_max_tokens)
+    };
     let promoted_token_ids = if state.config.requires_raw_token_ids {
         take_extra_token_ids(row.extra.as_mut())?
     } else {
@@ -495,7 +503,7 @@ fn compose_simple_turn(
         model: row.model.map(ModelId::from),
         endpoint: row.endpoint,
         streaming: row.streaming,
-        max_tokens: row.output_length.or(sampling_max_tokens),
+        max_tokens,
         timestamp_ms: row.timestamp,
         delay_ms: row.delay,
         ..Turn::default()
@@ -573,6 +581,36 @@ fn compose_simple_turn(
     }
     state.finalize_turn(&mut turn)?;
     Ok(turn)
+}
+
+fn token_native_sampling_max_tokens(extra: Option<&Map<String, Value>>) -> Result<Option<u32>> {
+    let Some(value) = extra.and_then(|extra| extra.get("sampling_params")) else {
+        return Ok(None);
+    };
+    let Some(sampling) = value.as_object() else {
+        if value.is_null() {
+            return Ok(None);
+        }
+        return Err(DatasetError::Validation(
+            "sampling_params must be an object for a token-native row".into(),
+        ));
+    };
+    let Some(value) = sampling.get("max_tokens") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .map(Some)
+        .ok_or_else(|| {
+            DatasetError::Validation(
+                "sampling_params.max_tokens must be a positive unsigned 32-bit integer".into(),
+            )
+        })
 }
 
 fn take_extra_token_ids(extra: Option<&mut Map<String, Value>>) -> Result<Option<Vec<u32>>> {
@@ -897,7 +935,7 @@ mod tests {
                 &LoadConfig::new(DatasetSource::Inline(json!([{
                     "extra": {
                         "token_ids": [1, 2, 3],
-                        "sampling_params": {"temperature": 0}
+                        "sampling_params": {"temperature": 0, "max_tokens": 9}
                     },
                     "output_length": 7
                 }]))),
@@ -909,6 +947,7 @@ mod tests {
 
         let turn = &dataset.conversations()[0].turns[0];
         assert_eq!(turn.input_tokens, 3);
+        assert_eq!(turn.max_tokens, Some(9));
         let Payload::TokenIds { token_ids } = dataset
             .segments()
             .get(turn.raw_token_ids.expect("token handle"))
@@ -924,6 +963,7 @@ mod tests {
         let extra: Value = serde_json::from_slice(wire).unwrap();
         assert!(extra.get("token_ids").is_none());
         assert_eq!(extra["sampling_params"]["temperature"], 0);
+        assert_eq!(extra["sampling_params"]["max_tokens"], 9);
 
         for invalid in [
             json!([]),
@@ -937,6 +977,25 @@ mod tests {
                     &LoadConfig::new(DatasetSource::Inline(json!([{
                         "extra": {"token_ids": invalid}
                     }]))),
+                    &compose,
+                    &TiktokenTokenizer::builtin(),
+                )
+                .await;
+            assert!(result.is_err());
+        }
+        for invalid in [
+            json!({"extra": {"token_ids": [1], "sampling_params": []}}),
+            json!({
+                "extra": {
+                    "token_ids": [1],
+                    "sampling_params": {"max_tokens": 0}
+                }
+            }),
+        ] {
+            let result = registry
+                .build_dataset(
+                    Some("single_turn"),
+                    &LoadConfig::new(DatasetSource::Inline(json!([invalid]))),
                     &compose,
                     &TiktokenTokenizer::builtin(),
                 )

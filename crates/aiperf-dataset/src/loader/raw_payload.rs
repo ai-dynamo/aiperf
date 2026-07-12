@@ -140,6 +140,7 @@ impl Composer for RawPayloadComposer {
             };
             let raw_token_ids = raw_token_ids(&row.value, &row.origin)?;
             let (raw_payload, raw_token_handle, extra_body) = if config.requires_raw_token_ids {
+                validate_token_native_fields(&row.value, &row.origin)?;
                 let token_ids = raw_token_ids.as_ref().ok_or_else(|| {
                     DatasetError::Validation(format!(
                         "{}: selected endpoint requires a non-empty token_ids array",
@@ -186,7 +187,11 @@ impl Composer for RawPayloadComposer {
                     .get("model")
                     .and_then(Value::as_str)
                     .map(ModelId::from),
-                max_tokens: raw_max_tokens(&row.value),
+                max_tokens: if config.requires_raw_token_ids {
+                    token_native_max_tokens(&row.value)
+                } else {
+                    raw_max_tokens(&row.value)
+                },
                 streaming: row.value.get("stream").and_then(Value::as_bool),
                 raw_payload,
                 raw_token_ids: raw_token_handle,
@@ -269,6 +274,67 @@ fn token_native_extra_body(value: &Value) -> Result<serde_json::Map<String, Valu
         extra.remove(field);
     }
     Ok(extra)
+}
+
+fn validate_token_native_fields(value: &Value, origin: &impl std::fmt::Display) -> Result<()> {
+    let object = value.as_object().ok_or_else(|| {
+        DatasetError::Validation(format!("{origin}: token-native payload must be an object"))
+    })?;
+    if let Some(model) = object.get("model")
+        && !model.is_null()
+        && model.as_str().is_none_or(|model| model.trim().is_empty())
+    {
+        return Err(DatasetError::Validation(format!(
+            "{origin}: model must be a non-empty string when configured"
+        )));
+    }
+    if let Some(stream) = object.get("stream")
+        && !stream.is_null()
+        && stream.as_bool() != Some(false)
+    {
+        return Err(DatasetError::Validation(format!(
+            "{origin}: token-native stream must be false"
+        )));
+    }
+    for field in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
+        let value = object.get(field);
+        validate_optional_positive_u32(value, origin, field)?;
+    }
+    if let Some(sampling_params) = object.get("sampling_params") {
+        match sampling_params {
+            Value::Null => {}
+            Value::Object(sampling_params) => {
+                let value = sampling_params.get("max_tokens");
+                validate_optional_positive_u32(value, origin, "sampling_params.max_tokens")?;
+            }
+            _ => {
+                return Err(DatasetError::Validation(format!(
+                    "{origin}: sampling_params must be an object when configured"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_positive_u32(
+    value: Option<&Value>,
+    origin: &impl std::fmt::Display,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    if value
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .is_none_or(|value| value == 0)
+    {
+        return Err(DatasetError::Validation(format!(
+            "{origin}: {field} must be a positive unsigned 32-bit integer"
+        )));
+    }
+    Ok(())
 }
 
 fn raw_token_ids(value: &Value, origin: &impl std::fmt::Display) -> Result<Option<Vec<u32>>> {
@@ -435,11 +501,26 @@ fn raw_max_tokens(value: &Value) -> Option<u32> {
         .and_then(|value| u32::try_from(value).ok())
 }
 
+fn token_native_max_tokens(value: &Value) -> Option<u32> {
+    value
+        .get("sampling_params")
+        .and_then(Value::as_object)
+        .and_then(|sampling| sampling.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            ["max_tokens", "max_completion_tokens", "max_output_tokens"]
+                .into_iter()
+                .find_map(|field| value.get(field).and_then(Value::as_u64))
+        })
+        .and_then(|value| u32::try_from(value).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use aiperf_rng::RngRoot;
+    use serde_json::json;
 
     use super::*;
     use crate::loader::{DatasetFormatRegistration, LoaderRegistry};
@@ -522,7 +603,7 @@ mod tests {
     #[tokio::test]
     async fn token_native_composition_frees_raw_bytes_and_retains_typed_fields() {
         let input = Bytes::from_static(
-            br#"{"model":"authored","token_ids":[7,8,9],"sampling_params":{"temperature":0},"stream":false,"request_id":"r-1"}"#,
+            br#"{"model":"authored","token_ids":[7,8,9],"max_tokens":5,"sampling_params":{"temperature":0,"max_tokens":7},"stream":false,"request_id":"r-1"}"#,
         );
         let mut registry = LoaderRegistry::new();
         registry
@@ -546,6 +627,7 @@ mod tests {
         let turn = &dataset.conversations()[0].turns[0];
         assert!(turn.raw_payload.is_none());
         assert_eq!(turn.input_tokens, 3);
+        assert_eq!(turn.max_tokens, Some(7));
         let Payload::TokenIds { token_ids } = dataset
             .segments()
             .get(turn.raw_token_ids.expect("token handle"))
@@ -563,9 +645,30 @@ mod tests {
         };
         let extra: Value = serde_json::from_slice(wire).unwrap();
         assert_eq!(extra["sampling_params"]["temperature"], 0);
+        assert_eq!(extra["sampling_params"]["max_tokens"], 7);
         assert_eq!(extra["request_id"], "r-1");
         assert!(extra.get("token_ids").is_none());
         assert!(extra.get("model").is_none());
         assert!(extra.get("stream").is_none());
+        assert!(extra.get("max_tokens").is_none());
+
+        for invalid in [
+            json!({"token_ids": [1], "model": 7}),
+            json!({"token_ids": [1], "stream": true}),
+            json!({"token_ids": [1], "stream": "false"}),
+            json!({"token_ids": [1], "max_tokens": 0}),
+            json!({"token_ids": [1], "sampling_params": []}),
+            json!({"token_ids": [1], "sampling_params": {"max_tokens": -1}}),
+        ] {
+            let result = registry
+                .build_dataset(
+                    Some("raw_payload"),
+                    &LoadConfig::new(DatasetSource::Inline(json!([invalid]))),
+                    &compose,
+                    &TiktokenTokenizer::builtin(),
+                )
+                .await;
+            assert!(result.is_err(), "invalid token-native field was accepted");
+        }
     }
 }
