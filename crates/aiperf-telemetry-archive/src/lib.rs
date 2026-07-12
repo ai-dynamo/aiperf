@@ -103,7 +103,7 @@ pub use scheduling::{
     IssuedSourceAttempt, MissedCadenceRange, SchedulingError, SourceAttemptGate, SourceAttemptKind,
 };
 pub use schema::{
-    ALL_ARROW_SCHEMA_DESCRIPTORS_V1, ATTEMPTS_ARROW_SCHEMA_V1, ArchiveSchemasV1,
+    ALL_ARROW_SCHEMA_DESCRIPTORS_V1, ARROW_ALIASES_V1, ATTEMPTS_ARROW_SCHEMA_V1, ArchiveSchemasV1,
     ArchiveTableSchemaV1, FAMILIES_ARROW_SCHEMA_V1, LOSSES_ARROW_SCHEMA_V1,
     MARKERS_ARROW_SCHEMA_V1, RAW_REFERENCES_ARROW_SCHEMA_V1, SAMPLES_ARROW_SCHEMA_V1, SchemaError,
     arrow_schema_fingerprint, table_id, table_name,

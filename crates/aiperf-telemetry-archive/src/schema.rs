@@ -22,6 +22,12 @@ use crate::{
 const SCHEMA_VERSION: &str = "1.0";
 const SCHEMA_FINGERPRINT_DOMAIN: &[u8] = b"aiperf.archive.arrow-schema.v1";
 
+/// Canonical nested alias descriptor referenced by every table descriptor.
+pub const ARROW_ALIASES_V1: CanonicalDescriptor = CanonicalDescriptor::new(
+    "arrow-aliases-v1",
+    include_bytes!("../descriptors/arrow-aliases-v1.json"),
+);
+
 /// Canonical attempts-table descriptor.
 pub const ATTEMPTS_ARROW_SCHEMA_V1: CanonicalDescriptor = CanonicalDescriptor::new(
     "attempts-arrow-schema-v1",
@@ -190,10 +196,23 @@ fn load_table(
     descriptor: CanonicalDescriptor,
 ) -> Result<ArchiveTableSchemaV1, SchemaError> {
     descriptor.validate().map_err(SchemaError::Descriptor)?;
+    ARROW_ALIASES_V1
+        .validate()
+        .map_err(SchemaError::Descriptor)?;
     let value: Value = serde_json::from_slice(descriptor.bytes()).map_err(SchemaError::Json)?;
     let object = value
         .as_object()
         .ok_or(SchemaError::InvalidDescriptor("root must be an object"))?;
+    let authored_alias_fingerprint = object
+        .get("alias_descriptor_fingerprint")
+        .and_then(Value::as_str)
+        .ok_or(SchemaError::InvalidDescriptor(
+            "alias_descriptor_fingerprint must be a string",
+        ))?;
+    let expected_alias_fingerprint = ARROW_ALIASES_V1.fingerprint();
+    if Digest::parse(authored_alias_fingerprint).ok() != Some(expected_alias_fingerprint) {
+        return Err(SchemaError::AliasFingerprintMismatch);
+    }
     let authored_table = object
         .get("table")
         .and_then(Value::as_str)
@@ -210,11 +229,25 @@ fn load_table(
             "schema version must be exactly 1.0",
         ));
     }
-    let aliases = object
+    let shared: Value =
+        serde_json::from_slice(ARROW_ALIASES_V1.bytes()).map_err(SchemaError::Json)?;
+    let mut aliases = shared
+        .get("aliases")
+        .and_then(Value::as_object)
+        .cloned()
+        .ok_or(SchemaError::InvalidDescriptor(
+            "shared aliases must be an object",
+        ))?;
+    let local_aliases = object
         .get("aliases")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    for (name, definition) in local_aliases {
+        if aliases.insert(name.clone(), definition).is_some() {
+            return Err(SchemaError::DuplicateAlias(name));
+        }
+    }
     let authored_fields = object
         .get("fields")
         .and_then(Value::as_array)
@@ -295,18 +328,11 @@ fn parse_type(
     if let Some(name) = value.as_str() {
         return match name {
             "bool" => Ok(DataType::Boolean),
+            "f64" => Ok(DataType::Float64),
             "i64" => Ok(DataType::Int64),
             "u16" => Ok(DataType::UInt16),
             "u64" => Ok(DataType::UInt64),
             "utf8" => Ok(DataType::Utf8),
-            "uuid" => Ok(DataType::FixedSizeBinary(16)),
-            "digest" => Ok(DataType::FixedSizeBinary(32)),
-            "epoch_ns" => Ok(DataType::Decimal128(38, 0)),
-            "string_map" => Ok(string_map_type()),
-            "archive_number" => Ok(archive_number_type()),
-            "source_timestamp" => Ok(timestamp_type()),
-            "created_timestamp" => Ok(timestamp_type()),
-            "exemplar" => Ok(exemplar_type()),
             alias => {
                 let definition = aliases
                     .get(alias)
@@ -367,6 +393,68 @@ fn parse_type(
         }
         return Ok(DataType::Struct(Fields::from(parsed)));
     }
+    if let Some(width) = object.get("fixed_size_binary") {
+        let width =
+            width
+                .as_i64()
+                .filter(|width| *width > 0)
+                .ok_or(SchemaError::InvalidDescriptor(
+                    "fixed_size_binary width must be positive",
+                ))?;
+        return i32::try_from(width)
+            .map(DataType::FixedSizeBinary)
+            .map_err(|_| SchemaError::InvalidDescriptor("fixed_size_binary width exceeds i32"));
+    }
+    if let Some(decimal) = object.get("decimal128") {
+        let values = decimal
+            .as_array()
+            .filter(|values| values.len() == 2)
+            .ok_or(SchemaError::InvalidDescriptor(
+                "decimal128 must be [precision, scale]",
+            ))?;
+        let precision = values[0]
+            .as_u64()
+            .and_then(|value| u8::try_from(value).ok())
+            .ok_or(SchemaError::InvalidDescriptor(
+                "decimal128 precision must fit u8",
+            ))?;
+        let scale = values[1]
+            .as_i64()
+            .and_then(|value| i8::try_from(value).ok())
+            .ok_or(SchemaError::InvalidDescriptor(
+                "decimal128 scale must fit i8",
+            ))?;
+        return Ok(DataType::Decimal128(precision, scale));
+    }
+    if let Some(entries) = object.get("map") {
+        let fields = entries
+            .as_array()
+            .filter(|fields| fields.len() == 2)
+            .ok_or(SchemaError::InvalidDescriptor(
+                "map must contain key and value fields",
+            ))?;
+        let key = parse_field(&fields[0], aliases, alias_stack)?;
+        let value = parse_field(&fields[1], aliases, alias_stack)?;
+        if key.name() != "key"
+            || key.is_nullable()
+            || key.data_type() != &DataType::Utf8
+            || value.name() != "value"
+            || value.is_nullable()
+            || value.data_type() != &DataType::Utf8
+        {
+            return Err(SchemaError::InvalidDescriptor(
+                "v1 map must be non-null Utf8 key/value",
+            ));
+        }
+        return Ok(DataType::Map(
+            Arc::new(Field::new(
+                "entries",
+                DataType::Struct(Fields::from(vec![key, value])),
+                false,
+            )),
+            true,
+        ));
+    }
     Err(SchemaError::InvalidDescriptor(
         "unknown complex type discriminator",
     ))
@@ -374,40 +462,6 @@ fn parse_type(
 
 fn enum8_type() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8))
-}
-
-fn string_map_type() -> DataType {
-    let entries = DataType::Struct(Fields::from(vec![
-        Field::new("key", DataType::Utf8, false),
-        Field::new("value", DataType::Utf8, false),
-    ]));
-    DataType::Map(Arc::new(Field::new("entries", entries, false)), true)
-}
-
-fn archive_number_type() -> DataType {
-    DataType::Struct(Fields::from(vec![
-        Field::new("kind", enum8_type(), false),
-        Field::new("source_lexeme", DataType::Utf8, true),
-        Field::new("finite_value", DataType::Float64, true),
-        Field::new("exact_u64", DataType::UInt64, true),
-        Field::new("f64_status", enum8_type(), false),
-    ]))
-}
-
-fn timestamp_type() -> DataType {
-    DataType::Struct(Fields::from(vec![
-        Field::new("lexeme", DataType::Utf8, true),
-        Field::new("normalized_unix_ns", DataType::Decimal128(38, 0), true),
-        Field::new("status", enum8_type(), false),
-    ]))
-}
-
-fn exemplar_type() -> DataType {
-    DataType::Struct(Fields::from(vec![
-        Field::new("labels", string_map_type(), false),
-        Field::new("value", archive_number_type(), false),
-        Field::new("timestamp", timestamp_type(), false),
-    ]))
 }
 
 fn logical_field(field: &Field) -> Result<LogicalField, SchemaError> {
@@ -476,6 +530,10 @@ pub enum SchemaError {
     },
     /// One struct or table repeats a field name.
     DuplicateField(String),
+    /// A local alias attempted to replace a shared physical alias.
+    DuplicateAlias(String),
+    /// Table descriptor does not bind the exact shared alias descriptor.
+    AliasFingerprintMismatch,
     /// An enum repeats one logical string.
     DuplicateEnumValue(String),
     /// A type token is neither built in nor a declared alias.
@@ -504,6 +562,10 @@ impl Display for SchemaError {
                 "schema table mismatch: expected {expected:?}, found {actual:?}"
             ),
             Self::DuplicateField(name) => write!(formatter, "duplicate schema field {name:?}"),
+            Self::DuplicateAlias(name) => write!(formatter, "duplicate schema alias {name:?}"),
+            Self::AliasFingerprintMismatch => {
+                formatter.write_str("schema alias descriptor fingerprint mismatch")
+            }
             Self::DuplicateEnumValue(value) => {
                 write!(formatter, "duplicate Enum8 value {value:?}")
             }
@@ -617,5 +679,15 @@ mod tests {
                 schema.schema().fields().len() as u64
             );
         }
+    }
+
+    #[test]
+    fn shared_alias_descriptor_is_canonical_and_bound_into_every_table() {
+        ARROW_ALIASES_V1.validate().unwrap();
+        assert_eq!(
+            ARROW_ALIASES_V1.fingerprint().to_hex(),
+            "b049116cbb050f0d1671c9825c6e26b76ee9397ea34b33983c08e5e45b86da98"
+        );
+        ArchiveSchemasV1::load().unwrap();
     }
 }

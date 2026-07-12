@@ -1,1 +1,1 @@
-{"descriptor_hash":"a430b569311cc33fe8dd3684239cf2ebe4952b4bdcd01d05976c2c28a5dbd2ec","parquet_byte_length":6268,"physical_content_hash":"ae968d48970b902320059cb5625c49cceb0417487dd511840edbe383f13bfae6","reader":"parquet-arrow-58.3.0","table":"families"}
+{"descriptor_hash":"c278b7d3b3a9bb029fc4f686b7d59f17c5ccaf53cec9a0aa0f737405f740616c","parquet_byte_length":6268,"physical_content_hash":"7c656b06228fe602a9c96d10ed71b76087fcf65813d63543f23045e235c580c1","reader":"parquet-arrow-58.3.0","table":"families"}
