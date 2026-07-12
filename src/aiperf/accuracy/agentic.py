@@ -23,6 +23,10 @@ interface with a queue-backed callback; it does not proxy or perform HTTP in
 Python. AgentLab 0.4.2 plus BrowserGym 0.14.3 is the second provider: its
 sync ``AbstractChatModel`` callback uses the same broker while AgentLab retains
 canonical browser prompts, actions, environment transitions, and rewards.
+MCPMark 0.0.1 at commit ``cd45b7f57923b9b3985467f5139927575f83141c``
+is the third provider: its exact ``MCPMarkAgent`` loop and MCP servers use the
+broker in place of ``litellm.acompletion`` while MCPMark retains task setup,
+tool execution, task-local verification, cleanup, and pass/fail authority.
 """
 
 from __future__ import annotations
@@ -307,8 +311,8 @@ class AgenticEvent:
 class AgenticHarness(ABC):
     """Harness trait behind the worker's stateful agentic operations.
 
-    A concrete implementation may use Harbor, AgentLab/BrowserGym, or a hermetic
-    test fixture. It must never send an inference request itself.
+    A concrete implementation may use Harbor, AgentLab/BrowserGym, MCPMark, or
+    a hermetic test fixture. It must never send an inference request itself.
     """
 
     @property

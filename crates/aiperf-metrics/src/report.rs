@@ -16,6 +16,7 @@ use crate::{
 };
 use serde::Serialize as DeriveSerialize;
 use serde::ser::{Serialize, Serializer};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Native report schema identifier.
@@ -338,6 +339,9 @@ pub struct AgenticEvaluatorReportInfo {
     pub agent: String,
     /// Exact adapter and inherited scaffold version.
     pub agent_version: String,
+    /// Provider-owned canonical agent controls used for the evaluation.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub canonical_agent_config: BTreeMap<String, Value>,
     /// Environment provider used for task sandboxes.
     pub environment: String,
     /// Canonical verifier implementation description.

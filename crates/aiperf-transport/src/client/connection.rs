@@ -26,7 +26,7 @@ use url::Url;
 
 use aiperf_clock::Clock;
 
-use crate::client::resolver::resolve;
+use crate::client::resolver::{CachingDnsResolver, DnsResolver};
 use crate::config::{ClientConfig, apply_socket_opts};
 use crate::models::{ErrorDetails, ErrorKind, HttpVersion, TraceData};
 
@@ -185,6 +185,12 @@ pub enum Sender {
 }
 
 impl Sender {
+    /// Whether this sender can carry concurrent independent streams.
+    pub fn is_multiplexed(&self) -> bool {
+        matches!(self, Sender::H2(_))
+    }
+
+    /// Whether the sender currently accepts a request.
     pub fn is_ready(&self) -> bool {
         match self {
             Sender::H1(s) => s.is_ready(),
@@ -213,6 +219,15 @@ impl Sender {
         &mut self,
         req: hyper::Request<TimedBody>,
     ) -> Result<Response<Incoming>, ErrorDetails> {
+        let ready = match self {
+            Sender::H1(sender) => sender.ready().await,
+            Sender::H2(sender) => sender.ready().await,
+        };
+        ready.map_err(|error| ErrorDetails {
+            kind: ErrorKind::Other,
+            code: None,
+            message: format!("send readiness: {error}"),
+        })?;
         let r = match self {
             Sender::H1(s) => s.send_request(req).await,
             Sender::H2(s) => s.send_request(req).await,
@@ -226,19 +241,82 @@ impl Sender {
 }
 
 /// Socket endpoint info captured for TraceData.
+#[derive(Debug, Clone, Copy)]
 pub struct SocketInfo {
     pub local: SocketAddr,
     pub remote: SocketAddr,
 }
 
-fn rustls_config(_ssl_verify: bool) -> Arc<rustls::ClientConfig> {
+#[derive(Debug)]
+struct NoCertificateVerification {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            signed,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            signed,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Build TLS policy for one transport.
+///
+/// `ssl_verify=false` deliberately disables only certificate-chain and hostname
+/// validation. Handshake signatures remain cryptographically verified. This is
+/// the Rust equivalent of the Python connector's `ssl=False` behavior proven in
+/// `tests/unit/transports/test_tcp_connector.py:337-422`.
+fn rustls_config(ssl_verify: bool) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let mut cfg = rustls::ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    if !ssl_verify {
+        let provider = cfg.crypto_provider().clone();
+        cfg.dangerous()
+            .set_certificate_verifier(Arc::new(NoCertificateVerification { provider }));
+    }
     cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    // A no-verify path can be added if needed; default verifies.
     Arc::new(cfg)
 }
 
@@ -278,11 +356,27 @@ pub async fn establish(
     clock: Rc<dyn Clock>,
     trace: &mut TraceData,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
+    let resolver = CachingDnsResolver::default();
+    establish_with_resolver(url, cfg, clock, trace, &resolver).await
+}
+
+/// Establish using an injected DNS policy.
+///
+/// Connection managers reuse a resolver across connections so trace records can
+/// distinguish cache hits from misses; standalone callers retain
+/// [`establish`]'s request-local behavior.
+pub async fn establish_with_resolver(
+    url: &Url,
+    cfg: &ClientConfig,
+    clock: Rc<dyn Clock>,
+    trace: &mut TraceData,
+    resolver: &dyn DnsResolver,
+) -> Result<(Sender, SocketInfo), ErrorDetails> {
     let timeout_ns = cfg.connect_timeout_ns;
     with_timeout(
         clock.clone(),
         timeout_ns,
-        establish_inner(url, cfg, clock, trace),
+        establish_inner(url, cfg, clock, trace, resolver),
         || ErrorDetails {
             kind: ErrorKind::Timeout,
             code: None,
@@ -298,6 +392,7 @@ async fn establish_inner(
     cfg: &ClientConfig,
     clock: Rc<dyn Clock>,
     trace: &mut TraceData,
+    resolver: &dyn DnsResolver,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
     // Unix-domain socket path: connect over UDS (HTTP/1.1), bypassing the
     // TCP/IP stack. The request URL still supplies the HTTP path + Host header.
@@ -327,7 +422,7 @@ async fn establish_inner(
         .port_or_known_default()
         .unwrap_or(if is_tls { 443 } else { 80 });
 
-    let remote = resolve(host, port, &clock, trace).await?;
+    let remote = resolver.resolve(host, port, cfg, &clock, trace).await?;
 
     trace.tcp_connect_start_ns = Some(clock.now_ns());
     let tcp = TcpStream::connect(remote)

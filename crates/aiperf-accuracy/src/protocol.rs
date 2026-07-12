@@ -379,6 +379,9 @@ pub struct AgenticEvaluatorIdentity {
     pub agent: String,
     /// Exact agent adapter and inherited scaffold version.
     pub agent_version: String,
+    /// Provider-owned canonical agent controls that supersede generic authored defaults.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub canonical_agent_config: BTreeMap<String, Value>,
     /// Environment provider selected for task sandboxes.
     pub environment: String,
     /// Canonical verifier implementation description.

@@ -12,9 +12,9 @@ use http::Method;
 use aiperf_clock::Clock;
 
 use crate::client::cancellation::{CancelOutcome, race_cancel_after_send};
-use crate::client::connection::SendCompletion;
+use crate::client::connection::{SendCompletion, with_timeout};
 use crate::client::http_client::HttpClient;
-use crate::client::pool::ConnectionPool;
+use crate::client::pool::{ConnectionManager, ConnectionPool};
 use crate::config::ClientConfig;
 use crate::models::{
     ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, SseMessage, TraceData,
@@ -26,13 +26,22 @@ pub struct HttpTransport {
     clock: Rc<dyn Clock>,
     client: HttpClient,
     client_cfg: ClientConfig,
-    pool: ConnectionPool,
+    connections: Rc<dyn ConnectionManager>,
     user_agent: String,
     session_header: Option<String>,
 }
 
 impl HttpTransport {
-    pub fn new(clock: Rc<dyn Clock>, mut cfg: ClientConfig) -> Self {
+    pub fn new(clock: Rc<dyn Clock>, cfg: ClientConfig) -> Self {
+        Self::with_connection_manager(clock, cfg, Rc::new(ConnectionPool::new()))
+    }
+
+    /// Build over an injected connection-management policy.
+    pub fn with_connection_manager(
+        clock: Rc<dyn Clock>,
+        mut cfg: ClientConfig,
+        connections: Rc<dyn ConnectionManager>,
+    ) -> Self {
         if let Some(total) = positive_timeout(cfg.total_timeout_ns) {
             cfg.connect_timeout_ns = minimum_timeout(cfg.connect_timeout_ns, Some(total));
         }
@@ -40,7 +49,7 @@ impl HttpTransport {
             client: HttpClient::new(clock.clone(), cfg.clone()),
             client_cfg: cfg,
             clock,
-            pool: ConnectionPool::new(),
+            connections,
             user_agent: "aiperf-transport/0".to_string(),
             session_header: None,
         }
@@ -208,17 +217,30 @@ impl HttpTransport {
 
         // Acquire a connection per the reuse strategy, then dispatch on it.
         let dispatch = async {
-            let mut sender = self
-                .pool
-                .acquire(
+            let acquire_remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
+            let acquire_timeout_ns =
+                minimum_timeout(self.client_cfg.connect_timeout_ns, acquire_remaining_ns);
+            let mut lease = with_timeout(
+                self.clock.clone(),
+                acquire_timeout_ns,
+                self.connections.acquire(
                     &url,
                     &self.client_cfg,
                     self.clock.clone(),
                     reuse,
                     corr,
                     &mut trace,
-                )
-                .await?;
+                ),
+                || ErrorDetails {
+                    kind: crate::models::ErrorKind::Timeout,
+                    code: None,
+                    message: format!(
+                        "connection acquisition timeout after {}ns",
+                        acquire_timeout_ns.unwrap_or_default()
+                    ),
+                },
+            )
+            .await?;
             let remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
             let dispatch_timeout_ns =
                 minimum_timeout(self.client_cfg.request_timeout_ns, remaining_ns);
@@ -226,7 +248,7 @@ impl HttpTransport {
                 .client
                 .dispatch_with_method_and_completion_timeout(
                     method,
-                    &mut sender,
+                    lease.sender_mut(),
                     &url,
                     &headers,
                     body,
@@ -239,21 +261,22 @@ impl HttpTransport {
                     dispatch_timeout_ns,
                 )
                 .await;
-            // On success, decide whether the connection is returned to the pool.
+            // A successful fully-drained response makes an HTTP/1 lease reusable.
+            // The lease itself owns cleanup, so cancellation/error paths cannot
+            // leak pool capacity.
             if res.is_ok() {
                 let keep = match reuse {
                     ConnectionReuseStrategy::StickyUserSessions => !cfg.is_final_turn,
                     _ => true,
                 };
                 if keep {
-                    self.pool.put(&url, corr, reuse, sender);
+                    lease.mark_reusable();
                 } else if let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) = (reuse, corr)
                 {
-                    self.pool.release(c);
+                    self.connections.release_session(c);
                 }
             } else if let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) = (reuse, corr) {
-                // Failed connections are never reused; drop the sticky lease.
-                self.pool.release(c);
+                self.connections.release_session(c);
             }
             res
         };
@@ -273,16 +296,21 @@ impl HttpTransport {
                     CancelOutcome::Cancelled => {
                         let now = self.clock.now_ns();
                         record.cancellation_ns = Some(now);
-                        if let Some(sent_ns) = completion_for_record.sent_ns() {
+                        if let Some(sent_ns) = completion_for_record.sent_ns()
+                            && trace.request_send_end_ns.is_none()
+                        {
                             trace.request_send_end_ns = Some(sent_ns);
                             trace.request_headers_sent_ns = Some(sent_ns);
                             trace.request_bytes_total = body_len as u64;
                             trace.request_chunks_count = 1;
+                            if self.client_cfg.collect_trace_chunks {
+                                trace.request_chunks.push((sent_ns, body_len as u64));
+                            }
                         }
                         if let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) =
                             (reuse, corr)
                         {
-                            self.pool.release(c);
+                            self.connections.release_session(c);
                         }
                         Err(ErrorDetails::cancelled(format!(
                             "RequestCancellationError: request cancelled {cancel_after}ns after being sent"
@@ -302,7 +330,7 @@ impl HttpTransport {
             if e.kind == crate::models::ErrorKind::Timeout
                 && let (ConnectionReuseStrategy::StickyUserSessions, Some(c)) = (reuse, corr)
             {
-                self.pool.release(c);
+                self.connections.release_session(c);
             }
             trace.error_timestamp_ns = Some(self.clock.now_ns());
             record.error = Some(e);

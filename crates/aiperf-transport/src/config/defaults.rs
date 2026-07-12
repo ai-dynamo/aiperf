@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Defaults. Port of `AioHttpDefaults` / `SocketDefaults`.
+//!
+//! The pool, DNS, keepalive, and TLS defaults follow
+//! `src/aiperf/transports/http_defaults.py:131-169` and are pinned by the
+//! source tests in `tests/unit/transports/test_tcp_connector.py:32-88`.
 
 use crate::models::HttpVersion;
 
@@ -15,23 +19,33 @@ use crate::models::HttpVersion;
 /// Config-v2's endpoint request timeout. For all three, `None` or a non-positive
 /// value means "no deadline".
 ///
-/// NOTE: `keepalive_ns` is accepted but NOT enforced: it is meant to bound the
-/// idle lifetime of a pooled connection, but `client::pool::ConnectionPool`
-/// currently stores senders in a plain map with no per-entry insertion timestamp
-/// or idle-age check, so there is no pool knob to attach a keepalive deadline to.
-/// Enforcing it requires adding an idle-since timestamp to the pool's stored
-/// entries and evicting on `take_ready` when `now - idle_since > keepalive_ns`
-/// (pool.rs is outside this change's scope). It is retained for API/config
-/// compatibility.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// Deadline for DNS, TCP, TLS, and HTTP handshake establishment.
     pub connect_timeout_ns: Option<i64>,
+    /// Deadline for request send plus the complete response body.
     pub request_timeout_ns: Option<i64>,
     /// One end-to-end request deadline including connection establishment.
     pub total_timeout_ns: Option<i64>,
+    /// Verify the server certificate and hostname for HTTPS connections.
     pub ssl_verify: bool,
+    /// HTTP protocol selection and cleartext prior-knowledge policy.
     pub http_version: HttpVersion,
+    /// Maximum idle lifetime of a pooled connection. `None` disables expiry.
     pub keepalive_ns: Option<i64>,
+    /// Maximum number of simultaneous HTTP/1 connections per origin.
+    ///
+    /// HTTP/2 uses one multiplexed connection per origin; this bound applies to
+    /// protocols that require an exclusive connection while a request is live.
+    pub max_connections_per_origin: usize,
+    /// Whether hostname resolutions are cached by the transport.
+    pub use_dns_cache: bool,
+    /// DNS cache lifetime. `None` retains entries until the transport is dropped.
+    pub dns_cache_ttl_ns: Option<i64>,
+    /// Retain per-wire-chunk `(clock_ns, size_bytes)` trace vectors.
+    ///
+    /// Counts, byte totals, and first/last timestamps are always collected.
+    pub collect_trace_chunks: bool,
     /// When set, connect over this Unix-domain socket path instead of TCP
     /// (co-located high-throughput: bypasses the TCP/IP loopback softirq tax).
     /// HTTP/1.1 is used over UDS. The request URL still supplies the path + Host.
@@ -46,7 +60,11 @@ impl Default for ClientConfig {
             total_timeout_ns: None,
             ssl_verify: true,
             http_version: HttpVersion::Auto,
-            keepalive_ns: None,
+            keepalive_ns: Some(300_000_000_000),
+            max_connections_per_origin: 2_500,
+            use_dns_cache: true,
+            dns_cache_ttl_ns: Some(300_000_000_000),
+            collect_trace_chunks: false,
             uds_path: None,
         }
     }
@@ -82,5 +100,10 @@ mod tests {
         assert_eq!(c.connect_timeout_ns, None);
         assert_eq!(c.request_timeout_ns, None);
         assert_eq!(c.total_timeout_ns, None);
+        assert_eq!(c.keepalive_ns, Some(300_000_000_000));
+        assert_eq!(c.max_connections_per_origin, 2_500);
+        assert!(c.use_dns_cache);
+        assert_eq!(c.dns_cache_ttl_ns, Some(300_000_000_000));
+        assert!(!c.collect_trace_chunks);
     }
 }

@@ -30,6 +30,29 @@ struct ChunkTiming {
     bytes: u64,
     recv_start: Option<i64>,
     recv_end: Option<i64>,
+    samples: Vec<(i64, u64)>,
+}
+
+impl ChunkTiming {
+    fn observe(&mut self, timestamp_ns: i64, size: usize, collect_samples: bool) {
+        self.chunks += 1;
+        self.bytes += size as u64;
+        if self.recv_start.is_none() {
+            self.recv_start = Some(timestamp_ns);
+        }
+        self.recv_end = Some(timestamp_ns);
+        if collect_samples {
+            self.samples.push((timestamp_ns, size as u64));
+        }
+    }
+
+    fn copy_to(&self, trace: &mut TraceData) {
+        trace.response_receive_start_ns = self.recv_start;
+        trace.response_receive_end_ns = self.recv_end;
+        trace.response_chunks_count = self.chunks;
+        trace.response_bytes_total = self.bytes;
+        trace.response_chunks.clone_from(&self.samples);
+    }
 }
 
 /// Map a response-body stream error into a transport [`ErrorDetails`].
@@ -183,11 +206,16 @@ impl HttpClient {
             CancelOutcome::Cancelled => {
                 let now = self.clock.now_ns();
                 record.cancellation_ns = Some(now);
-                if let Some(sent_ns) = completion_for_record.sent_ns() {
+                if let Some(sent_ns) = completion_for_record.sent_ns()
+                    && trace.request_send_end_ns.is_none()
+                {
                     trace.request_send_end_ns = Some(sent_ns);
                     trace.request_headers_sent_ns = Some(sent_ns);
                     trace.request_bytes_total = body_len as u64;
                     trace.request_chunks_count = 1;
+                    if self.cfg.collect_trace_chunks {
+                        trace.request_chunks.push((sent_ns, body_len as u64));
+                    }
                 }
                 Err(ErrorDetails::cancelled(format!(
                     "RequestCancellationError: request cancelled {cancel_after_ns}ns after being sent"
@@ -433,6 +461,9 @@ impl HttpClient {
         trace.request_headers_sent_ns = Some(send_end);
         trace.request_bytes_total = body_len as u64;
         trace.request_chunks_count = 1;
+        if self.cfg.collect_trace_chunks {
+            trace.request_chunks.push((send_end, body_len as u64));
+        }
         trace.response_headers_received_ns = Some(hdr_ns);
 
         let status = resp.status();
@@ -450,16 +481,6 @@ impl HttpClient {
         trace.response_status_code = Some(status.as_u16());
         trace.response_reason = status.canonical_reason().map(str::to_string);
 
-        if !status.is_success() {
-            let body = resp
-                .into_body()
-                .collect()
-                .await
-                .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
-                .unwrap_or_default();
-            return Err(ErrorDetails::http(status.as_u16(), body));
-        }
-
         record.recv_start_ns = Some(self.clock.now_ns());
 
         let content_type = resp
@@ -474,28 +495,42 @@ impl HttpClient {
                 .unwrap_or(false);
 
         let body_stream = resp.into_body().into_data_stream();
+        let timing = Rc::new(RefCell::new(ChunkTiming::default()));
+        let timing_map = timing.clone();
+        let clock_map = self.clock.clone();
+        let collect_chunks = self.cfg.collect_trace_chunks;
+        let timed = body_stream.map(move |item| match item {
+            Ok(bytes) => {
+                let timestamp_ns = clock_map.now_ns();
+                timing_map
+                    .borrow_mut()
+                    .observe(timestamp_ns, bytes.len(), collect_chunks);
+                Ok(bytes)
+            }
+            Err(error) => Err(body_err(error)),
+        });
+
+        if !status.is_success() {
+            let collected = timed
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<Bytes>, _>>();
+            timing.borrow().copy_to(trace);
+            let body = collected
+                .map(|chunks| {
+                    let total = chunks.iter().map(Bytes::len).sum();
+                    let mut raw = Vec::with_capacity(total);
+                    for chunk in chunks {
+                        raw.extend_from_slice(&chunk);
+                    }
+                    String::from_utf8_lossy(&raw).into_owned()
+                })
+                .unwrap_or_default();
+            return Err(ErrorDetails::http(status.as_u16(), body));
+        }
 
         if is_sse {
-            let timing = Rc::new(RefCell::new(ChunkTiming::default()));
-            let timing_map = timing.clone();
-            let clock_map = self.clock.clone();
-            // Timestamp each transport chunk as it arrives, then hand the bytes
-            // to the incremental SSE parser.
-            let timed = body_stream.map(move |item| match item {
-                Ok(b) => {
-                    let ts = clock_map.now_ns();
-                    let mut t = timing_map.borrow_mut();
-                    t.chunks += 1;
-                    t.bytes += b.len() as u64;
-                    if t.recv_start.is_none() {
-                        t.recv_start = Some(ts);
-                    }
-                    t.recv_end = Some(ts);
-                    Ok(b)
-                }
-                Err(e) => Err(body_err(e)),
-            });
-
             let start_ns = record.start_ns;
             let mut first_seen = false;
             let responses = &mut record.responses;
@@ -507,21 +542,16 @@ impl HttpClient {
             })
             .await;
 
-            {
-                let t = timing.borrow();
-                trace.response_receive_start_ns = t.recv_start;
-                trace.response_receive_end_ns = t.recv_end;
-                trace.response_chunks_count = t.chunks;
-                trace.response_bytes_total = t.bytes;
-            }
+            timing.borrow().copy_to(trace);
             sse_result?;
         } else {
-            let collected = body_stream
+            let collected = timed
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
-                .collect::<Result<Vec<Bytes>, _>>()
-                .map_err(body_err)?;
+                .collect::<Result<Vec<Bytes>, _>>();
+            timing.borrow().copy_to(trace);
+            let collected = collected?;
             let ts = self.clock.now_ns();
             let total: usize = collected.iter().map(|b| b.len()).sum();
             let mut raw = Vec::with_capacity(total);
@@ -530,10 +560,10 @@ impl HttpClient {
             }
             let body = Bytes::from(raw);
             let text = String::from_utf8_lossy(&body).into_owned();
-            trace.response_receive_start_ns = Some(record.recv_start_ns.unwrap_or(ts));
-            trace.response_receive_end_ns = Some(ts);
-            trace.response_chunks_count = collected.len() as u32;
-            trace.response_bytes_total = total as u64;
+            if trace.response_receive_start_ns.is_none() {
+                trace.response_receive_start_ns = Some(record.recv_start_ns.unwrap_or(ts));
+                trace.response_receive_end_ns = Some(ts);
+            }
             record.responses.push(Response::Text(TextResponse {
                 perf_ns: ts,
                 text,

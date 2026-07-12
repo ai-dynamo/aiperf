@@ -1215,6 +1215,17 @@ pub fn finalize_agentic_report(
         config.environment,
         evaluator.environment
     );
+    let effective_max_turns =
+        canonical_positive_usize(&evaluator.canonical_agent_config, "max_turns")?
+            .or(config.max_turns);
+    let effective_max_tokens =
+        canonical_positive_usize(&evaluator.canonical_agent_config, "max_tokens")?
+            .unwrap_or(config.max_tokens);
+    let effective_parser = canonical_nonempty_string(&evaluator.canonical_agent_config, "parser")?
+        .unwrap_or_else(|| config.parser.clone());
+    let effective_enable_summarize =
+        canonical_bool(&evaluator.canonical_agent_config, "enable_summarize")?
+            .unwrap_or(config.enable_summarize);
 
     let mut reward_values = BTreeMap::<String, Vec<f64>>::new();
     let mut completed_count = 0usize;
@@ -1396,6 +1407,7 @@ pub fn finalize_agentic_report(
             harness_source_sha256: evaluator.harness_source_sha256.clone(),
             agent: evaluator.agent.clone(),
             agent_version: evaluator.agent_version.clone(),
+            canonical_agent_config: evaluator.canonical_agent_config.clone(),
             environment: evaluator.environment.clone(),
             verifier: evaluator.verifier.clone(),
         },
@@ -1406,11 +1418,11 @@ pub fn finalize_agentic_report(
             task_concurrency: config.task_concurrency,
             model_concurrency,
             output_dir: config.output_dir.clone(),
-            max_turns: config.max_turns,
-            max_tokens: config.max_tokens,
+            max_turns: effective_max_turns,
+            max_tokens: effective_max_tokens,
             context_window: config.context_window,
-            parser: config.parser.clone(),
-            enable_summarize: config.enable_summarize,
+            parser: effective_parser,
+            enable_summarize: effective_enable_summarize,
             primary_reward: config.primary_reward.clone(),
             overwrite: config.overwrite,
             inference_gateway_base_url: config
@@ -1468,6 +1480,46 @@ pub fn finalize_agentic_report(
         native_report,
         results,
     })
+}
+
+fn canonical_positive_usize(config: &BTreeMap<String, Value>, key: &str) -> Result<Option<usize>> {
+    let Some(value) = config.get(key) else {
+        return Ok(None);
+    };
+    let raw = value
+        .as_u64()
+        .ok_or_else(|| anyhow!("canonical agent config {key:?} must be an unsigned integer"))?;
+    let resolved = usize::try_from(raw)
+        .with_context(|| format!("canonical agent config {key:?} exceeds usize"))?;
+    ensure!(
+        resolved > 0,
+        "canonical agent config {key:?} must be positive"
+    );
+    Ok(Some(resolved))
+}
+
+fn canonical_nonempty_string(
+    config: &BTreeMap<String, Value>,
+    key: &str,
+) -> Result<Option<String>> {
+    let Some(value) = config.get(key) else {
+        return Ok(None);
+    };
+    let resolved = value
+        .as_str()
+        .filter(|authored| !authored.trim().is_empty())
+        .ok_or_else(|| anyhow!("canonical agent config {key:?} must be a non-empty string"))?;
+    Ok(Some(resolved.to_string()))
+}
+
+fn canonical_bool(config: &BTreeMap<String, Value>, key: &str) -> Result<Option<bool>> {
+    let Some(value) = config.get(key) else {
+        return Ok(None);
+    };
+    value
+        .as_bool()
+        .map(Some)
+        .ok_or_else(|| anyhow!("canonical agent config {key:?} must be boolean"))
 }
 
 fn checked_call_count(total: usize, value: usize) -> Result<usize> {
@@ -1729,6 +1781,7 @@ mod tests {
                     },
                     agent: "aiperf-terminus-2".to_string(),
                     agent_version: "fixture".to_string(),
+                    canonical_agent_config: BTreeMap::new(),
                     environment: "fixture".to_string(),
                     verifier: "fixture verifier".to_string(),
                     episode_count: 1,

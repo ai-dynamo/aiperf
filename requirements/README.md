@@ -56,6 +56,18 @@ BrowserGym datasets use identifiers such as `browsergym/miniwob@0.14.3` and requ
 `--agentic-environment browsergym`; benchmark-specific services and Playwright
 browsers must be prepared according to the pinned BrowserGym package.
 
+`mcpmark-agentic-accuracy-worker.txt` is a third independent Python 3.12 lock.
+It installs MCPMark 0.0.1 from exact commit
+`cd45b7f57923b9b3985467f5139927575f83141c` with a hash-checked source archive
+and pins LiteLLM 1.80.0. MCPMark's Pixi runtime requires Click below 8, which is
+incompatible with the static Lighteval/DeepEval worker graph, so combining the
+locks would not be reproducible. The `mcpmark/` provider retains MCPMark's task
+registry, 100-turn agent loop, MCP servers, state managers, task-local
+`verify.py`, and cleanup. Only `litellm.acompletion` is replaced with the JSONL
+model-call broker; Rust sends and parses every inference request through its
+ordinary scheduled endpoint and transport path. Filesystem dataset provenance
+includes a digest over the concrete prepared files and their timestamps.
+
 Create the combined agentic worker environment with:
 
 ```bash
@@ -76,4 +88,30 @@ Regenerate that lock intentionally with:
 uv pip compile pyproject.toml --extra accuracy --extra browser-agentic-accuracy \
   --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
   --generate-hashes -o requirements/browser-agentic-accuracy-worker.txt
+```
+
+Create and run the MCPMark worker with:
+
+```bash
+uv venv --python 3.12 .venv-mcpmark-accuracy
+VIRTUAL_ENV=.venv-mcpmark-accuracy \
+  uv pip sync requirements/mcpmark-agentic-accuracy-worker.txt
+VIRTUAL_ENV=.venv-mcpmark-accuracy uv pip install --no-deps -e .
+
+AIPERF_ACCURACY_PYTHON=.venv-mcpmark-accuracy/bin/python \
+  cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --agentic-benchmark \
+    mcpmark/filesystem/standard@cd45b7f57923b9b3985467f5139927575f83141c \
+  --agentic-environment filesystem --agentic-task-concurrency 1 \
+  --agentic-max-episodes 1 --json out.json
+```
+
+MCPMark service prerequisites remain those of the exact upstream package (for
+example Node/npm for the pinned filesystem MCP server and service credentials
+for hosted suites). Regenerate its lock intentionally with:
+
+```bash
+uv pip compile pyproject.toml --extra mcpmark-agentic-accuracy \
+  --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+  --generate-hashes -o requirements/mcpmark-agentic-accuracy-worker.txt
 ```

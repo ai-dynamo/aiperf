@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use aiperf_transport::RealClock;
 use aiperf_transport::client::connection::{Sender, TimedBody};
-use aiperf_transport::client::pool::ConnectionPool;
+use aiperf_transport::client::pool::{ConnectionManager, ConnectionPool};
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::models::{ConnectionReuseStrategy, TraceData};
 use bytes::Bytes;
@@ -95,7 +95,7 @@ fn pooled_reuses_connection_and_records_reuse() {
 
         // First acquire establishes a real connection; send a real request over it.
         let mut t1 = TraceData::default();
-        let mut s1 = pool
+        let mut lease1 = pool
             .acquire(
                 &url,
                 &cfg,
@@ -112,12 +112,13 @@ fn pooled_reuses_connection_and_records_reuse() {
             t1.connection_reused_ns.is_none(),
             "first acquire is a fresh connect"
         );
-        assert_eq!(send_chat(&mut s1, &mock.base_url).await, 200);
+        assert_eq!(send_chat(lease1.sender_mut(), &mock.base_url).await, 200);
 
         // Return it to the pool, then re-acquire: should reuse (no new connect).
-        pool.put(&url, None, ConnectionReuseStrategy::Pooled, s1);
+        lease1.mark_reusable();
+        drop(lease1);
         let mut t2 = TraceData::default();
-        let mut s2 = pool
+        let mut lease2 = pool
             .acquire(
                 &url,
                 &cfg,
@@ -137,6 +138,6 @@ fn pooled_reuses_connection_and_records_reuse() {
             "reuse must not open a new socket"
         );
         // The reused connection still carries traffic to the same server.
-        assert_eq!(send_chat(&mut s2, &mock.base_url).await, 200);
+        assert_eq!(send_chat(lease2.sender_mut(), &mock.base_url).await, 200);
     });
 }

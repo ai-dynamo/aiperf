@@ -3,6 +3,10 @@
 
 //! Fine-grained connection/request trace timing. Behavioral port of
 //! `AioHttpTraceData` — all timestamps are `Clock::now_ns()` clock-nanoseconds.
+//!
+//! Field parity follows `src/aiperf/common/models/trace_models.py:379-463` and
+//! `:532-636`. Per-chunk vectors are opt-in at collection time, matching
+//! `src/aiperf/transports/aiohttp_trace.py:67-114,216-230`.
 
 /// Per-request trace timing. All `_ns` fields are clock-nanoseconds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -18,6 +22,8 @@ pub struct TraceData {
     pub tls_connect_end_ns: Option<i64>,
     pub connection_reused_ns: Option<i64>,
     // DNS
+    pub dns_cache_hit_ns: Option<i64>,
+    pub dns_cache_miss_ns: Option<i64>,
     pub dns_lookup_start_ns: Option<i64>,
     pub dns_lookup_end_ns: Option<i64>,
     // Request send
@@ -26,6 +32,7 @@ pub struct TraceData {
     pub request_send_end_ns: Option<i64>,
     pub request_chunks_count: u32,
     pub request_bytes_total: u64,
+    pub request_chunks: Vec<(i64, u64)>,
     // Response receive
     pub response_status_code: Option<u16>,
     pub response_reason: Option<String>,
@@ -33,6 +40,7 @@ pub struct TraceData {
     pub response_headers_received_ns: Option<i64>,
     pub response_chunks_count: u32,
     pub response_bytes_total: u64,
+    pub response_chunks: Vec<(i64, u64)>,
     pub response_receive_end_ns: Option<i64>,
     // Error
     pub error_timestamp_ns: Option<i64>,
@@ -112,8 +120,30 @@ impl TraceData {
         let conv = |v: Option<i64>| v.map(|p| reference.wall_ns + (p - reference.clock_ns));
         TraceExport {
             request_send_start_ns: conv(self.request_send_start_ns),
+            request_chunks: self
+                .request_chunks
+                .iter()
+                .map(|(timestamp_ns, size)| {
+                    (
+                        reference.wall_ns + (*timestamp_ns - reference.clock_ns),
+                        *size,
+                    )
+                })
+                .collect(),
             response_receive_start_ns: conv(self.response_receive_start_ns),
             response_receive_end_ns: conv(self.response_receive_end_ns),
+            response_chunks: self
+                .response_chunks
+                .iter()
+                .map(|(timestamp_ns, size)| {
+                    (
+                        reference.wall_ns + (*timestamp_ns - reference.clock_ns),
+                        *size,
+                    )
+                })
+                .collect(),
+            dns_cache_hit_ns: conv(self.dns_cache_hit_ns),
+            dns_cache_miss_ns: conv(self.dns_cache_miss_ns),
             sending_ns: self.sending(),
             waiting_ns: self.waiting(),
             receiving_ns: self.receiving(),
@@ -139,8 +169,12 @@ pub struct TraceReference {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceExport {
     pub request_send_start_ns: Option<i64>,
+    pub request_chunks: Vec<(i64, u64)>,
     pub response_receive_start_ns: Option<i64>,
     pub response_receive_end_ns: Option<i64>,
+    pub response_chunks: Vec<(i64, u64)>,
+    pub dns_cache_hit_ns: Option<i64>,
+    pub dns_cache_miss_ns: Option<i64>,
     pub sending_ns: Option<i64>,
     pub waiting_ns: Option<i64>,
     pub receiving_ns: Option<i64>,
@@ -168,8 +202,11 @@ mod tests {
             connection_pool_wait_end_ns: Some(150),
             dns_lookup_start_ns: Some(200),
             dns_lookup_end_ns: Some(260),
+            dns_cache_miss_ns: Some(190),
             tcp_connect_start_ns: Some(300),
             tcp_connect_end_ns: Some(500),
+            request_chunks: vec![(1_200, 12)],
+            response_chunks: vec![(1_500, 4), (2_000, 8)],
             ..TraceData::default()
         }
     }
@@ -211,5 +248,8 @@ mod tests {
         assert_eq!(exp.request_send_start_ns, Some(10_000)); // 10_000 + (1_000-1_000)
         assert_eq!(exp.response_receive_end_ns, Some(11_000)); // 10_000 + (2_000-1_000)
         assert_eq!(exp.duration_ns, Some(1_000));
+        assert_eq!(exp.dns_cache_miss_ns, Some(9_190));
+        assert_eq!(exp.request_chunks, vec![(10_200, 12)]);
+        assert_eq!(exp.response_chunks, vec![(10_500, 4), (11_000, 8)]);
     }
 }

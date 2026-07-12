@@ -32,3 +32,4 @@ socket2 = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "sync", "process", "time"] }
+hyper = { version = "1.10", features = ["server", "http1", "http2"] }

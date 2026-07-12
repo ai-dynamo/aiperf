@@ -538,3 +538,75 @@ This addendum proves the pinned BrowserGym family, not every external agentic
 benchmark. OSWorld/OSWorld-Verified, AppWorld, and MCPMark are not in
 BrowserGym 0.14.3 or Harbor 0.18 and still require their own canonical provider
 adapters before they may be claimed.
+
+## Addendum — 2026-07-11 (canonical MCPMark Verified provider)
+
+The MCPMark caveat immediately above is now superseded. Dataset names beginning
+with `mcpmark/` select a third independently locked `AgenticHarnessProvider`
+backed by MCPMark commit `cd45b7f57923b9b3985467f5139927575f83141c`
+(`MCPMark==0.0.1`, LiteLLM 1.80.0). The direct source archive is hash-pinned in
+`requirements/mcpmark-agentic-accuracy-worker.txt`; the complete lock digest is
+`85aed9ad589093de161c8ed00c2dbf64ffea1d06685a96a254c72fa4cf189a59`
+and the installed MCPMark `src/**/*.py` digest is
+`55bc1d0e43043101d4eed5b76d97c2efb14c3415e9a4c7e7b74cdc8f81fb21f2`.
+This worker is separate because MCPMark's Pixi dependency pins Click below 8
+and cannot share the static Lighteval/DeepEval environment.
+
+The adapter ports no MCPMark semantics. `MCPEvaluator` still owns setup,
+execution, verification, artifact writing, and cleanup
+(`src/evaluator.py:181-294`); `MCPMarkAgent` still owns the system prompt,
+100-turn loop, 32,768-token generation limit, temperature 1.0, tool history,
+retry policy, and MCP calls (`src/agents/mcpmark_agent.py:768-1099`); its exact
+stdio/HTTP MCP server definitions remain at
+`src/agents/mcpmark_agent.py:1102-1243`; and task selection plus verifier exit
+codes remain authoritative in `src/base/task_manager.py:132-245`. The adapter
+replaces only `litellm.acompletion` with the shared `ModelCallBroker`. It
+initializes MCPMark with the real target model so canonical model-specific tool
+schema handling remains active, substitutes a non-secret credential sentinel,
+and never gives Python a model-server URL or inference client.
+
+Each MCPMark call therefore crosses JSONL with complete messages, canonical
+generation controls, tool schemas, tool choice, and provider extras. Rust alone
+admits it through `AgenticWorkload`, materializes the ordinary Chat request,
+sends and streams it through `ScheduledRuntime` / `TransportSink`, reconstructs
+assistant tool calls in the endpoint parser, records timing/usage/metrics, and
+submits the terminal result. MCPMark then invokes its real MCP server and later
+its task-local verifier. A Rust transport failure is tagged through the agent
+loop and reported as infrastructure; state setup failure, verifier exception,
+worker failure, and a zero-call agent failure are also infrastructure. A
+normally completed verifier exit 1 remains canonical score `pass=0.0`, never an
+infrastructure rewrite.
+
+`mcpmark/<service>[/standard|easy]@<commit>` resolves the exact upstream task
+registry and forces sequential task environments because MCPMark uses process
+globals. Selected descriptions, metadata, and verifiers are content-digested.
+For the filesystem service, MCPMark's own category preparation runs before the
+measurement clock and AIPerf additionally digests every concrete environment
+file, its relative path, content, and modification timestamp; that state digest
+is part of the dataset revision. Hosted MCPMark services retain their canonical
+credential and service prerequisites. MCPMark's non-overridable controls are
+reported in `canonical_agent_config`; validated common values override generic
+CLI defaults in the effective native-v2 `agentic.config`, so reports do not
+claim the unused 4,096-token generic default.
+
+Executable proof uses the real pinned worker, MCPMark's
+`file_property/size_classification` task, the exact
+`@modelcontextprotocol/server-filesystem@2025.12.18` stdio server, and the
+shipped `verify.py`. The compiled Rust CLI serves three normal streaming model
+turns: discover the allowed directory, issue the canonical MCP tools that
+classify all eight files, and finish. The verifier checks directory creation,
+exact membership, byte-size ranges, empty root, and total count, then returns
+`pass=1.0`. `crates/aiperf/tests/agentic_mcpmark_e2e.rs` requires exactly three
+captured Rust HTTP requests with `include_usage`, model/tool history, 32,768
+max tokens, temperature 1.0, the exact worker/source/lock identity, concrete
+environment digest, MCPMark artifacts, and canonical reward 1.0:
+
+```bash
+AIPERF_MCPMARK_AGENTIC_PYTHON=/path/to/pinned/mcpmark/python \
+AIPERF_MCPMARK_FILESYSTEM_ROOT=/path/to/prepared/environments \
+  cargo test -p aiperf --test agentic_mcpmark_e2e -- --ignored --nocapture
+```
+
+This proves MCPMark's canonical provider and filesystem verifier path. It does
+not claim OSWorld/OSWorld-Verified or AppWorld; those still require their own
+canonical providers and proofs.

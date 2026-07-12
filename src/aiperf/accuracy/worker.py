@@ -44,7 +44,7 @@ from aiperf.accuracy.agentic import (
 )
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.6.0"
+WORKER_VERSION = "1.7.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -59,6 +59,10 @@ _BROWSERGYM_LOCKED_PACKAGE_VERSIONS = {
     "agentlab": "0.4.2",
     "browsergym-core": "0.14.3",
     "browsergym-experiments": "0.14.3",
+}
+_MCPMARK_LOCKED_PACKAGE_VERSIONS = {
+    "MCPMark": "0.0.1",
+    "litellm": "1.80.0",
 }
 _LCB_MAX_RELEASE = 6
 
@@ -106,6 +110,12 @@ class _LazyAgenticHarnessProvider(AgenticHarnessProvider):
 
 
 _AGENTIC_HARNESS_PROVIDERS: tuple[AgenticHarnessProvider, ...] = (
+    _LazyAgenticHarnessProvider(
+        capability="agentic_mcpmark",
+        namespace_prefix="mcpmark/",
+        factory="aiperf.accuracy.mcpmark:create_mcpmark_harness",
+        required_versions=_MCPMARK_LOCKED_PACKAGE_VERSIONS,
+    ),
     _LazyAgenticHarnessProvider(
         capability="agentic_browsergym",
         namespace_prefix="browsergym/",
@@ -278,6 +288,8 @@ class AccuracyWorker:
                 "agentlab",
                 "browsergym-core",
                 "browsergym-experiments",
+                "MCPMark",
+                "litellm",
             )
         }
         capabilities = [
@@ -1163,6 +1175,11 @@ def _dependency_lock_digest() -> str | None:
         return authored
     if all(
         _package_version(package) == expected
+        for package, expected in _MCPMARK_LOCKED_PACKAGE_VERSIONS.items()
+    ):
+        lock_name = "mcpmark-agentic-accuracy-worker.txt"
+    elif all(
+        _package_version(package) == expected
         for package, expected in _BROWSERGYM_LOCKED_PACKAGE_VERSIONS.items()
     ):
         lock_name = "browser-agentic-accuracy-worker.txt"
@@ -1194,8 +1211,14 @@ def _verify_locked_environment() -> None:
 
 
 def _verify_agentic_environment() -> None:
-    """Require the static evaluator substrate shared by every agentic provider."""
-    _verify_locked_environment()
+    """Leave dependency validation to the selected pinned agentic provider.
+
+    Agentic harnesses do not import the static Lighteval/DeepEval stack, and
+    several canonical providers have mutually incompatible dependency graphs.
+    ``_create_agentic_harness`` therefore requires the selected provider's
+    exact package versions before importing it; each provider additionally
+    verifies its pinned source digest.
+    """
 
 
 def main() -> None:

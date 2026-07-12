@@ -160,6 +160,12 @@ browser-agentic-accuracy = [
     "agentlab==0.4.2; python_version >= '3.12' and python_version < '3.13'",
     "browsergym==0.14.3; python_version >= '3.12'",
 ]
+mcpmark-agentic-accuracy = [
+    # MCPMark Verified owns its task registry, MCP servers, environment setup,
+    # agent loop, and task-local verifiers. Pin the source archive by commit;
+    # the generated requirements lock additionally pins its archive SHA-256.
+    "MCPMark @ https://github.com/eval-sys/mcpmark/archive/cd45b7f57923b9b3985467f5139927575f83141c.tar.gz ; python_version >= '3.12' and python_version < '3.13'",
+]
 
 [dependency-groups]
 dev = [
