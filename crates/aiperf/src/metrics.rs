@@ -201,7 +201,7 @@ pub struct NativeMetricsObserver {
 pub struct NativeMetricsCollection {
     /// Aggregate over every finalized request.
     pub summary: AccumulatorSummary,
-    /// Finalized request facts in arrival order.
+    /// Finalized request facts in ascending absolute request-slot order.
     pub records: Vec<RecordIngest>,
 }
 
