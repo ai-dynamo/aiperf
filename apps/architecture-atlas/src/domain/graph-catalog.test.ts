@@ -390,7 +390,7 @@ describe("graph-first catalog", () => {
     ).toBe(true);
   });
 
-  it("keeps Dynamo online out of built runner journey facts", () => {
+  it("includes built Dynamo online replay across the shared Tier-0 journey", () => {
     const builtJourneyNodes = architectureCatalog.graphNodes.filter(
       (node) => node.tier === 0 && node.status.state === "built",
     );
@@ -399,11 +399,38 @@ describe("graph-first catalog", () => {
     );
 
     expect(
-      builtJourneyNodes.every((node) => !node.flavors.includes("dynamo_online")),
+      builtJourneyNodes.every((node) => node.flavors.includes("dynamo_online")),
     ).toBe(true);
     expect(
-      builtJourneyEdges.every((edge) => !edge.flavors.includes("dynamo_online")),
+      builtJourneyEdges.every((edge) => edge.flavors.includes("dynamo_online")),
     ).toBe(true);
+  });
+
+  it("distinguishes the invoked library helper from the planned dedicated pair", () => {
+    const librarySeam = architectureCatalog.graphNodes.find(
+      (node) => node.id === "node.dynamo-online-library-seam",
+    );
+    const dedicatedPair = architectureCatalog.graphNodes.find(
+      (node) => node.id === "node.dynamo-online-runner-pair",
+    );
+    const dedicatedPairEdge = architectureCatalog.graphEdges.find(
+      (edge) => edge.id === "edge.dynamo.online.runner.plan",
+    );
+
+    expect(librarySeam?.summary.developer).toMatch(
+      /invoked.*dynamo_offline.*runner pair/i,
+    );
+    expect(librarySeam?.summary.maintainer).toMatch(
+      /existing.*feature-gated.*pair/i,
+    );
+    expect(dedicatedPair?.status).toEqual({
+      state: "planned",
+      delivery: "runner_pair",
+    });
+    expect(dedicatedPairEdge?.status).toEqual({
+      state: "planned",
+      delivery: "runner_pair",
+    });
   });
 
   it("models the complete feature-gated Dynamo offline path", () => {

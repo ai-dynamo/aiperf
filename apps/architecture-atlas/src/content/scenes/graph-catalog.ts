@@ -49,6 +49,7 @@ const builtJourneyFlavors: ExecutionFlavor[] = [
   "native_grpc",
   "online_mock",
   "dynamo_offline",
+  "dynamo_online",
 ];
 
 interface JourneyDefinition {
@@ -697,14 +698,14 @@ const graphNodesRaw = [
     status: { state: "built", delivery: "library_seam" },
     flavors: ["dynamo_online"],
     title: {
-      executive: "Dynamo online library seam",
-      developer: "Built library seam for online replay",
+      executive: "Dynamo online replay helper",
+      developer: "Library-owned online replay helper",
       maintainer: "run_scheduled_backend_online",
     },
     summary: {
-      executive: "The shared library seam already exists.",
-      developer: "Dynamo online is implemented only at the library seam.",
-      maintainer: "Source-backed online engine pump without a runner backend pair.",
+      executive: "The existing runner path invokes this shared library helper.",
+      developer: "The helper is invoked by the existing feature-gated dynamo_offline runner pair.",
+      maintainer: "The existing feature-gated pair calls run_scheduled_backend_online; only a distinct dynamo_online backend ID remains planned.",
     },
     evidence: [
       source(
@@ -738,9 +739,9 @@ const graphNodesRaw = [
       maintainer: "Planned aiperf-runner dynamo_online integration",
     },
     summary: {
-      executive: "Runner integration remains planned and explicitly unbuilt.",
-      developer: "Tracks future runner backend and pair registration.",
-      maintainer: "Design-only entity until executable runner source exists.",
+      executive: "A distinct Dynamo-online backend identity remains planned.",
+      developer: "Tracks a future dedicated dynamo_online backend ID and registered pair.",
+      maintainer: "Design-only dedicated identity; the built path uses dynamo_offline with replay_mode online.",
     },
     evidence: [design(redesignSpec)],
     seamPorts: [

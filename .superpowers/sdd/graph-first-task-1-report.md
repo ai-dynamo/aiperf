@@ -41,6 +41,7 @@ commit hash(es):
 - `c5ad057fa`
 - `0ab1c12a8`
 - `dcc387cce`
+- `789041ff0`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
@@ -154,6 +155,48 @@ GREEN:
 
 source-drift fix commit hash(es):
 - `dcc387cce`
+
+concerns:
+- none identified.
+
+## Final Dynamo Flavor Fix — 2026-07-12
+
+status: DONE
+
+fixes:
+- added `dynamo_online` to every built shared Tier-0 Python-to-result journey node and edge because the visual flavor now represents the runner-reachable `replay_mode=online` path;
+- retained the distinct `delivery: runner_pair` node and edge as planned-only facts for a future dedicated `dynamo_online` backend ID;
+- corrected the library-helper copy to state that the existing feature-gated `dynamo_offline` runner pair invokes `run_scheduled_backend_online`.
+
+tests:
+- replaced the stale Tier-0 exclusion assertion with complete shared-journey inclusion checks;
+- added explicit copy/status checks distinguishing the invoked library helper from the planned dedicated backend/pair.
+
+RED:
+- command:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run test -- src/domain/graph-catalog.test.ts`
+- observed:
+  - `1 failed test file`
+  - `2 failed, 24 passed`
+  - failures showed missing `dynamo_online` Tier-0 coverage and stale library-only copy.
+
+GREEN:
+- focused command:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run test -- src/domain/graph-catalog.test.ts`
+- focused result:
+  - `1 passed test file`
+  - `26 passed`
+- full commands:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run validate:content`
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run typecheck`
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas test`
+- full results:
+  - `validate:content`: `Architecture Atlas content is valid: 25 components, 20 edges, 23 crates.`
+  - `typecheck`: success
+  - `npm test`: `12 passed test files, 115 passed tests`
+
+final flavor fix commit hash(es):
+- pending
 
 concerns:
 - none identified.
