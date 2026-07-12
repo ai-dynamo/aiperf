@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use aiperf_metrics::RecordIngest;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::ObservedUsage;
 use uuid::Uuid;
@@ -173,6 +174,48 @@ impl TumblingWindowSampler {
     pub fn in_flight(&self) -> usize {
         self.in_flight.len()
     }
+
+    /// Ingest one already-terminal native request record.
+    ///
+    /// Thread-per-core graph workers finalize native records before returning
+    /// a trace. The coordinator can feed those records directly without
+    /// replaying a synthetic callback sequence or sharing a mutable sampler
+    /// across worker threads. Formulas match the ordinary observer path:
+    /// admission is the latency origin, meaningful token timestamps determine
+    /// TTFT/request latency, and endpoint usage owns OSL/ITL reconciliation.
+    pub fn process_record(&mut self, record: &RecordIngest) {
+        if record.canceled {
+            self.cancelled += 1;
+            return;
+        }
+        if record.errored {
+            self.errors += 1;
+            return;
+        }
+        let Some(first) = record.token_arrival_ns.first().copied() else {
+            self.errors += 1;
+            return;
+        };
+        let last = record
+            .token_arrival_ns
+            .last()
+            .copied()
+            .expect("a first token implies a last token");
+        let started_ns = record.admit_ns.unwrap_or(record.start_ns);
+        let output_sequence_length = record
+            .usage
+            .completion_tokens
+            .and_then(|value| usize::try_from(value).ok());
+        let inter_token_latency_ns = output_sequence_length
+            .filter(|count| *count > 1)
+            .map(|count| last.saturating_sub(first).max(0) as f64 / (count - 1) as f64);
+        self.completed.push(RequestSample {
+            request_latency_ns: last.saturating_sub(started_ns).max(0),
+            ttft_ns: Some(first.saturating_sub(started_ns).max(0)),
+            inter_token_latency_ns,
+            output_sequence_length,
+        });
+    }
 }
 
 impl WindowSampler for TumblingWindowSampler {
@@ -201,7 +244,9 @@ impl WindowSampler for TumblingWindowSampler {
 
     fn on_usage(&mut self, uuid: Uuid, usage: ObservedUsage) {
         if let Some(request) = self.in_flight.get_mut(&uuid) {
-            request.output_sequence_length = usage.completion_tokens;
+            request.output_sequence_length = usage
+                .completion_tokens
+                .and_then(|value| usize::try_from(value).ok());
         }
     }
 
@@ -272,6 +317,8 @@ fn elapsed_seconds(start_ns: i64, end_ns: i64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use aiperf_metrics::Phase;
+
     use super::*;
 
     #[test]
@@ -382,5 +429,34 @@ mod tests {
         let stats = sampler.take(100);
         assert_eq!(stats.successful_requests[0].ttft_ns, Some(10));
         assert_eq!(stats.successful_requests[0].request_latency_ns, 10);
+    }
+
+    #[test]
+    fn terminal_native_records_match_observer_window_formulas() {
+        let mut sampler = TumblingWindowSampler::new(0);
+        let mut completed = RecordIngest::minimal(10, 50, Phase::Profiling);
+        completed.admit_ns = Some(20);
+        completed.token_arrival_ns = vec![30, 40];
+        completed.usage.completion_tokens = Some(5);
+        sampler.process_record(&completed);
+
+        let mut failed = RecordIngest::minimal(10, 50, Phase::Profiling);
+        failed.errored = true;
+        sampler.process_record(&failed);
+        let mut cancelled = RecordIngest::minimal(10, 50, Phase::Profiling);
+        cancelled.canceled = true;
+        sampler.process_record(&cancelled);
+
+        let stats = sampler.take(1_000_000_000);
+        assert_eq!(stats.completed(), 1);
+        assert_eq!(stats.errors, 1);
+        assert_eq!(stats.cancelled, 1);
+        assert_eq!(stats.successful_requests[0].request_latency_ns, 20);
+        assert_eq!(stats.successful_requests[0].ttft_ns, Some(10));
+        assert_eq!(
+            stats.successful_requests[0].inter_token_latency_ns,
+            Some(2.5)
+        );
+        assert_eq!(stats.successful_requests[0].output_sequence_length, Some(5));
     }
 }
