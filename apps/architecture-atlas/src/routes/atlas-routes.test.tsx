@@ -16,169 +16,23 @@ function renderAtlas(path: string) {
   return router;
 }
 
-describe("unified atlas route", () => {
-  it("renders a textual graph inventory with no dangling connections", async () => {
-    renderAtlas(
-      "/atlas?audience=developer&modes=online_grpc&ownership=rust&statuses=built",
-    );
+describe("graph-first route shell", () => {
+  it("surfaces all canonical scenes in compact rail navigation", async () => {
+    renderAtlas("/?audience=developer");
 
-    const inventory = await screen.findByRole("list", {
-      name: "Visible architecture components",
-    });
-    const summary = screen.getByRole("status", {
-      name: "Atlas graph summary",
-    });
-    expect(within(inventory).getAllByRole("listitem").length).toBeGreaterThan(0);
-    expect(summary).toHaveTextContent(/components, \d+ connections/u);
-    expect(screen.getByLabelText("Architecture graph")).toBeInTheDocument();
-  });
-
-  it("shows selected evidence and changes copy with the audience lens", async () => {
-    const router = renderAtlas(
-      "/atlas?audience=executive&selected=component.clock-seam",
-    );
-
-    const drawer = await screen.findByRole("dialog", {
-      name: "Consistent time model",
-    });
-    expect(drawer).toHaveTextContent(
-      "Keeps real service tests and deterministic simulations comparable",
-    );
-    expect(drawer).toHaveTextContent(/upstream/u);
-    expect(drawer).toHaveTextContent(/downstream/u);
-
-    await router.navigate({
-      to: "/atlas",
-      search: {
-        audience: "maintainer",
-        selected: "component.clock-seam",
-      },
-    });
-
+    const rail = await screen.findByRole("navigation", { name: "Runtime scenes" });
     expect(
-      await screen.findByRole("dialog", {
-        name: "Clock with RealClock and SimClock",
-      }),
-    ).toHaveTextContent("crates/aiperf-clock/src/clock.rs");
-  });
-
-  it("names directed upstream and downstream dependencies in text", async () => {
-    renderAtlas(
-      "/atlas?audience=developer&selected=component.rust-runtime",
-    );
-
-    const summary = await screen.findByRole("status", {
-      name: "Atlas graph summary",
-    });
-    expect(summary).toHaveTextContent(
-      /upstream:.*Python configuration and orchestration/u,
-    );
-    expect(summary).toHaveTextContent(
-      /downstream:.*HTTP, gRPC, or mock inference target/u,
-    );
+      within(rail).getByRole("link", { name: "Runtime composition" }),
+    ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", {
-        name: /Python configuration and orchestration.*upstream of selected/iu,
+      within(rail).getByRole("link", {
+        name: "Runner protocol and registries",
       }),
     ).toBeInTheDocument();
-  });
-
-  it("exposes semantic lifecycle group labels outside the canvas", async () => {
-    renderAtlas("/atlas?audience=developer&layout=lifecycle");
-
-    const bands = await screen.findByRole("list", { name: "Layout bands" });
-    expect(within(bands).getByText(/Validation and preparation:/u)).toBeInTheDocument();
-    expect(within(bands).getByText(/Measurement:/u)).toBeInTheDocument();
-  });
-
-  it("writes search, layout, and selected-node interaction state to the URL", async () => {
-    const user = userEvent.setup();
-    const router = renderAtlas("/atlas?audience=developer");
-
-    await user.type(
-      await screen.findByRole("searchbox", { name: "Search atlas" }),
-      "clock",
-    );
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Layout perspective" }),
-      "lifecycle",
-    );
-    await user.click(
-      screen.getByRole("button", { name: /^Injected execution clock/u }),
-    );
-
-    await waitFor(() => {
-      expect(router.state.location.search).toMatchObject({
-        audience: "developer",
-        layout: "lifecycle",
-        query: "clock",
-        selected: "component.clock-seam",
-      });
-    });
-  });
-
-  it("preserves trailing spaces while editing a multi-word URL query", async () => {
-    const user = userEvent.setup();
-    const router = renderAtlas("/atlas?audience=developer");
-
-    await user.type(
-      await screen.findByRole("searchbox", { name: "Search atlas" }),
-      "virtual clock ",
-    );
-
-    await waitFor(() => {
-      expect(router.state.location.search.query).toBe("virtual clock ");
-    });
-    expect(screen.getByRole("searchbox", { name: "Search atlas" })).toHaveValue(
-      "virtual clock ",
-    );
-  });
-
-  it("restores focus to the inventory trigger when the drawer closes", async () => {
-    const user = userEvent.setup();
-    renderAtlas("/atlas?audience=developer");
-    await user.click(await screen.findByText("Text inventory"));
-    const trigger = screen.getByRole("button", {
-      name: /^Injected execution clock/u,
-    });
-
-    await user.click(trigger);
     expect(
-      await screen.findByRole("button", { name: "Clear selected component" }),
-    ).toHaveFocus();
-    await user.keyboard("{Escape}");
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      expect(trigger).toHaveFocus();
-    });
+      within(rail).getByRole("link", { name: "Crate dependency topology" }),
+    ).toBeInTheDocument();
   });
-
-  it.each(["close control", "Escape"] as const)(
-    "uses a visible focus fallback for deep links closed by %s",
-    async (method) => {
-      const user = userEvent.setup();
-      renderAtlas(
-        "/atlas?audience=developer&selected=component.clock-seam",
-      );
-      const close = await screen.findByRole("button", {
-        name: "Clear selected component",
-      });
-
-      if (method === "Escape") {
-        await user.keyboard("{Escape}");
-      } else {
-        await user.click(close);
-      }
-
-      await waitFor(() => {
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-        expect(
-          screen.getByRole("searchbox", { name: "Search atlas" }),
-        ).toHaveFocus();
-      });
-    },
-  );
 });
 
 describe("crate reference routes", () => {
@@ -247,14 +101,14 @@ describe("crate reference routes", () => {
 });
 
 describe("shell search", () => {
-  it("navigates exact crate names to references without stale guided filters", async () => {
+  it("navigates exact crate names to references from graph-first routes", async () => {
     const user = userEvent.setup();
     const router = renderAtlas(
-      "/execution?audience=executive&modes=online_grpc&statuses=built",
+      "/scenes/endpoint-bindings-transports?audience=executive",
     );
 
     await user.type(
-      await screen.findByRole("searchbox", { name: "Search architecture" }),
+      await screen.findByRole("searchbox", { name: "Graph search" }),
       "aiperf-clock",
     );
     await user.keyboard("{Enter}");
@@ -265,23 +119,22 @@ describe("shell search", () => {
     });
   });
 
-  it("sends general terms to the atlas and preserves only the audience", async () => {
+  it("writes general graph terms to shared search state on the active scene", async () => {
     const user = userEvent.setup();
     const router = renderAtlas(
-      "/parity?audience=maintainer&modes=dynamo_offline&statuses=unbuilt",
+      "/scenes/metrics-telemetry?audience=maintainer",
     );
 
     await user.type(
-      await screen.findByRole("searchbox", { name: "Search architecture" }),
+      await screen.findByRole("searchbox", { name: "Graph search" }),
       "virtual clock",
     );
-    await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/atlas");
-      expect(router.state.location.search).toEqual({
+      expect(router.state.location.pathname).toBe("/scenes/metrics-telemetry");
+      expect(router.state.location.search).toMatchObject({
         audience: "maintainer",
-        query: "virtual clock",
+        q: "virtual clock",
       });
     });
   });

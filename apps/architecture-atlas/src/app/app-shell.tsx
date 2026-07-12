@@ -3,8 +3,6 @@
 
 import { Link, useRouter } from "@tanstack/react-router";
 import {
-  useEffect,
-  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
@@ -18,41 +16,57 @@ import {
 } from "../domain/audience";
 import {
   routeCapabilities,
-  routeSupports,
-  type PresentationRoute,
+  type AtlasRoutePath,
+  type SceneRoute,
 } from "../domain/routes";
+import {
+  executionFlavorSchema,
+  type ExecutionFlavor,
+} from "../domain/architecture";
 
 interface AppShellProps {
   audience: Audience;
   children: ReactNode;
-  presentation: boolean;
-  presentationAvailable: boolean;
-  nextRoute?: PresentationRoute;
-  previousRoute?: PresentationRoute;
-  onExitPresentation(): void;
-  onNavigatePresentation(route: PresentationRoute): void;
-  onStartPresentation(): void;
+  sceneRoutes: readonly SceneRoute[];
+  activeScenePath: AtlasRoutePath;
+  primaryFlavor: ExecutionFlavor;
+  compareFlavor: ExecutionFlavor | null;
+  graphSearchQuery: string;
+  sharedStateNotice?: string;
   onAudienceChange(audience: Audience): void;
+  onPrimaryFlavorChange(flavor: ExecutionFlavor): void;
+  onCompareFlavorChange(flavor: ExecutionFlavor | null): void;
+  onGraphSearchChange(query: string): void;
+  onFitGraph(): void;
+  onResetGraph(): void;
+  onShareGraphState(): void;
 }
 
-function NavigationLinks() {
-  return routeCapabilities.map(({ path: to, label }) => (
+function SceneRailLinks({
+  routes,
+  audience,
+  primaryFlavor,
+  compareFlavor,
+  graphSearchQuery,
+}: {
+  routes: readonly SceneRoute[];
+  audience: Audience;
+  primaryFlavor: ExecutionFlavor;
+  compareFlavor: ExecutionFlavor | null;
+  graphSearchQuery: string;
+}) {
+  return routes.map(({ path: to, label }) => (
     <Link
       activeOptions={{ exact: to === "/" }}
       activeProps={{ "aria-current": "page" }}
       className="nav-link"
       key={to}
-      search={(previous) => ({
-        audience: previous.audience,
-        modes:
-          routeSupports(to, "filters") && !routeSupports(to, "atlasState")
-            ? previous.modes
-            : undefined,
-        statuses:
-          routeSupports(to, "filters") && !routeSupports(to, "atlasState")
-            ? previous.statuses
-            : undefined,
-      })}
+      search={{
+        audience,
+        primary: primaryFlavor,
+        compare: compareFlavor ?? undefined,
+        q: graphSearchQuery || undefined,
+      }}
       to={to}
     >
       <span className="nav-marker" aria-hidden="true" />
@@ -64,57 +78,22 @@ function NavigationLinks() {
 export function AppShell({
   audience,
   children,
-  presentation,
-  presentationAvailable,
-  nextRoute,
-  previousRoute,
-  onExitPresentation,
-  onNavigatePresentation,
-  onStartPresentation,
+  sceneRoutes,
+  activeScenePath,
+  primaryFlavor,
+  compareFlavor,
+  graphSearchQuery,
+  sharedStateNotice,
   onAudienceChange,
+  onPrimaryFlavorChange,
+  onCompareFlavorChange,
+  onGraphSearchChange,
+  onFitGraph,
+  onResetGraph,
+  onShareGraphState,
 }: AppShellProps) {
-  const presentationMain = useRef<HTMLElement>(null);
-  const presentationEntry = useRef<HTMLButtonElement>(null);
-  const nextControl = useRef<HTMLButtonElement>(null);
-  const previousControl = useRef<HTMLButtonElement>(null);
-  const wasPresenting = useRef(false);
   const router = useRouter();
-  const [globalQuery, setGlobalQuery] = useState("");
-
-  useEffect(() => {
-    if (presentation) {
-      presentationMain.current?.focus();
-    } else if (wasPresenting.current) {
-      presentationEntry.current?.focus();
-    }
-    wasPresenting.current = presentation;
-  }, [presentation]);
-
-  useEffect(() => {
-    if (!presentation) {
-      return undefined;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onExitPresentation();
-      } else if (event.key === "ArrowLeft" && previousRoute) {
-        previousControl.current?.click();
-      } else if (event.key === "ArrowRight" && nextRoute) {
-        nextControl.current?.click();
-      } else {
-        return;
-      }
-      event.preventDefault();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    nextRoute,
-    onExitPresentation,
-    onNavigatePresentation,
-    presentation,
-    previousRoute,
-  ]);
+  const [sceneRailCollapsed, setSceneRailCollapsed] = useState(false);
 
   const handleAudienceChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const result = audienceSchema.safeParse(event.target.value);
@@ -124,7 +103,7 @@ export function AppShell({
   };
   const handleGlobalSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const query = globalQuery.trim();
+    const query = graphSearchQuery.trim();
     if (!query) {
       return;
     }
@@ -138,59 +117,7 @@ export function AppShell({
         params: { crateId: crate.packageName },
         search: { audience },
       });
-    } else {
-      void router.navigate({
-        to: "/atlas",
-        search: { audience, query },
-      });
     }
-    setGlobalQuery("");
-  };
-
-  if (presentation) {
-    return (
-      <div className="app-shell presentation-shell">
-        <main
-          className="content-frame"
-          id="atlas-content"
-          ref={presentationMain}
-          tabIndex={-1}
-        >
-          {children}
-        </main>
-        <nav
-          aria-label="Presentation routes"
-          className="presentation-navigation"
-        >
-          {previousRoute ? (
-            <button
-              onClick={() => onNavigatePresentation(previousRoute)}
-              ref={previousControl}
-              type="button"
-            >
-              Previous
-            </button>
-          ) : (
-            <span aria-disabled="true">Previous</span>
-          )}
-          <span className="presentation-lens">{audience}</span>
-          <button onClick={onExitPresentation} type="button">
-            Exit presentation
-          </button>
-          {nextRoute ? (
-            <button
-              onClick={() => onNavigatePresentation(nextRoute)}
-              ref={nextControl}
-              type="button"
-            >
-              Next
-            </button>
-          ) : (
-            <span aria-disabled="true">Next</span>
-          )}
-        </nav>
-      </div>
-    );
   }
 
   return (
@@ -199,49 +126,55 @@ export function AppShell({
         Skip to content
       </a>
 
-      <aside className="side-rail">
+      <aside className="side-rail" data-collapsed={sceneRailCollapsed || undefined}>
         <div className="product-mark">
-          <span className="product-kicker">AIPerf systems observatory</span>
+          <span className="product-kicker">AIPerf runtime atlas</span>
           <span className="product-name">Architecture atlas</span>
         </div>
-        <nav aria-label="Architecture views" className="wide-navigation">
-          <NavigationLinks />
-        </nav>
+        {sceneRailCollapsed ? null : (
+          <nav aria-label="Runtime scenes" className="wide-navigation">
+            <SceneRailLinks
+              audience={audience}
+              compareFlavor={compareFlavor}
+              graphSearchQuery={graphSearchQuery}
+              primaryFlavor={primaryFlavor}
+              routes={sceneRoutes}
+            />
+          </nav>
+        )}
         <div className="rail-status">
-          <span className="status-indicator" aria-hidden="true" />
-          Foundation dataset
+          <span aria-hidden="true" className="status-indicator" />
+          <span>Built</span>
+          <span aria-hidden="true" className="utility-divider" />
+          <span>Planned</span>
         </div>
       </aside>
 
       <header className="utility-rail">
-        <details className="compact-navigation">
-          <summary>Explore</summary>
-          <nav aria-label="Compact architecture views">
-            <NavigationLinks />
-          </nav>
-        </details>
-
-        <div className="utility-context" aria-label="Current context">
-          <span>Atlas foundation</span>
+        <div className="utility-context" aria-label="Current scene">
+          <span>
+            {sceneRoutes.find(({ path }) => path === activeScenePath)?.label ??
+              routeCapabilities[0].label}
+          </span>
           <span className="utility-divider" aria-hidden="true" />
-          <span>Source-grounded views</span>
+          <span>Graph-first runtime path</span>
         </div>
 
         <div className="utility-controls">
           <form
-            aria-label="Global architecture search"
+            aria-label="Compact graph command bar"
             className="global-search"
             onSubmit={handleGlobalSearch}
             role="search"
           >
             <label>
-              <span>Search architecture</span>
+              <span>Graph search</span>
               <input
-                aria-label="Search architecture"
-                onChange={(event) => setGlobalQuery(event.target.value)}
+                aria-label="Graph search"
+                onChange={(event) => onGraphSearchChange(event.target.value)}
                 placeholder="Component or crate"
                 type="search"
-                value={globalQuery}
+                value={graphSearchQuery}
               />
             </label>
           </form>
@@ -257,18 +190,72 @@ export function AppShell({
               <option value="maintainer">Maintainer</option>
             </select>
           </label>
-          {presentationAvailable ? (
-            <button
-              className="presentation-control"
-              onClick={onStartPresentation}
-              ref={presentationEntry}
-              type="button"
+          <label className="audience-control">
+            <span>Primary flavor</span>
+            <select
+              aria-label="Primary flavor"
+              onChange={(event) => {
+                const parsed = executionFlavorSchema.safeParse(event.target.value);
+                if (parsed.success) {
+                  onPrimaryFlavorChange(parsed.data);
+                }
+              }}
+              value={primaryFlavor}
             >
-              Present this view
-            </button>
-          ) : null}
+              {executionFlavorSchema.options.map((flavor) => (
+                <option key={flavor} value={flavor}>
+                  {flavor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="audience-control">
+            <span>Compare flavor</span>
+            <select
+              aria-label="Compare flavor"
+              onChange={(event) => {
+                if (event.target.value === "") {
+                  onCompareFlavorChange(null);
+                  return;
+                }
+                const parsed = executionFlavorSchema.safeParse(event.target.value);
+                if (parsed.success) {
+                  onCompareFlavorChange(parsed.data);
+                }
+              }}
+              value={compareFlavor ?? ""}
+            >
+              <option value="">None</option>
+              {executionFlavorSchema.options.map((flavor) => (
+                <option key={flavor} value={flavor}>
+                  {flavor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button onClick={onFitGraph} type="button">
+            Fit graph
+          </button>
+          <button onClick={onResetGraph} type="button">
+            Reset graph
+          </button>
+          <button onClick={onShareGraphState} type="button">
+            Share graph state
+          </button>
+          <button
+            onClick={() => setSceneRailCollapsed((collapsed) => !collapsed)}
+            type="button"
+          >
+            {sceneRailCollapsed ? "Expand scene rail" : "Collapse scene rail"}
+          </button>
         </div>
       </header>
+
+      {sharedStateNotice ? (
+        <p aria-label="Graph state recovery notice" role="status">
+          {sharedStateNotice}
+        </p>
+      ) : null}
 
       <main className="content-frame" id="atlas-content" tabIndex={-1}>
         {children}

@@ -1,0 +1,267 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import type { GraphEdge, GraphNode } from "../../domain/architecture";
+import type { DirectedNeighborhood } from "../../domain/graph-derivation";
+import type { LayoutRequest, LayoutResult } from "../atlas/layout";
+import { GraphCanvas } from "./graph-canvas";
+import type { GraphCanvasLayoutService } from "./types";
+
+function createNode(input: {
+  id: string;
+  owner: GraphNode["owner"];
+  parentId?: string | null;
+  ports: Array<{ id: string; name: string; channel: GraphNode["seamPorts"][number]["channel"] }>;
+  tier: GraphNode["tier"];
+  title: string;
+}): GraphNode {
+  return {
+    audience: {
+      autoExpandDepth: { developer: 2, executive: 1, maintainer: 3 },
+      visibility: ["executive", "developer", "maintainer"],
+    },
+    childIds: [],
+    evidence: [{ path: "AGENTS.md" }],
+    flavors: ["native_http"],
+    footnotes: [],
+    id: input.id,
+    owner: input.owner,
+    parentId: input.parentId ?? null,
+    seamPorts: input.ports,
+    status: { delivery: "unconditional", state: "built" },
+    summary: {
+      developer: `${input.title} summary`,
+      executive: `${input.title} summary`,
+      maintainer: `${input.title} summary`,
+    },
+    tier: input.tier,
+    title: {
+      developer: input.title,
+      executive: input.title,
+      maintainer: input.title,
+    },
+  };
+}
+
+function createEdge(input: {
+  channel: GraphEdge["channel"];
+  id: string;
+  protocol: string;
+  sourceNodeId: string;
+  sourcePortId: string;
+  targetNodeId: string;
+  targetPortId: string;
+}): GraphEdge {
+  return {
+    channel: input.channel,
+    evidence: [{ path: "AGENTS.md" }],
+    flavors: ["native_http"],
+    footnotes: [],
+    id: input.id,
+    protocol: input.protocol,
+    source: { nodeId: input.sourceNodeId, portId: input.sourcePortId },
+    status: { delivery: "unconditional", state: "built" },
+    target: { nodeId: input.targetNodeId, portId: input.targetPortId },
+  };
+}
+
+const visibleNodes: GraphNode[] = [
+  createNode({
+    id: "node.python",
+    owner: "python",
+    ports: [{ channel: "control", id: "port.python.out", name: "Config out" }],
+    tier: 0,
+    title: "Python control",
+  }),
+  createNode({
+    id: "node.runner",
+    owner: "rust",
+    ports: [
+      { channel: "control", id: "port.runner.in", name: "Runner in" },
+      { channel: "request_data", id: "port.runner.out", name: "Dispatch out" },
+    ],
+    tier: 1,
+    title: "Runner core",
+  }),
+  createNode({
+    id: "node.transport",
+    owner: "rust",
+    ports: [{ channel: "request_data", id: "port.transport.in", name: "Transport in" }],
+    tier: 2,
+    title: "Transport sink",
+  }),
+];
+
+const visibleEdges: GraphEdge[] = [
+  createEdge({
+    channel: "control",
+    id: "edge.python.runner",
+    protocol: "jsonl",
+    sourceNodeId: "node.python",
+    sourcePortId: "port.python.out",
+    targetNodeId: "node.runner",
+    targetPortId: "port.runner.in",
+  }),
+  createEdge({
+    channel: "request_data",
+    id: "edge.runner.transport",
+    protocol: "http",
+    sourceNodeId: "node.runner",
+    sourcePortId: "port.runner.out",
+    targetNodeId: "node.transport",
+    targetPortId: "port.transport.in",
+  }),
+];
+
+const neighborhood: DirectedNeighborhood = {
+  downstreamNodeIds: ["node.transport"],
+  upstreamNodeIds: ["node.python"],
+};
+
+const layoutResult: LayoutResult = {
+  bands: [],
+  degraded: false,
+  positions: [
+    { bandId: "flow", id: "node.python", x: 20, y: 80 },
+    { bandId: "flow", id: "node.runner", x: 320, y: 80 },
+    { bandId: "flow", id: "node.transport", x: 620, y: 80 },
+  ],
+};
+
+function createLayoutRequest(): LayoutRequest {
+  return {
+    bands: [],
+    edges: [],
+    key: "graph.canvas.test.layout",
+    nodes: [],
+    perspective: "ownership",
+    version: 1,
+  };
+}
+
+function createLayoutService(result: LayoutResult): GraphCanvasLayoutService {
+  return {
+    layout: vi.fn(async () => result),
+  };
+}
+
+describe("graph canvas", () => {
+  it("renders task-2 derived nodes and edges with graph controls", async () => {
+    const onFocusEntity = vi.fn();
+    render(
+      <GraphCanvas
+        audience="developer"
+        focusedEntityId={null}
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(layoutResult)}
+        neighborhood={neighborhood}
+        onFocusEntity={onFocusEntity}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    await screen.findByTestId("graph-node-node.python");
+    expect(within(screen.getByTestId("graph-node-node.python")).getByText("Python control")).toBeInTheDocument();
+    expect(within(screen.getByTestId("graph-node-node.runner")).getByText("Runner core")).toBeInTheDocument();
+    expect(within(screen.getByTestId("graph-node-node.transport")).getByText("Transport sink")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Graph viewport controls" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Graph canvas minimap" }),
+    ).toBeInTheDocument();
+    const runnerPorts = within(screen.getByTestId("graph-node-node.runner")).getAllByRole(
+      "listitem",
+      { hidden: true },
+    );
+    expect(runnerPorts.map((item) => item.textContent)).toEqual([
+      "Runner in - control - target",
+      "Dispatch out - request_data - source",
+    ]);
+    expect(onFocusEntity).not.toHaveBeenCalled();
+  });
+
+  it("supports selection and directed path highlighting", async () => {
+    const onFocusEntity = vi.fn();
+    render(
+      <GraphCanvas
+        audience="developer"
+        focusedEntityId="node.runner"
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(layoutResult)}
+        neighborhood={neighborhood}
+        onFocusEntity={onFocusEntity}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    await screen.findByTestId("graph-node-node.runner");
+    expect(screen.getByTestId("graph-node-node.runner")).toHaveAttribute(
+      "data-path-state",
+      "focused",
+    );
+    expect(screen.getByTestId("graph-node-node.python")).toHaveAttribute(
+      "data-path-state",
+      "upstream",
+    );
+    expect(screen.getByTestId("graph-node-node.transport")).toHaveAttribute(
+      "data-path-state",
+      "downstream",
+    );
+    fireEvent.click(
+      within(screen.getByTestId("graph-node-node.runner")).getByText("Runner core"),
+    );
+    expect(onFocusEntity).toHaveBeenCalledWith("node.runner");
+  });
+
+  it("shows loading then a degraded fallback layout notice", async () => {
+    let resolveLayout: ((result: LayoutResult) => void) | undefined;
+    const layoutPromise = new Promise<LayoutResult>((resolve) => {
+      resolveLayout = resolve;
+    });
+    const service: GraphCanvasLayoutService = {
+      layout: vi.fn(async () => layoutPromise),
+    };
+
+    render(
+      <GraphCanvas
+        audience="developer"
+        focusedEntityId={null}
+        layoutRequest={createLayoutRequest()}
+        layoutService={service}
+        neighborhood={{ downstreamNodeIds: [], upstreamNodeIds: [] }}
+        onFocusEntity={vi.fn()}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    expect(
+      screen.getByRole("status", { name: "Graph layout status" }),
+    ).toHaveTextContent("Positioning graph layout");
+
+    resolveLayout?.({
+      ...layoutResult,
+      degraded: true,
+      reason: "worker unavailable",
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("status", { name: "Graph layout status" }),
+      ).toHaveTextContent("degraded"),
+    );
+    expect(screen.getByRole("status", { name: "Graph layout status" })).toHaveTextContent(
+      "worker unavailable",
+    );
+  });
+});

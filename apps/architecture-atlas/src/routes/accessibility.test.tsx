@@ -23,27 +23,28 @@ async function renderAndAudit(path: string) {
 describe("automated accessibility", () => {
   it.each([
     ["/?audience=developer", "ownership"],
-    ["/journey?audience=developer", "journey"],
-    ["/execution?audience=developer", "execution"],
-    ["/data-plane?audience=developer", "data plane"],
-    ["/observability?audience=developer", "observability"],
-    ["/parity?audience=developer", "parity"],
+    ["/scenes/runner-protocol-registries?audience=developer", "runner registries"],
+    ["/scenes/scheduling-phase-lifecycle?audience=developer", "scheduling"],
+    ["/scenes/dataset-segment-pipeline?audience=developer", "dataset"],
+    ["/scenes/endpoint-bindings-transports?audience=developer", "transports"],
+    ["/scenes/graph-ir-execution?audience=developer", "graph ir"],
+    ["/scenes/metrics-telemetry?audience=developer", "metrics"],
+    ["/scenes/accuracy-evaluator-hosting?audience=developer", "accuracy"],
+    ["/scenes/crate-dependency-topology?audience=developer", "crate topology"],
     ["/?audience=executive", "executive lens"],
-    ["/execution?audience=maintainer", "maintainer lens"],
+    ["/scenes/endpoint-bindings-transports?audience=maintainer", "maintainer lens"],
   ])("has no detectable violations on the %s %s route", async (path) => {
     await renderAndAudit(path);
   });
 
-  it("audits the atlas controls, inventory, and evidence drawer", async () => {
-    await renderAndAudit(
-      "/atlas?audience=maintainer&selected=component.clock-seam",
-    );
+  it("audits graph-first command controls and status notice", async () => {
+    await renderAndAudit("/");
     expect(
-      screen.getByRole("status", { name: "Atlas graph summary" }),
+      screen.getByRole("searchbox", { name: "Graph search" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Clear selected component" }),
-    ).toHaveFocus();
+      screen.getByRole("button", { name: "Share graph state" }),
+    ).toBeInTheDocument();
   });
 
   it.each([

@@ -18,23 +18,21 @@ function renderAtlas(path = "/") {
 }
 
 describe("application shell", () => {
-  it("renders primary navigation and the active route", async () => {
-    renderAtlas("/execution?audience=developer");
+  it("defaults to the runtime graph route with the scene rail visible", async () => {
+    renderAtlas("/");
 
     expect(
       await screen.findByRole("heading", {
-        name: "Execution modes and controls",
+        name: "Runtime composition",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("navigation", { name: "Architecture views" }),
+      screen.getByRole("navigation", { name: "Runtime scenes" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Present this view" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Collapse scene rail" })).toBeEnabled();
   });
 
-  it("keeps an explicit audience name when compact styles hide its text", async () => {
+  it("keeps an explicit audience label in the compact command bar", async () => {
     renderAtlas("/");
 
     expect(
@@ -104,7 +102,7 @@ describe("application shell", () => {
 
   it("persists audience changes in search state and local storage", async () => {
     const user = userEvent.setup();
-    const router = renderAtlas("/atlas?audience=developer");
+    const router = renderAtlas("/?audience=developer");
 
     await user.selectOptions(
       await screen.findByRole("combobox", { name: "Audience" }),
@@ -118,6 +116,27 @@ describe("application shell", () => {
       expect(window.localStorage.getItem(AUDIENCE_STORAGE_KEY)).toBe(
         "maintainer",
       );
+    });
+  });
+
+  it("wires primary and comparison flavor selectors into shared URL state", async () => {
+    const user = userEvent.setup();
+    const router = renderAtlas("/?audience=developer");
+
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Primary flavor" }),
+      "native_grpc",
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Compare flavor" }),
+      "dynamo_online",
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.search).toMatchObject({
+        primary: "native_grpc",
+        compare: "dynamo_online",
+      });
     });
   });
 });

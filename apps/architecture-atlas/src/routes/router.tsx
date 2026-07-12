@@ -6,160 +6,263 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  useRouter,
   useRouterState,
 } from "@tanstack/react-router";
 import type { RouterHistory } from "@tanstack/react-router";
-import { lazy, Suspense, useEffect } from "react";
+import { useEffect } from "react";
+import { z } from "zod";
 
 import { AudienceProvider, useAudience } from "../app/audience-context";
 import { AppShell } from "../app/app-shell";
+import { architectureCatalog } from "../content";
 import {
   persistAudience,
   resolveAudience,
-  type Audience,
+  audienceSchema,
 } from "../domain/audience";
-import type {
-  ArchitectureStatus,
-  ExecutionMode,
+import {
+  executionFlavorSchema,
 } from "../domain/architecture";
 import {
-  presentationRoutePaths,
-  routeSupports,
-  type GuidedRoute,
-} from "../domain/routes";
+  canonicalGraphState,
+  decodeGraphStateFromUrl,
+  encodeGraphStateForUrl,
+  resolveGraphState,
+  writeStoredGraphState,
+  type CanonicalGraphStateDomain,
+  type GraphStateStorage,
+} from "../domain/graph-state";
 import {
-  encodeSelection,
-  parseAtlasSearch,
-  parseModes,
-  parseOwnership,
-  parseStatuses,
-} from "../domain/search";
+  canonicalSceneIds,
+  legacyGuidedRedirects,
+  routeCapabilities,
+  scenePathFor,
+  type AtlasRoutePath,
+  type SceneId,
+} from "../domain/routes";
 import { CrateReferenceView } from "../features/crates/crate-reference";
-import { GuidedView } from "../features/guided/guided-view";
+import { GraphScene } from "../features/graph/graph-scene";
 
-const LazyAtlasView = lazy(async () => {
-  const module = await import("../features/atlas/atlas-view");
-  return { default: module.AtlasView };
-});
-const presentationRoutes = presentationRoutePaths;
-
-const unavailableAudienceStorage = {
+const unavailableStorage: GraphStateStorage = {
   getItem: () => null,
+  removeItem: () => undefined,
   setItem: () => undefined,
 };
 
-function getAudienceStorage() {
+const searchSchema = z.object({
+  audience: audienceSchema.optional(),
+  primary: executionFlavorSchema.optional(),
+  compare: executionFlavorSchema.optional(),
+  q: z.string().max(160).optional(),
+  s: z.string().optional(),
+});
+
+type RouterSearch = z.infer<typeof searchSchema>;
+
+function parseRouterSearch(search: Record<string, unknown>): RouterSearch {
+  const parsed: RouterSearch = {};
+  for (const [key, result] of Object.entries({
+    audience: audienceSchema.optional().safeParse(search.audience),
+    primary: executionFlavorSchema.optional().safeParse(search.primary),
+    compare: executionFlavorSchema.optional().safeParse(search.compare),
+    q: z.string().max(160).optional().safeParse(search.q),
+    s: z.string().optional().safeParse(search.s),
+  })) {
+    if (result.success && result.data !== undefined) {
+      Object.assign(parsed, { [key]: result.data });
+    }
+  }
+  return parsed;
+}
+
+function getStorage(): GraphStateStorage {
   try {
     return window.localStorage;
   } catch {
-    return unavailableAudienceStorage;
+    return unavailableStorage;
   }
+}
+
+function buildCanonicalDomain(defaultState: ReturnType<typeof canonicalGraphState>): CanonicalGraphStateDomain {
+  return {
+    defaultState,
+    sceneIds: new Set(canonicalSceneIds),
+    nodeIds: new Set(architectureCatalog.graphNodes.map(({ id }) => id)),
+    edgeIds: new Set(architectureCatalog.graphEdges.map(({ id }) => id)),
+    supportedFlavors: new Set(executionFlavorSchema.options),
+  };
 }
 
 function RootRouteComponent() {
   const search = rootRoute.useSearch();
   const navigate = rootRoute.useNavigate();
-  const router = useRouter();
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const storage = getAudienceStorage();
+  const storage = getStorage();
+  const activeSceneRoute = routeCapabilities.find((route) => route.path === pathname);
+  const isSceneRoutePath = activeSceneRoute !== undefined;
+
   const audience = resolveAudience(search.audience, storage);
-  const routeIndex = presentationRoutes.findIndex(
-    (route) => route === pathname,
+  const routeSceneId = activeSceneRoute?.sceneId ?? "scene.runtime-composition";
+  const primaryFlavor = search.primary ?? "native_http";
+  const compareFlavor = search.compare ?? null;
+  const defaultGraphState = canonicalGraphState({
+    sceneId: routeSceneId,
+    audience,
+    primaryFlavor,
+    compareFlavor,
+  });
+  const resolvedGraphState = resolveGraphState({
+    urlState: search.s ?? null,
+    storage,
+    canonical: buildCanonicalDomain(defaultGraphState),
+  });
+  const effectiveGraphState = canonicalGraphState({
+    ...resolvedGraphState.state,
+    audience,
+    sceneId: routeSceneId,
+    primaryFlavor,
+    compareFlavor,
+  });
+  const encodedState = encodeGraphStateForUrl(effectiveGraphState);
+  const resetEncodedState = encodeGraphStateForUrl(
+    canonicalGraphState({
+      audience,
+      compareFlavor,
+      primaryFlavor,
+      sceneId: routeSceneId,
+    }),
   );
-  const presentationAvailable = routeSupports(pathname, "presentation");
-  const presentation = search.present === true && presentationAvailable;
-  const filtersAvailable = routeSupports(pathname, "filters");
-  const atlasStateAvailable = routeSupports(pathname, "atlasState");
+  const legacyRedirect = legacyGuidedRedirects[pathname as keyof typeof legacyGuidedRedirects];
+
+  useEffect(() => {
+    if (!legacyRedirect) {
+      return;
+    }
+    void navigate({
+      replace: true,
+      to: legacyRedirect,
+      search: (previous) => ({
+        ...previous,
+        audience,
+      }),
+    });
+  }, [audience, legacyRedirect, navigate]);
 
   useEffect(() => {
     persistAudience(audience, storage);
-    const normalizedSearch = {
-      audience,
-      modes: filtersAvailable ? search.modes : undefined,
-      statuses: filtersAvailable ? search.statuses : undefined,
-      present: presentationAvailable ? search.present : undefined,
-      layout: atlasStateAvailable ? search.layout : undefined,
-      ownership: atlasStateAvailable ? search.ownership : undefined,
-      query: atlasStateAvailable ? search.query : undefined,
-      selected: atlasStateAvailable ? search.selected : undefined,
-    };
+    if (!isSceneRoutePath) {
+      return;
+    }
+    writeStoredGraphState(storage, effectiveGraphState);
     if (
-      search.audience !== normalizedSearch.audience ||
-      search.modes !== normalizedSearch.modes ||
-      search.statuses !== normalizedSearch.statuses ||
-      search.present !== normalizedSearch.present
-      || search.layout !== normalizedSearch.layout
-      || search.ownership !== normalizedSearch.ownership
-      || search.query !== normalizedSearch.query
-      || search.selected !== normalizedSearch.selected
+      search.audience !== audience ||
+      search.primary !== primaryFlavor ||
+      search.compare !== (compareFlavor ?? undefined) ||
+      search.s !== encodedState
     ) {
       void navigate({
         replace: true,
-        to: pathname,
-        search: normalizedSearch,
+        to: pathname as AtlasRoutePath,
+        search: (previous) => ({
+          ...previous,
+          audience,
+          primary: primaryFlavor,
+          compare: compareFlavor ?? undefined,
+          s: encodedState,
+        }),
       });
     }
   }, [
     audience,
-    atlasStateAvailable,
-    filtersAvailable,
+    compareFlavor,
+    effectiveGraphState,
+    encodedState,
     navigate,
     pathname,
-    presentationAvailable,
-    search,
+    primaryFlavor,
+    search.audience,
+    search.compare,
+    search.primary,
+    search.s,
     storage,
+    isSceneRoutePath,
   ]);
-
-  const handleAudienceChange = (nextAudience: Audience) => {
-    persistAudience(nextAudience, storage);
-    void navigate({
-      replace: true,
-      to: pathname,
-      search: (previous) => ({ ...previous, audience: nextAudience }),
-    });
-  };
-
-  const setPresentation = (enabled: boolean) => {
-    void navigate({
-      replace: true,
-      to: pathname,
-      search: (previous) => ({
-        ...previous,
-        present: enabled ? true : undefined,
-      }),
-    });
-  };
-
-  const navigatePresentation = (route: (typeof presentationRoutes)[number]) => {
-    const retainFilters = routeSupports(route, "filters");
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries({
-      audience,
-      modes: retainFilters ? search.modes : undefined,
-      statuses: retainFilters ? search.statuses : undefined,
-      present: true,
-    })) {
-      if (value !== undefined) {
-        params.set(key, String(value));
-      }
-    }
-    void router.navigate({ href: `${route}?${params.toString()}` });
-  };
 
   return (
     <AppShell
+      activeScenePath={scenePathFor(routeSceneId)}
       audience={audience}
-      nextRoute={presentationRoutes[routeIndex + 1]}
-      onExitPresentation={() => setPresentation(false)}
-      onNavigatePresentation={navigatePresentation}
-      onStartPresentation={() => setPresentation(true)}
-      onAudienceChange={handleAudienceChange}
-      presentation={presentation}
-      presentationAvailable={presentationAvailable}
-      previousRoute={presentationRoutes[routeIndex - 1]}
+      compareFlavor={compareFlavor}
+      graphSearchQuery={search.q ?? ""}
+      onAudienceChange={(nextAudience) => {
+        void navigate({
+          replace: true,
+          to: pathname as AtlasRoutePath,
+          search: (previous) => ({ ...previous, audience: nextAudience }),
+        });
+      }}
+      onCompareFlavorChange={(nextCompareFlavor) => {
+        void navigate({
+          replace: true,
+          to: pathname as AtlasRoutePath,
+          search: (previous) => ({
+            ...previous,
+            compare: nextCompareFlavor ?? undefined,
+          }),
+        });
+      }}
+      onFitGraph={() => {
+        window.dispatchEvent(new CustomEvent("atlas:fit-graph"));
+      }}
+      onGraphSearchChange={(query) => {
+        void navigate({
+          replace: true,
+          to: pathname as AtlasRoutePath,
+          search: (previous) => ({
+            ...previous,
+            q: query.trim() ? query : undefined,
+          }),
+        });
+      }}
+      onPrimaryFlavorChange={(nextPrimaryFlavor) => {
+        void navigate({
+          replace: true,
+          to: pathname as AtlasRoutePath,
+          search: (previous) => ({
+            ...previous,
+            primary: nextPrimaryFlavor,
+            compare:
+              previous.compare === nextPrimaryFlavor
+                ? undefined
+                : previous.compare,
+          }),
+        });
+      }}
+      onResetGraph={() => {
+        if (!isSceneRoutePath) {
+          return;
+        }
+        void navigate({
+          replace: true,
+          to: pathname as AtlasRoutePath,
+          search: (previous) => ({ ...previous, s: resetEncodedState }),
+        });
+      }}
+      onShareGraphState={() => {
+        if (!isSceneRoutePath) {
+          return;
+        }
+        void navigate({
+          replace: true,
+          to: pathname as AtlasRoutePath,
+          search: (previous) => ({ ...previous, s: encodedState }),
+        });
+      }}
+      primaryFlavor={primaryFlavor}
+      sceneRoutes={routeCapabilities}
+      sharedStateNotice={resolvedGraphState.notice?.message}
     >
       <AudienceProvider audience={audience}>
         <Outlet />
@@ -170,143 +273,169 @@ function RootRouteComponent() {
 
 const rootRoute = createRootRoute({
   component: RootRouteComponent,
-  validateSearch: parseAtlasSearch,
+  validateSearch: parseRouterSearch,
 });
 
-function GuidedRouteComponent({ route }: { route: GuidedRoute }) {
+function GraphSceneRouteComponent({ sceneId }: { sceneId: SceneId }) {
   const audience = useAudience();
   const search = rootRoute.useSearch();
   const navigate = rootRoute.useNavigate();
-  const updateModes = (modes: ExecutionMode[]) => {
-    void navigate({
-      replace: true,
-      to: route,
-      search: (previous) => ({
-        ...previous,
-        modes: encodeSelection(modes),
-      }),
-    });
-  };
-  const updateStatuses = (statuses: ArchitectureStatus[]) => {
-    void navigate({
-      replace: true,
-      to: route,
-      search: (previous) => ({
-        ...previous,
-        statuses: encodeSelection(statuses),
-      }),
-    });
-  };
+  const primaryFlavor = search.primary ?? "native_http";
+  const compareFlavor = search.compare ?? null;
+  const defaultState = canonicalGraphState({
+    audience,
+    compareFlavor,
+    primaryFlavor,
+    sceneId,
+  });
+  const sharedState = search.s
+    ? decodeGraphStateFromUrl(search.s, buildCanonicalDomain(defaultState)).state
+    : defaultState;
+  const state = canonicalGraphState({
+    ...sharedState,
+    audience,
+    compareFlavor,
+    primaryFlavor,
+    sceneId,
+  });
+
   return (
-    <GuidedView
+    <GraphScene
       audience={audience}
-      modes={
-        routeSupports(route, "filters") ? parseModes(search.modes) : []
-      }
-      onModesChange={updateModes}
-      onStatusesChange={updateStatuses}
-      route={route}
-      statuses={
-        routeSupports(route, "filters")
-          ? parseStatuses(search.statuses)
-          : []
-      }
+      compareFlavor={compareFlavor}
+      onGraphStateChange={(nextState) => {
+        void navigate({
+          replace: true,
+          to: scenePathFor(sceneId),
+          search: (previous) => ({
+            ...previous,
+            s: encodeGraphStateForUrl(
+              canonicalGraphState({
+                ...nextState,
+                audience,
+                compareFlavor,
+                primaryFlavor,
+                sceneId,
+              }),
+            ),
+          }),
+        });
+      }}
+      primaryFlavor={primaryFlavor}
+      sceneId={sceneId}
+      searchQuery={search.q ?? ""}
+      state={state}
     />
   );
 }
 
-const indexRoute = createRoute({
+const runtimeSceneRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: () => <GuidedRouteComponent route="/" />,
+  component: () => <GraphSceneRouteComponent sceneId="scene.runtime-composition" />,
 });
 
-const journeyRoute = createRoute({
+const runnerProtocolSceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/runner-protocol-registries",
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.runner-protocol-registries" />
+  ),
+});
+
+const schedulingSceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/scheduling-phase-lifecycle",
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.scheduling-phase-lifecycle" />
+  ),
+});
+
+const datasetSceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/dataset-segment-pipeline",
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.dataset-segment-pipeline" />
+  ),
+});
+
+const endpointSceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/endpoint-bindings-transports",
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.endpoint-bindings-transports" />
+  ),
+});
+
+const graphIrSceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/graph-ir-execution",
+  component: () => <GraphSceneRouteComponent sceneId="scene.graph-ir-execution" />,
+});
+
+const metricsSceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/metrics-telemetry",
+  component: () => <GraphSceneRouteComponent sceneId="scene.metrics-telemetry" />,
+});
+
+const accuracySceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/accuracy-evaluator-hosting",
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.accuracy-evaluator-hosting" />
+  ),
+});
+
+const crateTopologySceneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/scenes/crate-dependency-topology",
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.crate-dependency-topology" />
+  ),
+});
+
+const journeyRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/journey",
-  component: () => <GuidedRouteComponent route="/journey" />,
+  component: () => <GraphSceneRouteComponent sceneId="scene.runtime-composition" />,
 });
 
-const executionRoute = createRoute({
+const executionRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/execution",
-  component: () => <GuidedRouteComponent route="/execution" />,
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.endpoint-bindings-transports" />
+  ),
 });
 
-const dataPlaneRoute = createRoute({
+const dataPlaneRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/data-plane",
-  component: () => <GuidedRouteComponent route="/data-plane" />,
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.dataset-segment-pipeline" />
+  ),
 });
 
-const observabilityRoute = createRoute({
+const observabilityRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/observability",
-  component: () => <GuidedRouteComponent route="/observability" />,
+  component: () => <GraphSceneRouteComponent sceneId="scene.metrics-telemetry" />,
 });
 
-const parityRoute = createRoute({
+const parityRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/parity",
-  component: () => <GuidedRouteComponent route="/parity" />,
+  component: () => (
+    <GraphSceneRouteComponent sceneId="scene.crate-dependency-topology" />
+  ),
 });
 
-const atlasRoute = createRoute({
+const atlasRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/atlas",
-  component: AtlasRouteComponent,
+  component: () => <GraphSceneRouteComponent sceneId="scene.runtime-composition" />,
 });
-
-function AtlasRouteComponent() {
-  const audience = useAudience();
-  const search = rootRoute.useSearch();
-  const navigate = rootRoute.useNavigate();
-  return (
-    <Suspense fallback={<p role="status">Loading architecture graph…</p>}>
-      <LazyAtlasView
-        audience={audience}
-        onStateChange={(change) => {
-          void navigate({
-            replace: true,
-            to: "/atlas",
-            search: (previous) => ({
-              ...previous,
-              layout: change.layout ?? previous.layout,
-              modes:
-                change.modes === undefined
-                  ? previous.modes
-                  : encodeSelection(change.modes),
-              ownership:
-                change.owners === undefined
-                  ? previous.ownership
-                  : encodeSelection(change.owners),
-              query:
-                change.query === undefined
-                  ? previous.query
-                  : change.query.trim()
-                    ? change.query
-                    : undefined,
-              selected:
-                "selected" in change ? change.selected : previous.selected,
-              statuses:
-                change.statuses === undefined
-                  ? previous.statuses
-                  : encodeSelection(change.statuses),
-            }),
-          });
-        }}
-        state={{
-          layout: search.layout ?? "ownership",
-          modes: parseModes(search.modes),
-          owners: parseOwnership(search.ownership),
-          query: search.query ?? "",
-          selected: search.selected,
-          statuses: parseStatuses(search.statuses),
-        }}
-      />
-    </Suspense>
-  );
-}
 
 const crateRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -320,13 +449,21 @@ function CrateRouteComponent() {
 }
 
 const routeTree = rootRoute.addChildren([
-  indexRoute,
-  journeyRoute,
-  executionRoute,
-  dataPlaneRoute,
-  observabilityRoute,
-  parityRoute,
-  atlasRoute,
+  runtimeSceneRoute,
+  runnerProtocolSceneRoute,
+  schedulingSceneRoute,
+  datasetSceneRoute,
+  endpointSceneRoute,
+  graphIrSceneRoute,
+  metricsSceneRoute,
+  accuracySceneRoute,
+  crateTopologySceneRoute,
+  journeyRedirectRoute,
+  executionRedirectRoute,
+  dataPlaneRedirectRoute,
+  observabilityRedirectRoute,
+  parityRedirectRoute,
+  atlasRedirectRoute,
   crateRoute,
 ]);
 

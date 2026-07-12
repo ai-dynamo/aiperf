@@ -4,86 +4,93 @@
 export const routeCapabilities = [
   {
     path: "/",
-    label: "System ownership",
-    guided: true,
-    filters: true,
-    presentation: true,
-    atlasState: false,
+    label: "Runtime composition",
+    sceneId: "scene.runtime-composition",
+    graphState: true,
   },
   {
-    path: "/journey",
-    label: "One-run journey",
-    guided: true,
-    filters: false,
-    presentation: true,
-    atlasState: false,
+    path: "/scenes/runner-protocol-registries",
+    label: "Runner protocol and registries",
+    sceneId: "scene.runner-protocol-registries",
+    graphState: true,
   },
   {
-    path: "/execution",
-    label: "Execution modes",
-    guided: true,
-    filters: true,
-    presentation: true,
-    atlasState: false,
+    path: "/scenes/scheduling-phase-lifecycle",
+    label: "Scheduling and phase lifecycle",
+    sceneId: "scene.scheduling-phase-lifecycle",
+    graphState: true,
   },
   {
-    path: "/data-plane",
-    label: "Data plane",
-    guided: true,
-    filters: true,
-    presentation: true,
-    atlasState: false,
+    path: "/scenes/dataset-segment-pipeline",
+    label: "Dataset and segment pipeline",
+    sceneId: "scene.dataset-segment-pipeline",
+    graphState: true,
   },
   {
-    path: "/observability",
-    label: "Observability",
-    guided: true,
-    filters: true,
-    presentation: true,
-    atlasState: false,
+    path: "/scenes/endpoint-bindings-transports",
+    label: "Endpoint bindings and HTTP/gRPC transports",
+    sceneId: "scene.endpoint-bindings-transports",
+    graphState: true,
   },
   {
-    path: "/parity",
-    label: "Parity ledger",
-    guided: true,
-    filters: true,
-    presentation: true,
-    atlasState: false,
+    path: "/scenes/graph-ir-execution",
+    label: "Graph-IR execution",
+    sceneId: "scene.graph-ir-execution",
+    graphState: true,
   },
   {
-    path: "/atlas",
-    label: "Unified atlas",
-    guided: false,
-    filters: true,
-    presentation: false,
-    atlasState: true,
+    path: "/scenes/metrics-telemetry",
+    label: "Metrics and telemetry",
+    sceneId: "scene.metrics-telemetry",
+    graphState: true,
+  },
+  {
+    path: "/scenes/accuracy-evaluator-hosting",
+    label: "Accuracy and evaluator hosting",
+    sceneId: "scene.accuracy-evaluator-hosting",
+    graphState: true,
+  },
+  {
+    path: "/scenes/crate-dependency-topology",
+    label: "Crate dependency topology",
+    sceneId: "scene.crate-dependency-topology",
+    graphState: true,
   },
 ] as const;
 
 export type AtlasRoutePath = (typeof routeCapabilities)[number]["path"];
-export type GuidedRoute = Extract<
-  (typeof routeCapabilities)[number],
-  { guided: true }
->["path"];
-export type PresentationRoute = Extract<
-  (typeof routeCapabilities)[number],
-  { presentation: true }
->["path"];
-export type RouteCapability =
-  | "filters"
-  | "presentation"
-  | "atlasState"
-  | "guided";
+export type SceneRoute = (typeof routeCapabilities)[number];
+export type SceneId = SceneRoute["sceneId"];
+export type RouteCapability = "graphState";
 
-export const guidedRoutePaths: GuidedRoute[] = routeCapabilities
-  .filter((route): route is Extract<typeof route, { guided: true }> => route.guided)
-  .map(({ path }) => path);
-export const presentationRoutePaths: PresentationRoute[] = routeCapabilities
-  .filter(
-    (route): route is Extract<typeof route, { presentation: true }> =>
-      route.presentation,
-  )
-  .map(({ path }) => path);
+export const canonicalSceneRoutePaths: AtlasRoutePath[] = routeCapabilities.map(
+  ({ path }) => path,
+);
+export const canonicalSceneIds: SceneId[] = routeCapabilities.map(
+  ({ sceneId }) => sceneId,
+);
+
+export const legacyGuidedRedirects = {
+  "/journey": "/",
+  "/execution": "/scenes/endpoint-bindings-transports",
+  "/data-plane": "/scenes/dataset-segment-pipeline",
+  "/observability": "/scenes/metrics-telemetry",
+  "/parity": "/scenes/crate-dependency-topology",
+  "/atlas": "/",
+} as const satisfies Record<string, AtlasRoutePath>;
+
+export function scenePathFor(sceneId: SceneId): AtlasRoutePath {
+  const route = routeCapabilities.find((candidate) => candidate.sceneId === sceneId);
+  if (!route) {
+    return "/";
+  }
+  return route.path;
+}
+
+export function sceneIdForPath(pathname: string): SceneId {
+  const route = routeCapabilities.find((candidate) => candidate.path === pathname);
+  return route?.sceneId ?? "scene.runtime-composition";
+}
 
 export function routeSupports(
   pathname: string,
