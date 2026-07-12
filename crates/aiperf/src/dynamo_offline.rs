@@ -760,12 +760,77 @@ pub fn write_dynamo_report_json(
         .as_object()
         .context("Dynamo report did not serialize as a JSON object")?;
     let sorted = object.iter().collect::<BTreeMap<_, _>>();
-    let mut payload =
+    let payload =
         serde_json::to_string_pretty(&sorted).context("serializing sorted Dynamo report")?;
+    let mut payload = python_json_number_exponents(&payload);
     payload.push('\n');
     std::fs::write(path, payload)
         .with_context(|| format!("writing Dynamo report {}", path.display()))?;
     Ok(())
+}
+
+fn python_json_number_exponents(payload: &str) -> String {
+    let bytes = payload.as_bytes();
+    let mut normalized = String::with_capacity(payload.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut index = 0;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            normalized.push(char::from(byte));
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            normalized.push('"');
+            index += 1;
+            continue;
+        }
+        if byte != b'e' && byte != b'E' {
+            normalized.push(char::from(byte));
+            index += 1;
+            continue;
+        }
+
+        let mut exponent = index + 1;
+        let sign = if exponent < bytes.len() && (bytes[exponent] == b'+' || bytes[exponent] == b'-')
+        {
+            let sign = bytes[exponent];
+            exponent += 1;
+            sign
+        } else {
+            b'+'
+        };
+        let digits_start = exponent;
+        while exponent < bytes.len() && bytes[exponent].is_ascii_digit() {
+            exponent += 1;
+        }
+        if exponent == digits_start {
+            normalized.push(char::from(byte));
+            index += 1;
+            continue;
+        }
+
+        normalized.push('e');
+        normalized.push(char::from(sign));
+        if exponent - digits_start == 1 {
+            normalized.push('0');
+        }
+        normalized.push_str(&payload[digits_start..exponent]);
+        index = exponent;
+    }
+
+    normalized
 }
 
 fn shared_metric_diff(aiperf: &[u8], dynamo: &[u8]) -> String {
@@ -2721,6 +2786,16 @@ pub fn run_request_rate_offline_with_adaptive_and_ancillary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn python_json_exponents_have_a_sign_and_two_digits() {
+        assert_eq!(
+            python_json_number_exponents(
+                r#"{"small":1e-9,"large":1E9,"wide":1e-123,"text":"1e-9"}"#,
+            ),
+            r#"{"small":1e-09,"large":1e+09,"wide":1e-123,"text":"1e-9"}"#,
+        );
+    }
 
     fn assert_metric_parity(
         aiperf: &loadgen_core::collector::TraceSimulationReport,
