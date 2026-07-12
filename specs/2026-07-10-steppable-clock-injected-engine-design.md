@@ -518,3 +518,36 @@ and terminal path used by other offline requests; it adds no offline-only datase
 or endpoint model. A feature-gated test injects request and graph encoders that
 panic if called, while a runner subprocess selects the same `vllm_generate`
 descriptor used online and verifies exact prompt/completion usage in native-v2.
+
+## Addendum — 2026-07-12
+
+**Wall-clock in-process online replay (`replay_mode=online`) is built and runner-reachable.**
+Supersedes the implicit assumption that the steppable engine is driven only by the
+`SimClock` DES pump. The same passive `SteppableReplay` engine, `EngineHost`,
+`DynamoOfflineSink`, materializer, observer, native accumulator, and report are now
+also driven under the **real wall clock** by `aiperf_graph::runtime::drive_real_with_source`
+— the equivalent of Dynamo's `--replay-mode online`. The real-time driver steps the
+engine at each event's own sim time (`set_time_ns(at_ns); step(at_ns)`) but sleeps to
+that deadline in real wall time (interruptible by a submission `Notify`), so the engine's
+internal report is clock-invariant while AIPerf's observer measures real latency that
+tracks sim time within timer jitter.
+
+Only the driver and the parity finalizer differ from offline: online passes
+`enforce_byte_parity=false` (real-timer latencies cannot be byte-identical to the engine's
+internal completion times), while request/token counts remain exact. New library entrypoints
+mirror the offline twins: `run_paced_online`, `run_scheduled_backend_online[_deferred_with_delivery]`,
+and `run_graph_workload_online[_deferred]`, plus `EngineHost::new_real`. AIPerf drives the
+trace through its **own** scheduled/graph flow; the mocker's own trace driver is never used
+online.
+
+The runner exposes it through the `dynamo_offline` backend's `replay_mode` field
+(`offline` default | `online`), threaded through `ValidatedDynamoOfflineBackend` /
+`DynamoOfflineExecutor`; online branches select the wall-clock entrypoints, verify a relaxed
+online parity (counts exact, no byte bail), and report `clock=real` / `mode=online:*`.
+`aiperf-metrics` now accepts `ReportClockKind::Real` for the Dynamo report block. Python
+requires no change: the `dynamo_offline` backend `config` is a free-form dict that forwards
+`replay_mode` verbatim. An apples-to-apples gate (`aiperf::dynamo_offline` tests) drives
+byte-identical native-format hash-block tokens (`TurnTrace::synthesize_tokens`) through both
+AIPerf online and Dynamo's native `simulate_concurrency_live_requests` real-clock driver and
+asserts counts exact, every latency stat within 3% (measured ttft 1.4% / e2e 1.0% / itl 0.7%),
+and AIPerf throughput >= native.
