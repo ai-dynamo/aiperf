@@ -15,7 +15,6 @@ import orjson
 import pytest
 
 from aiperf.config import AIPerfConfig, BenchmarkRun
-from aiperf.orchestrator import rust_executor
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
@@ -168,24 +167,12 @@ def _graph_run(artifact_dir: Path) -> BenchmarkRun:
     )
 
 
-def _execute_v2_without_legacy_fallback(
+def _execute_v2(
     monkeypatch: pytest.MonkeyPatch,
     installation: RunnerInstallation,
     run: BenchmarkRun,
 ) -> tuple[dict[str, Any], subprocess.CompletedProcess[bytes], Any]:
-    """Execute through the product executor while making every v1 path fatal."""
-
-    def unexpected_v1(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("an executable protocol-v2 pair entered legacy v1 resolution")
-
-    monkeypatch.setattr(
-        RustSubprocessExecutor,
-        "_resolve_run",
-        staticmethod(unexpected_v1),
-    )
-    monkeypatch.setattr(rust_executor, "validate_v1_selection", unexpected_v1)
-    monkeypatch.setattr(rust_executor, "build_run_request", unexpected_v1)
-
+    """Execute through the product's protocol-v2-only subprocess boundary."""
     original_execute = RunnerInstallation.execute
     captured: list[tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]] = []
 
@@ -263,7 +250,7 @@ def test_python_config_v2_reaches_offline_scheduled_pair_without_v1_resolution(
     artifact_dir = tmp_path / "scheduled"
     run = _scheduled_run(artifact_dir)
 
-    request, completed, result = _execute_v2_without_legacy_fallback(
+    request, completed, result = _execute_v2(
         monkeypatch,
         offline_installation,
         run,
@@ -297,7 +284,7 @@ def test_python_config_v2_reaches_direct_graph_adapter_without_dual_conversion(
     artifact_dir = tmp_path / "graph"
     run = _graph_run(artifact_dir)
 
-    request, completed, result = _execute_v2_without_legacy_fallback(
+    request, completed, result = _execute_v2(
         monkeypatch,
         offline_installation,
         run,
@@ -326,7 +313,6 @@ def test_python_config_v2_reaches_direct_graph_adapter_without_dual_conversion(
 
 def test_online_only_capability_image_rejects_offline_before_legacy_resolution(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     offline_installation: RunnerInstallation,
 ) -> None:
     """A runner without the pair cannot reinterpret an offline run as v1 HTTP."""
@@ -345,16 +331,6 @@ def test_online_only_capability_image_rejects_offline_before_legacy_resolution(
     )
     run = _scheduled_run(tmp_path / "must-not-exist")
 
-    def unexpected_v1(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("offline selection reached legacy resolution or v1 projection")
-
-    monkeypatch.setattr(
-        RustSubprocessExecutor,
-        "_resolve_run",
-        staticmethod(unexpected_v1),
-    )
-    monkeypatch.setattr(rust_executor, "validate_v1_selection", unexpected_v1)
-    monkeypatch.setattr(rust_executor, "build_run_request", unexpected_v1)
     executor = RustSubprocessExecutor(tmp_path, installation=online_only)
 
     result = executor.execute_sync(run)

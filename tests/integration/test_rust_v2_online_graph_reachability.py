@@ -17,7 +17,6 @@ import orjson
 import pytest
 
 from aiperf.config import AIPerfConfig, BenchmarkRun
-from aiperf.orchestrator import rust_executor
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
@@ -164,22 +163,11 @@ def _graph_run(artifact_dir: Path, endpoint_url: str) -> BenchmarkRun:
     )
 
 
-def _execute_without_v1(
+def _execute_v2(
     monkeypatch: pytest.MonkeyPatch,
     installation: RunnerInstallation,
     run: BenchmarkRun,
 ) -> tuple[dict[str, Any], subprocess.CompletedProcess[bytes], Any]:
-    def unexpected_v1(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("online Graph-IR entered protocol-v1 projection or resolution")
-
-    monkeypatch.setattr(
-        RustSubprocessExecutor,
-        "_resolve_run",
-        staticmethod(unexpected_v1),
-    )
-    monkeypatch.setattr(rust_executor, "validate_v1_selection", unexpected_v1)
-    monkeypatch.setattr(rust_executor, "build_run_request", unexpected_v1)
-
     original_execute = RunnerInstallation.execute
     captured: list[tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]] = []
 
@@ -226,7 +214,7 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
         )
         run = _graph_run(artifact_dir, endpoint_url)
 
-        request, completed, result = _execute_without_v1(
+        request, completed, result = _execute_v2(
             monkeypatch,
             online_graph_installation,
             run,

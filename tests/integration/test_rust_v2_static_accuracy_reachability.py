@@ -17,7 +17,6 @@ import orjson
 import pytest
 
 from aiperf.config import AIPerfConfig, BenchmarkRun
-from aiperf.orchestrator import rust_executor
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
@@ -250,17 +249,6 @@ def test_python_config_v2_reaches_static_accuracy_without_v1_or_python_http(
             f"http://127.0.0.1:{server.server_address[1]}/v1/chat/completions"
         )
         run = _accuracy_run(artifact_dir, endpoint_url)
-
-        def unexpected_v1(*_args: object, **_kwargs: object) -> None:
-            pytest.fail("static accuracy entered protocol-v1 projection or resolution")
-
-        monkeypatch.setattr(
-            RustSubprocessExecutor,
-            "_resolve_run",
-            staticmethod(unexpected_v1),
-        )
-        monkeypatch.setattr(rust_executor, "validate_v1_selection", unexpected_v1)
-        monkeypatch.setattr(rust_executor, "build_run_request", unexpected_v1)
 
         original_execute = RunnerInstallation.execute
         captured: list[tuple[dict[str, Any], subprocess.CompletedProcess[bytes]]] = []
