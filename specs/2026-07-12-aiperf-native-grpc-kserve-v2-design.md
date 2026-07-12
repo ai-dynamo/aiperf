@@ -175,7 +175,8 @@ The implementation is guarded by:
 - runner inventory tests distinguishing static compatibility from executable
   v2 pairs;
 - a full runner subprocess proof for `online_grpc + scheduled`, including two
-  round-robin models whose exact OIP `model_name` values are captured; and
+  concurrent OS-thread workers and two round-robin models whose exact OIP
+  `model_name` values are captured; and
 - a user-facing `aiperf profile --config ...` proof that crosses Python Config
   v2, capability negotiation, orchestration, the strict runner, and a real
   mock Tonic/OIP server before asserting the native-v2 artifact; and

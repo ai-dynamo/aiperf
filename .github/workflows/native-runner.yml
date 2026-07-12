@@ -84,6 +84,7 @@ jobs:
           env -u RUSTC_WRAPPER cargo test --locked -p aiperf-runner \
             --test stdio_e2e \
             --test dag_stdio_e2e \
+            --test grpc_v2_stdio \
             --test protocol_v2_stdio \
             --test online_v2_stdio \
             --test redaction_stdio
