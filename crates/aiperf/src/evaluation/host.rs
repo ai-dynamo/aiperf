@@ -169,7 +169,7 @@ impl HostOperationDescriptor {
 }
 
 /// Secret-free provider operation ready for a Rust host executor.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct HostOperationEnvelope {
     /// Globally unique logical operation ID.
     pub operation_id: String,
@@ -193,6 +193,24 @@ pub struct HostOperationEnvelope {
     pub restricted: bool,
     /// Whether the provider requested typed incremental events.
     pub stream: bool,
+}
+
+impl fmt::Debug for HostOperationEnvelope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostOperationEnvelope")
+            .field("operation_id", &self.operation_id)
+            .field("unit_id", &self.unit_id)
+            .field("case_id", &self.case_id)
+            .field("semantic_attempt_id", &self.semantic_attempt_id)
+            .field("logical_call_id", &self.logical_call_id)
+            .field("service_id", &self.service_id)
+            .field("semantic_operation_id", &self.semantic_operation_id)
+            .field("purpose", &self.purpose)
+            .field("restricted", &self.restricted)
+            .field("stream", &self.stream)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One typed delta emitted by a host executor.
@@ -756,5 +774,17 @@ mod tests {
             endpoint_capabilities: BTreeSet::new(),
         };
         assert!(EvaluationRouteTable::new([invalid]).is_err());
+    }
+
+    #[test]
+    fn operation_debug_never_formats_payload_content() {
+        const SENTINEL: &str = "hidden-operation-debug-sentinel";
+
+        let mut operation = operation("model.generate");
+        operation.payload = serde_json::json!({"content": SENTINEL});
+        operation.restricted = true;
+        let encoded = format!("{operation:?}");
+        assert!(!encoded.contains(SENTINEL));
+        assert!(encoded.contains("restricted: true"));
     }
 }

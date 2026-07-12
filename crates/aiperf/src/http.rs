@@ -51,6 +51,8 @@ use crate::scheduled::{
 
 mod endpoint_dispatch;
 
+use endpoint_dispatch::EndpointDispatchHooks;
+
 /// Return true only for an SSE message that the current OpenAI-chat parser
 /// would record as a token. This mirrors the Python worker callback at
 /// `src/aiperf/workers/worker.py:474-487`: role-only, usage-only, finish-only,
@@ -1433,9 +1435,12 @@ impl TransportSink {
                         request,
                         binding.endpoint.as_ref(),
                         &binding.config,
-                        observer,
-                        on_first_token,
-                        responses,
+                        EndpointDispatchHooks::new(
+                            observer,
+                            on_first_token,
+                            responses,
+                            data_policy,
+                        ),
                     )
                     .await?
                 }
@@ -1458,9 +1463,12 @@ impl TransportSink {
                         request,
                         endpoint,
                         &model,
-                        observer,
-                        on_first_token,
-                        responses,
+                        EndpointDispatchHooks::new(
+                            observer,
+                            on_first_token,
+                            responses,
+                            data_policy,
+                        ),
                     )
                     .await?
                 }

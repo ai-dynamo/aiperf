@@ -32,6 +32,7 @@ use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
 
+use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
 
 use super::{
@@ -48,20 +49,42 @@ trait RuntimeEndpointAdapter {
     fn captures_assistant_turn(&self) -> bool;
 }
 
-struct EndpointResponseFilter<'a, A, F>
+pub(super) struct EndpointDispatchHooks<'a> {
+    observer: &'a dyn RequestObserver,
+    on_first_token: &'a dyn Fn(i64),
+    responses: Option<&'a dyn TurnResponseObserver>,
+    data_policy: TurnDataPolicy,
+}
+
+impl<'a> EndpointDispatchHooks<'a> {
+    pub(super) fn new(
+        observer: &'a dyn RequestObserver,
+        on_first_token: &'a dyn Fn(i64),
+        responses: Option<&'a dyn TurnResponseObserver>,
+        data_policy: TurnDataPolicy,
+    ) -> Self {
+        Self {
+            observer,
+            on_first_token,
+            responses,
+            data_policy,
+        }
+    }
+}
+
+struct EndpointResponseFilter<'a, A>
 where
     A: RuntimeEndpointAdapter + ?Sized,
 {
     endpoint: &'a A,
     responses: Option<&'a dyn TurnResponseObserver>,
     first_token_released: &'a Cell<bool>,
-    on_first_token: &'a mut F,
+    on_first_token: &'a dyn Fn(i64),
 }
 
-impl<A, F> HttpEndpointResponseFilter for EndpointResponseFilter<'_, A, F>
+impl<A> HttpEndpointResponseFilter for EndpointResponseFilter<'_, A>
 where
     A: RuntimeEndpointAdapter + ?Sized,
-    F: FnMut(i64),
 {
     fn poll_ready(
         &mut self,
@@ -182,9 +205,7 @@ impl TransportSink {
         req: HttpRequest,
         endpoint: &dyn Endpoint,
         endpoint_config: &EndpointConfig,
-        obs: &dyn RequestObserver,
-        on_first_token: impl FnMut(i64),
-        responses: Option<&dyn TurnResponseObserver>,
+        hooks: EndpointDispatchHooks<'_>,
     ) -> Result<HttpCollectedDispatch> {
         let endpoint = LegacyEndpointAdapter {
             endpoint,
@@ -196,15 +217,8 @@ impl TransportSink {
             &self.base_urls,
             &self.model,
         );
-        self.dispatch_runtime_endpoint_collect_record_with_hooks(
-            req,
-            &endpoint,
-            &binding,
-            obs,
-            on_first_token,
-            responses,
-        )
-        .await
+        self.dispatch_runtime_endpoint_collect_record_with_hooks(req, &endpoint, &binding, hooks)
+            .await
     }
 
     /// Dispatch through a worker-local prepared endpoint binding.
@@ -213,21 +227,12 @@ impl TransportSink {
         req: HttpRequest,
         endpoint: &dyn PreparedEndpoint,
         model: &str,
-        obs: &dyn RequestObserver,
-        on_first_token: impl FnMut(i64),
-        responses: Option<&dyn TurnResponseObserver>,
+        hooks: EndpointDispatchHooks<'_>,
     ) -> Result<HttpCollectedDispatch> {
         let binding = MetadataHttpEndpointBinding::from_prepared(endpoint, &self.base_urls, model);
         let endpoint = WorkerPreparedEndpointAdapter(endpoint);
-        self.dispatch_runtime_endpoint_collect_record_with_hooks(
-            req,
-            &endpoint,
-            &binding,
-            obs,
-            on_first_token,
-            responses,
-        )
-        .await
+        self.dispatch_runtime_endpoint_collect_record_with_hooks(req, &endpoint, &binding, hooks)
+            .await
     }
 
     async fn dispatch_runtime_endpoint_collect_record_with_hooks<A, B>(
@@ -235,14 +240,18 @@ impl TransportSink {
         req: HttpRequest,
         endpoint: &A,
         binding: &B,
-        obs: &dyn RequestObserver,
-        mut on_first_token: impl FnMut(i64),
-        responses: Option<&dyn TurnResponseObserver>,
+        hooks: EndpointDispatchHooks<'_>,
     ) -> Result<HttpCollectedDispatch>
     where
         A: RuntimeEndpointAdapter + ?Sized,
         B: HttpEndpointBinding,
     {
+        let EndpointDispatchHooks {
+            observer: obs,
+            on_first_token,
+            responses,
+            data_policy,
+        } = hooks;
         let HttpRequest {
             uuid,
             max_output_tokens,
@@ -313,7 +322,7 @@ impl TransportSink {
                 endpoint,
                 responses,
                 first_token_released: &first_token_released,
-                on_first_token: &mut on_first_token,
+                on_first_token,
             };
             prepared
                 .dispatch_backpressured(
@@ -364,12 +373,20 @@ impl TransportSink {
             let parsed = match parse_endpoint_response(endpoint, &server_response) {
                 Ok(parsed) => parsed,
                 Err(error) => {
-                    tracing::warn!(
-                        uuid = %uuid,
-                        endpoint = endpoint.descriptor().id,
-                        error = %error,
-                        "endpoint response parsing failed"
-                    );
+                    if data_policy.allow_content_diagnostics() {
+                        tracing::warn!(
+                            uuid = %uuid,
+                            endpoint = endpoint.descriptor().id,
+                            error = %error,
+                            "endpoint response parsing failed"
+                        );
+                    } else {
+                        tracing::warn!(
+                            uuid = %uuid,
+                            endpoint = endpoint.descriptor().id,
+                            "restricted endpoint response parsing failed"
+                        );
+                    }
                     parse_failed = true;
                     continue;
                 }
@@ -410,11 +427,18 @@ impl TransportSink {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    tracing::warn!(
-                        uuid = %uuid,
-                        error = %error,
-                        "endpoint assistant-message reconstruction failed"
-                    );
+                    if data_policy.allow_content_diagnostics() {
+                        tracing::warn!(
+                            uuid = %uuid,
+                            error = %error,
+                            "endpoint assistant-message reconstruction failed"
+                        );
+                    } else {
+                        tracing::warn!(
+                            uuid = %uuid,
+                            "restricted endpoint assistant-message reconstruction failed"
+                        );
+                    }
                     parse_failed = true;
                 }
             }
@@ -439,19 +463,33 @@ impl TransportSink {
             record.status,
             &mut model_response,
         );
-        tracing::debug!(
-            uuid = %uuid,
-            endpoint = endpoint.descriptor().id,
-            url = %request_url,
-            status = ?record.status,
-            responses = record.responses.len(),
-            error = ?record.error,
-            parsed_any,
-            parsed_content,
-            parse_failed,
-            terminal = ?terminal,
-            "classified endpoint dispatch"
-        );
+        if data_policy.allow_content_diagnostics() {
+            tracing::debug!(
+                uuid = %uuid,
+                endpoint = endpoint.descriptor().id,
+                url = %request_url,
+                status = ?record.status,
+                responses = record.responses.len(),
+                error = ?record.error,
+                parsed_any,
+                parsed_content,
+                parse_failed,
+                terminal = ?terminal,
+                "classified endpoint dispatch"
+            );
+        } else {
+            tracing::debug!(
+                uuid = %uuid,
+                endpoint = endpoint.descriptor().id,
+                status = ?record.status,
+                responses = record.responses.len(),
+                parsed_any,
+                parsed_content,
+                parse_failed,
+                terminal = ?terminal,
+                "classified restricted endpoint dispatch"
+            );
+        }
         obs.on_usage(uuid, observed_usage);
         obs.on_endpoint_metrics(uuid, endpoint_metrics);
         obs.on_terminal(uuid, terminal);
