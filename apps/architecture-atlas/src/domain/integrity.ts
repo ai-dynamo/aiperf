@@ -8,6 +8,7 @@ import {
   architectureCatalogSchema,
   type ArchitectureCatalog,
   type AudienceCopy,
+  type CargoDependencyKind,
   type EvidenceReference,
 } from "./architecture";
 
@@ -25,6 +26,7 @@ export interface WorkspacePackage {
   name: string;
   manifest_path: string;
   dependencies?: Array<{
+    kind?: CargoDependencyKind | null;
     name: string;
     path?: string | null;
   }>;
@@ -155,10 +157,10 @@ export async function validateArchitectureCatalog(
     }
   }
   for (const crateReference of catalog.crates) {
-    for (const dependencyId of crateReference.dependencyCrateIds) {
-      if (!crateIds.has(dependencyId)) {
+    for (const dependency of crateReference.dependencies) {
+      if (!crateIds.has(dependency.crateId)) {
         throw new Error(
-          `${crateReference.id} references missing crate ${dependencyId}`,
+          `${crateReference.id} references missing crate ${dependency.crateId}`,
         );
       }
     }
@@ -252,18 +254,17 @@ export function validateWorkspaceCrates(
       );
     }
     if (workspacePackage?.dependencies) {
-      const actualDependencies = [
-        ...new Set(
-          workspacePackage.dependencies
-            .filter(
-              ({ name, path }) =>
-                path?.startsWith(`${rootPath}/crates/`) &&
-                catalogPackages.has(name),
-            )
-            .map(({ name }) => `crate.${name}`),
-        ),
-      ].sort();
-      const catalogDependencies = [...crateReference.dependencyCrateIds].sort();
+      const actualDependencies = workspacePackage.dependencies
+        .filter(
+          ({ name, path }) =>
+            path?.startsWith(`${rootPath}/crates/`) &&
+            catalogPackages.has(name),
+        )
+        .map(({ kind, name }) => `crate.${name}:${kind ?? "normal"}`)
+        .sort();
+      const catalogDependencies = crateReference.dependencies
+        .map(({ crateId, kind }) => `${crateId}:${kind}`)
+        .sort();
       if (
         actualDependencies.length !== catalogDependencies.length ||
         actualDependencies.some(

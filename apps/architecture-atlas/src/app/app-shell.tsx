@@ -19,6 +19,7 @@ import {
 import {
   routeCapabilities,
   routeSupports,
+  type PresentationRoute,
 } from "../domain/routes";
 
 interface AppShellProps {
@@ -33,14 +34,6 @@ interface AppShellProps {
   onStartPresentation(): void;
   onAudienceChange(audience: Audience): void;
 }
-
-type PresentationRoute =
-  | "/"
-  | "/journey"
-  | "/execution"
-  | "/data-plane"
-  | "/observability"
-  | "/parity";
 
 function NavigationLinks() {
   return routeCapabilities.map(({ path: to, label }) => (

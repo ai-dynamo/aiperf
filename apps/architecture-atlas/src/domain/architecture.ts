@@ -27,6 +27,14 @@ export const executionModeSchema = z.enum([
   "dynamo_offline",
   "online_mock",
 ]);
+export const lifecycleBandSchema = z.enum([
+  "authoring",
+  "validation",
+  "execution",
+  "measurement",
+  "presentation",
+]);
+export const cargoDependencyKindSchema = z.enum(["normal", "build", "dev"]);
 export const workloadSchema = z.enum([
   "scheduled",
   "graph",
@@ -69,6 +77,7 @@ export const componentSchema = copyEntitySchema
   .extend({
     kind: z.literal("component"),
     owner: ownershipSchema,
+    lifecycleBand: lifecycleBandSchema,
     status: architectureStatusSchema,
     evidence: z.array(evidenceReferenceSchema).min(1),
     modes: z.array(executionModeSchema),
@@ -155,7 +164,14 @@ export const crateReferenceSchema = copyEntitySchema
     status: architectureStatusSchema,
     responsibility: audienceCopySchema,
     keySourcePaths: z.array(z.string().regex(repositoryPathPattern)).min(1),
-    dependencyCrateIds: z.array(architectureIdSchema),
+    dependencies: z.array(
+      z
+        .object({
+          crateId: architectureIdSchema,
+          kind: cargoDependencyKindSchema,
+        })
+        .strict(),
+    ),
     contracts: z.array(z.string().trim().min(1)),
     modes: z.array(executionModeSchema),
     parityScars: z.array(z.string().trim().min(1)),
@@ -179,6 +195,8 @@ export const architectureCatalogSchema = z
 export type Ownership = z.infer<typeof ownershipSchema>;
 export type ArchitectureStatus = z.infer<typeof architectureStatusSchema>;
 export type ExecutionMode = z.infer<typeof executionModeSchema>;
+export type LifecycleBand = z.infer<typeof lifecycleBandSchema>;
+export type CargoDependencyKind = z.infer<typeof cargoDependencyKindSchema>;
 export type Workload = z.infer<typeof workloadSchema>;
 export type AudienceCopy = z.infer<typeof audienceCopySchema>;
 export type EvidenceReference = z.infer<typeof evidenceReferenceSchema>;

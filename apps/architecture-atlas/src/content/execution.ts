@@ -13,6 +13,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.clock-seam",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Consistent time model", "Injected execution clock", "Clock with RealClock and SimClock"),
     summary: copy(
@@ -29,6 +30,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.scheduling",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Load policy", "Clock-paced scheduling", "Workload, SlotPool, StopChecker"),
     summary: copy(
@@ -45,6 +47,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.phases-controls",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Safe run lifecycle", "Phases and live controls", "ClockPhaseOrchestrator plus adaptive and ancillary drivers"),
     summary: copy(
@@ -61,6 +64,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.http-transport",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Web inference path", "Native HTTP and SSE transport", "Clock-injected Hyper transport"),
     summary: copy(
@@ -77,6 +81,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.grpc-transport",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Native RPC inference path", "KServe and Riva gRPC transport", "Clock-injected Tonic raw RPC transport"),
     summary: copy(
@@ -96,6 +101,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.online-mock",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Repeatable online target", "Standalone HTTP mock server", "aiperf-mock-rs ordinary network peer"),
     summary: copy(
@@ -112,6 +118,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.dynamo-offline",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "feature-gated",
     title: copy("Deterministic capacity simulation", "In-process Dynamo offline backend", "dynamo-offline SteppableReplay adapter"),
     summary: copy(
@@ -128,6 +135,7 @@ export const executionComponents: ArchitectureComponent[] = [
     id: "component.worker-placement",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Scalable local execution", "Thread-per-core placement", "OS thread current_thread runtime plus LocalSet"),
     summary: copy(

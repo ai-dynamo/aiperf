@@ -24,7 +24,7 @@ import type {
   ExecutionMode,
 } from "../domain/architecture";
 import {
-  guidedRoutePaths,
+  presentationRoutePaths,
   routeSupports,
   type GuidedRoute,
 } from "../domain/routes";
@@ -42,7 +42,7 @@ const LazyAtlasView = lazy(async () => {
   const module = await import("../features/atlas/atlas-view");
   return { default: module.AtlasView };
 });
-const presentationRoutes = guidedRoutePaths;
+const presentationRoutes = presentationRoutePaths;
 
 const unavailableAudienceStorage = {
   getItem: () => null,
@@ -283,7 +283,9 @@ function AtlasRouteComponent() {
               query:
                 change.query === undefined
                   ? previous.query
-                  : change.query.trim() || undefined,
+                  : change.query.trim()
+                    ? change.query
+                    : undefined,
               selected:
                 "selected" in change ? change.selected : previous.selected,
               statuses:

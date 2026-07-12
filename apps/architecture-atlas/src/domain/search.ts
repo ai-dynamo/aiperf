@@ -35,7 +35,11 @@ const modesSchema = csvSchema(executionModeSchema);
 const statusesSchema = csvSchema(architectureStatusSchema);
 const ownershipSelectionSchema = csvSchema(ownershipSchema);
 const layoutSchema = z.enum(["ownership", "lifecycle"]).optional();
-const querySchema = z.string().trim().min(1).max(160).optional();
+const querySchema = z
+  .string()
+  .max(160)
+  .refine((value) => value.trim().length > 0)
+  .optional();
 const selectedSchema = architectureIdSchema.optional();
 
 export const atlasSearchSchema = z.object({

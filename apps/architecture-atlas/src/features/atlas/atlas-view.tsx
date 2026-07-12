@@ -8,6 +8,7 @@ import {
   EdgeLabelRenderer,
   Handle,
   MiniMap,
+  MarkerType,
   Position,
   ReactFlow,
   getSmoothStepPath,
@@ -40,7 +41,13 @@ import {
   modeLabels,
   statusLabels,
 } from "../guided/primitives";
-import { layoutAtlas, type LayoutPerspective } from "./layout";
+import {
+  buildLayoutRequest,
+  FitAfterLayoutScheduler,
+  layoutAtlas,
+  type LayoutPerspective,
+  type LayoutResult,
+} from "./layout";
 
 interface AtlasRouteState {
   layout: LayoutPerspective;
@@ -62,7 +69,11 @@ interface ComponentNodeData extends Record<string, unknown> {
   component: ArchitectureComponent;
   dimmed: boolean;
   selected: boolean;
-  select(id: string): void;
+  select(id: string, trigger: HTMLButtonElement): void;
+}
+
+interface BandNodeData extends Record<string, unknown> {
+  label: string;
 }
 
 const modeOrder = Object.keys(modeLabels) as ExecutionMode[];
@@ -86,7 +97,9 @@ function ComponentNode({ data }: NodeProps<Node<ComponentNodeData>>) {
       <Handle position={Position.Left} type="target" />
       <button
         aria-pressed={data.selected}
-        onClick={() => data.select(data.component.id)}
+        onClick={(event) =>
+          data.select(data.component.id, event.currentTarget)
+        }
         type="button"
       >
         <span className="atlas-node-owner">{ownerLabels[data.component.owner]}</span>
@@ -99,7 +112,15 @@ function ComponentNode({ data }: NodeProps<Node<ComponentNodeData>>) {
   );
 }
 
-const nodeTypes = { component: ComponentNode };
+function BandNode({ data }: NodeProps<Node<BandNodeData>>) {
+  return (
+    <section aria-label={`${data.label} layout band`} className="atlas-band">
+      <strong>{data.label}</strong>
+    </section>
+  );
+}
+
+const nodeTypes = { band: BandNode, component: ComponentNode };
 
 interface SemanticEdgeData extends Record<string, unknown> {
   edge: ArchitectureEdge;
@@ -354,8 +375,24 @@ export function AtlasView({
         : { upstream: [], downstream: [], related: new Set<string>() },
     [graph.edges, selected],
   );
-  const [positions, setPositions] = useState(new Map<string, { x: number; y: number }>());
+  const layoutRequest = useMemo(
+    () => buildLayoutRequest(graph.components, graph.edges, state.layout),
+    [graph.components, graph.edges, state.layout],
+  );
+  const [committedLayout, setCommittedLayout] = useState<{
+    key: string;
+    result: LayoutResult;
+  }>();
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
+  const lastSelectionTrigger = useRef<HTMLButtonElement | undefined>(undefined);
+  const inventoryTriggers = useRef(new Map<string, HTMLButtonElement>());
+  const fitScheduler = useRef<FitAfterLayoutScheduler | undefined>(undefined);
+  if (!fitScheduler.current) {
+    fitScheduler.current = new FitAfterLayoutScheduler(
+      window.requestAnimationFrame.bind(window),
+      window.cancelAnimationFrame.bind(window),
+    );
+  }
 
   useEffect(() => {
     if (state.selected && !selected) {
@@ -365,39 +402,88 @@ export function AtlasView({
 
   useEffect(() => {
     let active = true;
-    void layoutAtlas(
-      graph.components,
-      graph.edges,
-      state.layout,
-      architectureCatalog.lifecycleStages,
-    ).then((layout) => {
+    setCommittedLayout(undefined);
+    void layoutAtlas(layoutRequest).then((result) => {
       if (active) {
-        setPositions(new Map(layout.map(({ id, x, y }) => [id, { x, y }])));
+        setCommittedLayout({ key: layoutRequest.key, result });
       }
     });
     return () => {
       active = false;
     };
-  }, [graph.components, graph.edges, state.layout]);
+  }, [layoutRequest]);
 
-  const nodes: Node<ComponentNodeData>[] = graph.components.map((component) => ({
-    id: component.id,
-    type: "component",
-    position: positions.get(component.id) ?? { x: 0, y: 0 },
-    data: {
-      audience,
-      component,
-      dimmed: Boolean(selected && !neighborhood.related.has(component.id)),
-      selected: selected?.id === component.id,
-      select: (id) => onStateChange({ selected: id }),
+  const layout =
+    committedLayout?.key === layoutRequest.key
+      ? committedLayout.result
+      : undefined;
+  useEffect(() => {
+    if (!instance || !layout) {
+      fitScheduler.current?.cancel();
+      return undefined;
+    }
+    const ids = layout.positions.map(({ id }) => id);
+    fitScheduler.current?.schedule(ids, (currentIds) => {
+      void instance.fitView({
+        nodes: currentIds.map((id) => ({ id })),
+        padding: 0.14,
+      });
+    });
+    return () => fitScheduler.current?.cancel();
+  }, [instance, layout]);
+  useEffect(
+    () => () => {
+      fitScheduler.current?.dispose();
     },
-  }));
+    [],
+  );
+
+  const positions = new Map(
+    layout?.positions.map(({ id, x, y }) => [id, { x, y }]) ?? [],
+  );
+  const nodes: Node[] = layout
+    ? [
+        ...layout.bands.map((band) => ({
+          data: { label: band.label },
+          draggable: false,
+          id: `band.${band.id}`,
+          position: { x: band.x, y: band.y },
+          selectable: false,
+          style: { height: band.height, width: band.width },
+          type: "band",
+          zIndex: -1,
+        })),
+        ...graph.components.map((component) => ({
+          data: {
+            audience,
+            component,
+            dimmed: Boolean(
+              selected && !neighborhood.related.has(component.id),
+            ),
+            selected: selected?.id === component.id,
+            select: (id: string, trigger: HTMLButtonElement) => {
+              lastSelectionTrigger.current = trigger;
+              onStateChange({ selected: id });
+            },
+          },
+          id: component.id,
+          position: positions.get(component.id) ?? { x: 0, y: 0 },
+          type: "component",
+        })),
+      ]
+    : [];
   const edges = graph.edges.map((edge) => ({
     id: edge.id,
     source: edge.from,
     target: edge.to,
     type: "semantic",
     data: { edge },
+    markerEnd: {
+      color: "#6db6ff",
+      height: 16,
+      type: MarkerType.ArrowClosed,
+      width: 16,
+    },
     className:
       selected &&
       (!neighborhood.related.has(edge.from) ||
@@ -415,8 +501,34 @@ export function AtlasView({
       selected: undefined,
       statuses: [],
     });
-    window.setTimeout(() => void instance?.fitView({ padding: 0.14 }), 0);
   };
+  const closeDrawer = () => {
+    const selectedId = selected?.id;
+    onStateChange({ selected: undefined });
+    window.requestAnimationFrame(() => {
+      (
+        lastSelectionTrigger.current ??
+        (selectedId ? inventoryTriggers.current.get(selectedId) : undefined)
+      )?.focus();
+    });
+  };
+  const fitCurrent = () => {
+    if (!instance || !layout) {
+      return;
+    }
+    fitScheduler.current?.schedule(
+      layout.positions.map(({ id }) => id),
+      (currentIds) => {
+        void instance.fitView({
+          nodes: currentIds.map((id) => ({ id })),
+          padding: 0.14,
+        });
+      },
+    );
+  };
+  const componentName = (id: string) =>
+    graph.components.find((component) => component.id === id)?.title[audience] ??
+    id;
 
   return (
     <section className={`atlas-route audience-${audience}`}>
@@ -455,7 +567,8 @@ export function AtlasView({
         </label>
         <button onClick={reset} type="button">Reset</button>
         <button
-          onClick={() => void instance?.fitView({ padding: 0.14 })}
+          disabled={!layout}
+          onClick={fitCurrent}
           type="button"
         >
           Fit view
@@ -489,21 +602,41 @@ export function AtlasView({
       >
         {graph.components.length} components, {graph.edges.length} connections
         {selected
-          ? `; ${neighborhood.upstream.length} upstream and ${neighborhood.downstream.length} downstream of ${selected.title[audience]}`
+          ? `; upstream: ${neighborhood.upstream.map(componentName).join(", ") || "none"}; downstream: ${neighborhood.downstream.map(componentName).join(", ") || "none"}; selected: ${selected.title[audience]}`
           : ""}
       </p>
+      {layout?.degraded ? (
+        <p className="atlas-layout-notice" role="status">
+          Automatic layout is degraded. A deterministic grouped fallback is in
+          use. {layout.reason}
+        </p>
+      ) : null}
+      {layout ? (
+        <ul aria-label="Layout bands" className="atlas-band-list">
+          {layout.bands.map((band) => (
+            <li key={band.id}>
+              {band.label}:{" "}
+              {
+                layout.positions.filter(
+                  ({ bandId }) => bandId === band.id,
+                ).length
+              }{" "}
+              components
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="atlas-workspace">
         <div aria-label="Architecture graph" className="atlas-canvas">
-          <ReactFlow
+          {layout ? <ReactFlow
             colorMode="dark"
             edges={edges}
             edgeTypes={edgeTypes}
-            fitView
             minZoom={0.2}
             nodeTypes={nodeTypes}
             nodes={nodes}
+            nodesDraggable={false}
             onInit={setInstance}
-            onNodeClick={(_, node) => onStateChange({ selected: node.id })}
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={28} size={1} />
@@ -513,12 +646,16 @@ export function AtlasView({
               maskColor="rgba(16, 18, 20, 0.76)"
               nodeColor="#6f7882"
             />
-          </ReactFlow>
+          </ReactFlow> : (
+            <p className="atlas-layout-loading" role="status">
+              Positioning architecture bands…
+            </p>
+          )}
         </div>
         {selected ? (
           <ComponentDrawer
             audience={audience}
-            close={() => onStateChange({ selected: undefined })}
+            close={closeDrawer}
             component={selected}
             downstream={neighborhood.downstream}
             upstream={neighborhood.upstream}
@@ -531,11 +668,30 @@ export function AtlasView({
           {graph.components.map((component) => (
             <li key={component.id}>
               <button
-                onClick={() => onStateChange({ selected: component.id })}
+                onClick={(event) => {
+                  lastSelectionTrigger.current = event.currentTarget;
+                  onStateChange({ selected: component.id });
+                }}
+                ref={(element) => {
+                  if (element) {
+                    inventoryTriggers.current.set(component.id, element);
+                  } else {
+                    inventoryTriggers.current.delete(component.id);
+                  }
+                }}
                 type="button"
               >
                 {component.title[audience]} — {ownerLabels[component.owner]} —{" "}
-                {statusLabels[component.status]}
+                {statusLabels[component.status]} —{" "}
+                {selected?.id === component.id
+                  ? "Selected component"
+                  : neighborhood.upstream.includes(component.id)
+                    ? "Upstream of selected"
+                    : neighborhood.downstream.includes(component.id)
+                      ? "Downstream of selected"
+                      : selected
+                        ? "Outside selected trace"
+                        : "No trace selected"}
               </button>
             </li>
           ))}

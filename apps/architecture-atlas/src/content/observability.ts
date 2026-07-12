@@ -9,6 +9,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.native-metrics",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "measurement",
     status: "built",
     title: copy("Performance evidence", "Native metrics and reporting", "MetricsAccumulator, sweep-lines, and Reporter"),
     summary: copy(
@@ -25,6 +26,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.live-telemetry",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "measurement",
     status: "built",
     title: copy("System context", "GPU, server, and network telemetry", "DCGM, Prometheus, and TCP-connect producer leaves"),
     summary: copy(
@@ -45,6 +47,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.telemetry-archive",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "presentation",
     status: "built",
     title: copy("Durable telemetry history", "Telemetry archive and recovery", "aiperf-telemetry-archive WAL and store seams"),
     summary: copy(
@@ -61,6 +64,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.static-accuracy",
     kind: "component",
     owner: "legacy",
+    lifecycleBand: "measurement",
     status: "legacy-parallel",
     title: copy("Established answer quality", "Static benchmark evaluation", "Legacy AccuracyEvaluator worker"),
     summary: copy(
@@ -77,6 +81,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.agentic-evaluation",
     kind: "component",
     owner: "legacy",
+    lifecycleBand: "measurement",
     status: "legacy-parallel",
     title: copy("Environment and tool quality", "Agentic benchmark providers", "AgenticHarnessProvider and Rust inference gateway"),
     summary: copy(
@@ -93,6 +98,7 @@ export const observabilityComponents: ArchitectureComponent[] = [
     id: "component.provider-evaluation",
     kind: "component",
     owner: "external",
+    lifecycleBand: "measurement",
     status: "runtime-conditional",
     title: copy("Bounded neutral evaluation", "Provider-neutral evaluator host", "Attested evaluator protocol v2 and Bubblewrap isolation"),
     summary: copy(

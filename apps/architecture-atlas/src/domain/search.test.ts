@@ -40,4 +40,10 @@ describe("atlas search parsing", () => {
       }),
     ).toEqual({ audience: "developer" });
   });
+
+  it("preserves meaningful query whitespace for controlled URL input", () => {
+    expect(parseAtlasSearch({ query: "virtual clock " })).toEqual({
+      query: "virtual clock ",
+    });
+  });
 });

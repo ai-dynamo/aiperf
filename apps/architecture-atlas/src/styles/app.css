@@ -1006,7 +1006,7 @@
   .atlas-node > button > span:not(.status-badge, .atlas-node-owner) {
     overflow: hidden;
     color: var(--text-secondary);
-    font-size: 0.69rem;
+    font-size: 0.75rem;
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1015,7 +1015,7 @@
   .atlas-node-owner {
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.58rem;
+    font-size: 0.7rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -1042,7 +1042,7 @@
     color: var(--text-secondary);
     padding: var(--space-1) var(--space-2);
     font-family: var(--font-data);
-    font-size: 0.58rem;
+    font-size: 0.68rem;
     pointer-events: none;
   }
 
@@ -1052,6 +1052,53 @@
 
   .atlas-edge-label[data-kind="control"] {
     border-inline-start-style: dashed;
+  }
+
+  .react-flow__node-band {
+    pointer-events: none;
+  }
+
+  .atlas-band {
+    inline-size: 100%;
+    block-size: 100%;
+    border: 1px solid var(--line-subtle);
+    background: color-mix(in srgb, var(--surface-rail) 68%, transparent);
+    padding: var(--space-3);
+  }
+
+  .atlas-band strong {
+    color: var(--accent-flow-strong);
+    font-family: var(--font-data);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .atlas-layout-notice {
+    border-inline-start: 2px solid var(--status-conditional);
+    margin-block: var(--space-3);
+    color: var(--text-secondary);
+    padding-inline-start: var(--space-3);
+    font-size: 0.78rem;
+  }
+
+  .atlas-layout-loading {
+    padding: var(--space-5);
+    color: var(--text-secondary);
+    font-family: var(--font-data);
+    font-size: 0.75rem;
+  }
+
+  .atlas-band-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-3);
+    padding: 0;
+    color: var(--text-muted);
+    font-family: var(--font-data);
+    font-size: 0.7rem;
+    list-style: none;
   }
 
   .react-flow__controls,

@@ -12,6 +12,7 @@ export const ownershipComponents: ArchitectureComponent[] = [
     id: "component.python-frontend",
     kind: "component",
     owner: "python",
+    lifecycleBand: "authoring",
     status: "built",
     title: copy(
       "Product control room",
@@ -32,6 +33,7 @@ export const ownershipComponents: ArchitectureComponent[] = [
     id: "component.rust-runner",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "validation",
     status: "built",
     title: copy(
       "Single-run execution engine",
@@ -55,6 +57,7 @@ export const ownershipComponents: ArchitectureComponent[] = [
     id: "component.rust-runtime",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy(
       "Reusable performance core",
@@ -75,6 +78,7 @@ export const ownershipComponents: ArchitectureComponent[] = [
     id: "component.inference-target",
     kind: "component",
     owner: "external",
+    lifecycleBand: "execution",
     status: "built",
     title: copy(
       "Inference destination",
@@ -95,6 +99,7 @@ export const ownershipComponents: ArchitectureComponent[] = [
     id: "component.python-evaluators",
     kind: "component",
     owner: "legacy",
+    lifecycleBand: "measurement",
     status: "legacy-parallel",
     title: copy(
       "Established evaluation semantics",

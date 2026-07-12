@@ -62,6 +62,35 @@ describe("unified atlas route", () => {
     ).toHaveTextContent("crates/aiperf-clock/src/clock.rs");
   });
 
+  it("names directed upstream and downstream dependencies in text", async () => {
+    renderAtlas(
+      "/atlas?audience=developer&selected=component.rust-runtime",
+    );
+
+    const summary = await screen.findByRole("status", {
+      name: "Atlas graph summary",
+    });
+    expect(summary).toHaveTextContent(
+      /upstream:.*Python configuration and orchestration/u,
+    );
+    expect(summary).toHaveTextContent(
+      /downstream:.*HTTP, gRPC, or mock inference target/u,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: /Python configuration and orchestration.*upstream of selected/iu,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("exposes semantic lifecycle group labels outside the canvas", async () => {
+    renderAtlas("/atlas?audience=developer&layout=lifecycle");
+
+    const bands = await screen.findByRole("list", { name: "Layout bands" });
+    expect(within(bands).getByText(/Validation and preparation:/u)).toBeInTheDocument();
+    expect(within(bands).getByText(/Measurement:/u)).toBeInTheDocument();
+  });
+
   it("writes search, layout, and selected-node interaction state to the URL", async () => {
     const user = userEvent.setup();
     const router = renderAtlas("/atlas?audience=developer");
@@ -87,6 +116,43 @@ describe("unified atlas route", () => {
       });
     });
   });
+
+  it("preserves trailing spaces while editing a multi-word URL query", async () => {
+    const user = userEvent.setup();
+    const router = renderAtlas("/atlas?audience=developer");
+
+    await user.type(
+      await screen.findByRole("searchbox", { name: "Search atlas" }),
+      "virtual clock ",
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.search.query).toBe("virtual clock ");
+    });
+    expect(screen.getByRole("searchbox", { name: "Search atlas" })).toHaveValue(
+      "virtual clock ",
+    );
+  });
+
+  it("restores focus to the inventory trigger when the drawer closes", async () => {
+    const user = userEvent.setup();
+    renderAtlas("/atlas?audience=developer");
+    await user.click(await screen.findByText("Text inventory"));
+    const trigger = screen.getByRole("button", {
+      name: /^Injected execution clock/u,
+    });
+
+    await user.click(trigger);
+    expect(
+      await screen.findByRole("button", { name: "Clear selected component" }),
+    ).toHaveFocus();
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    });
+  });
 });
 
 describe("crate reference routes", () => {
@@ -105,6 +171,23 @@ describe("crate reference routes", () => {
     expect(
       screen.getByRole("navigation", { name: "Crate directory" }),
     ).toBeInTheDocument();
+  });
+
+  it("labels normal and development Cargo dependencies separately", async () => {
+    renderAtlas("/crates/aiperf-extensions?audience=maintainer");
+
+    expect(
+      await screen.findByRole("heading", { name: "Normal dependencies" }),
+    ).toBeInTheDocument();
+    const development = screen.getByRole("region", {
+      name: "Development dependencies",
+    });
+    expect(within(development).getByText("aiperf-rng")).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Normal dependencies" }),
+      ).queryByText("aiperf-rng"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders a useful typed not-found view", async () => {

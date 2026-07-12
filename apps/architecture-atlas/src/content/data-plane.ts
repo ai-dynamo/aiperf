@@ -9,6 +9,7 @@ export const dataPlaneComponents: ArchitectureComponent[] = [
     id: "component.dataset-pipeline",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "validation",
     status: "built",
     title: copy("Request content supply", "Typed dataset pipeline", "Loader, composer, sampler, tokenizer, fetch seams"),
     summary: copy(
@@ -25,6 +26,7 @@ export const dataPlaneComponents: ArchitectureComponent[] = [
     id: "component.segment-store",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "validation",
     status: "built",
     title: copy("Deduplicated prompt memory", "Content-addressed segment store", "Prefix-dependent BLAKE3 dense Handle store"),
     summary: copy(
@@ -41,6 +43,7 @@ export const dataPlaneComponents: ArchitectureComponent[] = [
     id: "component.endpoint-registry",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "validation",
     status: "built",
     title: copy("Protocol portfolio", "Open endpoint registry and dialects", "EndpointFactory registry with PreparedEndpoint bindings"),
     summary: copy(
@@ -57,6 +60,7 @@ export const dataPlaneComponents: ArchitectureComponent[] = [
     id: "component.graph-ir",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Branching workload journeys", "Graph-IR dataflow execution", "GraphTracePlan async-dataflow executor"),
     summary: copy(
@@ -73,6 +77,7 @@ export const dataPlaneComponents: ArchitectureComponent[] = [
     id: "component.content-server",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "execution",
     status: "built",
     title: copy("Generated media delivery", "Run-owned content sidecar", "SyntheticMediaPublisher backed by confined Axum server"),
     summary: copy(
@@ -89,6 +94,7 @@ export const dataPlaneComponents: ArchitectureComponent[] = [
     id: "component.exact-token-ids",
     kind: "component",
     owner: "rust",
+    lifecycleBand: "validation",
     status: "built",
     title: copy("Exact token replay", "Raw token-ID request path", "Payload::TokenIds and Turn::raw_token_ids"),
     summary: copy(

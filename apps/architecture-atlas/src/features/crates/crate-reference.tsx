@@ -7,7 +7,10 @@ import { useState } from "react";
 import { architectureCatalog } from "../../content";
 import type { Audience } from "../../domain/audience";
 import { searchCrates } from "../../domain/atlas-graph";
-import type { CrateReference } from "../../domain/architecture";
+import type {
+  CargoDependencyKind,
+  CrateReference,
+} from "../../domain/architecture";
 import {
   EvidenceCitation,
   StatusBadge,
@@ -86,6 +89,56 @@ function RelationList({
   );
 }
 
+const dependencyKindLabels: Record<CargoDependencyKind, string> = {
+  normal: "Normal dependencies",
+  build: "Build dependencies",
+  dev: "Development dependencies",
+};
+
+function DependencySections({
+  audience,
+  crate,
+}: {
+  audience: Audience;
+  crate: CrateReference;
+}) {
+  return (Object.keys(dependencyKindLabels) as CargoDependencyKind[]).map(
+    (kind) => {
+      const dependencies = crate.dependencies
+        .filter((dependency) => dependency.kind === kind)
+        .flatMap((dependency) => {
+          const related = architectureCatalog.crates.find(
+            ({ id }) => id === dependency.crateId,
+          );
+          return related ? [related] : [];
+        });
+      const label = dependencyKindLabels[kind];
+      return (
+        <section aria-label={label} key={kind}>
+          <h2>{label}</h2>
+          {dependencies.length > 0 ? (
+            <ul className="reference-list">
+              {dependencies.map((dependency) => (
+                <li key={dependency.id}>
+                  <Link
+                    params={{ crateId: dependency.packageName }}
+                    search={{ audience }}
+                    to="/crates/$crateId"
+                  >
+                    {dependency.packageName}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>None.</p>
+          )}
+        </section>
+      );
+    },
+  );
+}
+
 export function CrateReferenceView({
   audience,
   crateId,
@@ -126,14 +179,10 @@ export function CrateReferenceView({
     );
   }
 
-  const dependencies = crate.dependencyCrateIds.flatMap((id) => {
-    const dependency = architectureCatalog.crates.find(
-      (candidate) => candidate.id === id,
-    );
-    return dependency ? [dependency] : [];
-  });
   const dependents = architectureCatalog.crates.filter((candidate) =>
-    candidate.dependencyCrateIds.includes(crate.id),
+    candidate.dependencies.some(({ crateId: dependencyId }) =>
+      dependencyId === crate.id
+    ),
   );
   const components = architectureCatalog.components.filter((component) =>
     component.crateIds.includes(crate.id),
@@ -172,11 +221,7 @@ export function CrateReferenceView({
               ))}
             </ul>
           </section>
-          <RelationList
-            audience={audience}
-            crates={dependencies}
-            label="Dependencies"
-          />
+          <DependencySections audience={audience} crate={crate} />
           <RelationList
             audience={audience}
             crates={dependents}

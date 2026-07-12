@@ -65,6 +65,10 @@ export type GuidedRoute = Extract<
   (typeof routeCapabilities)[number],
   { guided: true }
 >["path"];
+export type PresentationRoute = Extract<
+  (typeof routeCapabilities)[number],
+  { presentation: true }
+>["path"];
 export type RouteCapability =
   | "filters"
   | "presentation"
@@ -73,6 +77,12 @@ export type RouteCapability =
 
 export const guidedRoutePaths: GuidedRoute[] = routeCapabilities
   .filter((route): route is Extract<typeof route, { guided: true }> => route.guided)
+  .map(({ path }) => path);
+export const presentationRoutePaths: PresentationRoute[] = routeCapabilities
+  .filter(
+    (route): route is Extract<typeof route, { presentation: true }> =>
+      route.presentation,
+  )
   .map(({ path }) => path);
 
 export function routeSupports(

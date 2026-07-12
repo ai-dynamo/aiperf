@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   guidedRoutePaths,
+  presentationRoutePaths,
   routeCapabilities,
   routeSupports,
 } from "./routes";
@@ -28,6 +29,7 @@ describe("route capabilities", () => {
       "/observability",
       "/parity",
     ]);
+    expect(presentationRoutePaths).toEqual(guidedRoutePaths);
     expect(routeSupports("/execution", "filters")).toBe(true);
     expect(routeSupports("/journey", "filters")).toBe(false);
     expect(routeSupports("/atlas", "atlasState")).toBe(true);

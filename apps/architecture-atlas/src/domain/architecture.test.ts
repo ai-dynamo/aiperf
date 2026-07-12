@@ -8,12 +8,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { architectureCatalog } from "../content";
 import {
   architectureCatalogSchema,
+  crateReferenceSchema,
   workloadSchema,
   type ArchitectureCatalog,
   type ArchitectureRisk,
   type LifecycleStage,
 } from "./architecture";
-import { validateArchitectureCatalog } from "./integrity";
+import {
+  validateArchitectureCatalog,
+  validateWorkspaceCrates,
+} from "./integrity";
 
 const repositoryRoot = pathToFileURL(
   `${resolve(dirname(fileURLToPath(import.meta.url)), "../../../../")}/`,
@@ -40,6 +44,7 @@ function minimalCatalog(): ArchitectureCatalog {
             "Projects protocol-v2 input without protocol-v1 fallback or resolved state.",
         },
         evidence: [{ path: "AGENTS.md", lines: { start: 1, end: 12 } }],
+        lifecycleBand: "authoring",
         modes: ["online_http"],
         contracts: ["protocol-v2"],
       },
@@ -83,6 +88,59 @@ describe("architecture catalog schema", () => {
           status === "built",
       ),
     ).toBe(true);
+  });
+
+  it("requires one explicit primary lifecycle band per component", () => {
+    expect(
+      architectureCatalog.components.every(
+        (component) => "lifecycleBand" in component,
+      ),
+    ).toBe(true);
+  });
+
+  it("models Cargo dependency kinds explicitly", () => {
+    const source = architectureCatalog.crates.find(
+      ({ packageName }) => packageName === "aiperf-extensions",
+    );
+    expect(source).toBeDefined();
+    const parsed = crateReferenceSchema.parse(source);
+    expect(parsed.dependencies).toContainEqual({
+      crateId: "crate.aiperf-rng",
+      kind: "dev",
+    });
+  });
+
+  it("rejects Cargo dependency kind mismatches", () => {
+    const packages = architectureCatalog.crates.map((crate) => {
+      return {
+        name: crate.packageName,
+        manifest_path: fileURLToPath(
+          new URL(`${crate.path}/Cargo.toml`, repositoryRoot),
+        ),
+        dependencies: crate.dependencies.map(({ crateId, kind }) => ({
+          kind:
+            crate.packageName === "aiperf-extensions" &&
+            crateId === "crate.aiperf-rng"
+              ? "normal" as const
+              : kind,
+          name: crateId.replace(/^crate\./u, ""),
+          path: fileURLToPath(
+            new URL(
+              `crates/${crateId.replace(/^crate\./u, "")}`,
+              repositoryRoot,
+            ),
+          ),
+        })),
+      };
+    });
+
+    expect(() =>
+      validateWorkspaceCrates(
+        architectureCatalog,
+        packages,
+        repositoryRoot,
+      ),
+    ).toThrow(/dependency.*kind|workspace dependency mismatch/iu);
   });
 
   it("rejects missing audience copy", () => {

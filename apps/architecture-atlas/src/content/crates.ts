@@ -3,6 +3,7 @@
 
 import type {
   ArchitectureStatus,
+  CargoDependencyKind,
   CrateReference,
   ExecutionMode,
 } from "../domain/architecture";
@@ -14,7 +15,13 @@ interface CrateDefinition {
   integration: string;
   maintenance: string;
   key?: string[];
-  dependencies?: string[];
+  dependencies?: Array<
+    | string
+    | {
+        name: string;
+        kind: CargoDependencyKind;
+      }
+  >;
   contracts: string[];
   modes?: ExecutionMode[];
   scars?: string[];
@@ -47,9 +54,10 @@ function crateReference(definition: CrateDefinition): CrateReference {
     keySourcePaths: (definition.key ?? ["src/lib.rs"]).map(
       (source) => `${path}/${source}`,
     ),
-    dependencyCrateIds: (definition.dependencies ?? []).map(
-      (dependency) => `crate.${dependency}`,
-    ),
+    dependencies: (definition.dependencies ?? []).map((dependency) => ({
+      crateId: `crate.${typeof dependency === "string" ? dependency : dependency.name}`,
+      kind: typeof dependency === "string" ? "normal" : dependency.kind,
+    })),
     contracts: definition.contracts,
     modes: definition.modes ?? [],
     parityScars: definition.scars ?? [],
@@ -227,7 +235,11 @@ export const crateCatalog: CrateReference[] = [
     integration: "Transactionally links dataset, sampler, and endpoint registrations",
     maintenance: "AiperfRegistry and AiperfExtension freeze path",
     key: ["src/lib.rs"],
-    dependencies: ["aiperf-dataset", "aiperf-endpoints", "aiperf-rng"],
+    dependencies: [
+      "aiperf-dataset",
+      "aiperf-endpoints",
+      { name: "aiperf-rng", kind: "dev" },
+    ],
     contracts: ["AiperfExtension", "AiperfRegistry"],
     modes: ["online_http", "online_grpc", "online_mock"],
     scars: ["No runtime discovery, plugins.yaml, or dynamic-library ABI"],
@@ -259,7 +271,11 @@ export const crateCatalog: CrateReference[] = [
     integration: "Executes prepared unary and streaming gRPC bindings",
     maintenance: "Tonic transport, binding factories, KServe/Riva codecs, status, traces, and cancellation",
     key: ["src/lib.rs", "src/binding.rs", "src/transport.rs"],
-    dependencies: ["aiperf-clock", "aiperf-endpoints"],
+    dependencies: [
+      "aiperf-clock",
+      "aiperf-endpoints",
+      { name: "aiperf-clock", kind: "dev" },
+    ],
     contracts: ["GrpcEndpointBinding", "RequestSink<GrpcRequest>"],
     modes: ["online_grpc"],
     scars: ["Readiness retries, every sidecar, and the graph pair are rejected"],

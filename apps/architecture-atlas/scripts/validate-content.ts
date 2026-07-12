@@ -26,6 +26,7 @@ const cargoMetadataSchema = z.object({
       manifest_path: z.string().min(1),
       dependencies: z.array(
         z.object({
+          kind: z.enum(["normal", "build", "dev"]).nullable().optional(),
           name: z.string().min(1),
           path: z.string().nullable().optional(),
         }).passthrough(),
