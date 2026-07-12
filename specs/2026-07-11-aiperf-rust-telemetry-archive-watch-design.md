@@ -148,7 +148,7 @@ construction.
 - arbitrary SQL-derived metrics in the Rust process;
 - changing the authoritative GPU/server/network aggregate algorithms;
 - MLflow/W&B upload of raw archive partitions;
-- cross-archive joins or fleet catalog services.
+- cross-archive joins or fleet catalog services;
 - Graph-mode attachment until Graph owns a built workload-neutral lifecycle/phase observer,
   boundary commands, and telemetry/report join;
 - product offline attachment until the in-process engine sink and deterministic external-progress
@@ -611,7 +611,7 @@ boundary completion time.
 ### 6.4 Failure classification
 
 Every attempt becomes one `ArchiveScrapeRecord`. `outcome` describes transport/parse disposition;
-`body_unchanged` is an orthogonal success fact. V1 writes full sample rows for every successful
+`body_unchanged` is an orthogonal success fact. V1 writes full family/MetricPoint rows for every successful
 unchanged scrape rather than requiring readers to chase a prior sample batch. Outcomes include:
 
 - success with samples;
@@ -1320,15 +1320,20 @@ conflict rules; persistent uncertainty fails without guessing.
 
 ### 11.3 Locking, ancestry, and reconciliation
 
-An archive ID has one writer. Genesis binds a random `canonical_spool_id`. Source-activating resume
+An archive ID has one writer. Genesis binds a random `canonical_spool_id`. Source-activating exact resume
 requires that exact spool identity and its qualified open-descriptor lock; copying only the remote
-head to a different spool cannot reopen collection. Before a remote-backed session activates
+head to a different spool cannot reopen collection. Before a remote-backed resumed session activates
 sources, it conditionally installs `WriterClaim { claim_epoch, writer_session_id,
 canonical_spool_id, session_started_generation_hash }` in `LATEST`. Every later head update is
 conditioned on that claim. A clean remote finalization releases it. A claim left by a crash has no
 wall-clock expiry: takeover requires the canonical spool/lock plus an explicitly authored prior-
 claim ID, or a separate operator-mediated fencing action. A different host/spool may run sync-only
 but cannot acknowledge new collection. Distributed merge is out of scope.
+
+A create-new operation generates an unguessable archive ID and may begin locally when an optional
+remote target is temporarily unavailable; its first remote publication conditionally creates
+`LATEST` with the same claim. Exact-resume of an existing remote archive never activates sources
+without acquiring the claim. `CreateReceipt` includes the created object's version for later CAS.
 
 Before source activation, recovery compares verified hash-linked heads:
 
@@ -1624,7 +1629,7 @@ local paths, and normalized target URIs. Unknown fields and unknown factory IDs 
 Static validation covers:
 
 - exact runner distribution/capabilities;
-- workload resource requirements and typed `ControlPlaneHttp` backend capability;
+- workload resource requirements and typed `ControlPlaneHttpProvider` backend capability;
 - unique/valid source IDs and registered source types;
 - positive intervals/absolute timeout budgets and bounded counts/sizes;
 - credential/TLS/proxy/redirect/content-negotiation/compression policy without resolving secrets;
@@ -1639,9 +1644,10 @@ remote store capabilities/reachability where configured, filesystem reserve/capa
 credential-provider availability without creating an authoritative archive. Only after complete
 preparation does it acquire the qualified lifetime archive lock and reread authoritative state
 under that lock. Create-new commits genesis; exact-resume reconciles/replays prior WAL and commits
-`session_started`; sync-only creates no session. A remote-backed source-activating session acquires
-its conditional writer claim before sources. Only after those transactions does it start IO/decode
-workers and Clock maintenance and activate sources.
+`session_started`; sync-only creates no session. Remote exact-resume acquires its conditional writer
+claim before sources; create-new follows the unique-ID first-publication rule in §11.3. Only after
+the applicable transactions does it start IO/decode workers and Clock maintenance and activate
+sources.
 
 ### 14.3 Signals and stdout
 
@@ -1829,7 +1835,7 @@ median delta and a paired bootstrap 95% confidence interval. Attached archival p
   profile's predeclared numeric budgets;
 - default graceful local finalization completes within 30 seconds after admission closes, unless
   the profile deliberately configures a larger bounded shutdown budget;
-- a 24-hour accelerated/real soak has no missed acknowledged frames, no duplicate logical projection
+- a 24-hour accelerated/real soak has no missed acknowledged frames, no duplicate logical
   projections, no flat-history metadata rewrite, and no unbounded head/index-chain growth.
 
 Before `telemetry_watch` or attached archival is advertised, the release must check in at least one
@@ -1881,7 +1887,7 @@ version or material schema/writer change invalidates the profile until rerun.
 9. bounded worst-case decode cannot stall unrelated source/request LocalSet work at the qualified
    profile;
 10. failed/empty/unchanged/missed/dropped outcomes have exact counters/records and unchanged success
-   retains full sample rows;
+   retains full family/MetricPoint rows;
 11. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
     owner-assigned record-sequence watermark before drain.
 
@@ -1922,7 +1928,7 @@ version or material schema/writer change invalidates the profile until rerun.
 5. raw-body retention is off by default; opt-in requires classification, key provider, restrictive
    permissions, authenticated encryption for remote, and artifact-wide secret scanning;
 6. path traversal and unsafe artifact/spool/target aliasing fail validation;
-7. partition/index/generation/head hashes detect tampering/corruption.
+7. partition/index/generation/head hashes detect tampering/corruption;
 8. arbitrary endpoint labels are treated as potentially sensitive source data; configured
    sanitizers/access policy—not an impossible universal secret detector—govern them.
 
@@ -1933,7 +1939,7 @@ version or material schema/writer change invalidates the profile until rerun.
 2. Python `aiperf watch` -> exact packaged runner -> in-process HTTP Prometheus mock -> durable
    genesis/WAL/Parquet/index/head -> terminal response;
 3. multiple endpoint cadences including one slow/failing/oversized source and distinct per-call
-   deadlines over the shared native transport;
+   deadlines over profile-bound native control handles isolated from inference capacity;
 4. HTTP 500 with metric-looking body remains an HTTP failure record, not a sample;
 5. SIGINT/SIGTERM graceful finalization, forced-crash exact resume, and local-final/sync-only remote
    completion;
@@ -1969,23 +1975,26 @@ for passing standalone and attached profile artifacts rather than trusting docum
 ### Increment 1 — exposition and archive schema
 
 1. implement the bounded Prometheus 0.0.4/OpenMetrics 1.0.0 `aiperf-prometheus` model/parser seam;
-2. preserve current server/DCGM projection semantics with parity tests;
-3. check in canonical Arrow descriptors; implement every semantic/numeric/exemplar/source-time
-   payload, digest/identity rule, sanitizer surface, and golden Parquet/index/manifest/report;
+2. implement the frozen role-validity matrix, strict archive/native-fallback split, metadata-only
+   families, repeated MetricPoints, lexemes, timestamps, and preserve current server/DCGM parity;
+3. check in canonical Arrow/head/generation/index descriptors; implement logical-row evidence,
+   every digest/identity/epoch rule, sanitizer surface, and golden Parquet/index/manifest/report;
 4. add the five Tachometer regression fixtures as mandatory tests.
 
 ### Increment 2 — local writer and recovery
 
-1. implement bounded ordered decode/projection, fixed-memory loss ledger, Clock maintenance driver,
-   and single mutable archive owner;
-2. add durable genesis, sealed framed WAL segments, independent table projection coverage,
-   immutable Parquet, persistent manifest index, generation objects, and durable local head;
-3. add every-step crash/property recovery matrix and transaction-reserved spool quotas;
+1. implement erased prepared drivers, bounded shared decode/two-stage archive permits, fixed-memory
+   loss ledger, Clock maintenance/virtual-inline strategies, and the single mutable archive owner;
+2. add qualified lifetime lock, create-only genesis/resumed-session transaction, sealed WAL with
+   lagged retirement, logical/raw projection coverage, immutable Parquet/index/generations/head, and
+   non-self-referential receipt journal;
+3. add every-step crash/property/corruption recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
 
 ### Increment 3 — source runtime and watch product path
 
-1. revise runner-v2 resources/requirements and implement the prepared `ControlPlaneHttp` capability;
+1. revise runner-v2 resources/requirements and implement the profile-bound
+   `ControlPlaneHttpProvider` capability over isolated control capacity;
 2. implement strict secured source factories and one run-owned fixed-deadline driver per physical
    source;
 3. register `telemetry_watch`, add strict Python Config-v2 projection and `aiperf watch` command;
@@ -1993,23 +2002,24 @@ for passing standalone and attached profile artifacts rather than trusting docum
 
 ### Increment 4 — benchmark attachment
 
-1. replace phase-owned cadence loops with run-owned source subscriptions and pre-projection
-   all-outcome attempt tees;
+1. replace phase-owned cadence loops with run-owned source subscriptions, orchestrator coalescing
+   groups, physical attempt/phase-membership delivery, and all-outcome tees;
 2. emit exact lifecycle markers through a `PhaseObserver` tee;
 3. add typed archive provenance/health and failure diagnostic-artifact protocol;
 4. prove no extra scrapes, no metric drift, and no request-path backpressure.
 
 ### Increment 5 — object-store durability and resume
 
-1. implement capability-gated archive-store adapters, bounded immutable uploads, strong
-   verification, and conditional heads;
-2. implement create-new/exact/sync-only policies and hash-ancestry reconciliation;
+1. implement capability-gated archive-store adapters, bounded partition/raw uploads, strong
+   verification, conditional heads, writer claims, and uncertain-CAS reconciliation;
+2. implement create-new/exact/sync-only policies, hash ancestry, and durable publication receipts;
 3. add visibility/CAS/outage emulator matrix, finalization lifecycle, and §17 profiles;
 4. document operational recovery and orphan/GC procedures.
 
 ### Increment 6 — optional compaction and ecosystem docs
 
-1. add manifest-transactional compaction without in-place history mutation;
+1. add bounded manifest-transactional compaction proving logical multiset equality without in-place
+   history mutation;
 2. publish Arrow/DuckDB/Polars examples and schema compatibility policy;
 3. qualify and publish numeric standalone/attached scale profiles;
 4. document sync-only recovery, key rotation constraints, orphan inspection, and external GC.
@@ -2083,8 +2093,14 @@ later remapping.
 ### Archive existing `ServerMetricsRecord`/`GpuScrape` values
 
 Rejected. Those domain records intentionally discard unsupported families and failures. Archive an
-all-outcome pre-projection envelope; feed native and archive projections from the same decoded
-entity.
+all-outcome pre-projection envelope; derive strict archive and native-compatible projections from
+the same fetched bytes.
+
+### Put durability/publication timestamps in the row they describe
+
+Rejected. A frame cannot predict its own fsync or later remote CAS, and immutable rows cannot be
+patched afterward. Separate receipt objects attest earlier frame ranges/generations without
+self-reference.
 
 ### Dynamic wide columns for arbitrary metadata
 
@@ -2101,19 +2117,21 @@ This design is complete only when:
 - the revised workload-scoped runner-v2 DTO deserializes the complete watch envelope and rejects
   required/forbidden resource violations;
 - the exact runner derives and validates `online_http + telemetry_watch` from frozen factories and
-  the typed `ControlPlaneHttp` capability;
+  the typed `ControlPlaneHttpProvider` capability;
 - every physical source uses the injected Clock/native transport, one run-owned fixed-deadline
   driver, absolute deadline, and bounded ordered decode path;
-- Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves every advertised semantic role,
-  source timestamp, exemplar, metadata, and numeric leaf without changing native benchmark
-  projection semantics;
-- canonical Arrow descriptors, keyed/pre-post redaction identities, tagged numbers, manifest index,
-  and native-v2 DTO are deterministic and readable by the pinned query ecosystem;
-- durable genesis, sealed WAL, independent table coverage, immutable partitions/generations/index,
-  and local head recover every complete durable logical projection exactly once across all injected
-  crash points, including uncertain receipts and finalization races;
-- remote sync verifies create-only immutable objects and advances a linearizable conditional head
-  without flat history rewrites; exact/sync-only resume reconciles ancestry fail-closed;
+- Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves strict grammar, every valid role,
+  zero-point families, repeated MetricPoints, numeric/timestamp lexemes, exemplars, and a separately
+  named native fallback without changing benchmark semantics;
+- canonical Arrow/head/generation/index descriptors, keyed pre/post-redaction/body identities,
+  tagged exact/analytical numbers, attribute epochs, and native-v2 DTO are deterministic and
+  readable/prunable by the pinned query ecosystem;
+- qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
+  logical/raw coverage, immutable partitions/generations/index/head, and receipt journal recover
+  every complete durable projection exactly once across all injected crash/finalization points;
+- remote sync verifies create-only partition/raw/index/generation objects, owns a pre-activation
+  writer claim, and advances a linearizable conditional head without flat rewrites; uncertain CAS
+  and exact/sync-only resume reconcile ancestry fail-closed;
 - exact resume fails closed on identity/config/schema/key/writer mismatch and concurrent writers;
 - failures, gaps, unchanged bodies, misses, drops/loss ranges, local durability, visibility lag, and
   remote publication are observable;
