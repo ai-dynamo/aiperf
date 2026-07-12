@@ -6,6 +6,12 @@
 The two commands intentionally execute Dynamo's same canonical parser, binding,
 live runtime, collector, and report writer. Separate processes are still used so
 the gate measures frontend startup cost and real-clock run-to-run variance.
+Deterministic report fields remain byte/ULP exact. Real-clock fields use exact,
+tolerance-shifted conditional rank tests with Holm control across each case;
+self-variance and paired blocks are diagnostics, never an acceptance escape.
+Wall time and RSS are always gated. CPU and CPU-over-wall join the family only
+when official median CPU is at least one second, where fixed process bootstrap
+cost no longer dominates the measurement.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ import struct
 import subprocess
 import time
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 from pathlib import Path
 
 EXACT_REPORT_FIELDS = frozenset(
@@ -39,6 +46,11 @@ EXACT_REPORT_FIELDS = frozenset(
         "total_output_tokens",
     }
 )
+
+HOLM_FAMILY_ALPHA_NUMERATOR = 1
+HOLM_FAMILY_ALPHA_DENOMINATOR = 20
+PER_FIELD_TAIL_ALPHA_NUMERATOR = 1
+PER_FIELD_TAIL_ALPHA_DENOMINATOR = 40
 
 REQUIRED_POSITIVE_TAGS = frozenset(
     {
@@ -117,7 +129,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--aiperf-source", type=Path, required=True)
     parser.add_argument("--dynamo-source", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--samples", type=int, default=3)
+    parser.add_argument("--samples", type=int, default=9)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=180.0)
     parser.add_argument("--max-delta-percent", type=float, default=5.0)
@@ -141,7 +153,12 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _compact_json(value: object) -> str:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        value,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -950,7 +967,8 @@ def _run_child(
         report_path=str(report),
     )
     (case_dir / f"{stem}.time.json").write_text(
-        json.dumps(asdict(sample), sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(asdict(sample), allow_nan=False, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
     return sample
 
@@ -973,12 +991,17 @@ def _median_absolute(values: list[float]) -> float:
 
 def _symmetric_delta_percent(left: float, right: float) -> float:
     """Return a direction-independent relative distance, bounded at 200%."""
+    return abs(_signed_symmetric_delta_percent(left, right))
+
+
+def _signed_symmetric_delta_percent(left: float, right: float) -> float:
+    """Return a signed relative distance without privileging either frontend."""
     if left == right:
         return 0.0
     scale = (abs(left) + abs(right)) / 2.0
     if scale == 0.0:
         return math.inf
-    return abs(left - right) / scale * 100.0
+    return (left - right) / scale * 100.0
 
 
 def _self_variance_percent(values: list[float]) -> float:
@@ -990,11 +1013,166 @@ def _self_variance_percent(values: list[float]) -> float:
     )
 
 
-def _outside_interval_percent(value: float, low: float, high: float) -> float:
-    if low <= value <= high:
-        return 0.0
-    boundary = low if value < low else high
-    return abs(_relative_delta_percent(value, boundary))
+def _midranks_twice(values: list[Decimal]) -> list[int]:
+    """Return exact doubled midranks, preserving ties without binary64 drift."""
+    order = sorted(range(len(values)), key=values.__getitem__)
+    ranks = [0] * len(values)
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while end < len(order) and values[order[end]] == values[order[start]]:
+            end += 1
+        doubled_midrank = start + 1 + end
+        for position in range(start, end):
+            ranks[order[position]] = doubled_midrank
+        start = end
+    return ranks
+
+
+def _exact_rank_sum_tail(
+    left: list[Decimal], right: list[Decimal], *, upper: bool
+) -> tuple[int, int]:
+    """Return an inclusive conditional-permutation tail for a rank-sum test."""
+    if len(left) != len(right):
+        raise ValueError("rank-sum samples must have the same size")
+    ranks = _midranks_twice([*left, *right])
+    sample_size = len(left)
+    observed = sum(ranks[:sample_size])
+
+    counts: list[dict[int, int]] = [{} for _ in range(sample_size + 1)]
+    counts[0][0] = 1
+    for seen, rank in enumerate(ranks, start=1):
+        for selected in range(min(sample_size, seen), 0, -1):
+            for rank_sum, ways in counts[selected - 1].items():
+                candidate = rank_sum + rank
+                counts[selected][candidate] = counts[selected].get(candidate, 0) + ways
+
+    distribution = counts[sample_size]
+    if upper:
+        extreme = sum(ways for value, ways in distribution.items() if value >= observed)
+    else:
+        extreme = sum(ways for value, ways in distribution.items() if value <= observed)
+    total = math.comb(len(ranks), sample_size)
+    if sum(distribution.values()) != total:
+        raise AssertionError("rank-sum permutation distribution is incomplete")
+    return extreme, total
+
+
+def _distribution_gate(
+    left: list[float], right: list[float], limit: float
+) -> dict[str, float | int | str | bool | list[float]]:
+    """Test for evidence that either distribution lies outside the tolerance."""
+    if len(left) != len(right):
+        raise ValueError("paired distributions must have the same sample count")
+    if len(left) != 9:
+        raise ValueError("online parity distributions require exactly nine samples")
+    if not math.isfinite(limit) or not 0.0 < limit < 100.0:
+        raise ValueError("distribution tolerance must be between zero and 100 percent")
+    if not all(math.isfinite(value) and value >= 0.0 for value in [*left, *right]):
+        raise ValueError("online parity distributions must be finite and non-negative")
+
+    left_median = _median(left)
+    right_median = _median(right)
+    median_delta = abs(_relative_delta_percent(left_median, right_median))
+    left_self_variance = _self_variance_percent(left)
+    right_self_variance = _self_variance_percent(right)
+    volatile = max(left_self_variance, right_self_variance) > limit
+    paired_deltas = [
+        _relative_delta_percent(left_value, right_value)
+        for left_value, right_value in zip(left, right, strict=True)
+    ]
+    block_size = len(paired_deltas) // 3
+    block_medians = [
+        _median(paired_deltas[offset : offset + block_size])
+        for offset in range(0, len(paired_deltas), block_size)
+    ]
+    signed_block_median = _median(block_medians)
+    median_absolute_block_median = _median([abs(value) for value in block_medians])
+    diagnostic_block_effect = max(
+        abs(signed_block_median), median_absolute_block_median
+    )
+
+    tolerance = Decimal(str(limit)) / Decimal(100)
+    left_decimal = [Decimal(str(value)) for value in left]
+    right_decimal = [Decimal(str(value)) for value in right]
+    high_numerator, permutation_count = _exact_rank_sum_tail(
+        [value / (Decimal(1) + tolerance) for value in left_decimal],
+        right_decimal,
+        upper=True,
+    )
+    low_numerator, low_permutation_count = _exact_rank_sum_tail(
+        [value / (Decimal(1) - tolerance) for value in left_decimal],
+        right_decimal,
+        upper=False,
+    )
+    if low_permutation_count != permutation_count:
+        raise AssertionError("rank-sum tails used different permutation spaces")
+    unadjusted_per_field_passed = (
+        high_numerator * PER_FIELD_TAIL_ALPHA_DENOMINATOR
+        > permutation_count * PER_FIELD_TAIL_ALPHA_NUMERATOR
+        and low_numerator * PER_FIELD_TAIL_ALPHA_DENOMINATOR
+        > permutation_count * PER_FIELD_TAIL_ALPHA_NUMERATOR
+    )
+    return {
+        "block_medians_percent": block_medians,
+        "diagnostic_three_block_effect_percent": diagnostic_block_effect,
+        "gate_method": "tolerance_shifted_exact_conditional_rank_sum",
+        "high_regression_p_numerator": high_numerator,
+        "high_regression_p_value": high_numerator / permutation_count,
+        "left_median": left_median,
+        "left_self_variance_percent": left_self_variance,
+        "low_regression_p_numerator": low_numerator,
+        "low_regression_p_value": low_numerator / permutation_count,
+        "median_absolute_block_median_percent": median_absolute_block_median,
+        "median_delta_percent": median_delta,
+        "paired_signed_official_relative_deltas_percent": paired_deltas,
+        "unadjusted_per_field_passed": unadjusted_per_field_passed,
+        "unadjusted_per_field_tail_alpha": (
+            PER_FIELD_TAIL_ALPHA_NUMERATOR / PER_FIELD_TAIL_ALPHA_DENOMINATOR
+        ),
+        "permutation_count": permutation_count,
+        "right_median": right_median,
+        "right_self_variance_percent": right_self_variance,
+        "signed_block_median_percent": signed_block_median,
+        "tolerance_percent": limit,
+        "volatile": volatile,
+    }
+
+
+def _holm_rejections(
+    hypotheses: list[dict[str, int | str]],
+) -> list[dict[str, float | int | str]]:
+    """Apply exact Holm step-down control across one case's tested directions."""
+    ordered = sorted(
+        hypotheses,
+        key=lambda item: (
+            int(item["p_numerator"]) / int(item["p_denominator"]),
+            str(item["name"]),
+        ),
+    )
+    rejections: list[dict[str, float | int | str]] = []
+    family_size = len(ordered)
+    for index, hypothesis in enumerate(ordered):
+        numerator = int(hypothesis["p_numerator"])
+        denominator = int(hypothesis["p_denominator"])
+        remaining = family_size - index
+        threshold_denominator = HOLM_FAMILY_ALPHA_DENOMINATOR * remaining
+        reject = (
+            numerator * threshold_denominator
+            <= denominator * HOLM_FAMILY_ALPHA_NUMERATOR
+        )
+        if not reject:
+            break
+        rejections.append(
+            {
+                "holm_threshold": (HOLM_FAMILY_ALPHA_NUMERATOR / threshold_denominator),
+                "name": str(hypothesis["name"]),
+                "p_denominator": denominator,
+                "p_numerator": numerator,
+                "p_value": numerator / denominator,
+            }
+        )
+    return rejections
 
 
 def _ordered_float_bits(value: float) -> int:
@@ -1050,17 +1228,9 @@ def _paired_cpu_overhead_percent_of_wall(
 def _resource_value(sample: Sample, attribute: str) -> float:
     if attribute == "process_cpu":
         return sample.user_s + sample.system_s
+    if attribute == "process_cpu_overhead_of_wall":
+        return (sample.user_s + sample.system_s) / sample.wall_s
     return float(getattr(sample, attribute))
-
-
-def _resource_distribution_delta_percent(
-    aiperf: list[Sample], official: list[Sample], attribute: str
-) -> float:
-    aiperf_median = _median([_resource_value(sample, attribute) for sample in aiperf])
-    official_median = _median(
-        [_resource_value(sample, attribute) for sample in official]
-    )
-    return abs(_relative_delta_percent(aiperf_median, official_median))
 
 
 def _load_report(sample: Sample) -> dict[str, int | float]:
@@ -1108,7 +1278,11 @@ def _report_comparison(
             exact_reports.append((frontend, index, projection))
             hashes.add(
                 hashlib.sha256(
-                    json.dumps(projection, sort_keys=True).encode("utf-8")
+                    json.dumps(
+                        projection,
+                        allow_nan=False,
+                        sort_keys=True,
+                    ).encode("utf-8")
                 ).hexdigest()
             )
             if case.expected_requests is not None:
@@ -1152,7 +1326,6 @@ def _report_comparison(
     field_deltas: dict[str, list[float]] = {}
     field_median_abs: dict[str, float] = {}
     field_gate: dict[str, dict[str, object]] = {}
-    failures: list[str] = []
     for field in variable_fields:
         indices = sorted(reports["aiperf"])
         aiperf_values = [float(reports["aiperf"][index][field]) for index in indices]
@@ -1167,40 +1340,16 @@ def _report_comparison(
         ]
         aiperf_median = _median(aiperf_values)
         official_median = _median(official_values)
-        median_delta = abs(
-            _relative_delta_percent(
-                aiperf_median,
-                official_median,
-            )
-        )
-        official_self_variance = _self_variance_percent(official_values)
-        aiperf_self_variance = _self_variance_percent(aiperf_values)
-        official_volatile = official_self_variance > limit
-        if official_volatile:
-            gate_value = _outside_interval_percent(
-                aiperf_median, min(official_values), max(official_values)
-            )
-            method = "observed_official_variance_envelope"
-        else:
-            gate_value = median_delta
-            method = "strict_median_delta"
-        passed = math.isfinite(gate_value) and gate_value <= limit
-        if not passed:
-            failures.append(f"{field}: {method}={gate_value:.3f}% exceeds {limit:.3f}%")
+        gate = _distribution_gate(aiperf_values, official_values, limit)
+        median_delta = float(gate["median_delta_percent"])
         field_deltas[field] = deltas
         field_median_abs[field] = median_delta
         field_gate[field] = {
             "aiperf_median": aiperf_median,
             "aiperf_range": [min(aiperf_values), max(aiperf_values)],
-            "aiperf_self_variance_percent": aiperf_self_variance,
-            "gate_method": method,
-            "gate_value_percent": gate_value,
-            "median_delta_percent": median_delta,
             "official_median": official_median,
             "official_range": [min(official_values), max(official_values)],
-            "official_self_variance_percent": official_self_variance,
-            "official_wall_clock_volatile": official_volatile,
-            "passed": passed,
+            **gate,
         }
 
     return {
@@ -1211,9 +1360,7 @@ def _report_comparison(
         "field_gate": field_gate,
         "field_median_delta_percent": field_median_abs,
         "field_count": len(keys[0]),
-        "failures": failures,
         "max_field_median_delta_percent": max(field_median_abs.values()),
-        "passed": not failures,
     }
 
 
@@ -1292,35 +1439,34 @@ def _run_positive_case(
     resource_median_abs = {
         field: _median_absolute(deltas) for field, deltas in resource_deltas.items()
     }
-    resource_gate_delta = {
-        "process_cpu": _resource_distribution_delta_percent(
-            samples["aiperf"], samples["official"], "process_cpu"
-        ),
-        "process_cpu_overhead_of_wall": abs(
-            _median(resource_deltas["process_cpu_overhead_of_wall"])
-        ),
-        "rss": _resource_distribution_delta_percent(
-            samples["aiperf"], samples["official"], "rss_kib"
-        ),
-        "wall": _resource_distribution_delta_percent(
-            samples["aiperf"], samples["official"], "wall_s"
-        ),
+    resource_attributes = {
+        "process_cpu": "process_cpu",
+        "process_cpu_overhead_of_wall": "process_cpu_overhead_of_wall",
+        "rss": "rss_kib",
+        "wall": "wall_s",
     }
-    gated_resources = ("process_cpu_overhead_of_wall", "rss", "wall")
+    resource_gate = {
+        field: _distribution_gate(
+            [_resource_value(sample, attribute) for sample in samples["aiperf"]],
+            [_resource_value(sample, attribute) for sample in samples["official"]],
+            args.max_delta_percent,
+        )
+        for field, attribute in resource_attributes.items()
+    }
+    resource_diagnostic_three_block_effect = {
+        field: float(gate["diagnostic_three_block_effect_percent"])
+        for field, gate in resource_gate.items()
+    }
+    gated_resources = ("rss", "wall")
     official_cpu_median = _median(
         [sample.user_s + sample.system_s for sample in samples["official"]]
     )
     if official_cpu_median >= 1.0:
-        gated_resources = (*gated_resources, "process_cpu")
-    resource_failures = []
-    for field in gated_resources:
-        delta = resource_gate_delta[field]
-        if not math.isfinite(delta) or delta > args.max_delta_percent:
-            resource_failures.append(
-                f"{field}: distribution median delta {delta:.3f}% exceeds "
-                f"{args.max_delta_percent:.3f}%"
-            )
-
+        gated_resources = (
+            *gated_resources,
+            "process_cpu",
+            "process_cpu_overhead_of_wall",
+        )
     report = _report_comparison(
         case,
         samples["aiperf"],
@@ -1328,16 +1474,68 @@ def _run_positive_case(
         args.max_delta_percent,
         args.max_deterministic_ulps,
     )
+    hypotheses: list[dict[str, int | str]] = []
+    report_field_gate = report["field_gate"]
+    assert isinstance(report_field_gate, dict)
+    tested_gates = [
+        *((f"report/{field}", gate) for field, gate in report_field_gate.items()),
+        *((f"resource/{field}", resource_gate[field]) for field in gated_resources),
+    ]
+    for name, gate in tested_gates:
+        assert isinstance(gate, dict)
+        denominator = int(gate["permutation_count"])
+        hypotheses.extend(
+            [
+                {
+                    "name": f"{name}/high",
+                    "p_denominator": denominator,
+                    "p_numerator": int(gate["high_regression_p_numerator"]),
+                },
+                {
+                    "name": f"{name}/low",
+                    "p_denominator": denominator,
+                    "p_numerator": int(gate["low_regression_p_numerator"]),
+                },
+            ]
+        )
+    rejections = _holm_rejections(hypotheses)
+    failures = [
+        f"{rejection['name']}: exact p={rejection['p_value']:.8f} <= "
+        f"Holm threshold {rejection['holm_threshold']:.8f}"
+        for rejection in rejections
+    ]
+    report_rejections = [
+        rejection
+        for rejection in rejections
+        if str(rejection["name"]).startswith("report/")
+    ]
+    resource_rejections = [
+        rejection
+        for rejection in rejections
+        if str(rejection["name"]).startswith("resource/")
+    ]
+    report["holm_rejections"] = report_rejections
+    report["passed"] = not report_rejections
     return {
-        "failures": [
-            *(f"report/{failure}" for failure in report["failures"]),
-            *(f"resource/{failure}" for failure in resource_failures),
-        ],
+        "case_family_gate": {
+            "family_alpha": (
+                HOLM_FAMILY_ALPHA_NUMERATOR / HOLM_FAMILY_ALPHA_DENOMINATOR
+            ),
+            "hypothesis_count": len(hypotheses),
+            "method": "exact_holm_step_down",
+            "passed": not rejections,
+            "rejections": rejections,
+        },
+        "failures": failures,
         "official_process_cpu_median_s": official_cpu_median,
-        "passed": report["passed"] and not resource_failures,
+        "passed": not rejections,
         "report": report,
         "resource_deltas_percent": resource_deltas,
-        "resource_gate_delta_percent": resource_gate_delta,
+        "resource_diagnostic_three_block_effect_percent": (
+            resource_diagnostic_three_block_effect
+        ),
+        "resource_gate": resource_gate,
+        "resource_holm_rejections": resource_rejections,
         "resource_median_abs_delta_percent": resource_median_abs,
         "required_stderr": list(case.required_stderr),
         "samples": {
@@ -1435,12 +1633,17 @@ def main() -> int:
     args = _parser().parse_args()
     if args.samples < 1:
         raise ValueError("--samples must be positive")
+    if not args.rejections_only and args.samples != 9:
+        raise ValueError("positive online parity requires exactly nine samples")
     if args.warmups < 0:
         raise ValueError("--warmups must be non-negative")
     if not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
         raise ValueError("--timeout-seconds must be finite and positive")
-    if not math.isfinite(args.max_delta_percent) or args.max_delta_percent < 0:
-        raise ValueError("--max-delta-percent must be finite and non-negative")
+    if (
+        not math.isfinite(args.max_delta_percent)
+        or not 0.0 < args.max_delta_percent < 100.0
+    ):
+        raise ValueError("--max-delta-percent must be finite and between zero and 100")
     if args.max_deterministic_ulps < 0:
         raise ValueError("--max-deterministic-ulps must be non-negative")
     if args.skip_rejections and args.rejections_only:
@@ -1511,7 +1714,8 @@ def main() -> int:
         print(f"running positive case: {case.name}", flush=True)
         positive_results[case.name] = _run_positive_case(case, args, env)
         (args.output_dir / "summary.partial.json").write_text(
-            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(summary, allow_nan=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
 
     if not args.skip_rejections:
@@ -1526,9 +1730,10 @@ def main() -> int:
     )
     summary_path = args.output_dir / "summary.json"
     summary_path.write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(summary, allow_nan=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
-    print(json.dumps(summary, indent=2, sort_keys=True))
+    print(json.dumps(summary, allow_nan=False, indent=2, sort_keys=True))
     return 0 if summary["passed"] else 1
 
 
