@@ -46,6 +46,7 @@ use aiperf_endpoints::{
     EndpointId, EndpointKey, EndpointRegistry, Modality, PreparedEndpointTable, RawEndpointConfig,
 };
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use aiperf_metrics::ReportPairRunFacts;
 use aiperf_timing::StopConfig;
 use aiperf_transport_http::config::ClientConfig;
 use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
@@ -598,9 +599,11 @@ impl fmt::Debug for PreparedAgenticOnlineOperation {
 
 impl PreparedRunnerOperation for PreparedAgenticOnlineOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let outcome = execute_agentic_online_with_registry(self.spec, self.registry.as_ref())?;
+        let report =
+            execute_agentic_online_report_with_registry(&self.spec, self.registry.as_ref())?;
         Ok(PreparedRunOutcome {
-            report_path: outcome.report_path,
+            native_report: report.native_report,
+            report_facts: ReportPairRunFacts::new(),
             provenance: BTreeMap::from([
                 ("backend".to_owned(), "online_http".to_owned()),
                 ("workload".to_owned(), "agentic".to_owned()),
@@ -827,22 +830,13 @@ pub fn execute_agentic_online_with_registry_and_factories(
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
 ) -> Result<AgenticExecutionOutcome> {
-    spec.validate()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("creating agentic runner Tokio runtime")?;
-    let local = tokio::task::LocalSet::new();
-    let report = local.block_on(
-        &runtime,
-        execute_agentic_online_async_with_registry_and_factories(
-            &spec,
-            registry,
-            backend_factory,
-            evaluator_factory,
-            gateway_factory,
-            tokenizer_factory,
-        ),
+    let report = execute_agentic_online_report_with_registry_and_factories(
+        &spec,
+        registry,
+        backend_factory,
+        evaluator_factory,
+        gateway_factory,
+        tokenizer_factory,
     )?;
     let report_path = spec.artifact_target.join("native-v2.json");
     write_native_report_json(&report.native_report, &report_path)?;
@@ -850,6 +844,48 @@ pub fn execute_agentic_online_with_registry_and_factories(
         report_path,
         report,
     })
+}
+
+fn execute_agentic_online_report_with_registry(
+    spec: &AgenticOnlineExecutionSpec,
+    registry: &AiperfRegistry,
+) -> Result<AgenticRunReport> {
+    execute_agentic_online_report_with_registry_and_factories(
+        spec,
+        registry,
+        &NativeHttpExecutionBackendFactory,
+        &NativeAgenticEvaluatorProcessFactory,
+        &NativeAgenticGatewayFactory,
+        &NativeAgenticTokenizerFactory,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_agentic_online_report_with_registry_and_factories(
+    spec: &AgenticOnlineExecutionSpec,
+    registry: &AiperfRegistry,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
+    gateway_factory: &dyn AgenticGatewayFactory,
+    tokenizer_factory: &dyn AgenticTokenizerFactory,
+) -> Result<AgenticRunReport> {
+    spec.validate()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating agentic runner Tokio runtime")?;
+    let local = tokio::task::LocalSet::new();
+    local.block_on(
+        &runtime,
+        execute_agentic_online_async_with_registry_and_factories(
+            spec,
+            registry,
+            backend_factory,
+            evaluator_factory,
+            gateway_factory,
+            tokenizer_factory,
+        ),
+    )
 }
 
 /// Async composition used by an already-created current-thread runner runtime.
