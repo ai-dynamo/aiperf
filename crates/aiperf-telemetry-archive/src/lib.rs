@@ -16,7 +16,9 @@ pub mod digest;
 pub mod evidence;
 pub mod identity;
 pub mod index;
+pub mod key;
 pub mod manifest;
+pub mod projection;
 pub mod scheduling;
 pub mod spool;
 pub mod time;
@@ -43,9 +45,19 @@ pub use index::{
     IndexPageSink, IndexPageSource, IndexRemoval, IndexRootV1, IndexSnapshot, MemoryIndexPageStore,
     MutationMode,
 };
+pub use key::{
+    ArchiveKeyError, ArchiveKeyProvider, ArchiveSubkey, Blake3ArchiveKeyProvider,
+    keyed_domain_digest,
+};
 pub use manifest::{
     ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
     GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
+};
+pub use projection::{
+    ArchiveInfoLabelPartitionStatus, ArchiveSampleView, ArchiveSanitizer, AttributeMap,
+    EnrichmentError, ExpositionProjectionContextV1, ExpositionProjectionError, ExpositionRowsV1,
+    MetricFamilyRowV1, MetricPointRowV1, NoopEnricher, NoopSanitizer, SanitizationError,
+    SanitizedSample, StaticLabelEnricher, TelemetryEnricher, project_exposition_v1,
 };
 pub use scheduling::{
     AbsoluteCallDeadline, CadenceAdvance, CadenceDeadline, FixedDeadlineCadence,
