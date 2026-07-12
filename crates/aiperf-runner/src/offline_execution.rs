@@ -62,7 +62,7 @@ use aiperf_metrics::{
     ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
-use aiperf_rng::RngRoot;
+use aiperf_rng::{RngRoot, namespace};
 use aiperf_timing::{
     BernoulliFixedDelay, NoopPhaseObserver, Phase, SlotPool, make_interval_generator,
 };
@@ -1219,7 +1219,8 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                             &shared,
                         )?
                         .with_metrics_config(metrics.clone())
-                        .with_performance_record_capture(false);
+                        .with_performance_record_capture(false)
+                        .with_performance_summary_collection(phase_count != 1);
                         if phase.common().name == "profiling"
                             && let Some(observer) = &backend_goodput
                         {
@@ -1597,8 +1598,9 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             phase_count,
         )?;
         let rng_root = RngRoot::new(random_seed);
-        let node_policy = graph_node_policy(&phase, rng_root)?;
-        let workload = graph_workload_factory(input.plans, &phase, rng_root)?;
+        let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, 0);
+        let node_policy = graph_node_policy(&phase, phase_rng)?;
+        let workload = graph_workload_factory(input.plans, &phase, phase_rng)?;
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
             .execute_graph(
@@ -1671,7 +1673,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
 
 fn graph_node_policy(
     phase: &PhaseSpec,
-    rng_root: RngRoot,
+    phase_rng: RngRoot,
 ) -> Result<Option<Rc<dyn NodeDispatchPolicy>>> {
     let common = phase.common();
     let mut policies = Vec::<Rc<dyn NodeDispatchPolicy>>::new();
@@ -1685,7 +1687,7 @@ fn graph_node_policy(
             Box::new(BernoulliFixedDelay::new(
                 Some(cancellation.rate),
                 cancellation.delay,
-                RngRoot::new(rng_root.derive_seed("runner.offline.graph.cancellation")),
+                phase_rng.derive_root(namespace::GRAPH_NODE_CANCELLATION),
             )?),
             Phase::Profiling,
         )));
@@ -1700,7 +1702,7 @@ fn graph_node_policy(
 fn graph_workload_factory(
     plans: Vec<aiperf_graph::model::GraphTracePlan>,
     phase: &PhaseSpec,
-    rng_root: RngRoot,
+    phase_rng: RngRoot,
 ) -> Result<Box<dyn OfflineGraphRunFactory>> {
     let phase = phase.clone();
     let common = phase.common();
@@ -1711,9 +1713,7 @@ fn graph_workload_factory(
     } else {
         common.sessions
     };
-    let arrival_seed = rng_root
-        .derive_seed("runner.offline.graph.arrival")
-        .unwrap_or(0);
+    let arrival_seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
     Ok(Box::new(move |clock, backend| {
         let common = phase.common();
         let source: Rc<dyn GraphTraceSource> =

@@ -41,7 +41,7 @@ use aiperf_graph::policy::{
 use aiperf_graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf_graph::wire::OpenAiChatMessage;
 use aiperf_metrics::{InferenceDimensions, MetricsConfig, Phase};
-use aiperf_rng::RngRoot;
+use aiperf_rng::{RngRoot, namespace};
 use aiperf_timing::{BernoulliFixedDelay, SlotPool};
 use aiperf_transport_http::config::ClientConfig;
 use aiperf_transport_http::models::HttpVersion;
@@ -512,7 +512,8 @@ pub(crate) struct RunnerGraphBackendFactoryConfig {
 pub(crate) struct GraphCancellationConfig {
     pub(crate) rate: f64,
     pub(crate) delay_seconds: f64,
-    pub(crate) seed: u64,
+    /// Phase-local cancellation root; workers derive independent indexed roots.
+    pub(crate) rng_root: RngRoot,
     pub(crate) phase: aiperf_timing::Phase,
 }
 
@@ -551,11 +552,15 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
             )))));
         }
         if let Some(cancellation) = self.config.cancellation {
-            let seed = cancellation.seed ^ (worker_id as u64).rotate_left(17);
+            let worker_index = u64::try_from(worker_id)
+                .map_err(|_| GraphPlacementError("graph worker index exceeds u64".to_string()))?;
+            let worker_rng = cancellation
+                .rng_root
+                .derive_indexed_root(namespace::GRAPH_NODE_CANCELLATION_WORKER, worker_index);
             let policy = BernoulliFixedDelay::new(
                 Some(cancellation.rate),
                 cancellation.delay_seconds,
-                RngRoot::new(Some(seed)),
+                worker_rng,
             )
             .map_err(|error| GraphPlacementError(error.to_string()))?;
             policies.push(Rc::new(CancellationNodePolicy::new(
@@ -737,7 +742,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         let max_output_tokens = max_tokens.unwrap_or(self.default_max_tokens);
         let dispatch = self.endpoint_runtime.materialize(GraphEndpointRequest {
             selector: metadata_string(node, "endpoint").map(str::to_owned),
-            model,
+            model: model.clone(),
             turn,
             streaming: node.streaming,
             authored_input_tokens: metadata_u64(node, "input_tokens").unwrap_or(0),
@@ -791,6 +796,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
             .dispatch_prepared_turn_collect_record(
                 PreparedHttpTurn {
                     request,
+                    model,
                     endpoint,
                     endpoint_aware: true,
                 },

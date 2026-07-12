@@ -40,6 +40,25 @@ impl RngRoot {
         RandomGenerator::from_seed(self.derive_seed(identifier))
     }
 
+    /// Derive a child root for a named subsystem.
+    ///
+    /// Hierarchical roots let a coordinator isolate a component first and then
+    /// derive its internal streams without constructing ad-hoc compound names.
+    /// Seedless roots remain seedless, so callers preserve the ordinary entropy
+    /// semantics rather than replacing them with a fallback constant.
+    pub fn derive_root(self, identifier: &str) -> Self {
+        Self(self.derive_seed(identifier))
+    }
+
+    /// Derive a child root for one indexed instance of a named subsystem.
+    ///
+    /// The index is encoded as canonical ASCII decimal after `identifier` and a
+    /// colon. This is the standard split for phase- and worker-local streams;
+    /// adding another worker cannot perturb any existing worker's sequence.
+    pub fn derive_indexed_root(self, identifier: &str, index: u64) -> Self {
+        Self(self.derive_indexed_seed(identifier, index))
+    }
+
     /// Derive the deterministic child seed for `identifier`.
     ///
     /// Returns `None` when this root is seedless. For seeded roots, this is the
@@ -53,6 +72,35 @@ impl RngRoot {
                 root_buf.format(root).as_bytes(),
                 b":",
                 identifier.as_bytes(),
+            ])
+        })
+    }
+
+    /// Return a deterministic derived seed or one fresh entropy-backed value.
+    ///
+    /// Use this only at boundaries whose downstream API requires a concrete
+    /// `u64` seed. Consumers able to accept [`RngRoot`] should retain the root so
+    /// seedless behavior remains explicit in their own type.
+    pub fn derive_seed_or_entropy(self, identifier: &str) -> u64 {
+        self.derive_seed(identifier)
+            .unwrap_or_else(|| self.derive(identifier).random_u64())
+    }
+
+    /// Derive the deterministic child seed for one indexed component instance.
+    ///
+    /// Seeded roots hash `"{root}:{identifier}:{index}"`; seedless roots return
+    /// `None`. The parts are streamed directly into BLAKE3 without allocating a
+    /// formatted namespace string.
+    pub fn derive_indexed_seed(self, identifier: &str, index: u64) -> Option<u64> {
+        self.0.map(|root| {
+            let mut root_buf = itoa::Buffer::new();
+            let mut index_buf = itoa::Buffer::new();
+            derive_seed_parts(&[
+                root_buf.format(root).as_bytes(),
+                b":",
+                identifier.as_bytes(),
+                b":",
+                index_buf.format(index).as_bytes(),
             ])
         })
     }
@@ -129,7 +177,36 @@ mod tests {
     fn seedless_root_keeps_derived_streams_seedless() {
         let root = RngRoot(None);
         assert_eq!(root.derive_seed(namespace::DATASET_LOADER), None);
+        assert_eq!(root.derive_root(namespace::GRAPH_PHASE), root);
+        assert_eq!(root.derive_indexed_seed(namespace::GRAPH_PHASE, 7), None);
+        assert_eq!(root.derive_indexed_root(namespace::GRAPH_PHASE, 7), root);
         assert_eq!(root.derive_variation_seed("concurrency=4"), None);
+    }
+
+    #[test]
+    fn hierarchical_and_indexed_roots_are_canonical_and_isolated() {
+        let root = RngRoot::new(Some(42));
+        let phase_zero = root.derive_indexed_root(namespace::GRAPH_PHASE, 0);
+        let phase_one = root.derive_indexed_root(namespace::GRAPH_PHASE, 1);
+
+        assert_eq!(
+            root.derive_indexed_seed(namespace::GRAPH_PHASE, 0),
+            root.seed()
+                .map(|seed| { derive_seed_u64(&format!("{seed}:{}:0", namespace::GRAPH_PHASE)) })
+        );
+        assert_ne!(phase_zero, phase_one);
+        assert_ne!(
+            phase_zero.derive_seed(namespace::GRAPH_ARRIVAL),
+            phase_one.derive_seed(namespace::GRAPH_ARRIVAL)
+        );
+        assert_ne!(
+            phase_zero
+                .derive_root(namespace::GRAPH_NODE_CANCELLATION)
+                .derive_indexed_seed(namespace::GRAPH_NODE_CANCELLATION_WORKER, 0),
+            phase_zero
+                .derive_root(namespace::GRAPH_NODE_CANCELLATION)
+                .derive_indexed_seed(namespace::GRAPH_NODE_CANCELLATION_WORKER, 1)
+        );
     }
 
     #[test]
@@ -159,6 +236,15 @@ mod tests {
         let first_draws = [first.random_u64(), first.random_u64()];
         let second_draws = [second.random_u64(), second.random_u64()];
         assert_ne!(first_draws, second_draws);
+    }
+
+    #[test]
+    fn required_seed_boundary_preserves_seeded_derivation() {
+        let root = RngRoot::new(Some(19));
+        assert_eq!(
+            root.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL),
+            root.derive_seed(namespace::GRAPH_ARRIVAL).unwrap()
+        );
     }
 
     #[test]

@@ -75,7 +75,7 @@ use aiperf_metrics::{
 };
 use aiperf_rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
-    SequenceLengthDistribution, SequenceLengthPair,
+    SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
 use aiperf_timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
@@ -1710,6 +1710,8 @@ fn prepare_graph_phase(
     trace_instances: GraphTraceInstanceSequence,
     graph_placement: &dyn RunnerGraphPlacementFactory,
 ) -> Result<PreparedGraphPhase> {
+    let phase_index = u64::try_from(phase_index).context("graph phase index exceeds u64")?;
+    let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, phase_index);
     let common = phase.common();
     let one_pass =
         common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
@@ -1731,9 +1733,7 @@ fn prepare_graph_phase(
             let (pattern, rate, smoothness) = phase
                 .request_arrival()
                 .expect("validated graph rate phase has an arrival policy");
-            let seed = rng_root
-                .derive_seed(&format!("runner.graph.phase.{phase_index}.arrival"))
-                .unwrap_or(phase_index as u64);
+            let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
             Rc::new(IntervalGraphArrival::new(Rc::new(RefCell::new(
                 make_interval_generator(pattern, rate, smoothness, seed),
             ))))
@@ -1748,9 +1748,7 @@ fn prepare_graph_phase(
         .map(|cancellation| GraphCancellationConfig {
             rate: cancellation.rate,
             delay_seconds: cancellation.delay,
-            seed: rng_root
-                .derive_seed(&format!("runner.graph.phase.{phase_index}.cancellation"))
-                .unwrap_or(phase_index as u64),
+            rng_root: phase_rng.derive_root(namespace::GRAPH_NODE_CANCELLATION),
             phase: if common.name == "warmup" {
                 aiperf_timing::Phase::Warmup
             } else {

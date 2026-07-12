@@ -67,6 +67,14 @@ pub const DATASET_SYNTHESIS_SYNTHESIZER: &str = "dataset.synthesis.synthesizer";
 pub const DATASET_VIDEO_AUDIO: &str = "dataset.video.audio";
 /// Synthetic video noise.
 pub const DATASET_VIDEO_NOISE: &str = "dataset.video.noise";
+/// Root-trace arrival scheduling inside one graph phase.
+pub const GRAPH_ARRIVAL: &str = "graph.arrival";
+/// Graph node cancellation decisions inside one graph phase.
+pub const GRAPH_NODE_CANCELLATION: &str = "graph.node.cancellation";
+/// Worker-local split of graph node cancellation decisions.
+pub const GRAPH_NODE_CANCELLATION_WORKER: &str = "graph.node.cancellation.worker";
+/// Indexed graph-phase root used before deriving phase-local streams.
+pub const GRAPH_PHASE: &str = "graph.phase";
 /// Sequence-length pair sampling.
 pub const MODELS_SEQUENCE_DISTRIBUTION: &str = "models.sequence.distribution";
 /// Poisson ramp sampling.
@@ -112,6 +120,10 @@ pub const ALL: &[&str] = &[
     DATASET_SYNTHESIS_SYNTHESIZER,
     DATASET_VIDEO_AUDIO,
     DATASET_VIDEO_NOISE,
+    GRAPH_ARRIVAL,
+    GRAPH_NODE_CANCELLATION,
+    GRAPH_NODE_CANCELLATION_WORKER,
+    GRAPH_PHASE,
     MODELS_SEQUENCE_DISTRIBUTION,
     TIMING_RAMP_POISSON,
     TIMING_REQUEST_CANCELLATION,
