@@ -11,6 +11,7 @@ use aiperf_runner::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
+use aiperf_runner::redaction::redact_diagnostic;
 use aiperf_runner::registry::{
     BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerRunContext,
     validate_endpoint_profiles_v2,
@@ -423,7 +424,7 @@ fn write_v2_terminal_failure(
 fn diagnostic(code: &str, message: String) -> RunnerDiagnosticV2 {
     RunnerDiagnosticV2 {
         code: code.to_owned(),
-        message,
+        message: redact_diagnostic(message),
         path: None,
     }
 }

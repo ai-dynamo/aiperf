@@ -49,6 +49,7 @@ blake3.workspace = true
 bytes.workspace = true
 loadgen-core.workspace = true
 mimalloc = "0.1"
+regex.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tokio.workspace = true

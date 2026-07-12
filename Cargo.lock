@@ -267,6 +267,7 @@ dependencies = [
  "bytes",
  "loadgen-core",
  "mimalloc",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

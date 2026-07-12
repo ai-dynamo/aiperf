@@ -21,6 +21,7 @@ pub mod online_execution;
 pub mod protocol;
 pub mod protocol_v2;
 mod records;
+pub mod redaction;
 pub mod registry;
 mod server_metrics;
 pub mod turn_execution;
