@@ -319,9 +319,15 @@ class SessionRuntime:
         while len(events) < limit and not self._events.empty():
             events.append(self._events.get_nowait())
         self._raise_fatal()
+        # ``next_sequence`` is the sequence the NEXT event will carry (the runner
+        # inits ``next_event_sequence`` to 1 and requires it to equal
+        # last-event-sequence + 1). ``self._sequence`` is the last emitted
+        # sequence, so the next is one greater. The poll limit is bounded to the
+        # stream-events credit (== queue capacity), so the queue is fully drained
+        # each poll and no unreturned backlog can desynchronize this.
         return (
             tuple(events),
-            self._sequence,
+            self._sequence + 1,
             self.is_drained,
             self.host.remaining_credits(),
         )
