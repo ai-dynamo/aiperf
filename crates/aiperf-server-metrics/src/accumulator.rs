@@ -10,10 +10,11 @@
 //! timeslices, and histogram bucket-mean learning.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 use aiperf_metrics::{
-    AccumulatorSummary, MetricValue, Phase, SidecarMetric, SidecarSeries, SidecarStats,
-    SidecarTimeslice, Unit, linear_distribution,
+    Accumulator, AccumulatorSummary, ExportContext, MetricValue, Phase, SidecarMetric,
+    SidecarSeries, SidecarStats, SidecarTimeslice, Unit, linear_distribution,
 };
 
 use crate::atlas::{ServerMetricAtlas, ServerMetricView, VllmSglangMetricAtlas};
@@ -129,6 +130,25 @@ pub struct ServerMetricsAccumulator {
     records: Vec<ServerMetricsRecord>,
     boundaries: HashMap<Phase, ServerMetricsPhaseBoundary>,
 }
+
+/// Incompatibility detected while merging independently collected server telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerMetricsMergeError {
+    /// Workers captured different snapshots for the same phase boundary.
+    BoundaryConflict(Phase),
+}
+
+impl Display for ServerMetricsMergeError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::BoundaryConflict(phase) => {
+                write!(formatter, "conflicting {phase:?} server-metrics boundaries")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ServerMetricsMergeError {}
 
 impl ServerMetricsAccumulator {
     /// Build an empty accumulator.
@@ -362,6 +382,72 @@ impl ServerMetricsAccumulator {
             ingest_series(record, &mut states);
         }
         states
+    }
+
+    fn phase_for_context(&self, context: &ExportContext) -> Option<Phase> {
+        let phase = context.phase.or_else(|| {
+            [Phase::Profiling, Phase::Warmup]
+                .into_iter()
+                .find(|phase| self.boundaries.contains_key(phase))
+        })?;
+        let boundary = self.boundaries.get(&phase)?;
+        if context
+            .start_ns
+            .is_some_and(|start_ns| start_ns != boundary.start_ns)
+            || context
+                .end_ns
+                .is_some_and(|end_ns| end_ns != boundary.end_ns)
+        {
+            return None;
+        }
+        Some(phase)
+    }
+}
+
+impl Accumulator<ServerMetricsRecord> for ServerMetricsAccumulator {
+    type Summary = ServerMetricsSummary;
+    type MergeError = ServerMetricsMergeError;
+
+    fn process_record(&mut self, record: &ServerMetricsRecord) {
+        self.ingest_record(record.clone());
+    }
+
+    fn query_time_range(&self, start_ns: i64, end_ns: i64) -> Vec<bool> {
+        self.records
+            .iter()
+            .map(|record| record.timestamp_ns >= start_ns && record.timestamp_ns < end_ns)
+            .collect()
+    }
+
+    fn export_results(&self, context: &ExportContext) -> Self::Summary {
+        self.phase_for_context(context)
+            .map_or_else(ServerMetricsSummary::default, |phase| {
+                self.summarize_phase(phase, None)
+            })
+    }
+
+    fn merge(&mut self, other: &Self) -> Result<(), Self::MergeError> {
+        for (phase, incoming) in &other.boundaries {
+            if self
+                .boundaries
+                .get(phase)
+                .is_some_and(|existing| existing != incoming)
+            {
+                return Err(ServerMetricsMergeError::BoundaryConflict(*phase));
+            }
+        }
+        for (phase, boundary) in &other.boundaries {
+            self.boundaries
+                .entry(*phase)
+                .or_insert_with(|| boundary.clone());
+        }
+        self.records.extend(other.records.iter().cloned());
+        self.records.sort_by(|left, right| {
+            left.timestamp_ns
+                .cmp(&right.timestamp_ns)
+                .then_with(|| left.endpoint_url.cmp(&right.endpoint_url))
+        });
+        Ok(())
     }
 }
 
@@ -1177,6 +1263,60 @@ mod tests {
         assert_eq!(
             derived_value(&summary, "output_token_throughput_srv"),
             125.0
+        );
+    }
+
+    #[test]
+    fn shared_accumulator_seam_queries_half_open_and_exports_by_phase() {
+        let start = record(0, 100.0, 1.0, 10.0);
+        let middle = record(1_000_000_000, 105.0, 2.0, 15.0);
+        let end = record(2_000_000_000, 110.0, 3.0, 20.0);
+        let mut accumulator = ServerMetricsAccumulator::new();
+        accumulator.process_record(&start);
+        accumulator.process_record(&middle);
+        accumulator.process_record(&end);
+        accumulator.set_phase_boundary(ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 2_000_000_000,
+            start_records: BTreeMap::from([(start.endpoint_url.clone(), start)]),
+            end_records: BTreeMap::from([(end.endpoint_url.clone(), end)]),
+        });
+
+        assert_eq!(
+            accumulator.query_time_range(0, 2_000_000_000),
+            vec![true, true, false]
+        );
+        let summary =
+            Accumulator::export_results(&accumulator, &ExportContext::phase(Phase::Profiling));
+        assert!(summary.sidecar_metrics().contains_key("requests"));
+        let missing =
+            Accumulator::export_results(&accumulator, &ExportContext::phase(Phase::Warmup));
+        assert!(missing.sidecar_metrics().is_empty());
+    }
+
+    #[test]
+    fn shared_accumulator_merge_rejects_conflicting_boundaries() {
+        let start = record(0, 100.0, 1.0, 10.0);
+        let end = record(1_000_000_000, 110.0, 1.0, 20.0);
+        let boundary = ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 1_000_000_000,
+            start_records: BTreeMap::from([(start.endpoint_url.clone(), start)]),
+            end_records: BTreeMap::from([(end.endpoint_url.clone(), end)]),
+        };
+        let mut left = ServerMetricsAccumulator::new();
+        left.set_phase_boundary(boundary.clone());
+        let mut right = ServerMetricsAccumulator::new();
+        right.set_phase_boundary(ServerMetricsPhaseBoundary {
+            end_ns: 2_000_000_000,
+            ..boundary
+        });
+
+        assert_eq!(
+            left.merge(&right),
+            Err(ServerMetricsMergeError::BoundaryConflict(Phase::Profiling))
         );
     }
 }

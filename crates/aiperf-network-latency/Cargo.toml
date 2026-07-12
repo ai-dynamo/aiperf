@@ -10,6 +10,7 @@ description = "Clock-injected TCP-connect RTT calibration for AIPerf."
 
 [dependencies]
 aiperf-clock.workspace = true
+aiperf-metrics.workspace = true
 serde.workspace = true
 tokio.workspace = true
 url.workspace = true

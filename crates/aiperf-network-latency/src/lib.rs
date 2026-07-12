@@ -12,7 +12,7 @@ mod accumulator;
 mod model;
 mod probe;
 
-pub use accumulator::NetworkLatencyAccumulator;
+pub use accumulator::{NetworkLatencyAccumulator, NetworkLatencyMergeError};
 pub use model::{
     NetworkLatencyErrorDetails, NetworkLatencyErrorDetailsCount, NetworkLatencyResults,
     NetworkLatencySample, NetworkLatencyStats, NetworkLatencyTarget,

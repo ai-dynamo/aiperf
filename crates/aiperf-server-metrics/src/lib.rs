@@ -38,6 +38,6 @@ pub const DEFAULT_COLLECTION_INTERVAL_NS: i64 = 333_000_000;
 /// Connection/reachability timeout: 10 seconds.
 pub const DEFAULT_REACHABILITY_TIMEOUT_NS: i64 = 10_000_000_000;
 pub use accumulator::{
-    ServerMetricsAccumulator, ServerMetricsEndpointInfo, ServerMetricsPhaseBoundary,
-    ServerMetricsSummary,
+    ServerMetricsAccumulator, ServerMetricsEndpointInfo, ServerMetricsMergeError,
+    ServerMetricsPhaseBoundary, ServerMetricsSummary,
 };
