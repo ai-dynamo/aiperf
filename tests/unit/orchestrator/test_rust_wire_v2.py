@@ -27,6 +27,9 @@ from aiperf.orchestrator.rust_wire import (
     build_run_request,
 )
 
+_DISTRIBUTION_A = "blake3:" + "a" * 64
+_DISTRIBUTION_B = "blake3:" + "b" * 64
+
 
 def _run(
     artifact_target: Path,
@@ -89,12 +92,12 @@ def test_v2_envelope_and_default_scheduled_projection(
     request = build_authored_run_request(
         run,
         operation=operation,
-        expected_distribution_id="blake3:runner-image",
+        expected_distribution_id=_DISTRIBUTION_A,
     )
 
     assert request["protocol_version"] == 2
     assert request["operation"] == operation
-    assert request["expected_distribution_id"] == "blake3:runner-image"
+    assert request["expected_distribution_id"] == _DISTRIBUTION_A
     authored = request["run"]
     assert authored["identity"] == {
         "benchmark_id": "authored-v2",
@@ -159,7 +162,7 @@ def test_dag_jsonl_rows_enter_graph_workload_once_without_conversion(
     workload = build_authored_run_request(
         run,
         operation="validate",
-        expected_distribution_id="blake3:graph",
+        expected_distribution_id=_DISTRIBUTION_A,
     )["run"]["workload"]
 
     assert workload["type"] == "graph"
@@ -241,7 +244,7 @@ def test_projection_never_reads_resolved_or_performs_resolver_io(
     projected = build_authored_run_request(
         run,
         operation="execute",
-        expected_distribution_id="blake3:no-side-effects",
+        expected_distribution_id=_DISTRIBUTION_A,
     )
 
     assert projected["run"]["workload"]["config"]["dataset"]["path"] == str(
@@ -278,7 +281,7 @@ def test_open_backend_workload_and_agentic_provider_payloads_survive(
     authored = build_authored_run_request(
         run,
         operation="validate",
-        expected_distribution_id="blake3:custom",
+        expected_distribution_id=_DISTRIBUTION_A,
     )["run"]
 
     assert authored["backend"] == {
@@ -304,7 +307,7 @@ def test_default_static_accuracy_selection(tmp_path: Path) -> None:
     workload = build_authored_run_request(
         run,
         operation="validate",
-        expected_distribution_id="blake3:accuracy",
+        expected_distribution_id=_DISTRIBUTION_A,
     )["run"]["workload"]
 
     assert workload["type"] == "static_accuracy"
@@ -333,7 +336,7 @@ def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
     config = build_authored_run_request(
         run,
         operation="validate",
-        expected_distribution_id="blake3:dataset",
+        expected_distribution_id=_DISTRIBUTION_A,
     )["run"]["workload"]["config"]
 
     assert config["dataset"]["turn_delay_ms"] == {"mean": 25.0, "stddev": 3.0}
@@ -373,13 +376,13 @@ def test_runner_installation_uses_only_advertised_distribution_identity(
         binary=Path("/opt/aiperf-runner"),
         capabilities={
             "protocol_versions": [1, 2],
-            "distribution_id": "blake3:advertised",
+            "distribution_id": _DISTRIBUTION_A,
         },
     )
 
     request = installation.project_authored_request(run, operation="validate")
 
-    assert request["expected_distribution_id"] == "blake3:advertised"
+    assert request["expected_distribution_id"] == _DISTRIBUTION_A
 
     missing_identity = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
@@ -397,7 +400,7 @@ def test_executor_selects_advertised_v2_pair_without_legacy_resolution(
         binary=Path("/opt/aiperf-runner"),
         capabilities={
             "protocol_versions": [1, 2],
-            "distribution_id": "blake3:" + "a" * 64,
+            "distribution_id": _DISTRIBUTION_A,
             "supported_pairs": [["online_http", "scheduled"]],
             "endpoint_types": ["future_endpoint"],
         },
@@ -421,7 +424,7 @@ def test_executor_selects_advertised_v2_pair_without_legacy_resolution(
 
 
 def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
-    distribution_id = "blake3:" + "b" * 64
+    distribution_id = _DISTRIBUTION_B
     terminal = rust_executor._parse_terminal(
         orjson.dumps(
             {
@@ -512,7 +515,7 @@ def test_readiness_is_authored_in_v2_and_rejected_by_v1(tmp_path: Path) -> None:
     endpoint = build_authored_run_request(
         run,
         operation="validate",
-        expected_distribution_id="blake3:readiness",
+        expected_distribution_id=_DISTRIBUTION_A,
     )["run"]["endpoints"]["profiles"][0]
 
     assert endpoint["wait_for_model_timeout"] == 90.0

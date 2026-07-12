@@ -36,6 +36,8 @@ RUNNER_PROTOCOL_VERSION = 1
 RUNNER_PROTOCOL_V2 = 2
 SERVER_METRICS_PARQUET_WIRE_PATH = Path(".aiperf-server-metrics-parquet-wire.jsonl")
 RunnerOperationV2 = Literal["validate", "execute"]
+_DISTRIBUTION_ID_PREFIX = "blake3:"
+_DISTRIBUTION_ID_HEX_LENGTH = 64
 
 
 class RustWireError(ValueError):
@@ -60,14 +62,10 @@ def build_authored_run_request(
         raise RustWireError(
             f"protocol-v2 operation must be 'validate' or 'execute', got {operation!r}"
         )
-    if (
-        not isinstance(expected_distribution_id, str)
-        or not expected_distribution_id
-        or expected_distribution_id != expected_distribution_id.strip()
-    ):
+    if not _is_distribution_id(expected_distribution_id):
         raise RustWireError(
-            "protocol-v2 expected_distribution_id must be non-empty and contain no "
-            "leading or trailing whitespace"
+            "protocol-v2 expected_distribution_id must be 'blake3:' followed by "
+            "exactly 64 lowercase hexadecimal characters"
         )
 
     return {
@@ -76,6 +74,15 @@ def build_authored_run_request(
         "expected_distribution_id": expected_distribution_id,
         "run": _authored_run_v2(run),
     }
+
+
+def _is_distribution_id(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith(_DISTRIBUTION_ID_PREFIX):
+        return False
+    hexadecimal = value[len(_DISTRIBUTION_ID_PREFIX) :]
+    return len(hexadecimal) == _DISTRIBUTION_ID_HEX_LENGTH and all(
+        character in "0123456789abcdef" for character in hexadecimal
+    )
 
 
 def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
