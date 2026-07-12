@@ -6,8 +6,11 @@ from __future__ import annotations
 import orjson
 import pytest
 
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.orchestrator.native_report import (
     NativeReportError,
+    export_python_compatibility_reports,
+    load_native_report,
     load_native_summary,
     project_native_summary,
 )
@@ -193,3 +196,90 @@ def test_rejects_contract_drift(mutation, message: str) -> None:
     mutation(report)
     with pytest.raises(NativeReportError, match=message):
         project_native_summary(report)
+
+
+def test_python_report_generators_serialize_native_values_without_recomputing(
+    tmp_path,
+) -> None:
+    report = {
+        "schema_version": "2.0",
+        "aiperf_version": "0.0.0",
+        "run": {"mode": "online", "model": "mock-model"},
+        "summary": {"was_cancelled": False},
+        "metrics": {
+            "request_latency": _entry(
+                "distribution",
+                "ms",
+                {
+                    "count": 2,
+                    "avg": 12.5,
+                    "min": 10.0,
+                    "max": 15.0,
+                    "std": 2.5,
+                    "percentiles": {"p50": 12.5, "p99": 15.0},
+                },
+            ),
+            "request_count": _entry("counter", "requests", {"total": 2.0, "rate": 4.0}),
+        },
+        "warmup_metrics": {
+            "request_count": _entry("counter", "requests", {"total": 1.0, "rate": 1.0})
+        },
+        "errors": [],
+    }
+    envelope = AIPerfConfig.model_validate(
+        {
+            "benchmark": {
+                "models": ["mock-model"],
+                "endpoint": {"urls": ["http://127.0.0.1:8000"]},
+                "dataset": {"type": "synthetic"},
+                "profiling": {
+                    "type": "concurrency",
+                    "requests": 2,
+                    "concurrency": 1,
+                },
+                "artifacts": {"dir": str(tmp_path)},
+                "gpu_telemetry": {"enabled": False},
+                "server_metrics": {"enabled": False},
+            }
+        }
+    )
+    run = BenchmarkRun(
+        benchmark_id="compatibility-proof",
+        cfg=envelope.benchmark,
+        artifact_dir=tmp_path,
+        label="native",
+        random_seed=7,
+    )
+    projected = project_native_summary(report)
+
+    export_python_compatibility_reports(report, projected, run)
+
+    exported = orjson.loads((tmp_path / "profile_export_aiperf.json").read_bytes())
+    assert exported["schema_version"] == "1.4"
+    assert exported["benchmark_id"] == "compatibility-proof"
+    assert exported["request_latency"] == {
+        "unit": "ms",
+        "avg": 12.5,
+        "p50": 12.5,
+        "p99": 15.0,
+        "min": 10.0,
+        "max": 15.0,
+        "std": 2.5,
+        "count": 2,
+    }
+    assert exported["warmup_metrics"]["request_count"]["avg"] == 1.0
+    assert exported["run_info"]["random_seed"] == 7
+    assert exported["input_config"]["endpoint"]["urls"] == ["http://127.0.0.1:8000"]
+    csv = (tmp_path / "profile_export_aiperf.csv").read_text()
+    assert "Request Latency (ms)" in csv
+    assert "12.50" in csv
+    (tmp_path / "profile_export.jsonl").write_text("{}\n")
+    from aiperf.plot.core.mode_detector import ModeDetector, VisualizationMode
+
+    mode, run_directories = ModeDetector().detect_mode([tmp_path])
+    assert mode == VisualizationMode.SINGLE_RUN
+    assert run_directories == [tmp_path]
+
+    native_path = tmp_path / "native-v2.json"
+    native_path.write_bytes(orjson.dumps(report))
+    assert load_native_report(native_path) == report

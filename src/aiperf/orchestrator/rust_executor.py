@@ -18,7 +18,11 @@ import orjson
 
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
-from aiperf.orchestrator.native_report import load_native_summary
+from aiperf.orchestrator.native_report import (
+    export_python_compatibility_reports,
+    load_native_report,
+    project_native_summary,
+)
 from aiperf.orchestrator.rust_wire import (
     RUNNER_PROTOCOL_VERSION,
     build_run_request,
@@ -67,7 +71,9 @@ class RustSubprocessExecutor(RunExecutor):
             if completed.returncode != 0 or not terminal["success"]:
                 return _failure(completed, terminal, run)
             report_path = _validated_report_path(terminal, run.artifact_dir)
-            summary = load_native_summary(report_path)
+            native_report = load_native_report(report_path)
+            summary = project_native_summary(native_report)
+            export_python_compatibility_reports(native_report, summary, run)
             return _classify(summary, run)
         except Exception as error:
             logger.exception("Error executing native run %s", run.label)

@@ -11,11 +11,14 @@ report.  Python's multi-run/search layer consumes only the compact
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
 from aiperf.common.models.export_models import JsonMetricResult
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 NATIVE_REPORT_SCHEMA_VERSION = "2.0"
 
@@ -30,6 +33,11 @@ class NativeReportError(ValueError):
 
 def load_native_summary(path: Path) -> dict[str, JsonMetricResult]:
     """Load one authoritative Rust report and project its flat run summary."""
+    return project_native_summary(load_native_report(path))
+
+
+def load_native_report(path: Path) -> dict[str, Any]:
+    """Read one native report without weakening its schema checks."""
     try:
         payload = orjson.loads(path.read_bytes())
     except OSError as error:
@@ -40,7 +48,13 @@ def load_native_summary(path: Path) -> dict[str, JsonMetricResult]:
         raise NativeReportError(
             f"native report {path} is invalid JSON: {error}"
         ) from error
-    return project_native_summary(payload)
+    root = _mapping(payload, "native report")
+    if root.get("schema_version") != NATIVE_REPORT_SCHEMA_VERSION:
+        raise NativeReportError(
+            "unsupported native report schema_version "
+            f"{root.get('schema_version')!r}; expected {NATIVE_REPORT_SCHEMA_VERSION!r}"
+        )
+    return root
 
 
 def project_native_summary(payload: Any) -> dict[str, JsonMetricResult]:
@@ -59,7 +73,17 @@ def project_native_summary(payload: Any) -> dict[str, JsonMetricResult]:
             "unsupported native report schema_version "
             f"{schema_version!r}; expected {NATIVE_REPORT_SCHEMA_VERSION!r}"
         )
-    metrics = _mapping(root.get("metrics"), "native report metrics")
+    projected = _project_metric_entries(
+        root.get("metrics"), label="native report metrics"
+    )
+    _project_accuracy(root.get("accuracy"), projected)
+    return projected
+
+
+def _project_metric_entries(
+    authored: Any, *, label: str
+) -> dict[str, JsonMetricResult]:
+    metrics = _mapping(authored, label)
     projected: dict[str, JsonMetricResult] = {}
     for name, authored_entry in metrics.items():
         if not isinstance(name, str) or not name:
@@ -77,8 +101,114 @@ def project_native_summary(payload: Any) -> dict[str, JsonMetricResult]:
             raise NativeReportError(f"metric {name!r} unit must be a string")
         values = _legacy_stats(metric_type, stats, name)
         projected[name] = JsonMetricResult(unit=unit, **values)
-    _project_accuracy(root.get("accuracy"), projected)
     return projected
+
+
+def export_python_compatibility_reports(
+    payload: dict[str, Any],
+    summary_metrics: dict[str, JsonMetricResult],
+    run: BenchmarkRun,
+) -> None:
+    """Run the canonical Python JSON/CSV generators over native results.
+
+    Rust remains authoritative for request facts and aggregate values. Python
+    only serializes those values into the established Config-v2 report files so
+    plotters and upload extensions keep working during the native transition.
+    """
+    from aiperf.common.models import MetricResult, ProfileResults
+    from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
+    from aiperf.exporters.exporter_config import ExporterConfig
+    from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
+    from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    native_summary = _mapping(payload.get("summary"), "native report summary")
+    warmup_authored = payload.get("warmup_metrics")
+    warmup_metrics = (
+        _project_metric_entries(warmup_authored, label="native warmup metrics")
+        if warmup_authored is not None
+        else {}
+    )
+
+    def metric_result(tag: str, value: JsonMetricResult) -> MetricResult:
+        metric_class = MetricRegistry.get_class_or_none(tag)
+        return MetricResult(
+            tag=tag,
+            header=metric_class.header if metric_class is not None else tag,
+            **value.model_dump(),
+        )
+
+    successful = _counter_value(summary_metrics.get("request_count"))
+    failed = _counter_value(summary_metrics.get("error_request_count"))
+    errors = []
+    for index, authored_error in enumerate(payload.get("errors", [])):
+        error = _mapping(authored_error, f"native report errors[{index}]")
+        count = _required_int(error.get("count"), "native report error", "count")
+        errors.append(
+            ErrorDetailsCount(
+                error_details=ErrorDetails(
+                    code=error.get("code"),
+                    type=error.get("type"),
+                    message=str(error.get("message", "native request failed")),
+                ),
+                count=count,
+            )
+        )
+    results = ProfileResults(
+        records=[metric_result(tag, value) for tag, value in summary_metrics.items()],
+        warmup_records=[
+            metric_result(tag, value) for tag, value in warmup_metrics.items()
+        ]
+        or None,
+        completed=successful + failed,
+        start_ns=0,
+        end_ns=0,
+        was_cancelled=bool(native_summary.get("was_cancelled", False)),
+        successful_request_count=successful,
+        error_request_count=failed,
+        error_summary=errors,
+    )
+    exporter_config = ExporterConfig(
+        results=results,
+        cfg=run.cfg,
+        telemetry_results=None,
+        run=run,
+    )
+
+    exporters = [MetricsCsvExporter(exporter_config)]
+    authored_summary = run.cfg.artifacts.summary
+    if authored_summary is not False and "json" in authored_summary:
+        exporters.append(MetricsJsonExporter(exporter_config))
+    for exporter in exporters:
+        destination = exporter.get_export_info().file_path
+        _atomic_write_text(destination, exporter.render())
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Commit one rendered compatibility report without a partial-file window."""
+    import os
+    from uuid import uuid4
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _counter_value(metric: JsonMetricResult | None) -> int:
+    if metric is None:
+        return 0
+    value = metric.sum if metric.sum is not None else metric.avg
+    if value is None:
+        return 0
+    if not float(value).is_integer() or value < 0:
+        raise NativeReportError(
+            f"native counter value must be a non-negative integer: {value!r}"
+        )
+    return int(value)
 
 
 def _project_accuracy(authored: Any, projected: dict[str, JsonMetricResult]) -> None:

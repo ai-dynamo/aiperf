@@ -171,6 +171,13 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert result.summary_metrics["request_latency"].count == 4
         assert result.summary_metrics["good_request_count"].avg == 4.0
         assert (tmp_path / "native-v2.json").is_file()
+        compatibility = orjson.loads(
+            (tmp_path / "profile_export_aiperf.json").read_bytes()
+        )
+        assert compatibility["request_count"]["avg"] == 4.0
+        assert compatibility["request_latency"]["count"] == 4
+        assert compatibility["run_info"]["benchmark_id"] == "python-rust-e2e"
+        assert (tmp_path / "profile_export_aiperf.csv").is_file()
         records_path = tmp_path / "profile_export.jsonl"
         rows = [orjson.loads(line) for line in records_path.read_bytes().splitlines()]
         assert len(rows) == 4
