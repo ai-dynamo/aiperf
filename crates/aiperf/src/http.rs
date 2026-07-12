@@ -15,6 +15,7 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ use uuid::Uuid;
 use aiperf_clock::Clock;
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
+use aiperf_dataset::EndpointResolver;
 use aiperf_endpoints::{Endpoint, EndpointConfig};
 use aiperf_metrics::{HttpTrace, InferenceDimensions};
 use aiperf_transport::config::ClientConfig;
@@ -38,6 +40,7 @@ use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     Dispatchable, ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::multiturn::TurnToSend;
@@ -59,7 +62,7 @@ fn is_meaningful_chat_token(message: &SseMessage) -> bool {
 /// A slim online HTTP request carrying prompt text. This is the load
 /// generator's own request type; implementing [`Dispatchable`] is all the
 /// dispatch seam requires.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpRequest {
     /// Stable per-request identifier used to correlate observer events.
     pub uuid: Uuid,
@@ -94,6 +97,142 @@ pub struct HttpRequest {
     pub cancel_after_ns: Option<i64>,
     /// Effective endpoint index for this request.
     pub url_index: Option<u32>,
+}
+
+impl fmt::Debug for HttpRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HttpRequest")
+            .field("uuid", &self.uuid)
+            .field("input_length", &self.input_length)
+            .field("max_output_tokens", &self.max_output_tokens)
+            .field("has_prompt_text", &self.prompt_text.is_some())
+            .field("has_request_body", &self.request_body.is_some())
+            .field(
+                "request_body_bytes_len",
+                &self.request_body_bytes.as_ref().map(Bytes::len),
+            )
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("parameters", &self.parameters)
+            .field("endpoint_path", &self.endpoint_path)
+            .field("streaming", &self.streaming)
+            .field("x_correlation_id", &self.x_correlation_id)
+            .field("is_final_turn", &self.is_final_turn)
+            .field("cancel_after_ns", &self.cancel_after_ns)
+            .field("url_index", &self.url_index)
+            .finish()
+    }
+}
+
+/// Version of the trusted execution-command wire.
+pub const HTTP_EXECUTION_COMMAND_VERSION: u32 = 1;
+
+/// Data-only HTTP request carried across an execution-placement boundary.
+///
+/// `bytes::Bytes` is projected to `Vec<u8>` so this DTO has no transport- or
+/// allocator-specific representation. Header values may contain credentials;
+/// the DTO is therefore for an authenticated runner-to-worker channel, never
+/// for reports or logs.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HttpRequestWire {
+    /// Stable request identifier.
+    pub uuid: Uuid,
+    /// Accounted input-token length.
+    pub input_length: usize,
+    /// Requested output-token limit.
+    pub max_output_tokens: usize,
+    /// Optional synthetic prompt text.
+    pub prompt_text: Option<String>,
+    /// Optional decoded request body.
+    pub request_body: Option<Value>,
+    /// Optional byte-exact request body.
+    pub request_body_bytes: Option<Vec<u8>>,
+    /// Per-request headers, including credentials when the endpoint requires them.
+    pub headers: BTreeMap<String, String>,
+    /// Per-request URL query parameters.
+    pub parameters: BTreeMap<String, String>,
+    /// Endpoint path or absolute URL override.
+    pub endpoint_path: Option<String>,
+    /// Whether the response is streamed.
+    pub streaming: bool,
+    /// Optional session correlation identifier.
+    pub x_correlation_id: Option<String>,
+    /// Whether this is the final correlated turn.
+    pub is_final_turn: bool,
+    /// Post-send cancellation delay.
+    pub cancel_after_ns: Option<i64>,
+    /// Effective endpoint index.
+    pub url_index: Option<u32>,
+}
+
+impl fmt::Debug for HttpRequestWire {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HttpRequestWire")
+            .field("uuid", &self.uuid)
+            .field("input_length", &self.input_length)
+            .field("max_output_tokens", &self.max_output_tokens)
+            .field("has_prompt_text", &self.prompt_text.is_some())
+            .field("has_request_body", &self.request_body.is_some())
+            .field(
+                "request_body_bytes_len",
+                &self.request_body_bytes.as_ref().map(Vec::len),
+            )
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field(
+                "parameter_names",
+                &self.parameters.keys().collect::<Vec<_>>(),
+            )
+            .field("endpoint_path", &self.endpoint_path)
+            .field("streaming", &self.streaming)
+            .field("has_correlation_id", &self.x_correlation_id.is_some())
+            .field("is_final_turn", &self.is_final_turn)
+            .field("cancel_after_ns", &self.cancel_after_ns)
+            .field("url_index", &self.url_index)
+            .finish()
+    }
+}
+
+impl From<HttpRequest> for HttpRequestWire {
+    fn from(request: HttpRequest) -> Self {
+        Self {
+            uuid: request.uuid,
+            input_length: request.input_length,
+            max_output_tokens: request.max_output_tokens,
+            prompt_text: request.prompt_text,
+            request_body: request.request_body,
+            request_body_bytes: request.request_body_bytes.map(|bytes| bytes.to_vec()),
+            headers: request.headers,
+            parameters: request.parameters,
+            endpoint_path: request.endpoint_path,
+            streaming: request.streaming,
+            x_correlation_id: request.x_correlation_id,
+            is_final_turn: request.is_final_turn,
+            cancel_after_ns: request.cancel_after_ns,
+            url_index: request.url_index,
+        }
+    }
+}
+
+impl From<HttpRequestWire> for HttpRequest {
+    fn from(request: HttpRequestWire) -> Self {
+        Self {
+            uuid: request.uuid,
+            input_length: request.input_length,
+            max_output_tokens: request.max_output_tokens,
+            prompt_text: request.prompt_text,
+            request_body: request.request_body,
+            request_body_bytes: request.request_body_bytes.map(Bytes::from),
+            headers: request.headers,
+            parameters: request.parameters,
+            endpoint_path: request.endpoint_path,
+            streaming: request.streaming,
+            x_correlation_id: request.x_correlation_id,
+            is_final_turn: request.is_final_turn,
+            cancel_after_ns: request.cancel_after_ns,
+            url_index: request.url_index,
+        }
+    }
 }
 
 /// Generated response returned by the response-capturing dispatch path.
@@ -151,7 +290,7 @@ pub struct HttpTurnDispatchResult {
 /// [`EndpointConfig::endpoint_type`]. A cross-process backend can transmit the
 /// data fields and re-resolve the stateless endpoint adapter on the far side;
 /// local backends retain the already-resolved adapter allocation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PreparedHttpTurn {
     /// Transport-ready request fields.
     pub request: HttpRequest,
@@ -161,6 +300,61 @@ pub struct PreparedHttpTurn {
     pub endpoint_config: EndpointConfig,
     /// Whether the request came from the endpoint-aware dataset seam.
     pub endpoint_aware: bool,
+}
+
+impl fmt::Debug for PreparedHttpTurn {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedHttpTurn")
+            .field("request", &self.request)
+            .field("endpoint", &self.endpoint.metadata().endpoint_type)
+            .field("endpoint_config", &self.endpoint_config)
+            .field("endpoint_aware", &self.endpoint_aware)
+            .finish()
+    }
+}
+
+/// Versioned command sent from the one dispatcher to a placement backend.
+///
+/// This DTO deliberately excludes the `Arc<dyn Endpoint>` implementation.
+/// Workers re-resolve the stable endpoint identity through their frozen
+/// registry, so native thread pools and future ZMQ/RPC workers execute the same
+/// adapter contract. Endpoint headers and API keys are carried separately
+/// because ordinary [`EndpointConfig`] serialization intentionally redacts
+/// them from artifacts. Consequently this command belongs only on a trusted,
+/// authenticated execution channel and its [`Debug`] implementation never
+/// prints secret values.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PreparedHttpTurnWire {
+    /// Execution-command schema version.
+    pub version: u32,
+    /// Transport-ready request data.
+    pub request: HttpRequestWire,
+    /// Non-secret endpoint configuration and stable endpoint identity.
+    pub endpoint_config: EndpointConfig,
+    /// Endpoint-level headers omitted by artifact-safe config serialization.
+    pub endpoint_headers: BTreeMap<String, String>,
+    /// Endpoint API key omitted by artifact-safe config serialization.
+    pub endpoint_api_key: Option<String>,
+    /// Whether endpoint-aware dataset materialization produced this request.
+    pub endpoint_aware: bool,
+}
+
+impl fmt::Debug for PreparedHttpTurnWire {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedHttpTurnWire")
+            .field("version", &self.version)
+            .field("request", &self.request)
+            .field("endpoint_config", &self.endpoint_config)
+            .field(
+                "endpoint_header_names",
+                &self.endpoint_headers.keys().collect::<Vec<_>>(),
+            )
+            .field("has_endpoint_api_key", &self.endpoint_api_key.is_some())
+            .field("endpoint_aware", &self.endpoint_aware)
+            .finish()
+    }
 }
 
 impl PreparedHttpTurn {
@@ -201,6 +395,45 @@ impl PreparedHttpTurn {
             endpoint_config,
             endpoint_aware,
         }
+    }
+
+    /// Project this local command into the stable data-only execution wire.
+    pub fn into_wire(self) -> PreparedHttpTurnWire {
+        let endpoint_headers = self.endpoint_config.headers.clone();
+        let endpoint_api_key = self.endpoint_config.api_key.clone();
+        PreparedHttpTurnWire {
+            version: HTTP_EXECUTION_COMMAND_VERSION,
+            request: self.request.into(),
+            endpoint_config: self.endpoint_config,
+            endpoint_headers,
+            endpoint_api_key,
+            endpoint_aware: self.endpoint_aware,
+        }
+    }
+}
+
+impl PreparedHttpTurnWire {
+    /// Rehydrate a received command through the worker's frozen endpoint registry.
+    pub fn into_prepared(
+        self,
+        endpoint_resolver: &dyn EndpointResolver,
+    ) -> Result<PreparedHttpTurn> {
+        anyhow::ensure!(
+            self.version == HTTP_EXECUTION_COMMAND_VERSION,
+            "HTTP execution command version {} is unsupported; expected {}",
+            self.version,
+            HTTP_EXECUTION_COMMAND_VERSION,
+        );
+        let mut endpoint_config = self.endpoint_config;
+        endpoint_config.headers = self.endpoint_headers;
+        endpoint_config.api_key = self.endpoint_api_key;
+        let endpoint = endpoint_resolver.resolve_type(endpoint_config.endpoint_type)?;
+        Ok(PreparedHttpTurn {
+            request: self.request.into(),
+            endpoint,
+            endpoint_config,
+            endpoint_aware: self.endpoint_aware,
+        })
     }
 }
 
@@ -981,6 +1214,8 @@ mod tests {
 
     use super::*;
     use aiperf_clock::RealClock;
+    use aiperf_dataset::BuiltinEndpointResolver;
+    use aiperf_endpoints::EndpointType;
 
     #[derive(Default)]
     struct RecordingObserver {
@@ -1030,6 +1265,106 @@ mod tests {
     fn prepared_turn_is_send_between_reactor_threads() {
         fn assert_send<T: Send>() {}
         assert_send::<PreparedHttpTurn>();
+    }
+
+    #[test]
+    fn prepared_turn_wire_round_trips_and_redacts_debug_output() {
+        let request_secret = "request-secret";
+        let endpoint_secret = "endpoint-secret";
+        let mut endpoint_config = EndpointConfig {
+            endpoint_type: EndpointType::Messages,
+            streaming: true,
+            api_key: Some(endpoint_secret.into()),
+            ..EndpointConfig::default()
+        };
+        endpoint_config
+            .headers
+            .insert("anthropic-beta".into(), "secret-beta".into());
+        let prepared = PreparedHttpTurn {
+            request: HttpRequest {
+                uuid: Uuid::from_u128(42),
+                input_length: 7,
+                max_output_tokens: 11,
+                prompt_text: None,
+                request_body: None,
+                request_body_bytes: Some(Bytes::from_static(br#"{"messages":[]}"#)),
+                headers: BTreeMap::from([("x-api-key".into(), request_secret.into())]),
+                parameters: BTreeMap::from([("version".into(), "1".into())]),
+                endpoint_path: Some("/v1/messages".into()),
+                streaming: true,
+                x_correlation_id: Some("session-1".into()),
+                is_final_turn: true,
+                cancel_after_ns: Some(9),
+                url_index: Some(2),
+            },
+            endpoint: BuiltinEndpointResolver::default()
+                .resolve_type(EndpointType::Messages)
+                .unwrap(),
+            endpoint_config,
+            endpoint_aware: true,
+        };
+
+        let wire = prepared.into_wire();
+        let debug = format!("{wire:?}");
+        assert!(!debug.contains(request_secret));
+        assert!(!debug.contains(endpoint_secret));
+        assert!(!debug.contains("secret-beta"));
+
+        let encoded = serde_json::to_vec(&wire).unwrap();
+        let decoded: PreparedHttpTurnWire = serde_json::from_slice(&encoded).unwrap();
+        let rehydrated = decoded
+            .into_prepared(&BuiltinEndpointResolver::default())
+            .unwrap();
+        assert_eq!(rehydrated.request.uuid, Uuid::from_u128(42));
+        assert_eq!(
+            rehydrated.request.request_body_bytes.as_deref(),
+            Some(br#"{"messages":[]}"#.as_slice())
+        );
+        assert_eq!(rehydrated.request.headers["x-api-key"], request_secret);
+        assert_eq!(
+            rehydrated.endpoint_config.api_key.as_deref(),
+            Some(endpoint_secret)
+        );
+        assert_eq!(
+            rehydrated.endpoint_config.headers["anthropic-beta"],
+            "secret-beta"
+        );
+        assert_eq!(
+            rehydrated.endpoint.metadata().endpoint_type,
+            EndpointType::Messages
+        );
+        assert!(rehydrated.endpoint_aware);
+    }
+
+    #[test]
+    fn prepared_turn_wire_rejects_unknown_versions() {
+        let wire = PreparedHttpTurnWire {
+            version: HTTP_EXECUTION_COMMAND_VERSION + 1,
+            request: HttpRequestWire {
+                uuid: Uuid::nil(),
+                input_length: 1,
+                max_output_tokens: 1,
+                prompt_text: None,
+                request_body: None,
+                request_body_bytes: None,
+                headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                endpoint_path: None,
+                streaming: true,
+                x_correlation_id: None,
+                is_final_turn: true,
+                cancel_after_ns: None,
+                url_index: None,
+            },
+            endpoint_config: EndpointConfig::default(),
+            endpoint_headers: BTreeMap::new(),
+            endpoint_api_key: None,
+            endpoint_aware: false,
+        };
+        let error = wire
+            .into_prepared(&BuiltinEndpointResolver::default())
+            .unwrap_err();
+        assert!(error.to_string().contains("version"));
     }
 
     #[tokio::test]
