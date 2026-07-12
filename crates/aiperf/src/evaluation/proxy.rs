@@ -54,8 +54,12 @@ use super::host::CompatibilityProxyIngress;
 
 const PROXY_PATH: &str = "/v1/operations";
 const OPENAI_CHAT_PATH: &str = "/v1/chat/completions";
+/// Fixed worker-visible compatibility-proxy locator inside the isolated rootfs.
+pub const EVALUATOR_PROXY_LOCAL_LOCATOR: &str = "unix:///run/aiperf/evaluator-proxy.sock";
 const GRANT_HEADER: HeaderName = HeaderName::from_static("x-aiperf-proxy-grant");
 const CASE_HEADER: HeaderName = HeaderName::from_static("x-aiperf-case-id");
+const SEMANTIC_ATTEMPT_HEADER: HeaderName = HeaderName::from_static("x-aiperf-semantic-attempt-id");
+const LOGICAL_CALL_HEADER: HeaderName = HeaderName::from_static("x-aiperf-logical-call-id");
 const MAX_PROXY_OPERATIONS: u64 = 10_000_000;
 const MAX_PROXY_CONNECTIONS: u64 = 256;
 const MAX_PROXY_CONCURRENCY: u64 = MAX_PROXY_CONNECTIONS - 1;
@@ -63,20 +67,28 @@ const MAX_PROXY_BODY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROXY_AGGREGATE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAX_PROXY_STREAM_EVENTS: u64 = 10_000_000;
 const MAX_PROXY_LIFETIME_MS: u64 = 24 * 60 * 60 * 1_000;
+const PROXY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Registered local compatibility dialect over the shared typed host boundary.
 pub trait CompatibilityProxyDialect: Send + Sync {
     /// Fixed local path owned by this adapter, never an upstream path.
-    fn local_path(&self) -> &'static str;
+    fn local_path(&self) -> &str;
+
+    /// Exact logical routes this adapter may select after request lowering.
+    fn routes(&self) -> Vec<CompatibilityProxyRoute>;
+
+    /// Whether one dialect-owned, non-authority HTTP header is accepted.
+    fn allows_header(&self, name: &HeaderName) -> bool;
 
     /// Lower a strict compatibility request into the canonical host operation.
     fn lower(
         &self,
-        runtime: &ProxyGrantRuntime,
-        headers: &HeaderMap,
         body: &[u8],
-    ) -> std::result::Result<HostOperationRequest, ProxyRejection>;
+    ) -> std::result::Result<LoweredCompatibilityOperation, ProxyRejection>;
+}
 
+/// Per-request dialect response projection captured during strict lowering.
+pub trait CompatibilityResponseProjection: Send + Sync {
     /// Project a normalized terminal event into dialect JSON.
     fn project_terminal(
         &self,
@@ -90,29 +102,205 @@ pub trait CompatibilityProxyDialect: Send + Sync {
     ) -> std::result::Result<CanonicalJson, ProxyRejection>;
 }
 
+/// Authority-free output of one compatibility adapter lowering.
+pub struct LoweredCompatibilityOperation {
+    /// Exact frozen route selected by a caller-visible adapter selector.
+    pub route: CompatibilityProxyRoute,
+    /// Canonical operation payload understood by the registered Rust executor.
+    pub payload: CanonicalJson,
+    /// Terminal or genuinely incremental response mode.
+    pub response_mode: HostResponseMode,
+    /// Optional bounded semantic deadline.
+    pub deadline_ms: Option<u64>,
+    /// Request-bound response projection with no routing authority.
+    pub projection: Arc<dyn CompatibilityResponseProjection>,
+}
+
+impl std::fmt::Debug for LoweredCompatibilityOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LoweredCompatibilityOperation")
+            .field("route", &self.route)
+            .field("response_mode", &self.response_mode)
+            .field("deadline_ms", &self.deadline_ms)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One caller-visible selector mapped to an exact Rust-authorized logical route.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CompatibilityProxyRoute {
+    /// Dialect-local selector. For OpenAI chat this is the required `model` value.
+    pub selector: String,
+    /// Provider-plan logical service.
+    pub service_id: aiperf_accuracy::LogicalServiceId,
+    /// Exact service purpose.
+    pub purpose: aiperf_accuracy::OperationPurpose,
+    /// Exact semantic operation.
+    pub semantic_operation_id: aiperf_accuracy::SemanticOperationId,
+}
+
+impl CompatibilityProxyRoute {
+    /// Construct one bounded route selector with typed grant identities.
+    pub fn new(
+        selector: impl Into<String>,
+        service_id: aiperf_accuracy::LogicalServiceId,
+        purpose: aiperf_accuracy::OperationPurpose,
+        semantic_operation_id: aiperf_accuracy::SemanticOperationId,
+    ) -> Result<Self> {
+        let selector = selector.into();
+        ensure!(
+            !selector.is_empty()
+                && selector.trim() == selector
+                && selector.len() <= 256
+                && !selector.chars().any(char::is_control),
+            "compatibility proxy route selector is invalid"
+        );
+        Ok(Self {
+            selector,
+            service_id,
+            purpose,
+            semantic_operation_id,
+        })
+    }
+}
+
+/// Immutable deterministic set of linked compatibility dialects.
+#[derive(Clone, Default)]
+pub struct CompatibilityProxyDialectRegistry {
+    dialects: BTreeMap<String, FrozenCompatibilityProxyDialect>,
+}
+
+#[derive(Clone)]
+struct FrozenCompatibilityProxyDialect {
+    dialect: Arc<dyn CompatibilityProxyDialect>,
+    routes: Vec<CompatibilityProxyRoute>,
+}
+
+impl std::fmt::Debug for CompatibilityProxyDialectRegistry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompatibilityProxyDialectRegistry")
+            .field("paths", &self.dialects.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl CompatibilityProxyDialectRegistry {
+    /// Freeze unique path-owned adapters in deterministic path order.
+    pub fn new(
+        dialects: impl IntoIterator<Item = Arc<dyn CompatibilityProxyDialect>>,
+    ) -> Result<Self> {
+        let mut by_path = BTreeMap::new();
+        for dialect in dialects {
+            let path = dialect.local_path().to_string();
+            validate_dialect_path(&path)?;
+            ensure!(
+                path != PROXY_PATH,
+                "compatibility proxy dialect path is reserved"
+            );
+            let routes = dialect.routes();
+            ensure!(
+                !routes.is_empty() && routes.iter().collect::<BTreeSet<_>>().len() == routes.len(),
+                "compatibility proxy dialect routes are empty or duplicated"
+            );
+            ensure!(
+                by_path
+                    .insert(
+                        path.clone(),
+                        FrozenCompatibilityProxyDialect { dialect, routes },
+                    )
+                    .is_none(),
+                "duplicate compatibility proxy dialect path {path:?}"
+            );
+        }
+        Ok(Self { dialects: by_path })
+    }
+
+    /// Resolve one exact local path without fallback routing.
+    pub fn resolve(&self, path: &str) -> Option<Arc<dyn CompatibilityProxyDialect>> {
+        self.dialects.get(path).map(|entry| entry.dialect.clone())
+    }
+
+    /// Iterate registered paths in deterministic order.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.dialects.keys().map(String::as_str)
+    }
+
+    /// Return the exact union of route tuples exposed by linked dialects.
+    pub fn routes(&self) -> Vec<CompatibilityProxyRoute> {
+        self.dialects
+            .values()
+            .flat_map(|entry| entry.routes.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Return frozen path/route descriptors for provenance and policy hashing.
+    pub fn descriptors(&self) -> Vec<(String, Vec<CompatibilityProxyRoute>)> {
+        self.dialects
+            .iter()
+            .map(|(path, entry)| (path.clone(), entry.routes.clone()))
+            .collect()
+    }
+
+    fn contains_route(&self, path: &str, route: &CompatibilityProxyRoute) -> bool {
+        self.dialects
+            .get(path)
+            .is_some_and(|entry| entry.routes.contains(route))
+    }
+}
+
+fn validate_dialect_path(path: &str) -> Result<()> {
+    ensure!(
+        path.starts_with('/') && path.len() > 1 && path.len() <= 256 && path.is_ascii(),
+        "compatibility proxy dialect path is invalid"
+    );
+    for segment in path[1..].split('/') {
+        ensure!(
+            !segment.is_empty()
+                && !matches!(segment, "." | "..")
+                && segment.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~')
+                }),
+            "compatibility proxy dialect path must contain only literal URL segments"
+        );
+    }
+    Ok(())
+}
+
 /// OpenAI-compatible chat-completions adapter with no caller model/route authority.
 #[derive(Debug)]
 pub struct OpenAiChatCompatibilityDialect {
-    service_id: aiperf_accuracy::LogicalServiceId,
-    purpose: aiperf_accuracy::OperationPurpose,
-    semantic_operation_id: aiperf_accuracy::SemanticOperationId,
+    routes: BTreeMap<String, CompatibilityProxyRoute>,
+}
+
+#[derive(Debug)]
+struct OpenAiChatResponseProjection {
+    model: String,
 }
 
 impl OpenAiChatCompatibilityDialect {
-    fn from_grant(grant: &ScopedProxyGrant) -> Option<Self> {
-        let [service_id] = grant.service_ids.as_slice() else {
-            return None;
-        };
-        let [purpose] = grant.purposes.as_slice() else {
-            return None;
-        };
-        let [semantic_operation_id] = grant.semantic_operation_ids.as_slice() else {
-            return None;
-        };
-        (semantic_operation_id.as_str() == "model.generate").then(|| Self {
-            service_id: service_id.clone(),
-            purpose: purpose.clone(),
-            semantic_operation_id: semantic_operation_id.clone(),
+    /// Bind every accepted OpenAI `model` selector to an exact logical route.
+    pub fn new(routes: impl IntoIterator<Item = CompatibilityProxyRoute>) -> Result<Self> {
+        let mut by_selector = BTreeMap::new();
+        for route in routes {
+            ensure!(
+                route.semantic_operation_id.as_str() == "model.generate",
+                "OpenAI chat compatibility routes require model.generate"
+            );
+            ensure!(
+                by_selector.insert(route.selector.clone(), route).is_none(),
+                "duplicate OpenAI compatibility model selector"
+            );
+        }
+        ensure!(
+            !by_selector.is_empty(),
+            "OpenAI compatibility dialect requires at least one route"
+        );
+        Ok(Self {
+            routes: by_selector,
         })
     }
 }
@@ -486,24 +674,29 @@ pub struct ProxyGrantRuntime {
 }
 
 impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
-    fn local_path(&self) -> &'static str {
+    fn local_path(&self) -> &str {
         OPENAI_CHAT_PATH
+    }
+
+    fn routes(&self) -> Vec<CompatibilityProxyRoute> {
+        self.routes.values().cloned().collect()
+    }
+
+    fn allows_header(&self, name: &HeaderName) -> bool {
+        matches!(
+            name.as_str(),
+            "x-aiperf-case-id"
+                | "x-aiperf-semantic-attempt-id"
+                | "x-aiperf-logical-call-id"
+                | "accept-encoding"
+                | "user-agent"
+        ) || name.as_str().starts_with("x-stainless-")
     }
 
     fn lower(
         &self,
-        runtime: &ProxyGrantRuntime,
-        headers: &HeaderMap,
         body: &[u8],
-    ) -> std::result::Result<HostOperationRequest, ProxyRejection> {
-        let case_id = headers
-            .get(&CASE_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .ok_or(ProxyRejection::GrantScope)
-            .and_then(|value| {
-                EvaluationCaseId::new(value.to_string()).map_err(|_| ProxyRejection::GrantScope)
-            })?;
-        let unit_id = runtime.case_unit(&case_id)?;
+    ) -> std::result::Result<LoweredCompatibilityOperation, ProxyRejection> {
         let body = CanonicalJson::from_slice(body, Default::default())
             .map_err(|_| ProxyRejection::InvalidRequest)?;
         let object = body
@@ -511,6 +704,7 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
             .as_object()
             .ok_or(ProxyRejection::InvalidRequest)?;
         const ALLOWED: &[&str] = &[
+            "model",
             "messages",
             "max_tokens",
             "temperature",
@@ -531,6 +725,11 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
         {
             return Err(ProxyRejection::InvalidRequest);
         }
+        let route = object
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|selector| self.routes.get(selector))
+            .ok_or(ProxyRejection::GrantScope)?;
         let messages = object
             .get("messages")
             .filter(|value| {
@@ -594,54 +793,26 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
             );
         }
 
-        let ordinal = runtime
-            .next_proxy_ordinal
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-                value.checked_add(1)
-            })
-            .map_err(|_| ProxyRejection::GrantExhausted)?;
-        let identity = aiperf_accuracy::sha256_hex(
-            format!(
-                "aiperf-proxy-openai-chat-v1\0{}\0{}\0{ordinal}",
-                runtime.grant.grant_id, case_id
-            )
-            .as_bytes(),
-        );
-        let operation_id =
-            aiperf_accuracy::HostOperationId::new(format!("proxy-operation-{identity}"))
-                .map_err(|_| ProxyRejection::InvalidRequest)?;
-        let semantic_attempt_id =
-            aiperf_accuracy::SemanticAttemptId::new(format!("proxy-semantic-{identity}"))
-                .map_err(|_| ProxyRejection::InvalidRequest)?;
-        let logical_call_id = aiperf_accuracy::LogicalCallId::new(format!("proxy-call-{identity}"))
-            .map_err(|_| ProxyRejection::InvalidRequest)?;
         let payload = CanonicalJson::new(serde_json::Value::Object(payload))
             .map_err(|_| ProxyRejection::InvalidRequest)?;
         validate_no_secret_control_value(&payload).map_err(|_| ProxyRejection::InvalidRequest)?;
-        Ok(HostOperationRequest {
-            operation_id,
-            context: aiperf_accuracy::HostCallContext {
-                session_id: runtime.grant.session_id.clone(),
-                unit_id,
-                case_id,
-                semantic_attempt_id,
-                logical_call_id,
-            },
-            service_id: self.service_id.clone(),
-            purpose: self.purpose.clone(),
-            semantic_operation_id: self.semantic_operation_id.clone(),
+        Ok(LoweredCompatibilityOperation {
+            route: route.clone(),
             payload,
-            restricted_payload: None,
             response_mode: if stream {
                 HostResponseMode::Streaming
             } else {
                 HostResponseMode::Terminal
             },
             deadline_ms: None,
-            idempotency_key: format!("proxy-idempotency-{identity}"),
+            projection: Arc::new(OpenAiChatResponseProjection {
+                model: route.selector.clone(),
+            }),
         })
     }
+}
 
+impl CompatibilityResponseProjection for OpenAiChatResponseProjection {
     fn project_terminal(
         &self,
         event: HostOperationEvent,
@@ -651,7 +822,39 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
         };
         match terminal.disposition {
             aiperf_accuracy::HostOperationDisposition::Completed => {
-                terminal.result.ok_or(ProxyRejection::Unavailable)
+                let mut result = terminal
+                    .result
+                    .ok_or(ProxyRejection::Unavailable)?
+                    .into_value();
+                let object = result.as_object_mut().ok_or(ProxyRejection::Unavailable)?;
+                let choices = object
+                    .get_mut("choices")
+                    .and_then(serde_json::Value::as_array_mut)
+                    .ok_or(ProxyRejection::Unavailable)?;
+                for (index, choice) in choices.iter_mut().enumerate() {
+                    choice
+                        .as_object_mut()
+                        .ok_or(ProxyRejection::Unavailable)?
+                        .entry("index")
+                        .or_insert_with(|| serde_json::Value::from(index));
+                }
+                if let Some(usage) = object.get_mut("usage") {
+                    add_openai_total_tokens(usage)?;
+                }
+                object.insert(
+                    "id".to_string(),
+                    serde_json::Value::String(openai_response_id(&terminal.operation_id)),
+                );
+                object.insert(
+                    "object".to_string(),
+                    serde_json::Value::String("chat.completion".to_string()),
+                );
+                object.insert("created".to_string(), serde_json::Value::from(0));
+                object.insert(
+                    "model".to_string(),
+                    serde_json::Value::String(self.model.clone()),
+                );
+                CanonicalJson::new(result).map_err(|_| ProxyRejection::Unavailable)
             }
             _ => CanonicalJson::new(json!({
                 "error": {
@@ -668,7 +871,11 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
         event: HostOperationEvent,
     ) -> std::result::Result<CanonicalJson, ProxyRejection> {
         match event {
-            HostOperationEvent::StreamDelta { delta, .. } => {
+            HostOperationEvent::StreamDelta {
+                operation_id,
+                delta,
+                ..
+            } => {
                 let object = delta
                     .value()
                     .as_object()
@@ -682,15 +889,31 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
                     .cloned()
                     .ok_or(ProxyRejection::Unavailable)?;
                 CanonicalJson::new(json!({
+                    "id": openai_response_id(&operation_id),
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": self.model,
                     "choices": [{"delta": delta, "finish_reason": null, "index": index}]
                 }))
                 .map_err(|_| ProxyRejection::Unavailable)
             }
-            HostOperationEvent::Usage { usage, .. } => CanonicalJson::new(json!({
-                "choices": [],
-                "usage": usage,
-            }))
-            .map_err(|_| ProxyRejection::Unavailable),
+            HostOperationEvent::Usage {
+                operation_id,
+                usage,
+            } => {
+                let mut usage =
+                    serde_json::to_value(usage).map_err(|_| ProxyRejection::Unavailable)?;
+                add_openai_total_tokens(&mut usage)?;
+                CanonicalJson::new(json!({
+                    "id": openai_response_id(&operation_id),
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": self.model,
+                    "choices": [],
+                    "usage": usage,
+                }))
+                .map_err(|_| ProxyRejection::Unavailable)
+            }
             HostOperationEvent::Terminal { terminal } => match terminal.disposition {
                 aiperf_accuracy::HostOperationDisposition::Completed => {
                     let result = terminal.result.ok_or(ProxyRejection::Unavailable)?;
@@ -715,9 +938,20 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
                             }))
                         })
                         .collect::<std::result::Result<Vec<_>, ProxyRejection>>()?;
+                    let mut usage = object
+                        .get("usage")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    if !usage.is_null() {
+                        add_openai_total_tokens(&mut usage)?;
+                    }
                     CanonicalJson::new(json!({
+                        "id": openai_response_id(&terminal.operation_id),
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": self.model,
                         "choices": choices,
-                        "usage": object.get("usage").cloned().unwrap_or(serde_json::Value::Null),
+                        "usage": usage,
                     }))
                     .map_err(|_| ProxyRejection::Unavailable)
                 }
@@ -732,6 +966,35 @@ impl CompatibilityProxyDialect for OpenAiChatCompatibilityDialect {
             HostOperationEvent::CancellationAcknowledged { .. } => Err(ProxyRejection::Unavailable),
         }
     }
+}
+
+fn add_openai_total_tokens(
+    usage: &mut serde_json::Value,
+) -> std::result::Result<(), ProxyRejection> {
+    let usage = usage.as_object_mut().ok_or(ProxyRejection::Unavailable)?;
+    if usage.contains_key("total_tokens") {
+        return Ok(());
+    }
+    let prompt = usage
+        .get("prompt_tokens")
+        .and_then(serde_json::Value::as_u64);
+    let completion = usage
+        .get("completion_tokens")
+        .and_then(serde_json::Value::as_u64);
+    if let (Some(prompt), Some(completion)) = (prompt, completion) {
+        let total = prompt
+            .checked_add(completion)
+            .ok_or(ProxyRejection::Unavailable)?;
+        usage.insert("total_tokens".to_string(), serde_json::Value::from(total));
+    }
+    Ok(())
+}
+
+fn openai_response_id(operation_id: &aiperf_accuracy::HostOperationId) -> String {
+    let digest = aiperf_accuracy::sha256_hex(
+        format!("aiperf-openai-response-v1\0{}", operation_id.as_str()).as_bytes(),
+    );
+    format!("chatcmpl-{}", &digest[..32])
 }
 
 impl ProxyGrantRuntime {
@@ -1014,6 +1277,82 @@ impl ProxyGrantRuntime {
             .get(case_id)
             .cloned()
             .ok_or(ProxyRejection::GrantScope)
+    }
+
+    fn build_compatibility_request(
+        &self,
+        headers: &HeaderMap,
+        lowered: LoweredCompatibilityOperation,
+    ) -> std::result::Result<
+        (
+            HostOperationRequest,
+            Arc<dyn CompatibilityResponseProjection>,
+        ),
+        ProxyRejection,
+    > {
+        let case_id = headers
+            .get(&CASE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .ok_or(ProxyRejection::GrantScope)
+            .and_then(|value| {
+                EvaluationCaseId::new(value.to_string()).map_err(|_| ProxyRejection::GrantScope)
+            })?;
+        let unit_id = self.case_unit(&case_id)?;
+        let ordinal = self
+            .next_proxy_ordinal
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| ProxyRejection::GrantExhausted)?;
+        let identity = aiperf_accuracy::sha256_hex(
+            format!(
+                "aiperf-proxy-operation-v2\0{}\0{}\0{ordinal}",
+                self.grant.grant_id, case_id
+            )
+            .as_bytes(),
+        );
+        let operation_id =
+            aiperf_accuracy::HostOperationId::new(format!("proxy-operation-{identity}"))
+                .map_err(|_| ProxyRejection::InvalidRequest)?;
+        let semantic_attempt_id = headers
+            .get(&SEMANTIC_ATTEMPT_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| aiperf_accuracy::SemanticAttemptId::new(value.to_string()))
+            .transpose()
+            .map_err(|_| ProxyRejection::InvalidRequest)?
+            .unwrap_or_else(|| {
+                aiperf_accuracy::SemanticAttemptId::new(format!("proxy-semantic-{identity}"))
+                    .expect("hash-derived semantic attempt ID is valid")
+            });
+        let logical_call_id = headers
+            .get(&LOGICAL_CALL_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| aiperf_accuracy::LogicalCallId::new(value.to_string()))
+            .transpose()
+            .map_err(|_| ProxyRejection::InvalidRequest)?
+            .unwrap_or_else(|| {
+                aiperf_accuracy::LogicalCallId::new(format!("proxy-call-{identity}"))
+                    .expect("hash-derived logical call ID is valid")
+            });
+        let request = HostOperationRequest {
+            operation_id,
+            context: aiperf_accuracy::HostCallContext {
+                session_id: self.grant.session_id.clone(),
+                unit_id,
+                case_id,
+                semantic_attempt_id,
+                logical_call_id,
+            },
+            service_id: lowered.route.service_id,
+            purpose: lowered.route.purpose,
+            semantic_operation_id: lowered.route.semantic_operation_id,
+            payload: lowered.payload,
+            restricted_payload: None,
+            response_mode: lowered.response_mode,
+            deadline_ms: lowered.deadline_ms,
+            idempotency_key: format!("proxy-idempotency-{identity}"),
+        };
+        Ok((request, lowered.projection))
     }
 
     fn reject_reservation(&self, responder: &ProxyOperationResponder) {
@@ -1329,7 +1668,7 @@ struct ProxyServerState {
     runtime: Arc<ProxyGrantRuntime>,
     process_scope: Arc<dyn ProxyProcessScopeAuthorizer>,
     event_capacity: usize,
-    openai_chat: Option<Arc<dyn CompatibilityProxyDialect>>,
+    dialects: CompatibilityProxyDialectRegistry,
     shutdown: watch::Receiver<bool>,
 }
 
@@ -1375,6 +1714,11 @@ impl EvaluatorCompatibilityProxy {
         Arc::ptr_eq(&self.runtime, &receiver.runtime)
     }
 
+    /// Revoke new and pending compatibility work before worker quiescence.
+    pub fn revoke(&self) {
+        self.runtime.revoke();
+    }
+
     #[cfg(test)]
     fn available_connection_permits(&self) -> usize {
         self.connection_permits.available_permits()
@@ -1390,16 +1734,28 @@ impl CompatibilityProxyIngress for EvaluatorCompatibilityProxy {
     async fn shutdown(&self) -> Result<()> {
         self.runtime.revoke();
         let _ = self.shutdown.send(true);
-        if let Some(task) = self.task.lock().await.take() {
-            task.await
-                .context("joining evaluator compatibility proxy")??;
-        }
+        let join_result = if let Some(mut task) = self.task.lock().await.take() {
+            match tokio::time::timeout(PROXY_SHUTDOWN_TIMEOUT, &mut task).await {
+                Ok(result) => result
+                    .context("joining evaluator compatibility proxy")?
+                    .context("serving evaluator compatibility proxy"),
+                Err(_) => {
+                    task.abort();
+                    let _ = task.await;
+                    Err(anyhow!(
+                        "evaluator compatibility proxy exceeded its bounded shutdown deadline"
+                    ))
+                }
+            }
+        } else {
+            Ok(())
+        };
         match fs::remove_file(&self.socket_path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error).context("removing evaluator proxy socket"),
         }
-        Ok(())
+        join_result
     }
 }
 
@@ -1408,8 +1764,10 @@ pub async fn start_evaluator_compatibility_proxy(
     binding: ScopedProxyBinding,
     grant_started_ns: i64,
     process_scope: Arc<dyn ProxyProcessScopeAuthorizer>,
+    dialects: CompatibilityProxyDialectRegistry,
 ) -> Result<(EvaluatorCompatibilityProxy, ProxyOperationReceiver)> {
     validate_proxy_binding(&binding)?;
+    validate_dialect_grants(&binding.grant, &dialects)?;
     let socket_path = binding.host_socket_path.clone();
     ensure!(
         !socket_path.exists(),
@@ -1442,8 +1800,6 @@ pub async fn start_evaluator_compatibility_proxy(
         binding.grant.clone(),
         grant_started_ns,
     ));
-    let openai_chat = OpenAiChatCompatibilityDialect::from_grant(&binding.grant)
-        .map(|dialect| Arc::new(dialect) as Arc<dyn CompatibilityProxyDialect>);
     let (shutdown, shutdown_rx) = watch::channel(false);
     let state = ProxyServerState {
         grant: binding.grant,
@@ -1451,13 +1807,14 @@ pub async fn start_evaluator_compatibility_proxy(
         runtime: Arc::clone(&runtime),
         process_scope,
         event_capacity,
-        openai_chat,
+        dialects: dialects.clone(),
         shutdown: shutdown_rx.clone(),
     };
-    let router = Router::new()
-        .route(PROXY_PATH, post(proxy_operation))
-        .route(OPENAI_CHAT_PATH, post(openai_chat_operation))
-        .with_state(state);
+    let mut router = Router::new().route(PROXY_PATH, post(proxy_operation));
+    for path in dialects.paths() {
+        router = router.route(path, post(compatibility_operation));
+    }
+    let router = router.with_state(state);
     let mut shutdown_rx = shutdown_rx;
     let task = tokio::spawn(async move {
         axum::serve(
@@ -1485,6 +1842,23 @@ pub async fn start_evaluator_compatibility_proxy(
         },
         ProxyOperationReceiver { receiver, runtime },
     ))
+}
+
+fn validate_dialect_grants(
+    grant: &ScopedProxyGrant,
+    dialects: &CompatibilityProxyDialectRegistry,
+) -> Result<()> {
+    for route in dialects.routes() {
+        ensure!(
+            grant.service_ids.contains(&route.service_id)
+                && grant.purposes.contains(&route.purpose)
+                && grant
+                    .semantic_operation_ids
+                    .contains(&route.semantic_operation_id),
+            "compatibility dialect route exceeded its scoped proxy grant"
+        );
+    }
+    Ok(())
 }
 
 fn validate_proxy_binding(binding: &ScopedProxyBinding) -> Result<()> {
@@ -1528,8 +1902,11 @@ async fn proxy_operation(
     ConnectInfo(peer): ConnectInfo<ProxyPeerIdentity>,
     request: Request,
 ) -> Response {
+    if request.uri().query().is_some() {
+        return ProxyRejection::InvalidRequest.response();
+    }
     let (_headers, body, request_bytes) =
-        match authenticate_request_head(&state, peer, request, &[]) {
+        match authenticate_request_head(&state, peer, request, &[], None) {
             Ok(parts) => parts,
             Err(rejection) => return rejection.response(),
         };
@@ -1544,35 +1921,49 @@ async fn proxy_operation(
     submit_proxy_request(state, request, reservation, ProxyResponseProjection::Typed).await
 }
 
-async fn openai_chat_operation(
+async fn compatibility_operation(
     State(state): State<ProxyServerState>,
     ConnectInfo(peer): ConnectInfo<ProxyPeerIdentity>,
     request: Request,
 ) -> Response {
+    if request.uri().query().is_some() {
+        return ProxyRejection::InvalidRequest.response();
+    }
+    let path = request.uri().path().to_string();
+    let Some(dialect) = state.dialects.resolve(&path) else {
+        return ProxyRejection::GrantScope.response();
+    };
     let (headers, body, request_bytes) =
-        match authenticate_request_head(&state, peer, request, &[&CASE_HEADER]) {
+        match authenticate_request_head(&state, peer, request, &[&CASE_HEADER], Some(&*dialect)) {
             Ok(parts) => parts,
             Err(rejection) => return rejection.response(),
         };
-    let Some(dialect) = state.openai_chat.clone() else {
-        return ProxyRejection::GrantScope.response();
-    };
     let (body, reservation) = match collect_reserved_body(&state, body, request_bytes).await {
         Ok(collected) => collected,
         Err(rejection) => return rejection.response(),
     };
-    let request = match dialect.lower(&state.runtime, &headers, &body) {
+    let lowered = match dialect.lower(&body) {
+        Ok(lowered) => lowered,
+        Err(rejection) => return rejection.response(),
+    };
+    if !state.dialects.contains_route(&path, &lowered.route) {
+        return ProxyRejection::GrantScope.response();
+    }
+    let (request, projection) = match state.runtime.build_compatibility_request(&headers, lowered) {
         Ok(request) => request,
         Err(rejection) => return rejection.response(),
     };
-    if request.validate().is_err() || state.runtime.validate_scope(&request).is_err() {
+    if request.validate().is_err() {
         return ProxyRejection::InvalidRequest.response();
+    }
+    if let Err(rejection) = state.runtime.validate_scope(&request) {
+        return rejection.response();
     }
     submit_proxy_request(
         state,
         request,
         reservation,
-        ProxyResponseProjection::Dialect(dialect),
+        ProxyResponseProjection::Dialect(projection),
     )
     .await
 }
@@ -1580,7 +1971,7 @@ async fn openai_chat_operation(
 #[derive(Clone)]
 enum ProxyResponseProjection {
     Typed,
-    Dialect(Arc<dyn CompatibilityProxyDialect>),
+    Dialect(Arc<dyn CompatibilityResponseProjection>),
 }
 
 async fn submit_proxy_request(
@@ -1646,9 +2037,11 @@ fn authenticate_request_head(
     peer: ProxyPeerIdentity,
     request: Request,
     extra_headers: &[&HeaderName],
+    dialect: Option<&dyn CompatibilityProxyDialect>,
 ) -> std::result::Result<(HeaderMap, axum::body::Body, u64), ProxyRejection> {
     let (parts, body) = request.into_parts();
-    let request_bytes = authenticate_proxy_peer(state, peer, &parts.headers, extra_headers)?;
+    let request_bytes =
+        authenticate_proxy_peer(state, peer, &parts.headers, extra_headers, dialect)?;
     Ok((parts.headers, body, request_bytes))
 }
 
@@ -1697,8 +2090,9 @@ fn authenticate_proxy_peer(
     peer: ProxyPeerIdentity,
     headers: &HeaderMap,
     extra_headers: &[&HeaderName],
+    dialect: Option<&dyn CompatibilityProxyDialect>,
 ) -> std::result::Result<u64, ProxyRejection> {
-    let request_bytes = validate_proxy_headers(headers, &state.grant, extra_headers)?;
+    let request_bytes = validate_proxy_headers(headers, &state.grant, extra_headers, dialect)?;
     state
         .process_scope
         .authorize(&state.grant.process_scope_sha256, peer)?;
@@ -1709,13 +2103,18 @@ fn validate_proxy_headers(
     headers: &HeaderMap,
     grant: &ScopedProxyGrant,
     extra_headers: &[&HeaderName],
+    dialect: Option<&dyn CompatibilityProxyDialect>,
 ) -> std::result::Result<u64, ProxyRejection> {
     for name in headers.keys() {
+        if is_forbidden_proxy_header(name) {
+            return Err(ProxyRejection::InvalidRequest);
+        }
         if !matches!(
             name,
             &HOST | &CONTENT_TYPE | &CONTENT_LENGTH | &ACCEPT | &AUTHORIZATION | &CONNECTION
         ) && name != GRANT_HEADER
             && !extra_headers.contains(&name)
+            && !dialect.is_some_and(|dialect| dialect.allows_header(name))
         {
             return Err(ProxyRejection::InvalidRequest);
         }
@@ -1760,6 +2159,24 @@ fn validate_proxy_headers(
         return Err(ProxyRejection::InvalidRequest);
     }
     Ok(content_length)
+}
+
+fn is_forbidden_proxy_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "transfer-encoding"
+            | "upgrade"
+            | "te"
+            | "trailer"
+            | "proxy-authorization"
+            | "proxy-authenticate"
+            | "proxy-connection"
+            | "forwarded"
+            | "via"
+            | "x-forwarded-for"
+            | "x-forwarded-host"
+            | "x-forwarded-proto"
+    )
 }
 
 async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
@@ -1900,7 +2317,7 @@ mod tests {
         HostOperationTerminal, HostOperationUsage, LogicalCallId, LogicalServiceId,
         OperationPurpose, ScopedProxySecret, SemanticAttemptId, SemanticOperationId,
     };
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
     use super::*;
@@ -1922,6 +2339,23 @@ mod tests {
             max_stream_events: 16,
             expires_after_ms: 10_000,
         }
+    }
+
+    fn openai_route(selector: &str) -> CompatibilityProxyRoute {
+        CompatibilityProxyRoute::new(
+            selector,
+            LogicalServiceId::new("primary").unwrap(),
+            OperationPurpose::new("primary").unwrap(),
+            SemanticOperationId::new("model.generate").unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn openai_dialects() -> CompatibilityProxyDialectRegistry {
+        CompatibilityProxyDialectRegistry::new([Arc::new(
+            OpenAiChatCompatibilityDialect::new([openai_route("primary")]).unwrap(),
+        ) as Arc<dyn CompatibilityProxyDialect>])
+        .unwrap()
     }
 
     fn proxy_request_head(
@@ -2053,21 +2487,21 @@ mod tests {
         );
         headers.insert(&GRANT_HEADER, grant.grant_id.parse().unwrap());
         assert_eq!(
-            validate_proxy_headers(&headers, &grant, &[]),
+            validate_proxy_headers(&headers, &grant, &[], None),
             Err(ProxyRejection::InvalidRequest)
         );
 
         headers.insert(CONTENT_LENGTH, "19".parse().unwrap());
-        assert_eq!(validate_proxy_headers(&headers, &grant, &[]), Ok(19));
+        assert_eq!(validate_proxy_headers(&headers, &grant, &[], None), Ok(19));
         headers.insert("transfer-encoding", "chunked".parse().unwrap());
         assert_eq!(
-            validate_proxy_headers(&headers, &grant, &[]),
+            validate_proxy_headers(&headers, &grant, &[], None),
             Err(ProxyRejection::InvalidRequest)
         );
         headers.remove("transfer-encoding");
         headers.insert(CONTENT_LENGTH, "19, 19".parse().unwrap());
         assert_eq!(
-            validate_proxy_headers(&headers, &grant, &[]),
+            validate_proxy_headers(&headers, &grant, &[], None),
             Err(ProxyRejection::InvalidRequest)
         );
     }
@@ -2230,7 +2664,7 @@ mod tests {
     }
 
     #[test]
-    fn openai_chat_dialect_injects_fixed_route_and_correlation_and_rejects_model() {
+    fn openai_chat_dialect_maps_exact_selector_and_rejects_unknown_routes() {
         let runtime = ProxyGrantRuntime::new(grant(&"f".repeat(64)), 0);
         runtime
             .activate_unit_cases(
@@ -2238,22 +2672,18 @@ mod tests {
                 [EvaluationCaseId::new("case-1").unwrap()],
             )
             .unwrap();
-        let dialect = OpenAiChatCompatibilityDialect::from_grant(&runtime.grant).unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(&CASE_HEADER, "case-1".parse().unwrap());
+        let dialect = OpenAiChatCompatibilityDialect::new([openai_route("primary")]).unwrap();
         let lowered = dialect
             .lower(
-                &runtime,
-                &headers,
-                br#"{"messages":[{"role":"user","content":"hello"}],"max_tokens":4,"stream":true}"#,
+                br#"{"model":"primary","messages":[{"role":"user","content":"hello"}],"max_tokens":4,"stream":true}"#,
             )
             .unwrap();
-        assert_eq!(lowered.context.session_id.as_str(), "session-1");
-        assert_eq!(lowered.context.unit_id.as_str(), "unit-1");
-        assert_eq!(lowered.context.case_id.as_str(), "case-1");
-        assert_eq!(lowered.service_id.as_str(), "primary");
-        assert_eq!(lowered.purpose.as_str(), "primary");
-        assert_eq!(lowered.semantic_operation_id.as_str(), "model.generate");
+        assert_eq!(lowered.route.service_id.as_str(), "primary");
+        assert_eq!(lowered.route.purpose.as_str(), "primary");
+        assert_eq!(
+            lowered.route.semantic_operation_id.as_str(),
+            "model.generate"
+        );
         assert_eq!(lowered.response_mode, HostResponseMode::Streaming);
         assert!(
             lowered
@@ -2262,13 +2692,20 @@ mod tests {
                 .as_object()
                 .is_some_and(|object| !object.contains_key("model"))
         );
+        let mut headers = HeaderMap::new();
+        headers.insert(&CASE_HEADER, "case-1".parse().unwrap());
+        let (request, _projection) = runtime
+            .build_compatibility_request(&headers, lowered)
+            .unwrap();
+        request.validate().unwrap();
+        assert_eq!(request.context.session_id.as_str(), "session-1");
+        assert_eq!(request.context.unit_id.as_str(), "unit-1");
+        assert_eq!(request.context.case_id.as_str(), "case-1");
         assert!(matches!(
             dialect.lower(
-                &runtime,
-                &headers,
                 br#"{"messages":[{"role":"user","content":"hello"}],"max_tokens":4,"model":"caller-route"}"#,
             ),
-            Err(ProxyRejection::InvalidRequest)
+            Err(ProxyRejection::GrantScope)
         ));
     }
 
@@ -2347,9 +2784,14 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, _ingress) = start_evaluator_compatibility_proxy(binding, 0, authorizer)
-            .await
-            .unwrap();
+        let (proxy, _ingress) = start_evaluator_compatibility_proxy(
+            binding,
+            0,
+            authorizer,
+            CompatibilityProxyDialectRegistry::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(proxy.connection_capacity, 2);
 
         let first = UnixStream::connect(&socket_path).await.unwrap();
@@ -2391,9 +2833,14 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, ingress) = start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
-            .await
-            .unwrap();
+        let (proxy, ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            CompatibilityProxyDialectRegistry::default(),
+        )
+        .await
+        .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -2469,9 +2916,14 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, ingress) = start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
-            .await
-            .unwrap();
+        let (proxy, ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            CompatibilityProxyDialectRegistry::default(),
+        )
+        .await
+        .unwrap();
 
         let mut first_stream = UnixStream::connect(&socket_path).await.unwrap();
         let first_head = proxy_request_head(&binding, PROXY_PATH, first_body.len(), "");
@@ -2542,9 +2994,14 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, ingress) = start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
-            .await
-            .unwrap();
+        let (proxy, ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            CompatibilityProxyDialectRegistry::default(),
+        )
+        .await
+        .unwrap();
 
         let mut stream = UnixStream::connect(&socket_path).await.unwrap();
         let head = proxy_request_head(
@@ -2560,7 +3017,7 @@ mod tests {
             .expect("unregistered dialect waited for an untrusted request body")
             .unwrap();
         let response = String::from_utf8(response).unwrap();
-        assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"), "{response}");
         assert_eq!(pending_usage(&ingress.runtime), (0, 0, 0, 0, 0));
         proxy.shutdown().await.unwrap();
     }
@@ -2579,10 +3036,14 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, mut ingress) =
-            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
-                .await
-                .unwrap();
+        let (proxy, mut ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            CompatibilityProxyDialectRegistry::default(),
+        )
+        .await
+        .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -2702,10 +3163,14 @@ mod tests {
         };
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
-        let (proxy, mut ingress) =
-            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
-                .await
-                .unwrap();
+        let (proxy, mut ingress) = start_evaluator_compatibility_proxy(
+            binding.clone(),
+            0,
+            authorizer,
+            CompatibilityProxyDialectRegistry::default(),
+        )
+        .await
+        .unwrap();
         ingress
             .activate_case_scope(
                 aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
@@ -2771,7 +3236,7 @@ mod tests {
         let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
         authorizer.bind_root(std::process::id()).unwrap();
         let (proxy, mut ingress) =
-            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer)
+            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer, openai_dialects())
                 .await
                 .unwrap();
         ingress
@@ -2780,7 +3245,8 @@ mod tests {
                 [EvaluationCaseId::new("case-1").unwrap()],
             )
             .unwrap();
-        let body = br#"{"messages":[{"role":"user","content":"hello"}],"max_tokens":4}"#;
+        let body =
+            br#"{"model":"primary","messages":[{"role":"user","content":"hello"}],"max_tokens":4}"#;
         let client = async {
             let mut stream = UnixStream::connect(&socket_path).await.unwrap();
             let request = format!(
@@ -2839,6 +3305,216 @@ mod tests {
         assert!(!response.contains("\"kind\":\"terminal\""));
         assert!(!response.contains("proxy-operation-"));
         proxy.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pinned_openai_sdk_uses_uds_and_keeps_one_faithful_terminal_envelope() {
+        const CLIENT: &str = r#"
+import asyncio, json, sys
+import httpx, openai
+
+async def main():
+    http_client = httpx.AsyncClient(
+        transport=httpx.AsyncHTTPTransport(uds=sys.argv[1]), timeout=None
+    )
+    client = openai.AsyncOpenAI(
+        api_key=sys.argv[3],
+        base_url='http://localhost/v1',
+        default_headers={'x-aiperf-proxy-grant': sys.argv[2]},
+        http_client=http_client,
+        max_retries=0,
+        timeout=None,
+    )
+    response = await client.chat.completions.create(
+        model='primary',
+        messages=[{'role': 'user', 'content': 'hello'}],
+        max_tokens=4,
+        extra_headers={'x-aiperf-case-id': 'case-1'},
+    )
+    stream = await client.chat.completions.create(
+        model='primary',
+        messages=[{'role': 'user', 'content': 'stream'}],
+        max_tokens=4,
+        stream=True,
+        extra_headers={'x-aiperf-case-id': 'case-1'},
+    )
+    chunks = [
+        chunk.model_dump(mode='json', exclude_none=True)
+        async for chunk in stream
+    ]
+    print(json.dumps({
+        'openai': openai.__version__,
+        'httpx': httpx.__version__,
+        'response': response.model_dump(mode='json', exclude_none=True),
+        'chunks': chunks,
+    }), flush=True)
+    await asyncio.sleep(30)
+
+asyncio.run(main())
+"#;
+        let scope = "9".repeat(64);
+        let socket_path = PathBuf::from(format!(
+            "/tmp/aiperf-evaluator-proxy-sdk-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let binding = ScopedProxyBinding {
+            local_locator: EVALUATOR_PROXY_LOCAL_LOCATOR.to_string(),
+            host_socket_path: socket_path.clone(),
+            grant: grant(&scope),
+        };
+        let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
+        authorizer.bind_root(std::process::id()).unwrap();
+        let (proxy, mut ingress) =
+            start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer, openai_dialects())
+                .await
+                .unwrap();
+        ingress
+            .activate_case_scope(
+                aiperf_accuracy::EvaluationUnitId::new("unit-1").unwrap(),
+                [EvaluationCaseId::new("case-1").unwrap()],
+            )
+            .unwrap();
+
+        let required_python = std::env::var_os("AIPERF_PINNED_OPENAI_PYTHON");
+        let python = required_python
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/python")
+            });
+        if required_python.is_some() {
+            assert!(
+                python.is_file(),
+                "AIPERF_PINNED_OPENAI_PYTHON must name a prepared interpreter"
+            );
+        } else if !python.is_file() {
+            eprintln!("skipping pinned OpenAI SDK proof: evaluator environment is absent");
+            proxy.shutdown().await.unwrap();
+            return;
+        }
+        let mut child = tokio::process::Command::new(python)
+            .arg("-c")
+            .arg(CLIENT)
+            .arg(&socket_path)
+            .arg(&binding.grant.grant_id)
+            .arg(binding.grant.secret.expose_secret())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let mut stdout = BufReader::new(stdout).lines();
+        let client = async {
+            tokio::time::timeout(Duration::from_secs(5), stdout.next_line())
+                .await
+                .expect("OpenAI SDK client timed out")
+                .unwrap()
+                .expect("OpenAI SDK client produced no response")
+        };
+        let authority = async {
+            for ordinal in 0..2 {
+                let submission = loop {
+                    match ingress.try_recv() {
+                        Ok(submission) => break submission,
+                        Err(mpsc::error::TryRecvError::Empty) => tokio::task::yield_now().await,
+                        Err(error) => panic!("proxy ingress closed: {error}"),
+                    }
+                };
+                let request = submission.request().clone();
+                assert_eq!(request.service_id.as_str(), "primary");
+                assert_eq!(request.context.case_id.as_str(), "case-1");
+                assert_eq!(
+                    request.response_mode,
+                    if ordinal == 0 {
+                        HostResponseMode::Terminal
+                    } else {
+                        HostResponseMode::Streaming
+                    }
+                );
+                let responder = ingress.authorize(&submission, 0).unwrap();
+                responder.activate().unwrap();
+                let _ = submission.resolve(Ok(()));
+                if ordinal == 1 {
+                    responder
+                        .publish(HostOperationEvent::StreamDelta {
+                            operation_id: request.operation_id.clone(),
+                            stream_sequence: 0,
+                            delta: CanonicalJson::new(json!({
+                                "choice_index": 0,
+                                "delta": {"role": "assistant", "content": "hello"}
+                            }))
+                            .unwrap(),
+                        })
+                        .unwrap();
+                    responder
+                        .publish(HostOperationEvent::Usage {
+                            operation_id: request.operation_id.clone(),
+                            usage: HostOperationUsage {
+                                prompt_tokens: Some(1),
+                                completion_tokens: Some(1),
+                                reasoning_tokens: None,
+                                cached_tokens: None,
+                            },
+                        })
+                        .unwrap();
+                }
+                responder
+                    .publish(HostOperationEvent::Terminal {
+                        terminal: HostOperationTerminal {
+                            operation_id: request.operation_id,
+                            semantic_attempt_id: request.context.semantic_attempt_id,
+                            disposition: HostOperationDisposition::Completed,
+                            result: Some(
+                                CanonicalJson::new(json!({
+                                    "choices": [{
+                                        "message": {"role": "assistant", "content": "hello"},
+                                        "finish_reason": "stop",
+                                        "stop_reason": "stop"
+                                    }],
+                                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                                }))
+                                .unwrap(),
+                            ),
+                            error: None,
+                            usage: HostOperationUsage {
+                                prompt_tokens: Some(1),
+                                completion_tokens: Some(1),
+                                reasoning_tokens: None,
+                                cached_tokens: None,
+                            },
+                            observed_output: true,
+                        },
+                    })
+                    .unwrap();
+            }
+        };
+        let (line, ()) = tokio::join!(client, authority);
+        let result: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(result["openai"], "2.30.0");
+        assert_eq!(result["httpx"], "0.28.1");
+        assert_eq!(result["response"]["model"], "primary");
+        assert_eq!(result["response"]["choices"][0]["index"], 0);
+        assert_eq!(result["response"]["usage"]["total_tokens"], 2);
+        let chunks = result["chunks"].as_array().unwrap();
+        assert!(chunks.len() >= 3);
+        assert!(chunks.iter().all(|chunk| chunk["model"] == "primary"));
+        let ids = chunks
+            .iter()
+            .filter_map(|chunk| chunk["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), 1);
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk["usage"]["total_tokens"] == 2)
+        );
+
+        tokio::time::timeout(Duration::from_secs(2), proxy.shutdown())
+            .await
+            .expect("proxy did not close a held idle OpenAI SDK connection")
+            .unwrap();
+        let _ = child.start_kill();
+        let _ = child.wait().await;
     }
 
     #[test]

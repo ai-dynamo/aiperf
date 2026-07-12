@@ -45,6 +45,7 @@ use super::proxy::{
 };
 use super::report::{EvaluationCaseReportFacts, EvaluationReportFacts};
 use super::retry::OperationCancellation;
+use crate::scheduler::LocalTaskScheduler as _;
 
 /// Rust-side immutable asset acquisition seam.
 #[async_trait(?Send)]
@@ -468,6 +469,31 @@ pub struct EvaluationExecutionResult {
     pub report_commit: EvaluationReportCommit,
 }
 
+struct EvaluationExecutionCore {
+    plan: EvaluationPlan,
+    identity: EvaluationIdentity,
+    candidate: EvaluationFinishCandidate,
+    sealed_artifacts: SealedEvaluationArtifacts,
+    operations: Vec<OperationRecord>,
+    report_facts: EvaluationReportFacts,
+}
+
+impl EvaluationExecutionCore {
+    fn into_result(self, provider: Box<dyn EvaluationProvider>) -> EvaluationExecutionResult {
+        EvaluationExecutionResult {
+            plan: self.plan,
+            identity: self.identity,
+            candidate: self.candidate,
+            sealed_artifacts: self.sealed_artifacts,
+            operations: self.operations,
+            report_facts: self.report_facts,
+            report_commit: EvaluationReportCommit {
+                provider: Some(provider),
+            },
+        }
+    }
+}
+
 impl std::fmt::Debug for EvaluationExecutionResult {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -586,6 +612,48 @@ impl EvaluationWorkload {
 
     /// Plan, bind, execute, drain, finalize, quiesce, and seal one evaluation.
     pub async fn execute(mut self) -> Result<EvaluationExecutionResult> {
+        let core = match self.execute_inner().await {
+            Ok(core) => core,
+            Err(primary) => return Err(self.abort_after_failure(primary).await),
+        };
+        Ok(core.into_result(self.provider))
+    }
+
+    async fn abort_after_failure(&mut self, primary: anyhow::Error) -> anyhow::Error {
+        self.cancellation.cancel();
+        if let Some(proxy) = &self.compatibility_proxy_server {
+            proxy.revoke();
+        }
+        if let Ok(runtime) = self.host_runtime.require_scheduled() {
+            let scheduler = runtime.scheduler();
+            scheduler.cancel_all();
+            scheduler.wait_idle().await;
+        }
+
+        let abort_error = self.provider.abort().await.map_err(provider_error).err();
+        let proxy_error = match self.compatibility_proxy_server.take() {
+            Some(proxy) => proxy
+                .shutdown()
+                .await
+                .context("shutting down evaluator compatibility proxy after failure")
+                .err(),
+            None => None,
+        };
+
+        if let Some(abort_error) = abort_error {
+            return anyhow!(
+                "evaluator provider abort/quiescence failed: {abort_error:#}; original workload failure: {primary:#}"
+            );
+        }
+        match proxy_error {
+            Some(proxy_error) => anyhow!(
+                "{primary:#}; evaluator compatibility-proxy cleanup also failed: {proxy_error:#}"
+            ),
+            None => primary,
+        }
+    }
+
+    async fn execute_inner(&mut self) -> Result<EvaluationExecutionCore> {
         let plan = self
             .provider
             .plan(&self.plan_request)
@@ -904,13 +972,6 @@ impl EvaluationWorkload {
             proxy.revoke();
         }
 
-        if let Some(proxy) = self.compatibility_proxy_server.take() {
-            proxy
-                .shutdown()
-                .await
-                .context("shutting down evaluator compatibility proxy")?;
-        }
-
         state.arbiter.validate()?;
         state.ledger.validate_drained()?;
         let mut candidate = self
@@ -930,24 +991,26 @@ impl EvaluationWorkload {
             .finalizer
             .finalize(self.provider.as_mut(), &mut candidate)
             .await?;
+        if let Some(proxy) = self.compatibility_proxy_server.take() {
+            proxy
+                .shutdown()
+                .await
+                .context("shutting down evaluator compatibility proxy")?;
+        }
         let report_facts = state.build_report_facts(
             &identity,
             &self.routes,
             self.plan_request.provider_config.value().clone(),
-            self.public_score_projection_policy,
+            self.public_score_projection_policy.clone(),
         )?;
         let operations = state.ledger.operations().cloned().collect();
-        let report_commit = EvaluationReportCommit {
-            provider: Some(self.provider),
-        };
-        Ok(EvaluationExecutionResult {
+        Ok(EvaluationExecutionCore {
             plan,
             identity,
             candidate,
             sealed_artifacts,
             operations,
             report_facts,
-            report_commit,
         })
     }
 
@@ -1075,7 +1138,7 @@ impl EvaluationWorkload {
             return Ok(false);
         }
         let mut progressed = false;
-        loop {
+        for _ in 0..self.limits.event_batch_size {
             let submission = match self
                 .compatibility_proxy
                 .as_mut()
@@ -1940,7 +2003,8 @@ fn is_sha256(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
+    use std::sync::Arc;
 
     use aiperf_accuracy::{
         AggregateMetric, AggregationPolicy, ArtifactRef, ArtifactVisibility, CaseOutcome,
@@ -1952,9 +2016,10 @@ mod tests {
         EvaluationUnitPage, EvaluationUnitTemplateDescriptor, EvaluationWorkerIdentity, FiniteF64,
         HostCallContext, HostOperationRequest, IsolationQuiescenceProof, LogicalCallId,
         LogicalServiceId, LogicalServiceRequirement, OperationPurpose, ProviderScore,
-        SemanticAttemptId, SemanticOperationId, SequencedEvaluationEvent,
+        ScopedProxyBinding, ScopedProxyGrant, ScopedProxySecret, SemanticAttemptId,
+        SemanticOperationId, SequencedEvaluationEvent,
     };
-    use aiperf_clock::SimClock;
+    use aiperf_clock::{RealClock, RealClockAnchor, SimClock};
     use aiperf_graph::runtime::drive_sim;
     use aiperf_metrics::InferenceDimensions;
     use aiperf_timing::StopConfig;
@@ -1962,12 +2027,19 @@ mod tests {
     use async_trait::async_trait;
     use loadgen_core::sink::RequestObserver;
     use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream;
 
     use super::*;
     use crate::evaluation::host::{
         EvaluationRoute, HostExecutionEventSink, HostExecutorRegistryBuilder,
         HostOperationDescriptor, HostOperationExecutor, HostOperationExecutorFactory,
         HostOperationFamily, HostOperationSchemaValidator,
+    };
+    use crate::evaluation::proxy::{
+        CompatibilityProxyDialect, CompatibilityProxyDialectRegistry, CompatibilityProxyRoute,
+        LinuxProcessSubtreeAuthorizer, OpenAiChatCompatibilityDialect,
+        start_evaluator_compatibility_proxy,
     };
     use crate::evaluation::retry::InferenceTransportAttempt;
     use crate::multiturn::TurnToSend;
@@ -2121,6 +2193,8 @@ mod tests {
         next_sequence: u64,
         page_returned: bool,
         terminal_submitted: bool,
+        case_terminal_emitted: bool,
+        case_terminal_gate: Option<Rc<Cell<bool>>>,
         operation_deadline_ms: Option<u64>,
         state: Rc<RefCell<ProviderProofState>>,
     }
@@ -2245,6 +2319,18 @@ mod tests {
             limit: usize,
             _wait_ms: u64,
         ) -> std::result::Result<EvaluationEventBatch, EvaluationProviderError> {
+            if self.terminal_submitted
+                && !self.case_terminal_emitted
+                && self
+                    .case_terminal_gate
+                    .as_ref()
+                    .is_none_or(|gate| gate.get())
+            {
+                self.case_terminal_emitted = true;
+                self.enqueue(EvaluationEvent::CaseTerminal {
+                    outcome: Box::new(self.candidate.outcomes[0].clone()),
+                });
+            }
             let mut events = Vec::new();
             while events.len() < limit
                 && let Some(event) = self.events.pop_front()
@@ -2254,7 +2340,9 @@ mod tests {
             Ok(EvaluationEventBatch {
                 events,
                 next_sequence: self.next_sequence,
-                drained: self.terminal_submitted && self.events.is_empty(),
+                drained: self.terminal_submitted
+                    && self.case_terminal_emitted
+                    && self.events.is_empty(),
                 remaining_credits: self.plan.queue_credits,
             })
         }
@@ -2269,9 +2357,6 @@ mod tests {
                 .any(|event| matches!(event, HostOperationEvent::Terminal { .. }))
             {
                 self.terminal_submitted = true;
-                self.enqueue(EvaluationEvent::CaseTerminal {
-                    outcome: Box::new(self.candidate.outcomes[0].clone()),
-                });
             }
             Ok(())
         }
@@ -2294,6 +2379,11 @@ mod tests {
         }
 
         async fn shutdown(&mut self) -> std::result::Result<(), EvaluationProviderError> {
+            self.state.borrow_mut().shutdown = true;
+            Ok(())
+        }
+
+        async fn abort(&mut self) -> std::result::Result<(), EvaluationProviderError> {
             self.state.borrow_mut().shutdown = true;
             Ok(())
         }
@@ -2329,6 +2419,18 @@ mod tests {
         ) -> Result<Vec<ResolvedEvaluationAsset>> {
             ensure!(requirements.is_empty(), "fixture expected no assets");
             Ok(Vec::new())
+        }
+    }
+
+    struct FailingAssetResolver;
+
+    #[async_trait(?Send)]
+    impl EvaluationAssetResolver for FailingAssetResolver {
+        async fn resolve(
+            &self,
+            _requirements: &[EvaluationAssetRequirement],
+        ) -> Result<Vec<ResolvedEvaluationAsset>> {
+            Err(anyhow!("fixture host-side asset failure"))
         }
     }
 
@@ -2589,6 +2691,8 @@ mod tests {
                 next_sequence: 0,
                 page_returned: false,
                 terminal_submitted: false,
+                case_terminal_emitted: false,
+                case_terminal_gate: None,
                 operation_deadline_ms: Some(1_000),
                 state,
             },
@@ -2599,7 +2703,7 @@ mod tests {
     fn proof_workload(
         provider: ProofProvider,
         plan_request: EvaluationPlanRequest,
-        clock: Rc<SimClock>,
+        clock: Rc<dyn Clock>,
         cancellation: OperationCancellation,
     ) -> EvaluationWorkload {
         let credits = provider.plan.queue_credits;
@@ -2714,6 +2818,149 @@ mod tests {
         ));
         result.report_commit.commit().unwrap();
         assert!(state.borrow().committed);
+    }
+
+    #[test]
+    fn host_side_failure_aborts_provider_before_returning() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, plan_request) = provider_proof_fixture(state.clone());
+        let clock = Rc::new(SimClock::new());
+        let mut workload = proof_workload(
+            provider,
+            plan_request,
+            clock.clone(),
+            OperationCancellation::default(),
+        );
+        workload.asset_resolver = Rc::new(FailingAssetResolver);
+        let error = Rc::new(RefCell::new(None));
+        let error_for_run = error.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            *error_for_run.borrow_mut() = Some(workload.execute().await.unwrap_err());
+        });
+        assert!(!outcome.deadlocked);
+        assert!(
+            error
+                .borrow()
+                .as_ref()
+                .is_some_and(|error| error.to_string().contains("resolving immutable"))
+        );
+        assert!(state.borrow().shutdown);
+        assert!(!state.borrow().sealed);
+        assert!(!state.borrow().committed);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipe_and_proxy_operations_share_one_arbiter_ledger_and_executor() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let gate = Rc::new(Cell::new(false));
+        let (mut provider, plan_request) = provider_proof_fixture(state);
+        provider.case_terminal_gate = Some(gate.clone());
+        let clock: Rc<dyn Clock> = RealClock::from_anchor(RealClockAnchor::now());
+        let socket_path = PathBuf::from(format!(
+            "/tmp/aiperf-evaluation-mixed-ingress-{}.sock",
+            uuid::Uuid::new_v4()
+        ));
+        let scope = "e".repeat(64);
+        let binding = ScopedProxyBinding {
+            local_locator: "unix:///run/aiperf/evaluator-proxy.sock".to_string(),
+            host_socket_path: socket_path.clone(),
+            grant: ScopedProxyGrant {
+                grant_id: "mixed-ingress-grant".to_string(),
+                session_id: plan_request.session_id.clone(),
+                secret: ScopedProxySecret::new("s".repeat(48)).unwrap(),
+                service_ids: vec![LogicalServiceId::new("primary").unwrap()],
+                semantic_operation_ids: vec![SemanticOperationId::new("model.generate").unwrap()],
+                purposes: vec![OperationPurpose::new("primary").unwrap()],
+                process_scope_sha256: scope.clone(),
+                max_operations: 2,
+                max_concurrent_operations: 2,
+                max_request_bytes: 64 * 1024,
+                max_response_bytes: 64 * 1024,
+                max_stream_events: 8,
+                expires_after_ms: 10_000,
+            },
+        };
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+            let authorizer = Arc::new(LinuxProcessSubtreeAuthorizer::new(scope).unwrap());
+            authorizer.bind_root(std::process::id()).unwrap();
+            let dialects = CompatibilityProxyDialectRegistry::new([Arc::new(
+                OpenAiChatCompatibilityDialect::new([CompatibilityProxyRoute::new(
+                    "primary",
+                    LogicalServiceId::new("primary").unwrap(),
+                    OperationPurpose::new("primary").unwrap(),
+                    SemanticOperationId::new("model.generate").unwrap(),
+                )
+                .unwrap()])
+                .unwrap(),
+            )
+                as Arc<dyn CompatibilityProxyDialect>])
+            .unwrap();
+            let (server, receiver) =
+                start_evaluator_compatibility_proxy(binding.clone(), 0, authorizer, dialects)
+                    .await
+                    .unwrap();
+            let workload = proof_workload(provider, plan_request, clock, OperationCancellation::default())
+            .with_compatibility_proxy(server, receiver)
+            .unwrap();
+            let secret = binding.grant.secret.expose_secret().to_string();
+            let grant_id = binding.grant.grant_id.clone();
+            let client_gate = gate.clone();
+                let mut client = tokio::task::spawn_local(async move {
+                    let body = br#"{"model":"primary","messages":[{"role":"user","content":"hello"}],"max_tokens":4,"stream":true}"#;
+                for _ in 0..128 {
+                    let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+                    let head = format!(
+                        "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nAuthorization: Bearer {secret}\r\nx-aiperf-proxy-grant: {grant_id}\r\nx-aiperf-case-id: case-1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    stream.write_all(head.as_bytes()).await.unwrap();
+                    stream.write_all(body).await.unwrap();
+                    let mut response = Vec::new();
+                    stream.read_to_end(&mut response).await.unwrap();
+                    let response = String::from_utf8(response).unwrap();
+                    if response.starts_with("HTTP/1.1 403 Forbidden") {
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
+                    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+                    client_gate.set(true);
+                    return;
+                }
+                panic!("proxy case scope never became active");
+            });
+                let execution = workload.execute();
+                tokio::pin!(execution);
+                let execution = tokio::select! {
+                    client_result = &mut client => {
+                        client_result.unwrap();
+                        execution.await.unwrap()
+                    }
+                    execution_result = &mut execution => {
+                        let execution_result = execution_result.unwrap();
+                        client.await.unwrap();
+                        execution_result
+                    }
+                };
+            assert_eq!(execution.operations.len(), 2);
+            assert_eq!(
+                execution.report_facts.route_summaries["primary"].logical_operations,
+                2
+            );
+            assert!(
+                execution
+                    .operations
+                    .iter()
+                    .any(|operation| operation.registration.operation_id == "operation-1")
+            );
+            assert!(execution.operations.iter().any(|operation| {
+                operation
+                    .registration
+                    .operation_id
+                    .starts_with("proxy-operation-")
+            }));
+            })
+            .await;
     }
 
     #[test]
