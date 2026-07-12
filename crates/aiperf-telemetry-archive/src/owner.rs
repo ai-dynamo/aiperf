@@ -32,6 +32,26 @@ pub struct ArchiveFrameTimingV1 {
     pub archive_enqueue_ns: i64,
 }
 
+/// Driver-owned attempt context applied only by the sole frame sequencer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArchiveAttemptProjectionContextV1 {
+    /// Continuous cadence or forced-boundary source event.
+    pub reason: ScrapeReasonV1,
+    /// Exact sealed-plan joins, empty only for continuous attempts.
+    pub boundary_refs: Vec<crate::BoundaryReference>,
+}
+
+impl ArchiveAttemptProjectionContextV1 {
+    /// Context for an ordinary fixed-deadline cadence attempt.
+    #[must_use]
+    pub const fn continuous() -> Self {
+        Self {
+            reason: ScrapeReasonV1::Continuous,
+            boundary_refs: Vec::new(),
+        }
+    }
+}
+
 /// One source's genesis-persisted projection policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceProjectionPolicyV1 {
@@ -239,6 +259,20 @@ impl ArchiveFrameSequencerV1 {
         decoded: DecodedAttempt<Exposition, ()>,
         timing: ArchiveFrameTimingV1,
     ) -> Result<SequencedArchiveFrameV1, FrameSequencingError> {
+        self.project_attempt_with_context(
+            decoded,
+            timing,
+            ArchiveAttemptProjectionContextV1::continuous(),
+        )
+    }
+
+    /// Atomically project one decoded event with driver-owned boundary context.
+    pub fn project_attempt_with_context(
+        &mut self,
+        decoded: DecodedAttempt<Exposition, ()>,
+        timing: ArchiveFrameTimingV1,
+        context: ArchiveAttemptProjectionContextV1,
+    ) -> Result<SequencedArchiveFrameV1, FrameSequencingError> {
         let source_id = decoded.facts.source_id.clone();
         let source = self
             .sources
@@ -254,8 +288,38 @@ impl ArchiveFrameSequencerV1 {
         if timing.parse_done_ns > timing.archive_enqueue_ns {
             return Err(FrameSequencingError::TimestampOrder);
         }
-        if decoded.facts.scheduled_ns.is_none() {
-            return Err(FrameSequencingError::BoundaryContextRequired);
+        match context.reason {
+            ScrapeReasonV1::Continuous
+                if decoded.facts.scheduled_ns.is_none() || !context.boundary_refs.is_empty() =>
+            {
+                return Err(FrameSequencingError::InvalidAttemptContext(
+                    "continuous attempt requires scheduled_ns and no boundary references"
+                        .to_owned(),
+                ));
+            }
+            ScrapeReasonV1::Boundary
+                if decoded.facts.scheduled_ns.is_some() || context.boundary_refs.is_empty() =>
+            {
+                return Err(FrameSequencingError::BoundaryContextRequired);
+            }
+            ScrapeReasonV1::Continuous | ScrapeReasonV1::Boundary => {}
+        }
+        let mut boundary_ids = std::collections::BTreeSet::new();
+        for reference in &context.boundary_refs {
+            if reference.source_id != decoded.facts.source_id {
+                return Err(FrameSequencingError::InvalidAttemptContext(
+                    "boundary reference source differs from decoded attempt".to_owned(),
+                ));
+            }
+            if !boundary_ids.insert((
+                reference.transition_id.clone(),
+                reference.source_id.clone(),
+                reference.boundary_id.clone(),
+            )) {
+                return Err(FrameSequencingError::InvalidAttemptContext(
+                    "boundary context repeats an exact join key".to_owned(),
+                ));
+            }
         }
 
         let record_seq = self.next_record_seq;
@@ -394,9 +458,9 @@ impl ArchiveFrameSequencerV1 {
             request_attempt_seq: decoded.facts.request_attempt_seq,
             frame_id,
             batch_id,
-            reason: ScrapeReasonV1::Continuous,
+            reason: context.reason,
             outcome: decoded.facts.outcome,
-            boundary_refs: Vec::new(),
+            boundary_refs: context.boundary_refs,
             declared_media_type: decoded.facts.declared_media_type,
             strict_parser_format,
             native_compatibility_format,
@@ -513,6 +577,8 @@ pub enum FrameSequencingError {
     TimestampOrder,
     /// Boundary attempts require an explicit boundary-plan projection path.
     BoundaryContextRequired,
+    /// Driver-owned reason/references disagreed with scheduling identity.
+    InvalidAttemptContext(String),
     /// Successful decode omitted its authoritative capture instant.
     MissingCapture,
     /// Successful body continuity omitted exact decoded digest evidence.
@@ -552,6 +618,9 @@ impl Display for FrameSequencingError {
             }
             Self::BoundaryContextRequired => {
                 formatter.write_str("boundary attempt omitted its sealed boundary context")
+            }
+            Self::InvalidAttemptContext(message) => {
+                write!(formatter, "invalid archive attempt context: {message}")
             }
             Self::MissingCapture => {
                 formatter.write_str("successful archive attempt omitted capture time")
@@ -674,6 +743,70 @@ mod tests {
         assert_eq!(second.frame.attempt.same_body_as_source_record_seq, Some(0));
         assert_ne!(first.frame.attempt.frame_id, second.frame.attempt.frame_id);
         assert_eq!(sequencer.next_record_seq(), 2);
+    }
+
+    #[test]
+    fn boundary_projection_preserves_complete_structured_join() {
+        let mut sequencer = sequencer();
+        let mut decoded = decode(0, b"# TYPE precise gauge\nprecise 1\n");
+        decoded.facts.scheduled_ns = None;
+        let reference = crate::BoundaryReference {
+            transition_id: "warmup-to-profiling".to_owned(),
+            boundary_id: "source-a-profiling-start".to_owned(),
+            phase_id: "profiling".to_owned(),
+            source_id: "source-a".to_owned(),
+            role: crate::BoundaryRole::PhaseStart,
+            coalescing_group_id: None,
+        };
+
+        let projected = sequencer
+            .project_attempt_with_context(
+                decoded,
+                ArchiveFrameTimingV1 {
+                    parse_done_ns: 2,
+                    archive_enqueue_ns: 3,
+                },
+                ArchiveAttemptProjectionContextV1 {
+                    reason: ScrapeReasonV1::Boundary,
+                    boundary_refs: vec![reference.clone()],
+                },
+            )
+            .unwrap();
+
+        assert_eq!(projected.frame.attempt.reason, ScrapeReasonV1::Boundary);
+        assert_eq!(projected.frame.attempt.boundary_refs, vec![reference]);
+        assert!(projected.frame.attempt.scheduled_ns.is_none());
+    }
+
+    #[test]
+    fn attempt_reason_and_boundary_membership_fail_closed_as_one_unit() {
+        let mut sequencer = sequencer();
+        let reference = crate::BoundaryReference {
+            transition_id: "transition".to_owned(),
+            boundary_id: "boundary".to_owned(),
+            phase_id: "profiling".to_owned(),
+            source_id: "source-a".to_owned(),
+            role: crate::BoundaryRole::PhaseStart,
+            coalescing_group_id: None,
+        };
+        let error = sequencer
+            .project_attempt_with_context(
+                decode(0, b"metric 1\n"),
+                ArchiveFrameTimingV1 {
+                    parse_done_ns: 2,
+                    archive_enqueue_ns: 3,
+                },
+                ArchiveAttemptProjectionContextV1 {
+                    reason: ScrapeReasonV1::Continuous,
+                    boundary_refs: vec![reference],
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            FrameSequencingError::InvalidAttemptContext(_)
+        ));
+        assert_eq!(sequencer.next_record_seq(), 0);
     }
 
     #[test]
