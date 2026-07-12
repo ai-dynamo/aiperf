@@ -363,6 +363,12 @@ impl QualifiedSpool {
             verify_exact_file(&final_path, bytes)?;
             return Ok(());
         }
+        // Deep partition paths (partitions/<table>/<session>/<source>/<bucket>)
+        // are addressed lazily; their ancestor directories may not exist yet.
+        // create_dir_all is idempotent and re-runs on retry, so the
+        // temporary/rename convergence protocol below stays crash-safe.
+        fs::create_dir_all(parent)
+            .map_err(|error| io_error("create spool parent directory", parent, error))?;
         let file_name = final_path
             .file_name()
             .ok_or_else(|| SpoolError::UnsafeRelativePath(relative.to_path_buf()))?;

@@ -14,9 +14,15 @@ pub const ROLE_VALIDITY_MATRIX_V1_BYTES: &[u8] =
     include_bytes!("../descriptors/role-validity-matrix-v1.json");
 
 /// Return the exact canonical descriptor bytes used by durable identities.
+///
+/// The checked-in descriptor file carries a final newline (editors and
+/// final-newline tooling re-add it), but the canonical-JSON representation
+/// bound into archive identity admits no trailing whitespace. Trim it here so
+/// every consumer sees the exact canonical bytes regardless of the file's
+/// terminator.
 #[must_use]
 pub const fn role_validity_matrix_v1_bytes() -> &'static [u8] {
-    ROLE_VALIDITY_MATRIX_V1_BYTES
+    ROLE_VALIDITY_MATRIX_V1_BYTES.trim_ascii_end()
 }
 
 #[cfg(test)]
