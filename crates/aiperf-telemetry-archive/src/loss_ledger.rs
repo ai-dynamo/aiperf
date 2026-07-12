@@ -24,6 +24,7 @@ use crate::{
 };
 
 const LOSS_OVERFLOW_DOMAIN_V1: &str = "aiperf.archive.loss-overflow.v1";
+const BOUNDARY_OVERFLOW_DOMAIN_V1: &str = "aiperf.archive.boundary-overflow.v1";
 const SOURCE_VALID_KINDS_V1: [LossKindV1; 5] = [
     LossKindV1::MissedCadence,
     LossKindV1::ArchiveRejected,
@@ -120,6 +121,102 @@ pub struct LossLedgerViewV1 {
     pub complete_ranges: bool,
 }
 
+/// Semantic loss admitted before the archive owner assigns durable identities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnsequencedLossV1 {
+    /// Physical source, or the explicit global sentinel.
+    pub source_id: Option<String>,
+    /// Number of omitted entries represented by the inclusive range.
+    pub count: u64,
+    /// Semantic loss class.
+    pub loss_kind: LossKindV1,
+    /// Closed reason paired with the loss class.
+    pub reason: LossReasonV1,
+    /// First omitted source-record sequence.
+    pub first_source_record_seq: Option<u64>,
+    /// Last omitted source-record sequence.
+    pub last_source_record_seq: Option<u64>,
+    /// First omitted request-attempt sequence.
+    pub first_request_attempt_seq: Option<u64>,
+    /// Last omitted request-attempt sequence.
+    pub last_request_attempt_seq: Option<u64>,
+    /// First missed cadence tick.
+    pub first_tick: Option<u64>,
+    /// Last missed cadence tick.
+    pub last_tick: Option<u64>,
+    /// First missed absolute deadline.
+    pub first_deadline_ns: Option<i64>,
+    /// Last missed absolute deadline.
+    pub last_deadline_ns: Option<i64>,
+    /// Injected-Clock instant when the semantic loss became observable.
+    pub loss_observed_ns: i64,
+    /// Exact retained boundary joins.
+    pub boundary_refs: Vec<BoundaryReference>,
+    /// Boundary joins represented only by the overflow digest.
+    pub boundary_overflow_count: u64,
+    /// Digest over overflowed boundary joins.
+    pub boundary_overflow_digest: Option<Digest>,
+}
+
+impl From<ExactLossRangeV1> for UnsequencedLossV1 {
+    fn from(loss: ExactLossRangeV1) -> Self {
+        Self {
+            source_id: loss.source_id,
+            count: loss.count,
+            loss_kind: loss.loss_kind,
+            reason: loss.reason,
+            first_source_record_seq: loss.first_source_record_seq,
+            last_source_record_seq: loss.last_source_record_seq,
+            first_request_attempt_seq: loss.first_request_attempt_seq,
+            last_request_attempt_seq: loss.last_request_attempt_seq,
+            first_tick: loss.first_tick,
+            last_tick: loss.last_tick,
+            first_deadline_ns: loss.first_deadline_ns,
+            last_deadline_ns: loss.last_deadline_ns,
+            loss_observed_ns: loss.loss_observed_ns,
+            boundary_refs: loss.boundary_refs,
+            boundary_overflow_count: loss.boundary_overflow_count,
+            boundary_overflow_digest: loss.boundary_overflow_digest,
+        }
+    }
+}
+
+/// One owner-assigned durable identity consumed by a frozen loss frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LossFrameIdentityV1 {
+    /// Archive-global terminal record sequence.
+    pub record_seq: u64,
+    /// Session-global durable loss-row sequence.
+    pub loss_seq: u64,
+}
+
+/// Exact number and ordering of identities required by the next freeze.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LossLedgerFreezePlanV1 {
+    /// Mutable exact rows that become immutable in slot order.
+    pub exact_range_count: usize,
+    /// Dirty saturation slots emitted in prepared tuple order.
+    pub saturation_snapshot_count: usize,
+}
+
+impl LossLedgerFreezePlanV1 {
+    /// Total owner identities required to freeze this plan.
+    #[must_use]
+    pub fn frame_count(self) -> usize {
+        self.exact_range_count
+            .saturating_add(self.saturation_snapshot_count)
+    }
+}
+
+/// Newly immutable loss rows produced by one atomic checkpoint freeze.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FrozenLossFramesV1 {
+    /// Newly frozen exact rows in admission/coalescing order.
+    pub exact_ranges: Vec<ExactLossRangeV1>,
+    /// Latest snapshots for saturation slots dirtied since the preceding freeze.
+    pub saturation_snapshots: Vec<LossSaturationSnapshotV1>,
+}
+
 /// Run-owned, preparation-bounded attached telemetry loss ledger.
 #[derive(Debug)]
 pub struct FixedLossLedgerV1 {
@@ -129,9 +226,13 @@ pub struct FixedLossLedgerV1 {
     sources: Vec<String>,
     exact_slots: Vec<ExactSlotV1>,
     exact_ranges: usize,
+    frozen_exact_ranges: usize,
     exact_capacity_exhausted: bool,
     saturation_slots: Vec<SaturationSlotV1>,
     active_saturation_slots: usize,
+    next_admission_seq: u64,
+    last_frozen_record_seq: Option<u64>,
+    last_frozen_loss_seq: Option<u64>,
     recording_started: bool,
 }
 
@@ -228,9 +329,13 @@ impl FixedLossLedgerV1 {
             sources: prepared_sources,
             exact_slots,
             exact_ranges: 0,
+            frozen_exact_ranges: 0,
             exact_capacity_exhausted: false,
             saturation_slots,
             active_saturation_slots: 0,
+            next_admission_seq: 0,
+            last_frozen_record_seq: None,
+            last_frozen_loss_seq: None,
             recording_started: false,
         })
     }
@@ -258,6 +363,91 @@ impl FixedLossLedgerV1 {
         Ok(ledger)
     }
 
+    /// Restores frozen exact rows plus latest/history saturation snapshots.
+    pub fn resume_with_durable<I, S, E, D>(
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        sources: I,
+        limits: LossLedgerLimitsV1,
+        durable_exact_ranges: E,
+        durable_snapshots: D,
+    ) -> Result<Self, LossLedgerError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+        E: IntoIterator<Item = ExactLossRangeV1>,
+        D: IntoIterator<Item = LossSaturationSnapshotV1>,
+    {
+        let mut ledger = Self::new(archive_id, session_id, sources, limits)?;
+        ledger.restore_durable_exact_ranges(durable_exact_ranges)?;
+        ledger.restore_durable_snapshots(durable_snapshots)?;
+        Ok(ledger)
+    }
+
+    /// Restores immutable exact rows before any new semantic loss is admitted.
+    pub fn restore_durable_exact_ranges<I>(&mut self, ranges: I) -> Result<(), LossLedgerError>
+    where
+        I: IntoIterator<Item = ExactLossRangeV1>,
+    {
+        if self.recording_started || self.exact_ranges != 0 {
+            return Err(LossLedgerError::ResumeAfterRecording);
+        }
+        let mut prepared = Vec::new();
+        reserve_exact(
+            &mut prepared,
+            self.exact_slots.len(),
+            "durable exact loss recovery",
+        )?;
+        let mut previous_record = None;
+        let mut previous_loss = None;
+        for range in ranges {
+            let range = self.normalize_loss(range)?;
+            if prepared.len() == self.exact_slots.len() {
+                return Err(LossLedgerError::TooManyDurableExactRanges {
+                    maximum: self.exact_slots.len(),
+                    actual: prepared
+                        .len()
+                        .checked_add(1)
+                        .ok_or(LossLedgerError::ArithmeticOverflow)?,
+                });
+            }
+            validate_freeze_identities(
+                &[LossFrameIdentityV1 {
+                    record_seq: range.record_seq,
+                    loss_seq: range.loss_seq,
+                }],
+                previous_record,
+                previous_loss,
+            )?;
+            previous_record = Some(range.record_seq);
+            previous_loss = Some(range.loss_seq);
+            let source_index = self.resolve_source(range.source_id.as_deref())?;
+            prepared.push((source_index, range));
+        }
+
+        for (source_index, mut range) in prepared {
+            let exact_index = self.exact_ranges;
+            self.retain_exact(exact_index, source_index, &mut range);
+            let state = self.exact_slots[exact_index]
+                .state
+                .as_mut()
+                .expect("recovered exact slot was just populated");
+            state.frozen = true;
+            self.exact_ranges += 1;
+            self.frozen_exact_ranges += 1;
+            self.next_admission_seq = self.next_admission_seq.max(
+                state
+                    .loss_seq
+                    .checked_add(1)
+                    .ok_or(LossLedgerError::ArithmeticOverflow)?,
+            );
+            self.last_frozen_record_seq = Some(state.record_seq);
+            self.last_frozen_loss_seq = Some(state.loss_seq);
+        }
+        self.exact_capacity_exhausted = self.exact_ranges == self.exact_slots.len();
+        Ok(())
+    }
+
     /// Restores additional durable snapshots before accepting new loss inputs.
     ///
     /// Rows for each slot must occur in increasing snapshot-sequence order.
@@ -278,6 +468,9 @@ impl FixedLossLedgerV1 {
         previous_states.extend(self.saturation_slots.iter().map(|slot| slot.state));
         let previous_active = self.active_saturation_slots;
         let previous_exhausted = self.exact_capacity_exhausted;
+        let previous_next_admission = self.next_admission_seq;
+        let previous_last_record = self.last_frozen_record_seq;
+        let previous_last_loss = self.last_frozen_loss_seq;
 
         let result = (|| {
             for snapshot in snapshots {
@@ -299,7 +492,22 @@ impl FixedLossLedgerV1 {
                         .ok_or(LossLedgerError::ArithmeticOverflow)?;
                 }
                 self.saturation_slots[slot_index].state = Some(next);
+                self.saturation_slots[slot_index].dirty = false;
                 self.exact_capacity_exhausted = true;
+                self.next_admission_seq = self.next_admission_seq.max(
+                    snapshot
+                        .loss_seq
+                        .checked_add(1)
+                        .ok_or(LossLedgerError::ArithmeticOverflow)?,
+                );
+                self.last_frozen_record_seq = Some(
+                    self.last_frozen_record_seq
+                        .map_or(snapshot.record_seq, |value| value.max(snapshot.record_seq)),
+                );
+                self.last_frozen_loss_seq = Some(
+                    self.last_frozen_loss_seq
+                        .map_or(snapshot.loss_seq, |value| value.max(snapshot.loss_seq)),
+                );
             }
             Ok(())
         })();
@@ -309,29 +517,83 @@ impl FixedLossLedgerV1 {
             }
             self.active_saturation_slots = previous_active;
             self.exact_capacity_exhausted = previous_exhausted;
+            self.next_admission_seq = previous_next_admission;
+            self.last_frozen_record_seq = previous_last_record;
+            self.last_frozen_loss_seq = previous_last_loss;
         }
         result
     }
 
-    /// Records one already-validated semantic loss without growing ledger storage.
+    /// Deterministically folds boundary evidence into the configured fixed bound.
     ///
-    /// The row identities are retained for later control-frame materialization.
-    /// Callers must therefore assign them from the archive owner's sequence
-    /// authority before handing the row to this method.
-    pub fn record(
-        &mut self,
+    /// Callers use the returned row for both ledger mutation and control-frame
+    /// encoding so durable bytes and report health cannot disagree. Already
+    /// folded evidence is accepted unchanged; a row cannot be folded twice.
+    pub fn normalize_loss(
+        &self,
         mut loss: ExactLossRangeV1,
-    ) -> Result<LossLedgerRecordOutcomeV1, LossLedgerError> {
-        loss.validate().map_err(LossLedgerError::InvalidLoss)?;
+    ) -> Result<ExactLossRangeV1, LossLedgerError> {
         self.validate_identity(loss.archive_id, loss.session_id)?;
         self.validate_source_identifier(loss.source_id.as_deref())?;
         self.validate_boundaries(&loss.boundary_refs)?;
         if loss.boundary_refs.len() > self.limits.max_boundary_refs_per_range {
-            return Err(LossLedgerError::TooManyBoundaryReferences {
-                maximum: self.limits.max_boundary_refs_per_range,
-                actual: loss.boundary_refs.len(),
-            });
+            if loss.boundary_overflow_count != 0 || loss.boundary_overflow_digest.is_some() {
+                return Err(LossLedgerError::BoundaryEvidenceAlreadyOverflowed);
+            }
+            let overflow = loss
+                .boundary_refs
+                .split_off(self.limits.max_boundary_refs_per_range);
+            let mut hasher = domain_hasher(BOUNDARY_OVERFLOW_DOMAIN_V1);
+            hasher.update(
+                &u64::try_from(overflow.len())
+                    .map_err(|_| LossLedgerError::ArithmeticOverflow)?
+                    .to_be_bytes(),
+            );
+            for boundary in &overflow {
+                let length = canonical_boundary_length(boundary)?;
+                hasher.update(&length.to_be_bytes());
+                hash_canonical_boundary(&mut hasher, boundary);
+            }
+            loss.boundary_overflow_count =
+                u64::try_from(overflow.len()).map_err(|_| LossLedgerError::ArithmeticOverflow)?;
+            loss.boundary_overflow_digest = Some(Digest::from_bytes(*hasher.finalize().as_bytes()));
         }
+        loss.validate().map_err(LossLedgerError::InvalidLoss)?;
+        Ok(loss)
+    }
+
+    /// Records a semantic loss without assigning a durable frame identity.
+    pub fn record_unsequenced(
+        &mut self,
+        loss: UnsequencedLossV1,
+    ) -> Result<LossLedgerRecordOutcomeV1, LossLedgerError> {
+        let admission_seq = self.next_admission_seq;
+        let provisional = self.provisional_loss(loss, admission_seq);
+        let outcome = self.record_provisional(provisional)?;
+        self.next_admission_seq = admission_seq
+            .checked_add(1)
+            .ok_or(LossLedgerError::ArithmeticOverflow)?;
+        Ok(outcome)
+    }
+
+    /// Compatibility adapter for callers that still construct the exact DTO.
+    ///
+    /// Supplied owner identities are ignored. Durable `record_seq` and
+    /// `loss_seq` are assigned only after coalescing at checkpoint freeze.
+    pub fn record(
+        &mut self,
+        loss: ExactLossRangeV1,
+    ) -> Result<LossLedgerRecordOutcomeV1, LossLedgerError> {
+        loss.validate().map_err(LossLedgerError::InvalidLoss)?;
+        self.validate_identity(loss.archive_id, loss.session_id)?;
+        self.record_unsequenced(loss.into())
+    }
+
+    fn record_provisional(
+        &mut self,
+        loss: ExactLossRangeV1,
+    ) -> Result<LossLedgerRecordOutcomeV1, LossLedgerError> {
+        let mut loss = self.normalize_loss(loss)?;
         let source_index = self.resolve_source(loss.source_id.as_deref())?;
 
         if let Some(exact_index) = self.find_coalescible(source_index, &loss) {
@@ -353,6 +615,7 @@ impl FixedLossLedgerV1 {
             .ok_or(LossLedgerError::IllegalSaturationTuple)?;
         let was_inactive = self.saturation_slots[slot_index].state.is_none();
         let next = self.saturation_slots[slot_index].advance(&loss)?;
+        self.saturation_slots[slot_index].dirty = true;
         self.exact_capacity_exhausted = true;
         if was_inactive {
             self.active_saturation_slots = self
@@ -363,9 +626,165 @@ impl FixedLossLedgerV1 {
         self.recording_started = true;
         Ok(LossLedgerRecordOutcomeV1::Saturated {
             saturation_slot_id: self.saturation_slots[slot_index].slot_id,
-            saturation_snapshot_seq: next.snapshot_seq,
+            saturation_snapshot_seq: next.pending_snapshot_seq()?,
             cumulative_omitted_range_count: next.omitted_range_count,
             cumulative_omitted_entry_count: next.omitted_entry_count,
+        })
+    }
+
+    fn provisional_loss(&self, loss: UnsequencedLossV1, admission_seq: u64) -> ExactLossRangeV1 {
+        ExactLossRangeV1 {
+            archive_id: self.archive_id,
+            session_id: self.session_id,
+            source_id: loss.source_id,
+            record_seq: admission_seq,
+            loss_seq: admission_seq,
+            count: loss.count,
+            loss_kind: loss.loss_kind,
+            reason: loss.reason,
+            first_source_record_seq: loss.first_source_record_seq,
+            last_source_record_seq: loss.last_source_record_seq,
+            first_request_attempt_seq: loss.first_request_attempt_seq,
+            last_request_attempt_seq: loss.last_request_attempt_seq,
+            first_tick: loss.first_tick,
+            last_tick: loss.last_tick,
+            first_deadline_ns: loss.first_deadline_ns,
+            last_deadline_ns: loss.last_deadline_ns,
+            loss_observed_ns: loss.loss_observed_ns,
+            boundary_refs: loss.boundary_refs,
+            boundary_overflow_count: loss.boundary_overflow_count,
+            boundary_overflow_digest: loss.boundary_overflow_digest,
+        }
+    }
+
+    /// Returns the exact identity count and deterministic order of the next freeze.
+    #[must_use]
+    pub fn freeze_plan(&self) -> LossLedgerFreezePlanV1 {
+        LossLedgerFreezePlanV1 {
+            exact_range_count: self.exact_ranges.saturating_sub(self.frozen_exact_ranges),
+            saturation_snapshot_count: self
+                .saturation_slots
+                .iter()
+                .filter(|slot| slot.dirty)
+                .count(),
+        }
+    }
+
+    /// Atomically freezes mutable exact rows and dirty latest saturation snapshots.
+    pub fn freeze_checkpoint<I>(
+        &mut self,
+        identities: I,
+    ) -> Result<FrozenLossFramesV1, LossLedgerError>
+    where
+        I: IntoIterator<Item = LossFrameIdentityV1>,
+    {
+        let plan = self.freeze_plan();
+        let identities: Vec<_> = identities.into_iter().collect();
+        if identities.len() != plan.frame_count() {
+            return Err(LossLedgerError::FreezeIdentityCount {
+                expected: plan.frame_count(),
+                actual: identities.len(),
+            });
+        }
+        validate_freeze_identities(
+            &identities,
+            self.last_frozen_record_seq,
+            self.last_frozen_loss_seq,
+        )?;
+        let next_admission_after_freeze = identities
+            .last()
+            .map(|identity| {
+                identity
+                    .loss_seq
+                    .checked_add(1)
+                    .ok_or(LossLedgerError::ArithmeticOverflow)
+            })
+            .transpose()?;
+
+        let mut exact_ranges = Vec::new();
+        reserve_exact(
+            &mut exact_ranges,
+            plan.exact_range_count,
+            "frozen exact loss rows",
+        )?;
+        let mut saturation_snapshots = Vec::new();
+        reserve_exact(
+            &mut saturation_snapshots,
+            plan.saturation_snapshot_count,
+            "frozen saturation snapshots",
+        )?;
+        let mut saturation_states = Vec::new();
+        reserve_exact(
+            &mut saturation_states,
+            plan.saturation_snapshot_count,
+            "frozen saturation state",
+        )?;
+
+        let mut identity_index = 0_usize;
+        for slot in self
+            .exact_slots
+            .iter()
+            .take(self.exact_ranges)
+            .skip(self.frozen_exact_ranges)
+        {
+            let identity = identities[identity_index];
+            identity_index += 1;
+            let mut row = self.materialize_exact(slot);
+            row.record_seq = identity.record_seq;
+            row.loss_seq = identity.loss_seq;
+            row.validate().map_err(LossLedgerError::InvalidLoss)?;
+            exact_ranges.push(row);
+        }
+        for (slot_index, slot) in self.saturation_slots.iter().enumerate() {
+            if !slot.dirty {
+                continue;
+            }
+            let identity = identities[identity_index];
+            identity_index += 1;
+            let previous = slot
+                .state
+                .ok_or(LossLedgerError::InactiveSaturationSlot(slot.slot_id))?;
+            let mut next = previous;
+            next.record_seq = identity.record_seq;
+            next.loss_seq = identity.loss_seq;
+            next.snapshot_seq = previous.snapshot_seq;
+            next.persisted = true;
+            let snapshot = self.snapshot_at(slot_index, next);
+            snapshot.validate().map_err(LossLedgerError::InvalidLoss)?;
+            saturation_states.push((slot_index, next));
+            saturation_snapshots.push(snapshot);
+        }
+        debug_assert_eq!(identity_index, identities.len());
+
+        for (offset, identity) in identities
+            .iter()
+            .take(plan.exact_range_count)
+            .copied()
+            .enumerate()
+        {
+            let state = self.exact_slots[self.frozen_exact_ranges + offset]
+                .state
+                .as_mut()
+                .expect("planned exact slots are populated");
+            state.record_seq = identity.record_seq;
+            state.loss_seq = identity.loss_seq;
+            state.frozen = true;
+        }
+        self.frozen_exact_ranges = self.exact_ranges;
+        for (slot_index, state) in saturation_states {
+            self.saturation_slots[slot_index].state = Some(state);
+            self.saturation_slots[slot_index].dirty = false;
+        }
+        if let Some(last) = identities.last() {
+            self.last_frozen_record_seq = Some(last.record_seq);
+            self.last_frozen_loss_seq = Some(last.loss_seq);
+            self.next_admission_seq = self
+                .next_admission_seq
+                .max(next_admission_after_freeze.expect("nonempty identity list"));
+        }
+        Ok(FrozenLossFramesV1 {
+            exact_ranges,
+            saturation_snapshots,
         })
     }
 
@@ -390,7 +809,9 @@ impl FixedLossLedgerV1 {
         let previous = slot
             .state
             .ok_or(LossLedgerError::InactiveSaturationSlot(saturation_slot_id))?;
-        if record_seq <= previous.record_seq || loss_seq <= previous.loss_seq {
+        if previous.persisted
+            && (record_seq <= previous.record_seq || loss_seq <= previous.loss_seq)
+        {
             return Err(LossLedgerError::NonMonotonicOwnerSequence);
         }
         if loss_observed_ns < previous.loss_observed_ns {
@@ -404,7 +825,9 @@ impl FixedLossLedgerV1 {
             .snapshot_seq
             .checked_add(1)
             .ok_or(LossLedgerError::ArithmeticOverflow)?;
+        next.persisted = true;
         slot.state = Some(next);
+        slot.dirty = false;
         self.recording_started = true;
         Ok(self.snapshot_at(slot_index, next))
     }
@@ -678,6 +1101,7 @@ struct ExactRangeStateV1 {
     source_index: Option<usize>,
     record_seq: u64,
     loss_seq: u64,
+    frozen: bool,
     count: u64,
     kind: LossKindV1,
     reason: LossReasonV1,
@@ -700,6 +1124,7 @@ impl ExactRangeStateV1 {
             source_index,
             record_seq: loss.record_seq,
             loss_seq: loss.loss_seq,
+            frozen: false,
             count: loss.count,
             kind: loss.loss_kind,
             reason: loss.reason,
@@ -726,6 +1151,7 @@ struct SaturationSlotV1 {
     slot_id: Digest,
     initial_digest: Digest,
     state: Option<SaturationStateV1>,
+    dirty: bool,
 }
 
 impl SaturationSlotV1 {
@@ -746,6 +1172,7 @@ impl SaturationSlotV1 {
                 archive_id, session_id, source_id, kind, reason,
             ),
             state: None,
+            dirty: false,
         }
     }
 
@@ -753,7 +1180,7 @@ impl SaturationSlotV1 {
         let cumulative_ranges = match self.state {
             None => CumulativeRangesV1::from_loss(loss),
             Some(previous) => {
-                if loss.record_seq <= previous.record_seq || loss.loss_seq <= previous.loss_seq {
+                if loss.loss_seq <= previous.last_admission_seq {
                     return Err(LossLedgerError::NonMonotonicOwnerSequence);
                 }
                 if loss.loss_observed_ns < previous.loss_observed_ns {
@@ -771,6 +1198,8 @@ impl SaturationSlotV1 {
                 record_seq: loss.record_seq,
                 loss_seq: loss.loss_seq,
                 snapshot_seq: 0,
+                persisted: false,
+                last_admission_seq: loss.loss_seq,
                 omitted_range_count: 1,
                 omitted_entry_count: loss.count,
                 rolling_digest,
@@ -785,12 +1214,22 @@ impl SaturationSlotV1 {
                 loss_observed_ns: loss.loss_observed_ns,
             },
             Some(previous) => SaturationStateV1 {
-                record_seq: loss.record_seq,
-                loss_seq: loss.loss_seq,
+                record_seq: if previous.persisted {
+                    previous.record_seq
+                } else {
+                    loss.record_seq
+                },
+                loss_seq: if previous.persisted {
+                    previous.loss_seq
+                } else {
+                    loss.loss_seq
+                },
                 snapshot_seq: previous
                     .snapshot_seq
                     .checked_add(1)
                     .ok_or(LossLedgerError::ArithmeticOverflow)?,
+                persisted: previous.persisted,
+                last_admission_seq: loss.loss_seq,
                 omitted_range_count: previous
                     .omitted_range_count
                     .checked_add(1)
@@ -821,6 +1260,8 @@ struct SaturationStateV1 {
     record_seq: u64,
     loss_seq: u64,
     snapshot_seq: u64,
+    persisted: bool,
+    last_admission_seq: u64,
     omitted_range_count: u64,
     omitted_entry_count: u64,
     rolling_digest: Digest,
@@ -841,6 +1282,8 @@ impl SaturationStateV1 {
             record_seq: snapshot.record_seq,
             loss_seq: snapshot.loss_seq,
             snapshot_seq: snapshot.saturation_snapshot_seq,
+            persisted: true,
+            last_admission_seq: snapshot.loss_seq,
             omitted_range_count: snapshot.cumulative_omitted_range_count,
             omitted_entry_count: snapshot.cumulative_omitted_entry_count,
             rolling_digest: snapshot.omitted_rolling_digest,
@@ -855,6 +1298,10 @@ impl SaturationStateV1 {
             loss_observed_ns: snapshot.loss_observed_ns,
         }
     }
+
+    fn pending_snapshot_seq(self) -> Result<u64, LossLedgerError> {
+        Ok(self.snapshot_seq)
+    }
 }
 
 fn can_coalesce(
@@ -864,7 +1311,8 @@ fn can_coalesce(
     next: &ExactLossRangeV1,
     max_boundaries: usize,
 ) -> bool {
-    if current.source_index != source_index
+    if current.frozen
+        || current.source_index != source_index
         || current.kind != next.loss_kind
         || current.reason != next.reason
         || current.count.checked_add(next.count).is_none()
@@ -1368,6 +1816,23 @@ fn validate_bounded_identifier(
     Ok(())
 }
 
+fn validate_freeze_identities(
+    identities: &[LossFrameIdentityV1],
+    mut previous_record_seq: Option<u64>,
+    mut previous_loss_seq: Option<u64>,
+) -> Result<(), LossLedgerError> {
+    for identity in identities {
+        if previous_record_seq.is_some_and(|previous| identity.record_seq <= previous)
+            || previous_loss_seq.is_some_and(|previous| identity.loss_seq <= previous)
+        {
+            return Err(LossLedgerError::NonMonotonicOwnerSequence);
+        }
+        previous_record_seq = Some(identity.record_seq);
+        previous_loss_seq = Some(identity.loss_seq);
+    }
+    Ok(())
+}
+
 fn reserve_exact<T>(
     values: &mut Vec<T>,
     additional: usize,
@@ -1388,6 +1853,13 @@ pub enum LossLedgerError {
         /// Validated maximum.
         maximum: usize,
         /// Authored source count.
+        actual: usize,
+    },
+    /// Durable exact recovery exceeded the prepared exact-row capacity.
+    TooManyDurableExactRanges {
+        /// Prepared exact-row capacity.
+        maximum: usize,
+        /// Durable input row count observed so far.
         actual: usize,
     },
     /// A source identity occurred more than once.
@@ -1415,10 +1887,19 @@ pub enum LossLedgerError {
         /// Actual reference count.
         actual: usize,
     },
+    /// A caller supplied pre-folded overflow evidence alongside excess references.
+    BoundaryEvidenceAlreadyOverflowed,
     /// An internal fixed allocation could not be reserved during preparation.
     AllocationFailed(&'static str),
     /// Checked arithmetic overflowed.
     ArithmeticOverflow,
+    /// A checkpoint supplied a different number of owner identities than planned.
+    FreezeIdentityCount {
+        /// Exact plan count.
+        expected: usize,
+        /// Supplied identity count.
+        actual: usize,
+    },
     /// An input row did not belong to this archive.
     ArchiveIdentityMismatch,
     /// An input row did not belong to this collection session.
@@ -1461,6 +1942,10 @@ impl Display for LossLedgerError {
                 formatter,
                 "loss ledger source count {actual} exceeds validated maximum {maximum}"
             ),
+            Self::TooManyDurableExactRanges { maximum, actual } => write!(
+                formatter,
+                "durable exact loss count {actual} exceeds prepared maximum {maximum}"
+            ),
             Self::DuplicateSource(source) => {
                 write!(
                     formatter,
@@ -1485,10 +1970,17 @@ impl Display for LossLedgerError {
                 formatter,
                 "loss range carries {actual} boundary references; maximum is {maximum}"
             ),
+            Self::BoundaryEvidenceAlreadyOverflowed => formatter.write_str(
+                "loss range cannot fold additional boundaries after overflow evidence is sealed",
+            ),
             Self::AllocationFailed(allocation) => {
                 write!(formatter, "could not preallocate {allocation}")
             }
             Self::ArithmeticOverflow => formatter.write_str("loss ledger arithmetic overflowed"),
+            Self::FreezeIdentityCount { expected, actual } => write!(
+                formatter,
+                "loss freeze requires {expected} owner identities, received {actual}"
+            ),
             Self::ArchiveIdentityMismatch => {
                 formatter.write_str("loss ledger archive identity mismatch")
             }
@@ -1858,6 +2350,138 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn checkpoint_freeze_assigns_after_coalescing_and_never_mutates_frozen_rows() {
+        let mut ledger =
+            FixedLossLedgerV1::new(archive_id(), session_id(), ["source-a"], limits(4)).unwrap();
+        ledger
+            .record_unsequenced(
+                issued("source-a", 0, Some(0), LossKindV1::ArchiveRejected, 90).into(),
+            )
+            .unwrap();
+        ledger
+            .record_unsequenced(
+                issued("source-a", 1, Some(1), LossKindV1::ArchiveRejected, 91).into(),
+            )
+            .unwrap();
+        assert_eq!(
+            ledger.freeze_plan(),
+            LossLedgerFreezePlanV1 {
+                exact_range_count: 1,
+                saturation_snapshot_count: 0,
+            }
+        );
+        let first = ledger
+            .freeze_checkpoint([LossFrameIdentityV1 {
+                record_seq: 10,
+                loss_seq: 4,
+            }])
+            .unwrap();
+        assert_eq!(first.exact_ranges.len(), 1);
+        assert_eq!(first.exact_ranges[0].record_seq, 10);
+        assert_eq!(first.exact_ranges[0].loss_seq, 4);
+        assert_eq!(first.exact_ranges[0].count, 2);
+
+        ledger
+            .record_unsequenced(
+                issued("source-a", 2, Some(2), LossKindV1::ArchiveRejected, 92).into(),
+            )
+            .unwrap();
+        let second = ledger
+            .freeze_checkpoint([LossFrameIdentityV1 {
+                record_seq: 11,
+                loss_seq: 5,
+            }])
+            .unwrap();
+        assert_eq!(second.exact_ranges.len(), 1);
+        assert_eq!(second.exact_ranges[0].first_source_record_seq, Some(2));
+        let view = ledger.bounded_view();
+        assert_eq!(view.exact_ranges.len(), 2);
+        assert_eq!(view.exact_ranges[0].last_source_record_seq, Some(1));
+        assert_eq!(view.exact_ranges[0].record_seq, 10);
+        assert_eq!(view.exact_ranges[1].record_seq, 11);
+
+        assert_eq!(ledger.freeze_plan().frame_count(), 0);
+        assert_eq!(
+            ledger.freeze_checkpoint([]).unwrap(),
+            FrozenLossFramesV1::default()
+        );
+    }
+
+    #[test]
+    fn dirty_saturation_checkpoints_emit_latest_once_and_resume_continuation() {
+        let mut ledger =
+            FixedLossLedgerV1::new(archive_id(), session_id(), ["source-a"], limits(1)).unwrap();
+        ledger
+            .record_unsequenced(
+                issued("source-a", 0, Some(0), LossKindV1::ArchiveRejected, 0).into(),
+            )
+            .unwrap();
+        ledger
+            .record_unsequenced(global(LossKindV1::WriterFailed, 1).into())
+            .unwrap();
+        let first = ledger
+            .freeze_checkpoint([
+                LossFrameIdentityV1 {
+                    record_seq: 20,
+                    loss_seq: 10,
+                },
+                LossFrameIdentityV1 {
+                    record_seq: 21,
+                    loss_seq: 11,
+                },
+            ])
+            .unwrap();
+        assert_eq!(first.exact_ranges.len(), 1);
+        assert_eq!(first.saturation_snapshots.len(), 1);
+        assert_eq!(ledger.freeze_plan().frame_count(), 0);
+
+        ledger
+            .record_unsequenced(global(LossKindV1::WriterFailed, 2).into())
+            .unwrap();
+        assert_eq!(ledger.freeze_plan().saturation_snapshot_count, 1);
+        let second = ledger
+            .freeze_checkpoint([LossFrameIdentityV1 {
+                record_seq: 22,
+                loss_seq: 12,
+            }])
+            .unwrap();
+        assert_eq!(second.saturation_snapshots.len(), 1);
+        assert_eq!(second.saturation_snapshots[0].saturation_snapshot_seq, 1);
+        assert_eq!(
+            second.saturation_snapshots[0].cumulative_omitted_range_count,
+            2
+        );
+
+        let mut resumed = FixedLossLedgerV1::resume_with_durable(
+            archive_id(),
+            session_id(),
+            ["source-a"],
+            limits(1),
+            first.exact_ranges,
+            [
+                first.saturation_snapshots[0].clone(),
+                second.saturation_snapshots[0].clone(),
+            ],
+        )
+        .unwrap();
+        resumed
+            .record_unsequenced(global(LossKindV1::WriterFailed, 99).into())
+            .unwrap();
+        let third = resumed
+            .freeze_checkpoint([LossFrameIdentityV1 {
+                record_seq: 23,
+                loss_seq: 13,
+            }])
+            .unwrap();
+        assert_eq!(third.saturation_snapshots[0].saturation_snapshot_seq, 2);
+        assert_eq!(
+            third.saturation_snapshots[0].cumulative_omitted_range_count,
+            3
+        );
+        assert_eq!(resumed.freeze_plan().frame_count(), 0);
     }
 
     #[test]

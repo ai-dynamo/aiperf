@@ -17,6 +17,7 @@ pub mod decode;
 pub mod descriptor;
 pub mod digest;
 pub mod driver;
+pub mod entity;
 pub mod evidence;
 pub mod filesystem_store;
 pub mod frame_codec;
@@ -68,6 +69,11 @@ pub use driver::{
     TelemetryAttemptDisposition, TelemetryAttemptEnvelope, TelemetryDriverConfig,
     TelemetryDriverSummary, TelemetryFetcher,
 };
+pub use entity::{
+    BoundedEntityDecoder, ContentEncodingChainV1, ContentEncodingV1, DecodedHttpEntityV1,
+    EntityDecodeConfigError, EntityDecodeError, EntityDecodeErrorKind, EntityDecodeLimitsV1,
+    EntityDecodePolicyV1, IdentityGzipEntityDecoderV1,
+};
 pub use evidence::{
     CanonicalLogicalRow, LogicalField, LogicalRowError, LogicalSchema, LogicalType, LogicalValue,
     ProjectionEvidence, RequiredProjection, TableId,
@@ -99,12 +105,14 @@ pub use loss::{
     loss_saturation_slot_id_v1,
 };
 pub use loss_ledger::{
-    FixedLossLedgerV1, LossLedgerAllocationShapeV1, LossLedgerError, LossLedgerLimitsV1,
-    LossLedgerRecordOutcomeV1, LossLedgerViewV1,
+    FixedLossLedgerV1, FrozenLossFramesV1, LossFrameIdentityV1, LossLedgerAllocationShapeV1,
+    LossLedgerError, LossLedgerFreezePlanV1, LossLedgerLimitsV1, LossLedgerRecordOutcomeV1,
+    LossLedgerViewV1, UnsequencedLossV1,
 };
 pub use manifest::{
     ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
-    GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
+    GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, SessionAnchorV1,
+    TimeDomain,
 };
 pub use object_store::{
     ArchiveObjectStore, ArchiveStoreCapabilities, ArchiveStoreError, CreateReceipt,

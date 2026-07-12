@@ -253,6 +253,36 @@ impl ArchiveFrameSequencerV1 {
         Ok(assigned)
     }
 
+    /// Terminalizes one source event as loss without assigning a global record sequence.
+    ///
+    /// Attached admission can reject an issued source event before it reaches
+    /// projection. The later accepted event must still observe contiguous
+    /// source order, while the coalesced loss frame receives its global
+    /// `record_seq` only at checkpoint freeze. This transition therefore
+    /// advances exactly the current per-source expectation and no other state.
+    pub fn terminalize_source_loss(
+        &mut self,
+        source_id: &str,
+        source_record_seq: u64,
+    ) -> Result<(), FrameSequencingError> {
+        let source = self
+            .sources
+            .get_mut(source_id)
+            .ok_or_else(|| FrameSequencingError::UnknownSource(source_id.to_owned()))?;
+        if source_record_seq != source.expected_source_record_seq {
+            return Err(FrameSequencingError::SourceSequence {
+                source_id: source_id.to_owned(),
+                expected: source.expected_source_record_seq,
+                actual: source_record_seq,
+            });
+        }
+        source.expected_source_record_seq = source
+            .expected_source_record_seq
+            .checked_add(1)
+            .ok_or(FrameSequencingError::CountOverflow)?;
+        Ok(())
+    }
+
     /// Atomically project one decoded source event or leave all state unchanged.
     pub fn project_attempt(
         &mut self,
@@ -887,6 +917,50 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn source_loss_advances_only_exact_expected_source_sequence() {
+        let mut sequencer = sequencer();
+        assert_eq!(sequencer.next_record_seq(), 0);
+        sequencer.terminalize_source_loss("source-a", 0).unwrap();
+        assert_eq!(sequencer.next_record_seq(), 0);
+
+        let projected = sequencer
+            .project_attempt(
+                decode(1, b"metric 1\n"),
+                ArchiveFrameTimingV1 {
+                    parse_done_ns: 12,
+                    archive_enqueue_ns: 13,
+                },
+            )
+            .unwrap();
+        assert_eq!(projected.frame.attempt.source_record_seq, 1);
+        assert_eq!(projected.frame.attempt.record_seq, 0);
+
+        let duplicate = sequencer
+            .terminalize_source_loss("source-a", 1)
+            .unwrap_err();
+        assert!(matches!(
+            duplicate,
+            FrameSequencingError::SourceSequence {
+                expected: 2,
+                actual: 1,
+                ..
+            }
+        ));
+        let gap = sequencer
+            .terminalize_source_loss("source-a", 3)
+            .unwrap_err();
+        assert!(matches!(
+            gap,
+            FrameSequencingError::SourceSequence {
+                expected: 2,
+                actual: 3,
+                ..
+            }
+        ));
+        assert_eq!(sequencer.next_record_seq(), 1);
     }
 
     #[test]
