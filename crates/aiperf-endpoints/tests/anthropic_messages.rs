@@ -152,6 +152,14 @@ fn streaming_and_headers_match_messages_wire_contract() {
     assert!(!serialized.contains("anthropic-beta"));
     let body = MessagesEndpoint.format_payload(&request).unwrap();
     assert_eq!(body["stream"], true);
+
+    let mut empty_key = config(false);
+    empty_key.api_key = Some(String::new());
+    assert!(
+        !MessagesEndpoint
+            .format_headers(&empty_key)
+            .contains_key("x-api-key")
+    );
 }
 
 #[test]
