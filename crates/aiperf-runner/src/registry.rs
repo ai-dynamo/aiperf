@@ -30,7 +30,7 @@ use serde_json::{Map, Value, value::RawValue};
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::PhaseSpec;
+use crate::protocol::{EvaluationCapabilityInventory, PhaseSpec};
 use crate::protocol_v2::{
     AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunResourceV2, RunnerComponentId,
 };
@@ -337,6 +337,7 @@ pub struct RunnerRegistryBuilder {
     backends: BTreeMap<String, Arc<dyn RunnerBackendFactory>>,
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
+    evaluation_capabilities: EvaluationCapabilityInventory,
 }
 
 impl RunnerRegistryBuilder {
@@ -381,6 +382,25 @@ impl RunnerRegistryBuilder {
         Ok(())
     }
 
+    /// Attach capability truth derived from the same provider, host-operation,
+    /// and pair composition being frozen by this builder.
+    pub fn set_evaluation_capabilities(
+        &mut self,
+        capabilities: EvaluationCapabilityInventory,
+    ) -> Result<()> {
+        ensure!(
+            self.evaluation_capabilities.providers.is_empty()
+                && self.evaluation_capabilities.host_operations.is_empty()
+                && self
+                    .evaluation_capabilities
+                    .supported_combinations
+                    .is_empty(),
+            "runner evaluation capability inventory was configured twice"
+        );
+        self.evaluation_capabilities = capabilities;
+        Ok(())
+    }
+
     /// Freeze the complete registry after reference and descriptor validation.
     pub fn freeze(self) -> Result<RunnerRegistry> {
         for ((backend_id, workload_id), pair) in &self.pairs {
@@ -414,6 +434,7 @@ impl RunnerRegistryBuilder {
             workloads: self.workloads,
             pairs: self.pairs,
             statically_compatible_pairs,
+            evaluation_capabilities: self.evaluation_capabilities,
         })
     }
 }
@@ -424,6 +445,7 @@ pub struct RunnerRegistry {
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
     statically_compatible_pairs: BTreeSet<(String, String)>,
+    evaluation_capabilities: EvaluationCapabilityInventory,
 }
 
 impl RunnerRegistry {
@@ -449,6 +471,12 @@ impl RunnerRegistry {
             .keys()
             .map(|(backend, workload)| (backend.as_str(), workload.as_str()))
             .collect()
+    }
+
+    /// Borrow provider/operation combinations derived from this exact frozen
+    /// executable composition.
+    pub fn evaluation_capabilities(&self) -> &EvaluationCapabilityInventory {
+        &self.evaluation_capabilities
     }
 
     /// Return descriptor-compatible pairs whether or not protocol-v2 execution

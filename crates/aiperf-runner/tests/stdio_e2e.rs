@@ -90,6 +90,20 @@ fn capabilities_are_a_single_versioned_json_line() {
             .contains(&serde_json::json!("http_transport_policy"))
     );
     assert!(
+        !capabilities["run_features"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("grpc_transport_policy")),
+        "native gRPC must not masquerade as a protocol-v1 run feature"
+    );
+    assert!(
+        capabilities["supported_pairs"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(["online_grpc", "scheduled"])),
+        "native gRPC must be advertised through an executable protocol-v2 pair"
+    );
+    assert!(
         capabilities["run_features"]
             .as_array()
             .unwrap()

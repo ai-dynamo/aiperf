@@ -92,7 +92,7 @@ impl RunnerCapabilities {
             distribution_id,
             runner_registry,
             product_registry,
-            EvaluationCapabilityInventory::default(),
+            runner_registry.evaluation_capabilities().clone(),
         )
     }
 
@@ -152,7 +152,6 @@ impl RunnerCapabilities {
                 "python_accuracy_evaluator",
                 "raw_records",
                 "http_transport_policy",
-                "grpc_transport_policy",
                 "thread_per_core_execution",
                 "network_latency",
                 "server_metrics",
