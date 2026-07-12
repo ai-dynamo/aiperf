@@ -59,11 +59,11 @@ ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", 
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)
-"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.SPEED_BENCH_THROUGHPUT_16K, CustomDatasetType.SPEED_BENCH_WRITING"""
+"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.BAILIAN_TRACE, CustomDatasetType.SPEED_BENCH_THROUGHPUT_16K, CustomDatasetType.WEKA_TRACE"""
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.LLAVA_ONEVISION, PublicDatasetType.VOXPOPULI"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.MMSTAR, PublicDatasetType.WEKA_CC_TRACES_062126"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
@@ -103,7 +103,7 @@ AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGr
 
 AccuracyBenchmarkTypeStr: TypeAlias = str
 AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "AccuracyBenchmarkType", module=__name__)
-"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GSM8K, AccuracyBenchmarkType.MMLU"""
+"""Dynamic enum for accuracy benchmark. Example: AccuracyBenchmarkType.AIME, AccuracyBenchmarkType.GSM8K, AccuracyBenchmarkType.MMLU_PRO"""
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)

@@ -153,6 +153,15 @@ _REGISTRATIONS: dict[str, _Registration] = {
         ("dev", "test"),
         default_n_shots=5,
     ),
+    "mmlu-pro": _Registration(
+        "aiperf.accuracy.benchmarks.mmlu_pro:MMLUProBenchmark",
+        "aiperf.accuracy.graders.mmlu_pro:MMLUProGrader",
+        "TIGER-Lab/MMLU-Pro",
+        "b189ec765aa7ed75c8acfea42df31fdae71f97be",
+        ("validation", "test"),
+        default_n_shots=5,
+        default_enable_cot=True,
+    ),
     "aime": _Registration(
         "aiperf.accuracy.benchmarks.aime:AIMEBenchmark",
         "aiperf.accuracy.graders.math:MathGrader",
@@ -347,15 +356,7 @@ class AccuracyWorker:
         grader = request.get("grader")
         if grader is not None and (not isinstance(grader, str) or not grader.strip()):
             raise ValueError("load.grader must be a non-empty string or null")
-        if benchmark == "mmlu-pro":
-            if grader is not None:
-                raise ValueError(
-                    "MMLU-Pro is graded by its pinned Lighteval task metrics and "
-                    "does not accept a grader override"
-                )
-            await self._load_mmlu_pro(config)
-        else:
-            await self._load_inherited(benchmark, config, grader)
+        await self._load_inherited(benchmark, config, grader)
         self._benchmark = benchmark
         self._by_id = {problem.problem_id: problem for problem in self._problems}
         if len(self._by_id) != len(self._problems):
@@ -608,7 +609,7 @@ class AccuracyWorker:
         if registration is None:
             raise ValueError(
                 f"unsupported benchmark {benchmark!r}; available: "
-                + ", ".join(sorted([*_REGISTRATIONS, "mmlu-pro"]))
+                + ", ".join(sorted(_REGISTRATIONS))
             )
         n_shots = config.get("n_shots")
         if n_shots is None:
@@ -723,100 +724,6 @@ class AccuracyWorker:
             "subset": _resolved_subset(benchmark, registration, tasks),
             "revision": registration.dataset_revision,
             "evaluation_splits": list(registration.evaluation_splits),
-        }
-
-    async def _load_mmlu_pro(self, config: dict[str, Any]) -> None:
-        # Lighteval 0.13's tasks/tasks/mmlu_pro.py sets `instruction=query`.
-        # prompt_manager.py then removes that instruction from every few-shot
-        # query, yielding empty user turns. Upstream's authored endpoint command
-        # uses `mmlu_pro|0`; fail closed until the pinned evaluator fixes the task.
-        n_shots = config.get("n_shots")
-        if n_shots is None:
-            n_shots = 0
-        if not isinstance(n_shots, int) or isinstance(n_shots, bool):
-            raise ValueError("n_shots must be an integer")
-        if n_shots != 0:
-            raise ValueError(
-                "the pinned Lighteval 0.13.0 MMLU-Pro endpoint task is canonical "
-                "only at n_shots=0; its authored Doc sets instruction equal to the "
-                "full query, so PromptManager strips nonzero-shot example queries"
-            )
-        try:
-            from lighteval.tasks.lighteval_task import LightevalTask
-            from lighteval.tasks.prompt_manager import PromptManager
-            from lighteval.tasks.registry import Registry
-        except ImportError as error:
-            raise RuntimeError(
-                "MMLU-Pro requires the pinned Lighteval worker environment"
-            ) from error
-        if config.get("enable_cot") is False:
-            raise ValueError(
-                "MMLU-Pro's canonical Lighteval task requires its authored "
-                "chain-of-thought prompt; enable_cot=false is unsupported"
-            )
-        registry = Registry(tasks=f"mmlu_pro|{n_shots}")
-        tasks = registry.load_tasks()
-        if len(tasks) != 1:
-            raise RuntimeError(f"Lighteval resolved {len(tasks)} MMLU-Pro tasks")
-        LightevalTask.load_datasets(tasks, dataset_loading_processes=1)
-        task = next(iter(tasks.values()))
-        categories = config.get("tasks")
-        if categories:
-            requested = {str(category).strip() for category in categories}
-            for split in task.evaluation_split:
-                task.dataset[split] = task.dataset[split].filter(
-                    lambda row: row.get("category") in requested
-                )
-        category_by_doc_id = {
-            str(index): str(row.get("category", "mmlu_pro"))
-            for split in task.evaluation_split
-            for index, row in enumerate(task.dataset[split])
-        }
-        max_problems = _optional_positive_int(config, "max_problems")
-        docs = task.get_docs(max_samples=max_problems)
-        prompt_manager = PromptManager(
-            use_chat_template=False,
-            system_prompt=config.get("system_prompt"),
-        )
-        max_tokens_override = _optional_positive_int(config, "max_tokens")
-        problems = []
-        for index, doc in enumerate(docs):
-            messages = prompt_manager.prepare_prompt_api(doc)
-            prompt = prompt_manager.prepare_prompt(doc)
-            if not prompt.strip() or any(
-                not str(message.get("content", "")).strip() for message in messages
-            ):
-                raise RuntimeError(
-                    "pinned Lighteval produced an empty MMLU-Pro prompt message"
-                )
-            problem_id = _problem_id("mmlu-pro", index, prompt)
-            task_name = category_by_doc_id.get(str(doc.id), "mmlu_pro")
-            problems.append(
-                _Problem(
-                    problem_id=problem_id,
-                    task=task_name,
-                    prompt=prompt,
-                    messages=messages,
-                    generation=_generation_params(
-                        max_tokens_override or doc.generation_size or 32768,
-                        list(doc.stop_sequences or []),
-                    ),
-                    lighteval_doc=doc,
-                )
-            )
-        if not problems:
-            raise ValueError("MMLU-Pro returned no problems")
-        self._problems = problems
-        self._grader = None
-        self._uses_lcb_batch_grader = False
-        self._lighteval_task = task
-        self._dataset_identity = {
-            "provider": "lighteval",
-            "repository": task.dataset_path,
-            "subset": task.dataset_config_name,
-            "revision": task.dataset_revision,
-            "evaluation_splits": list(task.evaluation_split),
-            "task_version": task.version,
         }
 
     async def _grade_one(self, problem: _Problem, response: str) -> dict[str, Any]:

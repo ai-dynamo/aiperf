@@ -533,6 +533,22 @@ custom_dataset_loader:
       supports forks: and spawns: shorthand at the turn level; topology
       walk validates and stamps agent_depth and TurnMetadata.has_forks.
 
+  dynamo_trace:
+    class: aiperf.dataset.loader.recorded_graph:DynamoTraceNativeLoader
+    description: |
+      Dynamo request-trace capture compiled directly to Graph-IR by the native
+      runner. Python retains only the configuration/plugin identity.
+    metadata:
+      is_trace: true
+
+  weka_trace:
+    class: aiperf.dataset.loader.recorded_graph:WekaTraceNativeLoader
+    description: |
+      WEKA nested-agent trace compiled directly to Graph-IR by the native
+      runner. Python retains only the configuration/plugin identity.
+    metadata:
+      is_trace: true
+
   sagemaker_data_capture:
     class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader
     description: |
@@ -1501,6 +1517,13 @@ accuracy_grader:
       "####" marker when present). Compares numerically so "24" and "24.0"
       match. Pure-regex; no lighteval install required.
 
+  mmlu_pro:
+    class: aiperf.accuracy.graders.mmlu_pro:MMLUProGrader
+    description: |
+      MMLU-Pro grader. Extracts the final A-J letter from chain-of-thought
+      output via the upstream 3-tier cascade ("answer is (X)" ->
+      "Answer: X" -> last lone A-J letter). No optional dependencies.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1516,6 +1539,18 @@ accuracy_benchmark:
     metadata:
       default_grader: multiple_choice
       default_n_shots: 5
+
+  mmlu_pro:
+    class: aiperf.accuracy.benchmarks.mmlu_pro:MMLUProBenchmark
+    description: |
+      MMLU-Pro benchmark (TIGER-Lab/MMLU-Pro): 14 categories, up to 10 options
+      (A-J), chain-of-thought prompting at parity with the TIGER-AI-Lab
+      evaluate_from_api.py reference. Answer extracted via the "The answer is
+      (X)" cascade.
+    metadata:
+      default_grader: mmlu_pro
+      default_n_shots: 5
+      default_enable_cot: true
 
   aime:
     class: aiperf.accuracy.benchmarks.aime:AIMEBenchmark
@@ -1731,6 +1766,17 @@ communication_client:
 # local file. Selected via --public-dataset configuration option.
 # =============================================================================
 public_dataset_loader:
+  weka_cc_traces_062126:
+    class: aiperf.dataset.loader.recorded_graph:WekaTraceNativeLoader
+    description: |
+      Revision-pinned SemiAnalysis nested-agent WEKA traces. Rust loads the
+      selected Hugging Face rows and compiles each trace directly to Graph-IR.
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126
+      hf_split: train
+      streaming: true
+      has_timing_data: true
+
   exgentic_v2:
     class: aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader
     description: |
