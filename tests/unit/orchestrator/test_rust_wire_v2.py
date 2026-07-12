@@ -238,48 +238,6 @@ def test_dag_jsonl_rows_enter_graph_workload_once_without_conversion(
     assert "graph_ir" not in workload["config"]["dataset"]
 
 
-def test_v1_dag_jsonl_skips_legacy_dataset_timing_and_zmq_resolution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    authored_rows = [
-        {
-            "session_id": "root",
-            "turns": [{"messages": [{"role": "user", "content": "root"}]}],
-        }
-    ]
-    run = _run(
-        tmp_path / "graph-target",
-        dataset={
-            "type": "file",
-            "format": "dag_jsonl",
-            "records": authored_rows,
-        },
-    )
-
-    def fail_if_called(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("legacy resolver touched a runner-owned dag_jsonl program")
-
-    monkeypatch.setattr(
-        "aiperf.config.resolution.resolvers.DatasetResolver.resolve",
-        fail_if_called,
-    )
-    monkeypatch.setattr(
-        "aiperf.config.resolution.resolvers.TimingResolver.resolve",
-        fail_if_called,
-    )
-    monkeypatch.setattr(
-        "aiperf.config.resolution.resolvers.CommConfigResolver.resolve",
-        fail_if_called,
-    )
-
-    rust_executor.RustSubprocessExecutor._resolve_run(run)
-    dataset = build_run_request(run)["run"]["dataset"]
-
-    assert dataset["format"] == "dag_jsonl"
-    assert dataset["sampling"] == "sequential"
-    assert dataset["records"] == authored_rows
-
-
 def test_projection_never_reads_resolved_or_performs_resolver_io(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -628,9 +586,7 @@ def test_runner_installation_uses_only_advertised_distribution_identity(
         missing_identity.project_authored_request(run, operation="validate")
 
 
-def test_executor_selects_advertised_v2_pair_without_legacy_resolution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_executor_loads_only_the_advertised_v2_pair_adapter(tmp_path: Path) -> None:
     run = _run(tmp_path / "authored-only")
     installation = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
@@ -645,23 +601,18 @@ def test_executor_selects_advertised_v2_pair_without_legacy_resolution(
         base_dir=tmp_path,
         installation=installation,
     )
-    monkeypatch.setattr(
-        executor,
-        "_resolve_run",
-        lambda _run: pytest.fail("an executable v2 pair entered legacy resolution"),
-    )
-
     request = executor._request_for_run(run)
 
     assert request["protocol_version"] == 2
     assert request["run"]["backend"]["type"] == "online_http"
     assert request["run"]["workload"]["type"] == "scheduled"
+    assert not hasattr(rust_executor.RustSubprocessExecutor, "_resolve_run")
+    assert not hasattr(rust_executor, "build_run_request")
+    assert not hasattr(rust_executor, "validate_v1_selection")
     assert not run.artifact_dir.exists()
 
 
-def test_unsupported_v2_only_pair_fails_before_every_v1_helper(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unsupported_pair_fails_at_exact_v2_image_preflight(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "must-not-exist",
         backend={"type": "dynamo_offline", "config": {}},
@@ -678,13 +629,6 @@ def test_unsupported_v2_only_pair_fails_before_every_v1_helper(
         base_dir=tmp_path,
         installation=installation,
     )
-
-    def fail_if_called(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("v2-only selection entered a protocol-v1 helper")
-
-    monkeypatch.setattr(rust_executor, "validate_v1_selection", fail_if_called)
-    monkeypatch.setattr(rust_executor, "build_run_request", fail_if_called)
-    monkeypatch.setattr(executor, "_resolve_run", fail_if_called)
 
     with pytest.raises(
         RuntimeError,
@@ -727,7 +671,9 @@ def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
         )
 
 
-def test_v1_projection_remains_the_execution_compatibility_path(tmp_path: Path) -> None:
+def test_v1_wire_projection_remains_an_isolated_compatibility_utility(
+    tmp_path: Path,
+) -> None:
     request = build_run_request(_run(tmp_path))
 
     assert request["protocol_version"] == 1
@@ -749,31 +695,30 @@ def test_v1_fails_closed_for_v2_only_selections(
         build_run_request(_run(tmp_path, **selection))
 
 
-def test_v1_selection_failure_precedes_resolver_side_effects(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_executor_never_reinterprets_an_unsupported_pair_as_v1(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "not-created",
         backend={"type": "future_backend", "config": {"node": "remote"}},
     )
     installation = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
-        capabilities={"endpoint_types": ["future_endpoint"]},
+        capabilities={
+            "protocol_versions": [2],
+            "distribution_id": _DISTRIBUTION_A,
+            "supported_pairs": [["online_http", "scheduled"]],
+            "endpoint_types": ["future_endpoint"],
+        },
     )
     executor = rust_executor.RustSubprocessExecutor(
         base_dir=tmp_path,
         installation=installation,
     )
-    monkeypatch.setattr(
-        executor,
-        "_resolve_run",
-        lambda _run: pytest.fail("v2-only selection reached resolver side effects"),
-    )
-
     result = executor.execute_sync(run)
 
     assert result.success is False
-    assert "protocol v1" in (result.error or "")
+    assert "executable protocol-v2 pair ('future_backend', 'scheduled')" in (
+        result.error or ""
+    )
     assert not run.artifact_dir.exists()
 
 

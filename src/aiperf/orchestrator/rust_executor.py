@@ -23,12 +23,7 @@ from aiperf.orchestrator.native_report import (
     project_native_summary,
 )
 from aiperf.orchestrator.runner_installation import RunnerInstallation
-from aiperf.orchestrator.rust_wire import (
-    RUNNER_PROTOCOL_V2,
-    RUNNER_PROTOCOL_VERSION,
-    build_run_request,
-    validate_v1_selection,
-)
+from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_V2, RUNNER_PROTOCOL_VERSION
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
@@ -78,11 +73,7 @@ class RustSubprocessExecutor(RunExecutor):
                 completed.stdout,
                 run,
                 protocol_version=request["protocol_version"],
-                distribution_id=(
-                    self.installation.distribution_id
-                    if request["protocol_version"] == RUNNER_PROTOCOL_V2
-                    else None
-                ),
+                distribution_id=self.installation.distribution_id,
                 returncode=completed.returncode,
                 stderr=completed.stderr,
             )
@@ -103,76 +94,18 @@ class RustSubprocessExecutor(RunExecutor):
             )
 
     def _request_for_run(self, run: BenchmarkRun) -> dict[str, Any]:
-        """Select v2 only for a pair executable in this exact runner image."""
-        versions = self.installation.capabilities.get("protocol_versions")
-        if isinstance(versions, list) and RUNNER_PROTOCOL_V2 in versions:
-            authored = self.installation.project_authored_request(
-                run,
-                operation="execute",
-            )
-            backend = authored["run"]["backend"]["type"]
-            workload = authored["run"]["workload"]["type"]
-            if self.installation.supports_pair(backend, workload):
-                return authored
-            if _requires_protocol_v2(run.cfg):
-                # Let the exact-image capability seam own the diagnostic. A
-                # v2-only selection must never be reinterpreted by protocol v1
-                # or touch its resolver chain merely because this image lacks
-                # the requested executable pair.
-                self.installation.preflight_request(authored)
-                raise AssertionError("v2 pair preflight accepted an unsupported pair")
+        """Project one authored v2 run and bind it to an executable pair.
 
-        # Compatibility v1 still needs Python resolution. Endpoint capability
-        # checking and v1-only selection rejection happen before resolvers,
-        # which may create artifacts or warm tokenizer caches.
-        self.installation.preflight_endpoint(str(run.cfg.endpoint.type))
-        validate_v1_selection(run.cfg)
-        self._resolve_run(run)
-        return build_run_request(run)
-
-    @staticmethod
-    def _resolve_run(run: BenchmarkRun) -> None:
-        # ``dag_jsonl`` is an authored graph program, not a linear Python
-        # dataset. The runner's direct GraphInputAdapter owns its sole parse,
-        # topology validation, root selection, and Graph-IR lowering. Running
-        # DatasetResolver here would parse it once in Python, replace authored
-        # sequential sampling with the legacy loader preference, then make Rust
-        # parse it again. TimingResolver depends on that legacy dataset result,
-        # and CommConfigResolver exists only for the removed ZMQ execution path.
-        dataset = run.cfg.get_default_dataset()
-        if str(getattr(dataset, "format", "")) == "dag_jsonl":
-            from aiperf.config.resolution.resolvers import (
-                ArtifactDirResolver,
-                ConfigResolverChain,
-                GpuMetricsResolver,
-                TokenizerResolver,
-            )
-
-            ConfigResolverChain(
-                [
-                    ArtifactDirResolver(),
-                    TokenizerResolver(),
-                    GpuMetricsResolver(),
-                ]
-            ).resolve_all(run)
-            return
-
-        # Linear workloads retain the compatibility resolver chain until the
-        # strict authored protocol-v2 request replaces protocol v1.
-        from aiperf.config.resolution.resolvers import build_default_resolver_chain
-
-        build_default_resolver_chain().resolve_all(run)
-
-
-def _requires_protocol_v2(cfg: Any) -> bool:
-    """Return whether authored state cannot be represented by protocol v1."""
-    return (
-        str(cfg.backend.type) != "online_http"
-        or bool(cfg.backend.config)
-        or cfg.workload is not None
-        or bool(cfg.endpoint_profiles)
-        or cfg.endpoint.wait_for_model_timeout > 0
-    )
+        Python never resolves runner-owned inputs and never projects a second
+        protocol shape. The selected pair adapter is therefore the only load
+        boundary between Config v2 and its prepared Rust harness.
+        """
+        authored = self.installation.project_authored_request(
+            run,
+            operation="execute",
+        )
+        self.installation.preflight_request(authored)
+        return authored
 
 
 def _parse_terminal(

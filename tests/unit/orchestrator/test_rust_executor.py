@@ -29,10 +29,17 @@ def _completed(payload: object, *, returncode: int = 0) -> subprocess.CompletedP
 def _capabilities(*endpoint_types: str) -> dict[str, object]:
     return {
         "event": "runner_capabilities",
-        "protocol_versions": [1],
+        "protocol_versions": [2],
+        "capabilities_schema_version": 2,
         "report_schema_version": "2.0",
         "distribution_id": _TEST_DISTRIBUTION_ID,
         "endpoint_types": list(endpoint_types),
+        "supported_pairs": [["online_http", "scheduled"]],
+        "statically_compatible_pairs": [["online_http", "scheduled"]],
+        "backends": [{"id": "online_http"}],
+        "workloads": [{"id": "scheduled"}],
+        "endpoints": [{"id": endpoint} for endpoint in endpoint_types],
+        "extensions": [],
         "dataset_types": ["synthetic"],
         "phase_types": ["concurrency"],
         "phase_features": [],
@@ -44,20 +51,7 @@ def _capabilities(*endpoint_types: str) -> dict[str, object]:
 
 
 def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) -> None:
-    response = {
-        "event": "runner_capabilities",
-        "protocol_versions": [1],
-        "report_schema_version": "2.0",
-        "distribution_id": _TEST_DISTRIBUTION_ID,
-        "endpoint_types": ["chat"],
-        "dataset_types": ["synthetic"],
-        "phase_types": ["concurrency"],
-        "phase_features": [],
-        "run_features": [],
-        "telemetry_source_types": [],
-        "server_metrics_formats": [],
-        "runner_version": "0.0.0",
-    }
+    response = _capabilities("chat")
     monkeypatch.setattr(
         runner_installation,
         "_runner_distribution_id",
@@ -71,7 +65,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
-        ("protocol_versions", [2], "does not support protocol 1"),
+        ("protocol_versions", [1], "does not support protocol 2"),
         ("report_schema_version", "3.0", "report schema '3.0' is incompatible"),
         ("event", "something_else", "unknown capability response"),
     ],
@@ -79,19 +73,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
 def test_capabilities_reject_incompatible_runner(
     monkeypatch, field: str, value: object, match: str
 ) -> None:
-    response = {
-        "event": "runner_capabilities",
-        "protocol_versions": [1],
-        "report_schema_version": "2.0",
-        "distribution_id": _TEST_DISTRIBUTION_ID,
-        "endpoint_types": [],
-        "dataset_types": [],
-        "phase_types": [],
-        "phase_features": [],
-        "run_features": [],
-        "telemetry_source_types": [],
-        "server_metrics_formats": [],
-    }
+    response = _capabilities()
     response[field] = value
     monkeypatch.setattr(
         runner_installation,
@@ -196,19 +178,8 @@ def test_capabilities_reject_distribution_identity_mismatch(
 ) -> None:
     binary = tmp_path / "aiperf-runner"
     binary.write_bytes(b"selected-runner-image")
-    response = {
-        "event": "runner_capabilities",
-        "protocol_versions": [1],
-        "report_schema_version": "2.0",
-        "distribution_id": "blake3:" + "0" * 64,
-        "endpoint_types": [],
-        "dataset_types": [],
-        "phase_types": [],
-        "phase_features": [],
-        "run_features": [],
-        "telemetry_source_types": [],
-        "server_metrics_formats": [],
-    }
+    response = _capabilities()
+    response["distribution_id"] = "blake3:" + "0" * 64
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     with pytest.raises(RuntimeError, match="does not match.*exact selected"):
@@ -277,21 +248,18 @@ def test_runner_installation_preflights_every_fixed_plan_endpoint() -> None:
         installation.preflight_plan(plan)
 
 
-def test_executor_rejects_endpoint_before_resolution_without_secret_leakage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_executor_rejects_v1_only_runner_without_reading_config_secrets(
+    tmp_path: Path,
 ) -> None:
+    capabilities = _capabilities("chat", "messages")
+    capabilities["protocol_versions"] = [1]
     installation = runner_installation.RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
-        capabilities=_capabilities("chat", "messages"),
+        capabilities=capabilities,
     )
     executor = rust_executor.RustSubprocessExecutor(
         base_dir=tmp_path,
         installation=installation,
-    )
-    monkeypatch.setattr(
-        executor,
-        "_resolve_run",
-        lambda _run: pytest.fail("config resolution must not run"),
     )
     run = SimpleNamespace(
         cfg=SimpleNamespace(
@@ -305,8 +273,7 @@ def test_executor_rejects_endpoint_before_resolution_without_secret_leakage(
     result = executor.execute_sync(run)
 
     assert result.success is False
-    assert "acme_chat" in result.error
-    assert "available endpoints: chat, messages" in result.error
+    assert "does not support protocol 2" in result.error
     assert "sk-never-log-me" not in result.error
 
 
@@ -361,19 +328,7 @@ def test_terminal_failure_redacts_runner_error_and_stderr(tmp_path: Path) -> Non
 def test_capabilities_require_every_typed_feature_inventory(
     monkeypatch, field: str
 ) -> None:
-    response = {
-        "event": "runner_capabilities",
-        "protocol_versions": [1],
-        "report_schema_version": "2.0",
-        "distribution_id": _TEST_DISTRIBUTION_ID,
-        "endpoint_types": [],
-        "dataset_types": [],
-        "phase_types": [],
-        "phase_features": [],
-        "run_features": [],
-        "telemetry_source_types": [],
-        "server_metrics_formats": [],
-    }
+    response = _capabilities()
     response.pop(field)
     monkeypatch.setattr(
         runner_installation,

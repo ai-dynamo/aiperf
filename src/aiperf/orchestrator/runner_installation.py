@@ -327,13 +327,12 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
             "distribution"
         )
     versions = capabilities.get("protocol_versions")
-    if not isinstance(versions, list) or RUNNER_PROTOCOL_VERSION not in versions:
+    if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
         raise RuntimeError(
-            f"aiperf-runner does not support protocol {RUNNER_PROTOCOL_VERSION}: "
+            f"aiperf-runner does not support protocol {RUNNER_PROTOCOL_V2}: "
             f"advertised {versions!r}"
         )
-    if RUNNER_PROTOCOL_V2 in versions:
-        _validate_v2_capabilities(capabilities)
+    _validate_v2_capabilities(capabilities)
     schema = capabilities.get("report_schema_version")
     if schema != _NATIVE_REPORT_SCHEMA_VERSION:
         raise RuntimeError(
