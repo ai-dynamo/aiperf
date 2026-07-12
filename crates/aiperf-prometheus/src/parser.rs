@@ -6,6 +6,7 @@
 use std::fmt::Debug;
 
 use crate::{Exposition, ExpositionFormat, ParseError, ParseLimits};
+use crate::{semantic::assemble_exposition, syntax::parse_document};
 
 /// Object-safe, IO-free parser seam for advertised exposition grammars.
 pub trait ExpositionParser: Debug + Send + Sync {
@@ -25,10 +26,10 @@ pub struct StrictExpositionParser;
 impl ExpositionParser for StrictExpositionParser {
     fn parse(
         &self,
-        _format: ExpositionFormat,
-        _exact_body: &[u8],
-        _limits: &ParseLimits,
+        format: ExpositionFormat,
+        exact_body: &[u8],
+        limits: &ParseLimits,
     ) -> Result<Exposition, ParseError> {
-        todo!("strict exposition parsing is implemented in the next logical increment")
+        assemble_exposition(format, parse_document(format, exact_body, limits)?, limits)
     }
 }
