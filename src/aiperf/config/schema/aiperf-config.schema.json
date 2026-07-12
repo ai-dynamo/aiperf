@@ -20,6 +20,7 @@
     "AccuracyBenchmarkType": {
       "enum": [
         "mmlu",
+        "mmlu_pro",
         "aime",
         "hellaswag",
         "bigbench",
@@ -151,7 +152,8 @@
         "lighteval_expr",
         "lighteval_latex",
         "lighteval_gpqa",
-        "lighteval_gsm8k"
+        "lighteval_gsm8k",
+        "mmlu_pro"
       ],
       "title": "AccuracyGraderType",
       "type": "string"
@@ -3300,7 +3302,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+                  "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
                   "title": "Path"
                 },
                 "records": {
@@ -3333,7 +3335,7 @@
                 "format": {
                   "$ref": "#/$defs/DatasetFormat",
                   "default": "single_turn",
-                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+                  "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. weka_trace / dynamo_trace: Rust-native recorded graphs. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
                 },
                 "sampling": {
                   "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -3350,7 +3352,7 @@
                     }
                   ],
                   "default": null,
-                  "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+                  "description": "Trace synthesis/transformation configuration. Allows scaling trace replay and configuring Rust-native WEKA/Dynamo graph reconstruction."
                 },
                 "entries": {
                   "anyOf": [
@@ -8764,6 +8766,8 @@
         "raw_payload",
         "inputs_json",
         "dag_jsonl",
+        "dynamo_trace",
+        "weka_trace",
         "sagemaker_data_capture",
         "multi_turn",
         "random_pool",
@@ -9580,7 +9584,7 @@
             }
           ],
           "default": null,
-          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Mutually exclusive with `records:`. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, JSON/directory WEKA traces, JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
           "title": "Path"
         },
         "records": {
@@ -9613,7 +9617,7 @@
         "format": {
           "$ref": "#/$defs/DatasetFormat",
           "default": "single_turn",
-          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace / bailian_trace / burst_gpt_trace: timestamped trace files for replay. weka_trace / dynamo_trace: Rust-native recorded graphs. sagemaker_data_capture: JSONL captured by SageMaker DataCapture. random_pool: directory of reusable prompts."
         },
         "sampling": {
           "$ref": "#/$defs/DatasetSamplingStrategy",
@@ -9630,7 +9634,7 @@
             }
           ],
           "default": null,
-          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+          "description": "Trace synthesis/transformation configuration. Allows scaling trace replay and configuring Rust-native WEKA/Dynamo graph reconstruction."
         },
         "entries": {
           "anyOf": [
@@ -13683,6 +13687,7 @@
     },
     "PublicDatasetType": {
       "enum": [
+        "weka_cc_traces_062126",
         "exgentic_v2",
         "exgentic",
         "sharegpt",
@@ -15050,7 +15055,7 @@
     },
     "SynthesisConfig": {
       "additionalProperties": false,
-      "description": "Configuration for trace synthesis/transformation.\n\nUsed with mooncake_trace format to transform production trace\ndata before replay. Allows scaling timestamps, token lengths,\nand radix tree structure.",
+      "description": "Configuration for trace synthesis/transformation.\n\nMooncake fields scale production replay timestamps, token lengths, and\nradix-tree structure. Recorded WEKA/Dynamo fields bound whole-trace\nselection, idle-gap warping, canonical native content, and corpus wrapping.",
       "properties": {
         "speedupRatio": {
           "default": 1.0,
@@ -15226,6 +15231,86 @@
           "description": "Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).",
           "title": "Maxosl",
           "x-jinja2-supported": true
+        },
+        "maxContextLength": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum per-trace input-plus-output context for recorded graph selection.",
+          "title": "Maxcontextlength",
+          "x-jinja2-supported": true
+        },
+        "allowDatasetWrap": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether a finite recorded graph corpus may wrap during selection.",
+          "title": "Allowdatasetwrap"
+        },
+        "idleGapCapSeconds": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": 60.0,
+          "description": "True-idle gap cap for weka_trace/dynamo_trace; null disables warping.",
+          "title": "Idlegapcapseconds",
+          "x-jinja2-supported": true
+        },
+        "corpus": {
+          "anyOf": [
+            {
+              "enum": [
+                "coding",
+                "sonnet"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content corpus for recorded graph prompt reconstruction.",
+          "title": "Corpus"
         }
       },
       "title": "SynthesisConfig",
