@@ -1943,42 +1943,15 @@ pub(crate) async fn build_dataset(
 ) -> Result<Dataset> {
     match dataset {
         DatasetSpec::Synthetic(spec) => {
-            let mut compose = compose_config(models, rng_root)?;
-            if let Some(prompts) = &spec.prompts {
-                compose.output_length_distribution = prompts
-                    .osl
-                    .as_ref()
-                    .map(distribution)
-                    .transpose()?
-                    .filter(|value| value.expected_value() > 0.0);
-                compose.sequence_length_distribution = prompts
-                    .sequence_distribution
-                    .as_deref()
-                    .map(sequence_length_distribution)
-                    .transpose()?;
-            }
-            compose.synthetic_config = Some(synthetic_config(spec)?);
-            let rankings = is_rankings_endpoint(endpoint_type);
-            let mut load = LoadConfig::new(DatasetSource::Inline(if rankings {
-                serde_json::json!({"__aiperf_synthetic_rankings": true})
-            } else {
-                serde_json::json!({"__aiperf_synthetic": true})
-            }));
-            load.sampling_strategy = Some(spec.sampling.clone());
-            registry
-                .dataset_formats()
-                .build_dataset(
-                    Some(if rankings {
-                        "synthetic_rankings"
-                    } else {
-                        "synthetic"
-                    }),
-                    &load,
-                    &compose,
-                    tokenizer,
-                )
-                .await
-                .map_err(Into::into)
+            build_synthetic_dataset(
+                registry,
+                spec,
+                models,
+                rng_root,
+                tokenizer,
+                is_rankings_endpoint(endpoint_type),
+            )
+            .await
         }
         DatasetSpec::File(spec) => {
             build_file_dataset(registry, spec, models, rng_root, tokenizer).await
@@ -1987,6 +1960,51 @@ pub(crate) async fn build_dataset(
             build_public_dataset(registry, spec, models, rng_root, tokenizer).await
         }
     }
+}
+
+pub(crate) async fn build_synthetic_dataset(
+    registry: &AiperfRegistry,
+    spec: &SyntheticDatasetSpec,
+    models: &ModelsSpec,
+    rng_root: RngRoot,
+    tokenizer: &dyn TextTokenizer,
+    rankings: bool,
+) -> Result<Dataset> {
+    let mut compose = compose_config(models, rng_root)?;
+    if let Some(prompts) = &spec.prompts {
+        compose.output_length_distribution = prompts
+            .osl
+            .as_ref()
+            .map(distribution)
+            .transpose()?
+            .filter(|value| value.expected_value() > 0.0);
+        compose.sequence_length_distribution = prompts
+            .sequence_distribution
+            .as_deref()
+            .map(sequence_length_distribution)
+            .transpose()?;
+    }
+    compose.synthetic_config = Some(synthetic_config(spec)?);
+    let mut load = LoadConfig::new(DatasetSource::Inline(if rankings {
+        serde_json::json!({"__aiperf_synthetic_rankings": true})
+    } else {
+        serde_json::json!({"__aiperf_synthetic": true})
+    }));
+    load.sampling_strategy = Some(spec.sampling.clone());
+    registry
+        .dataset_formats()
+        .build_dataset(
+            Some(if rankings {
+                "synthetic_rankings"
+            } else {
+                "synthetic"
+            }),
+            &load,
+            &compose,
+            tokenizer,
+        )
+        .await
+        .map_err(Into::into)
 }
 
 pub(crate) fn dataset_rng_root(dataset: &DatasetSpec, run_rng_root: RngRoot) -> RngRoot {
@@ -2019,7 +2037,7 @@ fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<ComposeConfi
     Ok(compose)
 }
 
-async fn build_file_dataset(
+pub(crate) async fn build_file_dataset(
     registry: &AiperfRegistry,
     spec: &FileDatasetSpec,
     models: &ModelsSpec,
@@ -2091,7 +2109,7 @@ async fn build_file_dataset(
         .map_err(Into::into)
 }
 
-async fn build_public_dataset(
+pub(crate) async fn build_public_dataset(
     registry: &AiperfRegistry,
     spec: &PublicDatasetSpec,
     models: &ModelsSpec,

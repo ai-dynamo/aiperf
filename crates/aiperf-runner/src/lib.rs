@@ -10,6 +10,7 @@
 
 pub mod agentic_execution;
 pub mod coordinator;
+pub mod dataset_input;
 pub mod distribution_identity;
 pub mod execute;
 mod gpu_telemetry;
