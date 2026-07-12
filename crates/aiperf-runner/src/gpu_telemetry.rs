@@ -52,6 +52,52 @@ impl GpuTelemetryRun {
             !spec.sources.is_empty(),
             "GPU telemetry requires at least one source"
         );
+        for source in &spec.sources {
+            match source {
+                GpuTelemetrySourceSpec::Dcgm { url } => {
+                    ensure!(!url.trim().is_empty(), "DCGM telemetry URL cannot be empty");
+                }
+                GpuTelemetrySourceSpec::Python {
+                    collector,
+                    url,
+                    python_executable,
+                    worker_module,
+                    ..
+                } => {
+                    ensure!(
+                        !collector.trim().is_empty(),
+                        "Python GPU telemetry collector cannot be empty"
+                    );
+                    if let Some(url) = url {
+                        ensure!(
+                            !url.trim().is_empty(),
+                            "Python GPU telemetry URL cannot be empty"
+                        );
+                    }
+                    ensure!(
+                        python_executable.is_absolute(),
+                        "GPU telemetry python_executable must be absolute"
+                    );
+                    ensure!(
+                        !worker_module.trim().is_empty(),
+                        "GPU telemetry worker_module cannot be empty"
+                    );
+                }
+            }
+        }
+
+        // Validate the complete metric catalog before supervising any source
+        // process so a local configuration error cannot strand a child.
+        let accumulator = GpuTelemetryAccumulator::new().with_additional_metric_specs(
+            spec.custom_metrics
+                .iter()
+                .map(|metric| RuntimeGpuMetricSpec {
+                    name: metric.name.clone(),
+                    header: metric.header.clone(),
+                    unit: native_unit(metric.unit),
+                    kind: GpuMetricKind::Gauge,
+                }),
+        )?;
 
         let transport = Rc::new(HttpTransport::new(
             clock.clone(),
@@ -65,7 +111,6 @@ impl GpuTelemetryRun {
         for source in &spec.sources {
             match source {
                 GpuTelemetrySourceSpec::Dcgm { url } => {
-                    ensure!(!url.trim().is_empty(), "DCGM telemetry URL cannot be empty");
                     let source = Rc::new(DcgmTelemetrySource::new(
                         clock.clone(),
                         transport.clone(),
@@ -99,16 +144,6 @@ impl GpuTelemetryRun {
                 }
             }
         }
-        let accumulator = GpuTelemetryAccumulator::new().with_additional_metric_specs(
-            spec.custom_metrics
-                .iter()
-                .map(|metric| RuntimeGpuMetricSpec {
-                    name: metric.name.clone(),
-                    header: metric.header.clone(),
-                    unit: native_unit(metric.unit),
-                    kind: GpuMetricKind::Gauge,
-                }),
-        )?;
         Ok(Self {
             sidecar: Rc::new(GpuTelemetrySidecar::new(
                 clock,
@@ -137,6 +172,12 @@ impl GpuTelemetryRun {
     pub(crate) fn write_records_jsonl(&self, path: &Path) -> Result<()> {
         self.sidecar.write_records_jsonl(path)
     }
+
+    /// Gracefully stop supervised sources when execution ends before a phase
+    /// can own their normal `finish` barrier.
+    pub(crate) async fn shutdown(&self) {
+        self.sidecar.state.shutdown_sources().await;
+    }
 }
 
 struct GpuTelemetrySidecar {
@@ -157,6 +198,7 @@ struct GpuTelemetryState {
     task: RefCell<Option<JoinHandle<()>>>,
     started: Cell<bool>,
     finished: Cell<bool>,
+    sources_shutdown: Cell<bool>,
 }
 
 impl GpuTelemetrySidecar {
@@ -181,6 +223,7 @@ impl GpuTelemetrySidecar {
                 task: RefCell::new(None),
                 started: Cell::new(false),
                 finished: Cell::new(false),
+                sources_shutdown: Cell::new(false),
             }),
         }
     }
@@ -342,14 +385,7 @@ impl GpuTelemetryState {
             }
         }
 
-        for collector in &self.candidates {
-            if let Err(error) = collector.shutdown().await {
-                eprintln!(
-                    "GPU telemetry source shutdown failed for {}: {error}",
-                    collector.endpoint_url()
-                );
-            }
-        }
+        self.shutdown_sources().await;
 
         let start_snapshots = self.start_snapshots.borrow();
         let start_ns = self
@@ -371,6 +407,20 @@ impl GpuTelemetryState {
             *self.boundary.borrow_mut() = Some(boundary);
         }
         Ok(())
+    }
+
+    async fn shutdown_sources(&self) {
+        if self.sources_shutdown.replace(true) {
+            return;
+        }
+        for collector in &self.candidates {
+            if let Err(error) = collector.shutdown().await {
+                eprintln!(
+                    "GPU telemetry source shutdown failed for {}: {error}",
+                    collector.endpoint_url()
+                );
+            }
+        }
     }
 }
 

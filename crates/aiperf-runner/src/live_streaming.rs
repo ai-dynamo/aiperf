@@ -141,6 +141,7 @@ impl PythonLiveStreamingRun {
             spec.buffer_capacity > 0,
             "live streaming buffer_capacity must be positive"
         );
+        let endpoint = live_endpoint_config(&run.endpoint)?;
 
         let mut child = Command::new(&spec.python_executable)
             .arg("-u")
@@ -168,7 +169,6 @@ impl PythonLiveStreamingRun {
             .ok_or_else(|| anyhow!("live telemetry worker stdout was not piped"))?;
         let mut stdout = BufReader::new(stdout);
 
-        let endpoint = live_endpoint_config(&run.endpoint)?;
         let initialize = InitializeEvent {
             protocol_version: RUNNER_PROTOCOL_VERSION,
             event: "initialize",

@@ -541,6 +541,10 @@ fn validate_agentic_authored_run(
     context: &RunnerRunContext,
 ) -> Result<()> {
     ensure!(
+        context.sidecar_inputs().is_empty(),
+        "agentic execution does not yet support native sidecars"
+    );
+    ensure!(
         run.models.items.len() == 1,
         "agentic workloads require exactly one model"
     );

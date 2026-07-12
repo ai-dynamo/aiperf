@@ -104,6 +104,11 @@ impl NetworkLatencyRun {
             .filter(|value| value.is_finite() && *value > 0.0)
     }
 
+    /// Whether this retained resource owns active probes rather than a fixed RTT.
+    pub(crate) fn is_active_probe(&self) -> bool {
+        self.sidecar.is_some()
+    }
+
     /// Write every active-probe sample in the Python compatibility shape.
     pub(crate) fn write_records_jsonl(&self, path: &Path) -> Result<()> {
         let Some(sidecar) = &self.sidecar else {

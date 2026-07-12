@@ -230,59 +230,55 @@ pub(crate) struct NativeRunSpec {
 /// without projecting through v1 or decoding any body a second time.
 pub(crate) enum NativeSidecarPlan {
     /// Protocol-v1 compatibility values decoded by its outer request.
-    Legacy {
-        gpu_telemetry: Option<GpuTelemetrySpec>,
-        network_latency: Option<NetworkLatencySpec>,
-        server_metrics: Option<ServerMetricsSpec>,
-        live_streaming: Option<LiveStreamingSpec>,
-    },
+    Legacy(Box<LegacyNativeSidecarInputs>),
     /// Protocol-v2 direct adapter outputs retained through execution.
     Prepared(Arc<PreparedSidecarInputs>),
+}
+
+/// Protocol-v1 compatibility sidecar values kept behind one cold-path box.
+pub(crate) struct LegacyNativeSidecarInputs {
+    gpu_telemetry: Option<GpuTelemetrySpec>,
+    network_latency: Option<NetworkLatencySpec>,
+    server_metrics: Option<ServerMetricsSpec>,
+    live_streaming: Option<LiveStreamingSpec>,
 }
 
 impl NativeSidecarPlan {
     fn gpu_telemetry(&self) -> Result<Option<&GpuTelemetrySpec>> {
         match self {
-            Self::Legacy { gpu_telemetry, .. } => Ok(gpu_telemetry.as_ref()),
+            Self::Legacy(inputs) => Ok(inputs.gpu_telemetry.as_ref()),
             Self::Prepared(inputs) => inputs.get(GPU_TELEMETRY_SIDECAR_ID),
         }
     }
 
     fn network_latency(&self) -> Result<Option<&NetworkLatencySpec>> {
         match self {
-            Self::Legacy {
-                network_latency, ..
-            } => Ok(network_latency.as_ref()),
+            Self::Legacy(inputs) => Ok(inputs.network_latency.as_ref()),
             Self::Prepared(inputs) => inputs.get(NETWORK_LATENCY_SIDECAR_ID),
         }
     }
 
     fn server_metrics(&self) -> Result<Option<&ServerMetricsSpec>> {
         match self {
-            Self::Legacy { server_metrics, .. } => Ok(server_metrics.as_ref()),
+            Self::Legacy(inputs) => Ok(inputs.server_metrics.as_ref()),
             Self::Prepared(inputs) => inputs.get(SERVER_METRICS_SIDECAR_ID),
         }
     }
 
     pub(crate) fn live_streaming(&self) -> Result<Option<&LiveStreamingSpec>> {
         match self {
-            Self::Legacy { live_streaming, .. } => Ok(live_streaming.as_ref()),
+            Self::Legacy(inputs) => Ok(inputs.live_streaming.as_ref()),
             Self::Prepared(inputs) => inputs.get(LIVE_STREAMING_SIDECAR_ID),
         }
     }
 
     fn is_empty(&self) -> bool {
         match self {
-            Self::Legacy {
-                gpu_telemetry,
-                network_latency,
-                server_metrics,
-                live_streaming,
-            } => {
-                gpu_telemetry.is_none()
-                    && network_latency.is_none()
-                    && server_metrics.is_none()
-                    && live_streaming.is_none()
+            Self::Legacy(inputs) => {
+                inputs.gpu_telemetry.is_none()
+                    && inputs.network_latency.is_none()
+                    && inputs.server_metrics.is_none()
+                    && inputs.live_streaming.is_none()
             }
             Self::Prepared(inputs) => inputs.is_empty(),
         }
@@ -551,12 +547,12 @@ impl TryFrom<RunRequest> for NativeRunPlan {
                 phases: run.phases,
                 metrics: run.metrics,
                 artifacts: run.artifacts,
-                sidecars: NativeSidecarPlan::Legacy {
+                sidecars: NativeSidecarPlan::Legacy(Box::new(LegacyNativeSidecarInputs {
                     gpu_telemetry: run.gpu_telemetry,
                     network_latency: run.network_latency,
                     server_metrics: run.server_metrics,
                     live_streaming: run.live_streaming,
-                },
+                })),
                 user_files: Vec::new(),
             },
         })
@@ -741,9 +737,17 @@ pub(crate) fn execute_native_plan_uncommitted_with_factories(
         .build()
         .context("creating native single-run Tokio runtime")?;
     let local = tokio::task::LocalSet::new();
+    let sidecar_factory = BuiltinNativeSidecarResourceFactory;
     local.block_on(&runtime, async move {
         let plan = prepare_protocol_v1_graph(plan, graph_inputs).await?;
-        prepare_and_execute_native(plan, backend_factory, graph_placement, registry).await
+        prepare_and_execute_native(
+            plan,
+            backend_factory,
+            graph_placement,
+            registry,
+            &sidecar_factory,
+        )
+        .await
     })
 }
 
@@ -759,6 +763,23 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
+    execute_prepared_native_plan_uncommitted_with_all_factories(
+        plan,
+        backend_factory,
+        graph_placement,
+        registry,
+        &BuiltinNativeSidecarResourceFactory,
+    )
+}
+
+/// Execute one fully prepared plan with sidecar resource construction injected.
+pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
+    plan: NativeRunPlan,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
+    sidecar_factory: &dyn NativeSidecarResourceFactory,
+) -> Result<NativeReport> {
     ensure!(
         !matches!(plan.run.dataset, NativeDatasetPlan::AuthoredGraph(_)),
         "prepared native execution cannot accept an authored Graph-IR source"
@@ -771,7 +792,13 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     let local = tokio::task::LocalSet::new();
     local.block_on(
         &runtime,
-        prepare_and_execute_native(plan, backend_factory, graph_placement, registry),
+        prepare_and_execute_native(
+            plan,
+            backend_factory,
+            graph_placement,
+            registry,
+            sidecar_factory,
+        ),
     )
 }
 
@@ -1043,13 +1070,174 @@ struct PreparedAccuracy {
     tokenizer: Arc<dyn TextTokenizer>,
 }
 
+/// Startup seam for native sidecar resources.
+///
+/// Preparation runs on the coordinator's `LocalSet`, may supervise extension
+/// workers, and must return the exact Clock/anchor later given to scheduling
+/// and HTTP execution. A distribution can replace resource construction
+/// without changing artifact ownership or phase execution.
+#[async_trait(?Send)]
+pub(crate) trait NativeSidecarResourceFactory: std::fmt::Debug + Send + Sync {
+    /// Prepare the complete run-owned bundle without creating local artifacts.
+    async fn prepare(&self, run: &NativeRunSpec) -> Result<PreparedNativeSidecarResources>;
+}
+
+/// Built-in native sidecar resource composition.
+#[derive(Debug)]
+pub(crate) struct BuiltinNativeSidecarResourceFactory;
+
+/// Resources prepared before the exclusive artifact target is created.
+///
+/// The bundle owns cleanup order and retains every path/fact derived during
+/// preparation so execution never reopens the authored sidecar configuration.
+pub(crate) struct PreparedNativeSidecarResources {
+    real_clock_anchor: RealClockAnchor,
+    clock: Rc<dyn Clock>,
+    gpu_telemetry: Option<GpuTelemetryRun>,
+    network_latency: Option<NetworkLatencyRun>,
+    server_metrics: Option<ServerMetricsRun>,
+    live_streaming: Option<PythonLiveStreamingRun>,
+    gpu_records_path: Option<PathBuf>,
+    network_latency_records_path: Option<PathBuf>,
+    server_metrics_jsonl_path: Option<PathBuf>,
+    server_metrics_parquet_wire_path: Option<PathBuf>,
+}
+
+#[async_trait(?Send)]
+impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
+    async fn prepare(&self, run: &NativeRunSpec) -> Result<PreparedNativeSidecarResources> {
+        let real_clock_anchor = RealClockAnchor::now();
+        let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
+        let endpoint_urls = run.endpoint.default_urls()?;
+        let gpu_spec = run.sidecars.gpu_telemetry()?;
+        let network_spec = run.sidecars.network_latency()?;
+        let server_spec = run.sidecars.server_metrics()?;
+        let live_spec = run.sidecars.live_streaming()?;
+
+        // These constructors and path checks cannot start phase tasks. Finish
+        // every fallible local step before supervising a GPU/live child.
+        let network_latency = network_spec
+            .map(|spec| {
+                NetworkLatencyRun::new(&run.benchmark_id, spec, endpoint_urls, clock.clone())
+            })
+            .transpose()?;
+        let server_metrics = server_spec
+            .map(|spec| ServerMetricsRun::new(spec, clock.clone()))
+            .transpose()?;
+        let gpu_records_path = gpu_spec
+            .map(|spec| {
+                artifact_path(
+                    &run.artifact_dir,
+                    &spec.records_path,
+                    "gpu_telemetry.records_path",
+                )
+            })
+            .transpose()?;
+        let network_latency_records_path = network_spec
+            .and_then(|spec| spec.probe.as_ref())
+            .map(|probe| {
+                artifact_path(
+                    &run.artifact_dir,
+                    &probe.records_path,
+                    "network_latency.probe.records_path",
+                )
+            })
+            .transpose()?;
+        let server_metrics_jsonl_path = server_spec
+            .and_then(|spec| spec.jsonl_path.as_ref())
+            .map(|path| artifact_path(&run.artifact_dir, path, "server_metrics.jsonl_path"))
+            .transpose()?;
+        let server_metrics_parquet_wire_path = server_spec
+            .and_then(|spec| spec.parquet_wire_path.as_ref())
+            .map(|path| artifact_path(&run.artifact_dir, path, "server_metrics.parquet_wire_path"))
+            .transpose()?;
+        let live_metrics_config = live_spec
+            .is_some()
+            .then(|| metrics_config(&run.metrics))
+            .transpose()?;
+
+        let gpu_telemetry = match gpu_spec {
+            Some(spec) => Some(GpuTelemetryRun::new(spec, clock.clone()).await?),
+            None => None,
+        };
+        let live_streaming = if live_spec.is_some() {
+            match PythonLiveStreamingRun::spawn(
+                run,
+                live_metrics_config.expect("present live spec prepared its metrics config"),
+            )
+            .await
+            {
+                Ok(worker) => Some(worker),
+                Err(error) => {
+                    eprintln!("live telemetry extension failed to start: {error:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(PreparedNativeSidecarResources {
+            real_clock_anchor,
+            clock,
+            gpu_telemetry,
+            network_latency,
+            server_metrics,
+            live_streaming,
+            gpu_records_path,
+            network_latency_records_path,
+            server_metrics_jsonl_path,
+            server_metrics_parquet_wire_path,
+        })
+    }
+}
+
+impl PreparedNativeSidecarResources {
+    fn live_sink(&self) -> Option<Rc<dyn LiveResultsSink>> {
+        self.live_streaming
+            .as_ref()
+            .map(PythonLiveStreamingRun::sink)
+    }
+
+    async fn shutdown_run_resources(&mut self) {
+        if let Some(worker) = self.live_streaming.take()
+            && let Err(error) = worker.shutdown().await
+        {
+            eprintln!("live telemetry extension failed to shut down cleanly: {error:#}");
+        }
+
+        // Server-metrics tasks belong to phase sidecars and have already
+        // drained. Drop that retained source graph before supervised GPU
+        // workers, matching the explicit run-owned cleanup order.
+        self.server_metrics.take();
+        if let Some(gpu_telemetry) = self.gpu_telemetry.take() {
+            gpu_telemetry.shutdown().await;
+        }
+        self.network_latency.take();
+    }
+}
+
 async fn prepare_and_execute_native(
     request: NativeRunPlan,
     backend_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
+    sidecar_factory: &dyn NativeSidecarResourceFactory,
 ) -> Result<NativeReport> {
+    if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
+        validate_graph_request(&request)?;
+    }
     let mut accuracy = prepare_static_accuracy(&request).await?;
+    let mut sidecars = match sidecar_factory.prepare(&request.run).await {
+        Ok(sidecars) => sidecars,
+        Err(error) => {
+            return finish_accuracy_lifecycle(
+                Err(error.context("preparing native sidecar resources")),
+                accuracy.as_mut(),
+            )
+            .await;
+        }
+    };
     let artifact_result = (|| {
         std::fs::create_dir_all(&request.run.artifact_dir).with_context(|| {
             format!(
@@ -1060,66 +1248,48 @@ async fn prepare_and_execute_native(
         materialize_user_files(&request.run.artifact_dir, &request.run.user_files)
     })();
     if let Err(error) = artifact_result {
+        sidecars.shutdown_run_resources().await;
         return finish_accuracy_lifecycle(Err(error), accuracy.as_mut()).await;
     }
-    execute_native(
+    let result = execute_native(
         request,
-        accuracy,
+        accuracy.as_mut(),
+        &sidecars,
         backend_factory,
         graph_placement,
         registry,
     )
-    .await
+    .await;
+    sidecars.shutdown_run_resources().await;
+    finish_accuracy_lifecycle(result, accuracy.as_mut()).await
 }
 
 async fn execute_native(
     request: NativeRunPlan,
-    mut accuracy: Option<PreparedAccuracy>,
+    accuracy: Option<&mut PreparedAccuracy>,
+    sidecars: &PreparedNativeSidecarResources,
     backend_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
-        validate_graph_request(&request)?;
         ensure!(
             accuracy.is_none(),
             "graph execution received prepared static-accuracy state"
         );
         return execute_graph_native(request, graph_placement, registry).await;
     }
-    let result =
-        execute_scheduled_native(request, accuracy.as_mut(), backend_factory, registry).await;
-    finish_accuracy_lifecycle(result, accuracy.as_mut()).await
+    execute_scheduled_native(request, accuracy, sidecars, backend_factory, registry).await
 }
 
 async fn execute_scheduled_native(
     request: NativeRunPlan,
     accuracy: Option<&mut PreparedAccuracy>,
+    sidecars: &PreparedNativeSidecarResources,
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    let mut live_streaming = if request.run.sidecars.live_streaming()?.is_some() {
-        match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
-            .await
-        {
-            Ok(worker) => Some(worker),
-            Err(error) => {
-                eprintln!("live telemetry extension failed to start: {error:#}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let live_sink = live_streaming.as_ref().map(PythonLiveStreamingRun::sink);
-    let result =
-        execute_native_inner(request, accuracy, live_sink, backend_factory, registry).await;
-    if let Some(worker) = live_streaming.take()
-        && let Err(error) = worker.shutdown().await
-    {
-        eprintln!("live telemetry extension failed to shut down cleanly: {error:#}");
-    }
-    result
+    execute_native_inner(request, accuracy, sidecars, backend_factory, registry).await
 }
 
 fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
@@ -1647,10 +1817,11 @@ fn finish_accuracy_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Resul
 async fn execute_native_inner(
     request: NativeRunPlan,
     mut accuracy: Option<&mut PreparedAccuracy>,
-    live_sink: Option<Rc<dyn LiveResultsSink>>,
+    sidecars: &PreparedNativeSidecarResources,
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
+    let live_sink = sidecars.live_sink();
     let rng_root = RngRoot::new(request.run.random_seed);
     let dataset_spec = match &request.run.dataset {
         NativeDatasetPlan::Linear(dataset) => Some(dataset),
@@ -1798,62 +1969,15 @@ async fn execute_native_inner(
         }
     };
 
-    let real_clock_anchor = RealClockAnchor::now();
-    let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
-    let gpu_telemetry_spec = request.run.sidecars.gpu_telemetry()?;
-    let network_latency_spec = request.run.sidecars.network_latency()?;
-    let server_metrics_spec = request.run.sidecars.server_metrics()?;
-    let gpu_telemetry = if let Some(spec) = gpu_telemetry_spec {
-        Some(GpuTelemetryRun::new(spec, clock.clone()).await?)
-    } else {
-        None
-    };
-    let network_latency = network_latency_spec
-        .map(|spec| {
-            NetworkLatencyRun::new(
-                &request.run.benchmark_id,
-                spec,
-                &endpoint_urls,
-                clock.clone(),
-            )
-        })
-        .transpose()?;
-    let server_metrics = server_metrics_spec
-        .map(|spec| ServerMetricsRun::new(spec, clock.clone()))
-        .transpose()?;
-    let gpu_records_path = gpu_telemetry_spec
-        .map(|spec| {
-            artifact_path(
-                &request.run.artifact_dir,
-                &spec.records_path,
-                "gpu_telemetry.records_path",
-            )
-        })
-        .transpose()?;
-    let network_latency_records_path = network_latency_spec
-        .and_then(|spec| spec.probe.as_ref())
-        .map(|probe| {
-            artifact_path(
-                &request.run.artifact_dir,
-                &probe.records_path,
-                "network_latency.probe.records_path",
-            )
-        })
-        .transpose()?;
-    let server_metrics_jsonl_path = server_metrics_spec
-        .and_then(|spec| spec.jsonl_path.as_ref())
-        .map(|path| artifact_path(&request.run.artifact_dir, path, "server_metrics.jsonl_path"))
-        .transpose()?;
-    let server_metrics_parquet_wire_path = server_metrics_spec
-        .and_then(|spec| spec.parquet_wire_path.as_ref())
-        .map(|path| {
-            artifact_path(
-                &request.run.artifact_dir,
-                path,
-                "server_metrics.parquet_wire_path",
-            )
-        })
-        .transpose()?;
+    let real_clock_anchor = sidecars.real_clock_anchor;
+    let clock = sidecars.clock.clone();
+    let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
+    let network_latency = sidecars.network_latency.as_ref();
+    let server_metrics = sidecars.server_metrics.as_ref();
+    let gpu_records_path = sidecars.gpu_records_path.as_ref();
+    let network_latency_records_path = sidecars.network_latency_records_path.as_ref();
+    let server_metrics_jsonl_path = sidecars.server_metrics_jsonl_path.as_ref();
+    let server_metrics_parquet_wire_path = sidecars.server_metrics_parquet_wire_path.as_ref();
     let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
         workers: request.run.workers,
         coordinator_clock: clock.clone(),
@@ -1914,14 +2038,14 @@ async fn execute_native_inner(
         }
         plan = plan.with_record_processors(record_processors);
         let mut sidecars = Vec::new();
-        if let Some(server_metrics) = &server_metrics {
+        if let Some(server_metrics) = server_metrics {
             sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
         }
         if phase.common().name == "profiling" {
-            if let Some(gpu_telemetry) = &gpu_telemetry {
+            if let Some(gpu_telemetry) = gpu_telemetry {
                 sidecars.push(gpu_telemetry.sidecar());
             }
-            if let Some(network_latency) = &network_latency
+            if let Some(network_latency) = network_latency
                 && let Some(sidecar) = network_latency.sidecar()
             {
                 sidecars.push(sidecar);
@@ -1956,9 +2080,9 @@ async fn execute_native_inner(
     for record in &captured {
         accumulator.process_record(&record.ingest);
     }
-    if let Some(network_latency) = &network_latency {
+    if let Some(network_latency) = network_latency {
         let mean_rtt_ns = network_latency.mean_rtt_ns();
-        if network_latency_spec.is_some_and(|spec| spec.probe.is_some()) && mean_rtt_ns.is_none() {
+        if network_latency.is_active_probe() && mean_rtt_ns.is_none() {
             eprintln!(
                 "network latency calibration collected no successful probes; adjusted metrics are omitted"
             );
@@ -1967,7 +2091,7 @@ async fn execute_native_inner(
     }
     let mut profiling_metrics =
         accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
-    if let Some(gpu_telemetry) = &gpu_telemetry {
+    if let Some(gpu_telemetry) = gpu_telemetry {
         let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
         let concurrency = request
             .run
@@ -1980,7 +2104,7 @@ async fn execute_native_inner(
             .summarize(total_output_tokens, concurrency)
             .attach_to(&mut profiling_metrics);
     }
-    let profiling_server_summary = server_metrics.as_ref().map(|server_metrics| {
+    let profiling_server_summary = server_metrics.map(|server_metrics| {
         server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
     });
     let warmup = phased
@@ -1988,13 +2112,11 @@ async fn execute_native_inner(
         .iter()
         .any(|report| report.kind == PhaseKind::Warmup)
         .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
-    let warmup_server_summary =
-        server_metrics
-            .as_ref()
-            .filter(|_| warmup.is_some())
-            .map(|server_metrics| {
-                server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
-            });
+    let warmup_server_summary = server_metrics
+        .filter(|_| warmup.is_some())
+        .map(|server_metrics| {
+            server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
+        });
     if let Some(records_path) = &request.run.artifacts.records_path {
         let records_path = artifact_path(&request.run.artifact_dir, records_path, "records_path")?;
         write_records_jsonl(
@@ -2012,22 +2134,21 @@ async fn execute_native_inner(
         let outputs_path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&outputs_path, &captured, &metrics_config)?;
     }
-    if let (Some(gpu_telemetry), Some(gpu_records_path)) = (&gpu_telemetry, &gpu_records_path) {
+    if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
     }
     if let (Some(network_latency), Some(records_path)) =
-        (&network_latency, &network_latency_records_path)
+        (network_latency, network_latency_records_path)
     {
         network_latency.write_records_jsonl(records_path)?;
     }
-    if let (Some(server_metrics), Some(path)) = (&server_metrics, &server_metrics_jsonl_path) {
+    if let (Some(server_metrics), Some(path)) = (server_metrics, server_metrics_jsonl_path) {
         server_metrics.write_slim_jsonl(path)?;
     }
-    if let (Some(server_metrics), Some(path)) = (&server_metrics, &server_metrics_parquet_wire_path)
-    {
+    if let (Some(server_metrics), Some(path)) = (server_metrics, server_metrics_parquet_wire_path) {
         server_metrics.write_parquet_wire_jsonl(path)?;
     }
-    let server_metrics_report = server_metrics.as_ref().and_then(|server_metrics| {
+    let server_metrics_report = server_metrics.and_then(|server_metrics| {
         profiling_server_summary.as_ref().map(|profiling| {
             server_metrics.report_metadata(profiling, warmup_server_summary.as_ref())
         })
@@ -3863,6 +3984,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct RejectingSidecarFactory {
+        artifact_target: PathBuf,
+        preparations: Arc<AtomicUsize>,
+    }
+
+    #[async_trait(?Send)]
+    impl NativeSidecarResourceFactory for RejectingSidecarFactory {
+        async fn prepare(&self, _run: &NativeRunSpec) -> Result<PreparedNativeSidecarResources> {
+            assert!(
+                !self.artifact_target.exists(),
+                "sidecar preparation must precede artifact creation"
+            );
+            self.preparations.fetch_add(1, Ordering::SeqCst);
+            bail!("intentional sidecar preparation failure")
+        }
+    }
+
     struct RecordingGraphPlacement {
         builds: Arc<AtomicUsize>,
         traces: Arc<AtomicUsize>,
@@ -3885,6 +4024,67 @@ mod tests {
 
     struct RecordingGraphBackend {
         traces: Arc<AtomicUsize>,
+    }
+
+    #[test]
+    fn sidecar_resource_factory_finishes_before_artifact_creation() {
+        let root = tempfile::tempdir().unwrap();
+        let artifact_target = root.path().join("not-created");
+        let request: RunRequest = serde_json::from_value(json!({
+            "protocol_version": 1,
+            "run": {
+                "benchmark_id": "sidecar-preparation-order",
+                "artifact_dir": artifact_target.clone(),
+                "models": {"items": [{"name": "fixture-model"}]},
+                "endpoint": {
+                    "urls": ["http://must-not-be-contacted.invalid"],
+                    "type": "chat",
+                    "streaming": true
+                },
+                "dataset": {
+                    "type": "synthetic",
+                    "entries": 1,
+                    "prompts": {
+                        "isl": {"value": 1.0},
+                        "osl": {"value": 1.0}
+                    }
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "requests": 1,
+                    "concurrency": 1
+                }],
+                "metrics": {},
+                "artifacts": {}
+            }
+        }))
+        .unwrap();
+        let plan = NativeRunPlan::try_from(request).unwrap();
+        let preparations = Arc::new(AtomicUsize::new(0));
+        let factory = RejectingSidecarFactory {
+            artifact_target: artifact_target.clone(),
+            preparations: preparations.clone(),
+        };
+        let registry = AiperfRegistry::builtin().unwrap();
+
+        let error = execute_prepared_native_plan_uncommitted_with_all_factories(
+            plan,
+            &UnusedHttpPlacement,
+            &NativeRunnerGraphPlacementFactory,
+            &registry,
+            &factory,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("preparing native sidecar resources")
+        );
+        assert_eq!(preparations.load(Ordering::SeqCst), 1);
+        assert!(!artifact_target.exists());
     }
 
     #[async_trait::async_trait(?Send)]
