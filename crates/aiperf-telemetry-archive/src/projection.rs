@@ -120,6 +120,8 @@ pub struct MetricFamilyRowV1 {
     pub archive_id: ArchiveId,
     /// Collection-session UUID bytes.
     pub session_id: SessionId,
+    /// Physical source identity.
+    pub source_id: String,
     /// Terminal frame identity.
     pub frame_id: FrameId,
     /// Stable scrape batch identity.
@@ -305,6 +307,7 @@ pub fn project_exposition_v1(
         rows.families.push(MetricFamilyRowV1 {
             archive_id: context.archive_id,
             session_id: context.session_id,
+            source_id: context.source_id.to_owned(),
             frame_id: context.frame_id,
             batch_id: context.batch_id,
             record_seq: context.record_seq,

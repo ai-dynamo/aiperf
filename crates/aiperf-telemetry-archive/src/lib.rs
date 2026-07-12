@@ -9,6 +9,7 @@
 //! provider adapters consume these types rather than defining competing frame,
 //! manifest, receipt, or content-addressing rules.
 
+pub mod attempt;
 pub mod boundary;
 pub mod canonical_json;
 pub mod descriptor;
@@ -24,6 +25,9 @@ pub mod spool;
 pub mod time;
 pub mod wal;
 
+pub use attempt::{
+    ArchiveScrapeFrameV1, ArchiveScrapeRecordV1, AttemptValidationError, ScrapeReasonV1,
+};
 pub use boundary::{
     BoundaryCapturePlan, BoundaryPlanError, BoundaryPlanRegistry, BoundaryReference,
     BoundaryReferenceKey, BoundaryRole, SealedBoundaryCapturePlan, SourceBoundarySnapshotCommand,
