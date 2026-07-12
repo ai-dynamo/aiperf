@@ -82,6 +82,13 @@ pub trait RunnerGraphPlacementFactory: Send + Sync {
 
 /// Worker-to-coordinator facts emitted by a graph execution placement.
 pub(crate) enum RunnerGraphExecutionEvent {
+    /// One node crossed its first meaningful token edge.
+    FirstToken {
+        /// Unique root execution-instance identity.
+        trace_id: String,
+        /// Native request identity used to reject duplicate edges.
+        uuid: Uuid,
+    },
     /// One node reached a transport terminal and has a complete native record.
     Record(Box<CapturedRecord>),
     /// One admitted root trace reached its placement terminal.
@@ -917,6 +924,8 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
             usize::try_from(input_tokens).unwrap_or(usize::MAX),
             max_output_tokens,
         );
+        let first_token_emitted = Cell::new(false);
+        let first_token_error = RefCell::new(None);
         let collected = transport
             .dispatch_prepared_turn_collect_record(
                 PreparedHttpTurn {
@@ -926,9 +935,23 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     endpoint_aware: true,
                 },
                 self.observer.as_ref(),
-                &|_| on_first_token(),
+                &|_| {
+                    if !first_token_emitted.replace(true)
+                        && let Err(error) =
+                            self.events.emit(RunnerGraphExecutionEvent::FirstToken {
+                                trace_id: self.trace_id.clone(),
+                                uuid,
+                            })
+                    {
+                        *first_token_error.borrow_mut() = Some(error);
+                    }
+                    on_first_token();
+                },
             )
             .await?;
+        if let Some(error) = first_token_error.into_inner() {
+            return Err(anyhow!("emitting graph first-token event: {error}"));
+        }
         let outcome = collected.outcome;
         self.observer.record_response(
             uuid,
@@ -943,7 +966,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         let ordinal = self.emitted_records.get();
         let ingest = self
             .observer
-            .snapshot_record(uuid, ordinal)
+            .drain_terminal_record(uuid, ordinal)
             .ok_or_else(|| {
                 anyhow!(
                     "graph trace {:?} could not snapshot terminal node {node_id:?}",
@@ -979,11 +1002,11 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
 
 impl RunnerGraphSink {
     fn verify_finalized_records(&self) -> Result<()> {
-        let finalized = self.observer.finish_with_records().records.len();
+        let (arrivals, retained) = self.observer.record_counts();
         let emitted = usize::try_from(self.emitted_records.get()).unwrap_or(usize::MAX);
         ensure!(
-            finalized == emitted,
-            "graph trace {:?} finalized {finalized} metric records after emitting {emitted}",
+            retained == 0 && arrivals == emitted,
+            "graph trace {:?} retained {retained} of {arrivals} metric records after emitting {emitted}",
             self.trace_id
         );
         Ok(())
