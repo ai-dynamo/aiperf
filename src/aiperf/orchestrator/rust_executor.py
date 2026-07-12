@@ -252,6 +252,11 @@ def _require_request_capabilities(
                 "telemetry_source_types",
                 source["type"],
             )
+    if "network_latency" in run:
+        network_latency = run["network_latency"]
+        if not isinstance(network_latency, dict):
+            raise ValueError("native run network_latency must be an object")
+        _require_capability(capabilities, "run_features", "network_latency")
 
 
 def _require_capability(

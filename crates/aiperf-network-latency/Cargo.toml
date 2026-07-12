@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-network-latency"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Clock-injected TCP-connect RTT calibration for AIPerf."
+
+[dependencies]
+aiperf-clock.workspace = true
+serde.workspace = true
+tokio.workspace = true
+url.workspace = true

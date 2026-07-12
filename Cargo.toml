@@ -19,6 +19,7 @@ aiperf-dataset = { path = "crates/aiperf-dataset" }
 aiperf-endpoints = { path = "crates/aiperf-endpoints" }
 aiperf-extensions = { path = "crates/aiperf-extensions" }
 aiperf-metrics = { path = "crates/aiperf-metrics" }
+aiperf-network-latency = { path = "crates/aiperf-network-latency" }
 aiperf-rng = { path = "crates/aiperf-rng" }
 aiperf-transport = { path = "crates/aiperf-transport" }
 

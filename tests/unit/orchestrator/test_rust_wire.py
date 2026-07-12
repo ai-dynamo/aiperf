@@ -132,6 +132,32 @@ def test_projects_gpu_telemetry_defaults_custom_urls_and_disable(tmp_path) -> No
     assert "gpu_telemetry" not in build_run_request(run)["run"]
 
 
+def test_projects_active_and_fixed_network_latency_policy(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.network_latency.enabled = True
+    run.cfg.network_latency.ping_interval = 0.025
+
+    network_latency = build_run_request(run)["run"]["network_latency"]
+
+    assert network_latency == {
+        "probe": {
+            "ping_interval_ns": 25_000_000,
+            "connect_timeout_ns": 5_000_000_000,
+            "complete_topup_timeout_ns": 3_000_000_000,
+            "min_successful_samples": 5,
+            "records_path": "profile_export_network_latency.jsonl",
+        }
+    }
+
+    run.cfg.network_latency.mean_ms = 2.5
+    assert build_run_request(run)["run"]["network_latency"] == {
+        "mean_rtt_ns": 2_500_000
+    }
+
+    run.cfg.network_latency.enabled = False
+    assert "network_latency" not in build_run_request(run)["run"]
+
+
 def test_projects_custom_dcgm_through_the_canonical_python_source(tmp_path) -> None:
     from aiperf.config.resolution.resolvers import GpuMetricsResolver
 

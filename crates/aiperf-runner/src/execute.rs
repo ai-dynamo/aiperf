@@ -81,6 +81,7 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::gpu_telemetry::GpuTelemetryRun;
+use crate::network_latency::NetworkLatencyRun;
 use crate::protocol::{
     AccuracySpec, AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec,
     DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
@@ -170,6 +171,18 @@ fn validate_request(request: &RunRequest) -> Result<()> {
                 .count()
                 == 1,
             "GPU telemetry requires exactly one profiling phase"
+        );
+    }
+    if request.run.network_latency.is_some() {
+        ensure!(
+            request
+                .run
+                .phases
+                .iter()
+                .filter(|phase| phase.common().name == "profiling")
+                .count()
+                == 1,
+            "network latency calibration requires exactly one profiling phase"
         );
     }
     Ok(())
@@ -315,6 +328,19 @@ async fn execute_native_inner(
     } else {
         None
     };
+    let network_latency = request
+        .run
+        .network_latency
+        .as_ref()
+        .map(|spec| {
+            NetworkLatencyRun::new(
+                &request.run.benchmark_id,
+                spec,
+                &request.run.endpoint.urls,
+                clock.clone(),
+            )
+        })
+        .transpose()?;
     let gpu_records_path = request
         .run
         .gpu_telemetry
@@ -324,6 +350,19 @@ async fn execute_native_inner(
                 &request.run.artifact_dir,
                 &spec.records_path,
                 "gpu_telemetry.records_path",
+            )
+        })
+        .transpose()?;
+    let network_latency_records_path = request
+        .run
+        .network_latency
+        .as_ref()
+        .and_then(|spec| spec.probe.as_ref())
+        .map(|probe| {
+            artifact_path(
+                &request.run.artifact_dir,
+                &probe.records_path,
+                "network_latency.probe.records_path",
             )
         })
         .transpose()?;
@@ -613,10 +652,19 @@ async fn execute_native_inner(
             .with_resources(resources)
             .with_record_processors(record_processors)
             .with_controller(controller);
-        if phase.common().name == "profiling"
-            && let Some(gpu_telemetry) = &gpu_telemetry
-        {
-            plan = plan.with_sidecars(vec![gpu_telemetry.sidecar()]);
+        if phase.common().name == "profiling" {
+            let mut sidecars = Vec::new();
+            if let Some(gpu_telemetry) = &gpu_telemetry {
+                sidecars.push(gpu_telemetry.sidecar());
+            }
+            if let Some(network_latency) = &network_latency
+                && let Some(sidecar) = network_latency.sidecar()
+            {
+                sidecars.push(sidecar);
+            }
+            if !sidecars.is_empty() {
+                plan = plan.with_sidecars(sidecars);
+            }
         }
         if let Some(extension) = runtime_extension {
             plan = plan.with_runtime_extension(extension);
@@ -641,6 +689,21 @@ async fn execute_native_inner(
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
     for record in &captured {
         accumulator.process_record(&record.ingest);
+    }
+    if let Some(network_latency) = &network_latency {
+        let mean_rtt_ns = network_latency.mean_rtt_ns();
+        if request
+            .run
+            .network_latency
+            .as_ref()
+            .is_some_and(|spec| spec.probe.is_some())
+            && mean_rtt_ns.is_none()
+        {
+            eprintln!(
+                "network latency calibration collected no successful probes; adjusted metrics are omitted"
+            );
+        }
+        accumulator.set_network_rtt_ns(mean_rtt_ns);
     }
     let mut profiling_metrics =
         accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
@@ -681,6 +744,11 @@ async fn execute_native_inner(
     }
     if let (Some(gpu_telemetry), Some(gpu_records_path)) = (&gpu_telemetry, &gpu_records_path) {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
+    }
+    if let (Some(network_latency), Some(records_path)) =
+        (&network_latency, &network_latency_records_path)
+    {
+        network_latency.write_records_jsonl(records_path)?;
     }
     let mut outcome = RunOutcome {
         run: ReportRunInfo {

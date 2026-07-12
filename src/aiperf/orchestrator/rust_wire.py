@@ -166,6 +166,9 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     gpu_telemetry = _gpu_telemetry(run)
     if gpu_telemetry is not None:
         run_wire["gpu_telemetry"] = gpu_telemetry
+    network_latency = _network_latency(run)
+    if network_latency is not None:
+        run_wire["network_latency"] = network_latency
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
 
 
@@ -239,6 +242,44 @@ def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
     return result
 
 
+def _network_latency(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Lower fixed or profiling-bounded RTT calibration into native policy."""
+    config = run.cfg.network_latency
+    if not config.enabled:
+        return None
+    if config.mean_ms is not None:
+        return {
+            "mean_rtt_ns": _nonnegative_seconds_to_ns(
+                config.mean_ms / 1000.0,
+                "network latency fixed mean",
+            )
+        }
+
+    from aiperf.common.environment import Environment
+
+    return {
+        "probe": {
+            "ping_interval_ns": _positive_seconds_to_ns(
+                config.ping_interval,
+                "network latency ping interval",
+            ),
+            "connect_timeout_ns": _positive_seconds_to_ns(
+                Environment.NETWORK_LATENCY.CONNECT_TIMEOUT,
+                "network latency connect timeout",
+            ),
+            "complete_topup_timeout_ns": _nonnegative_seconds_to_ns(
+                Environment.NETWORK_LATENCY.COMPLETE_TOPUP_TIMEOUT,
+                "network latency completion top-up timeout",
+            ),
+            "min_successful_samples": Environment.NETWORK_LATENCY.MIN_SAMPLES,
+            "records_path": _artifact_relative_path(
+                run.artifact_dir,
+                run.cfg.artifacts.network_latency_export_jsonl_file,
+            ),
+        }
+    }
+
+
 def _normalize_dcgm_url(url: str) -> str:
     normalized = url.rstrip("/")
     return normalized if normalized.endswith("/metrics") else f"{normalized}/metrics"
@@ -249,6 +290,19 @@ def _positive_seconds_to_ns(value: float, label: str) -> int:
         raise RustWireError(f"{label} must be positive, got {value!r}")
     nanoseconds = round(float(value) * 1_000_000_000)
     if nanoseconds <= 0 or nanoseconds > 2**63 - 1:
+        raise RustWireError(f"{label} is outside the native nanosecond range")
+    return nanoseconds
+
+
+def _nonnegative_seconds_to_ns(value: float, label: str) -> int:
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or value < 0
+    ):
+        raise RustWireError(f"{label} must be non-negative, got {value!r}")
+    nanoseconds = round(float(value) * 1_000_000_000)
+    if nanoseconds < 0 or nanoseconds > 2**63 - 1:
         raise RustWireError(f"{label} is outside the native nanosecond range")
     return nanoseconds
 

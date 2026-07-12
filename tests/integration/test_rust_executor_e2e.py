@@ -14,6 +14,7 @@ from unittest import mock
 
 import orjson
 
+from aiperf.common.models import NetworkLatencySample
 from aiperf.common.models.record_models import MetricRecordInfo, RawRecordInfo
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.orchestrator.jsonl_loader import load_single_metric
@@ -252,6 +253,149 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -
         csv = (tmp_path / "profile_export_aiperf.csv").read_text()
         assert "GPU Power Usage (W)" in csv
         assert "GPU-python-e2e" in csv
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics(
+    tmp_path: Path,
+) -> None:
+    _ChatHandler.bodies.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 2,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 2,
+                        "concurrency": 1,
+                    },
+                    "network_latency": {
+                        "enabled": True,
+                        "ping_interval": 0.01,
+                    },
+                    "artifacts": {"dir": str(tmp_path)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="python-rust-network-rtt-e2e",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="native-network-rtt",
+            random_seed=23,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+
+        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+
+        assert result.success, result.error
+        assert result.summary_metrics["request_count"].avg == 2.0
+        assert result.summary_metrics["network_rtt"].avg > 0.0
+        assert "network_adjusted_request_latency" in result.summary_metrics
+        assert "network_adjusted_time_to_first_token" in result.summary_metrics
+
+        rows = [
+            NetworkLatencySample.model_validate(orjson.loads(line))
+            for line in (tmp_path / "profile_export_network_latency.jsonl")
+            .read_bytes()
+            .splitlines()
+        ]
+        assert len(rows) >= 5
+        assert sum(sample.success for sample in rows) >= 5
+        assert all(sample.probe_type == "tcp_connect" for sample in rows)
+        assert all(sample.target_host == "127.0.0.1" for sample in rows)
+        assert all(sample.target_port == port for sample in rows)
+
+        compatibility = orjson.loads(
+            (tmp_path / "profile_export_aiperf.json").read_bytes()
+        )
+        assert compatibility["network_rtt"]["avg"] > 0.0
+        assert "network_adjusted_request_latency" in compatibility
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_config_v2_fixed_network_rtt_bypasses_probes_and_shifts_metrics(
+    tmp_path: Path,
+) -> None:
+    _AdaptiveChatHandler.active = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AdaptiveChatHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 2,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 2,
+                        "concurrency": 1,
+                    },
+                    "network_latency": {"enabled": True, "mean_ms": 5.0},
+                    "artifacts": {"dir": str(tmp_path)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="python-rust-fixed-network-rtt-e2e",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="native-fixed-network-rtt",
+            random_seed=29,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+
+        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+
+        assert result.success, result.error
+        assert result.summary_metrics["network_rtt"].avg == 5.0
+        raw = result.summary_metrics["request_latency"]
+        adjusted = result.summary_metrics["network_adjusted_request_latency"]
+        assert raw.avg - adjusted.avg == 5.0
+        assert raw.std == adjusted.std
+        assert not (tmp_path / "profile_export_network_latency.jsonl").exists()
     finally:
         server.shutdown()
         server.server_close()

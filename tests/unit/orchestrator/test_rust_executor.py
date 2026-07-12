@@ -142,6 +142,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "python_accuracy_evaluator",
             "raw_records",
             "http_transport_policy",
+            "network_latency",
         ],
         "telemetry_source_types": ["dcgm"],
     }
@@ -163,6 +164,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             },
             "accuracy": {},
             "gpu_telemetry": {"sources": [{"type": "dcgm"}]},
+            "network_latency": {"mean_rtt_ns": 2_500_000},
         }
     }
 
@@ -180,6 +182,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("run_features", "gpu_telemetry"),
         ("run_features", "raw_records"),
         ("run_features", "http_transport_policy"),
+        ("run_features", "network_latency"),
         ("telemetry_source_types", "dcgm"),
     ):
         narrowed = {name: list(values) for name, values in capabilities.items()}

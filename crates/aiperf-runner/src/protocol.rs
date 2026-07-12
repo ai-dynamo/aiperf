@@ -79,6 +79,7 @@ impl RunnerCapabilities {
                 "python_accuracy_evaluator",
                 "raw_records",
                 "http_transport_policy",
+                "network_latency",
             ],
             telemetry_source_types: &["dcgm", "python"],
             runner_version: env!("CARGO_PKG_VERSION"),
@@ -142,6 +143,9 @@ pub struct RunSpec {
     /// Optional phase-bounded GPU telemetry collection.
     #[serde(default)]
     pub gpu_telemetry: Option<GpuTelemetrySpec>,
+    /// Optional fixed or actively measured network RTT calibration.
+    #[serde(default)]
+    pub network_latency: Option<NetworkLatencySpec>,
 }
 
 /// Canonical evaluator configuration for an accuracy-enabled native run.
@@ -251,6 +255,34 @@ pub struct GpuTelemetrySpec {
     /// Config-v2 custom DCGM fields registered for native sidecar reporting.
     #[serde(default)]
     pub custom_metrics: Vec<GpuTelemetryMetricSpec>,
+}
+
+/// Run-level network RTT calibration lowered from Config v2.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkLatencySpec {
+    /// Fixed mean RTT in nanoseconds; mutually exclusive with active probing.
+    #[serde(default)]
+    pub mean_rtt_ns: Option<f64>,
+    /// Active fresh-TCP probe policy; mutually exclusive with a fixed mean.
+    #[serde(default)]
+    pub probe: Option<NetworkLatencyProbeSpec>,
+}
+
+/// Profiling-bounded fresh-TCP probe policy.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkLatencyProbeSpec {
+    /// Clock cadence between probe issuances.
+    pub ping_interval_ns: i64,
+    /// Per-connect Clock deadline.
+    pub connect_timeout_ns: i64,
+    /// Global Clock budget for phase-end sample top-up.
+    pub complete_topup_timeout_ns: i64,
+    /// Successful-sample floor applied independently to every unique target.
+    pub min_successful_samples: usize,
+    /// Legacy-compatible per-sample JSONL path relative to the run directory.
+    pub records_path: PathBuf,
 }
 
 /// One injected GPU telemetry source.
