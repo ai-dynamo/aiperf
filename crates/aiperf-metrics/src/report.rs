@@ -1663,6 +1663,45 @@ pub struct ReportTelemetryLossSaturationSummary {
 
 /// Bounded archive-writer and loss-ledger health reported at finalization.
 #[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryArchiveSpoolBudget {
+    /// Whether ordinary/control admission is permanently closed.
+    pub closed: bool,
+    /// Whether the protected finalization transaction began.
+    pub finalizing: bool,
+    /// Reconciled logical bytes plus conservative committed growth.
+    pub accounted_bytes: u64,
+    /// Reconciled logical files plus conservative committed growth.
+    pub accounted_files: u64,
+    /// Current ordinary-lane committed byte growth.
+    pub ordinary_growth_bytes: u64,
+    /// Current ordinary-lane committed file growth.
+    pub ordinary_growth_files: u64,
+    /// Current control-lane committed byte growth.
+    pub control_growth_bytes: u64,
+    /// Current control-lane committed file growth.
+    pub control_growth_files: u64,
+    /// Outstanding ordinary frame reservations.
+    pub ordinary_frames: u64,
+    /// Outstanding control frame reservations.
+    pub control_frames: u64,
+    /// Reservations not yet committed or released.
+    pub outstanding_leases: u64,
+    /// Bytes unavailable to ordinary admission.
+    pub protected_reserve_bytes: u64,
+    /// Files unavailable to ordinary admission.
+    pub protected_reserve_files: u64,
+    /// Bytes unavailable even to the control lane.
+    pub finalization_reserve_bytes: u64,
+    /// Files unavailable even to the control lane.
+    pub finalization_reserve_files: u64,
+    /// Highest accounted/reserved byte usage observed.
+    pub high_water_bytes: u64,
+    /// Highest accounted/reserved file usage observed.
+    pub high_water_files: u64,
+}
+
+/// Bounded archive-writer and loss-ledger health reported at finalization.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
 pub struct ReportTelemetryArchiveHealth {
     /// Exact ranges that remain individually enumerable.
     pub loss_ranges: Vec<ReportTelemetryLossRange>,
@@ -1672,6 +1711,9 @@ pub struct ReportTelemetryArchiveHealth {
     pub complete_ranges: bool,
     /// Whether the archive writer remained alive through the reported snapshot.
     pub writer_alive: bool,
+    /// Final transaction-reserve accounting when an archive owner was active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spool_budget: Option<ReportTelemetryArchiveSpoolBudget>,
 }
 
 /// Additive telemetry-archive outcome embedded in a native-v2 report.
@@ -2181,6 +2223,7 @@ mod tests {
                 loss_saturation_summaries: Vec::new(),
                 complete_ranges: true,
                 writer_alive: true,
+                spool_budget: None,
             },
         }
     }
@@ -2247,6 +2290,7 @@ mod tests {
                 }],
                 complete_ranges: false,
                 writer_alive: false,
+                spool_budget: None,
             },
         }
     }
