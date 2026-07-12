@@ -84,6 +84,9 @@ pub struct Turn {
     pub role: Option<String>,
     /// Optional generation cap.
     pub max_tokens: Option<u32>,
+    /// Exact validated input token IDs for a token-native endpoint.
+    #[serde(default)]
+    pub raw_token_ids: Option<Vec<u32>>,
     /// Preformatted OpenAI-compatible messages spliced verbatim when non-empty.
     pub raw_messages: Option<Vec<Value>>,
     /// Preformatted OpenAI-compatible tools.
@@ -166,6 +169,8 @@ pub struct RequestRecord {
 pub enum ResponseData {
     /// Text response.
     Text { text: String },
+    /// Exact generated token IDs returned by a token-native endpoint.
+    TokenIds { token_ids: Vec<u32> },
     /// Reasoning response, optionally with normal content.
     Reasoning {
         content: Option<String>,
@@ -184,6 +189,8 @@ pub enum ResponseData {
     ImageRetrieval { data: Vec<Value> },
     /// Generated or edited images and their response metadata.
     Images(ImageResponseData),
+    /// Synthesized audio and its output geometry.
+    Audio(AudioResponseData),
     /// Async video-job state.
     Video(Box<VideoResponseData>),
 }
@@ -193,6 +200,7 @@ impl ResponseData {
     pub fn get_text(&self) -> String {
         match self {
             Self::Text { text } => text.clone(),
+            Self::TokenIds { .. } => String::new(),
             Self::Reasoning { content, reasoning } => {
                 let mut out = reasoning.clone();
                 if let Some(content) = content {
@@ -212,9 +220,57 @@ impl ResponseData {
             | Self::Rankings { .. }
             | Self::ImageRetrieval { .. }
             | Self::Images(_)
+            | Self::Audio(_)
             | Self::Video(_) => String::new(),
         }
     }
+
+    /// Whether this value carries a generated token output even when it has no text.
+    pub fn has_token_output(&self) -> bool {
+        match self {
+            Self::Text { text } => !text.is_empty(),
+            Self::TokenIds { token_ids } => !token_ids.is_empty(),
+            Self::Reasoning { content, reasoning } => {
+                !reasoning.is_empty() || content.as_ref().is_some_and(|text| !text.is_empty())
+            }
+            Self::ToolCall {
+                tool_call_text,
+                content,
+            } => {
+                !tool_call_text.is_empty() || content.as_ref().is_some_and(|text| !text.is_empty())
+            }
+            Self::Embeddings { .. }
+            | Self::Rankings { .. }
+            | Self::ImageRetrieval { .. }
+            | Self::Images(_)
+            | Self::Audio(_)
+            | Self::Video(_) => false,
+        }
+    }
+
+    /// Return the exact output-token count when the response is token-native.
+    pub fn raw_token_count(&self) -> Option<u64> {
+        match self {
+            Self::TokenIds { token_ids } => u64::try_from(token_ids.len()).ok(),
+            _ => None,
+        }
+    }
+}
+
+/// Synthesized-audio response data.
+///
+/// Python reference: `src/aiperf/common/models/record_models.py:743-751` at
+/// Riva reference commit `a391cfe27`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioResponseData {
+    /// Raw audio bytes returned by the service.
+    pub audio_bytes: Vec<u8>,
+    /// Output sample rate in hertz.
+    pub sample_rate_hz: u32,
+    /// Riva audio encoding name.
+    pub encoding: String,
+    /// Derived duration for mono 16-bit linear PCM, when computable.
+    pub duration_ms: Option<f64>,
 }
 
 /// One generated-image item returned by image generation or edit endpoints.

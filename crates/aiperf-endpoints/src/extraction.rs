@@ -260,6 +260,9 @@ fn collect_str_fields(source: &Map<String, Value>, keys: &[&str], out: &mut Vec<
 }
 
 fn walk_flat_fallbacks(payload: &Map<String, Value>, result: &mut ExtractedPayload) {
+    if append_string_or_list(payload, "token_ids", result) {
+        return;
+    }
     if append_string_or_list(payload, "prompt", result) {
         return;
     }

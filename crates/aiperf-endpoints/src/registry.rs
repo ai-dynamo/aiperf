@@ -20,6 +20,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::MessagesEndpoint;
+use crate::VllmGenerateFactory;
 use crate::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
 use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
@@ -34,6 +35,11 @@ use crate::metadata::{EndpointDescriptor, EndpointType};
 use crate::models::{
     CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ParsedResponse, RequestInfo,
     RequestRecord, ServerResponse, Turn,
+};
+use crate::riva::{
+    RivaAnalyzeEntitiesFactory, RivaAnalyzeIntentFactory, RivaAsrFactory, RivaNaturalQueryFactory,
+    RivaPunctuateTextFactory, RivaTextClassifyFactory, RivaTokenClassifyFactory,
+    RivaTransformTextFactory, RivaTtsFactory,
 };
 use crate::tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
@@ -601,6 +607,7 @@ impl EndpointRegistryBuilder {
         builder.register_endpoint(SolidoRagEndpoint)?;
         builder.register_factory(RawEndpointFactory)?;
         builder.register_factory(TemplateEndpointFactory)?;
+        builder.register_factory(VllmGenerateFactory)?;
         builder.register_factory(KServeChatFactory)?;
         builder.register_factory(KServeCompletionsFactory)?;
         builder.register_factory(KServeEmbeddingsFactory)?;
@@ -610,6 +617,15 @@ impl EndpointRegistryBuilder {
         builder.register_factory(KServeV2RankingsFactory)?;
         builder.register_factory(KServeV2VlmFactory)?;
         builder.register_factory(KServeV2ImagesFactory)?;
+        builder.register_factory(RivaAsrFactory)?;
+        builder.register_factory(RivaTtsFactory)?;
+        builder.register_factory(RivaTextClassifyFactory)?;
+        builder.register_factory(RivaTokenClassifyFactory)?;
+        builder.register_factory(RivaTransformTextFactory)?;
+        builder.register_factory(RivaPunctuateTextFactory)?;
+        builder.register_factory(RivaNaturalQueryFactory)?;
+        builder.register_factory(RivaAnalyzeIntentFactory)?;
+        builder.register_factory(RivaAnalyzeEntitiesFactory)?;
         Ok(builder)
     }
 

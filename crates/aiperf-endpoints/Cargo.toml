@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64.workspace = true
 jmespath = "0.4"
 minijinja = { version = "2.21", features = ["json"] }
 serde = { workspace = true, features = ["derive"] }

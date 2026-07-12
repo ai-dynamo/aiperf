@@ -15,7 +15,7 @@ pub enum Modality {
     Tokens,
     /// Image input or output.
     Image,
-    /// Audio input.
+    /// Audio input or output.
     Audio,
     /// Video input or output.
     Video,
@@ -48,6 +48,12 @@ pub struct EndpointDescriptor {
     pub produces_tokens: bool,
     /// Whether input tokenization is enabled.
     pub tokenizes_input: bool,
+    /// Whether every dataset turn must carry validated exact input token IDs.
+    ///
+    /// This capability is consumed during dataset composition and validation;
+    /// request formatters therefore receive typed IDs and never re-parse an
+    /// arbitrary JSON array on the dispatch path.
+    pub requires_raw_token_ids: bool,
     /// Whether multipart form data is required.
     pub requires_form_data: bool,
     /// Whether submit/poll lifecycle is required.

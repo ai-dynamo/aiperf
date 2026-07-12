@@ -7,8 +7,9 @@
 //! provider endpoint dialects, including OpenAI-compatible APIs and Anthropic Messages.
 //! Transport concerns such as URL assembly, SSE framing, and cancellation remain outside
 //! this crate; dialect-owned authentication headers are exposed through [`Endpoint`].
-//! KServe HTTP and inference-protocol dialects are open-registry, protocol-v2-only
-//! factories; their native gRPC wire bindings live in `aiperf-transport-grpc`.
+//! KServe HTTP/inference-protocol and NVIDIA Riva ASR/TTS/NLP dialects are
+//! open-registry, protocol-v2-only factories; their native gRPC wire bindings
+//! live in `aiperf-transport-grpc`.
 
 mod anthropic;
 mod config;
@@ -18,8 +19,10 @@ mod kserve;
 mod metadata;
 mod models;
 mod registry;
+mod riva;
 mod tier2;
 mod usage;
+mod vllm_generate;
 
 pub use anthropic::MessagesEndpoint;
 pub use config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, RequestContentType};
@@ -35,15 +38,20 @@ pub use kserve::{
 };
 pub use metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
 pub use models::{
-    CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
-    Media, ModelEndpoint, ParsedResponse, RequestInfo, RequestRecord, ResponseData, ServerResponse,
-    Turn, VideoResponseData,
+    AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem,
+    ImageResponseData, Media, ModelEndpoint, ParsedResponse, RequestInfo, RequestRecord,
+    ResponseData, ServerResponse, Turn, VideoResponseData,
 };
 pub use registry::{
     EndpointFactory, EndpointId, EndpointIdError, EndpointKey, EndpointRegistry,
     EndpointRegistryBuilder, EndpointRegistryError, EndpointResolver, PreparedEndpoint,
     PreparedEndpointBehavior, PreparedEndpointTable, PreparedReadinessRequest, PreparedRequest,
     ReadinessMethod, ReadinessPolicy, StatelessEndpointFactory,
+};
+pub use riva::{
+    RivaAnalyzeEntitiesFactory, RivaAnalyzeIntentFactory, RivaAsrFactory, RivaNaturalQueryFactory,
+    RivaPunctuateTextFactory, RivaTextClassifyFactory, RivaTokenClassifyFactory,
+    RivaTransformTextFactory, RivaTtsFactory,
 };
 pub use tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
@@ -52,3 +60,4 @@ pub use tier2::{
     VideoGenerationEndpoint,
 };
 pub use usage::UsageView;
+pub use vllm_generate::VllmGenerateFactory;

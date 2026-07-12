@@ -44,6 +44,7 @@ const fn descriptor(id: &'static str, aliases: &'static [&'static str]) -> Endpo
         supports_streaming: true,
         produces_tokens: true,
         tokenizes_input: true,
+        requires_raw_token_ids: false,
         requires_form_data: false,
         requires_polling: false,
         requires_inline_media: false,
