@@ -40,6 +40,7 @@ commit hash(es):
 - `fa30ee23c`
 - `c5ad057fa`
 - `0ab1c12a8`
+- `dcc387cce`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
@@ -152,7 +153,7 @@ GREEN:
   - `npm test`: `12 passed test files, 114 passed tests`
 
 source-drift fix commit hash(es):
-- pending
+- `dcc387cce`
 
 concerns:
 - none identified.
