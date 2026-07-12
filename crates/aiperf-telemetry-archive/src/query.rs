@@ -10,9 +10,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Debug, Display, Formatter};
 
-use arrow_array::RecordBatch;
+use arrow_array::{Array, FixedSizeBinaryArray, RecordBatch, StringArray};
 use bytes::Bytes;
-use parquet::arrow::arrow_reader::{ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::parquet::{PartitionDescriptorV1, PartitionProjectionEvidenceV1};
 use crate::{
@@ -307,20 +307,30 @@ pub fn read_partition_v1(
     if table_schema.fingerprint() != descriptor.schema_fingerprint {
         return Err(QueryError::PartitionSchemaMismatch(descriptor.table));
     }
-    let options = ArrowReaderOptions::new().with_schema(table_schema.schema().clone());
-    let builder =
-        ParquetRecordBatchReaderBuilder::try_new_with_options(Bytes::from(bytes), options)
-            .map_err(QueryError::Parquet)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes))
+        .map_err(QueryError::Parquet)?;
     if builder.schema().as_ref() != table_schema.schema().as_ref() {
         return Err(QueryError::ReaderSchemaMismatch(descriptor.table));
     }
     let reader = builder.build().map_err(QueryError::Parquet)?;
     let mut batches = Vec::new();
     let mut rows = 0_u64;
+    let mut physical_projections = BTreeMap::<Digest, Vec<Digest>>::new();
     for batch in reader {
         let batch = batch.map_err(QueryError::Arrow)?;
-        if batch.schema().as_ref() != table_schema.schema().as_ref() {
+        if batch.schema().fields() != table_schema.schema().fields() {
             return Err(QueryError::ReaderSchemaMismatch(descriptor.table));
+        }
+        let batch = RecordBatch::try_new(table_schema.schema().clone(), batch.columns().to_vec())
+            .map_err(QueryError::Arrow)?;
+        verify_partition_batch_identity(descriptor, &batch)?;
+        let logical_rows = table_schema.canonical_rows(&batch)?;
+        let frame_ids = frame_ids(&batch)?;
+        for (frame_id, row) in frame_ids.into_iter().zip(logical_rows) {
+            physical_projections
+                .entry(frame_id)
+                .or_default()
+                .push(row.digest());
         }
         rows = rows
             .checked_add(u64::try_from(batch.num_rows()).map_err(|_| QueryError::LengthOverflow)?)
@@ -333,7 +343,98 @@ pub fn read_partition_v1(
             actual: rows,
         });
     }
+    let physical_evidence = physical_projections
+        .into_iter()
+        .map(|(frame_id, row_digests)| {
+            projection_evidence_from_digests(row_digests).map(|evidence| (frame_id, evidence))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let descriptor_evidence = descriptor
+        .projections
+        .iter()
+        .map(|projection| {
+            (
+                projection.frame_id.digest(),
+                (projection.row_count, projection.logical_multiset_digest),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    if physical_evidence != descriptor_evidence {
+        return Err(QueryError::ReaderLogicalEvidenceMismatch);
+    }
     Ok(batches)
+}
+
+fn projection_evidence_from_digests(
+    mut row_digests: Vec<Digest>,
+) -> Result<(u64, Digest), QueryError> {
+    row_digests.sort_unstable();
+    let row_count = u64::try_from(row_digests.len()).map_err(|_| QueryError::LengthOverflow)?;
+    let fields = row_digests
+        .iter()
+        .map(Digest::as_bytes)
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>();
+    Ok((
+        row_count,
+        domain_digest("aiperf.archive.projection-multiset.v1", &fields),
+    ))
+}
+
+fn verify_partition_batch_identity(
+    descriptor: &PartitionDescriptorV1,
+    batch: &RecordBatch,
+) -> Result<(), QueryError> {
+    verify_fixed_identity(batch, "archive_id", descriptor.archive_id.as_bytes())?;
+    verify_fixed_identity(batch, "session_id", descriptor.session_id.as_bytes())?;
+    let source = batch
+        .column_by_name("source_id")
+        .and_then(|array| array.as_any().downcast_ref::<StringArray>())
+        .ok_or_else(|| QueryError::ReaderIdentityMismatch("source_id".to_string()))?;
+    for row in 0..source.len() {
+        match descriptor.source_id.as_deref() {
+            Some(expected) if !source.is_null(row) && source.value(row) == expected => {}
+            None if source.is_null(row) => {}
+            _ => {
+                return Err(QueryError::ReaderIdentityMismatch("source_id".to_string()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_fixed_identity(
+    batch: &RecordBatch,
+    name: &str,
+    expected: &[u8],
+) -> Result<(), QueryError> {
+    let array = batch
+        .column_by_name(name)
+        .and_then(|array| array.as_any().downcast_ref::<FixedSizeBinaryArray>())
+        .ok_or_else(|| QueryError::ReaderIdentityMismatch(name.to_string()))?;
+    if (0..array.len()).any(|row| array.is_null(row) || array.value(row) != expected) {
+        return Err(QueryError::ReaderIdentityMismatch(name.to_string()));
+    }
+    Ok(())
+}
+
+fn frame_ids(batch: &RecordBatch) -> Result<Vec<Digest>, QueryError> {
+    let frames = batch
+        .column_by_name("frame_id")
+        .and_then(|array| array.as_any().downcast_ref::<FixedSizeBinaryArray>())
+        .ok_or_else(|| QueryError::ReaderIdentityMismatch("frame_id".to_string()))?;
+    (0..frames.len())
+        .map(|row| {
+            if frames.is_null(row) {
+                return Err(QueryError::ReaderIdentityMismatch("frame_id".to_string()));
+            }
+            let bytes: [u8; Digest::BYTE_LEN] = frames
+                .value(row)
+                .try_into()
+                .map_err(|_| QueryError::ReaderIdentityMismatch("frame_id".to_string()))?;
+            Ok(Digest::from_bytes(bytes))
+        })
+        .collect()
 }
 
 fn verify_partition_bytes(
@@ -555,6 +656,10 @@ pub enum QueryError {
         /// Decoded rows.
         actual: u64,
     },
+    /// Physical archive/session/source identity differs from the descriptor.
+    ReaderIdentityMismatch(String),
+    /// Descriptor per-frame evidence differs from canonical physical rows.
+    ReaderLogicalEvidenceMismatch,
     /// Compaction input or output set was empty.
     EmptyCompactionSide,
     /// One physical partition occurred twice on one compaction side.
@@ -620,6 +725,12 @@ impl Display for QueryError {
                 formatter,
                 "reader row count mismatch: expected {expected}, found {actual}"
             ),
+            Self::ReaderIdentityMismatch(name) => {
+                write!(formatter, "reader partition identity mismatch in {name:?}")
+            }
+            Self::ReaderLogicalEvidenceMismatch => {
+                formatter.write_str("reader physical/logical projection evidence mismatch")
+            }
             Self::EmptyCompactionSide => {
                 formatter.write_str("compaction input/output cannot be empty")
             }
@@ -639,10 +750,17 @@ impl std::error::Error for QueryError {}
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use arrow_array::builder::{ListBuilder, StringBuilder, StringDictionaryBuilder};
+    use arrow_array::types::Int8Type;
+    use arrow_array::{BooleanArray, ListArray, UInt64Array};
+
     use super::*;
     use crate::{
-        ArchiveState, CanonicalJsonValue, EpochAnchor, GenerationTransactionKind, GenerationV1,
-        GenesisV1, IndexMutationSetV1, MutationMode, TimeDomain,
+        ArchiveState, CanonicalJsonValue, CanonicalLogicalRow, EpochAnchor, FrameTableProjectionV1,
+        GenerationTransactionKind, GenerationV1, GenesisV1, IndexMutationSetV1, LogicalValue,
+        MutationMode, ParquetPartitionBuilderV1, ParquetRotationConfigV1, TimeDomain,
     };
 
     fn archive() -> ArchiveId {
@@ -743,6 +861,32 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn independent_reader_recomputes_descriptor_evidence_from_physical_rows() {
+        let (schemas, partition) = raw_reference_partition();
+        let mut source = MemoryPartitionObjectSourceV1::default();
+        source
+            .put(&partition.descriptor, &partition.parquet_bytes)
+            .unwrap();
+        let batches = read_partition_v1(&source, &partition.descriptor, &schemas).unwrap();
+        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
+
+        let mut forged = partition.descriptor.clone();
+        forged.projections[0].logical_multiset_digest = Digest::from_bytes([0xee; 32]);
+        refresh_logical_object_id(&mut forged);
+        assert!(matches!(
+            read_partition_v1(&source, &forged, &schemas),
+            Err(QueryError::ReaderLogicalEvidenceMismatch)
+        ));
+
+        let mut forged_identity = partition.descriptor.clone();
+        forged_identity.source_id = Some("source-b".to_string());
+        assert!(matches!(
+            read_partition_v1(&source, &forged_identity, &schemas),
+            Err(QueryError::ReaderIdentityMismatch(name)) if name == "source_id"
+        ));
+    }
+
     fn refresh_logical_object_id(descriptor: &mut PartitionDescriptorV1) {
         descriptor.logical_object_id = crate::parquet::partition_logical_object_id_v1(
             descriptor.table,
@@ -794,6 +938,85 @@ mod tests {
             logical_object_id: logical,
             projections,
         }
+    }
+
+    fn raw_reference_partition() -> (ArchiveSchemasV1, crate::CompletedPartitionV1) {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let table = schemas.table(TableId::RawReferences).unwrap();
+        let archive_id = archive();
+        let session_id = session();
+        let frame_bytes = [0x44; 32];
+        let batch_bytes = [0x55; 32];
+        let raw_bytes = [0x66; 32];
+        let frame_id = crate::FrameId::new(Digest::from_bytes(frame_bytes));
+        let mut retention = StringDictionaryBuilder::<Int8Type>::new();
+        retention.append("all").unwrap();
+        let arrow_schema::DataType::List(element) = table
+            .schema()
+            .field_with_name("content_encoding_chain")
+            .unwrap()
+            .data_type()
+        else {
+            panic!("content encoding chain must be a list")
+        };
+        let mut encodings = ListBuilder::new(StringBuilder::new()).with_field(element.clone());
+        encodings.append(true);
+        let encodings: ListArray = encodings.finish();
+        let arrays: Vec<Arc<dyn Array>> = vec![
+            Arc::new(FixedSizeBinaryArray::from(vec![archive_id.as_bytes()])),
+            Arc::new(FixedSizeBinaryArray::from(vec![session_id.as_bytes()])),
+            Arc::new(StringArray::from(vec!["source-a"])),
+            Arc::new(FixedSizeBinaryArray::from(vec![&frame_bytes])),
+            Arc::new(FixedSizeBinaryArray::from(vec![&batch_bytes])),
+            Arc::new(FixedSizeBinaryArray::from(vec![&raw_bytes])),
+            Arc::new(UInt64Array::from(vec![1])),
+            Arc::new(UInt64Array::from(vec![1])),
+            Arc::new(retention.finish()),
+            Arc::new(BooleanArray::from(vec![false])),
+            Arc::new(encodings),
+        ];
+        let batch = RecordBatch::try_new(table.schema().clone(), arrays).unwrap();
+        let row = CanonicalLogicalRow::encode(
+            table.logical_schema(),
+            &[
+                LogicalValue::Binary(archive_id.as_bytes().to_vec()),
+                LogicalValue::Binary(session_id.as_bytes().to_vec()),
+                LogicalValue::String("source-a".to_string()),
+                LogicalValue::Binary(frame_bytes.to_vec()),
+                LogicalValue::Binary(batch_bytes.to_vec()),
+                LogicalValue::Binary(raw_bytes.to_vec()),
+                LogicalValue::Unsigned(1),
+                LogicalValue::Unsigned(1),
+                LogicalValue::String("all".to_string()),
+                LogicalValue::Bool(false),
+                LogicalValue::List(Vec::new()),
+            ],
+        )
+        .unwrap();
+        let projection = FrameTableProjectionV1 {
+            archive_id,
+            session_id,
+            source_id: Some("source-a".to_string()),
+            frame_id,
+            authoritative_frame_clock_ns: 10,
+            table: TableId::RawReferences,
+            batch,
+            logical_rows: vec![row],
+        };
+        let mut builder = ParquetPartitionBuilderV1::new(
+            schemas.clone(),
+            ParquetRotationConfigV1 {
+                target_rows: 1,
+                target_uncompressed_bytes: 1 << 20,
+                hard_rows: 10,
+                hard_bytes: 1 << 20,
+                time_bucket_ns: 100,
+            },
+        )
+        .unwrap();
+        let mut output = builder.append_frame(vec![projection]).unwrap();
+        assert_eq!(output.partitions.len(), 1);
+        (schemas, output.partitions.remove(0))
     }
 
     fn genesis(root: crate::IndexRootV1) -> GenerationV1 {
