@@ -371,19 +371,19 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
                     ErrorKind::Http => unreachable!(),
                 },
                 message: bounded_error(&error.message),
-                timings: Some(timings),
+                timings: Some(Box::new(timings)),
             });
         }
         let status = record.status.ok_or_else(|| ControlPlaneHttpError {
             kind: ControlPlaneHttpErrorKind::Transport,
             message: "control-plane response omitted HTTP status".to_owned(),
-            timings: Some(timings.clone()),
+            timings: Some(Box::new(timings.clone())),
         })?;
         let encoded_body =
             exact_text_body(&record.responses).ok_or_else(|| ControlPlaneHttpError {
                 kind: ControlPlaneHttpErrorKind::InvalidResponse,
                 message: "control-plane response did not contain one complete entity".to_owned(),
-                timings: Some(timings.clone()),
+                timings: Some(Box::new(timings.clone())),
             })?;
         if encoded_body.len() > self.max_encoded_bytes {
             return Err(ControlPlaneHttpError {
@@ -392,7 +392,7 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
                     "control-plane entity exceeded the {} byte encoded-body limit",
                     self.max_encoded_bytes
                 ),
-                timings: Some(timings),
+                timings: Some(Box::new(timings)),
             });
         }
         let headers = record
@@ -511,7 +511,7 @@ pub struct ControlPlaneHttpError {
     /// Bounded redaction-safe detail.
     pub message: String,
     /// Native timing facts when request IO began.
-    pub timings: Option<ControlPlaneTransportTimings>,
+    pub timings: Option<Box<ControlPlaneTransportTimings>>,
 }
 
 impl ControlPlaneHttpError {
