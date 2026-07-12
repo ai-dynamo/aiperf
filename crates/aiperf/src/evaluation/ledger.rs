@@ -56,6 +56,8 @@ pub struct OperationRegistration {
     pub semantic_attempt_id: String,
     /// Provider logical call identity.
     pub logical_call_id: String,
+    /// Provider idempotency identity bound one-to-one to this logical operation.
+    pub idempotency_key: String,
     /// Logical service resolved by the Rust route table.
     pub service_id: String,
     /// Registered open semantic operation ID.
@@ -94,6 +96,8 @@ pub struct OperationRecord {
 #[derive(Debug, Default)]
 pub struct OperationLedger {
     operations: BTreeMap<String, OperationRecord>,
+    logical_call_ids: BTreeMap<String, String>,
+    idempotency_keys: BTreeMap<String, String>,
     attempt_ids: BTreeSet<String>,
 }
 
@@ -106,6 +110,24 @@ impl OperationLedger {
             !self.operations.contains_key(&operation_id),
             "duplicate evaluator host operation {operation_id:?}"
         );
+        ensure!(
+            !self
+                .logical_call_ids
+                .contains_key(&registration.logical_call_id),
+            "duplicate evaluator logical call {:?}",
+            registration.logical_call_id
+        );
+        ensure!(
+            !self
+                .idempotency_keys
+                .contains_key(&registration.idempotency_key),
+            "duplicate evaluator idempotency key {:?}",
+            registration.idempotency_key
+        );
+        self.logical_call_ids
+            .insert(registration.logical_call_id.clone(), operation_id.clone());
+        self.idempotency_keys
+            .insert(registration.idempotency_key.clone(), operation_id.clone());
         self.operations.insert(
             operation_id,
             OperationRecord {
@@ -305,6 +327,7 @@ fn validate_registration(registration: &OperationRegistration) -> Result<()> {
             registration.semantic_attempt_id.as_str(),
         ),
         ("logical_call_id", registration.logical_call_id.as_str()),
+        ("idempotency_key", registration.idempotency_key.as_str()),
         ("service_id", registration.service_id.as_str()),
         (
             "semantic_operation_id",
@@ -343,6 +366,7 @@ mod tests {
             case_id: "case".into(),
             semantic_attempt_id: "semantic-attempt".into(),
             logical_call_id: format!("call-{id}"),
+            idempotency_key: format!("idempotency-{id}"),
             service_id: "primary".into(),
             semantic_operation_id: "model.generate".into(),
             replay_safe_after_output,
@@ -375,6 +399,27 @@ mod tests {
                 .is_err()
         );
         ledger.validate_drained().unwrap();
+    }
+
+    #[test]
+    fn logical_call_and_idempotency_identities_are_unique_across_ingresses() {
+        let mut ledger = OperationLedger::default();
+        ledger
+            .register(registration("pipe-operation", false))
+            .unwrap();
+
+        let mut duplicate_call = registration("proxy-operation", false);
+        duplicate_call.logical_call_id = "call-pipe-operation".into();
+        assert!(ledger.register(duplicate_call).is_err());
+
+        let mut duplicate_idempotency = registration("proxy-operation", false);
+        duplicate_idempotency.idempotency_key = "idempotency-pipe-operation".into();
+        assert!(ledger.register(duplicate_idempotency).is_err());
+
+        ledger
+            .register(registration("proxy-operation", false))
+            .unwrap();
+        assert_eq!(ledger.operations().len(), 2);
     }
 
     #[test]
