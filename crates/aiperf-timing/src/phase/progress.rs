@@ -193,25 +193,47 @@ impl PhaseProgress {
     /// When this crosses the configured request/session bound, sent counts are
     /// frozen before the all-sent event is published.
     pub fn record_sent(&self, sent: PhaseSend) -> Result<PhaseSendOutcome, PhaseProgressError> {
+        self.record_sent_batch(&[sent])
+            .map(|mut outcomes| outcomes.pop().expect("one input send produces one outcome"))
+    }
+
+    /// Atomically record one admitted batch before evaluating stop bounds.
+    ///
+    /// A Graph-IR root and its statically admitted DAG children form one
+    /// indivisible admission decision. Evaluating a session bound after only
+    /// the root would freeze progress before those already-admitted children
+    /// can be counted. Empty batches are accepted as a no-op.
+    pub fn record_sent_batch(
+        &self,
+        sent: &[PhaseSend],
+    ) -> Result<Vec<PhaseSendOutcome>, PhaseProgressError> {
+        if sent.is_empty() {
+            return Ok(Vec::new());
+        }
         if self.inner.sent_frozen.get() {
             return Err(PhaseProgressError::SentAfterFreeze);
         }
-        if sent.starts_session && (!sent.is_root || sent.planned_session_turns == 0) {
+        if sent
+            .iter()
+            .any(|sent| sent.starts_session && (!sent.is_root || sent.planned_session_turns == 0))
+        {
             return Err(PhaseProgressError::InvalidSessionStart);
         }
 
-        let (request_index, is_final_request) = {
+        let (first_request_index, is_final_request) = {
             let mut counters = self.inner.counters.borrow_mut();
-            let request_index = counters.requests_sent;
-            counters.requests_sent += 1;
-            if sent.is_root {
-                counters.root_requests_sent += 1;
-            }
-            if sent.starts_session {
-                counters.sent_sessions += 1;
-                counters.total_session_turns = counters
-                    .total_session_turns
-                    .saturating_add(sent.planned_session_turns);
+            let first_request_index = counters.requests_sent;
+            for sent in sent {
+                counters.requests_sent = counters.requests_sent.saturating_add(1);
+                if sent.is_root {
+                    counters.root_requests_sent = counters.root_requests_sent.saturating_add(1);
+                }
+                if sent.starts_session {
+                    counters.sent_sessions = counters.sent_sessions.saturating_add(1);
+                    counters.total_session_turns = counters
+                        .total_session_turns
+                        .saturating_add(sent.planned_session_turns);
+                }
             }
             let request_bound = self
                 .inner
@@ -226,16 +248,18 @@ impl PhaseProgress {
                     counters.sent_sessions >= expected
                         && counters.root_requests_sent >= counters.total_session_turns
                 });
-            (request_index, request_bound || session_bound)
+            (first_request_index, request_bound || session_bound)
         };
 
         if is_final_request {
             self.mark_sending_complete();
         }
-        Ok(PhaseSendOutcome {
-            request_index,
-            is_final_request,
-        })
+        Ok((0..sent.len())
+            .map(|offset| PhaseSendOutcome {
+                request_index: first_request_index.saturating_add(offset as u64),
+                is_final_request: is_final_request && offset + 1 == sent.len(),
+            })
+            .collect())
     }
 
     /// Freeze sent counters without publishing the all-sent event.
@@ -515,6 +539,35 @@ mod tests {
         assert_eq!(snapshot.requests_sent, 3);
         assert_eq!(snapshot.root_requests_sent, 2);
         assert_eq!(snapshot.final_requests_sent, Some(3));
+    }
+
+    #[test]
+    fn graph_admission_batch_freezes_only_after_every_child_is_counted() {
+        let progress = PhaseProgress::new(StopConfig {
+            expected_num_sessions: Some(1),
+            ..StopConfig::default()
+        });
+        let outcomes = progress
+            .record_sent_batch(&[
+                PhaseSend::single_turn_session(),
+                PhaseSend::dag_child(),
+                PhaseSend::dag_child(),
+            ])
+            .unwrap();
+
+        assert_eq!(outcomes.len(), 3);
+        assert!(!outcomes[0].is_final_request);
+        assert!(!outcomes[1].is_final_request);
+        assert!(outcomes[2].is_final_request);
+        let snapshot = progress.snapshot();
+        assert_eq!(snapshot.requests_sent, 3);
+        assert_eq!(snapshot.root_requests_sent, 1);
+        assert_eq!(snapshot.sent_sessions, 1);
+        assert_eq!(snapshot.final_requests_sent, Some(3));
+        assert_eq!(
+            progress.record_sent(PhaseSend::dag_child()),
+            Err(PhaseProgressError::SentAfterFreeze)
+        );
     }
 
     #[test]

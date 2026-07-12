@@ -178,6 +178,14 @@ impl PhaseContext {
         self.progress.record_sent(sent)
     }
 
+    /// Atomically record one admitted request batch before stop evaluation.
+    pub fn record_sent_batch(
+        &self,
+        sent: &[PhaseSend],
+    ) -> Result<Vec<PhaseSendOutcome>, PhaseProgressError> {
+        self.progress.record_sent_batch(sent)
+    }
+
     /// Atomically record one terminal request.
     pub fn record_returned(&self, returned: PhaseReturn) -> PhaseReturnOutcome {
         self.progress.record_returned(returned)
