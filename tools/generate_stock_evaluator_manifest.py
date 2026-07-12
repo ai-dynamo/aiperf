@@ -37,6 +37,7 @@ from packaging.requirements import Requirement
 from aiperf.accuracy.evaluation.canonical import canonical_dumps, canonical_sha256
 from aiperf.accuracy.evaluation.distributions import (
     ISOLATION_PROFILE,
+    MAX_PROCESSES,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
     SOURCE_TREE_DIGEST_POLICY,
@@ -73,6 +74,12 @@ GSM8K_CANARY_SOURCE = (
 )
 GSM8K_CANARY_DESTINATION = "assets/gsm8k_canary.jsonl"
 SOURCE_OVERLAY_DIR = ROOT / "src/aiperf/accuracy/evaluation/source_overlays"
+RESOURCE_BOOTSTRAP_SOURCE = (
+    ROOT / "src/aiperf/accuracy/evaluation/resource_bootstrap.py"
+)
+RESOURCE_BOOTSTRAP_DESTINATION = (
+    "runtime/libexec/aiperf-evaluator-resource-bootstrap.py"
+)
 NEMO_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/nemo/uv.lock"
 OPENBENCH_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/openbench/uv.lock"
 AUDITED_DIRECT_DEPENDENCIES = {
@@ -1178,6 +1185,13 @@ def _distribution_entry(
     ]
     embedded_files.append(
         _embedded_file(
+            RESOURCE_BOOTSTRAP_SOURCE.relative_to(ROOT).as_posix(),
+            RESOURCE_BOOTSTRAP_DESTINATION,
+            RESOURCE_BOOTSTRAP_SOURCE.read_bytes(),
+        )
+    )
+    embedded_files.append(
+        _embedded_file(
             GSM8K_CANARY_SOURCE.relative_to(ROOT).as_posix(),
             GSM8K_CANARY_DESTINATION,
             GSM8K_CANARY_SOURCE.read_bytes(),
@@ -1292,7 +1306,7 @@ def _distribution_entry(
                 "address_space_bytes": 16 * 1024 * 1024 * 1024,
                 "file_size_bytes": 8 * 1024 * 1024 * 1024,
                 "open_files": 4096,
-                "processes": 1024,
+                "processes": MAX_PROCESSES,
                 "cpu_seconds": 86400,
             },
         },

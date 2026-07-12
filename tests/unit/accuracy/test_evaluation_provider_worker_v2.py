@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import importlib.metadata
 import os
 import re
@@ -18,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from aiperf.accuracy.evaluation import resource_bootstrap
 from aiperf.accuracy.evaluation.canonical import (
     CanonicalJsonError,
     canonical_dumps,
@@ -33,8 +35,10 @@ from aiperf.accuracy.evaluation.contracts import (
     ScopedProxyBinding,
 )
 from aiperf.accuracy.evaluation.distributions import (
+    MAX_PROCESSES,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
+    RESOURCE_BOOTSTRAP,
     DistributionEvidence,
     executable_tasks,
     task_manifest,
@@ -220,7 +224,14 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         OPENBENCH_DISTRIBUTION,
     ):
         argv = descriptor.fixed_argv
-        assert argv[:3] == ("-I", "-m", "aiperf.accuracy.evaluation.worker")
+        assert argv[:4] == (
+            "-I",
+            RESOURCE_BOOTSTRAP,
+            "--max-processes",
+            str(MAX_PROCESSES),
+        )
+        assert RESOURCE_BOOTSTRAP.startswith("/runtime/libexec/")
+        assert "-m" not in argv
         assert "--stdio" not in argv
         assert argv[argv.index("--read-fd") + 1] == "3"
         assert argv[argv.index("--write-fd") + 1] == "4"
@@ -231,6 +242,79 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         assert environment["HOME"].startswith("/staging/")
         assert environment["TMPDIR"].startswith("/staging/")
         assert environment["XDG_DATA_HOME"].startswith("/staging/")
+
+
+def test_resource_bootstrap_installs_limit_before_worker_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+    limits = iter(
+        [
+            (resource_bootstrap.resource.RLIM_INFINITY,) * 2,
+            (MAX_PROCESSES, MAX_PROCESSES),
+        ]
+    )
+
+    def getrlimit(resource_id: int) -> tuple[int, int]:
+        assert resource_id == resource_bootstrap.resource.RLIMIT_NPROC
+        events.append("getrlimit")
+        return next(limits)
+
+    def setrlimit(resource_id: int, value: tuple[int, int]) -> None:
+        assert resource_id == resource_bootstrap.resource.RLIMIT_NPROC
+        events.append(("setrlimit", value))
+
+    worker_module = type(
+        "WorkerModule",
+        (),
+        {"main": staticmethod(lambda argv: events.append(("worker", argv)))},
+    )
+    original_import = builtins.__import__
+
+    def import_module(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "aiperf.accuracy.evaluation.worker":
+            events.append("worker-import")
+            return worker_module
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(resource_bootstrap.resource, "getrlimit", getrlimit)
+    monkeypatch.setattr(resource_bootstrap.resource, "setrlimit", setrlimit)
+    monkeypatch.setattr(builtins, "__import__", import_module)
+
+    worker_args = ["--provider", "nemo_evaluator"]
+    resource_bootstrap.main(["--max-processes", str(MAX_PROCESSES), *worker_args])
+
+    assert events == [
+        "getrlimit",
+        ("setrlimit", (MAX_PROCESSES, MAX_PROCESSES)),
+        "getrlimit",
+        "worker-import",
+        ("worker", worker_args),
+    ]
+
+
+@pytest.mark.parametrize("value", ["", "0", "01", "+1", "-1", "1.0", "one"])
+def test_resource_bootstrap_rejects_noncanonical_process_limits(value: str) -> None:
+    with pytest.raises(ValueError, match="canonical positive integer"):
+        resource_bootstrap._parse_max_processes(value)
+
+
+def test_resource_bootstrap_fails_when_inherited_hard_limit_is_too_small(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        resource_bootstrap.resource,
+        "getrlimit",
+        lambda _: (MAX_PROCESSES - 1, MAX_PROCESSES - 1),
+    )
+    with pytest.raises(RuntimeError, match="cannot satisfy"):
+        resource_bootstrap._install_process_limit(MAX_PROCESSES)
 
 
 def test_model_operation_schema_confines_inline_images_to_strict_raster_data() -> None:

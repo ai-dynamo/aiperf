@@ -16,8 +16,10 @@ from typing import Any
 import pytest
 
 from aiperf.accuracy.evaluation.distributions import (
+    MAX_PROCESSES,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
+    RESOURCE_BOOTSTRAP,
     source_tree_sha256,
 )
 from tools.generate_stock_evaluator_manifest import materialize
@@ -79,6 +81,40 @@ def test_provider_uv_locks_are_tracked_and_bound_into_generated_locks() -> None:
             ],
             "kind": "uv-lock-v1",
         }
+
+
+def test_materialized_roots_execute_the_standalone_resource_bootstrap(
+    stock_rootfs: dict[str, Path],
+) -> None:
+    """The process limit is installed by path before any AIPerf module launch."""
+    relative_bootstrap = RESOURCE_BOOTSTRAP.removeprefix("/")
+    for provider, root in stock_rootfs.items():
+        bootstrap = root / relative_bootstrap
+        assert bootstrap.is_file()
+        semantic_source = (
+            root
+            / "runtime/lib/python3.12/site-packages/aiperf/accuracy/evaluation/resource_bootstrap.py"
+        )
+        assert semantic_source.is_file()
+        assert bootstrap.read_bytes() == semantic_source.read_bytes()
+        completed = subprocess.run(
+            [
+                str(root / "runtime/bin/python3.12"),
+                "-I",
+                str(bootstrap),
+                "--max-processes",
+                str(MAX_PROCESSES),
+                "--help",
+            ],
+            cwd=root / "work",
+            env={"PATH": str(root / "runtime/bin")},
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert completed.returncode == 0, (provider, completed.stderr)
+        assert "AIPerf evaluator-provider worker" in completed.stdout
 
 
 def test_semantic_source_tree_v1_does_not_absorb_overlay_patch_assets(

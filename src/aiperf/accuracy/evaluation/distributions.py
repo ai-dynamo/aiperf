@@ -24,11 +24,12 @@ from aiperf.accuracy.evaluation.contracts import (
     EvaluationWorkerIdentity,
 )
 
-WORKER_MODULE = "aiperf.accuracy.evaluation.worker"
+RESOURCE_BOOTSTRAP = "/runtime/libexec/aiperf-evaluator-resource-bootstrap.py"
+MAX_PROCESSES = 1024
 CONTROL_READ_FD = 3
 CONTROL_WRITE_FD = 4
 STAGING_ROOT = "/staging"
-ISOLATION_PROFILE = "linux-bubblewrap-rootfs-process-tree-v3"
+ISOLATION_PROFILE = "linux-bubblewrap-rootfs-process-tree-v4"
 SOURCE_TREE_DIGEST_POLICY = "aiperf-semantic-source-tree-sha256-v1"
 WORKER_OPERATIONS = (
     "plan_session",
@@ -137,8 +138,9 @@ class StockDistributionDescriptor:
         """Return literal worker arguments owned by the stock factory."""
         return (
             "-I",
-            "-m",
-            WORKER_MODULE,
+            RESOURCE_BOOTSTRAP,
+            "--max-processes",
+            str(MAX_PROCESSES),
             "--provider",
             self.provider_id,
             "--distribution",

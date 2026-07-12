@@ -22,6 +22,12 @@ _SCALAR_OR_OBJECT: dict[str, Any] = {
     ]
 }
 
+_INLINE_RASTER_DATA_URI_PATTERN = (
+    r"^data:image/(?:gif|jpeg|png|webp);base64,"
+    r"(?:[A-Za-z0-9+/]{4})*"
+    r"(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$"
+)
+
 _CONTENT_BLOCK: dict[str, Any] = {
     "oneOf": [
         {
@@ -49,6 +55,27 @@ _CONTENT_BLOCK: dict[str, Any] = {
                 "asset_id": {"type": "string", "minLength": 1},
                 "media_type": {"type": "string", "minLength": 1},
                 "detail": {"enum": ["auto", "low", "high"]},
+            },
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["type", "image_url"],
+            "properties": {
+                "type": {"const": "image_url"},
+                "image_url": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["url"],
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "pattern": _INLINE_RASTER_DATA_URI_PATTERN,
+                            "maxLength": 1_048_576,
+                        },
+                        "detail": {"enum": ["auto", "low", "high"]},
+                    },
+                },
             },
         },
         {
