@@ -594,6 +594,13 @@ pub trait EvaluationProvider {
 /// Factory launch implementation separated from provider identity/config policy.
 #[async_trait(?Send)]
 pub trait EvaluationProviderLauncher: Send + Sync {
+    /// Prove the launch recipe, immutable closure, and isolation mechanism are
+    /// available in this exact runner image without starting the worker.
+    fn check_distribution_available(
+        &self,
+        distribution: &EvaluationDistributionDescriptor,
+    ) -> Result<(), EvaluationProviderError>;
+
     /// Attest, isolate, launch, and negotiate one exact registered distribution.
     async fn launch(
         &self,
@@ -615,6 +622,12 @@ pub trait EvaluationProviderFactory: Send + Sync {
         &self,
         config: &CanonicalJson,
     ) -> Result<ValidatedProviderConfig, ProviderRegistryError>;
+
+    /// Prove one descriptor-backed distribution is executable by this factory.
+    fn check_distribution_available(
+        &self,
+        distribution: &EvaluationDistributionId,
+    ) -> Result<(), EvaluationProviderError>;
 
     /// Launch one registered immutable distribution.
     async fn launch(
@@ -671,6 +684,19 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
         })
     }
 
+    fn check_distribution_available(
+        &self,
+        distribution: &EvaluationDistributionId,
+    ) -> Result<(), EvaluationProviderError> {
+        let distribution = self.descriptor.distribution(distribution).ok_or_else(|| {
+            EvaluationProviderError::FactoryMismatch(format!(
+                "distribution {distribution} is not registered for provider {}",
+                self.descriptor.provider_id
+            ))
+        })?;
+        self.launcher.check_distribution_available(distribution)
+    }
+
     async fn launch(
         &self,
         distribution: &EvaluationDistributionId,
@@ -695,6 +721,7 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
                 self.descriptor.provider_id
             ))
         })?;
+        self.launcher.check_distribution_available(distribution)?;
         self.launcher
             .launch(&self.descriptor, distribution, config, context)
             .await
@@ -734,7 +761,25 @@ impl EvaluationProviderRegistryBuilder {
         }
         let mut operation_schemas =
             BTreeMap::<SemanticOperationId, EvaluationOperationDescriptor>::new();
+        let mut available_distributions = BTreeMap::new();
+        let mut unavailable_distributions = BTreeMap::new();
         for factory in self.factories.values() {
+            let provider_id = factory.descriptor().provider_id.clone();
+            let mut provider_available = BTreeSet::new();
+            for distribution in &factory.descriptor().distributions {
+                match factory.check_distribution_available(&distribution.distribution_id) {
+                    Ok(()) => {
+                        provider_available.insert(distribution.distribution_id.clone());
+                    }
+                    Err(error) => {
+                        unavailable_distributions.insert(
+                            (provider_id.clone(), distribution.distribution_id.clone()),
+                            crate::canonical::redact_diagnostic(&error.to_string()),
+                        );
+                    }
+                }
+            }
+            available_distributions.insert(provider_id, provider_available);
             for operation in &factory.descriptor().operations {
                 if let Some(existing) = operation_schemas.get(&operation.operation_id) {
                     if existing != operation {
@@ -749,6 +794,8 @@ impl EvaluationProviderRegistryBuilder {
         }
         Ok(EvaluationProviderRegistry {
             factories: self.factories,
+            available_distributions,
+            unavailable_distributions,
         })
     }
 }
@@ -757,6 +804,8 @@ impl EvaluationProviderRegistryBuilder {
 #[derive(Clone)]
 pub struct EvaluationProviderRegistry {
     factories: BTreeMap<EvaluationProviderId, Arc<dyn EvaluationProviderFactory>>,
+    available_distributions: BTreeMap<EvaluationProviderId, BTreeSet<EvaluationDistributionId>>,
+    unavailable_distributions: BTreeMap<(EvaluationProviderId, EvaluationDistributionId), String>,
 }
 
 impl EvaluationProviderRegistry {
@@ -812,7 +861,50 @@ impl EvaluationProviderRegistry {
                 distribution: distribution_id.to_string(),
             });
         }
+        if !self.distribution_is_available(provider_id, distribution_id) {
+            return Err(ProviderRegistryError::UnavailableDistribution {
+                provider: provider_id.to_string(),
+                distribution: distribution_id.to_string(),
+                reason: self
+                    .unavailable_distributions
+                    .get(&(provider_id.clone(), distribution_id.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        "factory did not attest this distribution as executable".to_string()
+                    }),
+            });
+        }
         factory.validate_authored_config(config)
+    }
+
+    /// Return whether one registered distribution passed launch/isolation
+    /// availability attestation when this registry was frozen.
+    pub fn distribution_is_available(
+        &self,
+        provider_id: &EvaluationProviderId,
+        distribution_id: &EvaluationDistributionId,
+    ) -> bool {
+        self.available_distributions
+            .get(provider_id)
+            .is_some_and(|available| available.contains(distribution_id))
+    }
+
+    /// Borrow executable distributions in deterministic descriptor order.
+    pub fn available_distributions(
+        &self,
+        provider_id: &EvaluationProviderId,
+    ) -> Vec<&EvaluationDistributionDescriptor> {
+        let Some(factory) = self.factories.get(provider_id) else {
+            return Vec::new();
+        };
+        factory
+            .descriptor()
+            .distributions
+            .iter()
+            .filter(|distribution| {
+                self.distribution_is_available(provider_id, &distribution.distribution_id)
+            })
+            .collect()
     }
 
     /// Iterate descriptors in stable provider-ID order.
@@ -902,6 +994,13 @@ macro_rules! delegate_factory {
                 config: &CanonicalJson,
             ) -> Result<ValidatedProviderConfig, ProviderRegistryError> {
                 self.0.validate_authored_config(config)
+            }
+
+            fn check_distribution_available(
+                &self,
+                distribution: &EvaluationDistributionId,
+            ) -> Result<(), EvaluationProviderError> {
+                self.0.check_distribution_available(distribution)
             }
 
             async fn launch(
@@ -1132,6 +1231,15 @@ pub enum ProviderRegistryError {
         /// Selected distribution.
         distribution: String,
     },
+    /// A registered distribution lacks a verified launch closure or isolation mechanism.
+    UnavailableDistribution {
+        /// Selected provider.
+        provider: String,
+        /// Selected distribution.
+        distribution: String,
+        /// Redacted fail-closed availability reason.
+        reason: String,
+    },
     /// Providers assigned incompatible schemas/capabilities to one semantic operation ID.
     ConflictingOperationSchema(String),
     /// A frozen product registry cannot be empty.
@@ -1155,6 +1263,14 @@ impl Display for ProviderRegistryError {
             } => write!(
                 formatter,
                 "unknown evaluator distribution {distribution} for provider {provider}"
+            ),
+            Self::UnavailableDistribution {
+                provider,
+                distribution,
+                reason,
+            } => write!(
+                formatter,
+                "evaluator distribution {distribution} for provider {provider} is unavailable: {reason}"
             ),
             Self::ConflictingOperationSchema(operation) => write!(
                 formatter,
@@ -1258,6 +1374,13 @@ mod tests {
 
     #[async_trait(?Send)]
     impl EvaluationProviderLauncher for NeverLaunch {
+        fn check_distribution_available(
+            &self,
+            _distribution: &EvaluationDistributionDescriptor,
+        ) -> Result<(), EvaluationProviderError> {
+            Ok(())
+        }
+
         async fn launch(
             &self,
             _descriptor: &EvaluationProviderDescriptor,
@@ -1266,6 +1389,30 @@ mod tests {
             _context: &ProviderLaunchContext,
         ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
             panic!("pure validation test must not launch a provider")
+        }
+    }
+
+    struct UnavailableLaunch;
+
+    #[async_trait(?Send)]
+    impl EvaluationProviderLauncher for UnavailableLaunch {
+        fn check_distribution_available(
+            &self,
+            _distribution: &EvaluationDistributionDescriptor,
+        ) -> Result<(), EvaluationProviderError> {
+            Err(EvaluationProviderError::Launch(
+                "fixture isolation mechanism unavailable".to_string(),
+            ))
+        }
+
+        async fn launch(
+            &self,
+            _descriptor: &EvaluationProviderDescriptor,
+            _distribution: &EvaluationDistributionDescriptor,
+            _config: &ValidatedProviderConfig,
+            _context: &ProviderLaunchContext,
+        ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
+            panic!("an unavailable distribution must never launch")
         }
     }
 
@@ -1357,6 +1504,35 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["nemo_evaluator", "openbench"]
         );
+        let nemo_id = EvaluationProviderId::new("nemo_evaluator").unwrap();
+        assert_eq!(registry.available_distributions(&nemo_id).len(), 1);
+    }
+
+    #[test]
+    fn registry_excludes_and_rejects_unavailable_distributions() {
+        let distribution = distribution("nemo-unavailable");
+        let distribution_id = distribution.distribution_id.clone();
+        let provider_id = EvaluationProviderId::new("nemo_evaluator").unwrap();
+        let factory =
+            NemoEvaluatorProviderFactory::new(vec![distribution], Arc::new(UnavailableLaunch))
+                .unwrap();
+        let mut builder = EvaluationProviderRegistryBuilder::new();
+        builder.register(Arc::new(factory)).unwrap();
+        let registry = builder.freeze().unwrap();
+        assert!(!registry.distribution_is_available(&provider_id, &distribution_id));
+        assert!(registry.available_distributions(&provider_id).is_empty());
+
+        let config = CanonicalJson::new(serde_json::json!({"benchmark": "mmlu"})).unwrap();
+        assert!(matches!(
+            registry.validate_authored_config(&provider_id, &distribution_id, &config),
+            Err(ProviderRegistryError::UnavailableDistribution {
+                provider,
+                distribution,
+                reason,
+            }) if provider == "nemo_evaluator"
+                && distribution == "nemo-unavailable"
+                && reason.contains("isolation mechanism unavailable")
+        ));
     }
 
     #[test]

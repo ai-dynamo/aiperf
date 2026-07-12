@@ -279,6 +279,10 @@ pub struct PreparedEvaluatorLaunch {
 
 /// Replaceable platform implementation for the full evaluator isolation outcome.
 pub trait EvaluatorIsolation: Send + Sync {
+    /// Prove the platform isolation mechanism is present and immutable without
+    /// starting an evaluator worker.
+    fn check_available(&self) -> Result<(), EvaluationProviderError>;
+
     /// Prepare an isolated process-tree launch from a factory-owned recipe.
     fn prepare(
         &self,
@@ -352,7 +356,23 @@ impl BubblewrapEvaluatorIsolation {
         })
     }
 
+    #[cfg(target_os = "linux")]
     fn verify_binary(&self) -> Result<(), EvaluationProviderError> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let metadata = std::fs::symlink_metadata(&self.bubblewrap).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "failed to inspect Bubblewrap isolation binary: {error}"
+            ))
+        })?;
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.permissions().mode() & 0o111 == 0
+        {
+            return Err(EvaluationProviderError::Launch(
+                "Bubblewrap isolation binary was not a regular executable file".to_string(),
+            ));
+        }
         if hash_file(&self.bubblewrap)? != self.bubblewrap_sha256 {
             return Err(EvaluationProviderError::Launch(
                 "Bubblewrap binary digest did not match registered isolation profile".to_string(),
@@ -360,9 +380,20 @@ impl BubblewrapEvaluatorIsolation {
         }
         Ok(())
     }
+
+    #[cfg(not(target_os = "linux"))]
+    fn verify_binary(&self) -> Result<(), EvaluationProviderError> {
+        Err(EvaluationProviderError::Launch(
+            "Bubblewrap evaluator isolation is available only on Linux".to_string(),
+        ))
+    }
 }
 
 impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
+    fn check_available(&self) -> Result<(), EvaluationProviderError> {
+        self.verify_binary()
+    }
+
     fn prepare(
         &self,
         launch: &AttestedWorkerLaunch,
@@ -630,5 +661,26 @@ mod tests {
             }],
         };
         assert!(launch.validate().is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bubblewrap_availability_requires_exact_regular_executable() {
+        let root =
+            std::env::temp_dir().join(format!("aiperf-bwrap-availability-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let binary = root.join("bwrap");
+        std::fs::write(&binary, b"fixture-bwrap").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let digest = hash_file(&binary).unwrap();
+        let isolation =
+            BubblewrapEvaluatorIsolation::new(&binary, digest, EvaluatorResourceLimits::default())
+                .unwrap();
+        isolation.check_available().unwrap();
+
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(isolation.check_available().is_err());
+        let _ = std::fs::remove_dir_all(root);
     }
 }

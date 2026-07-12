@@ -138,6 +138,23 @@ impl SupervisedEvaluationProviderLauncher {
 
 #[async_trait(?Send)]
 impl EvaluationProviderLauncher for SupervisedEvaluationProviderLauncher {
+    fn check_distribution_available(
+        &self,
+        distribution: &EvaluationDistributionDescriptor,
+    ) -> Result<(), EvaluationProviderError> {
+        let launch = self
+            .launches
+            .get(&distribution.distribution_id)
+            .ok_or_else(|| {
+                EvaluationProviderError::FactoryMismatch(format!(
+                    "no factory-owned launch recipe for distribution {}",
+                    distribution.distribution_id
+                ))
+            })?;
+        self.attestor.attest(launch, distribution)?;
+        self.isolation.check_available()
+    }
+
     async fn launch(
         &self,
         descriptor: &EvaluationProviderDescriptor,
@@ -1034,6 +1051,10 @@ mod tests {
     struct FixtureIsolation;
 
     impl EvaluatorIsolation for FixtureIsolation {
+        fn check_available(&self) -> Result<(), EvaluationProviderError> {
+            Ok(())
+        }
+
         fn prepare(
             &self,
             _launch: &AttestedWorkerLaunch,
