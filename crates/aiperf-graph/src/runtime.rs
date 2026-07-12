@@ -389,6 +389,122 @@ where
     RunOutcome { deadlocked: false }
 }
 
+/// Run `body` against one passive external event source under the **real/wall
+/// clock**, stepping the source at each event's real-time deadline instead of
+/// fast-forwarding the virtual clock.
+///
+/// This is the wall-clock twin of [`drive_sim_with_source`]: the engine adapter
+/// (e.g. Dynamo's `SteppableReplay`), the in-process sink/observer/completion
+/// seam, the materializer, and the metrics accumulator are all identical and
+/// clock-agnostic — only the pump differs. It realizes the "real-time in-process"
+/// mode (measure the engine/scheduler at its live throughput ceiling with no
+/// network): the `RealClock` + in-process-transport corner of the
+/// `{transport, clock}` matrix. Speed scaling is expressed in the (already
+/// speed-adjusted) trace times, so an event at source time `t` is stepped when
+/// the wall clock reaches `t`; `--speedup-ratio` therefore shows up as smaller
+/// `t` values and shorter real sleeps, exactly as in the virtual driver.
+///
+/// `wakeup` is notified by the source's producer (the in-process sink) whenever
+/// it enqueues work, so an idle or long-sleeping engine loop re-evaluates its
+/// next event instead of waiting out a now-stale deadline. Unlike the virtual
+/// driver this makes no determinism guarantee — real timers carry jitter, which
+/// is the point of a wall-clock mode; use [`drive_sim_with_source`] when exact,
+/// reproducible ordering is required.
+pub fn drive_real_with_source<F>(
+    source: Rc<dyn SimEventSource>,
+    wakeup: Rc<Notify>,
+    make_body: impl FnOnce(Handle) -> F,
+) -> Result<RunOutcome, SimDriveError>
+where
+    F: Future<Output = ()>,
+{
+    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("current_thread runtime");
+    let local = LocalSet::new();
+    let handle = Handle::new(clock.clone());
+    let body = make_body(handle);
+
+    let outcome = local.block_on(&rt, async move {
+        let body_done = Rc::new(Cell::new(false));
+        let engine = tokio::task::spawn_local(drive_source_realtime(
+            clock.clone(),
+            source,
+            wakeup.clone(),
+            body_done.clone(),
+        ));
+
+        pin!(body).await;
+        // The trace drained: no further requests will be submitted. Let the
+        // engine loop finish any in-flight completions, then drain to idle.
+        body_done.set(true);
+        wakeup.notify_one();
+        engine
+            .await
+            .unwrap_or_else(|error| Err(SimDriveError::EventSource(error.to_string())))
+    });
+
+    outcome?;
+    Ok(RunOutcome { deadlocked: false })
+}
+
+/// Step one passive [`SimEventSource`] in real time: sleep to each event's
+/// deadline (interruptible by `wakeup`), then step it. Exits once the body has
+/// signalled completion and the source has drained to idle.
+async fn drive_source_realtime(
+    clock: Rc<dyn Clock>,
+    source: Rc<dyn SimEventSource>,
+    wakeup: Rc<Notify>,
+    body_done: Rc<Cell<bool>>,
+) -> Result<(), SimDriveError> {
+    loop {
+        match source.next_event_ns()? {
+            Some(at_ns) => {
+                let now = clock.now_ns();
+                if at_ns > now {
+                    // Wait until wall time reaches the event, but wake early if
+                    // the producer enqueues sooner work and re-evaluate.
+                    let notified = wakeup.notified();
+                    tokio::pin!(notified);
+                    tokio::select! {
+                        biased;
+                        () = &mut notified => continue,
+                        () = clock.clone().sleep(at_ns - now) => {}
+                    }
+                }
+                // Step at the event's own time (as the virtual driver does), so
+                // the source observes monotonic, self-consistent step times even
+                // though wall time may have overshot `at_ns` by timer jitter.
+                source.set_time_ns(at_ns)?;
+                let step = source.step(at_ns)?;
+                if step.end_ns < at_ns {
+                    return Err(SimDriveError::TimeRegression {
+                        now_ns: at_ns,
+                        event_ns: step.end_ns,
+                    });
+                }
+            }
+            None => {
+                if body_done.get() && source.is_idle() {
+                    return Ok(());
+                }
+                // No pending event yet: wait for the producer to enqueue work.
+                // A bounded fallback sleep re-checks the completion condition so
+                // a body that finishes while the source is idle still terminates.
+                let notified = wakeup.notified();
+                tokio::pin!(notified);
+                tokio::select! {
+                    biased;
+                    () = &mut notified => {}
+                    () = clock.clone().sleep(1_000_000) => {}
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +602,71 @@ mod tests {
 
         assert!(!outcome.deadlocked);
         assert_eq!(*log.borrow(), vec!["clock", "source"]);
+    }
+
+    #[test]
+    fn real_driver_steps_producer_fed_source_and_drains_to_completion() {
+        use std::collections::VecDeque;
+
+        // A passive source whose events are enqueued by the running body (the
+        // in-process sink's role): each pending entry is an engine event due at a
+        // wall-clock ns deadline. The real driver must step every one and then
+        // terminate once the body is done and the source is idle.
+        struct QueueSource {
+            pending: RefCell<VecDeque<i64>>,
+            stepped: RefCell<Vec<i64>>,
+        }
+        impl SimEventSource for QueueSource {
+            fn next_event_ns(&self) -> Result<Option<i64>, SimDriveError> {
+                Ok(self.pending.borrow().front().copied())
+            }
+            fn set_time_ns(&self, _now_ns: i64) -> Result<(), SimDriveError> {
+                Ok(())
+            }
+            fn step(&self, now_ns: i64) -> Result<SimStep, SimDriveError> {
+                let at = self.pending.borrow_mut().pop_front().unwrap_or(now_ns);
+                self.stepped.borrow_mut().push(at);
+                Ok(SimStep {
+                    end_ns: at,
+                    made_progress: true,
+                })
+            }
+            fn is_idle(&self) -> bool {
+                self.pending.borrow().is_empty()
+            }
+        }
+
+        let source = Rc::new(QueueSource {
+            pending: RefCell::new(VecDeque::new()),
+            stepped: RefCell::new(Vec::new()),
+        });
+        let wakeup = Rc::new(Notify::new());
+        let src_for_body = source.clone();
+        let wake_for_body = wakeup.clone();
+
+        let outcome = drive_real_with_source(source.clone(), wakeup, move |handle| async move {
+            let base = handle.now_ns();
+            // Submit three engine events at 1/2/3 ms deadlines, spaced 0.5 ms
+            // apart, waking the engine loop each time (as a producing sink would).
+            for offset in [1_000_000_i64, 2_000_000, 3_000_000] {
+                src_for_body.pending.borrow_mut().push_back(base + offset);
+                wake_for_body.notify_one();
+                handle.sleep_ns(500_000).await;
+            }
+            // Let the engine finish stepping everything before the trace "ends".
+            while !src_for_body.pending.borrow().is_empty() {
+                handle.sleep_ns(500_000).await;
+            }
+        })
+        .unwrap();
+
+        assert!(!outcome.deadlocked);
+        let stepped = source.stepped.borrow().clone();
+        assert_eq!(stepped.len(), 3, "every producer-fed event was stepped");
+        assert!(
+            stepped.windows(2).all(|w| w[0] <= w[1]),
+            "events stepped in wall-clock order: {stepped:?}"
+        );
     }
 
     #[test]
