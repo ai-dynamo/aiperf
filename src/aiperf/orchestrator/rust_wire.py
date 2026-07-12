@@ -102,7 +102,7 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
             "values": copy.deepcopy(run.variation.values),
         }
 
-    sidecars = _authored_sidecars(run)
+    workload = _authored_workload(run, dataset)
     endpoint_profiles = [
         {
             "id": "default",
@@ -116,19 +116,27 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
         }
         for profile_id, profile in cfg.endpoint_profiles.items()
     )
+    resources: dict[str, Any] = {
+        "models": _authored_models(cfg),
+        "endpoints": {"profiles": endpoint_profiles},
+        "metrics": _authored_metrics(cfg),
+        "artifacts": _authored_artifacts(run),
+    }
+    # Evaluation host effects are selected inside the provider-neutral
+    # workload object. Its runner descriptor forbids the generic sidecar
+    # resource, so an empty compatibility block must not turn into authored
+    # sidecar presence on the strict v2 wire.
+    if workload["type"] != "evaluation":
+        resources["sidecars"] = _authored_sidecars(run)
     return {
         "identity": identity,
         "artifact_target": str(run.artifact_dir),
-        "models": _authored_models(cfg),
-        "endpoints": {"profiles": endpoint_profiles},
         "backend": {
             "type": str(cfg.backend.type),
             "config": copy.deepcopy(cfg.backend.config),
         },
-        "workload": _authored_workload(run, dataset),
-        "metrics": _authored_metrics(cfg),
-        "artifacts": _authored_artifacts(run),
-        "sidecars": sidecars,
+        "workload": workload,
+        "resources": resources,
     }
 
 
@@ -270,10 +278,10 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
 
 def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:
     """Retain authored tokenizer acquisition policy with an explicit identity."""
+    from aiperf.common.tokenizer_fake_names import is_fake_model_name
+
     primary_model = cfg.models.items[0].name
     if cfg.tokenizer is None:
-        from aiperf.common.tokenizer_fake_names import is_fake_model_name
-
         return {
             "name": "builtin" if is_fake_model_name(primary_model) else primary_model,
             "revision": "main",
@@ -281,7 +289,9 @@ def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:
             "apply_chat_template": False,
         }
     result = _authored_model_dump(cfg.tokenizer)
-    result["name"] = cfg.tokenizer.name or primary_model
+    result["name"] = cfg.tokenizer.name or (
+        "builtin" if is_fake_model_name(primary_model) else primary_model
+    )
     return result
 
 

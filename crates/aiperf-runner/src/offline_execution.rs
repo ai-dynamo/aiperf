@@ -856,11 +856,15 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
     fn validate_run(
         &self,
         run: &AuthoredRunSpecV2,
-        _context: &RunnerRunContext,
+        context: &RunnerRunContext,
         backend: &dyn ValidatedBackendConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
         self.validate_pair(backend, workload)?;
+        ensure!(
+            context.sidecar_inputs().is_empty(),
+            "dynamo_offline scheduled execution does not support online sidecars"
+        );
         ensure!(
             run.artifacts.records_path.is_none()
                 && run.artifacts.raw_path.is_none()
@@ -1214,7 +1218,8 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                             &["dynamo-offline".to_owned()],
                             &shared,
                         )?
-                        .with_metrics_config(metrics.clone());
+                        .with_metrics_config(metrics.clone())
+                        .with_performance_record_capture(false);
                         if phase.common().name == "profiling"
                             && let Some(observer) = &backend_goodput
                         {

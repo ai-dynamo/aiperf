@@ -79,6 +79,15 @@ _WORDLEVEL_CONFIG = """{
 }"""
 
 
+def _forbid_protocol_v1(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("sidecar product proof reached protocol-v1 projection")
+
+    monkeypatch.setattr("aiperf.orchestrator.rust_executor.validate_v1_selection", fail)
+    monkeypatch.setattr("aiperf.orchestrator.rust_executor.build_run_request", fail)
+    monkeypatch.setattr(RustSubprocessExecutor, "_resolve_run", fail)
+
+
 class _ChatHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     bodies: list[dict[str, object]] = []
@@ -407,7 +416,9 @@ def test_config_v2_streams_rust_metrics_live_through_canonical_python_otel(
 
 def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _forbid_protocol_v1(monkeypatch)
     import pyarrow.parquet as pq
 
     from aiperf.common.environment import Environment
@@ -540,7 +551,11 @@ def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries
         thread.join(timeout=5)
 
 
-def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -> None:
+def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_protocol_v1(monkeypatch)
     _ChatHandler.bodies.clear()
     _ChatHandler.telemetry_scrapes = 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatHandler)
@@ -625,7 +640,9 @@ def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -
 
 def test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _forbid_protocol_v1(monkeypatch)
     _ChatHandler.bodies.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -706,7 +723,9 @@ def test_config_v2_runs_native_tcp_rtt_calibration_and_adjusts_metrics(
 
 def test_config_v2_fixed_network_rtt_bypasses_probes_and_shifts_metrics(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _forbid_protocol_v1(monkeypatch)
     _AdaptiveChatHandler.active = 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _AdaptiveChatHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

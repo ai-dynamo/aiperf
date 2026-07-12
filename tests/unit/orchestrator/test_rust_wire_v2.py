@@ -123,8 +123,28 @@ def test_v2_envelope_and_default_scheduled_projection(
             "concurrency": 1,
         }
     ]
-    assert authored["endpoints"]["profiles"][0]["id"] == "default"
-    assert authored["endpoints"]["profiles"][0]["type"] == "future_endpoint"
+    assert authored["resources"]["endpoints"]["profiles"][0]["id"] == "default"
+    assert (
+        authored["resources"]["endpoints"]["profiles"][0]["type"] == "future_endpoint"
+    )
+
+
+def test_normalized_unauthored_tokenizer_uses_builtin_for_placeholder_model(
+    tmp_path: Path,
+) -> None:
+    run = _run(tmp_path / "not-created")
+    assert run.cfg.tokenizer is not None
+    run.cfg.tokenizer.name = None
+
+    tokenizer = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["workload"]["config"]["tokenizer"]
+
+    assert tokenizer["name"] == "builtin"
+    assert tokenizer["revision"] == "main"
+    assert tokenizer["trust_remote_code"] is False
 
 
 def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
@@ -145,7 +165,7 @@ def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
 
     assert request["protocol_version"] == 2
     assert request["run"]["backend"] == {"type": "online_grpc", "config": {}}
-    assert request["run"]["endpoints"]["profiles"][0]["urls"] == [
+    assert request["run"]["resources"]["endpoints"]["profiles"][0]["urls"] == [
         "grpc://127.0.0.1:8001"
     ]
     with pytest.raises(RustWireError, match="protocol v1 supports only backend"):
@@ -425,9 +445,7 @@ def test_v2_file_dataset_projects_directly_to_selected_native_adapter(
         "entries": 1,
         "random_seed": 23,
         "osl": {"value": 7.0},
-        "records": [
-            {"timestamp": 0.0, "input_length": 8, "output_length": 2}
-        ],
+        "records": [{"timestamp": 0.0, "input_length": 8, "output_length": 2}],
     }
     assert not run.artifact_dir.exists()
 
@@ -453,7 +471,7 @@ def test_v2_user_files_are_rendered_and_serialized_once_without_writing(
         run,
         operation="execute",
         expected_distribution_id=_DISTRIBUTION_A,
-    )["run"]["artifacts"]["user_files"]
+    )["run"]["resources"]["artifacts"]["user_files"]
 
     assert files == [
         {
@@ -517,7 +535,7 @@ def test_v2_sidecars_are_direct_protocol_neutral_native_inputs(tmp_path: Path) -
         run,
         operation="execute",
         expected_distribution_id=_DISTRIBUTION_A,
-    )["run"]["sidecars"]
+    )["run"]["resources"]["sidecars"]
     compatibility_run = build_run_request(run)["run"]
 
     assert sidecars == {
@@ -550,14 +568,16 @@ def test_v2_custom_gpu_source_never_reads_resolved_state(tmp_path: Path) -> None
 
     class _ResolvedAccessIsABug:
         def __getattribute__(self, name: str):
-            raise AssertionError(f"v2 sidecar projection read BenchmarkRun.resolved.{name}")
+            raise AssertionError(
+                f"v2 sidecar projection read BenchmarkRun.resolved.{name}"
+            )
 
     run.__dict__["resolved"] = _ResolvedAccessIsABug()
     sidecar = build_authored_run_request(
         run,
         operation="execute",
         expected_distribution_id=_DISTRIBUTION_A,
-    )["run"]["sidecars"]["gpu_telemetry"]
+    )["run"]["resources"]["sidecars"]["gpu_telemetry"]
 
     assert "custom_metrics" not in sidecar
     assert all(source["type"] == "python" for source in sidecar["sources"])
@@ -767,7 +787,7 @@ def test_readiness_is_authored_in_v2_and_rejected_by_v1(tmp_path: Path) -> None:
         run,
         operation="validate",
         expected_distribution_id=_DISTRIBUTION_A,
-    )["run"]["endpoints"]["profiles"][0]
+    )["run"]["resources"]["endpoints"]["profiles"][0]
 
     assert endpoint["wait_for_model_timeout"] == 90.0
     assert endpoint["wait_for_model_interval"] == 1.25

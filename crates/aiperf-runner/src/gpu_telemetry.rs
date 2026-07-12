@@ -326,6 +326,12 @@ impl GpuTelemetryState {
     }
 
     async fn collect_continuously(self: Rc<Self>) {
+        // Python's canonical collector starts its cadence task with
+        // `immediate=True` (`src/aiperf/common/mixins/base_metrics_collector_mixin.py:345`).
+        // The forced baseline belongs just before the phase; this first ordinary
+        // scrape belongs just after the common phase-start barrier and ensures a
+        // short phase still has an in-window gauge sample.
+        self.collect_active().await;
         loop {
             let sleep = self.clock.clone().sleep(self.collection_interval_ns);
             let stopped = self.stop.notified();
@@ -336,20 +342,24 @@ impl GpuTelemetryState {
                 _ = &mut stopped => return,
                 _ = &mut sleep => {}
             }
-            let collectors = self.active.borrow().clone();
-            for collector in collectors {
-                match collector.collect_continuous().await {
-                    Ok(Some(scrape)) => GpuTelemetryCollector::ingest_scrape(
-                        &scrape,
-                        &mut self.accumulator.borrow_mut(),
-                    ),
-                    Ok(None) => {}
-                    Err(error) => {
-                        eprintln!(
-                            "GPU telemetry cadence scrape failed for {}: {error}",
-                            collector.endpoint_url()
-                        );
-                    }
+            self.collect_active().await;
+        }
+    }
+
+    async fn collect_active(&self) {
+        let collectors = self.active.borrow().clone();
+        for collector in collectors {
+            match collector.collect_continuous().await {
+                Ok(Some(scrape)) => GpuTelemetryCollector::ingest_scrape(
+                    &scrape,
+                    &mut self.accumulator.borrow_mut(),
+                ),
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!(
+                        "GPU telemetry cadence scrape failed for {}: {error}",
+                        collector.endpoint_url()
+                    );
                 }
             }
         }

@@ -220,17 +220,6 @@ impl RunnerV2Coordinator {
                 );
             }
         };
-        if has_unavailable_sidecar(&envelope) {
-            return failure(
-                operation,
-                self.distribution_id.clone(),
-                benchmark_id,
-                RunnerFailureStageV2::Validation,
-                "unsupported_sidecar",
-                "protocol-v2 runtime adapters are not registered for GPU, network-latency, or server-metrics sidecars",
-                1,
-            );
-        }
         if let Err(error) = self
             .runner_registry
             .validate_run(&envelope.run, &context, &selection)
@@ -412,13 +401,6 @@ fn validate_distribution_id(value: &str) -> Result<()> {
         "runner distribution_id must use blake3: followed by 64 lowercase hexadecimal digits"
     );
     Ok(())
-}
-
-fn has_unavailable_sidecar(envelope: &RunnerEnvelopeV2) -> bool {
-    let sidecars = &envelope.run.sidecars;
-    sidecars.gpu_telemetry.is_some()
-        || sidecars.network_latency.is_some()
-        || sidecars.server_metrics.is_some()
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -277,11 +277,11 @@ impl OnlineWorkloadAdapter for OnlineScheduledAdapter {
 
     fn validate_run(
         &self,
-        run: &AuthoredRunSpecV2,
+        _run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        validate_online_run(run, context)?;
+        validate_online_run(context)?;
         let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, self.workload_id())?;
         validate_authored_tokenizer(&workload.tokenizer)
     }
@@ -314,10 +314,13 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
         context: &RunnerRunContext,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        validate_online_run(run, context)?;
+        validate_online_run(context)?;
         ensure!(
-            run.sidecars.live_streaming.is_none(),
-            "protocol-v2 graph execution does not support live-result streaming"
+            run.sidecars.gpu_telemetry.is_none()
+                && run.sidecars.network_latency.is_none()
+                && run.sidecars.server_metrics.is_none()
+                && run.sidecars.live_streaming.is_none(),
+            "protocol-v2 graph execution does not support native sidecars"
         );
         ensure!(
             run.models.items.len() == 1,
@@ -356,7 +359,7 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
         context: &RunnerRunContext,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        validate_online_run(run, context)?;
+        validate_online_run(context)?;
         ensure!(
             run.models.items.len() == 1,
             "static accuracy execution currently requires exactly one model"
@@ -403,7 +406,7 @@ fn workload_config<'a, T: 'static>(
         .ok_or_else(|| anyhow!("online {workload_id} pair received a different config type"))
 }
 
-fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
+fn validate_online_run(context: &RunnerRunContext) -> Result<()> {
     context.default_endpoint_profile()?;
     for (profile_id, profile) in context.endpoint_profiles() {
         ensure!(
@@ -428,16 +431,10 @@ fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> R
             );
         }
     }
-    ensure!(
-        run.sidecars.gpu_telemetry.is_none()
-            && run.sidecars.network_latency.is_none()
-            && run.sidecars.server_metrics.is_none(),
-        "protocol-v2 online execution has no registered GPU, network-latency, or server-metrics runtime adapter"
-    );
     Ok(())
 }
 
-fn prepare_online_readiness(
+pub(crate) fn prepare_online_readiness(
     run: &AuthoredRunSpecV2,
     context: &RunnerRunContext,
 ) -> Result<Box<dyn PreparedOnlineReadiness>> {
