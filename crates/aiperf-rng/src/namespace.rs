@@ -77,8 +77,17 @@ pub const GRAPH_NODE_CANCELLATION_WORKER: &str = "graph.node.cancellation.worker
 pub const GRAPH_PHASE: &str = "graph.phase";
 /// Sequence-length pair sampling.
 pub const MODELS_SEQUENCE_DISTRIBUTION: &str = "models.sequence.distribution";
+/// Session-concurrency ramp sampling.
+///
+/// User-centric session admission uses this same actuator stream; there is no
+/// independently authored user-target ramp.
+pub const TIMING_RAMP_CONCURRENCY: &str = "timing.ramp.concurrency";
 /// Poisson ramp sampling.
 pub const TIMING_RAMP_POISSON: &str = "timing.ramp.poisson";
+/// Prefill-concurrency ramp sampling.
+pub const TIMING_RAMP_PREFILL_CONCURRENCY: &str = "timing.ramp.prefill_concurrency";
+/// Request-rate ramp sampling.
+pub const TIMING_RAMP_REQUEST_RATE: &str = "timing.ramp.request_rate";
 /// Request-cancellation sampling.
 pub const TIMING_REQUEST_CANCELLATION: &str = "timing.request.cancellation";
 /// Gamma request-interval sampling.
@@ -125,7 +134,10 @@ pub const ALL: &[&str] = &[
     GRAPH_NODE_CANCELLATION_WORKER,
     GRAPH_PHASE,
     MODELS_SEQUENCE_DISTRIBUTION,
+    TIMING_RAMP_CONCURRENCY,
     TIMING_RAMP_POISSON,
+    TIMING_RAMP_PREFILL_CONCURRENCY,
+    TIMING_RAMP_REQUEST_RATE,
     TIMING_REQUEST_CANCELLATION,
     TIMING_REQUEST_GAMMA_INTERVAL,
     TIMING_REQUEST_POISSON_INTERVAL,

@@ -44,8 +44,9 @@ use tokio::sync::{Notify, mpsc};
 use uuid::Uuid;
 
 use crate::execute::{
-    AdaptiveScheduledPhaseController, adaptive_run_config, integer_adaptive_bound, metrics_phase,
-    phase_config, phase_seamless_to_next, ramp_strategy, seconds_to_u64_ns,
+    AdaptiveScheduledPhaseController, RampActuatorRngRoots, adaptive_run_config,
+    integer_adaptive_bound, metrics_phase, phase_config, phase_seamless_to_next, ramp_strategy,
+    seconds_to_u64_ns,
 };
 use crate::graph_execution::{
     ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig, ObservedRunnerGraphPlacement,
@@ -1096,7 +1097,7 @@ fn prepare_graph_phase(
         intervals.clone(),
         session_slots.clone(),
         placement.clone(),
-        phase_rng.derive_root(namespace::TIMING_RAMP_POISSON),
+        phase_rng,
         failures.clone(),
     )?;
     let mut workload = GraphWorkload::new(clock, source, placement.clone())
@@ -1147,6 +1148,7 @@ fn graph_ramp_controller(
     failures: Rc<GraphPhaseFailures>,
 ) -> Result<Rc<dyn ScheduledPhaseController>> {
     let common = spec.common();
+    let rng_roots = RampActuatorRngRoots::from_phase_root(rng_root);
     let target_rate = spec
         .request_arrival()
         .and_then(|(_, target_rate, _)| target_rate);
@@ -1158,7 +1160,7 @@ fn graph_ramp_controller(
         let slots = session_slots
             .clone()
             .ok_or_else(|| anyhow!("concurrency_ramp requires graph session admission"))?;
-        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_roots.concurrency())?;
         drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
             slots.set_limit(value.round() as usize)
         }));
@@ -1167,7 +1169,13 @@ fn graph_ramp_controller(
         let target = common
             .prefill_concurrency
             .ok_or_else(|| anyhow!("prefill_ramp requires prefill_concurrency"))?;
-        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+        let strategy = ramp_strategy(
+            ramp,
+            1.0,
+            target as f64,
+            false,
+            rng_roots.prefill_concurrency(),
+        )?;
         let placement = placement.clone();
         let failures = failures.clone();
         drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
@@ -1180,7 +1188,7 @@ fn graph_ramp_controller(
         let target = target_rate.ok_or_else(|| anyhow!("rate_ramp requires a rate phase"))?;
         let duration_ns = seconds_to_u64_ns(ramp.duration)?;
         let start = target * RATE_RAMP_UPDATE_INTERVAL_NS as f64 / duration_ns as f64;
-        let strategy = ramp_strategy(ramp, start, target, true, rng_root)?;
+        let strategy = ramp_strategy(ramp, start, target, true, rng_roots.request_rate())?;
         drivers.push(RampDriver::new(clock, strategy, move |value| {
             intervals.borrow_mut().set_rate(value)
         }));

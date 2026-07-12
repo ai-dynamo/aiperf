@@ -69,7 +69,7 @@ use aiperf_metrics::{
 };
 use aiperf_rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
-    SequenceLengthDistribution, SequenceLengthPair,
+    SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
 use aiperf_timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
@@ -3160,6 +3160,45 @@ fn ancillary_policies(
     })
 }
 
+/// Phase-local roots for independently randomized ramp actuators.
+///
+/// The controller derives this layer before constructing a strategy. A
+/// stochastic strategy such as `PoissonRamp` then derives its curve-local
+/// `timing.ramp.poisson` stream, producing the stable hierarchy
+/// `phase -> actuator -> curve` without coupling simultaneous actuators.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RampActuatorRngRoots {
+    concurrency: RngRoot,
+    prefill_concurrency: RngRoot,
+    request_rate: RngRoot,
+}
+
+impl RampActuatorRngRoots {
+    /// Derive every actuator root as a pure function of one phase-local root.
+    pub(crate) fn from_phase_root(root: RngRoot) -> Self {
+        Self {
+            concurrency: root.derive_root(namespace::TIMING_RAMP_CONCURRENCY),
+            prefill_concurrency: root.derive_root(namespace::TIMING_RAMP_PREFILL_CONCURRENCY),
+            request_rate: root.derive_root(namespace::TIMING_RAMP_REQUEST_RATE),
+        }
+    }
+
+    /// Root for session-concurrency ramps, including user-centric admission.
+    pub(crate) const fn concurrency(self) -> RngRoot {
+        self.concurrency
+    }
+
+    /// Root for prefill-concurrency ramps.
+    pub(crate) const fn prefill_concurrency(self) -> RngRoot {
+        self.prefill_concurrency
+    }
+
+    /// Root for request-rate ramps.
+    pub(crate) const fn request_rate(self) -> RngRoot {
+        self.request_rate
+    }
+}
+
 fn ramp_controller(
     spec: &PhaseSpec,
     clock: Rc<dyn Clock>,
@@ -3169,6 +3208,7 @@ fn ramp_controller(
     rng_root: RngRoot,
 ) -> Result<Rc<dyn ScheduledPhaseController>> {
     let common = spec.common();
+    let rng_roots = RampActuatorRngRoots::from_phase_root(rng_root);
     let target_rate = spec
         .request_arrival()
         .and_then(|(_, target_rate, _)| target_rate);
@@ -3180,7 +3220,7 @@ fn ramp_controller(
         let slots = session_slots
             .clone()
             .ok_or_else(|| anyhow!("concurrency_ramp requires session admission"))?;
-        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_roots.concurrency())?;
         drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
             slots.set_limit(value.round() as usize)
         }));
@@ -3192,7 +3232,13 @@ fn ramp_controller(
         let slots = prefill_slots
             .clone()
             .ok_or_else(|| anyhow!("prefill_ramp requires prefill admission"))?;
-        let strategy = ramp_strategy(ramp, 1.0, target as f64, false, rng_root)?;
+        let strategy = ramp_strategy(
+            ramp,
+            1.0,
+            target as f64,
+            false,
+            rng_roots.prefill_concurrency(),
+        )?;
         drivers.push(RampDriver::new(clock.clone(), strategy, move |value| {
             slots.set_limit(value.round() as usize)
         }));
@@ -3201,7 +3247,7 @@ fn ramp_controller(
         let target = target_rate.ok_or_else(|| anyhow!("rate_ramp requires a rate phase"))?;
         let duration_ns = seconds_to_u64_ns(ramp.duration)?;
         let start = target * RATE_RAMP_UPDATE_INTERVAL_NS as f64 / duration_ns as f64;
-        let strategy = ramp_strategy(ramp, start, target, true, rng_root)?;
+        let strategy = ramp_strategy(ramp, start, target, true, rng_roots.request_rate())?;
         drivers.push(RampDriver::new(clock, strategy, move |value| {
             intervals.borrow_mut().set_rate(value)
         }));
@@ -4238,6 +4284,46 @@ mod tests {
 
         assert!(lowered[0].seamless);
         assert!(!lowered[1].seamless);
+    }
+
+    #[test]
+    fn ramp_actuator_roots_follow_phase_actuator_curve_hierarchy() {
+        let phase_root = RngRoot::new(Some(73));
+        let roots = RampActuatorRngRoots::from_phase_root(phase_root);
+
+        assert_eq!(
+            roots.concurrency(),
+            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_CONCURRENCY)
+        );
+        assert_eq!(
+            roots.prefill_concurrency(),
+            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
+        );
+        assert_eq!(
+            roots.request_rate(),
+            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_REQUEST_RATE)
+        );
+
+        let curve_seeds = [
+            roots
+                .request_rate()
+                .derive_seed(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+            roots
+                .prefill_concurrency()
+                .derive_seed(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+            roots
+                .concurrency()
+                .derive_seed(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+        ];
+        assert!(curve_seeds.iter().all(Option::is_some));
+        assert_ne!(curve_seeds[0], curve_seeds[1]);
+        assert_ne!(curve_seeds[0], curve_seeds[2]);
+        assert_ne!(curve_seeds[1], curve_seeds[2]);
+        assert_ne!(
+            roots.concurrency(),
+            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+            "the phase must not pre-derive the curve-local Poisson namespace"
+        );
     }
 
     #[test]

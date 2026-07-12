@@ -802,6 +802,36 @@ mod tests {
     }
 
     #[test]
+    fn poisson_actuator_trajectories_are_distinct_and_component_order_independent() {
+        let root = RngRoot::new(Some(42));
+        let trajectory = |identifier| {
+            PoissonRamp::new(cfg(1.0, 20.0, 1_000_000_000), root.derive_root(identifier))
+                .unwrap()
+                .event_times_ns()
+                .to_vec()
+        };
+        let forward = [
+            aiperf_rng::namespace::TIMING_RAMP_CONCURRENCY,
+            aiperf_rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY,
+            aiperf_rng::namespace::TIMING_RAMP_REQUEST_RATE,
+        ]
+        .map(trajectory);
+        let reverse = [
+            aiperf_rng::namespace::TIMING_RAMP_REQUEST_RATE,
+            aiperf_rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY,
+            aiperf_rng::namespace::TIMING_RAMP_CONCURRENCY,
+        ]
+        .map(trajectory);
+
+        assert_eq!(forward[0], reverse[2]);
+        assert_eq!(forward[1], reverse[1]);
+        assert_eq!(forward[2], reverse[0]);
+        assert_ne!(forward[0], forward[1]);
+        assert_ne!(forward[0], forward[2]);
+        assert_ne!(forward[1], forward[2]);
+    }
+
+    #[test]
     fn poisson_value_at_is_a_step_function_consistent_with_next_step() {
         let root = RngRoot::new(Some(9));
         let mut steps = PoissonRamp::new(cfg(10.0, 1.0, 1_000_000), root).unwrap();
