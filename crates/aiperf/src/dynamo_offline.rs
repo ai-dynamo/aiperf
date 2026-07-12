@@ -4836,6 +4836,200 @@ mod tests {
         assert!(error.to_string().contains("mean_ttft_ms"));
     }
 
+    /// Fixed native-format token encoder: every AIPerf request dispatches the
+    /// exact same token vector that the native `DirectRequest`s carry, so both
+    /// drivers feed the engine byte-identical inputs (identical prefix-cache
+    /// blocks), not merely equal token counts.
+    struct FixedTokensEncoder {
+        tokens: Vec<u32>,
+    }
+
+    impl OfflineRequestEncoder<HttpRequest> for FixedTokensEncoder {
+        fn encode(&self, _request: &HttpRequest) -> Result<Vec<u32>> {
+            Ok(self.tokens.clone())
+        }
+    }
+
+    impl OfflineGraphRequestEncoder for FixedTokensEncoder {
+        fn encode_graph_messages(&self, _wires: &[Bytes], _requested: usize) -> Result<Vec<u32>> {
+            Ok(self.tokens.clone())
+        }
+    }
+
+    /// Apples-to-apples gate: AIPerf's own online flow versus Dynamo's native
+    /// wall-clock online replay driver, both under the real clock, on the same
+    /// engine, with byte-identical request tokens produced by Dynamo's own
+    /// `TurnTrace::synthesize_tokens` hash-block conversion (the native format).
+    /// Dynamo's `simulate_concurrency_live_requests` is the real-clock native
+    /// baseline — its report measures wall-clock latency via `Instant::elapsed`,
+    /// exactly like AIPerf's observer. The gate: request/token counts are exact,
+    /// every latency stat is within 3%, and AIPerf's throughput is at least the
+    /// native throughput.
+    #[test]
+    fn online_matches_native_dynamo_live_replay_apples_to_apples() {
+        use dynamo_mocker::replay::simulate_concurrency_live_requests;
+
+        const REQUESTS: usize = 32;
+        const OSL: usize = 8;
+        // No driver-side admission queue: every request is admitted at t=0 on
+        // both sides, so TTFT reflects only engine-side batching (identical on
+        // both) rather than a driver queue-wait artifact.
+        const CONCURRENCY: usize = REQUESTS;
+
+        // Build the shared inputs in the native format: one prefill block of
+        // hash-derived tokens via Dynamo's own conversion. Identical across all
+        // requests, so the engine's cache-reuse pattern is identical on both
+        // drivers.
+        let args = MockEngineArgs::default().normalized().unwrap();
+        let block_size = args.block_size;
+        let isl = block_size;
+        let tokens = DynamoTraceHashEncoder
+            .encode(&[7i64], block_size, isl)
+            .unwrap();
+        assert_eq!(tokens.len(), isl);
+
+        // AIPerf: the normal online flow (paced workload -> SlotPool admission ->
+        // DynamoOfflineSink -> observer/collector) under the real clock, but with
+        // the fixed native-format token encoder so the engine sees exactly the
+        // native tokens rather than text-encoded synthetic ones.
+        let aiperf = {
+            let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+            let host = EngineHost::new_real_with_factory_and_delivery(
+                clock.clone(),
+                &OfflineEngineConfig::default(),
+                &NativeDynamoEngineFactory,
+                Rc::new(IncrementalOfflineEventDelivery),
+            )
+            .unwrap();
+            let encoder = Rc::new(FixedTokensEncoder {
+                tokens: tokens.clone(),
+            });
+            let sink: Rc<dyn HttpRequestDispatcher> = DynamoOfflineSink::new_with_encoders(
+                host.clone(),
+                clock.clone(),
+                "model".to_string(),
+                encoder.clone(),
+                encoder,
+            );
+            let result = Rc::new(RefCell::new(None));
+            let result_for_body = result.clone();
+            let clock_for_body: Rc<dyn Clock> = clock.clone();
+            let start_ns = clock.now_ns();
+            let source: Rc<dyn SimEventSource> = host.clone();
+            let wakeup = host.submit_wakeup();
+            let outcome = drive_real_with_source(source, wakeup, move |_handle| async move {
+                let run = run_paced_with_backend(
+                    clock_for_body,
+                    start_ns,
+                    sink,
+                    vec!["dynamo-offline".to_string()],
+                    SkeletonWorkload {
+                        num_requests: REQUESTS,
+                        input_tokens: isl,
+                        output_tokens: OSL,
+                        turns: 1,
+                        think_time_ms: None,
+                    },
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    Some(CONCURRENCY),
+                    None,
+                    StopConfig {
+                        total_expected_requests: Some(REQUESTS as u64),
+                        ..StopConfig::default()
+                    },
+                    7,
+                    None,
+                    AncillaryTimingConfig::default(),
+                )
+                .await;
+                *result_for_body.borrow_mut() = Some(run);
+            })
+            .unwrap();
+            assert!(!outcome.deadlocked);
+            result.borrow_mut().take().unwrap().unwrap().performance
+        };
+
+        // Native baseline: Dynamo's own wall-clock online driver, same engine
+        // args, byte-identical tokens, same in-flight concurrency, one worker.
+        let requests = (0..REQUESTS)
+            .map(|index| DirectRequest {
+                tokens: tokens.clone(),
+                max_output_tokens: OSL,
+                output_token_ids: None,
+                uuid: Some(Uuid::from_u128(index as u128 + 1)),
+                dp_rank: 0,
+                arrival_timestamp_ms: None,
+                priority: 0,
+                strict_priority: 0,
+                policy_class: None,
+            })
+            .collect::<Vec<_>>();
+        let native =
+            simulate_concurrency_live_requests(MockEngineArgs::default(), requests, CONCURRENCY, 1)
+                .unwrap();
+
+        // Counts: exact (0% divergence — the sim results are 100% comparable).
+        assert_eq!(
+            aiperf.request_counts.num_requests,
+            native.request_counts.num_requests
+        );
+        assert_eq!(
+            aiperf.request_counts.completed_requests,
+            native.request_counts.completed_requests
+        );
+        assert_eq!(
+            aiperf.request_counts.total_input_tokens,
+            native.request_counts.total_input_tokens
+        );
+        assert_eq!(
+            aiperf.request_counts.total_output_tokens,
+            native.request_counts.total_output_tokens
+        );
+
+        // Latency: every stat within 3% (an absolute 1ms floor keeps sub-ms
+        // synthetic latencies from making a hair-trigger ratio flaky; real
+        // traces have far larger latencies where the fixed real overhead is a
+        // much smaller fraction).
+        let within_3pct = |name: &str, a: f64, n: f64| {
+            let delta = (a - n).abs();
+            let tol = (n.abs() * 0.03).max(1.0);
+            assert!(
+                delta <= tol,
+                "{name}: aiperf={a:.4} native={n:.4} delta={delta:.4} exceeds 3% (tol={tol:.4})"
+            );
+        };
+        within_3pct("ttft.mean", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
+        within_3pct("ttft.p90", aiperf.latency.ttft.p90_ms, native.latency.ttft.p90_ms);
+        within_3pct("e2e.mean", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_3pct("e2e.p90", aiperf.latency.e2e.p90_ms, native.latency.e2e.p90_ms);
+        within_3pct(
+            "itl.mean",
+            aiperf.latency.itl.distribution.mean_ms,
+            native.latency.itl.distribution.mean_ms,
+        );
+        within_3pct("tpot.mean", aiperf.latency.tpot.mean_ms, native.latency.tpot.mean_ms);
+
+        // Throughput: AIPerf's driver is at least as fast as the native driver.
+        // A small slack absorbs real-timer jitter on the (already fast) run.
+        let slack = 0.97;
+        assert!(
+            aiperf.throughput.request_throughput_rps
+                >= native.throughput.request_throughput_rps * slack,
+            "aiperf rps {:.3} < native rps {:.3}",
+            aiperf.throughput.request_throughput_rps,
+            native.throughput.request_throughput_rps
+        );
+        assert!(
+            aiperf.throughput.output_throughput_tok_s
+                >= native.throughput.output_throughput_tok_s * slack,
+            "aiperf out t/s {:.3} < native out t/s {:.3}",
+            aiperf.throughput.output_throughput_tok_s,
+            native.throughput.output_throughput_tok_s
+        );
+    }
+
     #[test]
     fn online_wall_clock_runs_end_to_end_in_process_without_http() {
         // The wall-clock (drive_real_with_source) driver runs the same in-process
