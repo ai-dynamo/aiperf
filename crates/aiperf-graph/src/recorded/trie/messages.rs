@@ -12,7 +12,7 @@ use super::TrieNode;
 use crate::recorded::RecordedTraceError;
 use crate::recorded::content::RecordedContentSynthesizer;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Role {
     Assistant,
     User,
@@ -32,6 +32,26 @@ pub(super) struct BlockTag {
     role: Role,
     starts_message: bool,
 }
+
+/// De-duplication key for a single prompt message within one trace's lowering.
+///
+/// A message is fully determined by its parent segment, role, and the recorded
+/// block hashes it covers — block content is a pure function of `(hash, scope,
+/// block_size)`, and the scope is fixed for the whole build. Interning the same
+/// tuple is a `SegmentPool` dedup no-op, so caching the resulting handle lets
+/// every shared-prefix message reuse the content-parent's segment verbatim
+/// instead of re-decoding (tokenizer) and re-hashing (blake3) it per node. This
+/// is the linear-time equivalent of the Python driver's prefix-path splice
+/// (`segment_ir/trie_content.py`) and yields byte-identical pool output.
+#[derive(PartialEq, Eq, Hash)]
+pub(super) struct PromptMessageKey {
+    parent: Option<u32>,
+    role: Role,
+    hashes: Box<[crate::recorded::BlockHash]>,
+}
+
+/// Per-trace prompt-message reuse cache consumed by [`emit_prompt`].
+pub(super) type PromptMessageCache = HashMap<PromptMessageKey, Handle>;
 
 #[derive(Debug)]
 struct Geometry {
@@ -174,6 +194,7 @@ pub(super) fn assign_block_tags(
     Ok((all_tags, inherited_by_node))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_prompt(
     node: &TrieNode,
     tags: &[BlockTag],
@@ -182,6 +203,7 @@ pub(super) fn emit_prompt(
     tail_scope: &str,
     content: &mut dyn RecordedContentSynthesizer,
     pool: &mut SegmentPool,
+    cache: &mut PromptMessageCache,
 ) -> Result<Vec<Handle>, RecordedTraceError> {
     if tags.is_empty() && node.request.input_tokens > 0 {
         let tokens = content.tail_tokens(
@@ -205,21 +227,39 @@ pub(super) fn emit_prompt(
         }
     }
     let mut handles = Vec::with_capacity(groups.len());
-    let mut parent = None;
+    let mut parent: Option<Handle> = None;
     let mut assembled = 0_usize;
     for (role, blocks) in groups {
-        let mut tokens = Vec::with_capacity(blocks.len().saturating_mul(block_size));
-        for block in blocks {
-            tokens.extend(content.block_tokens(
-                &node.request.hash_ids[block..block + 1],
-                block_size,
-                hash_scope,
-            )?);
-        }
-        assembled = assembled.saturating_add(tokens.len());
-        let text = content.decode(&tokens)?;
-        parent = Some(intern_message(pool, parent, role.as_str(), &text, &tokens)?);
-        handles.push(parent.expect("message handle assigned"));
+        // Each block contributes exactly `block_size` tokens, so the message
+        // length is known without decoding — the covered-count assertion below
+        // stays exact even when the message is served from the reuse cache.
+        assembled = assembled.saturating_add(blocks.len().saturating_mul(block_size));
+        let key = PromptMessageKey {
+            parent: parent.map(|handle| handle.index()),
+            role,
+            hashes: blocks
+                .iter()
+                .map(|block| node.request.hash_ids[*block])
+                .collect(),
+        };
+        let handle = if let Some(cached) = cache.get(&key) {
+            *cached
+        } else {
+            let mut tokens = Vec::with_capacity(blocks.len().saturating_mul(block_size));
+            for block in &blocks {
+                tokens.extend(content.block_tokens(
+                    &node.request.hash_ids[*block..*block + 1],
+                    block_size,
+                    hash_scope,
+                )?);
+            }
+            let text = content.decode(&tokens)?;
+            let handle = intern_message(pool, parent, role.as_str(), &text, &tokens)?;
+            cache.insert(key, handle);
+            handle
+        };
+        parent = Some(handle);
+        handles.push(handle);
     }
     let expected = tags.len().saturating_mul(block_size);
     if assembled != expected {
@@ -253,9 +293,8 @@ pub(super) fn intern_message(
 mod parity_tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use num_bigint::BigInt;
-
     use super::*;
+    use crate::recorded::BlockHash;
     use crate::recorded::content::RecordedContentSynthesizer;
     use crate::recorded::trie::RecordedRequest;
 
@@ -264,7 +303,7 @@ mod parity_tests {
     impl RecordedContentSynthesizer for FixedContent {
         fn block_tokens(
             &mut self,
-            hashes: &[BigInt],
+            hashes: &[BlockHash],
             block_size: usize,
             _trace_scope: Option<&str>,
         ) -> Result<Vec<u32>, RecordedTraceError> {
@@ -296,7 +335,7 @@ mod parity_tests {
                 chain_id: "chain".into(),
                 turn_index: order,
                 order,
-                hash_ids: hashes.iter().copied().map(BigInt::from).collect(),
+                hash_ids: hashes.iter().copied().map(i128::from).collect(),
                 input_tokens: input,
                 output_tokens: output,
                 start_seconds: order as f64,
@@ -338,6 +377,7 @@ mod parity_tests {
 
         let mut content = FixedContent;
         let mut pool = SegmentPool::new();
+        let mut cache = PromptMessageCache::new();
         let parent_path = emit_prompt(
             &nodes[0],
             &tags[0],
@@ -346,6 +386,7 @@ mod parity_tests {
             "trace",
             &mut content,
             &mut pool,
+            &mut cache,
         )
         .unwrap();
         let child_path = emit_prompt(
@@ -356,6 +397,7 @@ mod parity_tests {
             "trace",
             &mut content,
             &mut pool,
+            &mut cache,
         )
         .unwrap();
         assert_eq!(parent_path.len(), 1);
@@ -368,7 +410,18 @@ mod parity_tests {
         let node = node("tiny", 0, &[], 7, 1);
         let mut content = FixedContent;
         let mut pool = SegmentPool::new();
-        let path = emit_prompt(&node, &[], 16, None, "trace", &mut content, &mut pool).unwrap();
+        let mut cache = PromptMessageCache::new();
+        let path = emit_prompt(
+            &node,
+            &[],
+            16,
+            None,
+            "trace",
+            &mut content,
+            &mut pool,
+            &mut cache,
+        )
+        .unwrap();
         assert_eq!(path.len(), 1);
         let payload = pool.freeze();
         let aiperf_dataset::Payload::Message { role, tokens, .. } =
@@ -385,9 +438,8 @@ mod parity_tests {
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use num_bigint::BigInt;
-
     use super::*;
+    use crate::recorded::BlockHash;
     use crate::recorded::trie::RecordedRequest;
 
     fn node(id: &str, order: usize, hashes: &[i64], input: usize, output: usize) -> TrieNode {
@@ -397,7 +449,7 @@ mod tests {
                 chain_id: "chain".into(),
                 turn_index: order,
                 order,
-                hash_ids: hashes.iter().copied().map(BigInt::from).collect(),
+                hash_ids: hashes.iter().copied().map(i128::from).collect(),
                 input_tokens: input,
                 output_tokens: output,
                 start_seconds: order as f64,
@@ -419,8 +471,8 @@ mod tests {
 
     #[test]
     fn geometry_clamps_covered_blocks_and_counts_only_missing_whole_blocks() {
-        let previous = [BigInt::from(1)];
-        let current = [BigInt::from(1), BigInt::from(2), BigInt::from(3)];
+        let previous: [BlockHash; 1] = [1];
+        let current: [BlockHash; 3] = [1, 2, 3];
         let over_shared = geometry_from_hashes(&previous, &current, 5, 2);
         assert_eq!(over_shared.lcp, 1);
         assert_eq!(over_shared.covered, 2);

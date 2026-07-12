@@ -62,8 +62,6 @@ pub(super) fn resolve_content_parents(nodes: &mut [TrieNode]) {
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use num_bigint::BigInt;
-
     use super::*;
     use crate::recorded::trie::RecordedRequest;
 
@@ -74,7 +72,7 @@ mod tests {
                 chain_id: "c".into(),
                 turn_index: order,
                 order,
-                hash_ids: hashes.iter().map(|value| BigInt::from(*value)).collect(),
+                hash_ids: hashes.iter().map(|value| i128::from(*value)).collect(),
                 input_tokens: hashes.len(),
                 output_tokens: 1,
                 start_seconds: order as f64,

@@ -6,6 +6,31 @@
 use num_bigint::BigInt;
 use serde_json::Value;
 
+/// Fast recorded cache-block hash coercion into a machine `i128`.
+///
+/// Recorded hashes are u64 in Dynamo/WEKA captures and small negative virtual
+/// ids for non-replay turns, so `i128` losslessly covers the entire realistic
+/// domain without a per-hash heap allocation. The common `Value::Number`
+/// integer path never touches `num_bigint`; the rare string/boolean/oversized
+/// forms fall back through [`integer`] so Pydantic-compatible coercion and the
+/// arbitrary-precision parity edge cases stay byte-exact. `i128::Display`
+/// equals `BigInt::Display` for every in-range value, so content-seed strings
+/// are unchanged.
+pub(super) fn hash_i128(value: &Value) -> Option<i128> {
+    if let Value::Number(number) = value {
+        if let Some(unsigned) = number.as_u64() {
+            return Some(i128::from(unsigned));
+        }
+        if let Some(signed) = number.as_i64() {
+            return Some(i128::from(signed));
+        }
+        if let Ok(parsed) = number.to_string().parse::<i128>() {
+            return Some(parsed);
+        }
+    }
+    i128::try_from(integer(value)?).ok()
+}
+
 pub(super) fn integer(value: &Value) -> Option<BigInt> {
     match value {
         Value::Bool(value) => Some(BigInt::from(u8::from(*value))),

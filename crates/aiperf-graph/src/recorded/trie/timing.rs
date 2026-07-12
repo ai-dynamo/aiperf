@@ -186,8 +186,6 @@ pub(super) fn apply_start_anchors(
 mod parity_tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use num_bigint::BigInt;
-
     use super::*;
     use crate::recorded::trie::RecordedRequest;
 
@@ -198,7 +196,7 @@ mod parity_tests {
                 chain_id: "chain".into(),
                 turn_index: order,
                 order,
-                hash_ids: vec![BigInt::from(order + 1)],
+                hash_ids: vec![(order + 1) as i128],
                 input_tokens: 16,
                 output_tokens: 1,
                 start_seconds: start,
@@ -289,8 +287,6 @@ mod parity_tests {
 mod tests {
     use std::collections::{BTreeMap, HashSet};
 
-    use num_bigint::BigInt;
-
     use super::*;
     use crate::recorded::trie::RecordedRequest;
 
@@ -301,7 +297,7 @@ mod tests {
                 chain_id: "chain".into(),
                 turn_index: order,
                 order,
-                hash_ids: vec![BigInt::from(order)],
+                hash_ids: vec![order as i128],
                 input_tokens: 1,
                 output_tokens: 1,
                 start_seconds: start,

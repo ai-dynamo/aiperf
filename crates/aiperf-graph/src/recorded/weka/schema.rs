@@ -30,7 +30,7 @@ pub(super) struct WekaLeaf {
     pub model: String,
     pub input_tokens: usize,
     pub output_tokens: usize,
-    pub hashes: Vec<BigInt>,
+    pub hashes: Vec<i128>,
     pub duration_seconds: f64,
     pub streaming: bool,
     pub ttft_seconds: Option<f64>,
@@ -337,15 +337,17 @@ fn string_list_default(
         .map(drop)
 }
 
-fn nonnegative_bigint_list(value: &Value, label: &str) -> Result<Vec<BigInt>, RecordedTraceError> {
+fn nonnegative_bigint_list(value: &Value, label: &str) -> Result<Vec<i128>, RecordedTraceError> {
     value
         .as_array()
         .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be a list")))?
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            let integer = bigint(value, &format!("{label}[{index}]"))?;
-            if integer < BigInt::from(0) {
+            let integer = super::super::scalar::hash_i128(value).ok_or_else(|| {
+                RecordedTraceError(format!("WEKA {label}[{index}] must be an integer"))
+            })?;
+            if integer < 0 {
                 return Err(RecordedTraceError(format!(
                     "WEKA {label}[{index}] must be non-negative"
                 )));
@@ -416,7 +418,6 @@ fn optional_finite_nonnegative(
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigInt;
     use serde_json::json;
 
     use super::*;
@@ -454,7 +455,7 @@ mod tests {
         assert_eq!(leaf.ttft_seconds, Some(0.25));
         assert_eq!(
             leaf.hashes,
-            ["184467440737095516170".parse::<BigInt>().unwrap()]
+            ["184467440737095516170".parse::<i128>().unwrap()]
         );
     }
 

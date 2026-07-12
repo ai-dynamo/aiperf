@@ -103,6 +103,11 @@ pub(crate) fn lower_recorded_graph(
     let mut graph_nodes = BTreeMap::new();
     let mut all_edges = Vec::new();
     let prefix_cache = theoretical_prefix_cache(&nodes);
+    // Shared-prefix prompt messages recur across every node in a session; caching
+    // their interned handles turns the per-node full re-materialization into the
+    // linear splice the Python driver performs, avoiding the quadratic tokenizer
+    // decode + blake3 content-hash on deep traces.
+    let mut message_cache = messages::PromptMessageCache::new();
 
     for (index, node) in nodes.iter().enumerate() {
         let prompt = messages::emit_prompt(
@@ -113,6 +118,7 @@ pub(crate) fn lower_recorded_graph(
             tail_scope,
             content,
             pool,
+            &mut message_cache,
         )?;
         let response_tokens = content.tail_tokens(
             node.request.output_tokens,

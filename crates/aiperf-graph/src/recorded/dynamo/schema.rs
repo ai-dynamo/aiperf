@@ -50,7 +50,7 @@ pub(super) struct RequestMetrics {
 pub(super) struct ReplayMetrics {
     pub block_size: usize,
     pub input_length: i64,
-    pub hashes: Vec<BigInt>,
+    pub hashes: Vec<i128>,
 }
 
 #[derive(Debug, Clone)]
@@ -211,11 +211,12 @@ fn parse_replay(value: &Value) -> Result<ReplayMetrics, RecordedTraceError> {
         .iter()
         .enumerate()
         .map(|(index, value)| {
-            let hash = bigint(
-                value,
-                &format!("request.replay.input_sequence_hashes[{index}]"),
-            )?;
-            if hash < BigInt::from(0) {
+            let hash = super::super::scalar::hash_i128(value).ok_or_else(|| {
+                RecordedTraceError(format!(
+                    "Dynamo request.replay.input_sequence_hashes[{index}] must be an integer"
+                ))
+            })?;
+            if hash < 0 {
                 return Err(RecordedTraceError(
                     "Dynamo recorded replay hashes must be non-negative".into(),
                 ));
@@ -363,7 +364,6 @@ fn bigint(value: &Value, label: &str) -> Result<BigInt, RecordedTraceError> {
 
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigInt;
     use serde_json::json;
 
     use super::*;
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(request.replay.as_ref().unwrap().block_size, 16);
         assert_eq!(
             request.replay.unwrap().hashes,
-            ["184467440737095516170".parse::<BigInt>().unwrap()]
+            ["184467440737095516170".parse::<i128>().unwrap()]
         );
     }
 

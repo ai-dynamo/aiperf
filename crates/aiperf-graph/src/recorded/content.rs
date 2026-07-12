@@ -13,7 +13,8 @@ use std::collections::HashMap;
 
 use aiperf_dataset::TextTokenizer;
 use aiperf_rng::{RandomGenerator, RngRoot, derive_seed_u64, namespace};
-use num_bigint::BigInt;
+
+use super::BlockHash;
 
 use super::{PromptCorpus, RecordedTraceError};
 
@@ -25,7 +26,7 @@ pub(crate) trait RecordedContentSynthesizer {
     /// Decode full cache blocks in order under a local or global hash namespace.
     fn block_tokens(
         &mut self,
-        hashes: &[BigInt],
+        hashes: &[BlockHash],
         block_size: usize,
         trace_scope: Option<&str>,
     ) -> Result<Vec<u32>, RecordedTraceError>;
@@ -40,7 +41,7 @@ pub(crate) trait RecordedContentSynthesizer {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BlockCacheKey {
     scope: String,
-    hash: BigInt,
+    hash: BlockHash,
     block_size: usize,
 }
 
@@ -87,7 +88,7 @@ impl<'a> CorpusContentSynthesizer<'a> {
 impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
     fn block_tokens(
         &mut self,
-        hashes: &[BigInt],
+        hashes: &[BlockHash],
         block_size: usize,
         trace_scope: Option<&str>,
     ) -> Result<Vec<u32>, RecordedTraceError> {
@@ -96,7 +97,7 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
         for hash in hashes {
             let key = BlockCacheKey {
                 scope: scope.to_string(),
-                hash: hash.clone(),
+                hash: *hash,
                 block_size,
             };
             let block = if let Some(cached) = self.blocks.get(&key) {
@@ -185,7 +186,6 @@ fn wrapping_window(corpus: &[u32], start: usize, count: usize) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use aiperf_dataset::TiktokenTokenizer;
-    use num_bigint::BigInt;
 
     use super::*;
 
@@ -194,7 +194,7 @@ mod tests {
         let tokenizer = TiktokenTokenizer::builtin();
         let mut content =
             CorpusContentSynthesizer::new(&tokenizer, PromptCorpus::Sonnet, 42).unwrap();
-        let hash = "184467440737095516170".parse::<BigInt>().unwrap();
+        let hash: BlockHash = "184467440737095516170".parse().unwrap();
 
         let global = content
             .block_tokens(std::slice::from_ref(&hash), 16, None)

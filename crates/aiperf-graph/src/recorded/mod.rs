@@ -24,17 +24,20 @@ use std::error::Error;
 use std::fmt::{self, Display};
 
 use aiperf_dataset::LoadConfig;
-use num_bigint::BigInt;
 
 pub use dynamo::compile_dynamo_trace_input;
 pub use weka::compile_weka_trace_input;
 
 /// Opaque recorded cache-block identity.
 ///
-/// Python accepts arbitrary-size integers. `BigInt` preserves that open domain
-/// without narrowing WEKA hashes to a machine integer; Dynamo's synthetic
-/// negative identities use the same representation.
-pub(crate) type BlockHash = BigInt;
+/// Dynamo/WEKA captures record u64 cache-block hashes, and Dynamo mints small
+/// negative virtual identities for non-replay turns; `i128` losslessly covers
+/// that entire domain as a `Copy` machine integer. This replaces the former
+/// `BigInt` representation, which heap-allocated, parsed, cloned, compared, and
+/// hashed every one of the millions of per-block hashes on the lowering hot
+/// path. `i128::Display` is identical to `BigInt::Display` for every recorded
+/// value, so content-seed derivation stays byte-exact.
+pub(crate) type BlockHash = i128;
 
 /// Corpus used to reconstruct recorded token blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

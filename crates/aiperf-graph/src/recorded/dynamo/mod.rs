@@ -14,8 +14,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use aiperf_dataset::{SegmentPool, TextTokenizer};
-use num_bigint::BigInt;
 use serde_json::{Map, Value};
+
+use super::BlockHash;
 
 use crate::input::{GraphInputBundle, GraphInputMetadata};
 
@@ -379,7 +380,7 @@ struct NormalizedTurn {
     duration_ms: i64,
     input_tokens: usize,
     output_tokens: usize,
-    hashes: Vec<BigInt>,
+    hashes: Vec<BlockHash>,
     request: Option<RequestMetrics>,
     is_final: bool,
     virtual_fallback: bool,
@@ -449,7 +450,7 @@ fn build_tree_requests(
         )
     });
     let mut next_virtual = -1_i64;
-    let mut virtual_previous = HashMap::<String, Vec<BigInt>>::new();
+    let mut virtual_previous = HashMap::<String, Vec<BlockHash>>::new();
     for &index in &order {
         let turn = &mut turns[index];
         if let Some(replay) = turn
@@ -474,7 +475,7 @@ fn build_tree_requests(
                 .unwrap_or_default();
             hashes.truncate(full_blocks);
             while hashes.len() < full_blocks {
-                hashes.push(BigInt::from(next_virtual));
+                hashes.push(BlockHash::from(next_virtual));
                 next_virtual -= 1;
             }
             virtual_previous.insert(turn.session_id.clone(), hashes.clone());
