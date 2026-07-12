@@ -77,7 +77,7 @@ dependencies = [
 
 # CLI Entrypoints
 [project.scripts]
-aiperf = "aiperf.cli:app"
+aiperf = "aiperf.entrypoint:main"
 
 # Plugin entry point definition to discover plugins at runtime
 [project.entry-points."aiperf.plugins"]
