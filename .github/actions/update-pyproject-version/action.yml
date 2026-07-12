@@ -36,17 +36,23 @@ runs:
         ):
             raise SystemExit(f"::error::Invalid PEP 440 version '{target}'")
 
-        path = "pyproject.toml"
-        text = open(path).read()
-        patched, n = re.subn(
-            r'^(version\s*=\s*")[^"]*(")',
-            rf'\g<1>{target}\g<2>',
-            text,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        if n != 1:
-            raise SystemExit(f"::error::Could not find 'version = \"...\"' in {path}")
-        open(path, "w").write(patched)
-        print(f"Patched {path}: version = \"{target}\"")
+        paths = [
+            "pyproject.toml",
+            "packaging/aiperf-runner/pyproject.toml",
+        ]
+        for path in paths:
+            text = open(path).read()
+            patched, n = re.subn(
+                r'^(version\s*=\s*")[^"]*(")',
+                rf'\g<1>{target}\g<2>',
+                text,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            if n != 1:
+                raise SystemExit(
+                    f"::error::Could not find 'version = \"...\"' in {path}"
+                )
+            open(path, "w").write(patched)
+            print(f"Patched {path}: version = \"{target}\"")
         PYEOF
