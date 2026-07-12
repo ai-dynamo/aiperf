@@ -1616,6 +1616,7 @@ struct GraphPhaseExecution {
     placement: Rc<dyn GraphTraceExecutionBackend>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
+    adaptive_control_variable: Option<AdaptiveControlVariable>,
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
     local_cancelling: Rc<Cell<bool>>,
@@ -1688,10 +1689,14 @@ impl PhaseExecution for GraphPhaseExecution {
         if let Some(error) = &self.setup_error {
             return Err(PhaseExecutionError::new(error.clone()));
         }
-        if let (Some(limit), Some(slots)) = (config.concurrency, &self.session_slots) {
+        if self.adaptive_control_variable != Some(AdaptiveControlVariable::Concurrency)
+            && let (Some(limit), Some(slots)) = (config.concurrency, &self.session_slots)
+        {
             slots.set_limit(limit);
         }
-        if let Some(limit) = self.prefill_initial {
+        if self.adaptive_control_variable != Some(AdaptiveControlVariable::PrefillConcurrency)
+            && let Some(limit) = self.prefill_initial
+        {
             self.placement
                 .set_prefill_limit(limit)
                 .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
@@ -1811,6 +1816,10 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
         let workload = Rc::new(prepared.workload.with_observer(observer));
         let mut setup_error = None;
         let mut controller = prepared.controller;
+        let adaptive_control_variable = prepared
+            .adaptive
+            .as_ref()
+            .map(|adaptive| adaptive.control_variable);
         let adaptive_sampler = prepared.adaptive.map(|adaptive| {
             let sampler: SharedWindowSampler = Rc::new(RefCell::new(Box::new(
                 TumblingWindowSampler::new(context.clock().now_ns()),
@@ -1840,6 +1849,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             placement: prepared.placement,
             session_slots: prepared.session_slots,
             prefill_initial: prepared.prefill_initial,
+            adaptive_control_variable,
             controller,
             failures: prepared.failures,
             local_cancelling,
@@ -1854,11 +1864,25 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
 
     fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
         self.run_cancelling.set(true);
-        let result = self
+        let errors = self
             .placements
             .iter()
-            .try_for_each(|placement| placement.cancel_inflight())
-            .map_err(|error| PhaseExecutionError::new(error.to_string()));
+            .enumerate()
+            .filter_map(|(index, placement)| {
+                placement
+                    .cancel_inflight()
+                    .err()
+                    .map(|error| format!("placement {index}: {error}"))
+            })
+            .collect::<Vec<_>>();
+        let result = if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(PhaseExecutionError::new(format!(
+                "cancelling graph placements: {}",
+                errors.join("; ")
+            )))
+        };
         Box::pin(async move { result })
     }
 }
@@ -2126,6 +2150,9 @@ async fn execute_graph_native(
             .cmp(&right.ingest.start_ns)
             .then_with(|| left.uuid.cmp(&right.uuid))
     });
+    for (request_index, record) in captured.iter_mut().enumerate() {
+        record.ingest.request_index = Some(request_index);
+    }
 
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
     for record in &captured {

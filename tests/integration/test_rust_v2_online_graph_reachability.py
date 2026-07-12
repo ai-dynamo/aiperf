@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import os
+import socket
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,6 +65,10 @@ class _GraphChatHandler(BaseHTTPRequestHandler):
     bodies: list[dict[str, Any]] = []
     bodies_lock = threading.Lock()
 
+    def setup(self) -> None:
+        super().setup()
+        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
         body = orjson.loads(self.rfile.read(length))
@@ -114,7 +119,13 @@ def online_graph_installation() -> RunnerInstallation:
     return installation
 
 
-def _graph_run(artifact_dir: Path, endpoint_url: str) -> BenchmarkRun:
+def _graph_run(
+    artifact_dir: Path,
+    endpoint_url: str,
+    *,
+    phases: list[dict[str, Any]] | None = None,
+    benchmark_id: str = "python-v2-online-graph",
+) -> BenchmarkRun:
     config = AIPerfConfig.model_validate(
         {
             "benchmark": {
@@ -131,7 +142,8 @@ def _graph_run(artifact_dir: Path, endpoint_url: str) -> BenchmarkRun:
                     "sampling": "sequential",
                     "records": _graph_rows(),
                 },
-                "phases": [
+                "phases": phases
+                or [
                     {
                         "name": "profiling",
                         "type": "concurrency",
@@ -155,7 +167,7 @@ def _graph_run(artifact_dir: Path, endpoint_url: str) -> BenchmarkRun:
         }
     )
     return BenchmarkRun(
-        benchmark_id="python-v2-online-graph",
+        benchmark_id=benchmark_id,
         cfg=config.benchmark,
         artifact_dir=artifact_dir,
         label="online-graph",
@@ -273,6 +285,104 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
             "spawn-0": ["spawn-0"],
             "root-1": ["root-0", "answer-root-0", "root-1"],
         }
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_python_config_v2_graph_uses_shared_phase_ramp_adaptive_and_session_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    online_graph_installation: RunnerInstallation,
+) -> None:
+    with _GraphChatHandler.bodies_lock:
+        _GraphChatHandler.bodies.clear()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _GraphChatHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        artifact_dir = tmp_path / "online-graph-phases"
+        endpoint_url = (
+            f"http://127.0.0.1:{server.server_address[1]}/v1/chat/completions"
+        )
+        run = _graph_run(
+            artifact_dir,
+            endpoint_url,
+            benchmark_id="python-v2-online-graph-phases",
+            phases=[
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "sessions": 1,
+                    "concurrency": 2,
+                    "concurrency_ramp": {
+                        "duration": 0.01,
+                        "strategy": "linear",
+                    },
+                },
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "sessions": 1,
+                    "duration": 0.05,
+                    "concurrency": 2,
+                    "seamless": True,
+                    "prefill_concurrency": 2,
+                    "grace_period": 0.01,
+                    "adaptive_scale": {
+                        "enabled": True,
+                        "control": {
+                            "variable": "prefill_concurrency",
+                            "min": 1,
+                            "max": 2,
+                        },
+                        "assessment_period": 1,
+                        "min_completed_requests": 1,
+                        "sustain_duration": 1,
+                        "strategy": {
+                            "type": "ramp_until_fail",
+                            "step_policy": "fixed_percent_step",
+                            "step_percent": 100,
+                        },
+                    },
+                    "sla": {
+                        "request_latency": {"p95": {"le": 1000}},
+                    },
+                },
+            ],
+        )
+
+        request, completed, result = _execute_v2(
+            monkeypatch,
+            online_graph_installation,
+            run,
+        )
+
+        assert request["protocol_version"] == 2
+        assert request["run"]["workload"]["type"] == "graph"
+        projected_phases = request["run"]["workload"]["config"]["phases"]
+        assert projected_phases[0]["seamless"] is False
+        assert projected_phases[1]["seamless"] is True
+        assert projected_phases[0]["concurrency_ramp"] == {
+            "duration": 0.01,
+            "strategy": "linear",
+        }
+        assert projected_phases[1]["adaptive_scale"]["control_variable"] == (
+            "prefill_concurrency"
+        )
+
+        terminal = orjson.loads(completed.stdout)
+        assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+        assert terminal["success"] is True
+        assert result.success, result.error
+        assert result.summary_metrics["request_count"].avg == 4.0
+        assert (artifact_dir / "adaptive_scale_events.jsonl").is_file()
+        assert (artifact_dir / "adaptive_scale_summary.json").is_file()
+
+        with _GraphChatHandler.bodies_lock:
+            bodies = copy.deepcopy(_GraphChatHandler.bodies)
+        assert len(bodies) == 8
     finally:
         server.shutdown()
         server.server_close()

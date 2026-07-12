@@ -9,7 +9,7 @@
 //! policies. Replacing native placement with ZMQ leaves graph scheduling and
 //! this worker-side execution contract unchanged.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -618,8 +618,8 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
             run_origin_ns: self.run_origin_ns,
             raw_enabled: self.raw_enabled,
             terminal_nodes,
-            order: RefCell::new(Vec::new()),
-            captures: RefCell::new(HashMap::new()),
+            captured: self.captured.clone(),
+            emitted_records: Cell::new(0),
         });
         let mut local = LocalGraphTraceExecutionBackend::new(
             self.clock.clone(),
@@ -631,21 +631,12 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
         }
         local = local.with_node_failure(Rc::new(AbortTraceNodeFailurePolicy));
         let result = local.execute_trace(plan).await;
-        let batch = sink
-            .finish_records()
+        sink.verify_finalized_records()
             .map_err(|error| TraceError::Other(error.to_string()))?;
-        self.captured
-            .send(batch)
-            .map_err(|_| TraceError::Other("graph metric capture receiver closed".into()))?;
         result
     }
 
     fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
-        if limit == 0 {
-            return Err(TraceError::Other(
-                "graph prefill limit must be positive".into(),
-            ));
-        }
         let slots = self.prefill_slots.as_ref().ok_or_else(|| {
             TraceError::Other("graph worker has no configured prefill admission pool".into())
         })?;
@@ -669,13 +660,8 @@ struct RunnerGraphSink {
     run_origin_ns: i64,
     raw_enabled: bool,
     terminal_nodes: HashSet<String>,
-    order: RefCell<Vec<Uuid>>,
-    captures: RefCell<HashMap<Uuid, PendingGraphCapture>>,
-}
-
-struct PendingGraphCapture {
-    output: CapturedModelOutput,
-    raw: Option<CapturedHttpExchange>,
+    captured: mpsc::UnboundedSender<Vec<CapturedRecord>>,
+    emitted_records: Cell<u64>,
 }
 
 #[async_trait(?Send)]
@@ -779,7 +765,6 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         );
         let arrival_ms =
             self.clock.now_ns().saturating_sub(self.run_origin_ns) as f64 / 1_000_000.0;
-        self.order.borrow_mut().push(uuid);
         self.observer.on_arrival(
             uuid,
             arrival_ms,
@@ -809,9 +794,20 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                 http: outcome.http,
             },
         );
-        self.captures.borrow_mut().insert(
-            uuid,
-            PendingGraphCapture {
+        let ordinal = self.emitted_records.get();
+        let ingest = self
+            .observer
+            .snapshot_record(uuid, ordinal)
+            .ok_or_else(|| {
+                anyhow!(
+                    "graph trace {:?} could not snapshot terminal node {node_id:?}",
+                    self.trace_id
+                )
+            })?;
+        self.captured
+            .send(vec![CapturedRecord {
+                uuid,
+                x_correlation_id: self.trace_id.clone(),
                 output: CapturedModelOutput::from_parts(
                     &outcome.response_text,
                     outcome.model_response.content.as_deref(),
@@ -821,8 +817,10 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     request_payload: collected.request_payload.to_vec(),
                     record: collected.record,
                 }),
-            },
-        );
+                ingest,
+            }])
+            .map_err(|_| anyhow!("graph metric capture receiver closed"))?;
+        self.emitted_records.set(ordinal.saturating_add(1));
 
         Ok(match outcome.terminal {
             ReplayTerminalStatus::Completed => GraphReply::from_text(outcome.response_text),
@@ -833,35 +831,15 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
 }
 
 impl RunnerGraphSink {
-    fn finish_records(&self) -> Result<Vec<CapturedRecord>> {
-        let records = self.observer.finish_with_records().records;
-        let order = self.order.take();
-        if records.len() != order.len() {
-            return Err(anyhow!(
-                "graph trace {:?} finalized {} metric records for {} arrivals",
-                self.trace_id,
-                records.len(),
-                order.len()
-            ));
-        }
-        let mut captures = self.captures.take();
-        Ok(records
-            .into_iter()
-            .zip(order)
-            .map(|(ingest, uuid)| {
-                let capture = captures.remove(&uuid).unwrap_or(PendingGraphCapture {
-                    output: CapturedModelOutput::default(),
-                    raw: None,
-                });
-                CapturedRecord {
-                    uuid,
-                    x_correlation_id: self.trace_id.clone(),
-                    output: capture.output,
-                    raw: capture.raw,
-                    ingest,
-                }
-            })
-            .collect())
+    fn verify_finalized_records(&self) -> Result<()> {
+        let finalized = self.observer.finish_with_records().records.len();
+        let emitted = usize::try_from(self.emitted_records.get()).unwrap_or(usize::MAX);
+        ensure!(
+            finalized == emitted,
+            "graph trace {:?} finalized {finalized} metric records after emitting {emitted}",
+            self.trace_id
+        );
+        Ok(())
     }
 
     fn metadata_handle(&self, node: &LlmNode, name: &str) -> Result<Option<Handle>> {
