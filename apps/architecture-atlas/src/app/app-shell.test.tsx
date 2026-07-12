@@ -22,14 +22,16 @@ describe("application shell", () => {
     renderAtlas("/execution?audience=developer");
 
     expect(
-      await screen.findByRole("heading", { name: "Execution modes" }),
+      await screen.findByRole("heading", {
+        name: "Execution modes and controls",
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("navigation", { name: "Architecture views" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Presentation controls" }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: "Present this view" }),
+    ).toBeEnabled();
   });
 
   it("keeps an explicit audience name when compact styles hide its text", async () => {

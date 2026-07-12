@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Link } from "@tanstack/react-router";
-import type { ChangeEvent, ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 
 import {
   audienceSchema,
@@ -22,8 +27,22 @@ const navigation = [
 interface AppShellProps {
   audience: Audience;
   children: ReactNode;
+  presentation: boolean;
+  nextRoute?: PresentationRoute;
+  previousRoute?: PresentationRoute;
+  onExitPresentation(): void;
+  onNavigatePresentation(route: PresentationRoute): void;
+  onStartPresentation(): void;
   onAudienceChange(audience: Audience): void;
 }
+
+type PresentationRoute =
+  | "/"
+  | "/journey"
+  | "/execution"
+  | "/data-plane"
+  | "/observability"
+  | "/parity";
 
 function NavigationLinks() {
   return navigation.map(({ to, label }) => (
@@ -32,6 +51,7 @@ function NavigationLinks() {
       activeProps={{ "aria-current": "page" }}
       className="nav-link"
       key={to}
+      search={(previous) => previous}
       to={to}
     >
       <span className="nav-marker" aria-hidden="true" />
@@ -43,14 +63,102 @@ function NavigationLinks() {
 export function AppShell({
   audience,
   children,
+  presentation,
+  nextRoute,
+  previousRoute,
+  onExitPresentation,
+  onNavigatePresentation,
+  onStartPresentation,
   onAudienceChange,
 }: AppShellProps) {
+  const presentationMain = useRef<HTMLElement>(null);
+  const nextControl = useRef<HTMLButtonElement>(null);
+  const previousControl = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (presentation) {
+      presentationMain.current?.focus();
+    }
+  }, [presentation]);
+
+  useEffect(() => {
+    if (!presentation) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onExitPresentation();
+      } else if (event.key === "ArrowLeft" && previousRoute) {
+        previousControl.current?.click();
+      } else if (event.key === "ArrowRight" && nextRoute) {
+        nextControl.current?.click();
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    nextRoute,
+    onExitPresentation,
+    onNavigatePresentation,
+    presentation,
+    previousRoute,
+  ]);
+
   const handleAudienceChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const result = audienceSchema.safeParse(event.target.value);
     if (result.success) {
       onAudienceChange(result.data);
     }
   };
+
+  if (presentation) {
+    return (
+      <div className="app-shell presentation-shell">
+        <main
+          className="content-frame"
+          id="atlas-content"
+          ref={presentationMain}
+          tabIndex={-1}
+        >
+          {children}
+        </main>
+        <nav
+          aria-label="Presentation routes"
+          className="presentation-navigation"
+        >
+          {previousRoute ? (
+            <button
+              onClick={() => onNavigatePresentation(previousRoute)}
+              ref={previousControl}
+              type="button"
+            >
+              Previous
+            </button>
+          ) : (
+            <span aria-disabled="true">Previous</span>
+          )}
+          <span className="presentation-lens">{audience}</span>
+          <button onClick={onExitPresentation} type="button">
+            Exit presentation
+          </button>
+          {nextRoute ? (
+            <button
+              onClick={() => onNavigatePresentation(nextRoute)}
+              ref={nextControl}
+              type="button"
+            >
+              Next
+            </button>
+          ) : (
+            <span aria-disabled="true">Next</span>
+          )}
+        </nav>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -101,11 +209,10 @@ export function AppShell({
           </label>
           <button
             className="presentation-control"
-            disabled
-            title="Presentation controls arrive with atlas content"
+            onClick={onStartPresentation}
             type="button"
           >
-            Presentation controls
+            Present this view
           </button>
         </div>
       </header>
