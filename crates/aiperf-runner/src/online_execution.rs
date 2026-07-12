@@ -19,7 +19,6 @@ use aiperf_dataset::{
     DatasetFetcher, DatasetSource, HttpDatasetFetcher, LoadConfig, TiktokenEncoding,
 };
 use aiperf_endpoints::Modality;
-use aiperf_graph::input::GraphInputAdapterResolver;
 use aiperf_metrics::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -29,11 +28,11 @@ use url::Url;
 
 use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
-    NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeGraphInputPlan,
-    NativePreparedEndpointPlan, NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec,
-    NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
-    StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec, distribution,
-    execute_native_plan_uncommitted_with_factories, load_tokenizer,
+    NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativePreparedEndpointPlan,
+    NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec, NativeSidecarPlan,
+    NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
+    StaticAccuracyEvaluatorProcessSpec, distribution,
+    execute_prepared_native_plan_uncommitted_with_factories, load_tokenizer,
 };
 use crate::graph_execution::NativeRunnerGraphPlacementFactory;
 use crate::protocol::{ArtifactSpec, DistributionSpec, PhaseSpec, TokenizerSpec};
@@ -292,10 +291,7 @@ impl OnlineWorkloadAdapter for OnlineScheduledAdapter {
         let workload =
             workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
         let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness {
-            plan,
-            graph_inputs: context.graph_inputs_handle(),
-        }))
+        Ok(Box::new(NativePlanHarness { plan }))
     }
 }
 
@@ -333,10 +329,7 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
         let workload =
             workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
         let plan = lower_graph(run, context, workload, self.tokenizers.as_ref())?;
-        Ok(Box::new(NativePlanHarness {
-            plan,
-            graph_inputs: context.graph_inputs_handle(),
-        }))
+        Ok(Box::new(NativePlanHarness { plan }))
     }
 }
 
@@ -383,10 +376,7 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
             self.tokenizers.as_ref(),
             self.evaluator_factory.clone(),
         )?;
-        Ok(Box::new(NativePlanHarness {
-            plan,
-            graph_inputs: context.graph_inputs_handle(),
-        }))
+        Ok(Box::new(NativePlanHarness { plan }))
     }
 }
 
@@ -844,7 +834,11 @@ impl DirectGraphDatasetV2 {
         Ok(config)
     }
 
-    fn lower(self) -> Result<NativeGraphDatasetPlan> {
+    fn prepare(
+        self,
+        tokenizer: &TokenizerSpec,
+        context: &RunnerRunContext,
+    ) -> Result<NativeGraphDatasetPlan> {
         let source = match (self.path, self.records) {
             (Some(path), None) => DatasetSource::Path(path),
             (None, Some(records)) => DatasetSource::Inline(records),
@@ -865,14 +859,44 @@ impl DirectGraphDatasetV2 {
                 && default_output_tokens <= usize::MAX as f64,
             "graph dataset.osl expected value is outside the native usize range"
         );
+        let adapter_name = self.format;
+        let adapter = context
+            .graph_inputs()
+            .find(&adapter_name)
+            .with_context(|| format!("resolving direct Graph-IR adapter {adapter_name:?}"))?;
+        let tokenizer = load_tokenizer(Some(&tokenizer.name))?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("creating direct Graph-IR preparation runtime")?;
+        let local = tokio::task::LocalSet::new();
+        let input = Arc::new(
+            local
+                .block_on(
+                    &runtime,
+                    adapter.load(
+                        aiperf_graph::input::GraphInputConfig {
+                            load,
+                            root_limit: self.entries,
+                        },
+                        tokenizer.as_ref(),
+                    ),
+                )
+                .context("loading and validating direct authored Graph-IR input")?,
+        );
+        ensure!(
+            !input.plans.is_empty(),
+            "authored Graph-IR input contains no root traces after root limiting"
+        );
+        ensure!(
+            input.metadata.format == adapter_name,
+            "Graph-IR adapter {:?} returned bundle format {:?}",
+            adapter_name,
+            input.metadata.format
+        );
+        validate_graph_endpoint_profile_references(input.as_ref(), context)?;
         Ok(NativeGraphDatasetPlan {
-            input: NativeGraphInputPlan::Authored {
-                adapter_name: self.format,
-                input: Box::new(aiperf_graph::input::GraphInputConfig {
-                    load,
-                    root_limit: self.entries,
-                }),
-            },
+            input,
             random_seed: self.random_seed,
             default_output_tokens: default_output_tokens as usize,
         })
@@ -934,9 +958,8 @@ fn lower_graph(
     workload: &GraphWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunPlan> {
-    let dataset = DirectGraphDatasetV2::decode(&workload.dataset)?.lower()?;
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
-    let dataset = prepare_graph_input(dataset, &tokenizer, context)?;
+    let dataset = DirectGraphDatasetV2::decode(&workload.dataset)?.prepare(&tokenizer, context)?;
     build_common_plan(
         run,
         workload.worker_count,
@@ -1002,46 +1025,6 @@ fn build_common_plan(
     })
 }
 
-fn prepare_graph_input(
-    mut graph: NativeGraphDatasetPlan,
-    tokenizer: &TokenizerSpec,
-    context: &RunnerRunContext,
-) -> Result<NativeGraphDatasetPlan> {
-    let NativeGraphInputPlan::Authored {
-        adapter_name,
-        input,
-    } = graph.input
-    else {
-        bail!("protocol-v2 graph preparation received an already prepared input bundle")
-    };
-    let adapter = context
-        .graph_inputs()
-        .find(&adapter_name)
-        .with_context(|| format!("resolving direct Graph-IR adapter {adapter_name:?}"))?;
-    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("creating direct Graph-IR preparation runtime")?;
-    let local = tokio::task::LocalSet::new();
-    let bundle = local
-        .block_on(&runtime, adapter.load(*input, tokenizer_impl.as_ref()))
-        .context("loading and validating direct authored Graph-IR input")?;
-    ensure!(
-        !bundle.plans.is_empty(),
-        "authored Graph-IR input contains no root traces after root limiting"
-    );
-    ensure!(
-        bundle.metadata.format == adapter_name,
-        "Graph-IR adapter {:?} returned bundle format {:?}",
-        adapter_name,
-        bundle.metadata.format
-    );
-    validate_graph_endpoint_profile_references(&bundle, context)?;
-    graph.input = NativeGraphInputPlan::Prepared(Arc::new(bundle));
-    Ok(graph)
-}
-
 fn validate_graph_endpoint_profile_references(
     bundle: &aiperf_graph::input::GraphInputBundle,
     context: &RunnerRunContext,
@@ -1081,7 +1064,6 @@ fn lower_prepared_endpoint_plan(context: &RunnerRunContext) -> NativePreparedEnd
 
 struct NativePlanHarness {
     plan: NativeRunPlan,
-    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
 }
 
 impl fmt::Debug for NativePlanHarness {
@@ -1099,10 +1081,9 @@ impl PreparedOnlineHarness for NativePlanHarness {
         product_registry: &aiperf_extensions::AiperfRegistry,
     ) -> Result<(NativeReport, ReportPairRunFacts)> {
         let report_facts = native_plan_report_facts(&self.plan)?;
-        let native_report = execute_native_plan_uncommitted_with_factories(
+        let native_report = execute_prepared_native_plan_uncommitted_with_factories(
             self.plan,
             &NativeHttpExecutionBackendFactory,
-            self.graph_inputs.as_ref(),
             &NativeRunnerGraphPlacementFactory,
             product_registry,
         )?;
@@ -1114,13 +1095,10 @@ fn native_plan_report_facts(plan: &NativeRunPlan) -> Result<ReportPairRunFacts> 
     let NativeDatasetPlan::Graph(graph) = &plan.run.dataset else {
         return Ok(ReportPairRunFacts::new());
     };
-    let NativeGraphInputPlan::Prepared(input) = &graph.input else {
-        bail!("protocol-v2 graph report facts require one retained prepared input bundle")
-    };
     let graph = ReportGraphRunInfo::new(
-        input.metadata.format.clone(),
-        input.metadata.root_count,
-        input.metadata.node_count,
+        graph.input.metadata.format.clone(),
+        graph.input.metadata.root_count,
+        graph.input.metadata.node_count,
         plan.run.workers,
         plan.run.phases.len(),
     )?;

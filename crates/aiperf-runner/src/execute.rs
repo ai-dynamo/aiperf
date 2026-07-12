@@ -412,8 +412,14 @@ pub(crate) enum NativeDatasetPlan {
     PreparedLinear(PreparedDatasetInput),
     /// Canonical evaluator selection and dataset-load policy.
     StaticAccuracy(NativeStaticAccuracyPlan),
-    /// Direct authored graph input consumed exactly once by its adapter.
+    /// Canonical Graph-IR bundle returned directly by the selected adapter.
     Graph(Box<NativeGraphDatasetPlan>),
+    /// Protocol-v1 compatibility source awaiting its direct adapter load.
+    ///
+    /// Protocol v2 never constructs this value. Keeping the compatibility
+    /// source outside [`NativeGraphDatasetPlan`] makes the prepared execution
+    /// contract structurally incapable of carrying a half-lowered graph.
+    AuthoredGraph(Box<AuthoredGraphDatasetPlan>),
 }
 
 /// Process coordinates selected for one static-accuracy evaluator.
@@ -501,27 +507,19 @@ impl NativeStaticAccuracyPlan {
     }
 }
 
-/// Direct graph adapter selection and already typed load policy.
+/// Fully prepared Graph-IR execution input.
 pub(crate) struct NativeGraphDatasetPlan {
-    pub(crate) input: NativeGraphInputPlan,
+    pub(crate) input: Arc<GraphInputBundle>,
     pub(crate) random_seed: Option<u64>,
     pub(crate) default_output_tokens: usize,
 }
 
-/// Direct Graph-IR input state.
-///
-/// V1 retains an authored source because its historical protocol performs
-/// acquisition during execution. V2 stores the adapter's canonical bundle at
-/// preparation time so topology validation and source loading happen once,
-/// before run artifacts or HTTP resources exist.
-pub(crate) enum NativeGraphInputPlan {
-    /// Source still awaiting its single direct adapter load.
-    Authored {
-        adapter_name: String,
-        input: Box<GraphInputConfig>,
-    },
-    /// Canonical Graph-IR bundle loaded and validated during preparation.
-    Prepared(Arc<GraphInputBundle>),
+/// Deprecated protocol-v1 graph source kept outside the prepared run shape.
+pub(crate) struct AuthoredGraphDatasetPlan {
+    adapter_name: String,
+    input: GraphInputConfig,
+    random_seed: Option<u64>,
+    default_output_tokens: usize,
 }
 
 impl TryFrom<RunRequest> for NativeRunPlan {
@@ -532,7 +530,10 @@ impl TryFrom<RunRequest> for NativeRunPlan {
         let mut dataset = lower_v1_dataset(run.dataset)?;
         if let Some(accuracy) = run.accuracy {
             ensure!(
-                !matches!(dataset, NativeDatasetPlan::Graph(_)),
+                !matches!(
+                    dataset,
+                    NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_)
+                ),
                 "authored Graph-IR datasets cannot be combined with an accuracy evaluator"
             );
             dataset = NativeDatasetPlan::StaticAccuracy(lower_v1_static_accuracy(accuracy));
@@ -611,14 +612,14 @@ fn lower_v1_dataset(dataset: DatasetSpec) -> Result<NativeDatasetPlan> {
     let random_seed = dataset_random_seed(&dataset);
     let default_output_tokens = default_output_tokens(&dataset)?;
     let input = graph_input_config(&dataset)?;
-    Ok(NativeDatasetPlan::Graph(Box::new(NativeGraphDatasetPlan {
-        input: NativeGraphInputPlan::Authored {
+    Ok(NativeDatasetPlan::AuthoredGraph(Box::new(
+        AuthoredGraphDatasetPlan {
             adapter_name,
-            input: Box::new(input),
+            input,
+            random_seed,
+            default_output_tokens,
         },
-        random_seed,
-        default_output_tokens,
-    })))
+    )))
 }
 
 /// Execute exactly one request with the native local execution backend.
@@ -740,16 +741,80 @@ pub(crate) fn execute_native_plan_uncommitted_with_factories(
         .build()
         .context("creating native single-run Tokio runtime")?;
     let local = tokio::task::LocalSet::new();
+    local.block_on(&runtime, async move {
+        let plan = prepare_protocol_v1_graph(plan, graph_inputs).await?;
+        prepare_and_execute_native(plan, backend_factory, graph_placement, registry).await
+    })
+}
+
+/// Execute a plan whose graph input, if present, is already fully prepared.
+///
+/// Protocol-v2 pair preparation uses this entry point. Its signature omits a
+/// graph-input resolver on purpose: once the selected adapter has returned a
+/// canonical [`GraphInputBundle`], the execution harness cannot load or
+/// reinterpret the authored source a second time.
+pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
+    plan: NativeRunPlan,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
+) -> Result<NativeReport> {
+    ensure!(
+        !matches!(plan.run.dataset, NativeDatasetPlan::AuthoredGraph(_)),
+        "prepared native execution cannot accept an authored Graph-IR source"
+    );
+    validate_plan(&plan)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating prepared native single-run Tokio runtime")?;
+    let local = tokio::task::LocalSet::new();
     local.block_on(
         &runtime,
-        prepare_and_execute_native(
-            plan,
-            backend_factory,
-            graph_inputs,
-            graph_placement,
-            registry,
-        ),
+        prepare_and_execute_native(plan, backend_factory, graph_placement, registry),
     )
+}
+
+async fn prepare_protocol_v1_graph(
+    mut plan: NativeRunPlan,
+    graph_inputs: &dyn GraphInputAdapterResolver,
+) -> Result<NativeRunPlan> {
+    let NativeDatasetPlan::AuthoredGraph(source) = &plan.run.dataset else {
+        return Ok(plan);
+    };
+    let adapter_name = source.adapter_name.clone();
+    let input = GraphInputConfig {
+        load: source.input.load.clone(),
+        root_limit: source.input.root_limit,
+    };
+    let random_seed = source.random_seed;
+    let default_output_tokens = source.default_output_tokens;
+    let adapter = graph_inputs
+        .find(&adapter_name)
+        .ok_or_else(|| anyhow!("no Graph-IR input adapter is registered for {adapter_name:?}"))?;
+    let tokenizer = load_tokenizer(Some(&plan.run.tokenizer.name))?;
+    let input = Arc::new(
+        adapter
+            .load(input, tokenizer.as_ref())
+            .await
+            .context("loading direct protocol-v1 Graph-IR input")?,
+    );
+    ensure!(
+        !input.plans.is_empty(),
+        "authored Graph-IR input contains no root traces after root limiting"
+    );
+    ensure!(
+        input.metadata.format == adapter_name,
+        "Graph-IR adapter {:?} returned bundle format {:?}",
+        adapter_name,
+        input.metadata.format
+    );
+    plan.run.dataset = NativeDatasetPlan::Graph(Box::new(NativeGraphDatasetPlan {
+        input,
+        random_seed,
+        default_output_tokens,
+    }));
+    Ok(plan)
 }
 
 fn materialize_user_files(
@@ -981,7 +1046,6 @@ struct PreparedAccuracy {
 async fn prepare_and_execute_native(
     request: NativeRunPlan,
     backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn GraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1002,7 +1066,6 @@ async fn prepare_and_execute_native(
         request,
         accuracy,
         backend_factory,
-        graph_inputs,
         graph_placement,
         registry,
     )
@@ -1013,7 +1076,6 @@ async fn execute_native(
     request: NativeRunPlan,
     mut accuracy: Option<PreparedAccuracy>,
     backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn GraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1023,7 +1085,7 @@ async fn execute_native(
             accuracy.is_none(),
             "graph execution received prepared static-accuracy state"
         );
-        return execute_graph_native(request, graph_inputs, graph_placement, registry).await;
+        return execute_graph_native(request, graph_placement, registry).await;
     }
     let result =
         execute_scheduled_native(request, accuracy.as_mut(), backend_factory, registry).await;
@@ -1212,7 +1274,6 @@ struct PreparedGraphPhase {
 
 async fn execute_graph_native(
     request: NativeRunPlan,
-    graph_inputs: &dyn GraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1220,7 +1281,8 @@ async fn execute_graph_native(
         NativeDatasetPlan::Graph(graph) => graph,
         NativeDatasetPlan::Linear(_)
         | NativeDatasetPlan::PreparedLinear(_)
-        | NativeDatasetPlan::StaticAccuracy(_) => {
+        | NativeDatasetPlan::StaticAccuracy(_)
+        | NativeDatasetPlan::AuthoredGraph(_) => {
             bail!("graph execution received a non-graph dataset plan")
         }
     };
@@ -1232,27 +1294,7 @@ async fn execute_graph_native(
         tokenizer.clone(),
         request.run.tokenizer.apply_chat_template,
     ));
-    let input = match &graph.input {
-        NativeGraphInputPlan::Prepared(input) => input.clone(),
-        NativeGraphInputPlan::Authored {
-            adapter_name,
-            input,
-        } => {
-            let adapter = graph_inputs.find(adapter_name).ok_or_else(|| {
-                anyhow!("no Graph-IR input adapter is registered for {adapter_name:?}")
-            })?;
-            let input = GraphInputConfig {
-                load: input.load.clone(),
-                root_limit: input.root_limit,
-            };
-            Arc::new(
-                adapter
-                    .load(input, tokenizer.as_ref())
-                    .await
-                    .context("loading direct authored Graph-IR input")?,
-            )
-        }
-    };
+    let input = graph.input.clone();
     ensure!(
         !input.plans.is_empty(),
         "authored Graph-IR input contains no root traces after root limiting"
@@ -1613,7 +1655,7 @@ async fn execute_native_inner(
     let dataset_spec = match &request.run.dataset {
         NativeDatasetPlan::Linear(dataset) => Some(dataset),
         NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::StaticAccuracy(_) => None,
-        NativeDatasetPlan::Graph(_) => {
+        NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_) => {
             bail!("scheduled execution received a direct graph dataset plan")
         }
     };
@@ -1623,7 +1665,9 @@ async fn execute_native_inner(
             .random_seed
             .map_or(rng_root, |seed| RngRoot::new(Some(seed))),
         NativeDatasetPlan::StaticAccuracy(_) => rng_root,
-        NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
+        NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_) => {
+            unreachable!("graph rejected above")
+        }
     };
     let metrics_config = metrics_config(&request.run.metrics)?;
     let model_names = request
@@ -1736,7 +1780,9 @@ async fn execute_native_inner(
             NativeDatasetPlan::StaticAccuracy(_) => {
                 bail!("evaluator dataset plan requires an accuracy evaluator")
             }
-            NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
+            NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_) => {
+                unreachable!("graph rejected above")
+            }
         }
     };
     let default_output_tokens = if accuracy.is_some() {

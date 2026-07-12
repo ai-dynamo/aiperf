@@ -828,11 +828,6 @@ impl RunnerRunContext {
         self.graph_inputs.as_ref()
     }
 
-    /// Clone the graph-input resolver handle into a prepared graph operation.
-    pub fn graph_inputs_handle(&self) -> Arc<dyn GraphInputAdapterResolver> {
-        self.graph_inputs.clone()
-    }
-
     /// Borrow the frozen dataset-input resolver composed by the coordinator.
     pub fn dataset_inputs(&self) -> &dyn RunnerDatasetInputAdapterResolver {
         self.dataset_inputs.as_ref()
