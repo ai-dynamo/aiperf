@@ -24,6 +24,7 @@ aiperf-network-latency = { path = "crates/aiperf-network-latency" }
 aiperf-server-metrics = { path = "crates/aiperf-server-metrics" }
 aiperf-rng = { path = "crates/aiperf-rng" }
 aiperf-transport-http = { path = "crates/aiperf-transport-http" }
+aiperf-transport-grpc = { path = "crates/aiperf-transport-grpc" }
 
 # external (shared versions)
 anyhow = "1"
@@ -36,6 +37,7 @@ bytes = "1"
 chrono = "0.4"
 csv = "1"
 futures = "0.3"
+half = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 itoa = "1"
 libc = "0.2"
@@ -49,9 +51,12 @@ regex = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 smallvec = { version = "1", features = ["serde"] }
 tiktoken-rs = "0.9"
 tokio = { version = "1", features = ["full"] }
+tonic = { version = "0.14.6", default-features = false, features = ["channel", "tls-ring", "tls-webpki-roots"] }
+prost = "0.14.4"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 url = "2"

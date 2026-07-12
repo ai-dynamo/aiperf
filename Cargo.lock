@@ -60,6 +60,7 @@ dependencies = [
  "aiperf-metrics",
  "aiperf-rng",
  "aiperf-timing",
+ "aiperf-transport-grpc",
  "aiperf-transport-http",
  "anyhow",
  "async-trait",
@@ -81,8 +82,10 @@ name = "aiperf-accuracy"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "libc",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 
@@ -230,6 +233,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-prometheus"
+version = "0.0.0"
+dependencies = [
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "aiperf-rng"
 version = "0.0.0"
 dependencies = [
@@ -260,19 +272,24 @@ dependencies = [
  "aiperf-server-metrics",
  "aiperf-test-static-extension",
  "aiperf-timing",
+ "aiperf-transport-grpc",
  "aiperf-transport-http",
  "anyhow",
  "async-trait",
  "axum",
  "blake3",
  "bytes",
+ "http 1.4.2",
  "loadgen-core",
  "mimalloc",
+ "prost 0.14.4",
  "regex",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-stream",
+ "tonic 0.14.6",
  "tracing",
  "url",
  "uuid",
@@ -290,6 +307,22 @@ dependencies = [
  "serde",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "aiperf-telemetry-archive"
+version = "0.0.0"
+dependencies = [
+ "aiperf-clock",
+ "async-trait",
+ "blake3",
+ "bytes",
+ "libc",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -313,6 +346,25 @@ dependencies = [
  "rand_distr",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "aiperf-transport-grpc"
+version = "0.0.0"
+dependencies = [
+ "aiperf-clock",
+ "aiperf-endpoints",
+ "bytes",
+ "futures",
+ "half",
+ "http 1.4.2",
+ "prost 0.14.4",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic 0.14.6",
+ "url",
 ]
 
 [[package]]
@@ -4232,6 +4284,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
+ "num-bigint",
  "num-integer",
  "num-traits",
 ]
@@ -6780,6 +6833,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]
