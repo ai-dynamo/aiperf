@@ -240,7 +240,7 @@ fn sort_sweep_events(events: &mut [SweepEvent]) {
             .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
             .then_with(|| left.delta.total_cmp(&right.delta))
     };
-    if events.len() >= PARALLEL_EVENT_SORT_MIN_EVENTS {
+    if events.len() >= PARALLEL_EVENT_SORT_MIN_EVENTS && rayon::current_num_threads() > 1 {
         events.par_sort_unstable_by(compare);
     } else {
         events.sort_unstable_by(compare);
@@ -617,71 +617,7 @@ impl SweepLineCurves {
         window_start_ns: f64,
         window_end_ns: f64,
     ) -> Vec<SweepMetricResult> {
-        let effective = [
-            SweepMetricSpec::new(
-                "effective_concurrency",
-                "Effective Concurrency",
-                "requests",
-                1.0,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_decode_throughput",
-                "Effective Decode Throughput",
-                "tokens/sec",
-                NANOS_PER_SECOND,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_prefill_throughput",
-                "Effective Prefill Throughput",
-                "tokens/sec",
-                NANOS_PER_SECOND,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_decode_concurrency",
-                "Effective Decode Concurrency",
-                "requests",
-                1.0,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_prefill_concurrency",
-                "Effective Prefill Concurrency",
-                "requests",
-                1.0,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_total_throughput",
-                "Effective Total Throughput",
-                "tokens/sec",
-                NANOS_PER_SECOND,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_decode_throughput_per_user",
-                "Effective Decode Throughput Per User",
-                "tokens/sec/user",
-                NANOS_PER_SECOND,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "effective_prefill_throughput_per_user",
-                "Effective Prefill Throughput Per User",
-                "tokens/sec/user",
-                NANOS_PER_SECOND,
-                MetricConsoleGroup::Effective,
-            ),
-            SweepMetricSpec::new(
-                "tokens_in_flight",
-                "Tokens In Flight",
-                "tokens",
-                1.0,
-                MetricConsoleGroup::Effective,
-            ),
-        ];
+        let effective = EFFECTIVE_METRIC_SPECS;
         let curves = [
             &self.concurrency,
             &self.decode_throughput,
@@ -693,62 +629,29 @@ impl SweepLineCurves {
             &self.prefill_throughput_per_user,
             &self.tokens_in_flight,
         ];
+        let active_specs = ACTIVE_METRIC_SPECS;
         let active = [
             (
-                SweepMetricSpec::new(
-                    "active_decode_throughput",
-                    "Active Decode Throughput",
-                    "tokens/sec",
-                    NANOS_PER_SECOND,
-                    MetricConsoleGroup::Active,
-                ),
+                active_specs[0],
                 &self.decode_throughput,
                 &self.decode_concurrency,
             ),
             (
-                SweepMetricSpec::new(
-                    "active_prefill_throughput",
-                    "Active Prefill Throughput",
-                    "tokens/sec",
-                    NANOS_PER_SECOND,
-                    MetricConsoleGroup::Active,
-                ),
+                active_specs[1],
                 &self.prefill_throughput,
                 &self.prefill_concurrency,
             ),
             (
-                SweepMetricSpec::new(
-                    "active_decode_throughput_per_user",
-                    "Active Decode Throughput Per User",
-                    "tokens/sec/user",
-                    NANOS_PER_SECOND,
-                    MetricConsoleGroup::Active,
-                ),
+                active_specs[2],
                 &self.decode_throughput_per_user,
                 &self.decode_concurrency,
             ),
             (
-                SweepMetricSpec::new(
-                    "active_prefill_throughput_per_user",
-                    "Active Prefill Throughput Per User",
-                    "tokens/sec/user",
-                    NANOS_PER_SECOND,
-                    MetricConsoleGroup::Active,
-                ),
+                active_specs[3],
                 &self.prefill_throughput_per_user,
                 &self.prefill_concurrency,
             ),
-            (
-                SweepMetricSpec::new(
-                    "active_total_throughput",
-                    "Active Total Throughput",
-                    "tokens/sec",
-                    NANOS_PER_SECOND,
-                    MetricConsoleGroup::Active,
-                ),
-                &self.total_throughput,
-                &self.concurrency,
-            ),
+            (active_specs[4], &self.total_throughput, &self.concurrency),
         ];
         if self
             .tokens_in_flight
@@ -839,6 +742,110 @@ impl SweepMetricSpec {
         }
     }
 }
+
+const EFFECTIVE_METRIC_SPECS: [SweepMetricSpec; 9] = [
+    SweepMetricSpec::new(
+        "effective_concurrency",
+        "Effective Concurrency",
+        "requests",
+        1.0,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_decode_throughput",
+        "Effective Decode Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_prefill_throughput",
+        "Effective Prefill Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_decode_concurrency",
+        "Effective Decode Concurrency",
+        "requests",
+        1.0,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_prefill_concurrency",
+        "Effective Prefill Concurrency",
+        "requests",
+        1.0,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_total_throughput",
+        "Effective Total Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_decode_throughput_per_user",
+        "Effective Decode Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "effective_prefill_throughput_per_user",
+        "Effective Prefill Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Effective,
+    ),
+    SweepMetricSpec::new(
+        "tokens_in_flight",
+        "Tokens In Flight",
+        "tokens",
+        1.0,
+        MetricConsoleGroup::Effective,
+    ),
+];
+
+const ACTIVE_METRIC_SPECS: [SweepMetricSpec; 5] = [
+    SweepMetricSpec::new(
+        "active_decode_throughput",
+        "Active Decode Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Active,
+    ),
+    SweepMetricSpec::new(
+        "active_prefill_throughput",
+        "Active Prefill Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Active,
+    ),
+    SweepMetricSpec::new(
+        "active_decode_throughput_per_user",
+        "Active Decode Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Active,
+    ),
+    SweepMetricSpec::new(
+        "active_prefill_throughput_per_user",
+        "Active Prefill Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Active,
+    ),
+    SweepMetricSpec::new(
+        "active_total_throughput",
+        "Active Total Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+        MetricConsoleGroup::Active,
+    ),
+];
 
 /// Boundary-safe time-weighted result for one sweep-line curve.
 #[derive(Debug, Clone, PartialEq)]
@@ -953,6 +960,40 @@ mod tests {
     }
 
     #[test]
+    fn single_thread_pool_large_event_sort_matches_sequential_reference() {
+        let mut events = (0..PARALLEL_EVENT_SORT_MIN_EVENTS)
+            .map(|index| {
+                let timestamp_ns = ((index * 17) % 4_096) as f64;
+                let magnitude = ((index / 2) % 7 + 1) as f64;
+                let delta = if index % 2 == 0 {
+                    -magnitude
+                } else {
+                    magnitude
+                };
+                SweepEvent::new(timestamp_ns, delta)
+            })
+            .collect::<Vec<_>>();
+        let mut expected = events.clone();
+        expected.sort_unstable_by(|left, right| {
+            left.timestamp_ns
+                .total_cmp(&right.timestamp_ns)
+                .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
+                .then_with(|| left.delta.total_cmp(&right.delta))
+        });
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+
+        pool.install(|| {
+            assert_eq!(rayon::current_num_threads(), 1);
+            sort_sweep_events(&mut events);
+        });
+
+        assert_eq!(events, expected);
+    }
+
+    #[test]
     fn compact_curve_keeps_the_right_continuous_same_timestamp_value() {
         let curve = sweep_line_cumsum_compact(vec![
             SweepEvent::new(0.0, 1.0),
@@ -1023,6 +1064,127 @@ mod tests {
         assert_eq!(metrics.len(), 14);
         assert_eq!(metrics[0].tag, "effective_concurrency");
         assert_eq!(metrics[13].tag, "active_total_throughput");
+    }
+
+    #[test]
+    fn metric_specs_preserve_all_fourteen_exact_identities() {
+        let observed = EFFECTIVE_METRIC_SPECS
+            .into_iter()
+            .chain(ACTIVE_METRIC_SPECS)
+            .map(|spec| {
+                (
+                    spec.tag,
+                    spec.header,
+                    spec.unit,
+                    spec.scale,
+                    spec.console_group,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            observed,
+            vec![
+                (
+                    "effective_concurrency",
+                    "Effective Concurrency",
+                    "requests",
+                    1.0,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_decode_throughput",
+                    "Effective Decode Throughput",
+                    "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_prefill_throughput",
+                    "Effective Prefill Throughput",
+                    "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_decode_concurrency",
+                    "Effective Decode Concurrency",
+                    "requests",
+                    1.0,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_prefill_concurrency",
+                    "Effective Prefill Concurrency",
+                    "requests",
+                    1.0,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_total_throughput",
+                    "Effective Total Throughput",
+                    "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_decode_throughput_per_user",
+                    "Effective Decode Throughput Per User",
+                    "tokens/sec/user",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "effective_prefill_throughput_per_user",
+                    "Effective Prefill Throughput Per User",
+                    "tokens/sec/user",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "tokens_in_flight",
+                    "Tokens In Flight",
+                    "tokens",
+                    1.0,
+                    MetricConsoleGroup::Effective,
+                ),
+                (
+                    "active_decode_throughput",
+                    "Active Decode Throughput",
+                    "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Active,
+                ),
+                (
+                    "active_prefill_throughput",
+                    "Active Prefill Throughput",
+                    "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Active,
+                ),
+                (
+                    "active_decode_throughput_per_user",
+                    "Active Decode Throughput Per User",
+                    "tokens/sec/user",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Active,
+                ),
+                (
+                    "active_prefill_throughput_per_user",
+                    "Active Prefill Throughput Per User",
+                    "tokens/sec/user",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Active,
+                ),
+                (
+                    "active_total_throughput",
+                    "Active Total Throughput",
+                    "tokens/sec",
+                    NANOS_PER_SECOND,
+                    MetricConsoleGroup::Active,
+                ),
+            ]
+        );
     }
 
     #[test]
