@@ -144,6 +144,19 @@ def test_v2_envelope_and_default_scheduled_projection(
     }
 
 
+def test_v2_projects_resolved_worker_lower_bound(tmp_path: Path) -> None:
+    run = _run(tmp_path / "worker-placement")
+    run.cfg.runtime.workers_min = 3
+
+    request = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )
+
+    assert request["run"]["workload"]["config"]["worker_count"] == 3
+
+
 def test_v2_projects_authored_http_policy_without_legacy_conversion(
     tmp_path: Path,
 ) -> None:
