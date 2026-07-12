@@ -17,6 +17,7 @@ mod limits;
 mod model;
 mod number;
 mod parser;
+mod role_matrix;
 mod semantic;
 mod syntax;
 
@@ -37,3 +38,4 @@ pub use number::{
     NumberProduction, SourceTimestamp, TimestampStatus, parse_number_lexeme,
 };
 pub use parser::{ExpositionParser, StrictExpositionParser};
+pub use role_matrix::{ROLE_VALIDITY_MATRIX_V1_BYTES, role_validity_matrix_v1_bytes};
