@@ -35,6 +35,12 @@ fn capabilities_are_a_single_versioned_json_line() {
         serde_json::json!(["synthetic", "file", "public"])
     );
     assert!(capabilities["phase_types"].as_array().unwrap().len() >= 6);
+    assert!(
+        capabilities["run_features"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("outputs_json"))
+    );
 }
 
 async fn chat_handler() -> impl IntoResponse {
@@ -114,6 +120,7 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             },
             "artifacts": {
                 "records_path": "profile_export.jsonl",
+                "outputs_path": "outputs.json",
                 "trace": true
             }
         }
@@ -177,6 +184,17 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             && row["metrics"]["request_latency"]["value"].is_number()
             && row["metrics"]["time_to_first_token"]["value"].is_number()
             && row["trace_data"]["trace_type"] == "aiperf-transport"
+    }));
+    let outputs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(artifacts.path().join("outputs.json")).unwrap())
+            .unwrap();
+    assert_eq!(outputs["schema_version"], "1.0");
+    assert_eq!(outputs["data"].as_array().unwrap().len(), 4);
+    assert!(outputs["data"].as_array().unwrap().iter().all(|row| {
+        row["response_text"] == "a"
+            && row["metrics"]["output_token_count"] == 1.0
+            && row["metrics"]["output_sequence_length"] == 1.0
+            && row["metrics"]["request_latency"].is_number()
     }));
 }
 

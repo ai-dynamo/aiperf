@@ -50,7 +50,7 @@ impl RunnerCapabilities {
                 "fixed_schedule",
             ],
             phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
-            run_features: &["python_accuracy_evaluator"],
+            run_features: &["outputs_json", "python_accuracy_evaluator"],
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -191,6 +191,9 @@ pub struct ArtifactSpec {
     /// Per-request metrics JSONL path, or absent when records are disabled.
     #[serde(default)]
     pub records_path: Option<PathBuf>,
+    /// Aggregated profiling response text and selected metrics JSON path.
+    #[serde(default)]
+    pub outputs_path: Option<PathBuf>,
     /// Include transport timing details on JSONL records.
     #[serde(default)]
     pub trace: bool,

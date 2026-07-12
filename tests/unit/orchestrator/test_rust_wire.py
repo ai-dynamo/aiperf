@@ -116,6 +116,15 @@ def test_projects_slos_timeslices_and_custom_record_path(tmp_path) -> None:
     }
 
 
+def test_projects_outputs_json_into_the_native_results_layer(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.artifacts.export_outputs_json = True
+
+    projected = build_run_request(run)["run"]
+
+    assert projected["artifacts"]["outputs_path"] == "outputs.json"
+
+
 def test_projects_complete_adaptive_scale_policy(tmp_path) -> None:
     phase = build_run_request(
         _run(

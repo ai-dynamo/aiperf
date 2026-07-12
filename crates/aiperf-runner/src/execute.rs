@@ -87,7 +87,7 @@ use crate::protocol::{
     SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
     SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
-use crate::records::{CapturedRecord, write_records_jsonl};
+use crate::records::{CapturedRecord, write_outputs_json, write_records_jsonl};
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
@@ -604,6 +604,10 @@ async fn execute_native_inner(
             &metrics_config,
             request.run.artifacts.trace,
         )?;
+    }
+    if let Some(outputs_path) = &request.run.artifacts.outputs_path {
+        let outputs_path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
+        write_outputs_json(&outputs_path, &captured, &metrics_config)?;
     }
     let mut outcome = RunOutcome {
         run: ReportRunInfo {
@@ -1750,6 +1754,7 @@ struct RunCapture {
     origin_ns: i64,
     observer: Rc<NativeMetricsObserver>,
     identities: RefCell<Vec<CaptureIdentity>>,
+    response_text: RefCell<HashMap<Uuid, String>>,
 }
 
 impl RunCapture {
@@ -1759,6 +1764,7 @@ impl RunCapture {
             clock,
             origin_ns,
             identities: RefCell::new(Vec::new()),
+            response_text: RefCell::new(HashMap::new()),
         }
     }
 
@@ -1800,9 +1806,24 @@ impl RunCapture {
         );
     }
 
+    fn record_response_text(&self, uuid: Uuid, response_text: &str) -> Result<()> {
+        if response_text.is_empty() {
+            return Ok(());
+        }
+        ensure!(
+            self.response_text
+                .borrow_mut()
+                .insert(uuid, response_text.to_string())
+                .is_none(),
+            "native response text was recorded more than once for request {uuid}"
+        );
+        Ok(())
+    }
+
     fn finish(&self, issued_times: &HashMap<Uuid, i64>) -> Result<Vec<CapturedRecord>> {
         let collection = self.observer.finish_with_records();
         let identities = self.identities.borrow();
+        let response_text = self.response_text.borrow();
         ensure!(
             collection.records.len() == identities.len(),
             "native record capture finalized {} records for {} dispatched identities",
@@ -1826,6 +1847,7 @@ impl RunCapture {
                 Ok(CapturedRecord {
                     uuid: identity.uuid,
                     x_correlation_id: identity.x_correlation_id.clone(),
+                    response_text: response_text.get(&identity.uuid).cloned(),
                     ingest,
                 })
             })
@@ -1931,16 +1953,20 @@ impl TurnDispatcher for ConfiguredDispatcher {
             .dispatch_turn(turn, &tee, on_first_token)
             .await;
         match &result {
-            Ok(outcome) => self.capture.observer.record_response(
-                uuid,
-                NativeResponseMetadata {
-                    start_ns: Some(outcome.start_ns),
-                    end_ns: Some(outcome.end_ns),
-                    prompt_tokens: outcome.prompt_tokens,
-                    completion_tokens: outcome.completion_tokens,
-                    http: outcome.http,
-                },
-            ),
+            Ok(outcome) => {
+                self.capture
+                    .record_response_text(uuid, &outcome.response_text)?;
+                self.capture.observer.record_response(
+                    uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(outcome.start_ns),
+                        end_ns: Some(outcome.end_ns),
+                        prompt_tokens: outcome.prompt_tokens,
+                        completion_tokens: outcome.completion_tokens,
+                        http: outcome.http,
+                    },
+                );
+            }
             Err(_) => {
                 let now = self.capture.clock.now_ns();
                 self.capture
