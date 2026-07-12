@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
 use aiperf_extensions::AiperfRegistry;
-use aiperf_graph::input::GraphInputAdapterResolver;
 use aiperf_metrics::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,
@@ -29,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunnerComponentId};
 use crate::sidecar_input::PreparedSidecarInputs;
@@ -576,6 +576,7 @@ pub struct BuiltinRunnerRegistryFactory;
 impl RunnerRegistryFactory for BuiltinRunnerRegistryFactory {
     fn build(&self) -> Result<RunnerRegistry> {
         let mut builder = RunnerRegistryBuilder::new();
+        builder.register_backend(Arc::new(OnlineGrpcBackendFactoryV2))?;
         builder.register_backend(Arc::new(OnlineHttpBackendFactoryV2))?;
         builder.register_workload(Arc::new(ScheduledWorkloadFactoryV2))?;
         builder.register_workload(Arc::new(GraphWorkloadFactoryV2))?;
@@ -592,6 +593,8 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     crate::agentic_execution::register_agentic_workload(builder)?;
     crate::agentic_execution::register_agentic_online_pair(builder)?;
     crate::online_execution::register_online_http_pairs(builder)?;
+    crate::online_execution::register_online_http_scheduled_pair(builder)?;
+    crate::grpc_execution::register_online_grpc_pairs(builder)?;
     #[cfg(feature = "dynamo-offline")]
     crate::offline_execution::register_dynamo_offline_backend(builder)?;
     Ok(())
@@ -605,6 +608,14 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OnlineHttpBackendConfigV2 {}
+
+/// Strict validated config owned by the built-in `online_grpc` backend.
+///
+/// Endpoint profiles own targets, deadlines, metadata, and channel-reuse
+/// policy, so the backend object remains intentionally empty and strict.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OnlineGrpcBackendConfigV2 {}
 
 /// Strict built-in scheduled-workload authored config.
 #[derive(Deserialize)]
@@ -753,7 +764,7 @@ pub struct ValidatedEndpointProfileV2 {
 #[derive(Clone)]
 pub struct RunnerRunContext {
     product_registry: Arc<AiperfRegistry>,
-    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+    graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
     sidecar_inputs: Arc<PreparedSidecarInputs>,
     endpoint_profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
@@ -784,7 +795,7 @@ impl RunnerRunContext {
     /// Freeze one validated profile collection beside the process registry.
     pub fn new(
         product_registry: Arc<AiperfRegistry>,
-        graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
         sidecar_inputs: Arc<PreparedSidecarInputs>,
         profiles: Vec<ValidatedEndpointProfileV2>,
@@ -824,7 +835,7 @@ impl RunnerRunContext {
     }
 
     /// Borrow the frozen graph-input resolver composed by the coordinator.
-    pub fn graph_inputs(&self) -> &dyn GraphInputAdapterResolver {
+    pub fn graph_inputs(&self) -> &dyn RunnerGraphInputAdapterResolver {
         self.graph_inputs.as_ref()
     }
 
@@ -1023,6 +1034,15 @@ pub static ONLINE_HTTP_BACKEND_DESCRIPTOR: RunnerBackendDescriptor = RunnerBacke
     features: &["h1", "h2c", "http", "tls", "uds"],
 };
 
+/// Built-in online gRPC backend descriptor.
+pub static ONLINE_GRPC_BACKEND_DESCRIPTOR: RunnerBackendDescriptor = RunnerBackendDescriptor {
+    id: "online_grpc",
+    description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
+    clock: RunnerClockKind::Real,
+    semantic_responses: true,
+    features: &["grpc", "h2", "tls"],
+};
+
 /// Built-in scheduled workload descriptor.
 pub static SCHEDULED_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
     id: "scheduled",
@@ -1072,6 +1092,26 @@ impl RunnerBackendFactory for OnlineHttpBackendFactoryV2 {
 }
 
 #[derive(Debug)]
+struct OnlineGrpcBackendFactoryV2;
+
+impl RunnerBackendFactory for OnlineGrpcBackendFactoryV2 {
+    fn descriptor(&self) -> &'static RunnerBackendDescriptor {
+        &ONLINE_GRPC_BACKEND_DESCRIPTOR
+    }
+
+    fn validate(
+        &self,
+        authored: &RawValue,
+        _requirements: &WorkloadRequirements,
+    ) -> Result<Box<dyn ValidatedBackendConfig>> {
+        Ok(Box::new(strict_decode::<OnlineGrpcBackendConfigV2>(
+            authored,
+            "online_grpc backend config",
+        )?))
+    }
+}
+
+#[derive(Debug)]
 struct ScheduledWorkloadFactoryV2;
 
 impl RunnerWorkloadFactory for ScheduledWorkloadFactoryV2 {
@@ -1112,11 +1152,6 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             &config.tokenizer,
             &config.phases,
         )?;
-        let dataset = raw_object(&config.dataset, "graph workload dataset")?;
-        ensure!(
-            dataset.get("format").and_then(Value::as_str) == Some("dag_jsonl"),
-            "graph workload dataset.format must be \"dag_jsonl\""
-        );
         Ok(Box::new(config))
     }
 
@@ -1459,7 +1494,7 @@ mod tests {
         };
         let context = RunnerRunContext::new(
             Arc::new(AiperfRegistry::builtin().unwrap()),
-            Arc::new(aiperf_graph::input::GraphInputAdapterRegistry::with_builtin_adapters()),
+            Arc::new(crate::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
             Arc::new(crate::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
             Arc::new(crate::sidecar_input::PreparedSidecarInputs::default()),
             vec![
@@ -1498,9 +1533,9 @@ mod tests {
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
         #[cfg(feature = "dynamo-offline")]
-        let expected_backends = vec!["dynamo_offline", "online_http"];
+        let expected_backends = vec!["dynamo_offline", "online_grpc", "online_http"];
         #[cfg(not(feature = "dynamo-offline"))]
-        let expected_backends = vec!["online_http"];
+        let expected_backends = vec!["online_grpc", "online_http"];
         assert_eq!(
             registry
                 .backend_descriptors()
@@ -1521,15 +1556,24 @@ mod tests {
         let expected_supported = vec![
             ("dynamo_offline", "graph"),
             ("dynamo_offline", "scheduled"),
+            ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
+            ("online_http", "scheduled"),
         ];
         #[cfg(not(feature = "dynamo-offline"))]
-        let expected_supported = vec![("online_http", "agentic"), ("online_http", "graph")];
+        let expected_supported = vec![
+            ("online_grpc", "scheduled"),
+            ("online_http", "agentic"),
+            ("online_http", "graph"),
+            ("online_http", "scheduled"),
+        ];
         #[cfg(feature = "dynamo-offline")]
         let expected_static = vec![
             ("dynamo_offline", "graph"),
             ("dynamo_offline", "scheduled"),
+            ("online_grpc", "graph"),
+            ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),
@@ -1537,6 +1581,8 @@ mod tests {
         ];
         #[cfg(not(feature = "dynamo-offline"))]
         let expected_static = vec![
+            ("online_grpc", "graph"),
+            ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
             ("online_http", "scheduled"),

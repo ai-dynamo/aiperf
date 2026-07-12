@@ -18,12 +18,12 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_graph::input::GraphInputAdapterRegistry;
 use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
 use aiperf_runner::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, PreparedDatasetInput,
     RunnerDatasetInputAdapterResolver, RunnerDatasetInputContext,
 };
+use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runner::protocol_v2::RunnerEnvelopeV2;
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
@@ -199,7 +199,7 @@ fn statically_linked_extension_child() {
         DISTRIBUTION_ID,
         &BuiltinRunnerRegistryFactory,
         &StaticTestRegistryFactory,
-        Arc::new(GraphInputAdapterRegistry::with_builtin_adapters()),
+        Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),
         Arc::new(CountingDatasetInputs {
             inner: BuiltinRunnerDatasetInputAdapterResolver::new(),
             loads: dataset_loads.clone(),

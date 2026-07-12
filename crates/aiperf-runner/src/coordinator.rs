@@ -13,11 +13,11 @@ use std::sync::Arc;
 
 use aiperf::report::finalize_and_write_native_report_json;
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory};
-use aiperf_graph::input::GraphInputAdapterResolver;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::RunnerCapabilities;
 use crate::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
@@ -57,7 +57,7 @@ pub struct RunnerV2Coordinator {
     distribution_id: String,
     runner_registry: RunnerRegistry,
     product_registry: Arc<AiperfRegistry>,
-    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+    graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
     sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
 }
@@ -78,7 +78,7 @@ impl RunnerV2Coordinator {
         distribution_id: impl Into<String>,
         runner_registry_factory: &dyn RunnerRegistryFactory,
         product_registry_factory: &dyn AiperfRegistryFactory,
-        graph_inputs: Arc<dyn GraphInputAdapterResolver>,
+        graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
         sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
     ) -> Result<Self> {

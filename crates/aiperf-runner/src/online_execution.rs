@@ -15,15 +15,13 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aiperf_dataset::{
-    DatasetFetcher, DatasetSource, HttpDatasetFetcher, LoadConfig, TiktokenEncoding,
-};
+use aiperf_dataset::{DatasetFetcher, HttpDatasetFetcher, TiktokenEncoding};
 use aiperf_endpoints::Modality;
 use aiperf_metrics::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::Deserialize;
-use serde_json::{Map, Value, value::RawValue};
+use serde_json::{Value, value::RawValue};
 use url::Url;
 
 use crate::dataset_input::RunnerDatasetInputContext;
@@ -31,11 +29,12 @@ use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativePreparedEndpointPlan,
     NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec, NativeSidecarPlan,
     NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
-    StaticAccuracyEvaluatorProcessSpec, distribution,
-    execute_prepared_native_plan_uncommitted_with_factories, load_tokenizer,
+    StaticAccuracyEvaluatorProcessSpec, execute_prepared_native_plan_uncommitted_with_factories,
+    load_tokenizer,
 };
 use crate::graph_execution::NativeRunnerGraphPlacementFactory;
-use crate::protocol::{ArtifactSpec, DistributionSpec, PhaseSpec, TokenizerSpec};
+use crate::graph_input::RunnerGraphInputContext;
+use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
     GraphWorkloadConfigV2, OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
@@ -317,7 +316,7 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
         );
         let workload = workload_config::<GraphWorkloadConfigV2>(workload, self.workload_id())?;
         validate_authored_tokenizer(&workload.tokenizer)?;
-        DirectGraphDatasetV2::decode(&workload.dataset).map(drop)
+        context.graph_inputs().validate_identity(&workload.dataset)
     }
 
     fn prepare(
@@ -402,6 +401,16 @@ fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> R
             !profile.config.urls.is_empty(),
             "endpoint profile {profile_id:?} has no URL"
         );
+        for url in &profile.config.urls {
+            let scheme = Url::parse(url)
+                .with_context(|| format!("parsing endpoint profile {profile_id:?} URL"))?
+                .scheme()
+                .to_string();
+            ensure!(
+                matches!(scheme.as_str(), "http" | "https"),
+                "online_http endpoint profile {profile_id:?} requires http:// or https:// URLs, got {url:?}"
+            );
+        }
         ensure!(
             profile.config.wait_for_model_timeout <= 0.0,
             "protocol-v2 online execution does not yet implement endpoint readiness probes; endpoint profile {profile_id:?} enables one"
@@ -759,151 +768,7 @@ impl StaticAccuracyConfigV2 {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectGraphDatasetV2 {
-    #[serde(rename = "type")]
-    source_type: String,
-    #[serde(default)]
-    path: Option<PathBuf>,
-    #[serde(default)]
-    records: Option<Value>,
-    format: String,
-    #[serde(default = "default_sequential")]
-    sampling: String,
-    #[serde(default)]
-    synthesis: Option<Value>,
-    #[serde(default)]
-    entries: Option<usize>,
-    #[serde(default)]
-    random_seed: Option<u64>,
-    #[serde(default)]
-    osl: Option<DistributionSpec>,
-    #[serde(default)]
-    options: Map<String, Value>,
-}
-
-fn default_sequential() -> String {
-    "sequential".into()
-}
-
-impl DirectGraphDatasetV2 {
-    fn decode(raw: &RawValue) -> Result<Self> {
-        let config: Self =
-            serde_json::from_str(raw.get()).context("decoding direct protocol-v2 graph input")?;
-        ensure!(
-            config.source_type == "file",
-            "online graph execution requires dataset.type=\"file\""
-        );
-        ensure!(
-            config.format == "dag_jsonl",
-            "online graph execution requires dataset.format=\"dag_jsonl\""
-        );
-        ensure!(
-            config.path.is_some() ^ config.records.is_some(),
-            "direct graph input requires exactly one of path or records"
-        );
-        ensure!(
-            config.sampling.eq_ignore_ascii_case("sequential"),
-            "direct Graph-IR input currently requires sequential root selection"
-        );
-        ensure!(
-            config.synthesis.is_none(),
-            "direct Graph-IR input does not accept linear trace synthesis"
-        );
-        ensure!(
-            config.entries != Some(0),
-            "direct graph root limit must be positive when configured"
-        );
-        for name in config.options.keys() {
-            ensure!(
-                name == "inter_turn_delay_cap_seconds",
-                "dag_jsonl graph input does not accept option {name:?}"
-            );
-        }
-        if let Some(delay) = config
-            .options
-            .get("inter_turn_delay_cap_seconds")
-            .and_then(Value::as_f64)
-        {
-            ensure!(
-                delay.is_finite() && delay >= 0.0,
-                "inter_turn_delay_cap_seconds must be finite and non-negative"
-            );
-        }
-        Ok(config)
-    }
-
-    fn prepare(
-        self,
-        tokenizer: &TokenizerSpec,
-        context: &RunnerRunContext,
-    ) -> Result<NativeGraphDatasetPlan> {
-        let source = match (self.path, self.records) {
-            (Some(path), None) => DatasetSource::Path(path),
-            (None, Some(records)) => DatasetSource::Inline(records),
-            _ => unreachable!("source exclusivity validated"),
-        };
-        let mut load = LoadConfig::new(source);
-        load.options = self.options;
-        let default_output_tokens = self
-            .osl
-            .as_ref()
-            .map(distribution)
-            .transpose()?
-            .map(|value| value.expected_value().ceil())
-            .unwrap_or(1.0);
-        ensure!(
-            default_output_tokens.is_finite()
-                && default_output_tokens > 0.0
-                && default_output_tokens <= usize::MAX as f64,
-            "graph dataset.osl expected value is outside the native usize range"
-        );
-        let adapter_name = self.format;
-        let adapter = context
-            .graph_inputs()
-            .find(&adapter_name)
-            .with_context(|| format!("resolving direct Graph-IR adapter {adapter_name:?}"))?;
-        let tokenizer = load_tokenizer(Some(&tokenizer.name))?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("creating direct Graph-IR preparation runtime")?;
-        let local = tokio::task::LocalSet::new();
-        let input = Arc::new(
-            local
-                .block_on(
-                    &runtime,
-                    adapter.load(
-                        aiperf_graph::input::GraphInputConfig {
-                            load,
-                            root_limit: self.entries,
-                        },
-                        tokenizer.as_ref(),
-                    ),
-                )
-                .context("loading and validating direct authored Graph-IR input")?,
-        );
-        ensure!(
-            !input.plans.is_empty(),
-            "authored Graph-IR input contains no root traces after root limiting"
-        );
-        ensure!(
-            input.metadata.format == adapter_name,
-            "Graph-IR adapter {:?} returned bundle format {:?}",
-            adapter_name,
-            input.metadata.format
-        );
-        validate_graph_endpoint_profile_references(input.as_ref(), context)?;
-        Ok(NativeGraphDatasetPlan {
-            input,
-            random_seed: self.random_seed,
-            default_output_tokens: default_output_tokens as usize,
-        })
-    }
-}
-
-fn lower_scheduled(
+pub(crate) fn lower_scheduled(
     run: &AuthoredRunSpecV2,
     context: &RunnerRunContext,
     workload: &ScheduledWorkloadConfigV2,
@@ -959,7 +824,29 @@ fn lower_graph(
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunPlan> {
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
-    let dataset = DirectGraphDatasetV2::decode(&workload.dataset)?.prepare(&tokenizer, context)?;
+    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("creating direct Graph-IR preparation runtime")?;
+    let local = tokio::task::LocalSet::new();
+    let prepared = local
+        .block_on(
+            &runtime,
+            context.graph_inputs().load(
+                &workload.dataset,
+                &RunnerGraphInputContext {
+                    tokenizer: tokenizer_impl.as_ref(),
+                },
+            ),
+        )
+        .context("loading direct authored Graph-IR input")?;
+    validate_graph_endpoint_profile_references(&prepared.bundle, context)?;
+    let dataset = NativeGraphDatasetPlan {
+        input: Arc::new(prepared.bundle),
+        random_seed: prepared.random_seed,
+        default_output_tokens: prepared.default_output_tokens,
+    };
     build_common_plan(
         run,
         workload.worker_count,

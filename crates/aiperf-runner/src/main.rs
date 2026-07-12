@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
-use aiperf_graph::input::GraphInputAdapterRegistry;
 use aiperf_runner::coordinator::RunnerV2Coordinator;
 use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
+use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runner::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
@@ -159,7 +159,7 @@ fn run_v2(input: &[u8]) -> ! {
             format!("invalid protocol-v2 request: {error}"),
         ),
     };
-    let graph_inputs = Arc::new(GraphInputAdapterRegistry::with_builtin_adapters());
+    let graph_inputs = Arc::new(BuiltinRunnerGraphInputAdapterResolver::new());
     let dataset_inputs = Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new());
     let sidecar_inputs = Arc::new(BuiltinRunnerSidecarInputAdapterResolver::new());
     let coordinator = match RunnerV2Coordinator::new(

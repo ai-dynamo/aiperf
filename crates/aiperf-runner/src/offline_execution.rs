@@ -24,13 +24,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::dynamo_offline::{
-    CanonicalSharedMetrics, OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig,
-    OfflineGraphReport, OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity,
-    OfflineRouterMode, OfflineRunReport, OfflineScheduledExecution, OfflineScheduledFuture,
+    CanonicalSharedMetrics, DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
+    OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig, OfflineGraphReport,
+    OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity, OfflineRouterMode,
+    OfflineRunReport, OfflineScheduledExecution, OfflineScheduledExecutionFinalizer,
     OfflineScheduledReport, OfflineScheduledRunFactory, OfflineTopology, OfflineTraceConfig,
     run_graph_offline, run_graph_workload_offline, run_scheduled_backend_offline,
-    run_trace_offline, write_dynamo_per_request_jsonl, write_dynamo_report_json,
-    write_dynamo_worker_artifacts_json,
+    run_scheduled_backend_offline_deferred, run_trace_offline, write_dynamo_per_request_jsonl,
+    write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::{
@@ -38,15 +39,14 @@ use aiperf::multiturn::{
     NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
     PreparedTurnEndpointResolver,
 };
-use aiperf::phase_runtime::run_scheduled_phases_with_aggregate;
+use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
 use aiperf_clock::Clock;
 use aiperf_dataset::{
-    DatasetSource, HuggingFaceTokenizer, LoadConfig, SamplerRegistry, SegmentStore, TextTokenizer,
-    TiktokenEncoding, TiktokenTokenizer,
+    SamplerRegistry, SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
 };
 use aiperf_endpoints::{Modality, PreparedEndpointTable};
 use aiperf_graph::bench::BenchConfig;
-use aiperf_graph::input::{GraphInputBundle, GraphInputConfig};
+use aiperf_graph::input::GraphInputBundle;
 use aiperf_graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     FailFastRunFailurePolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
@@ -76,8 +76,10 @@ use crate::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources,
 };
+use crate::graph_input::RunnerGraphInputContext;
 use crate::online_execution::{
     NativeOnlineTokenizerSourceResolver, OnlineTokenizerSourceResolver, lower_authored_tokenizer,
+    validate_authored_tokenizer,
 };
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
@@ -795,7 +797,7 @@ impl RunnerBackendFactory for DynamoOfflineBackendFactory {
 /// retains a private adapter universe.
 pub fn register_dynamo_offline_backend(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_backend(Arc::new(DynamoOfflineBackendFactory))?;
-    builder.register_pair(Arc::new(DynamoOfflineGraphPairFactory))?;
+    builder.register_pair(Arc::new(DynamoOfflineGraphPairFactory::default()))?;
     builder.register_pair(Arc::new(DynamoOfflineScheduledPairFactory::default()))
 }
 
@@ -1126,6 +1128,7 @@ impl NativeConversationSourceFactory for DynamoOfflinePreparedConversationSource
         };
         Ok(Box::new(
             source
+                .with_request_materializer(Arc::new(TraceHashAwareRequestMaterializer))
                 .with_response_tokenizer(tokenizer)
                 .with_input_token_counter(input_token_counter),
         ))
@@ -1184,7 +1187,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
         let artifact_for_factory = artifact_target.clone();
         let benchmark_for_factory = benchmark_id.clone();
         let model_for_factory = model.clone();
-        let factory: Box<dyn OfflineScheduledRunFactory> =
+        let factory: Box<dyn DeferredOfflineScheduledRunFactory> =
             Box::new(move |clock: Rc<dyn Clock>, start_ns, dispatcher| {
                 Box::pin(async move {
                     let shared = native_scheduled_resources(&phases);
@@ -1220,7 +1223,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         }
                         plans.push(plan);
                     }
-                    let aggregate = run_scheduled_phases_with_aggregate(
+                    let aggregate = run_scheduled_phases_with_aggregate_deferred(
                         plans,
                         clock.clone(),
                         start_ns,
@@ -1228,26 +1231,36 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         Rc::new(NoopPhaseObserver),
                     )
                     .await?;
-                    let mut execution =
-                        OfflineScheduledExecution::phased(aggregate.phased, aggregate.performance)?;
-                    if let Some(observer) = backend_goodput {
-                        let goodput = observer.finish();
-                        for tag in [
-                            MetricTag::GoodRequestCount,
-                            MetricTag::Goodput,
-                            MetricTag::GoodRequestFraction,
-                        ] {
-                            if let Some(value) = goodput.finite_value(tag) {
-                                execution.profiling.native_metrics.insert_finite(tag, value);
+                    let finalizer: Box<dyn OfflineScheduledExecutionFinalizer> =
+                        Box::new(move || {
+                            let aggregate = aggregate.finish();
+                            let mut execution = OfflineScheduledExecution::phased(
+                                aggregate.phased,
+                                aggregate.performance,
+                            )?;
+                            if let Some(observer) = backend_goodput {
+                                let goodput = observer.finish();
+                                for tag in [
+                                    MetricTag::GoodRequestCount,
+                                    MetricTag::Goodput,
+                                    MetricTag::GoodRequestFraction,
+                                ] {
+                                    if let Some(value) = goodput.finite_value(tag) {
+                                        execution
+                                            .profiling
+                                            .native_metrics
+                                            .insert_finite(tag, value);
+                                    }
+                                }
                             }
-                        }
-                    }
-                    Ok(execution)
-                }) as OfflineScheduledFuture
+                            Ok(execution)
+                        });
+                    Ok(finalizer)
+                }) as DeferredOfflineScheduledFuture
             });
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
-            .execute_scheduled(factory)?;
+            .execute_scheduled_deferred(factory)?;
         let warmup = outcome
             .report
             .auxiliary_phase_reports
@@ -1284,184 +1297,6 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
             provenance,
         })
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectGraphDatasetSpecV2 {
-    #[serde(default = "default_dataset_name")]
-    name: String,
-    #[serde(rename = "type")]
-    source_type: String,
-    #[serde(default)]
-    path: Option<PathBuf>,
-    #[serde(default)]
-    records: Option<Value>,
-    format: String,
-    #[serde(default = "default_sequential")]
-    sampling: String,
-    #[serde(default)]
-    synthesis: Option<Value>,
-    #[serde(default)]
-    entries: Option<usize>,
-    #[serde(default)]
-    random_seed: Option<u64>,
-    #[serde(default)]
-    inter_turn_delay_cap_seconds: Option<f64>,
-    #[serde(default)]
-    osl: Option<Value>,
-}
-
-fn default_dataset_name() -> String {
-    "default".into()
-}
-
-fn default_sequential() -> String {
-    "sequential".into()
-}
-
-impl DirectGraphDatasetSpecV2 {
-    fn decode(raw: &RawValue) -> Result<Self> {
-        let spec = serde_json::from_str::<Self>(raw.get())
-            .map_err(|error| anyhow!("invalid direct graph dataset config: {error}"))?;
-        spec.validate()?;
-        Ok(spec)
-    }
-
-    fn validate(&self) -> Result<()> {
-        ensure!(
-            !self.name.trim().is_empty(),
-            "graph dataset name cannot be empty"
-        );
-        ensure!(
-            self.source_type == "file",
-            "dynamo_offline + graph currently requires dataset.type=\"file\""
-        );
-        ensure!(
-            self.format == "dag_jsonl",
-            "dynamo_offline + graph requires dataset.format=\"dag_jsonl\""
-        );
-        ensure!(
-            self.path.is_some() ^ self.records.is_some(),
-            "graph file dataset requires exactly one of path or records"
-        );
-        ensure!(
-            self.sampling.eq_ignore_ascii_case("sequential"),
-            "direct Graph-IR currently requires sequential dataset sampling"
-        );
-        ensure!(
-            self.synthesis.is_none(),
-            "direct Graph-IR does not accept trace synthesis"
-        );
-        ensure!(
-            self.entries != Some(0),
-            "graph dataset entries must be positive when configured"
-        );
-        if let Some(delay) = self.inter_turn_delay_cap_seconds {
-            ensure!(
-                delay.is_finite() && delay >= 0.0,
-                "inter_turn_delay_cap_seconds must be finite and non-negative"
-            );
-        }
-        let _ = self.default_output_tokens()?;
-        Ok(())
-    }
-
-    fn input_config(&self) -> GraphInputConfig {
-        let source = match (&self.path, &self.records) {
-            (Some(path), None) => DatasetSource::Path(path.clone()),
-            (None, Some(records)) => DatasetSource::Inline(records.clone()),
-            _ => unreachable!("dataset source exclusivity validated"),
-        };
-        let mut load = LoadConfig::new(source);
-        if let Some(delay) = self.inter_turn_delay_cap_seconds {
-            load.options
-                .insert("inter_turn_delay_cap_seconds".into(), Value::from(delay));
-        }
-        GraphInputConfig {
-            load,
-            root_limit: self.entries,
-        }
-    }
-
-    fn default_output_tokens(&self) -> Result<usize> {
-        let Some(value) = &self.osl else {
-            return Ok(1);
-        };
-        let expected = match value {
-            Value::Number(number) => number.as_f64(),
-            Value::Object(object) => object.get("value").and_then(Value::as_f64),
-            _ => None,
-        }
-        .ok_or_else(|| {
-            anyhow!(
-                "direct graph dataset.osl currently requires a fixed numeric value; per-node max_tokens remains supported"
-            )
-        })?;
-        ensure!(
-            expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
-            "graph dataset.osl must be positive and representable as usize"
-        );
-        Ok(expected.ceil() as usize)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectGraphTokenizerSpecV2 {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default = "default_revision")]
-    revision: String,
-    #[serde(default)]
-    trust_remote_code: bool,
-    #[serde(default)]
-    apply_chat_template: bool,
-}
-
-fn default_revision() -> String {
-    "main".into()
-}
-
-impl DirectGraphTokenizerSpecV2 {
-    fn decode(raw: &RawValue) -> Result<Self> {
-        let spec = serde_json::from_str::<Self>(raw.get())
-            .map_err(|error| anyhow!("invalid direct graph tokenizer config: {error}"))?;
-        ensure!(
-            !spec.trust_remote_code,
-            "native direct graph tokenization does not execute remote tokenizer code"
-        );
-        ensure!(
-            !spec.apply_chat_template,
-            "direct Graph-IR token accounting does not yet apply a tokenizer chat template"
-        );
-        ensure!(
-            !spec.revision.trim().is_empty(),
-            "tokenizer revision cannot be empty"
-        );
-        Ok(spec)
-    }
-
-    fn load(&self, model: &str) -> Result<Arc<dyn TextTokenizer>> {
-        let name = self.name.as_deref().unwrap_or(model);
-        let path = Path::new(name);
-        if path.is_dir() {
-            return Ok(Arc::new(HuggingFaceTokenizer::from_directory(path)?));
-        }
-        if path.is_file() {
-            return Ok(Arc::new(HuggingFaceTokenizer::from_file(path)?));
-        }
-        match name.parse::<TiktokenEncoding>() {
-            Ok(encoding) => Ok(Arc::new(TiktokenTokenizer::new(encoding))),
-            Err(_) => bail_unknown_tokenizer(name, &self.revision),
-        }
-    }
-}
-
-fn bail_unknown_tokenizer<T>(name: &str, revision: &str) -> Result<T> {
-    Err(anyhow!(
-        "tokenizer {name:?} at revision {revision:?} is neither a built-in encoding nor a local tokenizer path; remote tokenizer acquisition is not implemented by this runner distribution"
-    ))
 }
 
 fn validate_direct_graph_phase(phase: &PhaseSpec) -> Result<()> {
@@ -1559,7 +1394,18 @@ fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
     Ok((value * 1_000_000_000.0).round_ties_even() as i64)
 }
 
-struct DynamoOfflineGraphPairFactory;
+#[derive(Clone)]
+struct DynamoOfflineGraphPairFactory {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+}
+
+impl Default for DynamoOfflineGraphPairFactory {
+    fn default() -> Self {
+        Self {
+            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+        }
+    }
+}
 
 impl fmt::Debug for DynamoOfflineGraphPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1589,13 +1435,31 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             workload.worker_count == 1,
             "dynamo_offline direct graph uses one LocalSet around one globally contended engine; worker_count must be 1"
         );
-        let _ = DirectGraphDatasetSpecV2::decode(&workload.dataset)?;
-        let _ = DirectGraphTokenizerSpecV2::decode(&workload.tokenizer)?;
+        validate_authored_tokenizer(&workload.tokenizer)?;
         ensure!(
             workload.phases.len() == 1,
             "dynamo_offline direct graph currently requires exactly one profiling phase"
         );
         validate_direct_graph_phase(&workload.phases[0])?;
+        Ok(())
+    }
+
+    fn validate_run(
+        &self,
+        _run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        self.validate_pair(backend, workload)?;
+        let workload = validated_graph_workload(workload)?;
+        context
+            .graph_inputs()
+            .validate_identity(&workload.dataset)?;
+        ensure!(
+            context.sidecar_inputs().is_empty(),
+            "dynamo_offline graph execution does not support online sidecars"
+        );
         Ok(())
     }
 
@@ -1619,8 +1483,6 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         let backend = validated_dynamo_offline_backend(backend.as_ref())?.clone();
         let workload = validated_graph_workload(workload.as_ref())?;
-        let dataset = DirectGraphDatasetSpecV2::decode(&workload.dataset)?;
-        let tokenizer = DirectGraphTokenizerSpecV2::decode(&workload.tokenizer)?;
         let phase = workload.phases[0].clone();
         ensure!(
             run.models.items.len() == 1
@@ -1640,28 +1502,27 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             "artifact_target already exists; protocol-v2 execution requires an exclusive uncreated target"
         );
         let model = run.models.items[0].name.clone();
-        let tokenizer = tokenizer.load(&model)?;
-        let adapter = context
-            .graph_inputs()
-            .find("dag_jsonl")
-            .ok_or_else(|| anyhow!("no direct graph adapter is registered for dag_jsonl"))?;
+        let tokenizer_spec =
+            lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
+        let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .context("creating direct graph preparation runtime")?;
-        let input = runtime
-            .block_on(adapter.load(dataset.input_config(), tokenizer.as_ref()))
+        let prepared = runtime
+            .block_on(context.graph_inputs().load(
+                &workload.dataset,
+                &RunnerGraphInputContext {
+                    tokenizer: tokenizer.as_ref(),
+                },
+            ))
             .context("loading direct authored Graph-IR input")?;
-        ensure!(
-            !input.plans.is_empty(),
-            "authored Graph-IR input contains no root traces after root limiting"
-        );
         let metrics = offline_metrics_config(&run.metrics)?;
-        let default_max_tokens = dataset.default_output_tokens()?;
-        let random_seed = dataset.random_seed.or(run.identity.random_seed);
+        let default_max_tokens = prepared.default_output_tokens;
+        let random_seed = prepared.random_seed.or(run.identity.random_seed);
         Ok(Box::new(PreparedDynamoOfflineGraphOperation {
             backend,
-            input,
+            input: prepared.bundle,
             phase,
             metrics,
             model,
@@ -1953,6 +1814,34 @@ impl DynamoOfflineExecutor {
         );
         let report =
             run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?;
+        verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        let artifacts = self.emit_backend_artifacts(
+            |path| write_dynamo_report_json(&report.dynamo, path),
+            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
+        )?;
+        let provenance = self.provenance(report.parity);
+        Ok(DynamoOfflineScheduledOutcome {
+            report,
+            artifacts,
+            provenance,
+        })
+    }
+
+    /// Run a scheduled workload whose deterministic observer reduction occurs
+    /// after the virtual-time driver and its Tokio `LocalSet` have exited.
+    pub fn execute_scheduled_deferred(
+        self,
+        workload: Box<dyn DeferredOfflineScheduledRunFactory>,
+    ) -> Result<DynamoOfflineScheduledOutcome> {
+        ensure!(
+            self.artifacts.worker_artifacts_json.is_none(),
+            "worker_artifacts_json is supported only by canonical trace workloads"
+        );
+        let report = run_scheduled_backend_offline_deferred(
+            self.engine.clone(),
+            self.model.clone(),
+            workload,
+        )?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
