@@ -69,6 +69,111 @@ pub trait RunnerGraphPlacementFactory: Send + Sync {
         worker_count: usize,
         worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
     ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError>;
+
+    /// Whether successful traces must emit one native record per static node.
+    ///
+    /// Product placements return `true`. Lightweight injected placements used
+    /// for coordinator tests may return no transport records and retain the
+    /// default aggregate progress fallback.
+    fn requires_node_records(&self) -> bool {
+        false
+    }
+}
+
+/// Worker-to-coordinator facts emitted by a graph execution placement.
+pub(crate) enum RunnerGraphExecutionEvent {
+    /// One node reached a transport terminal and has a complete native record.
+    Record(Box<CapturedRecord>),
+    /// One admitted root trace reached its placement terminal.
+    TraceComplete {
+        /// Unique execution-instance identity.
+        trace_id: String,
+        /// Static request count reserved at root admission.
+        node_count: usize,
+        /// Whether missing per-node records are an infrastructure failure.
+        requires_node_records: bool,
+        /// Explicit success, cancellation, or failure classification.
+        result: Result<(), TraceError>,
+    },
+}
+
+/// Object-safe worker-event delivery seam.
+///
+/// The stock implementation uses an in-process JSON-free channel. A future
+/// remote placement can decode the same terminal facts into this seam without
+/// changing phase accounting, adaptive sampling, or artifact collection.
+pub(crate) trait RunnerGraphExecutionEventSink: Send + Sync {
+    /// Deliver one ordered execution event or fail the run if delivery closed.
+    fn emit(&self, event: RunnerGraphExecutionEvent) -> Result<(), TraceError>;
+}
+
+/// Channel-backed execution-event sink used by native placement.
+pub(crate) struct ChannelRunnerGraphExecutionEventSink {
+    sender: mpsc::UnboundedSender<RunnerGraphExecutionEvent>,
+}
+
+impl ChannelRunnerGraphExecutionEventSink {
+    /// Bind the worker side to one phase-local coordinator receiver.
+    pub(crate) fn new(sender: mpsc::UnboundedSender<RunnerGraphExecutionEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+impl RunnerGraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
+    fn emit(&self, event: RunnerGraphExecutionEvent) -> Result<(), TraceError> {
+        self.sender
+            .send(event)
+            .map_err(|_| TraceError::Other("graph execution event receiver closed".into()))
+    }
+}
+
+/// Coordinator-side wrapper that observes every placement terminal.
+///
+/// Keeping this outside worker implementations covers native queue rejection
+/// and future remote transports as well as traces that reached a worker.
+pub(crate) struct ObservedRunnerGraphPlacement {
+    delegate: Rc<dyn GraphTraceExecutionBackend>,
+    events: Arc<dyn RunnerGraphExecutionEventSink>,
+    requires_node_records: bool,
+}
+
+impl ObservedRunnerGraphPlacement {
+    /// Decorate one placement without changing its dispatch/control semantics.
+    pub(crate) fn new(
+        delegate: Rc<dyn GraphTraceExecutionBackend>,
+        events: Arc<dyn RunnerGraphExecutionEventSink>,
+        requires_node_records: bool,
+    ) -> Self {
+        Self {
+            delegate,
+            events,
+            requires_node_records,
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl GraphTraceExecutionBackend for ObservedRunnerGraphPlacement {
+    async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+        let trace_id = plan.trace.id.clone();
+        let node_count = plan.graph.nodes.len();
+        let result = self.delegate.execute_trace(plan).await;
+        self.events.emit(RunnerGraphExecutionEvent::TraceComplete {
+            trace_id,
+            node_count,
+            requires_node_records: self.requires_node_records,
+            result: result.clone(),
+        })?;
+        result
+    }
+
+    fn cancel_inflight(&self) -> Result<(), TraceError> {
+        self.delegate.cancel_inflight()
+    }
+
+    fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
+        self.delegate.set_prefill_limit(limit)
+    }
 }
 
 /// Stock thread-per-core whole-trace placement.
@@ -85,6 +190,10 @@ impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
             worker_count,
             worker_factory,
         )?))
+    }
+
+    fn requires_node_records(&self) -> bool {
+        true
     }
 }
 
@@ -481,7 +590,7 @@ pub(crate) struct RunnerGraphBackendFactoryConfig {
     pub(crate) prefill_concurrency: Option<usize>,
     pub(crate) cancellation: Option<GraphCancellationConfig>,
     pub(crate) raw_enabled: bool,
-    pub(crate) captured: mpsc::UnboundedSender<Vec<CapturedRecord>>,
+    pub(crate) events: Arc<dyn RunnerGraphExecutionEventSink>,
 }
 
 /// Worker-local cancellation construction inputs.
@@ -562,7 +671,7 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
             default_max_tokens: self.config.default_max_tokens,
             run_origin_ns: self.config.run_origin_ns,
             raw_enabled: self.config.raw_enabled,
-            captured: self.config.captured.clone(),
+            events: self.config.events.clone(),
             node_policy,
             prefill_slots,
             next_session: Cell::new(0),
@@ -585,7 +694,7 @@ struct RunnerGraphWorkerBackend {
     default_max_tokens: usize,
     run_origin_ns: i64,
     raw_enabled: bool,
-    captured: mpsc::UnboundedSender<Vec<CapturedRecord>>,
+    events: Arc<dyn RunnerGraphExecutionEventSink>,
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
@@ -630,7 +739,7 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
             run_origin_ns: self.run_origin_ns,
             raw_enabled: self.raw_enabled,
             terminal_nodes,
-            captured: self.captured.clone(),
+            events: self.events.clone(),
             emitted_records: Cell::new(0),
         });
         let mut local = LocalGraphTraceExecutionBackend::new(
@@ -697,7 +806,7 @@ struct RunnerGraphSink {
     run_origin_ns: i64,
     raw_enabled: bool,
     terminal_nodes: HashSet<String>,
-    captured: mpsc::UnboundedSender<Vec<CapturedRecord>>,
+    events: Arc<dyn RunnerGraphExecutionEventSink>,
     emitted_records: Cell<u64>,
 }
 
@@ -841,22 +950,23 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                     self.trace_id
                 )
             })?;
-        self.captured
-            .send(vec![CapturedRecord {
-                uuid,
-                x_correlation_id: self.trace_id.clone(),
-                output: CapturedModelOutput::from_parts(
-                    &outcome.response_text,
-                    outcome.model_response.content.as_deref(),
-                    outcome.model_response.reasoning.as_deref(),
-                ),
-                raw: self.raw_enabled.then_some(CapturedHttpExchange {
-                    request_payload: collected.request_payload.to_vec(),
-                    record: collected.record,
-                }),
-                ingest,
-            }])
-            .map_err(|_| anyhow!("graph metric capture receiver closed"))?;
+        self.events
+            .emit(RunnerGraphExecutionEvent::Record(Box::new(
+                CapturedRecord {
+                    uuid,
+                    x_correlation_id: self.trace_id.clone(),
+                    output: CapturedModelOutput::from_parts(
+                        &outcome.response_text,
+                        outcome.model_response.content.as_deref(),
+                        outcome.model_response.reasoning.as_deref(),
+                    ),
+                    raw: self.raw_enabled.then_some(CapturedHttpExchange {
+                        request_payload: collected.request_payload.to_vec(),
+                        record: collected.record,
+                    }),
+                    ingest,
+                },
+            )))?;
         self.emitted_records.set(ordinal.saturating_add(1));
 
         Ok(match outcome.terminal {

@@ -63,15 +63,16 @@ use aiperf_endpoints::{
     EndpointConfig, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
 };
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use aiperf_graph::errors::TraceError;
 use aiperf_graph::execution::GraphTraceExecutionBackend;
 use aiperf_graph::input::{
     GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle, GraphInputConfig,
 };
 use aiperf_graph::policy::FailFastRunFailurePolicy;
 use aiperf_graph::workload::{
-    CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
-    GraphTraceSource, GraphWorkload, GraphWorkloadObserver, ImmediateGraphArrival,
-    IntervalGraphArrival, SlotPoolTraceAdmission, TraceAdmissionInfo,
+    CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceSource,
+    GraphWorkload, GraphWorkloadObserver, ImmediateGraphArrival, IntervalGraphArrival,
+    SlotPoolTraceAdmission, TraceAdmissionInfo,
 };
 use aiperf_metrics::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
@@ -104,10 +105,11 @@ use crate::dataset_input::PreparedDatasetInput;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
-    GraphCancellationConfig, LegacyRunnerGraphEndpointRuntimeFactory,
-    NativeRunnerGraphPlacementFactory, PreparedRunnerGraphEndpointRuntimeFactory,
+    ChannelRunnerGraphExecutionEventSink, GraphCancellationConfig,
+    LegacyRunnerGraphEndpointRuntimeFactory, NativeRunnerGraphPlacementFactory,
+    ObservedRunnerGraphPlacement, PreparedRunnerGraphEndpointRuntimeFactory,
     RunnerGraphBackendFactory, RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
-    RunnerGraphPlacementFactory,
+    RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink, RunnerGraphPlacementFactory,
 };
 use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
@@ -1488,13 +1490,168 @@ fn graph_input_config(dataset: &DatasetSpec) -> Result<GraphInputConfig> {
 struct PreparedGraphPhase {
     workload: GraphWorkload,
     placement: Rc<dyn GraphTraceExecutionBackend>,
-    records: mpsc::UnboundedReceiver<Vec<CapturedRecord>>,
+    events: mpsc::UnboundedReceiver<RunnerGraphExecutionEvent>,
     intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
     adaptive: Option<AdaptiveRunConfig>,
+}
+
+struct GraphTracePhaseProgress {
+    expected_nodes: usize,
+    returned_nodes: usize,
+}
+
+trait GraphPhaseProgressSink {
+    fn record_sent_batch(&self, sent: &[PhaseSend]) -> Result<(), String>;
+    fn record_returned(&self, returned: PhaseReturn);
+    fn mark_all_sent(&self);
+}
+
+impl GraphPhaseProgressSink for PhaseContext {
+    fn record_sent_batch(&self, sent: &[PhaseSend]) -> Result<(), String> {
+        PhaseContext::record_sent_batch(self, sent)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    fn record_returned(&self, returned: PhaseReturn) {
+        PhaseContext::record_returned(self, returned);
+    }
+
+    fn mark_all_sent(&self) {
+        PhaseContext::mark_all_sent(self);
+    }
+}
+
+struct GraphPhaseProgress {
+    sink: Rc<dyn GraphPhaseProgressSink>,
+    failures: Rc<GraphPhaseFailures>,
+    traces: RefCell<HashMap<String, GraphTracePhaseProgress>>,
+}
+
+impl GraphPhaseProgress {
+    fn new(sink: Rc<dyn GraphPhaseProgressSink>, failures: Rc<GraphPhaseFailures>) -> Self {
+        Self {
+            sink,
+            failures,
+            traces: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn admit(&self, info: &TraceAdmissionInfo) {
+        if info.node_count == 0 {
+            self.failures.record(format!(
+                "graph trace {:?} contains no dispatchable nodes",
+                info.trace_id
+            ));
+            return;
+        }
+        if self
+            .traces
+            .borrow_mut()
+            .insert(
+                info.trace_id.clone(),
+                GraphTracePhaseProgress {
+                    expected_nodes: info.node_count,
+                    returned_nodes: 0,
+                },
+            )
+            .is_some()
+        {
+            self.failures.record(format!(
+                "graph trace {:?} was admitted more than once",
+                info.trace_id
+            ));
+            return;
+        }
+        let mut sent = Vec::with_capacity(info.node_count);
+        sent.push(PhaseSend::single_turn_session());
+        sent.extend((1..info.node_count).map(|_| PhaseSend::dag_child()));
+        if let Err(error) = self.sink.record_sent_batch(&sent) {
+            self.failures.record(format!(
+                "recording graph trace {:?} admitted send batch: {error}",
+                info.trace_id
+            ));
+        }
+    }
+
+    fn record(&self, record: &CapturedRecord) {
+        let completes_session = {
+            let mut traces = self.traces.borrow_mut();
+            let Some(trace) = traces.get_mut(&record.x_correlation_id) else {
+                self.failures.record(format!(
+                    "graph trace {:?} emitted a node record before admission or after completion",
+                    record.x_correlation_id
+                ));
+                return;
+            };
+            if trace.returned_nodes >= trace.expected_nodes {
+                self.failures.record(format!(
+                    "graph trace {:?} emitted more than {} node records",
+                    record.x_correlation_id, trace.expected_nodes
+                ));
+                return;
+            }
+            trace.returned_nodes += 1;
+            trace.returned_nodes == trace.expected_nodes
+        };
+        self.sink.record_returned(PhaseReturn {
+            completes_session,
+            cancelled: record.ingest.canceled,
+            errored: record.ingest.errored,
+            releases_prefill: true,
+        });
+    }
+
+    fn complete(
+        &self,
+        trace_id: &str,
+        node_count: usize,
+        requires_node_records: bool,
+        result: &Result<(), TraceError>,
+    ) {
+        let Some(trace) = self.traces.borrow_mut().remove(trace_id) else {
+            self.failures.record(format!(
+                "graph trace {trace_id:?} completed before admission or more than once"
+            ));
+            return;
+        };
+        if trace.expected_nodes != node_count {
+            self.failures.record(format!(
+                "graph trace {trace_id:?} completed with {node_count} nodes after reserving {}",
+                trace.expected_nodes
+            ));
+        }
+        let missing = trace.expected_nodes.saturating_sub(trace.returned_nodes);
+        let (cancelled, mut errored) = match result {
+            Ok(()) => (false, false),
+            Err(TraceError::Cancelled(_)) => (true, false),
+            Err(_) => (false, true),
+        };
+        if result.is_ok() && missing > 0 && requires_node_records {
+            errored = true;
+            self.failures.record(format!(
+                "graph trace {trace_id:?} completed successfully without {missing} reserved node records"
+            ));
+        }
+        for index in 0..missing {
+            self.sink.record_returned(PhaseReturn {
+                completes_session: index + 1 == missing,
+                cancelled,
+                errored,
+                releases_prefill: false,
+            });
+        }
+        if let Err(error) = result
+            && !cancelled
+        {
+            self.failures
+                .record(format!("graph trace {trace_id:?} failed: {error}"));
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1527,72 +1684,16 @@ impl GraphPhaseFailures {
 }
 
 struct GraphPhaseWorkloadObserver {
-    context: PhaseContext,
-    trace_nodes: RefCell<HashMap<String, usize>>,
-    failures: Rc<GraphPhaseFailures>,
-    local_cancelling: Rc<Cell<bool>>,
-    run_cancelling: Rc<Cell<bool>>,
+    progress: Rc<GraphPhaseProgress>,
 }
 
 impl GraphWorkloadObserver for GraphPhaseWorkloadObserver {
     fn on_trace_admit(&self, info: &TraceAdmissionInfo, _admit_ns: i64) {
-        if info.node_count == 0 {
-            self.failures.record(format!(
-                "graph trace {:?} contains no dispatchable nodes",
-                info.trace_id
-            ));
-            return;
-        }
-        self.trace_nodes
-            .borrow_mut()
-            .insert(info.trace_id.clone(), info.node_count);
-        let mut sent = Vec::with_capacity(info.node_count);
-        sent.push(PhaseSend::single_turn_session());
-        sent.extend((1..info.node_count).map(|_| PhaseSend::dag_child()));
-        if let Err(error) = self.context.record_sent_batch(&sent) {
-            self.failures.record(format!(
-                "recording graph trace {:?} admitted send batch: {error}",
-                info.trace_id
-            ));
-        }
-    }
-
-    fn on_trace_complete(&self, outcome: &GraphTraceRunResult) {
-        let node_count = self
-            .trace_nodes
-            .borrow_mut()
-            .remove(&outcome.trace_id)
-            .unwrap_or_default();
-        let cancelled = self.local_cancelling.get()
-            || self.run_cancelling.get()
-            || matches!(
-                outcome.result,
-                Err(aiperf_graph::errors::TraceError::Cancelled(_))
-            );
-        let errored = outcome.result.is_err() && !cancelled;
-        for node_index in 0..node_count {
-            self.context.record_returned(PhaseReturn {
-                completes_session: node_index + 1 == node_count,
-                cancelled,
-                errored,
-                releases_prefill: true,
-            });
-        }
-        if errored {
-            let error = outcome
-                .result
-                .as_ref()
-                .err()
-                .expect("errored graph outcome contains an error");
-            self.failures.record(format!(
-                "graph trace {:?} failed: {error}",
-                outcome.trace_id
-            ));
-        }
+        self.progress.admit(info);
     }
 
     fn on_sending_complete(&self, _at_ns: i64) {
-        self.context.mark_all_sent();
+        self.progress.sink.mark_all_sent();
     }
 }
 
@@ -1619,9 +1720,9 @@ struct GraphPhaseExecution {
     adaptive_control_variable: Option<AdaptiveControlVariable>,
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
-    local_cancelling: Rc<Cell<bool>>,
-    records: RefCell<Option<mpsc::UnboundedReceiver<Vec<CapturedRecord>>>>,
+    events: RefCell<Option<mpsc::UnboundedReceiver<RunnerGraphExecutionEvent>>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
+    progress: Rc<GraphPhaseProgress>,
     adaptive_sampler: Option<SharedWindowSampler>,
     drain_stop: Rc<GraphRecordDrainStop>,
     drain_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
@@ -1634,18 +1735,19 @@ impl GraphPhaseExecution {
             self.drain_task.borrow().is_none(),
             "graph record drain was already started"
         );
-        let mut records = self
-            .records
+        let mut events = self
+            .events
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("graph record receiver was already consumed"))?;
         let captured = self.captured.clone();
         let sampler = self.adaptive_sampler.clone();
+        let progress = self.progress.clone();
         let stop = self.drain_stop.clone();
         *self.drain_task.borrow_mut() = Some(tokio::task::spawn_local(async move {
             loop {
-                while let Ok(batch) = records.try_recv() {
-                    ingest_graph_record_batch(&captured, sampler.as_ref(), batch);
+                while let Ok(event) = events.try_recv() {
+                    ingest_graph_execution_event(&captured, sampler.as_ref(), &progress, event);
                 }
                 if stop.stopped.get() {
                     return;
@@ -1658,8 +1760,13 @@ impl GraphPhaseExecution {
                 }
                 tokio::select! {
                     biased;
-                    batch = records.recv() => match batch {
-                        Some(batch) => ingest_graph_record_batch(&captured, sampler.as_ref(), batch),
+                    event = events.recv() => match event {
+                        Some(event) => ingest_graph_execution_event(
+                            &captured,
+                            sampler.as_ref(),
+                            &progress,
+                            event,
+                        ),
                         None => return,
                     },
                     () = &mut stopped => {}
@@ -1670,18 +1777,29 @@ impl GraphPhaseExecution {
     }
 }
 
-fn ingest_graph_record_batch(
+fn ingest_graph_execution_event(
     captured: &Rc<RefCell<Vec<CapturedRecord>>>,
     sampler: Option<&SharedWindowSampler>,
-    batch: Vec<CapturedRecord>,
+    progress: &GraphPhaseProgress,
+    event: RunnerGraphExecutionEvent,
 ) {
-    if let Some(sampler) = sampler {
-        let mut sampler = sampler.borrow_mut();
-        for record in &batch {
-            sampler.on_record(&record.ingest);
+    match event {
+        RunnerGraphExecutionEvent::Record(record) => {
+            if let Some(sampler) = sampler {
+                sampler.borrow_mut().on_record(&record.ingest);
+            }
+            progress.record(&record);
+            captured.borrow_mut().push(*record);
+        }
+        RunnerGraphExecutionEvent::TraceComplete {
+            trace_id,
+            node_count,
+            requires_node_records,
+            result,
+        } => {
+            progress.complete(&trace_id, node_count, requires_node_records, &result);
         }
     }
-    captured.borrow_mut().extend(batch);
 }
 
 impl PhaseExecution for GraphPhaseExecution {
@@ -1750,7 +1868,6 @@ impl PhaseExecution for GraphPhaseExecution {
     }
 
     fn cancel_inflight(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
-        self.local_cancelling.set(true);
         let result = self
             .placement
             .cancel_inflight()
@@ -1795,7 +1912,6 @@ struct GraphPhaseExecutionFactory {
     phases: RefCell<HashMap<String, PreparedGraphPhase>>,
     placements: Vec<Rc<dyn GraphTraceExecutionBackend>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
-    run_cancelling: Rc<Cell<bool>>,
 }
 
 impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
@@ -1805,13 +1921,12 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
                 error: format!("graph phase {:?} has no prepared execution plan", config.id),
             });
         };
-        let local_cancelling = Rc::new(Cell::new(false));
+        let progress = Rc::new(GraphPhaseProgress::new(
+            Rc::new(context.clone()),
+            prepared.failures.clone(),
+        ));
         let observer = Rc::new(GraphPhaseWorkloadObserver {
-            context: context.clone(),
-            trace_nodes: RefCell::new(HashMap::new()),
-            failures: prepared.failures.clone(),
-            local_cancelling: local_cancelling.clone(),
-            run_cancelling: self.run_cancelling.clone(),
+            progress: progress.clone(),
         });
         let workload = Rc::new(prepared.workload.with_observer(observer));
         let mut setup_error = None;
@@ -1852,9 +1967,9 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             adaptive_control_variable,
             controller,
             failures: prepared.failures,
-            local_cancelling,
-            records: RefCell::new(Some(prepared.records)),
+            events: RefCell::new(Some(prepared.events)),
             captured: self.captured.clone(),
+            progress,
             adaptive_sampler,
             drain_stop: Rc::new(GraphRecordDrainStop::default()),
             drain_task: RefCell::new(None),
@@ -1863,7 +1978,6 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
     }
 
     fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
-        self.run_cancelling.set(true);
         let errors = self
             .placements
             .iter()
@@ -2128,12 +2242,10 @@ async fn execute_graph_native(
         .zip(&phase_configs)
         .map(|(prepared, config)| (config.id.clone(), prepared))
         .collect::<HashMap<_, _>>();
-    let run_cancelling = Rc::new(Cell::new(false));
     let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(GraphPhaseExecutionFactory {
         phases: RefCell::new(phases),
         placements,
         captured: captured.clone(),
-        run_cancelling,
     });
     let phase_observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
     let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
@@ -2258,7 +2370,9 @@ fn prepare_graph_phase(
             unreachable!("unsupported graph phase rejected before input acquisition")
         }
     };
-    let (records_tx, records_rx) = mpsc::unbounded_channel();
+    let (events_tx, events_rx) = mpsc::unbounded_channel();
+    let event_sink: Arc<dyn RunnerGraphExecutionEventSink> =
+        Arc::new(ChannelRunnerGraphExecutionEventSink::new(events_tx));
     let adaptive =
         graph_adaptive_config(phase, &request.run.benchmark_id, &request.run.artifact_dir)?;
     let prefill_initial = match (common.prefill_concurrency, adaptive.as_ref()) {
@@ -2295,10 +2409,16 @@ fn prepare_graph_phase(
             prefill_concurrency: prefill_initial,
             cancellation,
             raw_enabled: request.run.artifacts.raw_path.is_some(),
-            captured: records_tx,
+            events: event_sink.clone(),
         },
     ));
+    let requires_node_records = graph_placement.requires_node_records();
     let placement = graph_placement.build(request.run.workers, worker_factory)?;
+    let placement: Rc<dyn GraphTraceExecutionBackend> = Rc::new(ObservedRunnerGraphPlacement::new(
+        placement,
+        event_sink,
+        requires_node_records,
+    ));
     let failures = Rc::new(GraphPhaseFailures::default());
     let controller = graph_ramp_controller(
         phase,
@@ -2322,7 +2442,7 @@ fn prepare_graph_phase(
     Ok(PreparedGraphPhase {
         workload,
         placement,
-        records: records_rx,
+        events: events_rx,
         intervals,
         session_slots,
         prefill_initial,
@@ -4735,6 +4855,127 @@ mod tests {
             "items": [{"name": "mock-model"}]
         }))
         .unwrap()
+    }
+
+    #[derive(Default)]
+    struct RecordingGraphPhaseProgressSink {
+        sent: RefCell<Vec<PhaseSend>>,
+        returned: RefCell<Vec<PhaseReturn>>,
+        all_sent: Cell<bool>,
+    }
+
+    impl GraphPhaseProgressSink for RecordingGraphPhaseProgressSink {
+        fn record_sent_batch(&self, sent: &[PhaseSend]) -> Result<(), String> {
+            self.sent.borrow_mut().extend_from_slice(sent);
+            Ok(())
+        }
+
+        fn record_returned(&self, returned: PhaseReturn) {
+            self.returned.borrow_mut().push(returned);
+        }
+
+        fn mark_all_sent(&self) {
+            self.all_sent.set(true);
+        }
+    }
+
+    fn graph_phase_record(trace_id: &str, errored: bool, canceled: bool) -> CapturedRecord {
+        let mut ingest =
+            aiperf_metrics::RecordIngest::minimal(0, 1, aiperf_metrics::Phase::Profiling);
+        ingest.errored = errored;
+        ingest.canceled = canceled;
+        CapturedRecord {
+            uuid: Uuid::nil(),
+            x_correlation_id: trace_id.into(),
+            output: CapturedModelOutput::default(),
+            raw: None,
+            ingest,
+        }
+    }
+
+    #[test]
+    fn graph_phase_progress_preserves_completed_nodes_before_trace_cancellation() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let progress = GraphPhaseProgress::new(sink.clone(), failures.clone());
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "trace-cancelled".into(),
+            node_count: 3,
+            arrival_ns: 0,
+        });
+        progress.record(&graph_phase_record("trace-cancelled", false, false));
+        progress.complete(
+            "trace-cancelled",
+            3,
+            true,
+            &Err(TraceError::Cancelled("phase grace expired".into())),
+        );
+
+        assert_eq!(
+            *sink.sent.borrow(),
+            vec![
+                PhaseSend::single_turn_session(),
+                PhaseSend::dag_child(),
+                PhaseSend::dag_child(),
+            ]
+        );
+        assert_eq!(
+            *sink.returned.borrow(),
+            vec![
+                PhaseReturn {
+                    releases_prefill: true,
+                    ..PhaseReturn::default()
+                },
+                PhaseReturn {
+                    cancelled: true,
+                    ..PhaseReturn::default()
+                },
+                PhaseReturn {
+                    completes_session: true,
+                    cancelled: true,
+                    ..PhaseReturn::default()
+                },
+            ]
+        );
+        assert!(failures.first().is_none());
+    }
+
+    #[test]
+    fn graph_phase_progress_never_masks_backend_failure_as_cancellation() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let progress = GraphPhaseProgress::new(sink.clone(), failures.clone());
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "trace-failed".into(),
+            node_count: 2,
+            arrival_ns: 0,
+        });
+        progress.record(&graph_phase_record("trace-failed", false, false));
+        progress.complete(
+            "trace-failed",
+            2,
+            true,
+            &Err(TraceError::Other("backend failed".into())),
+        );
+
+        assert_eq!(
+            *sink.returned.borrow(),
+            vec![
+                PhaseReturn {
+                    releases_prefill: true,
+                    ..PhaseReturn::default()
+                },
+                PhaseReturn {
+                    completes_session: true,
+                    errored: true,
+                    ..PhaseReturn::default()
+                },
+            ]
+        );
+        assert_eq!(
+            failures.first().as_deref(),
+            Some("graph trace \"trace-failed\" failed: backend failed")
+        );
     }
 
     #[derive(Debug)]
