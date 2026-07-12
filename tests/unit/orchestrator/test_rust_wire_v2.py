@@ -456,6 +456,42 @@ def test_executor_selects_advertised_v2_pair_without_legacy_resolution(
     assert not run.artifact_dir.exists()
 
 
+def test_unsupported_v2_only_pair_fails_before_every_v1_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _run(
+        tmp_path / "must-not-exist",
+        backend={"type": "dynamo_offline", "config": {}},
+    )
+    installation = RunnerInstallation(
+        binary=Path("/opt/aiperf-runner"),
+        capabilities={
+            "protocol_versions": [1, 2],
+            "distribution_id": _DISTRIBUTION_A,
+            "supported_pairs": [["online_http", "scheduled"]],
+        },
+    )
+    executor = rust_executor.RustSubprocessExecutor(
+        base_dir=tmp_path,
+        installation=installation,
+    )
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("v2-only selection entered a protocol-v1 helper")
+
+    monkeypatch.setattr(rust_executor, "validate_v1_selection", fail_if_called)
+    monkeypatch.setattr(rust_executor, "build_run_request", fail_if_called)
+    monkeypatch.setattr(executor, "_resolve_run", fail_if_called)
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"executable protocol-v2 pair \('dynamo_offline', 'scheduled'\)",
+    ):
+        executor._request_for_run(run)
+
+    assert not run.artifact_dir.exists()
+
+
 def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
     distribution_id = _DISTRIBUTION_B
     terminal = rust_executor._parse_terminal(

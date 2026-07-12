@@ -114,6 +114,13 @@ class RustSubprocessExecutor(RunExecutor):
             workload = authored["run"]["workload"]["type"]
             if self.installation.supports_pair(backend, workload):
                 return authored
+            if _requires_protocol_v2(run.cfg):
+                # Let the exact-image capability seam own the diagnostic. A
+                # v2-only selection must never be reinterpreted by protocol v1
+                # or touch its resolver chain merely because this image lacks
+                # the requested executable pair.
+                self.installation.preflight_request(authored)
+                raise AssertionError("v2 pair preflight accepted an unsupported pair")
 
         # Compatibility v1 still needs Python resolution. Endpoint capability
         # checking and v1-only selection rejection happen before resolvers,
@@ -155,6 +162,16 @@ class RustSubprocessExecutor(RunExecutor):
         from aiperf.config.resolution.resolvers import build_default_resolver_chain
 
         build_default_resolver_chain().resolve_all(run)
+
+
+def _requires_protocol_v2(cfg: Any) -> bool:
+    """Return whether authored state cannot be represented by protocol v1."""
+    return (
+        str(cfg.backend.type) != "online_http"
+        or bool(cfg.backend.config)
+        or cfg.workload is not None
+        or cfg.endpoint.wait_for_model_timeout > 0
+    )
 
 
 def _parse_terminal(
