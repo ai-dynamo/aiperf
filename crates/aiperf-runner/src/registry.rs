@@ -1642,7 +1642,17 @@ fn strict_decode<T>(authored: &RawValue, label: &str) -> Result<T>
 where
     T: DeserializeOwned,
 {
-    serde_json::from_str(authored.get()).map_err(|error| anyhow!("{label}: {error}"))
+    // serde_json's `arbitrary_precision` feature is enabled transitively across
+    // this build (via aiperf-graph, which needs it to parse >u64 recorded-trace
+    // hashes). With it on, streaming `from_str` represents every number as an
+    // internal map, so any `#[serde(flatten)]` (e.g. `PhaseSpec`'s
+    // `PhaseCommonSpec`) or `#[serde(untagged)]` field whose type is `f64` fails
+    // with "invalid type: map, expected f64". Buffering through `serde_json::Value`
+    // first reconstructs numbers in a form the derived impls accept, at the cost
+    // of one extra parse. Mirrors `dataset_input::decode_dataset_source`.
+    let value: serde_json::Value =
+        serde_json::from_str(authored.get()).map_err(|error| anyhow!("{label}: {error}"))?;
+    serde_json::from_value(value).map_err(|error| anyhow!("{label}: {error}"))
 }
 
 fn validate_common_workload(
