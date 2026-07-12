@@ -15,6 +15,7 @@
 //!   [--request-concurrency N] [--http2]
 //! ```
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -67,7 +68,7 @@ use aiperf_dataset::{
     SyntheticDatasetConfig, SyntheticPromptConfig, TextTokenizer, TiktokenEncoding,
     TiktokenTokenizer,
 };
-use aiperf_endpoints::EndpointConfig;
+use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_metrics::{NativeReport, ReportRunInfo, ReportSummary, RunOutcome};
 use aiperf_rng::{RngRoot, SamplingDistribution};
@@ -82,6 +83,7 @@ use dynamo_mocker::replay::{
 // A high-churn benchmark allocator: the graph executor + streaming client
 // allocate heavily per request, and glibc malloc/free was the top profiled
 // hotspot. mimalloc cuts that churn substantially.
+#[cfg(not(feature = "system-allocator"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -109,6 +111,31 @@ struct Cli {
     base_url: Option<String>,
     /// Positional `[MODEL]` (default `model`).
     model: Option<String>,
+
+    /// Endpoint request/response dialect (for example `chat` or `messages`).
+    #[arg(long, default_value = "chat", value_parser = parse_endpoint_type)]
+    endpoint_type: EndpointType,
+    /// Endpoint API key; the selected dialect chooses its authentication header.
+    #[arg(long)]
+    api_key: Option<String>,
+    /// Custom endpoint header as `NAME:VALUE` or a JSON object; repeatable.
+    #[arg(short = 'H', long = "header")]
+    headers: Vec<String>,
+    /// Extra request-body input as `KEY:JSON` or a JSON object; repeatable.
+    #[arg(long = "extra-inputs")]
+    extra_inputs: Vec<String>,
+    /// Override the endpoint dialect's default absolute request path.
+    #[arg(long = "custom-endpoint")]
+    custom_endpoint: Option<String>,
+    /// Enable SSE response streaming; pass `--streaming=false` for JSON responses.
+    #[arg(
+        long,
+        default_value_t = true,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        action = clap::ArgAction::Set
+    )]
+    streaming: bool,
 
     // --- feature-gated in-process Dynamo backend ---
     /// Run against the in-process Dynamo mock engine with virtual time.
@@ -791,6 +818,9 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
     };
     let concurrency = cli.concurrency.unwrap_or(16);
     anyhow::ensure!(concurrency > 0, "--concurrency must be greater than zero");
+    let mut endpoint = configured_endpoint(cli, &base_url)?;
+    endpoint.use_legacy_max_tokens = true;
+    endpoint.use_server_token_count = true;
 
     tracing::info!(
         benchmark = requested_benchmark,
@@ -844,12 +874,7 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
                     dataset.dataset().as_ref().clone(),
                     model.clone(),
                     cli.accuracy_max_tokens.unwrap_or(2_048),
-                    EndpointConfig {
-                        streaming: true,
-                        use_legacy_max_tokens: true,
-                        use_server_token_count: true,
-                        ..EndpointConfig::default()
-                    },
+                    endpoint.clone(),
                     registries.endpoint_resolver(),
                 )?,
             );
@@ -953,6 +978,9 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
     let parser = cli.agentic_parser.as_deref().unwrap_or("json");
     let inference_gateway_host =
         resolve_advertised_host(cli.agentic_inference_gateway_host.as_deref())?;
+    let mut endpoint = configured_endpoint(cli, &base_url)?;
+    endpoint.use_legacy_max_tokens = true;
+    endpoint.use_server_token_count = true;
     anyhow::ensure!(
         model_concurrency > 0,
         "--concurrency must be greater than zero"
@@ -1051,12 +1079,7 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
         let turn_builder = Rc::new(DatasetAgenticTurnBuilder::new(
             model.clone(),
             tokenizer.clone(),
-            EndpointConfig {
-                streaming: true,
-                use_legacy_max_tokens: true,
-                use_server_token_count: true,
-                ..EndpointConfig::default()
-            },
+            endpoint,
             registries.endpoint_resolver(),
         )?);
         let evaluator: Box<dyn AgenticEvaluator> = Box::new(evaluator);
@@ -1280,6 +1303,91 @@ fn build_native_synthetic_dataset(
         .map_err(Into::into)
 }
 
+fn parse_endpoint_type(value: &str) -> Result<EndpointType, String> {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    serde_json::from_value(serde_json::Value::String(normalized))
+        .map_err(|_| format!("unknown endpoint type {value:?}"))
+}
+
+fn parse_endpoint_headers(values: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut headers = BTreeMap::new();
+    for authored in values {
+        if authored.trim_start().starts_with('{') {
+            let object = serde_json::from_str::<serde_json::Value>(authored)?;
+            let object = object.as_object().ok_or_else(|| {
+                anyhow::anyhow!("--header JSON must be an object of string values")
+            })?;
+            for (name, value) in object {
+                let value = value
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("--header {name:?} value must be a string"))?;
+                anyhow::ensure!(!name.trim().is_empty(), "--header name cannot be empty");
+                headers.insert(name.clone(), value.to_string());
+            }
+            continue;
+        }
+        let (name, value) = authored.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("--header must be NAME:VALUE or a JSON object (got {authored:?})")
+        })?;
+        let name = name.trim();
+        anyhow::ensure!(!name.is_empty(), "--header name cannot be empty");
+        headers.insert(name.to_string(), value.trim().to_string());
+    }
+    Ok(headers)
+}
+
+fn parse_endpoint_extra(
+    values: &[String],
+) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut extra = serde_json::Map::new();
+    for authored in values {
+        if authored.trim_start().starts_with('{') {
+            let value = serde_json::from_str::<serde_json::Value>(authored)?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("--extra-inputs JSON must be an object"))?;
+            extra.extend(object.clone());
+            continue;
+        }
+        let (name, raw) = authored.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!("--extra-inputs must be KEY:JSON or a JSON object (got {authored:?})")
+        })?;
+        let name = name.trim();
+        anyhow::ensure!(!name.is_empty(), "--extra-inputs key cannot be empty");
+        let raw = raw.trim();
+        let value = serde_json::from_str(raw)
+            .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
+        extra.insert(name.to_string(), value);
+    }
+    Ok(extra)
+}
+
+fn configured_endpoint(cli: &Cli, base_url: &str) -> anyhow::Result<EndpointConfig> {
+    let extra = parse_endpoint_extra(&cli.extra_inputs)?;
+    EndpointConfig {
+        endpoint_type: cli.endpoint_type,
+        urls: parse_base_urls(base_url)?,
+        path: cli.custom_endpoint.clone(),
+        streaming: cli.streaming,
+        use_server_token_count: true,
+        headers: parse_endpoint_headers(&cli.headers)?,
+        api_key: cli.api_key.clone(),
+        extra: (!extra.is_empty()).then_some(extra),
+        ..EndpointConfig::default()
+    }
+    .validate()
+    .map_err(Into::into)
+}
+
+fn has_endpoint_configuration(cli: &Cli) -> bool {
+    cli.endpoint_type != EndpointType::Chat
+        || cli.api_key.is_some()
+        || !cli.headers.is_empty()
+        || !cli.extra_inputs.is_empty()
+        || cli.custom_endpoint.is_some()
+        || !cli.streaming
+}
+
 fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()> {
     let base_url = cli
         .base_url
@@ -1323,6 +1431,10 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
     #[cfg(feature = "dynamo-offline")]
     if !cli.trace_files.is_empty() {
         anyhow::ensure!(is_offline(cli), "--trace-file requires --offline");
+        anyhow::ensure!(
+            !has_endpoint_configuration(cli),
+            "endpoint dialect/auth/body flags do not apply to canonical native trace replay"
+        );
         anyhow::ensure!(
             cli.input_file.is_none()
                 && !cli.fixed_schedule
@@ -1494,6 +1606,7 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         local: &local,
         model: &model,
     };
+    let endpoint = configured_endpoint(cli, &base_url)?;
 
     if cli.fixed_schedule {
         let input_file = cli
@@ -1510,15 +1623,17 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
                 cli.fixed_schedule_start_offset_ms,
                 cli.fixed_schedule_end_offset_ms,
             )?;
-        let source: Box<dyn ConversationSource> =
-            Box::new(NativeDatasetConversationSource::preferred_with_registries(
+        let source: Box<dyn ConversationSource> = Box::new(
+            NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
                 dataset,
                 model.clone(),
                 osl,
                 RngRoot::new(cli.seed),
+                endpoint.clone(),
                 registries.samplers(),
                 registries.endpoint_resolver(),
-            )?);
+            )?,
+        );
         if is_offline(cli) {
             #[cfg(feature = "dynamo-offline")]
             {
@@ -1619,24 +1734,30 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         );
         let source: Box<dyn ConversationSource> = if cli.input_file.is_some() {
             let dataset = load_native_file_dataset(cli, &dataset_build, osl)?;
-            Box::new(NativeDatasetConversationSource::preferred_with_registries(
-                dataset,
-                model.clone(),
-                osl,
-                RngRoot::new(cli.seed),
-                registries.samplers(),
-                registries.endpoint_resolver(),
-            )?)
+            Box::new(
+                NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
+                    dataset,
+                    model.clone(),
+                    osl,
+                    RngRoot::new(cli.seed),
+                    endpoint.clone(),
+                    registries.samplers(),
+                    registries.endpoint_resolver(),
+                )?,
+            )
         } else {
             let dataset = build_native_synthetic_dataset(cli, &dataset_build, isl, osl, turns)?;
-            Box::new(NativeDatasetConversationSource::preferred_with_registries(
-                dataset,
-                model.clone(),
-                osl,
-                RngRoot::new(cli.seed),
-                registries.samplers(),
-                registries.endpoint_resolver(),
-            )?)
+            Box::new(
+                NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
+                    dataset,
+                    model.clone(),
+                    osl,
+                    RngRoot::new(cli.seed),
+                    endpoint.clone(),
+                    registries.samplers(),
+                    registries.endpoint_resolver(),
+                )?,
+            )
         };
         let user_config = UserCentricConfig {
             num_users: initial_users,
@@ -1708,24 +1829,30 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         anyhow::ensure!(turns > 0, "--turns must be greater than zero");
         let source: Box<dyn ConversationSource> = if cli.input_file.is_some() {
             let dataset = load_native_file_dataset(cli, &dataset_build, osl)?;
-            Box::new(NativeDatasetConversationSource::preferred_with_registries(
-                dataset,
-                model.clone(),
-                osl,
-                RngRoot::new(cli.seed),
-                registries.samplers(),
-                registries.endpoint_resolver(),
-            )?)
+            Box::new(
+                NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
+                    dataset,
+                    model.clone(),
+                    osl,
+                    RngRoot::new(cli.seed),
+                    endpoint.clone(),
+                    registries.samplers(),
+                    registries.endpoint_resolver(),
+                )?,
+            )
         } else {
             let dataset = build_native_synthetic_dataset(cli, &dataset_build, isl, osl, turns)?;
-            Box::new(NativeDatasetConversationSource::preferred_with_registries(
-                dataset,
-                model.clone(),
-                osl,
-                RngRoot::new(cli.seed),
-                registries.samplers(),
-                registries.endpoint_resolver(),
-            )?)
+            Box::new(
+                NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
+                    dataset,
+                    model.clone(),
+                    osl,
+                    RngRoot::new(cli.seed),
+                    endpoint.clone(),
+                    registries.samplers(),
+                    registries.endpoint_resolver(),
+                )?,
+            )
         };
         let adaptive = build_adaptive_cli_config(cli, concurrency, pattern)?;
         anyhow::ensure!(
@@ -1790,6 +1917,74 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         cli.input_file.is_none(),
         "--input-file is currently supported by --fixed-schedule, --request-rate, and --user-centric-rate"
     );
+
+    // The legacy walking-skeleton issuer constructs Chat payloads directly.
+    // Any authored endpoint policy lowers through the same native dataset and
+    // endpoint traits used by request-rate, fixed, runner, and offline paths.
+    if has_endpoint_configuration(cli) {
+        let dataset = build_native_synthetic_dataset(cli, &dataset_build, isl, osl, 1)?;
+        let source: Box<dyn ConversationSource> = Box::new(
+            NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
+                dataset,
+                model.clone(),
+                osl,
+                RngRoot::new(cli.seed),
+                endpoint,
+                registries.samplers(),
+                registries.endpoint_resolver(),
+            )?,
+        );
+        let pattern = ArrivalPattern::ConcurrencyBurst;
+        let adaptive = build_adaptive_cli_config(cli, concurrency, pattern)?;
+        anyhow::ensure!(
+            !matches!(
+                adaptive.as_ref().map(|config| config.control_variable),
+                Some(AdaptiveControlVariable::Users)
+            ),
+            "adaptive users requires --user-centric-rate"
+        );
+        let rate_config = RequestRateConfig {
+            arrival_pattern: pattern,
+            request_rate: None,
+            arrival_smoothness: None,
+            session_concurrency: Some(concurrency),
+            prefill_concurrency: cli.prefill_concurrency,
+            seed: cli.seed.unwrap_or(0),
+        };
+        if is_offline(cli) {
+            #[cfg(feature = "dynamo-offline")]
+            {
+                let report = run_request_rate_offline_with_adaptive_and_ancillary(
+                    offline_engine_config(cli)?,
+                    model,
+                    source,
+                    rate_config,
+                    stop,
+                    adaptive,
+                    ancillary,
+                )?;
+                emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+                log_offline_metric_parity(report.parity);
+                emit_scheduled_report(cli, &report.aiperf)?;
+                return Ok(());
+            }
+        }
+        let report = local.block_on(
+            &rt,
+            run_request_rate_online_with_ancillary(
+                base_url,
+                model,
+                source,
+                rate_config,
+                stop,
+                cli.http2,
+                adaptive,
+                ancillary,
+            ),
+        )?;
+        emit_scheduled_report(cli, &report)?;
+        return Ok(());
+    }
 
     let workload = SkeletonWorkload {
         num_requests,
@@ -2283,6 +2478,10 @@ fn print_graph_summary(s: &GraphSummary, backend: &str) {
 }
 
 fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !has_endpoint_configuration(cli),
+        "endpoint dialect/auth/body flags are supported by online scheduled workloads, not --mode graph"
+    );
     anyhow::ensure!(
         !cli.adaptive_scale,
         "--adaptive-scale is supported by online workloads, not --mode graph"
