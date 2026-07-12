@@ -14,6 +14,35 @@ import {
   type LayoutWorkerPort,
 } from "./layout";
 
+function crashableWorker() {
+  const listeners = new Map<string, Set<(event: Event) => void>>();
+  const posted: Array<{ requestId: number }> = [];
+  const terminate = vi.fn();
+  const worker = {
+    addEventListener: (type: string, listener: (event: Event) => void) => {
+      const registered = listeners.get(type) ?? new Set();
+      registered.add(listener);
+      listeners.set(type, registered);
+    },
+    postMessage: (message: { requestId: number }) => posted.push(message),
+    removeEventListener: (type: string, listener: (event: Event) => void) => {
+      listeners.get(type)?.delete(listener);
+    },
+    terminate,
+  } as unknown as LayoutWorkerPort;
+  return {
+    emit: (type: string, event: Event) => {
+      for (const listener of listeners.get(type) ?? []) {
+        listener(event);
+      }
+    },
+    eventTypes: () => [...listeners.keys()],
+    posted,
+    terminate,
+    worker,
+  };
+}
+
 describe("semantic atlas layout", () => {
   it("assigns explicit ownership bands", () => {
     const request = buildLayoutRequest(
@@ -90,8 +119,10 @@ describe("layout worker adapter", () => {
       positions: [],
     };
     const worker: LayoutWorkerPort = {
-      addEventListener: (_type, listener) => {
-        receive = listener;
+      addEventListener: (type, listener) => {
+        if (type === "message") {
+          receive = listener as (event: MessageEvent<unknown>) => void;
+        }
       },
       postMessage: (message) => {
         queueMicrotask(() =>
@@ -110,6 +141,81 @@ describe("layout worker adapter", () => {
 
     await expect(adapter.layout(request)).resolves.toEqual(result);
     adapter.dispose();
+  });
+
+  it("falls back on worker error and replaces the poisoned worker", async () => {
+    const firstWorker = crashableWorker();
+    const replacementWorker = crashableWorker();
+    const request = buildLayoutRequest(
+      architectureCatalog.components.slice(0, 2),
+      [],
+      "ownership",
+    );
+    const adapter = new LayoutWorkerAdapter(
+      firstWorker.worker,
+      () => replacementWorker.worker,
+    );
+    const service = new AtlasLayoutService(adapter);
+    const first = service.layout(request);
+
+    await Promise.resolve();
+    expect(firstWorker.eventTypes()).toContain("error");
+    firstWorker.emit(
+      "error",
+      new ErrorEvent("error", { message: "ELK worker crashed" }),
+    );
+
+    await expect(first).resolves.toMatchObject({
+      degraded: true,
+      reason: "ELK worker crashed",
+    });
+    expect(firstWorker.terminate).toHaveBeenCalledOnce();
+
+    const retried = service.layout(request);
+    await Promise.resolve();
+    expect(replacementWorker.posted).toHaveLength(1);
+    replacementWorker.emit(
+      "message",
+      new MessageEvent("message", {
+        data: {
+          requestId: replacementWorker.posted[0]?.requestId,
+          result: deterministicFallbackLayout(request, "recovered"),
+        },
+      }),
+    );
+    await expect(retried).resolves.toMatchObject({ reason: "recovered" });
+  });
+
+  it("rejects all pending work and resets after message decode failure", async () => {
+    const firstWorker = crashableWorker();
+    const replacementWorker = crashableWorker();
+    const adapter = new LayoutWorkerAdapter(
+      firstWorker.worker,
+      () => replacementWorker.worker,
+    );
+    const request = buildLayoutRequest([], [], "ownership");
+    const first = adapter.layout(request);
+    const second = adapter.layout(request);
+
+    expect(firstWorker.eventTypes()).toContain("messageerror");
+    firstWorker.emit("messageerror", new MessageEvent("messageerror"));
+
+    await expect(first).rejects.toThrow(/decode/i);
+    await expect(second).rejects.toThrow(/decode/i);
+    expect(firstWorker.terminate).toHaveBeenCalledOnce();
+
+    const retried = adapter.layout(request);
+    expect(replacementWorker.posted).toHaveLength(1);
+    replacementWorker.emit(
+      "message",
+      new MessageEvent("message", {
+        data: {
+          requestId: replacementWorker.posted[0]?.requestId,
+          result: { bands: [], degraded: false, positions: [] },
+        },
+      }),
+    );
+    await expect(retried).resolves.toMatchObject({ degraded: false });
   });
 
   it("evicts failed cache entries and retries after fallback", async () => {

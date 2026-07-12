@@ -6,6 +6,7 @@ import type {
   ArchitectureComponent,
   ArchitectureEdge,
   ArchitectureStatus,
+  CargoDependencyKind,
   CrateReference,
   ExecutionMode,
   Ownership,
@@ -27,6 +28,11 @@ export interface DependencyNeighborhood {
   upstream: string[];
   downstream: string[];
   related: Set<string>;
+}
+
+export interface CrateDependent {
+  crate: CrateReference;
+  kind: CargoDependencyKind;
 }
 
 function includesQuery(values: readonly string[], query: string): boolean {
@@ -136,4 +142,21 @@ export function searchCrates(
       normalized,
     ),
   );
+}
+
+export function deriveCrateDependents(
+  crates: readonly CrateReference[],
+  targetCrateId: string,
+): CrateDependent[] {
+  return crates
+    .flatMap((crate) =>
+      crate.dependencies
+        .filter(({ crateId }) => crateId === targetCrateId)
+        .map(({ kind }) => ({ crate, kind })),
+    )
+    .sort(
+      (left, right) =>
+        left.kind.localeCompare(right.kind) ||
+        left.crate.packageName.localeCompare(right.crate.packageName),
+    );
 }

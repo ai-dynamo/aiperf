@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { architectureCatalog } from "../content";
 import {
   deriveAtlasGraph,
+  deriveCrateDependents,
   dependencyNeighborhood,
   searchCrates,
 } from "./atlas-graph";
@@ -75,5 +76,25 @@ describe("atlas graph derivation", () => {
         ({ packageName }) => packageName,
       ),
     ).toContain("aiperf-graph");
+  });
+
+  it("preserves dependency kind in reverse dependent relationships", () => {
+    const dependents = deriveCrateDependents(
+      architectureCatalog.crates,
+      "crate.aiperf-rng",
+    );
+
+    expect(dependents).toContainEqual(
+      expect.objectContaining({
+        kind: "dev",
+        crate: expect.objectContaining({ packageName: "aiperf-extensions" }),
+      }),
+    );
+    expect(dependents).toContainEqual(
+      expect.objectContaining({
+        kind: "normal",
+        crate: expect.objectContaining({ packageName: "aiperf-mock-rs" }),
+      }),
+    );
   });
 });

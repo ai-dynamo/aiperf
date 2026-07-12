@@ -6,7 +6,10 @@ import { useState } from "react";
 
 import { architectureCatalog } from "../../content";
 import type { Audience } from "../../domain/audience";
-import { searchCrates } from "../../domain/atlas-graph";
+import {
+  deriveCrateDependents,
+  searchCrates,
+} from "../../domain/atlas-graph";
 import type {
   CargoDependencyKind,
   CrateReference,
@@ -56,43 +59,15 @@ function CrateDirectory({ audience, current }: CrateDirectoryProps) {
   );
 }
 
-function RelationList({
-  audience,
-  crates,
-  label,
-}: {
-  audience: Audience;
-  crates: readonly CrateReference[];
-  label: string;
-}) {
-  return (
-    <section>
-      <h2>{label}</h2>
-      {crates.length > 0 ? (
-        <ul className="reference-list">
-          {crates.map((crate) => (
-            <li key={crate.id}>
-              <Link
-                params={{ crateId: crate.packageName }}
-                search={{ audience }}
-                to="/crates/$crateId"
-              >
-                {crate.packageName}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>None in the workspace catalog.</p>
-      )}
-    </section>
-  );
-}
-
 const dependencyKindLabels: Record<CargoDependencyKind, string> = {
   normal: "Normal dependencies",
   build: "Build dependencies",
   dev: "Development dependencies",
+};
+const dependentKindLabels: Record<CargoDependencyKind, string> = {
+  normal: "Normal dependents",
+  build: "Build dependents",
+  dev: "Development dependents",
 };
 
 function DependencySections({
@@ -126,6 +101,49 @@ function DependencySections({
                     to="/crates/$crateId"
                   >
                     {dependency.packageName}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>None.</p>
+          )}
+        </section>
+      );
+    },
+  );
+}
+
+function DependentSections({
+  audience,
+  crate,
+}: {
+  audience: Audience;
+  crate: CrateReference;
+}) {
+  const relationships = deriveCrateDependents(
+    architectureCatalog.crates,
+    crate.id,
+  );
+  return (Object.keys(dependentKindLabels) as CargoDependencyKind[]).map(
+    (kind) => {
+      const dependents = relationships.filter(
+        (relationship) => relationship.kind === kind,
+      );
+      const label = dependentKindLabels[kind];
+      return (
+        <section aria-label={label} key={kind}>
+          <h2>{label}</h2>
+          {dependents.length > 0 ? (
+            <ul className="reference-list">
+              {dependents.map(({ crate: dependent }) => (
+                <li key={dependent.id}>
+                  <Link
+                    params={{ crateId: dependent.packageName }}
+                    search={{ audience }}
+                    to="/crates/$crateId"
+                  >
+                    {dependent.packageName}
                   </Link>
                 </li>
               ))}
@@ -179,11 +197,6 @@ export function CrateReferenceView({
     );
   }
 
-  const dependents = architectureCatalog.crates.filter((candidate) =>
-    candidate.dependencies.some(({ crateId: dependencyId }) =>
-      dependencyId === crate.id
-    ),
-  );
   const components = architectureCatalog.components.filter((component) =>
     component.crateIds.includes(crate.id),
   );
@@ -222,11 +235,7 @@ export function CrateReferenceView({
             </ul>
           </section>
           <DependencySections audience={audience} crate={crate} />
-          <RelationList
-            audience={audience}
-            crates={dependents}
-            label="Dependents"
-          />
+          <DependentSections audience={audience} crate={crate} />
           <section>
             <h2>Related components</h2>
             {components.length > 0 ? (

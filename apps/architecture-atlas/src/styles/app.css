@@ -511,7 +511,7 @@
     gap: var(--space-2);
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.63rem;
+    font-size: 0.7rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -551,7 +551,7 @@
     color: var(--text-muted);
     padding: var(--space-1) var(--space-2);
     font-family: var(--font-data);
-    font-size: 0.65rem;
+    font-size: 0.72rem;
   }
 
   .contract-line {
@@ -570,7 +570,7 @@
     overflow-wrap: anywhere;
     color: var(--accent-flow);
     font-family: var(--font-data);
-    font-size: 0.64rem;
+    font-size: 0.72rem;
     text-underline-offset: 0.2rem;
   }
 
@@ -848,7 +848,7 @@
     gap: var(--space-1);
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.62rem;
+    font-size: 0.7rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
   }
@@ -885,7 +885,7 @@
     gap: var(--space-1);
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.62rem;
+    font-size: 0.7rem;
     letter-spacing: 0.07em;
     text-transform: uppercase;
   }
@@ -925,7 +925,7 @@
     margin-block-end: var(--space-2);
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.62rem;
+    font-size: 0.7rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -1028,7 +1028,7 @@
   .react-flow__edge-text {
     fill: var(--text-secondary);
     font-family: var(--font-data);
-    font-size: 0.62rem;
+    font-size: 0.75rem;
   }
 
   .react-flow__edge-textbg {
@@ -1042,7 +1042,7 @@
     color: var(--text-secondary);
     padding: var(--space-1) var(--space-2);
     font-family: var(--font-data);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     pointer-events: none;
   }
 
@@ -1069,7 +1069,7 @@
   .atlas-band strong {
     color: var(--accent-flow-strong);
     font-family: var(--font-data);
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -1097,7 +1097,7 @@
     padding: 0;
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     list-style: none;
   }
 
@@ -1166,7 +1166,7 @@
   .detail-facts dt {
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.6rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
   }
 
@@ -1248,7 +1248,7 @@
   .crate-directory > p {
     color: var(--text-muted);
     font-family: var(--font-data);
-    font-size: 0.65rem;
+    font-size: 0.72rem;
   }
 
   .crate-directory li {
@@ -1268,7 +1268,7 @@
   }
 
   .crate-directory a span {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     line-height: 1.35;
   }
 

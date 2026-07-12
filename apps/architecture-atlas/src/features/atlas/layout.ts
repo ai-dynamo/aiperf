@@ -30,9 +30,25 @@ export interface LayoutWorkerPort {
     type: "message",
     listener: (event: MessageEvent<unknown>) => void,
   ): void;
+  addEventListener(
+    type: "error",
+    listener: (event: ErrorEvent) => void,
+  ): void;
+  addEventListener(
+    type: "messageerror",
+    listener: (event: MessageEvent<unknown>) => void,
+  ): void;
   postMessage(message: WorkerRequest): void;
   removeEventListener(
     type: "message",
+    listener: (event: MessageEvent<unknown>) => void,
+  ): void;
+  removeEventListener(
+    type: "error",
+    listener: (event: ErrorEvent) => void,
+  ): void;
+  removeEventListener(
+    type: "messageerror",
     listener: (event: MessageEvent<unknown>) => void,
   ): void;
   terminate(): void;
@@ -47,6 +63,8 @@ export class LayoutWorkerAdapter implements LayoutExecutor {
     }
   >();
   private requestId = 0;
+  private worker?: LayoutWorkerPort;
+  private disposed = false;
 
   private readonly receive = (event: MessageEvent<unknown>) => {
     const response = event.data as WorkerResponse;
@@ -61,9 +79,59 @@ export class LayoutWorkerAdapter implements LayoutExecutor {
       pending.resolve(response.result);
     }
   };
+  private readonly receiveError = (event: ErrorEvent) => {
+    this.poison(event.message || "layout worker crashed");
+  };
+  private readonly receiveMessageError = () => {
+    this.poison("layout worker message decode failure");
+  };
 
-  constructor(private readonly worker: LayoutWorkerPort) {
+  constructor(
+    worker: LayoutWorkerPort,
+    private readonly replaceWorker: () => LayoutWorkerPort = () => {
+      throw new Error("layout worker cannot be replaced");
+    },
+  ) {
+    this.worker = worker;
+    this.attach(worker);
+  }
+
+  private attach(worker: LayoutWorkerPort): void {
     worker.addEventListener("message", this.receive);
+    worker.addEventListener("error", this.receiveError);
+    worker.addEventListener("messageerror", this.receiveMessageError);
+  }
+
+  private detach(worker: LayoutWorkerPort): void {
+    worker.removeEventListener("message", this.receive);
+    worker.removeEventListener("error", this.receiveError);
+    worker.removeEventListener("messageerror", this.receiveMessageError);
+  }
+
+  private poison(message: string): void {
+    const worker = this.worker;
+    this.worker = undefined;
+    if (worker) {
+      this.detach(worker);
+      worker.terminate();
+    }
+    const error = new Error(message);
+    const pending = [...this.pending.values()];
+    this.pending.clear();
+    for (const request of pending) {
+      request.reject(error);
+    }
+  }
+
+  private activeWorker(): LayoutWorkerPort {
+    if (this.disposed) {
+      throw new Error("layout worker adapter is disposed");
+    }
+    if (!this.worker) {
+      this.worker = this.replaceWorker();
+      this.attach(this.worker);
+    }
+    return this.worker;
   }
 
   layout(request: LayoutRequest): Promise<LayoutResult> {
@@ -72,7 +140,7 @@ export class LayoutWorkerAdapter implements LayoutExecutor {
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { reject, resolve });
       try {
-        this.worker.postMessage({ request, requestId });
+        this.activeWorker().postMessage({ request, requestId });
       } catch (error) {
         this.pending.delete(requestId);
         reject(error);
@@ -81,12 +149,8 @@ export class LayoutWorkerAdapter implements LayoutExecutor {
   }
 
   dispose(): void {
-    this.worker.removeEventListener("message", this.receive);
-    this.worker.terminate();
-    for (const { reject } of this.pending.values()) {
-      reject(new Error("layout worker disposed"));
-    }
-    this.pending.clear();
+    this.disposed = true;
+    this.poison("layout worker disposed");
   }
 }
 
@@ -155,11 +219,16 @@ function defaultLayoutService(): AtlasLayoutService {
             throw new Error("layout worker unavailable");
           },
         }
-      : new LayoutWorkerAdapter(
-          new Worker(new URL("./layout.worker.ts", import.meta.url), {
-            type: "module",
-          }),
-        );
+      : (() => {
+          const createWorker = () =>
+            new Worker(new URL("./layout.worker.ts", import.meta.url), {
+              type: "module",
+            }) as LayoutWorkerPort;
+          return new LayoutWorkerAdapter(
+            createWorker(),
+            createWorker,
+          );
+        })();
   defaultService = new AtlasLayoutService(executor);
   return defaultService;
 }

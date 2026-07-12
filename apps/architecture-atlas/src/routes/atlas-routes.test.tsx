@@ -153,6 +153,32 @@ describe("unified atlas route", () => {
       expect(trigger).toHaveFocus();
     });
   });
+
+  it.each(["close control", "Escape"] as const)(
+    "uses a visible focus fallback for deep links closed by %s",
+    async (method) => {
+      const user = userEvent.setup();
+      renderAtlas(
+        "/atlas?audience=developer&selected=component.clock-seam",
+      );
+      const close = await screen.findByRole("button", {
+        name: "Clear selected component",
+      });
+
+      if (method === "Escape") {
+        await user.keyboard("{Escape}");
+      } else {
+        await user.click(close);
+      }
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(
+          screen.getByRole("searchbox", { name: "Search atlas" }),
+        ).toHaveFocus();
+      });
+    },
+  );
 });
 
 describe("crate reference routes", () => {
@@ -188,6 +214,22 @@ describe("crate reference routes", () => {
         screen.getByRole("region", { name: "Normal dependencies" }),
       ).queryByText("aiperf-rng"),
     ).not.toBeInTheDocument();
+  });
+
+  it("preserves Cargo kind when displaying reverse dependents", async () => {
+    renderAtlas("/crates/aiperf-rng?audience=maintainer");
+
+    const normal = await screen.findByRole("region", {
+      name: "Normal dependents",
+    });
+    const development = screen.getByRole("region", {
+      name: "Development dependents",
+    });
+    expect(within(normal).getByText("aiperf-mock-rs")).toBeInTheDocument();
+    expect(
+      within(development).getByText("aiperf-extensions"),
+    ).toBeInTheDocument();
+    expect(within(normal).queryByText("aiperf-extensions")).not.toBeInTheDocument();
   });
 
   it("renders a useful typed not-found view", async () => {

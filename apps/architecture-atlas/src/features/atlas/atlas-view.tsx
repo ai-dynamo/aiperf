@@ -384,8 +384,11 @@ export function AtlasView({
     result: LayoutResult;
   }>();
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
-  const lastSelectionTrigger = useRef<HTMLButtonElement | undefined>(undefined);
+  const lastSelectionTrigger = useRef<
+    { componentId: string; element: HTMLButtonElement } | undefined
+  >(undefined);
   const inventoryTriggers = useRef(new Map<string, HTMLButtonElement>());
+  const searchInput = useRef<HTMLInputElement>(null);
   const fitScheduler = useRef<FitAfterLayoutScheduler | undefined>(undefined);
   if (!fitScheduler.current) {
     fitScheduler.current = new FitAfterLayoutScheduler(
@@ -462,7 +465,10 @@ export function AtlasView({
             ),
             selected: selected?.id === component.id,
             select: (id: string, trigger: HTMLButtonElement) => {
-              lastSelectionTrigger.current = trigger;
+              lastSelectionTrigger.current = {
+                componentId: id,
+                element: trigger,
+              };
               onStateChange({ selected: id });
             },
           },
@@ -506,10 +512,19 @@ export function AtlasView({
     const selectedId = selected?.id;
     onStateChange({ selected: undefined });
     window.requestAnimationFrame(() => {
-      (
-        lastSelectionTrigger.current ??
-        (selectedId ? inventoryTriggers.current.get(selectedId) : undefined)
-      )?.focus();
+      const lastTrigger = lastSelectionTrigger.current;
+      const trigger =
+        (lastTrigger && lastTrigger.componentId === selectedId
+          ? lastTrigger.element
+          : undefined) ??
+        (selectedId ? inventoryTriggers.current.get(selectedId) : undefined);
+      const visibleTrigger =
+        trigger &&
+        trigger.isConnected &&
+        !trigger.closest("details:not([open])")
+          ? trigger
+          : undefined;
+      (visibleTrigger ?? searchInput.current)?.focus();
     });
   };
   const fitCurrent = () => {
@@ -546,6 +561,7 @@ export function AtlasView({
             aria-label="Search atlas"
             onChange={(event) => onStateChange({ query: event.target.value })}
             placeholder="Label, summary, crate, contract"
+            ref={searchInput}
             type="search"
             value={state.query}
           />
@@ -669,7 +685,10 @@ export function AtlasView({
             <li key={component.id}>
               <button
                 onClick={(event) => {
-                  lastSelectionTrigger.current = event.currentTarget;
+                  lastSelectionTrigger.current = {
+                    componentId: component.id,
+                    element: event.currentTarget,
+                  };
                   onStateChange({ selected: component.id });
                 }}
                 ref={(element) => {
