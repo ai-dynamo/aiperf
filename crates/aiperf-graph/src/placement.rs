@@ -24,6 +24,9 @@ use crate::errors::TraceError;
 use crate::execution::GraphTraceExecutionBackend;
 use crate::model::GraphTracePlan;
 
+/// Default number of complete trace commands buffered per placement worker.
+pub const DEFAULT_GRAPH_WORKER_QUEUE_CAPACITY: usize = 256;
+
 /// Builds one worker-local backend after entering its owning OS thread.
 ///
 /// Factory state must be shareable, but the returned backend deliberately need
@@ -38,7 +41,7 @@ pub trait GraphTraceExecutionBackendFactory: Send + Sync {
 
 /// Native thread-per-core whole-trace placement backend.
 pub struct ThreadPerCoreGraphTraceExecutionBackend {
-    senders: Vec<mpsc::UnboundedSender<WorkerCommand>>,
+    senders: Vec<mpsc::Sender<WorkerCommand>>,
     next_worker: Cell<usize>,
     threads: RefCell<Vec<JoinHandle<()>>>,
 }
@@ -49,16 +52,30 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
         worker_count: usize,
         factory: Arc<dyn GraphTraceExecutionBackendFactory>,
     ) -> Result<Self, GraphPlacementError> {
+        Self::new_with_queue_capacity(worker_count, DEFAULT_GRAPH_WORKER_QUEUE_CAPACITY, factory)
+    }
+
+    /// Start workers with an explicit per-worker whole-trace queue capacity.
+    pub fn new_with_queue_capacity(
+        worker_count: usize,
+        queue_capacity: usize,
+        factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+    ) -> Result<Self, GraphPlacementError> {
         if worker_count == 0 {
             return Err(GraphPlacementError(
                 "graph placement requires at least one worker".into(),
+            ));
+        }
+        if queue_capacity == 0 {
+            return Err(GraphPlacementError(
+                "graph placement queue capacity must be positive".into(),
             ));
         }
 
         let mut senders = Vec::with_capacity(worker_count);
         let mut threads = Vec::with_capacity(worker_count);
         for worker_id in 0..worker_count {
-            let (command_tx, command_rx) = mpsc::unbounded_channel();
+            let (command_tx, command_rx) = mpsc::channel(queue_capacity);
             let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
             let worker_factory = factory.clone();
             let thread = match std::thread::Builder::new()
@@ -67,7 +84,7 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
             {
                 Ok(thread) => thread,
                 Err(error) => {
-                    stop_workers(&senders, threads);
+                    stop_workers(senders, threads);
                     return Err(GraphPlacementError(format!(
                         "failed to spawn graph worker {worker_id}: {error}"
                     )));
@@ -79,11 +96,11 @@ impl ThreadPerCoreGraphTraceExecutionBackend {
             match ready_rx.recv() {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    stop_workers(&senders, threads);
+                    stop_workers(senders, threads);
                     return Err(GraphPlacementError(error));
                 }
                 Err(error) => {
-                    stop_workers(&senders, threads);
+                    stop_workers(senders, threads);
                     return Err(GraphPlacementError(format!(
                         "graph worker {worker_id} exited during startup: {error}"
                     )));
@@ -115,6 +132,7 @@ impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
                 plan,
                 result: result_tx,
             })
+            .await
             .map_err(|_| {
                 TraceError::Other(format!(
                     "graph placement worker {worker_id} is not available"
@@ -130,9 +148,7 @@ impl GraphTraceExecutionBackend for ThreadPerCoreGraphTraceExecutionBackend {
 
 impl Drop for ThreadPerCoreGraphTraceExecutionBackend {
     fn drop(&mut self) {
-        for sender in &self.senders {
-            let _ = sender.send(WorkerCommand::Shutdown);
-        }
+        self.senders.clear();
         for thread in self.threads.get_mut().drain(..) {
             let _ = thread.join();
         }
@@ -144,13 +160,12 @@ enum WorkerCommand {
         plan: GraphTracePlan,
         result: oneshot::Sender<Result<(), TraceError>>,
     },
-    Shutdown,
 }
 
 fn worker_thread(
     worker_id: usize,
     factory: Arc<dyn GraphTraceExecutionBackendFactory>,
-    mut commands: mpsc::UnboundedReceiver<WorkerCommand>,
+    mut commands: mpsc::Receiver<WorkerCommand>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -190,7 +205,7 @@ fn worker_thread(
                             let _ = result.send(backend.execute_trace(plan).await);
                         });
                     }
-                    Some(WorkerCommand::Shutdown) | None => break,
+                    None => break,
                 },
                 completed = active.join_next(), if !active.is_empty() => {
                     let _ = completed;
@@ -201,10 +216,8 @@ fn worker_thread(
     }));
 }
 
-fn stop_workers(senders: &[mpsc::UnboundedSender<WorkerCommand>], threads: Vec<JoinHandle<()>>) {
-    for sender in senders {
-        let _ = sender.send(WorkerCommand::Shutdown);
-    }
+fn stop_workers(senders: Vec<mpsc::Sender<WorkerCommand>>, threads: Vec<JoinHandle<()>>) {
+    drop(senders);
     for thread in threads {
         let _ = thread.join();
     }
@@ -300,6 +313,19 @@ mod tests {
                 (0, "c".into()),
                 (1, "d".into())
             ]
+        );
+    }
+
+    #[test]
+    fn bounded_placement_rejects_a_zero_capacity() {
+        let placements = Arc::new(Mutex::new(Vec::new()));
+        let factory = Arc::new(RecordingFactory { placements });
+        let error = ThreadPerCoreGraphTraceExecutionBackend::new_with_queue_capacity(1, 0, factory)
+            .err()
+            .expect("zero capacity must fail closed");
+        assert_eq!(
+            error,
+            GraphPlacementError("graph placement queue capacity must be positive".into())
         );
     }
 }
