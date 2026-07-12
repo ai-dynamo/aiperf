@@ -407,10 +407,11 @@ async fn run_driver_inner(
         let issued = gate
             .begin(SourceAttemptKind::Continuous(deadline), call_deadline)
             .map_err(DriverStopError::Scheduling)?;
+        let expected_request_attempt_seq = request_attempt_seq;
         let request = FetchRequest {
             source_id: config.source_id.clone(),
             source_record_seq: issued.source_record_seq,
-            request_attempt_seq,
+            request_attempt_seq: expected_request_attempt_seq,
             kind: issued.kind.clone(),
         };
         request_attempt_seq =
@@ -427,7 +428,12 @@ async fn run_driver_inner(
             cancellation.clone(),
         )
         .await;
-        validate_fetched_attempt(&config.source_id, &issued, &attempt)?;
+        validate_fetched_attempt(
+            &config.source_id,
+            &issued,
+            expected_request_attempt_seq,
+            &attempt,
+        )?;
         gate.complete(issued.source_record_seq)
             .map_err(DriverStopError::Scheduling)?;
         consumer
@@ -587,6 +593,7 @@ fn deadline_attempt(
 fn validate_fetched_attempt(
     source_id: &str,
     issued: &crate::IssuedSourceAttempt,
+    expected_request_attempt_seq: u64,
     fetched: &FetchedAttempt,
 ) -> Result<(), DriverStopError> {
     if fetched.source_id != source_id || fetched.source_record_seq != issued.source_record_seq {
@@ -602,6 +609,11 @@ fn validate_fetched_attempt(
     if fetched.scheduled_ns != expected_scheduled {
         return Err(DriverStopError::Invariant(
             "fetcher changed the source event's scheduling identity".to_owned(),
+        ));
+    }
+    if fetched.request_attempt_seq != Some(expected_request_attempt_seq) {
+        return Err(DriverStopError::Invariant(
+            "fetcher changed the request-attempt identity".to_owned(),
         ));
     }
     Ok(())
@@ -936,5 +948,27 @@ mod tests {
             consumer.attempts.borrow()[0].disposition,
             FetchDisposition::Shutdown
         ));
+    }
+
+    #[test]
+    fn fetched_attempt_must_preserve_issued_request_sequence() {
+        let issued = crate::IssuedSourceAttempt {
+            source_record_seq: 0,
+            kind: SourceAttemptKind::Boundary {
+                transition_id: "profiling-start".to_owned(),
+            },
+            deadline: AbsoluteCallDeadline::derive(0, 10, None, None, None).unwrap(),
+        };
+        let mut fetched = deadline_attempt("source-a".to_owned(), 0, 7, None, 0, 1, false);
+        validate_fetched_attempt("source-a", &issued, 7, &fetched).unwrap();
+
+        fetched.request_attempt_seq = Some(8);
+        let mismatch = validate_fetched_attempt("source-a", &issued, 7, &fetched)
+            .unwrap_err()
+            .to_string();
+        assert!(mismatch.contains("request-attempt identity"), "{mismatch}");
+
+        fetched.request_attempt_seq = None;
+        assert!(validate_fetched_attempt("source-a", &issued, 7, &fetched).is_err());
     }
 }
