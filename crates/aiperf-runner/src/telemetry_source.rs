@@ -15,13 +15,14 @@ use std::sync::Arc;
 
 use aiperf_clock::Clock;
 use aiperf_telemetry_archive::{
-    ArchiveSourceError, FetchDisposition, FetchRequest, FetchedAttempt,
+    ArchiveSourceError, CanonicalJsonValue, ContentEncodingV1, EntityDecodeLimitsV1,
+    EntityDecodePolicyV1, FetchDisposition, FetchRequest, FetchedAttempt,
     FixedDeadlineTelemetryDriver, LocalCancellationSignal, PreparedTelemetryDriver,
     TelemetryAttemptConsumer, TelemetryDriverConfig, TelemetryFetcher,
 };
 use aiperf_transport_http::config::ClientConfig;
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use url::Url;
 
@@ -81,6 +82,9 @@ impl Debug for ArchiveSourcePrepareContext {
 
 /// Factory-owned validated source ready for one preparation.
 pub trait ValidatedArchiveSource: Debug + Send + Sync {
+    /// Factory-produced canonical persistent source identity with defaults explicit.
+    fn persistent_identity(&self) -> &CanonicalJsonValue;
+
     /// Prepare the complete already-typed driver without a concrete downcast.
     fn prepare(
         self: Box<Self>,
@@ -171,7 +175,7 @@ static PROMETHEUS_SOURCE_DESCRIPTOR: ArchiveSourceDescriptor = ArchiveSourceDesc
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PrometheusArchiveSourceFactory;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PrometheusHttpSourceConfigV2 {
     url: String,
@@ -183,13 +187,15 @@ struct PrometheusHttpSourceConfigV2 {
     redirects: DisabledPolicyV2,
     proxy: DisabledPolicyV2,
     accepted_formats: Vec<PrometheusFormatV2>,
+    #[serde(default = "default_content_encodings")]
+    accepted_content_encodings: Vec<PrometheusContentEncodingV2>,
     max_compressed_bytes: usize,
     max_decompressed_bytes: usize,
     #[serde(default = "default_max_expansion_ratio")]
     max_expansion_ratio: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TlsProviderSpecV2 {
     #[serde(default)]
@@ -198,19 +204,35 @@ struct TlsProviderSpecV2 {
     mtls_provider: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum DisabledPolicyV2 {
     Disabled,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum PrometheusFormatV2 {
     #[serde(rename = "prometheus_text_0_0_4")]
     PrometheusText0_0_4,
     #[serde(rename = "openmetrics_text_1_0_0")]
     OpenmetricsText1_0_0,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PrometheusContentEncodingV2 {
+    Gzip,
+    Identity,
+}
+
+impl PrometheusContentEncodingV2 {
+    const fn archive(self) -> ContentEncodingV1 {
+        match self {
+            Self::Gzip => ContentEncodingV1::Gzip,
+            Self::Identity => ContentEncodingV1::Identity,
+        }
+    }
 }
 
 impl PrometheusFormatV2 {
@@ -224,6 +246,13 @@ impl PrometheusFormatV2 {
 
 const fn default_max_expansion_ratio() -> u64 {
     100
+}
+
+fn default_content_encodings() -> Vec<PrometheusContentEncodingV2> {
+    vec![
+        PrometheusContentEncodingV2::Gzip,
+        PrometheusContentEncodingV2::Identity,
+    ]
 }
 
 impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
@@ -241,7 +270,7 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
                 "source request_timeout_ns must be positive".to_owned(),
             ));
         }
-        let config: PrometheusHttpSourceConfigV2 =
+        let mut config: PrometheusHttpSourceConfigV2 =
             serde_json::from_str(config.get()).map_err(|error| {
                 ArchiveSourceFactoryError::InvalidConfig(format!(
                     "prometheus_http source config: {error}"
@@ -262,7 +291,6 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
         if config.max_compressed_bytes == 0
             || config.max_decompressed_bytes == 0
             || config.max_expansion_ratio == 0
-            || config.max_compressed_bytes > config.max_decompressed_bytes
         {
             return Err(ArchiveSourceFactoryError::InvalidConfig(
                 "prometheus_http body limits are zero or inconsistent".to_owned(),
@@ -276,18 +304,67 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
         let DisabledPolicyV2::Disabled = config.redirects;
         let DisabledPolicyV2::Disabled = config.proxy;
         let format_count = config.accepted_formats.len();
-        let formats = config.accepted_formats.into_iter().collect::<BTreeSet<_>>();
+        let formats = config
+            .accepted_formats
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
         if formats.len() != format_count {
             return Err(ArchiveSourceFactoryError::InvalidConfig(
                 "prometheus_http accepted_formats must be unique".to_owned(),
             ));
         }
+        config.accepted_formats = formats.iter().copied().collect();
+        if config.accepted_content_encodings.is_empty() {
+            return Err(ArchiveSourceFactoryError::InvalidConfig(
+                "prometheus_http accepted_content_encodings cannot be empty".to_owned(),
+            ));
+        }
+        let encoding_count = config.accepted_content_encodings.len();
+        let encodings = config
+            .accepted_content_encodings
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if encodings.len() != encoding_count {
+            return Err(ArchiveSourceFactoryError::InvalidConfig(
+                "prometheus_http accepted_content_encodings must be unique".to_owned(),
+            ));
+        }
+        config.accepted_content_encodings = encodings.iter().copied().collect();
+        let entity_policy = EntityDecodePolicyV1::new(
+            encodings
+                .iter()
+                .copied()
+                .map(PrometheusContentEncodingV2::archive),
+            EntityDecodeLimitsV1 {
+                max_encoded_bytes: config.max_compressed_bytes,
+                max_decoded_bytes: config.max_decompressed_bytes,
+                max_expansion_ratio: config.max_expansion_ratio,
+            },
+        )
+        .map_err(|error| {
+            ArchiveSourceFactoryError::InvalidConfig(format!(
+                "prometheus_http content decoding: {error}"
+            ))
+        })?;
         if config.tls.trust_provider.is_some() || config.tls.mtls_provider.is_some() {
             return Err(ArchiveSourceFactoryError::InvalidConfig(
                 "this runner distribution does not provide custom telemetry TLS material"
                     .to_owned(),
             ));
         }
+        let persistent_identity =
+            CanonicalJsonValue::parse(&serde_json::to_vec(&config).map_err(|error| {
+                ArchiveSourceFactoryError::InvalidConfig(format!(
+                    "prometheus_http canonical source identity: {error}"
+                ))
+            })?)
+            .map_err(|error| {
+                ArchiveSourceFactoryError::InvalidConfig(format!(
+                    "prometheus_http canonical source identity: {error}"
+                ))
+            })?;
         let credential = config.credential_provider.map_or(
             ControlPlaneCredentialReference::None,
             ControlPlaneCredentialReference::BearerProvider,
@@ -296,6 +373,13 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
             connect_timeout_ns: Some(config.connect_timeout_ns),
             request_timeout_ns: None,
             total_timeout_ns: None,
+            max_response_body_bytes: Some(u64::try_from(config.max_compressed_bytes).map_err(
+                |_| {
+                    ArchiveSourceFactoryError::InvalidConfig(
+                        "prometheus_http max_compressed_bytes exceeds u64".to_owned(),
+                    )
+                },
+            )?),
             max_connections_per_origin: 1,
             collect_trace_chunks: false,
             ..ClientConfig::default()
@@ -311,25 +395,34 @@ impl ArchiveSourceFactory for PrometheusArchiveSourceFactory {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            entity_policy
+                .accepted_encodings()
+                .iter()
+                .map(|encoding| encoding.as_str().to_owned())
+                .collect(),
             config.max_compressed_bytes,
         )
         .map_err(|error| ArchiveSourceFactoryError::InvalidConfig(error.to_string()))?;
         Ok(Box::new(ValidatedPrometheusArchiveSource {
+            persistent_identity,
             profile,
-            max_decompressed_bytes: config.max_decompressed_bytes,
-            max_expansion_ratio: config.max_expansion_ratio,
+            entity_policy,
         }))
     }
 }
 
 #[derive(Debug)]
 struct ValidatedPrometheusArchiveSource {
+    persistent_identity: CanonicalJsonValue,
     profile: ValidatedControlPlaneProfile,
-    max_decompressed_bytes: usize,
-    max_expansion_ratio: u64,
+    entity_policy: EntityDecodePolicyV1,
 }
 
 impl ValidatedArchiveSource for ValidatedPrometheusArchiveSource {
+    fn persistent_identity(&self) -> &CanonicalJsonValue {
+        &self.persistent_identity
+    }
+
     fn prepare(
         self: Box<Self>,
         context: ArchiveSourcePrepareContext,
@@ -345,8 +438,7 @@ impl ValidatedArchiveSource for ValidatedPrometheusArchiveSource {
             .map_err(|error| ArchiveSourceFactoryError::Prepare(error.to_string()))?;
         let fetcher: Rc<dyn TelemetryFetcher> = Rc::new(PrometheusTelemetryFetcher {
             control,
-            max_decompressed_bytes: self.max_decompressed_bytes,
-            max_expansion_ratio: self.max_expansion_ratio,
+            entity_policy: self.entity_policy,
         });
         let driver = FixedDeadlineTelemetryDriver::new(
             TelemetryDriverConfig {
@@ -366,8 +458,7 @@ impl ValidatedArchiveSource for ValidatedPrometheusArchiveSource {
 
 struct PrometheusTelemetryFetcher {
     control: Rc<dyn ControlPlaneHttp>,
-    max_decompressed_bytes: usize,
-    max_expansion_ratio: u64,
+    entity_policy: EntityDecodePolicyV1,
 }
 
 impl Debug for PrometheusTelemetryFetcher {
@@ -375,8 +466,7 @@ impl Debug for PrometheusTelemetryFetcher {
         formatter
             .debug_struct("PrometheusTelemetryFetcher")
             .field("control", &self.control)
-            .field("max_decompressed_bytes", &self.max_decompressed_bytes)
-            .field("max_expansion_ratio", &self.max_expansion_ratio)
+            .field("entity_policy", &self.entity_policy)
             .finish()
     }
 }
@@ -415,34 +505,12 @@ impl TelemetryFetcher for PrometheusTelemetryFetcher {
                 let end_ns = response.timings.end_ns;
                 let start_ns = response.timings.request_start_ns;
                 let first_byte_ns = response.timings.first_byte_ns;
-                let disposition = if content_encoding
-                    .as_deref()
-                    .is_none_or(|encoding| encoding.eq_ignore_ascii_case("identity"))
-                {
-                    let decoded = response.encoded_body.clone();
-                    let allowed = response.encoded_body.len().max(1).saturating_mul(
-                        usize::try_from(self.max_expansion_ratio).unwrap_or(usize::MAX),
-                    );
-                    if decoded.len() <= self.max_decompressed_bytes && decoded.len() <= allowed {
-                        FetchDisposition::Response {
-                            status: response.status,
-                            content_type,
-                            content_encoding,
-                            encoded_body: response.encoded_body,
-                            decoded_body: decoded,
-                        }
-                    } else {
-                        FetchDisposition::Transport {
-                            kind: "decoded_body_limit".to_owned(),
-                            message: "telemetry entity exceeded decoded-body limits".to_owned(),
-                        }
-                    }
-                } else {
-                    FetchDisposition::Transport {
-                        kind: "unsupported_content_encoding".to_owned(),
-                        message: "telemetry response used an unsupported Content-Encoding"
-                            .to_owned(),
-                    }
+                let disposition = FetchDisposition::EncodedResponse {
+                    status: response.status,
+                    content_type,
+                    content_encoding,
+                    encoded_body: response.encoded_body,
+                    entity_policy: self.entity_policy.clone(),
                 };
                 FetchedAttempt {
                     source_id,
@@ -594,7 +662,7 @@ mod tests {
     #[test]
     fn stock_registry_strictly_validates_prometheus_source() {
         let registry = ArchiveSourceFactoryRegistry::stock();
-        registry
+        let validated = registry
             .validate(
                 "prometheus_http",
                 &config(),
@@ -603,6 +671,8 @@ mod tests {
                 },
             )
             .unwrap();
+        let persistent = String::from_utf8(validated.persistent_identity().to_bytes()).unwrap();
+        assert!(persistent.contains("\"accepted_content_encodings\":[\"gzip\",\"identity\"]"));
         assert_eq!(
             registry
                 .descriptors()
@@ -664,5 +734,52 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.to_string().contains("prometheus_http"));
+    }
+
+    #[test]
+    fn content_encoding_policy_is_closed_unique_and_independently_bounded() {
+        let registry = ArchiveSourceFactoryRegistry::stock();
+        let mut duplicate: serde_json::Value = serde_json::from_str(config().get()).unwrap();
+        duplicate["accepted_content_encodings"] = json!(["gzip", "gzip"]);
+        assert!(
+            registry
+                .validate(
+                    "prometheus_http",
+                    &raw(duplicate),
+                    ArchiveSourceValidationContext {
+                        request_timeout_ns: 2_000_000,
+                    },
+                )
+                .is_err()
+        );
+
+        let mut unknown: serde_json::Value = serde_json::from_str(config().get()).unwrap();
+        unknown["accepted_content_encodings"] = json!(["zstd"]);
+        assert!(
+            registry
+                .validate(
+                    "prometheus_http",
+                    &raw(unknown),
+                    ArchiveSourceValidationContext {
+                        request_timeout_ns: 2_000_000,
+                    },
+                )
+                .is_err()
+        );
+
+        let mut independent: serde_json::Value = serde_json::from_str(config().get()).unwrap();
+        independent["max_compressed_bytes"] = json!(4096);
+        independent["max_decompressed_bytes"] = json!(1024);
+        assert!(
+            registry
+                .validate(
+                    "prometheus_http",
+                    &raw(independent),
+                    ArchiveSourceValidationContext {
+                        request_timeout_ns: 2_000_000,
+                    },
+                )
+                .is_ok()
+        );
     }
 }

@@ -9,6 +9,7 @@
 //! returned attempt facts.
 
 use std::collections::BTreeMap;
+use std::env;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -82,6 +83,76 @@ impl SecretProviderResolver for RejectingSecretProviderResolver {
     }
 }
 
+/// Environment-backed bearer resolver used by the stock runner distribution.
+///
+/// A public reference such as `node-metrics` maps to
+/// `AIPERF_CONTROL_BEARER_NODE_METRICS`. Diagnostics expose only that public
+/// variable name and never the token value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnvironmentSecretProviderResolver {
+    prefix: String,
+}
+
+impl Default for EnvironmentSecretProviderResolver {
+    fn default() -> Self {
+        Self {
+            prefix: "AIPERF_CONTROL_BEARER_".to_owned(),
+        }
+    }
+}
+
+impl EnvironmentSecretProviderResolver {
+    /// Use an explicit uppercase public environment-variable prefix.
+    pub fn new(prefix: impl Into<String>) -> Result<Self, SecretResolutionError> {
+        let prefix = prefix.into();
+        if prefix.is_empty()
+            || prefix.chars().any(|character| {
+                !(character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_')
+            })
+        {
+            return Err(SecretResolutionError::Failed(
+                "control-plane secret prefix must contain only uppercase ASCII letters, digits, and underscores"
+                    .to_owned(),
+            ));
+        }
+        Ok(Self { prefix })
+    }
+
+    /// Return the public variable name derived from one provider reference.
+    pub fn variable_name(&self, provider_id: &str) -> Result<String, SecretResolutionError> {
+        if provider_id.is_empty()
+            || provider_id.len() > 256
+            || provider_id.trim() != provider_id
+            || provider_id.chars().any(char::is_control)
+        {
+            return Err(SecretResolutionError::Unavailable(provider_id.to_owned()));
+        }
+        let suffix = provider_id
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() {
+                    char::from(byte.to_ascii_uppercase())
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        Ok(format!("{}{suffix}", self.prefix))
+    }
+}
+
+impl SecretProviderResolver for EnvironmentSecretProviderResolver {
+    fn resolve_bearer(&self, provider_id: &str) -> Result<ResolvedSecret, SecretResolutionError> {
+        let variable = self.variable_name(provider_id)?;
+        let value = env::var(&variable).map_err(|_| {
+            SecretResolutionError::Failed(format!(
+                "control-plane bearer environment variable {variable} is missing or is not UTF-8"
+            ))
+        })?;
+        ResolvedSecret::new(value)
+    }
+}
+
 /// Strict transport profile after source-factory validation.
 #[derive(Clone, Debug)]
 pub struct ValidatedControlPlaneProfile {
@@ -89,6 +160,7 @@ pub struct ValidatedControlPlaneProfile {
     client: ClientConfig,
     credential: ControlPlaneCredentialReference,
     accepted_media_types: Vec<String>,
+    accepted_content_encodings: Vec<String>,
     max_encoded_bytes: usize,
 }
 
@@ -99,6 +171,7 @@ impl ValidatedControlPlaneProfile {
         client: ClientConfig,
         credential: ControlPlaneCredentialReference,
         accepted_media_types: Vec<String>,
+        accepted_content_encodings: Vec<String>,
         max_encoded_bytes: usize,
     ) -> Result<Self, ControlPlanePrepareError> {
         if !matches!(url.scheme(), "http" | "https") {
@@ -143,6 +216,10 @@ impl ValidatedControlPlaneProfile {
                 "control-plane profile must accept at least one media type".to_owned(),
             ));
         }
+        validate_sorted_tokens(
+            "control-plane accepted content encodings",
+            &accepted_content_encodings,
+        )?;
         let mut preceding: Option<&str> = None;
         for media_type in &accepted_media_types {
             if media_type.is_empty()
@@ -174,6 +251,7 @@ impl ValidatedControlPlaneProfile {
             client,
             credential,
             accepted_media_types,
+            accepted_content_encodings,
             max_encoded_bytes,
         })
     }
@@ -194,6 +272,82 @@ pub trait ControlPlaneHttpProvider: Debug {
     ) -> Result<Rc<dyn ControlPlaneHttp>, ControlPlanePrepareError>;
 }
 
+/// Backend-owned preparation seam for run-local control-plane providers.
+///
+/// The factory is process-shareable while each returned provider remains
+/// LocalSet-owned beside its injected Clock. Remote runner distributions can
+/// replace this member without changing telemetry source or workload code.
+pub trait ControlPlaneHttpProviderFactory: Debug + Send + Sync {
+    /// Prepare one provider for a run's single Clock authority.
+    fn prepare(
+        &self,
+        clock: Rc<dyn Clock>,
+        policy: ControlPlaneClientPolicy,
+    ) -> Rc<dyn ControlPlaneHttpProvider>;
+}
+
+/// Backend-owned ceilings inherited by every prepared source handle.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ControlPlaneClientPolicy {
+    /// Maximum DNS/TCP/TLS/HTTP-handshake lifetime for any source.
+    pub connect_timeout_ns: Option<i64>,
+}
+
+impl ControlPlaneClientPolicy {
+    /// Rejects a present non-positive backend ceiling.
+    pub fn validate(self) -> Result<(), ControlPlanePrepareError> {
+        if self.connect_timeout_ns.is_some_and(|timeout| timeout <= 0) {
+            return Err(ControlPlanePrepareError::InvalidProfile(
+                "backend control-plane connect timeout must be positive".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Stock native control-plane provider factory.
+#[derive(Clone)]
+pub struct NativeControlPlaneHttpProviderFactory {
+    secrets: Arc<dyn SecretProviderResolver>,
+}
+
+impl NativeControlPlaneHttpProviderFactory {
+    /// Bind a deployment-owned secret resolver without resolving any source.
+    #[must_use]
+    pub fn new(secrets: Arc<dyn SecretProviderResolver>) -> Self {
+        Self { secrets }
+    }
+}
+
+impl Default for NativeControlPlaneHttpProviderFactory {
+    fn default() -> Self {
+        Self::new(Arc::new(EnvironmentSecretProviderResolver::default()))
+    }
+}
+
+impl Debug for NativeControlPlaneHttpProviderFactory {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeControlPlaneHttpProviderFactory")
+            .field("secrets", &self.secrets)
+            .finish()
+    }
+}
+
+impl ControlPlaneHttpProviderFactory for NativeControlPlaneHttpProviderFactory {
+    fn prepare(
+        &self,
+        clock: Rc<dyn Clock>,
+        policy: ControlPlaneClientPolicy,
+    ) -> Rc<dyn ControlPlaneHttpProvider> {
+        Rc::new(NativeControlPlaneHttpProvider::with_client_policy(
+            clock,
+            Arc::clone(&self.secrets),
+            policy,
+        ))
+    }
+}
+
 /// Minimal owned request allowed by a profile-bound control handle.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ControlPlaneRequest {
@@ -202,7 +356,7 @@ pub struct ControlPlaneRequest {
 }
 
 /// Allowlisted control response and exact entity bytes.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ControlPlaneResponse {
     /// HTTP status, including non-success status.
     pub status: u16,
@@ -212,6 +366,19 @@ pub struct ControlPlaneResponse {
     pub encoded_body: Bytes,
     /// Native transport timing facts on the injected Clock timeline.
     pub timings: ControlPlaneTransportTimings,
+}
+
+impl Debug for ControlPlaneResponse {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ControlPlaneResponse")
+            .field("status", &self.status)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("encoded_body_bytes", &self.encoded_body.len())
+            .field("encoded_body", &"<redacted>")
+            .field("timings", &self.timings)
+            .finish()
+    }
 }
 
 /// Native transport facts safe for source attempt construction.
@@ -243,13 +410,28 @@ pub trait ControlPlaneHttp: Debug {
 pub struct NativeControlPlaneHttpProvider {
     clock: Rc<dyn Clock>,
     secrets: Arc<dyn SecretProviderResolver>,
+    client_policy: ControlPlaneClientPolicy,
 }
 
 impl NativeControlPlaneHttpProvider {
     /// Create a provider over the run's one RealClock and deployment resolver.
     #[must_use]
     pub fn new(clock: Rc<dyn Clock>, secrets: Arc<dyn SecretProviderResolver>) -> Self {
-        Self { clock, secrets }
+        Self::with_client_policy(clock, secrets, ControlPlaneClientPolicy::default())
+    }
+
+    /// Create a provider with backend-owned client ceilings.
+    #[must_use]
+    pub fn with_client_policy(
+        clock: Rc<dyn Clock>,
+        secrets: Arc<dyn SecretProviderResolver>,
+        client_policy: ControlPlaneClientPolicy,
+    ) -> Self {
+        Self {
+            clock,
+            secrets,
+            client_policy,
+        }
     }
 }
 
@@ -259,6 +441,7 @@ impl Debug for NativeControlPlaneHttpProvider {
             .debug_struct("NativeControlPlaneHttpProvider")
             .field("virtual_clock", &self.clock.is_virtual())
             .field("secrets", &self.secrets)
+            .field("client_policy", &self.client_policy)
             .finish()
     }
 }
@@ -268,6 +451,7 @@ impl ControlPlaneHttpProvider for NativeControlPlaneHttpProvider {
         &self,
         profile: ValidatedControlPlaneProfile,
     ) -> Result<Rc<dyn ControlPlaneHttp>, ControlPlanePrepareError> {
+        self.client_policy.validate()?;
         let authorization = match &profile.credential {
             ControlPlaneCredentialReference::None => None,
             ControlPlaneCredentialReference::BearerProvider(provider_id) => Some(
@@ -276,10 +460,12 @@ impl ControlPlaneHttpProvider for NativeControlPlaneHttpProvider {
                     .map_err(ControlPlanePrepareError::Secret)?,
             ),
         };
-        let transport = Rc::new(HttpTransport::new(
-            self.clock.clone(),
-            profile.client.clone(),
-        ));
+        let mut client = profile.client.clone();
+        client.connect_timeout_ns = capped_connect_timeout(
+            client.connect_timeout_ns,
+            self.client_policy.connect_timeout_ns,
+        );
+        let transport = Rc::new(HttpTransport::new(self.clock.clone(), client));
         Ok(Rc::new(NativeControlPlaneHttp {
             clock: self.clock.clone(),
             transport,
@@ -287,6 +473,7 @@ impl ControlPlaneHttpProvider for NativeControlPlaneHttpProvider {
             display_url: profile.url.to_string(),
             authorization,
             accept: profile.accepted_media_types.join(", "),
+            accept_encoding: profile.accepted_content_encodings.join(", "),
             max_encoded_bytes: profile.max_encoded_bytes,
         }))
     }
@@ -299,6 +486,7 @@ struct NativeControlPlaneHttp {
     display_url: String,
     authorization: Option<ResolvedSecret>,
     accept: String,
+    accept_encoding: String,
     max_encoded_bytes: usize,
 }
 
@@ -324,7 +512,7 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
         validate_request_id(&request.request_id)?;
         let mut config = RequestConfig::new(self.url.clone())
             .header("Accept", self.accept.clone())
-            .header("Accept-Encoding", "identity")
+            .header("Accept-Encoding", self.accept_encoding.clone())
             .request_id(request.request_id)
             .reuse(ConnectionReuseStrategy::Pooled);
         if let Some(secret) = &self.authorization {
@@ -414,6 +602,64 @@ fn exact_text_body(responses: &[Response]) -> Option<Bytes> {
         [Response::Text(response)] => Some(response.body.clone()),
         _ => None,
     }
+}
+
+fn capped_connect_timeout(source: Option<i64>, backend: Option<i64>) -> Option<i64> {
+    match (source, backend) {
+        (Some(source), Some(backend)) => Some(source.min(backend)),
+        (Some(source), None) => Some(source),
+        (None, Some(backend)) => Some(backend),
+        (None, None) => None,
+    }
+}
+
+fn validate_sorted_tokens(
+    field: &'static str,
+    values: &[String],
+) -> Result<(), ControlPlanePrepareError> {
+    if values.is_empty() {
+        return Err(ControlPlanePrepareError::InvalidProfile(format!(
+            "{field} cannot be empty"
+        )));
+    }
+    let mut preceding: Option<&str> = None;
+    for value in values {
+        if value.is_empty()
+            || !value.is_ascii()
+            || value.bytes().any(|byte| {
+                !(byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(
+                        byte,
+                        b'!' | b'#'
+                            | b'$'
+                            | b'%'
+                            | b'&'
+                            | b'\''
+                            | b'*'
+                            | b'+'
+                            | b'-'
+                            | b'.'
+                            | b'^'
+                            | b'_'
+                            | b'`'
+                            | b'|'
+                            | b'~'
+                    ))
+            })
+        {
+            return Err(ControlPlanePrepareError::InvalidProfile(format!(
+                "{field} contains an invalid lowercase HTTP token"
+            )));
+        }
+        if preceding.is_some_and(|preceding| preceding >= value.as_str()) {
+            return Err(ControlPlanePrepareError::InvalidProfile(format!(
+                "{field} must be sorted and unique"
+            )));
+        }
+        preceding = Some(value);
+    }
+    Ok(())
 }
 
 fn validate_request_id(value: &str) -> Result<(), ControlPlaneHttpError> {
@@ -546,13 +792,16 @@ mod tests {
     use super::*;
 
     fn profile(url: &str) -> ValidatedControlPlaneProfile {
-        let mut client = ClientConfig::default();
-        client.max_connections_per_origin = 1;
+        let client = ClientConfig {
+            max_connections_per_origin: 1,
+            ..ClientConfig::default()
+        };
         ValidatedControlPlaneProfile::new(
             Url::parse(url).unwrap(),
             client,
             ControlPlaneCredentialReference::None,
             vec!["text/plain; version=0.0.4".to_owned()],
+            vec!["gzip".to_owned(), "identity".to_owned()],
             1024,
         )
         .unwrap()
@@ -560,14 +809,17 @@ mod tests {
 
     #[test]
     fn profile_rejects_userinfo_and_nonisolated_connection_capacity() {
-        let mut client = ClientConfig::default();
-        client.max_connections_per_origin = 1;
+        let mut client = ClientConfig {
+            max_connections_per_origin: 1,
+            ..ClientConfig::default()
+        };
         assert!(
             ValidatedControlPlaneProfile::new(
                 Url::parse("https://user:secret@example.test/metrics").unwrap(),
                 client.clone(),
                 ControlPlaneCredentialReference::None,
                 vec!["text/plain".to_owned()],
+                vec!["identity".to_owned()],
                 1,
             )
             .is_err()
@@ -579,6 +831,7 @@ mod tests {
                 client,
                 ControlPlaneCredentialReference::None,
                 vec!["text/plain".to_owned()],
+                vec!["identity".to_owned()],
                 1,
             )
             .is_err()
@@ -590,5 +843,63 @@ mod tests {
         let secret = ResolvedSecret::new("fixture-super-secret").unwrap();
         assert!(!format!("{secret:?}").contains("fixture-super-secret"));
         let _ = profile("http://127.0.0.1:1/metrics");
+    }
+
+    #[test]
+    fn environment_provider_references_have_stable_public_names() {
+        let resolver = EnvironmentSecretProviderResolver::default();
+        assert_eq!(
+            resolver.variable_name("node-metrics").unwrap(),
+            "AIPERF_CONTROL_BEARER_NODE_METRICS"
+        );
+        assert!(resolver.variable_name(" padded ").is_err());
+    }
+
+    #[test]
+    fn content_negotiation_and_backend_connect_ceiling_are_exact() {
+        let profile = profile("http://127.0.0.1:1/metrics");
+        assert_eq!(
+            profile.accepted_content_encodings,
+            ["gzip".to_owned(), "identity".to_owned()]
+        );
+        assert_eq!(
+            capped_connect_timeout(Some(5_000), Some(3_000)),
+            Some(3_000)
+        );
+        assert_eq!(capped_connect_timeout(Some(2_000), None), Some(2_000));
+        assert_eq!(capped_connect_timeout(None, Some(3_000)), Some(3_000));
+        assert!(
+            ControlPlaneClientPolicy {
+                connect_timeout_ns: Some(0),
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn content_encoding_advertisement_rejects_unknown_shape_before_io() {
+        let client = ClientConfig {
+            max_connections_per_origin: 1,
+            ..ClientConfig::default()
+        };
+        for encodings in [
+            vec!["identity".to_owned(), "gzip".to_owned()],
+            vec!["gzip".to_owned(), "gzip".to_owned()],
+            vec!["GZIP".to_owned()],
+            vec!["gzip, identity".to_owned()],
+        ] {
+            assert!(
+                ValidatedControlPlaneProfile::new(
+                    Url::parse("https://example.test/metrics").unwrap(),
+                    client.clone(),
+                    ControlPlaneCredentialReference::None,
+                    vec!["text/plain".to_owned()],
+                    encodings,
+                    1024,
+                )
+                .is_err()
+            );
+        }
     }
 }
