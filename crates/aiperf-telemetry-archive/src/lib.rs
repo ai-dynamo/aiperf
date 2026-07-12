@@ -15,6 +15,7 @@ pub mod canonical_json;
 pub mod decode;
 pub mod descriptor;
 pub mod digest;
+pub mod driver;
 pub mod evidence;
 pub mod identity;
 pub mod index;
@@ -47,6 +48,12 @@ pub use decode::{
 };
 pub use descriptor::{CanonicalDescriptor, DescriptorError};
 pub use digest::{Digest, DigestError, domain_digest};
+pub use driver::{
+    ArchiveSourceError, DriverConsumerError, DriverStartError, DriverStopError, FetchRequest,
+    FixedDeadlineTelemetryDriver, LocalCancellationSignal, PreparedTelemetryDriver,
+    RunningTelemetryDriver, TelemetryAttemptConsumer, TelemetryDriverConfig,
+    TelemetryDriverSummary, TelemetryFetcher,
+};
 pub use evidence::{
     CanonicalLogicalRow, LogicalField, LogicalRowError, LogicalSchema, LogicalType, LogicalValue,
     ProjectionEvidence, RequiredProjection, TableId,
