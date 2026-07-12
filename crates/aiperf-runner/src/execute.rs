@@ -94,6 +94,7 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::dataset_input::PreparedDatasetInput;
+use crate::execution_factories::RunnerExecutionFactories;
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
     GraphCancellationConfig, LegacyRunnerGraphEndpointRuntimeFactory,
@@ -112,6 +113,7 @@ use crate::protocol::{
     SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
     SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
+use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, write_outputs_json,
     write_raw_records_jsonl, write_records_jsonl,
@@ -746,6 +748,7 @@ pub(crate) fn execute_native_plan_uncommitted_with_factories(
             graph_placement,
             registry,
             &sidecar_factory,
+            None,
         )
         .await
     })
@@ -772,6 +775,27 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     )
 }
 
+/// Execute a protocol-v2 plan through the exact coordinator-frozen factories.
+///
+/// Readiness was already expanded into an immutable endpoint-owned plan during
+/// pair preparation. Activation happens on the run-owned Clock before the
+/// exclusive artifact target is created.
+pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
+    plan: NativeRunPlan,
+    factories: &RunnerExecutionFactories,
+    registry: &AiperfRegistry,
+    readiness: Box<dyn PreparedOnlineReadiness>,
+) -> Result<NativeReport> {
+    execute_prepared_native_plan_uncommitted_with_runtime_factories(
+        plan,
+        factories.http(),
+        factories.graph(),
+        registry,
+        &BuiltinNativeSidecarResourceFactory,
+        Some((readiness, factories.readiness_transport())),
+    )
+}
+
 /// Execute one fully prepared plan with sidecar resource construction injected.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
     plan: NativeRunPlan,
@@ -779,6 +803,27 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
+) -> Result<NativeReport> {
+    execute_prepared_native_plan_uncommitted_with_runtime_factories(
+        plan,
+        backend_factory,
+        graph_placement,
+        registry,
+        sidecar_factory,
+        None,
+    )
+}
+
+fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
+    plan: NativeRunPlan,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
+    sidecar_factory: &dyn NativeSidecarResourceFactory,
+    readiness: Option<(
+        Box<dyn PreparedOnlineReadiness>,
+        &dyn ReadinessTransportFactory,
+    )>,
 ) -> Result<NativeReport> {
     ensure!(
         !matches!(plan.run.dataset, NativeDatasetPlan::AuthoredGraph(_)),
@@ -798,6 +843,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
             graph_placement,
             registry,
             sidecar_factory,
+            readiness,
         ),
     )
 }
@@ -1223,6 +1269,10 @@ async fn prepare_and_execute_native(
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
+    readiness: Option<(
+        Box<dyn PreparedOnlineReadiness>,
+        &dyn ReadinessTransportFactory,
+    )>,
 ) -> Result<NativeReport> {
     if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
         validate_graph_request(&request)?;
@@ -1238,18 +1288,19 @@ async fn prepare_and_execute_native(
             .await;
         }
     };
-    let artifact_result = (|| {
-        std::fs::create_dir_all(&request.run.artifact_dir).with_context(|| {
-            format!(
-                "creating run artifact directory {}",
-                request.run.artifact_dir.display()
+    if let Some((readiness, transport_factory)) = readiness
+        && !readiness.is_empty()
+    {
+        let clock = sidecars.clock.clone();
+        let transport = transport_factory.build(clock.clone());
+        if let Err(error) = readiness.wait(clock, transport).await {
+            sidecars.shutdown_run_resources().await;
+            return finish_accuracy_lifecycle(
+                Err(error.context("waiting for endpoint readiness")),
+                accuracy.as_mut(),
             )
-        })?;
-        materialize_user_files(&request.run.artifact_dir, &request.run.user_files)
-    })();
-    if let Err(error) = artifact_result {
-        sidecars.shutdown_run_resources().await;
-        return finish_accuracy_lifecycle(Err(error), accuracy.as_mut()).await;
+            .await;
+        }
     }
     let result = execute_native(
         request,
@@ -1262,6 +1313,16 @@ async fn prepare_and_execute_native(
     .await;
     sidecars.shutdown_run_resources().await;
     finish_accuracy_lifecycle(result, accuracy.as_mut()).await
+}
+
+fn create_run_artifacts(run: &NativeRunSpec) -> Result<()> {
+    std::fs::create_dir_all(&run.artifact_dir).with_context(|| {
+        format!(
+            "creating run artifact directory {}",
+            run.artifact_dir.display()
+        )
+    })?;
+    materialize_user_files(&run.artifact_dir, &run.user_files)
 }
 
 async fn execute_native(
@@ -1277,7 +1338,7 @@ async fn execute_native(
             accuracy.is_none(),
             "graph execution received prepared static-accuracy state"
         );
-        return execute_graph_native(request, graph_placement, registry).await;
+        return execute_graph_native(request, sidecars, graph_placement, registry).await;
     }
     execute_scheduled_native(request, accuracy, sidecars, backend_factory, registry).await
 }
@@ -1444,6 +1505,7 @@ struct PreparedGraphPhase {
 
 async fn execute_graph_native(
     request: NativeRunPlan,
+    sidecars: &PreparedNativeSidecarResources,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1514,8 +1576,8 @@ async fn execute_graph_native(
                 ))
             }
         };
-    let real_clock_anchor = RealClockAnchor::now();
-    let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
+    let real_clock_anchor = sidecars.real_clock_anchor;
+    let clock = sidecars.clock.clone();
     let start_ns = clock.now_ns();
     let rng_root = RngRoot::new(graph_random_seed.or(request.run.random_seed));
     let trace_instances = GraphTraceInstanceSequence::default();
@@ -1542,6 +1604,8 @@ async fn execute_graph_native(
             graph_placement,
         )?);
     }
+
+    create_run_artifacts(&request.run)?;
 
     let mut captured = Vec::new();
     for prepared in phases {
@@ -1814,6 +1878,17 @@ fn finish_accuracy_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Resul
     }
 }
 
+fn finish_execution_backend_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Result<T> {
+    match (result, shutdown) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error.context("shutting down execution backend")),
+        (Err(error), Err(shutdown)) => Err(error.context(format!(
+            "execution backend also failed during shutdown: {shutdown:#}"
+        ))),
+    }
+}
+
 async fn execute_native_inner(
     request: NativeRunPlan,
     mut accuracy: Option<&mut PreparedAccuracy>,
@@ -1988,87 +2063,94 @@ async fn execute_native_inner(
         prepared_endpoints,
     })?;
     let start_ns = clock.now_ns();
-    execution_backend.set_run_origin(start_ns)?;
     let capture = Rc::new(RunCapture::new(
         clock.clone(),
         start_ns,
         metrics_config.clone(),
         request.run.artifacts.raw_path.is_some(),
     ));
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
-        execution_backend: execution_backend.clone(),
-        model: primary_model.clone(),
-        capture: capture.clone(),
-    });
-
-    let shared_resources = native_scheduled_resources(&request.run.phases);
-
-    let mut plans = Vec::with_capacity(request.run.phases.len());
-    for (phase_index, phase) in request.run.phases.iter().enumerate() {
-        let mut plan = build_native_scheduled_phase_plan_with_source_factory(
-            phase_index,
-            phase,
-            &dataset,
-            &primary_model,
-            default_output_tokens,
-            dataset_rng_root,
-            rng_root,
-            source_factory.as_ref(),
-            tokenizer.clone(),
-            input_token_counter.clone(),
-            clock.clone(),
-            start_ns,
-            &request.run.benchmark_id,
-            &request.run.artifact_dir,
-            &endpoint_urls,
-            &shared_resources,
-        )?;
-        let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
+    let execution_result = async {
+        execution_backend.set_run_origin(start_ns)?;
+        let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
+            execution_backend: execution_backend.clone(),
+            model: primary_model.clone(),
             capture: capture.clone(),
-            phase: metrics_phase(phase)?,
-            has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
-            live_sink: live_sink.clone(),
         });
-        let mut record_processors = vec![record_processor];
-        if phase.common().name == "profiling"
-            && let Some(accuracy) = accuracy.as_ref()
-        {
-            let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
-            record_processors.push(processor);
-        }
-        plan = plan.with_record_processors(record_processors);
-        let mut sidecars = Vec::new();
-        if let Some(server_metrics) = server_metrics {
-            sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
-        }
-        if phase.common().name == "profiling" {
-            if let Some(gpu_telemetry) = gpu_telemetry {
-                sidecars.push(gpu_telemetry.sidecar());
-            }
-            if let Some(network_latency) = network_latency
-                && let Some(sidecar) = network_latency.sidecar()
-            {
-                sidecars.push(sidecar);
-            }
-        }
-        if !sidecars.is_empty() {
-            plan = plan.with_sidecars(sidecars);
-        }
-        plans.push(plan);
-    }
 
-    let observer: Rc<dyn PhaseObserver> = if let Some(sink) = live_sink {
-        live_phase_observer(sink, clock.clone())
-    } else {
-        Rc::new(NoopPhaseObserver)
-    };
-    let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
-    execution_backend.shutdown()?;
-    phased
-        .reports
-        .iter()
-        .find(|report| report.kind == PhaseKind::Profiling)
-        .ok_or_else(|| anyhow!("phase runtime completed without a profiling report"))?;
+        let shared_resources = native_scheduled_resources(&request.run.phases);
+
+        let mut plans = Vec::with_capacity(request.run.phases.len());
+        for (phase_index, phase) in request.run.phases.iter().enumerate() {
+            let mut plan = build_native_scheduled_phase_plan_with_source_factory(
+                phase_index,
+                phase,
+                &dataset,
+                &primary_model,
+                default_output_tokens,
+                dataset_rng_root,
+                rng_root,
+                source_factory.as_ref(),
+                tokenizer.clone(),
+                input_token_counter.clone(),
+                clock.clone(),
+                start_ns,
+                &request.run.benchmark_id,
+                &request.run.artifact_dir,
+                &endpoint_urls,
+                &shared_resources,
+            )?;
+            let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
+                capture: capture.clone(),
+                phase: metrics_phase(phase)?,
+                has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+                live_sink: live_sink.clone(),
+            });
+            let mut record_processors = vec![record_processor];
+            if phase.common().name == "profiling"
+                && let Some(accuracy) = accuracy.as_ref()
+            {
+                let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
+                record_processors.push(processor);
+            }
+            plan = plan.with_record_processors(record_processors);
+            let mut sidecars = Vec::new();
+            if let Some(server_metrics) = server_metrics {
+                sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
+            }
+            if phase.common().name == "profiling" {
+                if let Some(gpu_telemetry) = gpu_telemetry {
+                    sidecars.push(gpu_telemetry.sidecar());
+                }
+                if let Some(network_latency) = network_latency
+                    && let Some(sidecar) = network_latency.sidecar()
+                {
+                    sidecars.push(sidecar);
+                }
+            }
+            if !sidecars.is_empty() {
+                plan = plan.with_sidecars(sidecars);
+            }
+            plans.push(plan);
+        }
+
+        create_run_artifacts(&request.run)?;
+
+        let observer: Rc<dyn PhaseObserver> = if let Some(sink) = live_sink {
+            live_phase_observer(sink, clock.clone())
+        } else {
+            Rc::new(NoopPhaseObserver)
+        };
+        let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
+        phased
+            .reports
+            .iter()
+            .find(|report| report.kind == PhaseKind::Profiling)
+            .ok_or_else(|| anyhow!("phase runtime completed without a profiling report"))?;
+        Ok(phased)
+    }
+    .await;
+    let shutdown = execution_backend.shutdown();
+    let phased = finish_execution_backend_shutdown(execution_result, shutdown)?;
     let issued_times = phased
         .reports
         .iter()

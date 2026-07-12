@@ -29,13 +29,14 @@ use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativePreparedEndpointPlan,
     NativePreparedEndpointProfile, NativeRunPlan, NativeRunSpec, NativeSidecarPlan,
     NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan, StaticAccuracyEvaluatorFactory,
-    StaticAccuracyEvaluatorProcessSpec, execute_prepared_native_plan_uncommitted_with_factories,
-    load_tokenizer,
+    StaticAccuracyEvaluatorProcessSpec,
+    execute_prepared_native_plan_uncommitted_with_execution_factories, load_tokenizer,
 };
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputContext;
 use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
+use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
 use crate::registry::{
     GraphWorkloadConfigV2, OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
     RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
@@ -206,12 +207,14 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         online_backend(backend.as_ref())?;
         self.adapter.validate_workload(workload.as_ref())?;
+        let readiness = prepare_online_readiness(run, context)?;
         let harness = self.adapter.prepare(run, context, workload)?;
         Ok(Box::new(PreparedOnlineOperation {
             workload_id: self.adapter.workload_id(),
             harness,
             product_registry: context.product_registry_handle(),
             execution_factories: context.execution_factories_handle(),
+            readiness,
         }))
     }
 }
@@ -225,6 +228,7 @@ trait PreparedOnlineHarness: fmt::Debug {
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
         execution_factories: &RunnerExecutionFactories,
+        readiness: Box<dyn PreparedOnlineReadiness>,
     ) -> Result<(NativeReport, ReportPairRunFacts)>;
 }
 
@@ -412,10 +416,13 @@ fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> R
                 "online_http endpoint profile {profile_id:?} requires http:// or https:// URLs, got {url:?}"
             );
         }
-        ensure!(
-            profile.config.wait_for_model_timeout <= 0.0,
-            "protocol-v2 online execution does not yet implement endpoint readiness probes; endpoint profile {profile_id:?} enables one"
-        );
+        if profile.config.wait_for_model_timeout > 0.0 {
+            ensure!(
+                profile.config.wait_for_model_mode == "models",
+                "endpoint profile {profile_id:?} readiness mode {:?} is not executable yet; only endpoint-owned models/health readiness is implemented",
+                profile.config.wait_for_model_mode
+            );
+        }
     }
     ensure!(
         run.sidecars.gpu_telemetry.is_none()
@@ -425,6 +432,39 @@ fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> R
         "protocol-v2 online execution has no registered sidecar adapter"
     );
     Ok(())
+}
+
+fn prepare_online_readiness(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+) -> Result<Box<dyn PreparedOnlineReadiness>> {
+    let profiles = context
+        .endpoint_profiles()
+        .map(|(profile_id, profile)| {
+            ReadinessEndpointProfile::new(
+                profile_id,
+                profile.endpoint_id.clone(),
+                profile.config.clone(),
+                profile.connection_reuse,
+                profile.http2,
+            )
+        })
+        .collect::<Vec<_>>();
+    let models = run
+        .models
+        .items
+        .iter()
+        .map(|model| model.name.clone())
+        .collect::<Vec<_>>();
+    context
+        .execution_factories()
+        .readiness_plans()
+        .prepare(ReadinessPlanInput {
+            endpoints: context.product_registry().endpoints(),
+            profiles: &profiles,
+            models: &models,
+        })
+        .context("preparing endpoint-owned readiness plan")
 }
 
 #[derive(Debug, Deserialize)]
@@ -968,13 +1008,14 @@ impl PreparedOnlineHarness for NativePlanHarness {
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
         execution_factories: &RunnerExecutionFactories,
+        readiness: Box<dyn PreparedOnlineReadiness>,
     ) -> Result<(NativeReport, ReportPairRunFacts)> {
         let report_facts = native_plan_report_facts(&self.plan)?;
-        let native_report = execute_prepared_native_plan_uncommitted_with_factories(
+        let native_report = execute_prepared_native_plan_uncommitted_with_execution_factories(
             self.plan,
-            execution_factories.http(),
-            execution_factories.graph(),
+            execution_factories,
             product_registry,
+            readiness,
         )?;
         Ok((native_report, report_facts))
     }
@@ -999,6 +1040,7 @@ struct PreparedOnlineOperation {
     harness: Box<dyn PreparedOnlineHarness>,
     product_registry: Arc<aiperf_extensions::AiperfRegistry>,
     execution_factories: RunnerExecutionFactories,
+    readiness: Box<dyn PreparedOnlineReadiness>,
 }
 
 impl fmt::Debug for PreparedOnlineOperation {
@@ -1013,9 +1055,11 @@ impl fmt::Debug for PreparedOnlineOperation {
 
 impl PreparedRunnerOperation for PreparedOnlineOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let (native_report, report_facts) = self
-            .harness
-            .execute(self.product_registry.as_ref(), &self.execution_factories)?;
+        let (native_report, report_facts) = self.harness.execute(
+            self.product_registry.as_ref(),
+            &self.execution_factories,
+            self.readiness,
+        )?;
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
