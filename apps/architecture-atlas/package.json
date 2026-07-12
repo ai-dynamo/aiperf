@@ -22,6 +22,7 @@
     "@tanstack/react-router": "^1.170.17",
     "@xyflow/react": "^12.11.2",
     "elkjs": "^0.11.1",
+    "lz-string": "^1.5.0",
     "motion": "^12.42.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

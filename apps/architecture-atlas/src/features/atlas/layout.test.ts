@@ -9,6 +9,7 @@ import {
   FitAfterLayoutScheduler,
   LayoutWorkerAdapter,
   buildLayoutRequest,
+  composeBandLayouts,
   deterministicFallbackLayout,
   type LayoutResult,
   type LayoutWorkerPort,
@@ -41,6 +42,12 @@ function crashableWorker() {
     terminate,
     worker,
   };
+}
+
+function selectComponents(ids: readonly string[]) {
+  return architectureCatalog.components.filter((component) =>
+    ids.includes(component.id),
+  );
 }
 
 describe("semantic atlas layout", () => {
@@ -105,6 +112,114 @@ describe("semantic atlas layout", () => {
       result.bands.length,
     );
     expect(new Set(result.bands.map(({ y }) => y)).size).toBe(1);
+  });
+
+  it("includes hierarchical expansion and partial relayout in layout key", () => {
+    const components = architectureCatalog.components.slice(0, 3);
+    const [root, child, other] = components;
+    const base = buildLayoutRequest(components, architectureCatalog.edges, "ownership");
+    const partial = buildLayoutRequest(components, architectureCatalog.edges, "ownership", {
+      hierarchy: [{ id: child.id, parentId: root.id }],
+      partialRelayout: {
+        expandedSubgraphs: [{ nodeIds: [root.id, child.id], rootId: root.id }],
+        manualPositions: [
+          { id: child.id, x: 140, y: 220 },
+          { id: other.id, x: 340, y: 460 },
+        ],
+        relayoutNodeIds: [child.id],
+      },
+    });
+
+    expect(partial.key).not.toBe(base.key);
+    expect(partial.partialRelayout?.expandedSubgraphs).toEqual([
+      { nodeIds: [root.id, child.id], rootId: root.id },
+    ]);
+    expect(
+      partial.nodes.find(({ id }) => id === child.id)?.parentId,
+    ).toBe(root.id);
+  });
+
+  it("preserves unaffected manual positions during partial relayout merge", () => {
+    const request = buildLayoutRequest(
+      selectComponents([
+        "component.clock-seam",
+        "component.scheduling",
+        "component.python-frontend",
+      ]),
+      [],
+      "ownership",
+      {
+        partialRelayout: {
+          expandedSubgraphs: [],
+          manualPositions: [{ id: "component.clock-seam", x: 777, y: 555 }],
+          relayoutNodeIds: ["component.scheduling"],
+        },
+      },
+    );
+    const merged = composeBandLayouts(request, [
+      {
+        bandId: "ownership.rust",
+        height: 280,
+        positions: [
+          { id: "component.clock-seam", x: 4, y: 8 },
+          { id: "component.scheduling", x: 40, y: 52 },
+        ],
+        width: 320,
+      },
+      {
+        bandId: "ownership.python",
+        height: 240,
+        positions: [{ id: "component.python-frontend", x: 16, y: 24 }],
+        width: 260,
+      },
+    ]);
+    const preserved = merged.positions.find(
+      ({ id }) => id === "component.clock-seam",
+    );
+    const relaidOut = merged.positions.find(
+      ({ id }) => id === "component.scheduling",
+    );
+
+    expect(preserved).toMatchObject({ x: 777, y: 555 });
+    expect(relaidOut).not.toMatchObject({ x: 777, y: 555 });
+    expect(merged.partialRelayout).toEqual({
+      preservedManualNodeIds: ["component.clock-seam"],
+      relaidOutNodeIds: ["component.scheduling"],
+    });
+  });
+
+  it("keeps manual positions in deterministic fallback for unaffected nodes", () => {
+    const request = buildLayoutRequest(
+      selectComponents([
+        "component.clock-seam",
+        "component.scheduling",
+        "component.python-frontend",
+      ]),
+      [],
+      "ownership",
+      {
+        partialRelayout: {
+          expandedSubgraphs: [],
+          manualPositions: [
+            { id: "component.clock-seam", x: 600, y: 610 },
+            { id: "component.scheduling", x: 22, y: 44 },
+          ],
+          relayoutNodeIds: ["component.scheduling"],
+        },
+      },
+    );
+    const result = deterministicFallbackLayout(request, "fallback");
+
+    expect(
+      result.positions.find(({ id }) => id === "component.clock-seam"),
+    ).toMatchObject({ x: 600, y: 610 });
+    expect(
+      result.positions.find(({ id }) => id === "component.scheduling"),
+    ).not.toMatchObject({ x: 22, y: 44 });
+    expect(result.partialRelayout).toEqual({
+      preservedManualNodeIds: ["component.clock-seam"],
+      relaidOutNodeIds: ["component.scheduling"],
+    });
   });
 });
 

@@ -10,11 +10,39 @@ import type {
 
 export type LayoutPerspective = "ownership" | "lifecycle";
 
+export interface LayoutHierarchyParent {
+  id: string;
+  parentId: string;
+}
+
+export interface LayoutExpandedSubgraph {
+  nodeIds: string[];
+  rootId: string;
+}
+
+export interface LayoutManualPosition {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface LayoutPartialRelayout {
+  expandedSubgraphs: LayoutExpandedSubgraph[];
+  manualPositions: LayoutManualPosition[];
+  relayoutNodeIds: string[];
+}
+
+export interface BuildLayoutRequestOptions {
+  hierarchy?: LayoutHierarchyParent[];
+  partialRelayout?: LayoutPartialRelayout;
+}
+
 export interface LayoutRequest {
   bands: LayoutBandDefinition[];
   edges: Array<{ from: string; id: string; to: string }>;
   key: string;
-  nodes: Array<{ bandId: string; id: string }>;
+  nodes: Array<{ bandId: string; id: string; parentId?: string }>;
+  partialRelayout?: LayoutPartialRelayout;
   perspective: LayoutPerspective;
 }
 
@@ -48,6 +76,10 @@ export interface LayoutPosition {
 export interface LayoutResult {
   bands: LayoutBand[];
   degraded: boolean;
+  partialRelayout?: {
+    preservedManualNodeIds: string[];
+    relaidOutNodeIds: string[];
+  };
   positions: LayoutPosition[];
   reason?: string;
 }
@@ -84,7 +116,11 @@ export function buildLayoutRequest(
   components: readonly ArchitectureComponent[],
   edges: readonly ArchitectureEdge[],
   perspective: LayoutPerspective,
+  options: BuildLayoutRequestOptions = {},
 ): LayoutRequest {
+  const hierarchyByNode = new Map(
+    (options.hierarchy ?? []).map(({ id, parentId }) => [id, parentId]),
+  );
   const definitions: LayoutBandDefinition[] =
     perspective === "ownership"
       ? ownershipOrder.map((owner, order) => ({
@@ -105,6 +141,7 @@ export function buildLayoutRequest(
           ? `ownership.${component.owner}`
           : `lifecycle.${component.lifecycleBand}`,
       id: component.id,
+      parentId: hierarchyByNode.get(component.id),
     }));
   const visibleBandIds = new Set(nodes.map(({ bandId }) => bandId));
   const bands = definitions.filter(({ id }) => visibleBandIds.has(id));
@@ -113,15 +150,23 @@ export function buildLayoutRequest(
     .filter(({ from, to }) => nodeIds.has(from) && nodeIds.has(to))
     .sort((left, right) => left.id.localeCompare(right.id))
     .map(({ from, id, to }) => ({ from, id, to }));
+  const partialRelayout = normalizePartialRelayout(options.partialRelayout, nodes);
+  const hierarchyKey = nodes
+    .filter((node) => typeof node.parentId === "string")
+    .map((node) => `${node.id}>${node.parentId}`)
+    .join(",");
   return {
     bands,
     edges: visibleEdges,
     key: [
       perspective,
       nodes.map(({ bandId, id }) => `${id}@${bandId}`).join(","),
+      hierarchyKey,
       visibleEdges.map(({ id }) => id).join(","),
+      serializePartialRelayoutKey(partialRelayout),
     ].join("|"),
     nodes,
+    partialRelayout,
     perspective,
   };
 }
@@ -157,7 +202,13 @@ export function composeBandLayouts(
     offset +=
       (request.perspective === "ownership" ? height : width) + BAND_GAP;
   }
-  return { bands, degraded: false, positions };
+  const partial = applyPartialRelayoutOverrides(positions, request.partialRelayout);
+  return {
+    bands,
+    degraded: false,
+    partialRelayout: partial.summary,
+    positions: partial.positions,
+  };
 }
 
 function fallbackBandLayout(
@@ -193,5 +244,95 @@ export function deterministicFallbackLayout(
     ),
     degraded: true,
     reason,
+  };
+}
+
+function normalizePartialRelayout(
+  partialRelayout: LayoutPartialRelayout | undefined,
+  nodes: ReadonlyArray<{ id: string }>,
+): LayoutPartialRelayout | undefined {
+  if (!partialRelayout) {
+    return undefined;
+  }
+  const nodeIds = new Set(nodes.map(({ id }) => id));
+  const relayoutNodeIds = [...new Set(partialRelayout.relayoutNodeIds)]
+    .filter((id) => nodeIds.has(id))
+    .sort((left, right) => left.localeCompare(right));
+  const manualPositions = [...partialRelayout.manualPositions]
+    .filter(({ id }) => nodeIds.has(id))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const expandedSubgraphs = partialRelayout.expandedSubgraphs
+    .map(({ nodeIds: members, rootId }) => ({
+      nodeIds: [...new Set(members)]
+        .filter((id) => nodeIds.has(id))
+        .sort((left, right) => left.localeCompare(right)),
+      rootId,
+    }))
+    .filter(
+      ({ nodeIds: members, rootId }) =>
+        members.length > 0 && members.includes(rootId) && nodeIds.has(rootId),
+    )
+    .sort((left, right) => left.rootId.localeCompare(right.rootId));
+  return {
+    expandedSubgraphs,
+    manualPositions,
+    relayoutNodeIds,
+  };
+}
+
+function serializePartialRelayoutKey(
+  partialRelayout: LayoutPartialRelayout | undefined,
+): string {
+  if (!partialRelayout) {
+    return "";
+  }
+  const expanded = partialRelayout.expandedSubgraphs
+    .map(({ nodeIds, rootId }) => `${rootId}:${nodeIds.join("+")}`)
+    .join(",");
+  const manual = partialRelayout.manualPositions
+    .map(({ id, x, y }) => `${id}:${x}:${y}`)
+    .join(",");
+  return `${partialRelayout.relayoutNodeIds.join(",")}|${expanded}|${manual}`;
+}
+
+function applyPartialRelayoutOverrides(
+  positions: LayoutPosition[],
+  partialRelayout: LayoutPartialRelayout | undefined,
+): {
+  positions: LayoutPosition[];
+  summary?: { preservedManualNodeIds: string[]; relaidOutNodeIds: string[] };
+} {
+  if (!partialRelayout) {
+    return { positions };
+  }
+  const relayoutNodeIds = new Set(partialRelayout.relayoutNodeIds);
+  const manualById = new Map(
+    partialRelayout.manualPositions.map((position) => [position.id, position]),
+  );
+  const visibleNodeIds = new Set(positions.map(({ id }) => id));
+  const preservedManualNodeIds: string[] = [];
+  const relaidOutNodeIds = [...relayoutNodeIds]
+    .filter((id) => visibleNodeIds.has(id))
+    .sort((left, right) => left.localeCompare(right));
+  const overriddenPositions = positions.map((position) => {
+    const manual = manualById.get(position.id);
+    if (!manual || relayoutNodeIds.has(position.id)) {
+      return position;
+    }
+    preservedManualNodeIds.push(position.id);
+    return {
+      ...position,
+      x: manual.x,
+      y: manual.y,
+    };
+  });
+  return {
+    positions: overriddenPositions,
+    summary: {
+      preservedManualNodeIds: preservedManualNodeIds.sort((a, b) =>
+        a.localeCompare(b),
+      ),
+      relaidOutNodeIds,
+    },
   };
 }
