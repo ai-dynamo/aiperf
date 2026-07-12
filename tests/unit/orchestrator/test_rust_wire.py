@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aiperf.config import AIPerfConfig, BenchmarkRun
-from aiperf.orchestrator.rust_wire import build_run_request
+from aiperf.orchestrator.rust_wire import RustWireError, build_run_request
 
 
 def _run(tmp_path: Path, *, dataset: dict | None = None, phases: list | None = None):
@@ -110,6 +112,92 @@ def test_projects_slos_timeslices_and_custom_record_path(tmp_path) -> None:
         "records_path": "search-samples.jsonl",
         "trace": True,
     }
+
+
+def test_projects_complete_adaptive_scale_policy(tmp_path) -> None:
+    phase = build_run_request(
+        _run(
+            tmp_path,
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "constant",
+                    "duration": 30,
+                    "rate": 20,
+                    "concurrency": 8,
+                    "adaptive_scale": {
+                        "enabled": True,
+                        "control": {"variable": "request_rate", "min": 2},
+                        "assessment_period": 1,
+                        "min_completed_requests": 3,
+                        "sustain_duration": 2,
+                        "strategy": {
+                            "type": "ramp_until_fail",
+                            "step_policy": "fixed_percent_step",
+                            "step_percent": 50,
+                        },
+                    },
+                    "sla": {
+                        "request_latency": {"p95": {"le": 1000}},
+                        "success_rate": {"avg": {"ge": 0.99}},
+                    },
+                }
+            ],
+        )
+    )["run"]["phases"][0]
+
+    assert phase["adaptive_scale"] == {
+        "control_variable": "request_rate",
+        "minimum": 2.0,
+        "maximum": 20.0,
+        "assessment_period_seconds": 1.0,
+        "sustain_duration_seconds": 2.0,
+        "min_completed_requests": 3,
+        "strategy_type": "ramp_until_fail",
+        "step_policy": "fixed_percent_step",
+        "base_step": 10,
+        "max_step_multiplier": 4,
+        "step_percent": 50.0,
+        "sla_filters": [
+            {
+                "metric_tag": "request_latency",
+                "stat": "p95",
+                "op": "le",
+                "threshold": 1000.0,
+            },
+            {
+                "metric_tag": "success_rate",
+                "stat": "avg",
+                "op": "ge",
+                "threshold": 0.99,
+            },
+        ],
+    }
+
+
+def test_rejects_adaptive_sla_without_adaptive_controller(tmp_path) -> None:
+    run = _run(
+        tmp_path,
+        phases=[
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 1,
+                "concurrency": 1,
+                "sla": [
+                    {
+                        "metric_tag": "request_latency",
+                        "stat": "p95",
+                        "op": "le",
+                        "threshold": 1000,
+                    }
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(RustWireError, match="without enabling adaptive_scale"):
+        build_run_request(run)
 
 
 def test_projects_user_centric_and_fixed_schedule_variants(tmp_path) -> None:

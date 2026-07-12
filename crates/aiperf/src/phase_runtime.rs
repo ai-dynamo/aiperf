@@ -16,6 +16,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use aiperf_core::observer::CollectorObserver;
+use aiperf_metrics::MetricsConfig;
 use aiperf_timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseConfig, PhaseContext,
     PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseObserver,
@@ -24,13 +26,15 @@ use aiperf_timing::{
 };
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
+use loadgen_core::sink::RequestObserver;
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::metrics::{NativeMetricsObserver, ObserverTee};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{
-    ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime, TurnDispatchOutcome,
-    TurnDispatcher, TurnLifecycleObserver, TurnRecordProcessor, Workload,
+    IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime,
+    TurnDispatchOutcome, TurnDispatcher, TurnLifecycleObserver, TurnRecordProcessor, Workload,
 };
 use crate::scheduler::LocalTaskScheduler;
 
@@ -41,6 +45,48 @@ pub trait ScheduledPhaseController {
 
     /// Stop and join actuators at sending handoff.
     fn stop(&self) -> LocalPhaseFuture<Result<()>>;
+
+    /// Resolve when controller policy independently requires issuance to stop.
+    ///
+    /// Ramps never resolve this future. Adaptive controllers use it to wake a
+    /// workload that may otherwise be sleeping until a distant arrival time.
+    fn wait_until_stop(&self) -> LocalPhaseFuture<()> {
+        Box::pin(std::future::pending())
+    }
+}
+
+/// Runtime additions constructed at the actual start of one phase.
+///
+/// This is the extension seam for policies that consume request observations,
+/// gate issuance, and own an asynchronous controller. Construction occurs only
+/// after the ordinary collector and native metrics observer exist, so an
+/// extension decorates rather than replaces benchmark measurement.
+pub struct ScheduledRuntimeExtensionParts {
+    /// Observer that includes the supplied ordinary measurement delegate.
+    pub observer: Rc<dyn RequestObserver>,
+    /// Optional policy gate consulted before every root or continuation issue.
+    pub issuance_gate: Option<Rc<dyn IssuanceGate>>,
+    /// Effective phase controller, normally wrapping the supplied controller.
+    pub controller: Rc<dyn ScheduledPhaseController>,
+}
+
+/// Object-safe factory for one phase-local runtime policy extension.
+pub trait ScheduledRuntimeExtension {
+    /// Decorate ordinary measurement and controller policy for this phase.
+    ///
+    /// `observer_origin_ns` is the timestamp origin used by transport callback
+    /// offsets. `phase_start_ns` is the actual phase boundary and should anchor
+    /// phase-local windows. They differ when warmup and profiling share one
+    /// transport timeline.
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        &self,
+        clock: Rc<dyn aiperf_clock::Clock>,
+        observer_origin_ns: i64,
+        phase_start_ns: i64,
+        delegate: Rc<dyn RequestObserver>,
+        controller: Rc<dyn ScheduledPhaseController>,
+    ) -> Result<ScheduledRuntimeExtensionParts>;
 }
 
 /// Controller used when a phase has no actuators.
@@ -201,6 +247,8 @@ pub struct ScheduledPhasePlan {
     pub controller: Rc<dyn ScheduledPhaseController>,
     /// Long-lived admission state and force cleanup.
     pub resources: Rc<dyn ScheduledPhaseResources>,
+    /// Optional phase-local observer/gate/controller decorator.
+    pub runtime_extension: Option<Rc<dyn ScheduledRuntimeExtension>>,
 }
 
 impl ScheduledPhasePlan {
@@ -219,6 +267,7 @@ impl ScheduledPhasePlan {
             start_ns: None,
             controller: Rc::new(NoopScheduledPhaseController),
             resources: Rc::new(NoopScheduledPhaseResources),
+            runtime_extension: None,
         }
     }
 
@@ -252,6 +301,12 @@ impl ScheduledPhasePlan {
     /// Attach shared admission resources used across phase workloads.
     pub fn with_resources(mut self, resources: Rc<dyn ScheduledPhaseResources>) -> Self {
         self.resources = resources;
+        self
+    }
+
+    /// Attach a phase-local observer, issuance-gate, and controller extension.
+    pub fn with_runtime_extension(mut self, extension: Rc<dyn ScheduledRuntimeExtension>) -> Self {
+        self.runtime_extension = Some(extension);
         self
     }
 }
@@ -377,14 +432,55 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             PhaseKind::Profiling => aiperf_timing::Phase::Profiling,
         };
         let tracker = Rc::new(PhaseDispatchTracker::new(context));
-        let start_ns = plan.start_ns.unwrap_or_else(|| self.clock.now_ns());
-        let runtime = ScheduledRuntime::new(
-            self.clock.clone(),
-            start_ns,
-            self.dispatcher.clone(),
-            config.stop,
-            plan.enforce_stop,
-        );
+        let phase_start_ns = self.clock.now_ns();
+        let start_ns = plan.start_ns.unwrap_or(phase_start_ns);
+        let mut controller = plan.controller.clone();
+        let runtime = if let Some(extension) = plan.runtime_extension.take() {
+            let collector = Rc::new(CollectorObserver::new(true));
+            let native_metrics = Rc::new(NativeMetricsObserver::new(
+                self.clock.clone(),
+                start_ns,
+                MetricsConfig::default(),
+            ));
+            let delegates: Vec<Rc<dyn RequestObserver>> =
+                vec![collector.clone(), native_metrics.clone()];
+            let delegate: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
+            let extension = match extension.build(
+                self.clock.clone(),
+                start_ns,
+                phase_start_ns,
+                delegate,
+                controller,
+            ) {
+                Ok(extension) => extension,
+                Err(error) => {
+                    return Rc::new(FailedScheduledPhaseExecution {
+                        phase_id: config.id.clone(),
+                        error: format!("building phase runtime extension: {error:#}"),
+                    });
+                }
+            };
+            controller = extension.controller;
+            ScheduledRuntime::new_with_observer(
+                self.clock.clone(),
+                start_ns,
+                self.dispatcher.clone(),
+                config.stop,
+                plan.enforce_stop,
+                collector,
+                native_metrics,
+                extension.observer,
+                extension.issuance_gate,
+            )
+        } else {
+            ScheduledRuntime::new(
+                self.clock.clone(),
+                start_ns,
+                self.dispatcher.clone(),
+                config.stop,
+                plan.enforce_stop,
+            )
+        };
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {
@@ -402,7 +498,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             runtime,
             tracker,
             wait_for_natural_drain: !plan.enforce_stop,
-            controller: plan.controller,
+            controller,
             resources: plan.resources,
             reports: self.reports.clone(),
             finalized: Cell::new(false),
@@ -418,6 +514,24 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             tokio::task::yield_now().await;
             Ok(())
         })
+    }
+}
+
+struct FailedScheduledPhaseExecution {
+    phase_id: String,
+    error: String,
+}
+
+impl PhaseExecution for FailedScheduledPhaseExecution {
+    fn configure(&self, _config: &PhaseConfig) -> Result<(), PhaseExecutionError> {
+        Err(PhaseExecutionError::new(format!(
+            "phase {:?}: {}",
+            self.phase_id, self.error
+        )))
+    }
+
+    fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -467,10 +581,18 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let workload = self.workload.clone();
         let runtime = self.runtime.clone();
         let wait_for_natural_drain = self.wait_for_natural_drain;
+        let controller = self.controller.clone();
         Box::pin(async move {
-            workload.execute(runtime.clone()).await.map_err(|error| {
-                PhaseExecutionError::new(format!("scheduled workload: {error:#}"))
-            })?;
+            let execution = workload.execute(runtime.clone());
+            let stop = controller.wait_until_stop();
+            tokio::pin!(execution);
+            tokio::pin!(stop);
+            tokio::select! {
+                result = &mut execution => result.map_err(|error| {
+                    PhaseExecutionError::new(format!("scheduled workload: {error:#}"))
+                })?,
+                () = &mut stop => runtime.scheduler().cancel_pending(),
+            }
             if wait_for_natural_drain {
                 // Authored/naturally exhausted workloads do not have a stop
                 // counter that can publish the last-send edge. Their scheduler

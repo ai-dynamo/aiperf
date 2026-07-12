@@ -464,6 +464,9 @@ def _phase(phase: Any) -> dict[str, Any]:
             "rate": phase.cancellation.rate,
             "delay": phase.cancellation.delay,
         }
+    adaptive_scale = _adaptive_scale(phase)
+    if adaptive_scale is not None:
+        common["adaptive_scale"] = adaptive_scale
 
     if isinstance(phase, ConcurrencyPhase):
         return {"type": "concurrency", **common, "concurrency": phase.concurrency}
@@ -502,6 +505,57 @@ def _rate_phase(kind: str, phase: Any, common: dict[str, Any]) -> dict[str, Any]
     result = {"type": kind, **common, "rate": phase.rate}
     _set_optional(result, "concurrency", phase.concurrency)
     return result
+
+
+def _adaptive_scale(phase: Any) -> dict[str, Any] | None:
+    enabled = bool(getattr(phase, "adaptive_scale", False))
+    sla_filters = list(getattr(phase, "sla", ()) or ())
+    if not enabled:
+        if sla_filters:
+            raise RustWireError(
+                f"phase {phase.name!r} defines adaptive SLA filters without "
+                "enabling adaptive_scale"
+            )
+        return None
+    if phase.name != "profiling":
+        raise RustWireError("adaptive_scale is supported only on profiling phases")
+
+    variable = str(phase.adaptive_control_variable)
+    maximum = phase.adaptive_control_max
+    if maximum is None:
+        maximum = {
+            "concurrency": phase.concurrency,
+            "prefill_concurrency": phase.prefill_concurrency,
+            "request_rate": getattr(phase, "rate", None),
+            "users": getattr(phase, "users", None),
+        }.get(variable)
+    if maximum is None:
+        raise RustWireError(
+            f"adaptive_scale control.max could not be resolved for {variable!r}"
+        )
+
+    return {
+        "control_variable": variable,
+        "minimum": phase.adaptive_control_min,
+        "maximum": maximum,
+        "assessment_period_seconds": phase.adaptive_assessment_period or 30.0,
+        "sustain_duration_seconds": phase.adaptive_sustain_duration,
+        "min_completed_requests": phase.adaptive_min_completed_requests,
+        "strategy_type": phase.adaptive_scale_strategy_type,
+        "step_policy": phase.adaptive_scale_step_policy,
+        "base_step": phase.adaptive_scale_base_step,
+        "max_step_multiplier": phase.adaptive_scale_max_step_multiplier,
+        "step_percent": phase.adaptive_scale_step_percent,
+        "sla_filters": [
+            {
+                "metric_tag": sla.metric_tag,
+                "stat": sla.stat,
+                "op": sla.op,
+                "threshold": sla.threshold,
+            }
+            for sla in sla_filters
+        ],
+    }
 
 
 def _ramp(value: Any) -> dict[str, Any] | None:

@@ -25,6 +25,8 @@ pub struct RunnerCapabilities {
     pub dataset_types: &'static [&'static str],
     /// Phase variants accepted by the current protocol.
     pub phase_types: &'static [&'static str],
+    /// Optional policies accepted inside a phase.
+    pub phase_features: &'static [&'static str],
     /// Rust runner package version.
     pub runner_version: &'static str,
 }
@@ -45,6 +47,7 @@ impl RunnerCapabilities {
                 "user_centric",
                 "fixed_schedule",
             ],
+            phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -867,6 +870,90 @@ pub struct PhaseCommonSpec {
     /// Post-send cancellation policy.
     #[serde(default)]
     pub cancellation: Option<CancellationSpec>,
+    /// Optional single-run adaptive load controller.
+    #[serde(default)]
+    pub adaptive_scale: Option<AdaptiveScaleSpec>,
+}
+
+/// Fully resolved adaptive-scale policy for one profiling phase.
+///
+/// Config v2 validation and defaulting are grounded in
+/// `src/aiperf/config/adaptive_scale_phase.py:140-383`; the wire carries the
+/// effective maximum rather than asking the native runner to rediscover an
+/// omitted-field default.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdaptiveScaleSpec {
+    /// Controlled live load variable.
+    pub control_variable: AdaptiveControlVariableSpec,
+    /// Inclusive lower bound.
+    pub minimum: f64,
+    /// Inclusive upper bound after Config-v2 inference.
+    pub maximum: f64,
+    /// Tumbling assessment-window duration in seconds.
+    pub assessment_period_seconds: f64,
+    /// Required boundary hold duration in seconds.
+    pub sustain_duration_seconds: f64,
+    /// Minimum successful completions for a conclusive window.
+    pub min_completed_requests: usize,
+    /// Controller strategy; protocol v1 intentionally has one exact algorithm.
+    pub strategy_type: AdaptiveStrategyTypeSpec,
+    /// Control increment policy.
+    pub step_policy: AdaptiveStepPolicySpec,
+    /// Minimum increment for SLA-margin scaling.
+    pub base_step: usize,
+    /// Largest SLA-margin multiplier.
+    pub max_step_multiplier: usize,
+    /// Current-value percentage for fixed-percent steps.
+    pub step_percent: f64,
+    /// Conjunctive SLA filters in authored order.
+    pub sla_filters: Vec<AdaptiveSlaFilterSpec>,
+}
+
+/// Live control variable supported by the native actuator registry.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdaptiveControlVariableSpec {
+    /// Session concurrency.
+    Concurrency,
+    /// Requests admitted but awaiting their first token.
+    PrefillConcurrency,
+    /// Mean issue rate.
+    RequestRate,
+    /// Active user-centric target.
+    Users,
+}
+
+/// Adaptive controller strategy accepted by protocol v1.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdaptiveStrategyTypeSpec {
+    /// Monotone discover, boundary sustain, and one recovery.
+    RampUntilFail,
+}
+
+/// Adaptive step-size policy.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdaptiveStepPolicySpec {
+    /// Scale a base increment using the tightest normalized SLA margin.
+    SlaMargin,
+    /// Increment by a fixed percentage of the current control value.
+    FixedPercentStep,
+}
+
+/// One adaptive SLA predicate.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdaptiveSlaFilterSpec {
+    /// Supported metric tag or alias.
+    pub metric_tag: String,
+    /// Aggregate statistic.
+    pub stat: String,
+    /// Comparison operator.
+    pub op: String,
+    /// Finite threshold in the metric's public display unit.
+    pub threshold: f64,
 }
 
 /// One Clock-driven phase ramp.

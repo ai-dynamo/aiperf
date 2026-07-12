@@ -143,6 +143,40 @@ pub fn build_adaptive(
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
 ) -> Result<BuiltAdaptive> {
+    build_adaptive_with_origins(
+        config,
+        clock,
+        start_ns,
+        start_ns,
+        delegate,
+        intervals,
+        session_slots,
+        prefill_slots,
+        user_target,
+    )
+}
+
+/// Construct adaptive policy when transport observations and phase-local
+/// windows have distinct origins.
+///
+/// A phased run keeps all transport timestamps on one benchmark timeline, but
+/// each adaptive sampler must begin at its own phase boundary. Python starts
+/// window state with phase strategy setup
+/// (`src/aiperf/timing/strategies/adaptive_scale.py:125-132,193-222`); this
+/// split preserves that behavior after a warmup phase without changing the
+/// observer wire contract.
+#[allow(clippy::too_many_arguments)]
+pub fn build_adaptive_with_origins(
+    config: AdaptiveRunConfig,
+    clock: Rc<dyn Clock>,
+    observer_origin_ns: i64,
+    window_start_ns: i64,
+    delegate: Rc<dyn RequestObserver>,
+    intervals: Rc<RefCell<Box<dyn IntervalGenerator>>>,
+    session_slots: Option<Rc<SlotPool>>,
+    prefill_slots: Option<Rc<SlotPool>>,
+    user_target: Option<Rc<dyn UserTarget>>,
+) -> Result<BuiltAdaptive> {
     let actuator: Rc<dyn ControlActuator> = match config.control_variable {
         AdaptiveControlVariable::Concurrency => {
             let pool = session_slots
@@ -197,8 +231,9 @@ pub fn build_adaptive(
             sustain_duration_ns: config.sustain_duration_ns,
         },
     )?;
-    let sampler: SharedWindowSampler =
-        Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(start_ns))));
+    let sampler: SharedWindowSampler = Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(
+        window_start_ns,
+    ))));
     let artifacts: SharedArtifactSink = Rc::new(RefCell::new(Box::new(FileArtifactSink::new(
         &config.artifact_dir,
     )?)));
@@ -213,8 +248,12 @@ pub fn build_adaptive(
             correlation: config.correlation,
         },
     )?);
-    let observer: Rc<dyn RequestObserver> =
-        Rc::new(AdaptiveObserver::new(delegate, sampler, clock, start_ns));
+    let observer: Rc<dyn RequestObserver> = Rc::new(AdaptiveObserver::new(
+        delegate,
+        sampler,
+        clock,
+        observer_origin_ns,
+    ));
     Ok(BuiltAdaptive { scale, observer })
 }
 

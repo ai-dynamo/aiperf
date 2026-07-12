@@ -10,6 +10,7 @@ description = "Versioned single-benchmark subprocess runner for the Python AIPer
 
 [dependencies]
 aiperf.workspace = true
+aiperf-adaptive = { path = "../aiperf-adaptive" }
 aiperf-clock.workspace = true
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true

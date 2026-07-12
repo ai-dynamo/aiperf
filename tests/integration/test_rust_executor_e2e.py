@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -86,6 +87,33 @@ class _ChatHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(_SSE)))
         self.end_headers()
         self.wfile.write(_SSE)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+class _AdaptiveChatHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        with self.lock:
+            type(self).active += 1
+            type(self).peak = max(type(self).peak, type(self).active)
+        try:
+            time.sleep(0.05)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(_SSE)))
+            self.end_headers()
+            self.wfile.write(_SSE)
+        finally:
+            with self.lock:
+                type(self).active -= 1
 
     def log_message(self, format: str, *args: object) -> None:
         pass
@@ -493,6 +521,104 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         # so setup can consume part of the authored 51 ms interval. The real
         # process proof must still show paced dispatch rather than a burst.
         assert 15_000_000 <= start_delta_ns <= 250_000_000
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_config_v2_adaptive_phase_controls_the_native_live_issuer(
+    tmp_path: Path,
+) -> None:
+    _AdaptiveChatHandler.active = 0
+    _AdaptiveChatHandler.peak = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _AdaptiveChatHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 2,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "duration": 8,
+                        "concurrency": 2,
+                        "adaptive_scale": {
+                            "enabled": True,
+                            "control": {
+                                "variable": "concurrency",
+                                "min": 1,
+                                "max": 2,
+                            },
+                            "assessment_period": 1,
+                            "min_completed_requests": 1,
+                            "sustain_duration": 1,
+                            "strategy": {
+                                "type": "ramp_until_fail",
+                                "step_policy": "fixed_percent_step",
+                                "step_percent": 100,
+                            },
+                        },
+                        "sla": {
+                            "request_latency": {"p95": {"le": 1000}},
+                        },
+                    },
+                    "artifacts": {"dir": str(tmp_path)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="python-rust-adaptive-e2e",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="native-adaptive",
+            random_seed=37,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+
+        assert result.success, result.error
+        assert result.summary_metrics["request_count"].avg > 10
+        assert _AdaptiveChatHandler.peak >= 2
+        summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+        assert summary["schema_version"] == 2
+        assert summary["status"] == "incomplete"
+        assert summary["control_variable"] == "concurrency"
+        assert summary["control_value"] == 2.0
+        assert (
+            summary["completed_reason"]
+            == "max_control_value_reached_without_saturation"
+        )
+        events = [
+            orjson.loads(line)
+            for line in (tmp_path / "adaptive_scale_events.jsonl")
+            .read_bytes()
+            .splitlines()
+        ]
+        assert events[0]["event"] == "adaptive_phase_started"
+        assert any(
+            event["event"] == "adaptive_decision"
+            and event["control_value_after"] == 2.0
+            for event in events
+        )
+        assert events[-1]["event"] == "adaptive_incomplete"
     finally:
         server.shutdown()
         server.server_close()

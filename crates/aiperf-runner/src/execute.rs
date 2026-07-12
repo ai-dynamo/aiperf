@@ -9,6 +9,10 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aiperf::adaptive::{
+    AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
+    positive_seconds_to_ns,
+};
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
@@ -21,14 +25,17 @@ use aiperf::multiturn::{
 };
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
-    ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
+    ScheduledPhaseResources, ScheduledRuntimeExtension, ScheduledRuntimeExtensionParts,
+    SlotPoolPhaseResources, run_scheduled_phases,
 };
 use aiperf::report::write_native_report_json;
 use aiperf::request_rate::RequestRateWorkload;
 use aiperf::scheduled::{
-    ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher, TurnRecordProcessor, Workload,
+    IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
+    TurnRecordProcessor, Workload,
 };
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
+use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
 use aiperf_clock::{Clock, RealClock};
 use aiperf_dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
@@ -64,12 +71,13 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::protocol::{
-    DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
-    ModelSelectionStrategy, ModelsSpec, PhaseSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
-    RampSpec, RampStrategySpec, RunRequest, RunTerminal, SequenceDistributionEntrySpec,
-    SourceImageSamplingSpec, SyntheticAudioFormatSpec, SyntheticAudioSpec, SyntheticDatasetSpec,
-    SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
-    SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
+    AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DatasetSpec,
+    DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec, ModelSelectionStrategy,
+    ModelsSpec, PhaseSpec, PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
+    RunRequest, RunTerminal, SequenceDistributionEntrySpec, SourceImageSamplingSpec,
+    SyntheticAudioFormatSpec, SyntheticAudioSpec, SyntheticDatasetSpec, SyntheticImageFormatSpec,
+    SyntheticImageSpec, SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec,
+    SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
 use crate::records::{CapturedRecord, write_records_jsonl};
 
@@ -80,6 +88,7 @@ type PhaseRuntimeParts = (
     Option<Rc<SlotPool>>,
     bool,
     Rc<dyn ScheduledPhaseResources>,
+    Option<Rc<dyn UserTarget>>,
 );
 
 /// Execute exactly one request on a fresh current-thread Tokio runtime.
@@ -199,14 +208,38 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         .run
         .phases
         .iter()
-        .any(|phase| phase.request_arrival().is_some() && phase.concurrency().is_some())
+        .any(|phase| {
+            phase.request_arrival().is_some()
+                && (phase.concurrency().is_some()
+                    || phase
+                        .common()
+                        .adaptive_scale
+                        .as_ref()
+                        .is_some_and(|adaptive| {
+                            matches!(
+                                adaptive.control_variable,
+                                AdaptiveControlVariableSpec::Concurrency
+                            )
+                        }))
+        })
         .then(|| Rc::new(SlotPool::new(1)));
     let shared_prefill = request
         .run
         .phases
         .iter()
         .any(|phase| {
-            phase.request_arrival().is_some() && phase.common().prefill_concurrency.is_some()
+            phase.request_arrival().is_some()
+                && (phase.common().prefill_concurrency.is_some()
+                    || phase
+                        .common()
+                        .adaptive_scale
+                        .as_ref()
+                        .is_some_and(|adaptive| {
+                            matches!(
+                                adaptive.control_variable,
+                                AdaptiveControlVariableSpec::PrefillConcurrency
+                            )
+                        }))
         })
         .then(|| Rc::new(SlotPool::new(1)));
     let request_resources: Rc<dyn ScheduledPhaseResources> = Rc::new(SlotPoolPhaseResources::new(
@@ -241,8 +274,15 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         let arrival_seed = rng_root
             .derive_seed(&format!("runner.phase.{phase_index}.arrival"))
             .unwrap_or(phase_index as u64);
-        let (workload, intervals, phase_session, phase_prefill, enforce_stop, resources):
-            PhaseRuntimeParts = match phase {
+        let (
+            workload,
+            intervals,
+            phase_session,
+            phase_prefill,
+            enforce_stop,
+            resources,
+            user_target,
+        ): PhaseRuntimeParts = match phase {
             PhaseSpec::Concurrency { .. }
             | PhaseSpec::Poisson { .. }
             | PhaseSpec::Gamma { .. }
@@ -269,6 +309,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
                     shared_prefill.clone(),
                     true,
                     request_resources.clone(),
+                    None,
                 )
             }
             PhaseSpec::UserCentric {
@@ -285,15 +326,38 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
                     phase.common().rate_ramp.is_none(),
                     "user_centric cadence is authored and does not accept rate_ramp"
                 );
+                let adaptive = phase.common().adaptive_scale.as_ref();
+                let initial_users = adaptive
+                    .filter(|adaptive| {
+                        matches!(
+                            adaptive.control_variable,
+                            AdaptiveControlVariableSpec::Users
+                        )
+                    })
+                    .map(|adaptive| integer_adaptive_bound(adaptive.minimum, "users minimum"))
+                    .transpose()?
+                    .unwrap_or(*users);
+                let session_concurrency = match (adaptive, concurrency) {
+                    (
+                        Some(AdaptiveScaleSpec {
+                            control_variable: AdaptiveControlVariableSpec::Concurrency,
+                            maximum,
+                            ..
+                        }),
+                        None,
+                    ) => Some(integer_adaptive_bound(*maximum, "concurrency maximum")?),
+                    _ => *concurrency,
+                };
                 let concrete = Rc::new(UserCentricWorkload::new(
                     UserCentricConfig {
-                        num_users: *users,
+                        num_users: initial_users,
                         request_rate: *rate,
-                        concurrency: *concurrency,
+                        concurrency: session_concurrency,
                     },
                     source,
                 )?);
                 let phase_session = concrete.session_slots();
+                let user_target: Rc<dyn UserTarget> = Rc::new(concrete.control());
                 let resources: Rc<dyn ScheduledPhaseResources> =
                     Rc::new(SlotPoolPhaseResources::new(phase_session.clone(), None));
                 let intervals = Rc::new(RefCell::new(make_interval_generator(
@@ -302,7 +366,15 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
                     None,
                     arrival_seed,
                 )));
-                (concrete, intervals, phase_session, None, true, resources)
+                (
+                    concrete,
+                    intervals,
+                    phase_session,
+                    None,
+                    true,
+                    resources,
+                    Some(user_target),
+                )
             }
             PhaseSpec::FixedSchedule {
                 auto_offset,
@@ -339,6 +411,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
                     None,
                     false,
                     Rc::new(aiperf::phase_runtime::NoopScheduledPhaseResources),
+                    None,
                 )
             }
         };
@@ -351,24 +424,35 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         let controller = ramp_controller(
             phase,
             clock.clone(),
+            intervals.clone(),
+            phase_session.clone(),
+            phase_prefill.clone(),
+            RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.ramp"))),
+        )?;
+        let runtime_extension = adaptive_runtime_extension(
+            phase,
+            &request.run.benchmark_id,
+            &request.run.artifact_dir,
             intervals,
             phase_session,
             phase_prefill,
-            RngRoot::new(rng_root.derive_seed(&format!("runner.phase.{phase_index}.ramp"))),
+            user_target,
         )?;
         let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
             capture: capture.clone(),
             phase: metrics_phase(phase)?,
             has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
         });
-        plans.push(
-            ScheduledPhasePlan::new(phase_config, workload, policies)
-                .with_enforce_stop(enforce_stop)
-                .with_start_ns(start_ns)
-                .with_resources(resources)
-                .with_record_processors(vec![record_processor])
-                .with_controller(controller),
-        );
+        let mut plan = ScheduledPhasePlan::new(phase_config, workload, policies)
+            .with_enforce_stop(enforce_stop)
+            .with_start_ns(start_ns)
+            .with_resources(resources)
+            .with_record_processors(vec![record_processor])
+            .with_controller(controller);
+        if let Some(extension) = runtime_extension {
+            plan = plan.with_runtime_extension(extension);
+        }
+        plans.push(plan);
     }
 
     let observer: Rc<dyn PhaseObserver> = Rc::new(NoopPhaseObserver);
@@ -1128,6 +1212,273 @@ fn ramp_controller(
         Ok(Rc::new(aiperf::phase_runtime::NoopScheduledPhaseController))
     } else {
         Ok(Rc::new(RampScheduledPhaseController::new(drivers)))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn adaptive_runtime_extension(
+    phase: &PhaseSpec,
+    benchmark_id: &str,
+    artifact_dir: &Path,
+    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    session_slots: Option<Rc<SlotPool>>,
+    prefill_slots: Option<Rc<SlotPool>>,
+    user_target: Option<Rc<dyn UserTarget>>,
+) -> Result<Option<Rc<dyn ScheduledRuntimeExtension>>> {
+    let Some(spec) = phase.common().adaptive_scale.as_ref() else {
+        return Ok(None);
+    };
+    ensure!(
+        phase.common().name == "profiling",
+        "adaptive_scale is supported only on profiling phases"
+    );
+    ensure!(
+        phase.common().duration.is_some(),
+        "adaptive_scale requires a phase duration"
+    );
+    ensure!(
+        !matches!(phase, PhaseSpec::FixedSchedule { .. }),
+        "adaptive_scale is not defined for fixed_schedule phases"
+    );
+
+    let control_variable = match spec.control_variable {
+        AdaptiveControlVariableSpec::Concurrency => {
+            ensure!(
+                session_slots.is_some(),
+                "adaptive concurrency requires session admission"
+            );
+            ensure!(
+                phase.common().concurrency_ramp.is_none(),
+                "adaptive concurrency cannot be combined with concurrency_ramp"
+            );
+            AdaptiveControlVariable::Concurrency
+        }
+        AdaptiveControlVariableSpec::PrefillConcurrency => {
+            ensure!(
+                !matches!(phase, PhaseSpec::UserCentric { .. }),
+                "user_centric phases do not expose prefill admission"
+            );
+            ensure!(
+                prefill_slots.is_some(),
+                "adaptive prefill_concurrency requires prefill admission"
+            );
+            ensure!(
+                phase.common().prefill_ramp.is_none(),
+                "adaptive prefill_concurrency cannot be combined with prefill_ramp"
+            );
+            let session_target = phase.concurrency().ok_or_else(|| {
+                anyhow!("adaptive prefill_concurrency requires a session concurrency cap")
+            })?;
+            ensure!(
+                spec.maximum <= session_target as f64,
+                "adaptive prefill_concurrency maximum must be <= concurrency"
+            );
+            AdaptiveControlVariable::PrefillConcurrency
+        }
+        AdaptiveControlVariableSpec::RequestRate => {
+            ensure!(
+                matches!(
+                    phase,
+                    PhaseSpec::Poisson { .. }
+                        | PhaseSpec::Gamma { .. }
+                        | PhaseSpec::Constant { .. }
+                ),
+                "adaptive request_rate requires a rate-controlled phase"
+            );
+            ensure!(
+                phase.common().rate_ramp.is_none(),
+                "adaptive request_rate cannot be combined with rate_ramp"
+            );
+            AdaptiveControlVariable::RequestRate
+        }
+        AdaptiveControlVariableSpec::Users => {
+            ensure!(
+                matches!(phase, PhaseSpec::UserCentric { .. }) && user_target.is_some(),
+                "adaptive users requires a user_centric phase"
+            );
+            AdaptiveControlVariable::Users
+        }
+    };
+    let step = match spec.step_policy {
+        AdaptiveStepPolicySpec::SlaMargin => AdaptiveStepConfig::SlaMargin {
+            base_step: spec.base_step,
+            max_step_multiplier: spec.max_step_multiplier,
+        },
+        AdaptiveStepPolicySpec::FixedPercentStep => AdaptiveStepConfig::FixedPercent {
+            percent: spec.step_percent,
+        },
+    };
+    let sla_filters = spec
+        .sla_filters
+        .iter()
+        .map(|filter| {
+            SlaFilter::new(
+                filter.metric_tag.clone(),
+                filter.stat.parse()?,
+                filter.op.parse()?,
+                filter.threshold,
+            )
+            .map_err(Into::into)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let config = AdaptiveRunConfig {
+        control_variable,
+        minimum: spec.minimum,
+        maximum: spec.maximum,
+        assessment_period_ns: positive_seconds_to_ns(
+            spec.assessment_period_seconds,
+            "adaptive assessment period",
+        )?,
+        sustain_duration_ns: positive_seconds_to_ns(
+            spec.sustain_duration_seconds,
+            "adaptive sustain duration",
+        )?,
+        min_completed_requests: spec.min_completed_requests,
+        sla_filters,
+        step,
+        artifact_dir: artifact_dir.to_path_buf(),
+        correlation: CorrelationContext {
+            run_id: Some(benchmark_id.to_string()),
+            phase_id: phase.common().name.clone(),
+            phase_name: Some(phase.common().name.clone()),
+            ..CorrelationContext::default()
+        },
+    };
+    Ok(Some(Rc::new(AdaptiveRuntimeExtension {
+        config,
+        intervals,
+        session_slots,
+        prefill_slots,
+        user_target,
+        session_target: phase.concurrency(),
+        prefill_target: phase.common().prefill_concurrency,
+    })))
+}
+
+fn integer_adaptive_bound(value: f64, label: &str) -> Result<usize> {
+    ensure!(
+        value.is_finite() && value >= 1.0 && value.fract() == 0.0 && value <= usize::MAX as f64,
+        "adaptive {label} must be an integer in the usize range"
+    );
+    Ok(value as usize)
+}
+
+struct AdaptiveRuntimeExtension {
+    config: AdaptiveRunConfig,
+    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    session_slots: Option<Rc<SlotPool>>,
+    prefill_slots: Option<Rc<SlotPool>>,
+    user_target: Option<Rc<dyn UserTarget>>,
+    session_target: Option<usize>,
+    prefill_target: Option<usize>,
+}
+
+impl ScheduledRuntimeExtension for AdaptiveRuntimeExtension {
+    fn build(
+        &self,
+        clock: Rc<dyn Clock>,
+        observer_origin_ns: i64,
+        phase_start_ns: i64,
+        delegate: Rc<dyn RequestObserver>,
+        controller: Rc<dyn ScheduledPhaseController>,
+    ) -> Result<ScheduledRuntimeExtensionParts> {
+        if self.config.control_variable != AdaptiveControlVariable::Concurrency
+            && let (Some(slots), Some(target)) = (&self.session_slots, self.session_target)
+        {
+            slots.set_limit(target);
+        }
+        if self.config.control_variable != AdaptiveControlVariable::PrefillConcurrency
+            && let (Some(slots), Some(target)) = (&self.prefill_slots, self.prefill_target)
+        {
+            slots.set_limit(target);
+        }
+        let built = build_adaptive_with_origins(
+            self.config.clone(),
+            clock,
+            observer_origin_ns,
+            phase_start_ns,
+            delegate,
+            self.intervals.clone(),
+            self.session_slots.clone(),
+            self.prefill_slots.clone(),
+            self.user_target.clone(),
+        )?;
+        let gate: Rc<dyn IssuanceGate> = built.scale.clone();
+        let controller: Rc<dyn ScheduledPhaseController> = Rc::new(
+            AdaptiveScheduledPhaseController::new(built.scale, controller),
+        );
+        Ok(ScheduledRuntimeExtensionParts {
+            observer: built.observer,
+            issuance_gate: Some(gate),
+            controller,
+        })
+    }
+}
+
+struct AdaptiveScheduledPhaseController {
+    scale: Rc<AdaptiveScale>,
+    delegate: Rc<dyn ScheduledPhaseController>,
+    assessment: RefCell<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl AdaptiveScheduledPhaseController {
+    fn new(scale: Rc<AdaptiveScale>, delegate: Rc<dyn ScheduledPhaseController>) -> Self {
+        Self {
+            scale,
+            delegate,
+            assessment: RefCell::new(None),
+        }
+    }
+}
+
+impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
+    fn start(&self) -> Result<()> {
+        ensure!(
+            self.assessment.borrow().is_none(),
+            "adaptive phase controller was already started"
+        );
+        self.delegate.start()?;
+        self.scale.start()?;
+        let scale = self.scale.clone();
+        *self.assessment.borrow_mut() = Some(tokio::task::spawn_local(scale.assessment_loop()));
+        Ok(())
+    }
+
+    fn stop(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+        self.scale.deactivate();
+        let assessment = self.assessment.borrow_mut().take();
+        let scale = self.scale.clone();
+        let delegate = self.delegate.clone();
+        Box::pin(async move {
+            let mut errors = Vec::new();
+            if let Some(assessment) = assessment {
+                assessment.abort();
+                if let Err(error) = assessment.await
+                    && !error.is_cancelled()
+                {
+                    errors.push(format!("adaptive assessment task: {error}"));
+                }
+            }
+            if let Err(error) = scale.complete_phase() {
+                errors.push(format!("completing adaptive phase: {error}"));
+            }
+            if let Some(error) = scale.last_error() {
+                errors.push(format!("adaptive assessment failed: {error}"));
+            }
+            if let Err(error) = delegate.stop().await {
+                errors.push(format!("stopping delegated phase controller: {error:#}"));
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                bail!(errors.join("; "))
+            }
+        })
+    }
+
+    fn wait_until_stop(&self) -> aiperf_timing::LocalPhaseFuture<()> {
+        let scale = self.scale.clone();
+        Box::pin(async move { scale.wait_until_stop_sending().await })
     }
 }
 
