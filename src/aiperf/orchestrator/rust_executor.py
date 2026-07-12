@@ -26,6 +26,7 @@ from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_wire import (
     RUNNER_PROTOCOL_VERSION,
     build_run_request,
+    validate_v1_selection,
 )
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ class RustSubprocessExecutor(RunExecutor):
             # directories or warm tokenizer caches. Unknown endpoint identity
             # is an exact-runner compatibility error, not a Python plugin lookup.
             self.installation.preflight_endpoint(str(run.cfg.endpoint.type))
+            validate_v1_selection(run.cfg)
             self._resolve_run(run)
             request = build_run_request(run)
             completed = self.installation.execute(request)

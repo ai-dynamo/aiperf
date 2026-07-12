@@ -20,10 +20,15 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from aiperf.common.redact import redact_string
-from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_VERSION
+from aiperf.orchestrator.rust_wire import (
+    RUNNER_PROTOCOL_V2,
+    RUNNER_PROTOCOL_VERSION,
+    RunnerOperationV2,
+    build_authored_run_request,
+)
 
 if TYPE_CHECKING:
-    from aiperf.config.resolution.plan import BenchmarkPlan
+    from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
 
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
 _NATIVE_REPORT_SCHEMA_VERSION = "2.0"
@@ -61,6 +66,47 @@ class RunnerInstallation:
             f"aiperf-runner {self.binary}; available endpoints: {choices}. "
             "Select a runner distribution containing that endpoint (for example "
             f"with {_RUNNER_ENV})."
+        )
+
+    @property
+    def distribution_id(self) -> str | None:
+        """Return the exact identity advertised by this binary, if available.
+
+        Protocol v1 runners do not publish an executable identity. Python does
+        not synthesize one from package versions, paths, or endpoint catalogs.
+        """
+        value = self.capabilities.get("distribution_id")
+        return value if isinstance(value, str) and value else None
+
+    def project_authored_request(
+        self,
+        run: BenchmarkRun,
+        *,
+        operation: RunnerOperationV2,
+    ) -> dict[str, Any]:
+        """Build a v2 request bound to this installation without executing it.
+
+        The selected runner must explicitly advertise both protocol v2 and its
+        exact distribution identity. This provisional API intentionally does
+        not launch v2 until the Rust strict DTO and response contract land.
+        """
+        versions = self.capabilities.get("protocol_versions")
+        if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
+            raise RuntimeError(
+                f"selected aiperf-runner {self.binary} does not support protocol "
+                f"{RUNNER_PROTOCOL_V2}; advertised {versions!r}"
+            )
+        distribution_id = self.distribution_id
+        if distribution_id is None:
+            raise RuntimeError(
+                f"selected aiperf-runner {self.binary} advertises protocol "
+                f"{RUNNER_PROTOCOL_V2} without distribution_id; upgrade the runner. "
+                "Python will not invent a fallback identity."
+            )
+        return build_authored_run_request(
+            run,
+            operation=operation,
+            expected_distribution_id=distribution_id,
         )
 
     def preflight_plan(self, plan: BenchmarkPlan) -> None:
@@ -132,6 +178,15 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
         raise ValueError("aiperf-runner capabilities must be an object")
     if capabilities.get("event") != "runner_capabilities":
         raise ValueError("aiperf-runner returned an unknown capability response")
+    distribution_id = capabilities.get("distribution_id")
+    if distribution_id is not None and (
+        not isinstance(distribution_id, str)
+        or not distribution_id
+        or distribution_id != distribution_id.strip()
+    ):
+        raise ValueError(
+            "aiperf-runner capability distribution_id must be a non-empty exact string"
+        )
     versions = capabilities.get("protocol_versions")
     if not isinstance(versions, list) or RUNNER_PROTOCOL_VERSION not in versions:
         raise RuntimeError(

@@ -3,18 +3,19 @@
 
 """Versioned projection from Config v2 into the native single-run contract.
 
-Config v2 remains the user-facing and orchestration schema.  This module is
-the only place where a fully resolved :class:`BenchmarkRun` is lowered into
-the narrower Rust execution ABI; raw Pydantic dumps are deliberately not a
-process boundary.
+Config v2 remains the user-facing and orchestration schema. Protocol v1 keeps
+its resolved compatibility projection while protocol v2 has a separate,
+side-effect-free authored projection. Raw Pydantic dumps are deliberately not
+the outer process boundary in either version.
 """
 
 from __future__ import annotations
 
+import copy
 import multiprocessing
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from aiperf.common.environment import Environment
 from aiperf.config.dataset import FileDataset, PublicDataset, SyntheticDataset
@@ -32,11 +33,230 @@ if TYPE_CHECKING:
 
 
 RUNNER_PROTOCOL_VERSION = 1
+RUNNER_PROTOCOL_V2 = 2
 SERVER_METRICS_PARQUET_WIRE_PATH = Path(".aiperf-server-metrics-parquet-wire.jsonl")
+RunnerOperationV2 = Literal["validate", "execute"]
 
 
 class RustWireError(ValueError):
     """Raised when a resolved Config v2 run cannot enter the native ABI."""
+
+
+def build_authored_run_request(
+    run: BenchmarkRun,
+    *,
+    operation: RunnerOperationV2,
+    expected_distribution_id: str,
+) -> dict[str, Any]:
+    """Project one Config-v2 run into the provisional protocol-v2 envelope.
+
+    This projection reads authored/structurally normalized configuration only:
+    it never reads ``BenchmarkRun.resolved``, loads a dataset, inspects the
+    filesystem, warms a tokenizer, creates artifacts, or starts a worker. The
+    strict Rust protocol-v2 DTO is not built yet, so callers may inspect or test
+    this contract but must continue to execute protocol v1 for now.
+    """
+    if operation not in ("validate", "execute"):
+        raise RustWireError(
+            f"protocol-v2 operation must be 'validate' or 'execute', got {operation!r}"
+        )
+    if (
+        not isinstance(expected_distribution_id, str)
+        or not expected_distribution_id
+        or expected_distribution_id != expected_distribution_id.strip()
+    ):
+        raise RustWireError(
+            "protocol-v2 expected_distribution_id must be non-empty and contain no "
+            "leading or trailing whitespace"
+        )
+
+    return {
+        "protocol_version": RUNNER_PROTOCOL_V2,
+        "operation": operation,
+        "expected_distribution_id": expected_distribution_id,
+        "run": _authored_run_v2(run),
+    }
+
+
+def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
+    """Assemble the provisional v2 run body in one alignment point."""
+    cfg = run.cfg
+    dataset = cfg.get_default_dataset()
+    identity: dict[str, Any] = {
+        "benchmark_id": run.benchmark_id,
+        "label": run.label,
+        "trial": run.trial,
+    }
+    _set_optional(identity, "random_seed", run.random_seed)
+    if run.variation is not None:
+        identity["variation"] = {
+            "index": run.variation.index,
+            "label": run.variation.label,
+            "values": copy.deepcopy(run.variation.values),
+        }
+
+    sidecars = _authored_sidecars(cfg)
+    return {
+        "identity": identity,
+        "artifact_target": str(run.artifact_dir),
+        "models": _authored_models(cfg),
+        "endpoints": {
+            "profiles": [
+                {
+                    "id": "default",
+                    **_authored_endpoint(cfg.endpoint, include_readiness=True),
+                }
+            ]
+        },
+        "backend": {
+            "type": str(cfg.backend.type),
+            "config": copy.deepcopy(cfg.backend.config),
+        },
+        "workload": _authored_workload(cfg, dataset),
+        "metrics": _authored_metrics(cfg),
+        "artifacts": _authored_artifacts(cfg),
+        "sidecars": sidecars,
+    }
+
+
+def _authored_models(cfg: Any) -> dict[str, Any]:
+    """Project model selection without resolving tokenizers or model aliases."""
+    return {
+        "strategy": str(cfg.models.strategy),
+        "items": [
+            {
+                "name": item.name,
+                **({"weight": item.weight} if item.weight is not None else {}),
+            }
+            for item in cfg.models.items
+        ],
+    }
+
+
+def _authored_endpoint(
+    endpoint: Any, *, include_readiness: bool = False
+) -> dict[str, Any]:
+    """Project raw endpoint policy without consulting endpoint metadata."""
+    result: dict[str, Any] = {
+        "urls": list(endpoint.urls),
+        "type": str(endpoint.type),
+        "streaming": endpoint.streaming,
+        "use_legacy_max_tokens": endpoint.use_legacy_max_tokens,
+        "use_server_token_count": endpoint.use_server_token_count,
+        "timeout_seconds": endpoint.timeout,
+        "connection_reuse": str(endpoint.connection_reuse),
+        "download_video_content": endpoint.download_video_content,
+        "extra": copy.deepcopy(endpoint.extra),
+        "headers": dict(endpoint.headers),
+        "http2": False,
+    }
+    _set_optional(result, "path", endpoint.path)
+    _set_optional(result, "api_key", endpoint.api_key)
+    _set_optional(result, "session_header", endpoint.session_header)
+    if endpoint.request_content_type is not None:
+        result["request_content_type"] = {
+            "application/json": "application_json",
+            "multipart/form-data": "multipart_form_data",
+        }[str(endpoint.request_content_type)]
+    if endpoint.template is not None:
+        result["template"] = endpoint.template.body
+        result["response_field"] = endpoint.template.response_field
+    if include_readiness:
+        result["wait_for_model_timeout"] = endpoint.wait_for_model_timeout
+        result["wait_for_model_interval"] = endpoint.wait_for_model_interval
+        result["wait_for_model_mode"] = endpoint.wait_for_model_mode
+    return result
+
+
+def _authored_workload(cfg: Any, dataset: Any) -> dict[str, Any]:
+    """Build an open workload selection around unprepared authored inputs."""
+    if cfg.workload is not None:
+        workload_type = str(cfg.workload.type)
+        workload_config = copy.deepcopy(cfg.workload.config)
+    else:
+        workload_type = _default_workload_type(cfg, dataset)
+        workload_config = {}
+
+    # Explicit extension-owned keys remain intact. The current Config-v2
+    # scheduled fields fill only missing keys during the compatibility window.
+    current_fields: dict[str, Any] = {
+        "worker_count": _worker_count(cfg),
+        "dataset": _authored_model_dump(dataset),
+        "tokenizer": _authored_model_dump(cfg.tokenizer),
+        "phases": [_authored_model_dump(phase) for phase in cfg.phases],
+    }
+    if cfg.accuracy is not None and cfg.accuracy.enabled:
+        current_fields["accuracy"] = _authored_model_dump(cfg.accuracy)
+    for name, value in current_fields.items():
+        workload_config.setdefault(name, value)
+    return {"type": workload_type, "config": workload_config}
+
+
+def _default_workload_type(cfg: Any, dataset: Any) -> str:
+    """Select the compatibility workload from exact normalized authored state."""
+    if str(getattr(dataset, "format", "")) == "dag_jsonl":
+        return "graph"
+    if cfg.accuracy is not None and cfg.accuracy.enabled:
+        return "static_accuracy"
+    return "scheduled"
+
+
+def _authored_model_dump(value: Any) -> dict[str, Any]:
+    """Serialize one authored config object without resolution or aliases."""
+    return value.model_dump(
+        mode="json",
+        by_alias=False,
+        exclude_none=True,
+        context={"include_secrets": True},
+    )
+
+
+def _authored_metrics(cfg: Any) -> dict[str, Any]:
+    """Project authored metric policy shared with the v1 native path."""
+    result: dict[str, Any] = {"slos": dict(cfg.slos or {})}
+    if cfg.artifacts.slice_duration is not None:
+        result["slice_duration_seconds"] = cfg.artifacts.slice_duration
+    return result
+
+
+def _authored_artifacts(cfg: Any) -> dict[str, Any]:
+    """Project output names relative to the selected, still-uncreated target."""
+    root = cfg.artifacts.dir
+    result: dict[str, Any] = {"trace": cfg.artifacts.trace}
+    if cfg.artifacts.records is not False or cfg.artifacts.raw:
+        result["records_path"] = str(
+            cfg.artifacts.profile_export_jsonl_file.relative_to(root)
+        )
+    if cfg.artifacts.export_outputs_json:
+        result["outputs_path"] = str(cfg.artifacts.outputs_json_file.relative_to(root))
+    if cfg.artifacts.raw:
+        result["raw_path"] = str(
+            cfg.artifacts.profile_export_raw_jsonl_file.relative_to(root)
+        )
+    if cfg.artifacts.user_files:
+        result["user_files"] = [
+            _authored_model_dump(user_file) for user_file in cfg.artifacts.user_files
+        ]
+    return result
+
+
+def _authored_sidecars(cfg: Any) -> dict[str, Any]:
+    """Project sidecar intent without discovery, probing, or worker startup."""
+    result: dict[str, Any] = {}
+    if cfg.gpu_telemetry.enabled:
+        result["gpu_telemetry"] = _authored_model_dump(cfg.gpu_telemetry)
+    if cfg.network_latency.enabled:
+        result["network_latency"] = _authored_model_dump(cfg.network_latency)
+    if cfg.server_metrics.enabled:
+        result["server_metrics"] = _authored_model_dump(cfg.server_metrics)
+    if cfg.otel.collector_enabled or cfg.mlflow.enabled:
+        live_streaming: dict[str, Any] = {}
+        if cfg.otel.collector_enabled:
+            live_streaming["otel"] = _authored_model_dump(cfg.otel)
+        if cfg.mlflow.enabled:
+            live_streaming["mlflow"] = _authored_model_dump(cfg.mlflow)
+        result["live_streaming"] = live_streaming
+    return result
 
 
 def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
@@ -48,39 +268,7 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     """
     cfg = run.cfg
     dataset = cfg.get_default_dataset()
-
-    models = [
-        {
-            "name": item.name,
-            **({"weight": item.weight} if item.weight is not None else {}),
-        }
-        for item in cfg.models.items
-    ]
-    endpoint = cfg.endpoint
-    endpoint_wire: dict[str, Any] = {
-        "urls": list(endpoint.urls),
-        "type": str(endpoint.type),
-        "streaming": endpoint.streaming,
-        "use_legacy_max_tokens": endpoint.use_legacy_max_tokens,
-        "use_server_token_count": endpoint.use_server_token_count,
-        "timeout_seconds": endpoint.timeout,
-        "connection_reuse": str(endpoint.connection_reuse),
-        "download_video_content": endpoint.download_video_content,
-        "extra": dict(endpoint.extra),
-        "headers": dict(endpoint.headers),
-        "http2": False,
-    }
-    _set_optional(endpoint_wire, "path", endpoint.path)
-    _set_optional(endpoint_wire, "api_key", endpoint.api_key)
-    _set_optional(endpoint_wire, "session_header", endpoint.session_header)
-    if endpoint.request_content_type is not None:
-        endpoint_wire["request_content_type"] = {
-            "application/json": "application_json",
-            "multipart/form-data": "multipart_form_data",
-        }[str(endpoint.request_content_type)]
-    if endpoint.template is not None:
-        endpoint_wire["template"] = endpoint.template.body
-        endpoint_wire["response_field"] = endpoint.template.response_field
+    validate_v1_selection(cfg)
 
     variation = run.variation
     run_wire: dict[str, Any] = {
@@ -89,8 +277,8 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
         "trial": run.trial,
         "workers": _worker_count(cfg),
         "artifact_dir": str(run.artifact_dir),
-        "models": {"strategy": str(cfg.models.strategy), "items": models},
-        "endpoint": endpoint_wire,
+        "models": _authored_models(cfg),
+        "endpoint": _authored_endpoint(cfg.endpoint),
         "dataset": _dataset(run, dataset),
         "tokenizer": {
             "name": _tokenizer_source(run),
@@ -180,6 +368,28 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     if live_streaming is not None:
         run_wire["live_streaming"] = live_streaming
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
+
+
+def validate_v1_selection(cfg: Any) -> None:
+    """Fail before v1 resolution when Config v2 selected a v2-only surface."""
+    if str(cfg.backend.type) != "online_http" or cfg.backend.config:
+        raise RustWireError(
+            "native runner protocol v1 supports only backend type 'online_http' "
+            "with an empty config; authored backend selections require protocol v2"
+        )
+    if cfg.workload is not None:
+        raise RustWireError(
+            "native runner protocol v1 does not represent an explicit workload "
+            "selection; remove benchmark.workload or use protocol v2 once its strict "
+            "execution DTO is available"
+        )
+    if cfg.endpoint.wait_for_model_timeout > 0:
+        raise RustWireError(
+            "native runner protocol v1 cannot honor endpoint.wait_for_model_timeout; "
+            "readiness must be implemented by the selected runner before this run can "
+            "execute. Disable readiness or use a protocol-v2-capable runner once its "
+            "strict execution DTO is available."
+        )
 
 
 def _worker_count(cfg: Any) -> int:

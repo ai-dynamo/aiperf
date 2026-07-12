@@ -2984,6 +2984,22 @@
           "default": null,
           "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
         },
+        "backend": {
+          "$ref": "#/$defs/RunnerBackendConfig",
+          "description": "Orthogonal native backend selection. The open type ID and factory-owned config are validated by the selected aiperf-runner."
+        },
+        "workload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunnerWorkloadConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional explicit native workload selection. When omitted, the protocol-v2 projection selects graph for dag_jsonl, static_accuracy for enabled accuracy, and scheduled otherwise."
+        },
         "model": {
           "description": "Shorthand for 'models'. Accepts a single value which will be converted to a list/dict. Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced.",
           "oneOf": [
@@ -13635,6 +13651,49 @@
       ],
       "title": "RequestContentType",
       "type": "string"
+    },
+    "RunnerBackendConfig": {
+      "additionalProperties": false,
+      "description": "Orthogonal execution-backend selection for one native run.",
+      "properties": {
+        "type": {
+          "default": "online_http",
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "description": "Factory-owned authored configuration. Python preserves this object without interpreting implementation-specific keys.",
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "title": "RunnerBackendConfig",
+      "type": "object"
+    },
+    "RunnerWorkloadConfig": {
+      "additionalProperties": false,
+      "description": "Optional explicit workload-factory selection for one native run.",
+      "properties": {
+        "type": {
+          "description": "Open factory ID resolved by the selected runner registry.",
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "description": "Factory-owned authored configuration. Python preserves this object without interpreting implementation-specific keys.",
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "RunnerWorkloadConfig",
+      "type": "object"
     },
     "RuntimeConfig": {
       "additionalProperties": false,

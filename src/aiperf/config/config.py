@@ -51,6 +51,10 @@ from aiperf.config.dataset import (
 from aiperf.config.endpoint import (
     EndpointConfig,
 )
+from aiperf.config.execution import (
+    RunnerBackendConfig,
+    RunnerWorkloadConfig,
+)
 from aiperf.config.gpu_telemetry import (
     GpuTelemetryConfig,
 )
@@ -385,6 +389,25 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             default=None,
             description="Accuracy benchmarking configuration. "
             "When set, enables accuracy evaluation alongside performance profiling.",
+        ),
+    ]
+
+    backend: Annotated[
+        RunnerBackendConfig,
+        Field(
+            default_factory=RunnerBackendConfig,
+            description="Orthogonal native backend selection. The open type ID and "
+            "factory-owned config are validated by the selected aiperf-runner.",
+        ),
+    ]
+
+    workload: Annotated[
+        RunnerWorkloadConfig | None,
+        Field(
+            default=None,
+            description="Optional explicit native workload selection. When omitted, "
+            "the protocol-v2 projection selects graph for dag_jsonl, "
+            "static_accuracy for enabled accuracy, and scheduled otherwise.",
         ),
     ]
 

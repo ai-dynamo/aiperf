@@ -105,8 +105,10 @@ cargo run --release -p aiperf-runner -- --capabilities
 
 `cargo run -p aiperf` is intentionally invalid: the `aiperf` Rust package has
 no binary. Config-v2 YAML expresses endpoints, datasets, phases, ramps,
-cancellation, adaptive policy, accuracy, telemetry, and artifacts; Python
-expands outer loops and lowers each resolved cell into one runner request.
+cancellation, adaptive policy, accuracy, telemetry, artifacts, and open
+backend/workload selections. Python expands outer loops; execution retains the
+protocol-v1 compatibility projection while a side-effect-free authored-v2
+projection is available for validation and contract tests.
 
 The online concurrency and request-rate issuers own all applicable live ramp
 actuators. User-centric owns only its optional session-concurrency pool, while
@@ -302,16 +304,16 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   the strict v2 envelope, exact image identity, and worker-local prepared bindings;
   mode reachability is intentionally delegated to the next spec.
 - `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **decided /
-  partly built; authoritative for native product reachability**: one strict v2
+  partly built; Python authored-v2 projection built; authoritative for native product reachability**: one strict v2
   runner envelope composes registered `online_http` or feature-gated
   `dynamo_offline` backends with scheduled, Graph-IR, static-accuracy, or
   stateful-agentic workloads. Defines feature forwarding, capabilities,
   preparation, native-v2, packaging, migration, and subprocess gates for every pair.
 - `specs/2026-07-11-python-orchestrator-rust-single-run-design.md` — **built v1 +
-  runner-only v2 addenda**: Python `aiperf` is the only human frontend and
-  `aiperf-runner` the only Rust executable. Python owns structural Config v2 and
-  outer/presentation loops; protocol v2 uses a side-effect-free authored request
-  followed by Rust validation/preparation. The separate execution-surface spec owns
+  Python v2 projection; Rust v2 pending**: Python `aiperf` is the only human frontend
+  and `aiperf-runner` the only Rust executable. Python owns structural Config v2 and
+  outer/presentation loops; the authored v2 request avoids resolved state and side
+  effects. The separate execution-surface spec owns Rust validation/preparation and
   the remaining Graph/offline/agentic projections.
 - `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
   every load mode reduces to one dispatch verb on the clock-scheduled graph
