@@ -294,13 +294,13 @@ fn sim_clock_expires_idle_h1_and_reuses_dns_cache() {
         assert_eq!(server.accepted.get(), 1);
         assert!(first.trace.unwrap().dns_cache_miss_ns.is_some());
 
-        clock.advance_to(6);
+        clock.advance_to(5);
         let second = transport.get(&config).await;
         assert!(!second.has_error());
         let trace = second.trace.unwrap();
         assert_eq!(server.accepted.get(), 2, "expired H1 socket is replaced");
         assert!(trace.connection_reused_ns.is_none());
-        assert_eq!(trace.dns_cache_hit_ns, Some(6));
+        assert_eq!(trace.dns_cache_hit_ns, Some(5));
         assert!(trace.dns_lookup_start_ns.is_none());
     });
 }
@@ -325,10 +325,34 @@ fn sim_clock_expires_idle_h2_root_connection() {
         assert!(!first.has_error());
         assert_eq!(server.accepted.get(), 1);
 
-        clock.advance_to(6);
+        clock.advance_to(5);
         let second = transport.get(&config).await;
         assert!(!second.has_error());
         assert_eq!(server.accepted.get(), 2, "expired H2 root is replaced");
+        assert!(second.trace.unwrap().connection_reused_ns.is_none());
+    });
+}
+
+#[test]
+fn zero_keepalive_disables_idle_h1_reuse() {
+    run_local(async {
+        let server = LoopbackServer::spawn(ServerProtocol::H1, Duration::ZERO).await;
+        let clock: Rc<dyn Clock> = RealClock::new();
+        let transport = HttpTransport::new(
+            clock,
+            ClientConfig {
+                http_version: HttpVersion::Http1Only,
+                keepalive_ns: Some(0),
+                ..ClientConfig::default()
+            },
+        );
+        let config = request(&server.base_url);
+
+        let first = transport.get(&config).await;
+        let second = transport.get(&config).await;
+        assert!(!first.has_error());
+        assert!(!second.has_error());
+        assert_eq!(server.accepted.get(), 2);
         assert!(second.trace.unwrap().connection_reused_ns.is_none());
     });
 }

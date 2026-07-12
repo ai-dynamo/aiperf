@@ -16,9 +16,16 @@ use aiperf_clock::Clock;
 
 use crate::models::{ErrorDetails, SseMessage};
 
-/// Read `stream` as SSE, invoking `on_message` per parsed message. Stops after
-/// a `[DONE]` message. Returns `Err` (kind `Sse`) if an `event: error` message
-/// is seen, or propagates a stream error as `Err`.
+/// Read `stream` as SSE, invoking `on_message` per parsed message and draining
+/// through transport EOF, including after a `[DONE]` sentinel. Returns `Err`
+/// (kind `Sse`) if an `event: error` message is seen, or propagates a stream
+/// error as `Err`.
+///
+/// Python's `AsyncSSEStreamReader` yields every framed message until its input
+/// iterator ends; neither it nor `AioHttpClient` exits on `[DONE]`
+/// (`src/aiperf/transports/sse_utils.py:106-189` and
+/// `src/aiperf/transports/aiohttp_client.py:175-232`). Draining is also what
+/// makes an HTTP/1 response safe to return to the shared pool.
 pub async fn read_sse<S>(
     stream: S,
     clock: Rc<dyn Clock>,
@@ -63,11 +70,7 @@ where
                         "Error occurred in SSE response: {err}"
                     )));
                 }
-                let done = msg.is_done();
                 on_message(msg);
-                if done {
-                    return Ok(());
-                }
             }
         }
 
@@ -159,10 +162,10 @@ mod tests {
     }
 
     #[test]
-    fn stops_at_done() {
+    fn done_is_delivered_without_abandoning_the_response_body() {
         let msgs = collect(vec!["data: a\n\ndata: [DONE]\n\ndata: c\n\n"]);
-        // [DONE] is delivered, then iteration stops (c is not delivered).
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.len(), 3);
         assert!(msgs[1].is_done());
+        assert_eq!(msgs[2].data(), Some("c"));
     }
 }

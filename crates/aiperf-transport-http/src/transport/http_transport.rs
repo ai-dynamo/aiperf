@@ -210,7 +210,13 @@ impl HttpTransport {
         let total_timeout_ns = positive_timeout(self.client_cfg.total_timeout_ns);
         let deadline_ns = total_timeout_ns.map(|timeout| start_ns.saturating_add(timeout));
 
-        let mut trace = TraceData::default();
+        let mut trace = TraceData {
+            // Match aiohttp's request lifecycle: request start precedes pool
+            // queueing/reuse/connection creation.
+            // Source: `src/aiperf/transports/aiohttp_trace.py:14-40`.
+            request_send_start_ns: Some(start_ns),
+            ..TraceData::default()
+        };
         let send_completion = Rc::new(SendCompletion::new());
         let completion_for_dispatch = send_completion.clone();
         let completion_for_record = send_completion.clone();
@@ -300,7 +306,7 @@ impl HttpTransport {
                             && trace.request_send_end_ns.is_none()
                         {
                             trace.request_send_end_ns = Some(sent_ns);
-                            trace.request_headers_sent_ns = Some(sent_ns);
+                            trace.request_headers_sent_ns = completion_for_record.headers_ns();
                             trace.request_bytes_total = body_len as u64;
                             trace.request_chunks_count = 1;
                             if self.client_cfg.collect_trace_chunks {

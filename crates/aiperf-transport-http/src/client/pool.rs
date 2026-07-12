@@ -36,8 +36,8 @@ fn origin_key(url: &Url) -> String {
 
 fn expired(idle_since_ns: i64, now_ns: i64, keepalive_ns: Option<i64>) -> bool {
     keepalive_ns
-        .filter(|timeout| *timeout > 0)
-        .is_some_and(|timeout| now_ns.saturating_sub(idle_since_ns) > timeout)
+        .filter(|timeout| *timeout >= 0)
+        .is_some_and(|timeout| now_ns.saturating_sub(idle_since_ns) >= timeout)
 }
 
 fn copy_socket(trace: &mut TraceData, socket: SocketInfo) {

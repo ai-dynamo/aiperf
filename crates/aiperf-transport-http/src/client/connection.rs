@@ -54,6 +54,7 @@ where
 /// instant rather than the later instant at which the executor happened to poll
 /// it, preserving `src/aiperf/timing/request_cancellation.py:53-82`.
 pub struct SendCompletion {
+    headers_ns: Cell<Option<i64>>,
     sent_ns: Rc<Cell<Option<i64>>>,
     notify: Notify,
 }
@@ -62,6 +63,7 @@ impl SendCompletion {
     /// Create an untriggered signal.
     pub fn new() -> Self {
         Self {
+            headers_ns: Cell::new(None),
             sent_ns: Rc::new(Cell::new(None)),
             notify: Notify::new(),
         }
@@ -69,8 +71,15 @@ impl SendCompletion {
 
     fn with_cell(sent_ns: Rc<Cell<Option<i64>>>) -> Self {
         Self {
+            headers_ns: Cell::new(None),
             sent_ns,
             notify: Notify::new(),
+        }
+    }
+
+    fn mark_headers(&self, headers_ns: i64) {
+        if self.headers_ns.get().is_none() {
+            self.headers_ns.set(Some(headers_ns));
         }
     }
 
@@ -86,6 +95,17 @@ impl SendCompletion {
     /// Return the captured timestamp when send completion has already fired.
     pub fn sent_ns(&self) -> Option<i64> {
         self.sent_ns.get()
+    }
+
+    /// Return the instant the encoder first requested the body, immediately
+    /// after the request head was accepted for writing.
+    ///
+    /// Hyper exposes no request-head callback. The first body poll is its
+    /// closest lifecycle boundary to aiohttp's distinct
+    /// `on_request_headers_sent` event
+    /// (`src/aiperf/transports/aiohttp_trace.py:269-276`).
+    pub fn headers_ns(&self) -> Option<i64> {
+        self.headers_ns.get()
     }
 
     /// Wait until the complete body has been handed to the HTTP transport and
@@ -151,6 +171,7 @@ impl Body for TimedBody {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
         let this = self.get_mut();
+        this.completion.mark_headers(this.clock.now_ns());
         let r = Pin::new(&mut this.inner).poll_frame(cx);
         // Stamp the "send complete" instant once the body is fully handed to the
         // encoder: either an explicit end-of-stream, or the last data frame
@@ -428,7 +449,6 @@ async fn establish_inner(
     let tcp = TcpStream::connect(remote)
         .await
         .map_err(ErrorDetails::from)?;
-    trace.tcp_connect_end_ns = Some(clock.now_ns());
     let local = tcp.local_addr().map_err(ErrorDetails::from)?;
     // Apply low-latency socket options through a borrowed socket2 ref.
     {
@@ -456,11 +476,18 @@ async fn establish_inner(
             .connect(server_name, tcp)
             .await
             .map_err(ErrorDetails::from)?;
-        trace.tls_connect_end_ns = Some(clock.now_ns());
+        let connected_ns = clock.now_ns();
+        trace.tls_connect_end_ns = Some(connected_ns);
+        // Python's connection-create trace folds TLS into tcp_connect_*.
+        // Preserve that public span while retaining the Rust-only TLS bracket.
+        // Source: `src/aiperf/transports/aiohttp_trace.py:140-155` and
+        // `src/aiperf/common/models/trace_models.py:304-310`.
+        trace.tcp_connect_end_ns = Some(connected_ns);
         let alpn_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
         let use_h2 = force_h2 || (alpn_h2 && !force_h1);
         handshake(TokioIo::new(tls), use_h2).await?
     } else {
+        trace.tcp_connect_end_ns = Some(clock.now_ns());
         let use_h2 = force_h2; // cleartext: h2 only via prior-knowledge
         handshake(TokioIo::new(tcp), use_h2).await?
     };

@@ -85,8 +85,8 @@ impl CachingDnsResolver {
     fn cached(&self, key: &(String, u16), now_ns: i64, ttl_ns: Option<i64>) -> Option<SocketAddr> {
         let cached = self.entries.borrow().get(key).copied()?;
         let expired = ttl_ns
-            .filter(|ttl| *ttl > 0)
-            .is_some_and(|ttl| now_ns.saturating_sub(cached.cached_at_ns) > ttl);
+            .filter(|ttl| *ttl >= 0)
+            .is_some_and(|ttl| now_ns.saturating_sub(cached.cached_at_ns) >= ttl);
         if expired {
             self.entries.borrow_mut().remove(key);
             None
@@ -211,22 +211,22 @@ mod tests {
         assert_eq!(first.dns_cache_hit_ns, None);
         assert_eq!(first.dns_lookup_start_ns, Some(0));
 
-        clock.advance_to(10);
+        clock.advance_to(9);
         let mut second = TraceData::default();
         runtime
             .block_on(resolver.resolve("example.test", 8080, &cfg, &clock_dyn, &mut second))
             .unwrap();
         assert_eq!(lookup.calls.get(), 1);
-        assert_eq!(second.dns_cache_hit_ns, Some(10));
+        assert_eq!(second.dns_cache_hit_ns, Some(9));
         assert_eq!(second.dns_lookup_start_ns, None);
 
-        clock.advance_to(11);
+        clock.advance_to(10);
         let mut third = TraceData::default();
         runtime
             .block_on(resolver.resolve("example.test", 8080, &cfg, &clock_dyn, &mut third))
             .unwrap();
         assert_eq!(lookup.calls.get(), 2);
-        assert_eq!(third.dns_cache_miss_ns, Some(11));
+        assert_eq!(third.dns_cache_miss_ns, Some(10));
         assert_eq!(third.dns_cache_hit_ns, None);
     }
 

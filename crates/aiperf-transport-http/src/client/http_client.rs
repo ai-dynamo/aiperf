@@ -119,7 +119,12 @@ impl HttpClient {
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
         let mut record = RequestRecord::started(start_ns);
-        let mut trace = TraceData::default();
+        let mut trace = TraceData {
+            // aiohttp emits on_request_start before connection acquisition.
+            // Source: `src/aiperf/transports/aiohttp_trace.py:14-23,208-215`.
+            request_send_start_ns: Some(start_ns),
+            ..TraceData::default()
+        };
         let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
             on_first_token(ttft_ns);
             true
@@ -168,7 +173,10 @@ impl HttpClient {
         let start_ns = self.clock.now_ns();
         let body_len = body.len();
         let mut record = RequestRecord::started(start_ns);
-        let mut trace = TraceData::default();
+        let mut trace = TraceData {
+            request_send_start_ns: Some(start_ns),
+            ..TraceData::default()
+        };
         let completion = Rc::new(SendCompletion::new());
         let completion_for_dispatch = completion.clone();
         let completion_for_record = completion.clone();
@@ -210,7 +218,7 @@ impl HttpClient {
                     && trace.request_send_end_ns.is_none()
                 {
                     trace.request_send_end_ns = Some(sent_ns);
-                    trace.request_headers_sent_ns = Some(sent_ns);
+                    trace.request_headers_sent_ns = completion_for_record.headers_ns();
                     trace.request_bytes_total = body_len as u64;
                     trace.request_chunks_count = 1;
                     if self.cfg.collect_trace_chunks {
@@ -452,13 +460,15 @@ impl HttpClient {
         // by TimedBody — the real "send complete", distinct from response-headers.
         let req = self.build_request_with_method(method, url, headers, body, completion.clone())?;
 
-        trace.request_send_start_ns = Some(self.clock.now_ns());
+        if trace.request_send_start_ns.is_none() {
+            trace.request_send_start_ns = Some(self.clock.now_ns());
+        }
         let resp = sender.send(req).await?;
         // Response headers received; the body finished writing at `send_end`.
         let hdr_ns = self.clock.now_ns();
         let send_end = completion.sent_ns().unwrap_or(hdr_ns);
         trace.request_send_end_ns = Some(send_end);
-        trace.request_headers_sent_ns = Some(send_end);
+        trace.request_headers_sent_ns = completion.headers_ns().or(Some(send_end));
         trace.request_bytes_total = body_len as u64;
         trace.request_chunks_count = 1;
         if self.cfg.collect_trace_chunks {

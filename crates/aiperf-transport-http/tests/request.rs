@@ -38,6 +38,10 @@ fn streaming_chat_records_tokens_ttft_and_usage() {
         assert!(t.waiting().is_some());
         assert!(t.response_chunks_count > 0);
         assert!(t.response_bytes_total > 0);
+        assert!(t.request_send_start_ns <= t.dns_cache_miss_ns);
+        assert!(t.request_headers_sent_ns.is_some());
+        assert!(t.request_headers_sent_ns <= t.request_send_end_ns);
+        assert!(t.request_send_end_ns <= t.response_headers_received_ns);
     });
 }
 
