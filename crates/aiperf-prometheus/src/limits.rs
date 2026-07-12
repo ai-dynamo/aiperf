@@ -22,6 +22,8 @@ pub struct ParseLimits {
     pub max_wire_samples: usize,
     /// Maximum labels on one sample before role-label extraction.
     pub max_labels_per_sample: usize,
+    /// Maximum UTF-8 bytes in one family or emitted sample name.
+    pub max_metric_name_bytes: usize,
     /// Maximum UTF-8 bytes in one label name.
     pub max_label_name_bytes: usize,
     /// Maximum UTF-8 bytes in one decoded label value.
@@ -55,6 +57,7 @@ impl Default for ParseLimits {
             max_metric_points: 1_000_000,
             max_wire_samples: 2_000_000,
             max_labels_per_sample: 128,
+            max_metric_name_bytes: 1024,
             max_label_name_bytes: 1024,
             max_label_value_bytes: 64 * 1024,
             max_metadata_value_bytes: 1024 * 1024,

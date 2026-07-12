@@ -17,6 +17,7 @@ mod limits;
 mod model;
 mod number;
 mod parser;
+mod syntax;
 
 pub use compatibility::{
     CompatibilityProjectionError, NativeCompatibilityProjection, NoopNativeCompatibilityProjection,

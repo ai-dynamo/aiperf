@@ -24,6 +24,8 @@ pub enum LimitKind {
     WireSamples,
     /// Labels on one sample.
     LabelsPerSample,
+    /// Metric-family or emitted sample name bytes.
+    MetricNameBytes,
     /// Label-name bytes.
     LabelNameBytes,
     /// Label-value bytes.

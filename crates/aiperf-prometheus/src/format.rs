@@ -15,6 +15,15 @@ pub enum ExpositionFormat {
     OpenMetricsText100,
 }
 
+impl Display for ExpositionFormat {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        formatter.write_str(match self {
+            Self::PrometheusText004 => "Prometheus text 0.0.4",
+            Self::OpenMetricsText100 => "OpenMetrics text 1.0.0",
+        })
+    }
+}
+
 impl ExpositionFormat {
     /// Selects an exact supported grammar from an HTTP `Content-Type` value.
     ///
