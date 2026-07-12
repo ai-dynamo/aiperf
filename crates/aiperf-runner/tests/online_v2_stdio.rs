@@ -525,7 +525,7 @@ async fn scheduled_pair_serves_generated_image_urls_for_the_full_run_lifecycle()
                         "height": {"value": 3.0},
                         "format": "png",
                         "source": "noise",
-                        "source_sampling": "random_with_replacement"
+                        "source_sampling": "random-with-replacement"
                     }
                 },
                 "tokenizer": {
