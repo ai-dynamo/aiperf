@@ -184,6 +184,18 @@ def test_projects_inline_file_dataset_through_native_registry(tmp_path) -> None:
     assert request["tokenizer"] == {"name": "builtin"}
 
 
+def test_projects_chat_template_token_accounting(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.tokenizer.apply_chat_template = True
+
+    request = build_run_request(run)["run"]
+
+    assert request["tokenizer"] == {
+        "name": "builtin",
+        "apply_chat_template": True,
+    }
+
+
 def test_projects_complete_synthetic_dataset_shape(tmp_path) -> None:
     run = _run(
         tmp_path,

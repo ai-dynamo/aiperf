@@ -16,7 +16,8 @@ use aiperf::fixed_schedule::{
 use aiperf::http::TransportSink;
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
-    ConversationSource, IssuedCredit, NativeDatasetConversationSource, TurnToSend,
+    ConversationSource, EndpointInputTokenCounter, InputTokenCounter, IssuedCredit,
+    NativeDatasetConversationSource, TurnToSend,
 };
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
@@ -156,6 +157,10 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         .cloned()
         .ok_or_else(|| anyhow!("at least one model is required"))?;
     let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
+    let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
+        tokenizer.clone(),
+        request.run.tokenizer.apply_chat_template,
+    ));
     let dataset = build_dataset(
         &registry,
         &request.run.dataset,
@@ -229,6 +234,8 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
             phase_rng,
             endpoint.clone(),
             &registry,
+            tokenizer.clone(),
+            input_token_counter.clone(),
             matches!(phase, PhaseSpec::FixedSchedule { .. }),
         )?;
         let arrival_seed = rng_root
@@ -421,6 +428,8 @@ fn native_conversation_source(
     rng_root: RngRoot,
     endpoint: EndpointConfig,
     registry: &AiperfRegistry,
+    tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
     sequential: bool,
 ) -> Result<Box<dyn ConversationSource>> {
     let source = if sequential {
@@ -442,7 +451,11 @@ fn native_conversation_source(
             registry.endpoint_resolver(),
         )?
     };
-    Ok(Box::new(source))
+    Ok(Box::new(
+        source
+            .with_response_tokenizer(tokenizer)
+            .with_input_token_counter(input_token_counter),
+    ))
 }
 
 async fn build_dataset(
@@ -1207,17 +1220,17 @@ impl ModelSelector for WeightedModelSelector {
     }
 }
 
-fn load_tokenizer(spec: Option<&str>) -> Result<Box<dyn TextTokenizer>> {
+fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer>> {
     let spec = spec.unwrap_or("builtin");
     let path = Path::new(spec);
     if path.is_dir() {
-        return Ok(Box::new(HuggingFaceTokenizer::from_directory(path)?));
+        return Ok(Arc::new(HuggingFaceTokenizer::from_directory(path)?));
     }
     if path.is_file() {
-        return Ok(Box::new(HuggingFaceTokenizer::from_file(path)?));
+        return Ok(Arc::new(HuggingFaceTokenizer::from_file(path)?));
     }
     let encoding = spec.parse::<TiktokenEncoding>()?;
-    Ok(Box::new(TiktokenTokenizer::new(encoding)))
+    Ok(Arc::new(TiktokenTokenizer::new(encoding)))
 }
 
 fn seconds_to_ns(value: f64) -> Result<i64> {

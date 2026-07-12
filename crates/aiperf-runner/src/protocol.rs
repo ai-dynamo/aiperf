@@ -109,12 +109,16 @@ pub struct TokenizerSpec {
     /// Built-in encoding name, local tokenizer.json, or local model directory.
     #[serde(default = "default_tokenizer_name")]
     pub name: String,
+    /// Count chat-shaped request bodies through the tokenizer's chat template.
+    #[serde(default)]
+    pub apply_chat_template: bool,
 }
 
 impl Default for TokenizerSpec {
     fn default() -> Self {
         Self {
             name: default_tokenizer_name(),
+            apply_chat_template: false,
         }
     }
 }

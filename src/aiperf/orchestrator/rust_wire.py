@@ -80,7 +80,14 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
         "models": {"strategy": str(cfg.models.strategy), "items": models},
         "endpoint": endpoint_wire,
         "dataset": _dataset(run, dataset),
-        "tokenizer": {"name": _tokenizer_source(run)},
+        "tokenizer": {
+            "name": _tokenizer_source(run),
+            **(
+                {"apply_chat_template": True}
+                if cfg.tokenizer is not None and cfg.tokenizer.apply_chat_template
+                else {}
+            ),
+        },
         "phases": [_phase(phase) for phase in cfg.phases],
         "metrics": {
             "slos": dict(cfg.slos or {}),
@@ -161,7 +168,9 @@ def _synthetic_dataset(dataset: SyntheticDataset) -> dict[str, Any]:
     if dataset.images is not None:
         source = dataset.images.source
         source_value = (
-            str(source.expanduser().resolve()) if isinstance(source, Path) else str(source)
+            str(source.expanduser().resolve())
+            if isinstance(source, Path)
+            else str(source)
         )
         result["images"] = {
             "batch_size": dataset.images.batch_size,
@@ -393,10 +402,6 @@ def _native_file_format(format_name: str) -> tuple[str, dict[str, Any]]:
 
 def _tokenizer_source(run: BenchmarkRun) -> str:
     cfg = run.cfg.tokenizer
-    if cfg is not None and cfg.apply_chat_template:
-        raise RustWireError(
-            "native tokenizer projection does not yet support apply_chat_template=true"
-        )
     primary_model = run.cfg.models.items[0].name
     resolved = run.resolved.tokenizer_names or {}
     name = resolved.get(primary_model) or (cfg.name if cfg is not None else None)

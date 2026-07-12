@@ -43,6 +43,118 @@ use uuid::Uuid;
 
 use crate::workload::SkeletonWorkload;
 
+/// Policy for deriving the input length attached to one materialized request.
+///
+/// The endpoint and decoded body are passed together because endpoint dialects
+/// own their extraction rules. Implementations may preserve authored dataset
+/// counts or retokenize the exact body that will be serialized on the wire.
+pub trait InputTokenCounter: Send + Sync {
+    /// Count input tokens for one fully materialized endpoint request.
+    fn count_input_tokens(
+        &self,
+        endpoint: &dyn Endpoint,
+        body: &[u8],
+        authored_input_tokens: u64,
+    ) -> Result<u64>;
+}
+
+/// Input-count policy that preserves the count authored by the dataset.
+#[derive(Debug, Default)]
+pub struct AuthoredInputTokenCounter;
+
+impl InputTokenCounter for AuthoredInputTokenCounter {
+    fn count_input_tokens(
+        &self,
+        _endpoint: &dyn Endpoint,
+        _body: &[u8],
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        Ok(authored_input_tokens)
+    }
+}
+
+/// Exact wire-body token accounting with optional Hugging Face chat templates.
+///
+/// This is the native counterpart of
+/// `src/aiperf/records/inference_result_parser.py:320-428`: endpoint-specific
+/// extraction runs against the final request body, chat templates are
+/// best-effort, tool text is added outside the role/content template, and the
+/// ordinary path joins extracted text with one space.
+pub struct EndpointInputTokenCounter {
+    tokenizer: Arc<dyn TextTokenizer>,
+    apply_chat_template: bool,
+}
+
+impl EndpointInputTokenCounter {
+    /// Construct exact endpoint-aware input accounting.
+    pub fn new(tokenizer: Arc<dyn TextTokenizer>, apply_chat_template: bool) -> Self {
+        Self {
+            tokenizer,
+            apply_chat_template,
+        }
+    }
+
+    fn add_text_count(&self, count: u64, texts: &[String]) -> Result<u64> {
+        if texts.is_empty() {
+            return Ok(count);
+        }
+        let tokens = u64::try_from(self.tokenizer.count(&texts.join(" "))?)
+            .map_err(|_| anyhow!("input token count exceeds u64"))?;
+        count
+            .checked_add(tokens)
+            .ok_or_else(|| anyhow!("input token count overflowed u64"))
+    }
+}
+
+impl fmt::Debug for EndpointInputTokenCounter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EndpointInputTokenCounter")
+            .field("tokenizer", &self.tokenizer.name())
+            .field("apply_chat_template", &self.apply_chat_template)
+            .finish()
+    }
+}
+
+impl InputTokenCounter for EndpointInputTokenCounter {
+    fn count_input_tokens(
+        &self,
+        endpoint: &dyn Endpoint,
+        body: &[u8],
+        authored_input_tokens: u64,
+    ) -> Result<u64> {
+        let Ok(body) = serde_json::from_slice(body) else {
+            return Ok(authored_input_tokens);
+        };
+        let extracted = endpoint.extract_payload_inputs(&body);
+        if self.apply_chat_template
+            && let Some(messages) = extracted
+                .messages
+                .as_deref()
+                .filter(|items| !items.is_empty())
+            && let Some(tokens) = self
+                .tokenizer
+                .apply_chat_template(messages, true)
+                .ok()
+                .flatten()
+        {
+            let templated = u64::try_from(tokens.len())
+                .map_err(|_| anyhow!("templated input token count exceeds u64"))?;
+            let count = extracted
+                .pretokenised_token_count
+                .checked_add(templated)
+                .ok_or_else(|| anyhow!("input token count overflowed u64"))?;
+            return self.add_text_count(count, &extracted.tool_texts);
+        }
+        if !extracted.texts.is_empty() {
+            return self.add_text_count(extracted.pretokenised_token_count, &extracted.texts);
+        }
+        if extracted.pretokenised_token_count > 0 {
+            return Ok(extracted.pretokenised_token_count);
+        }
+        Ok(authored_input_tokens)
+    }
+}
+
 /// Metadata and static user content for one turn in a conversation template.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TurnMetadata {
@@ -818,6 +930,7 @@ struct NativeSessionBackend {
     endpoint_resolver: Arc<dyn EndpointResolver>,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
     default_output_tokens: usize,
 }
 
@@ -911,7 +1024,12 @@ impl NativeSessionBackend {
             CreditPhase::Profiling,
             &Overrides::new(),
         )?;
-        let input_length = usize::try_from(materialized.input_tokens)
+        let input_tokens = self.input_token_counter.count_input_tokens(
+            endpoint.as_ref(),
+            &materialized.body,
+            materialized.input_tokens,
+        )?;
+        let input_length = usize::try_from(input_tokens)
             .map_err(|_| anyhow!("materialized input token count exceeds usize"))?;
         let max_output_tokens = materialized
             .max_tokens
@@ -964,6 +1082,7 @@ pub struct NativeDatasetConversationSource {
     endpoint_resolver: Arc<dyn EndpointResolver>,
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
     default_output_tokens: usize,
 }
 
@@ -1176,8 +1295,21 @@ impl NativeDatasetConversationSource {
             endpoint_resolver,
             materializer,
             response_tokenizer,
+            input_token_counter: Arc::new(AuthoredInputTokenCounter),
             default_output_tokens,
         })
+    }
+
+    /// Replace authored input lengths with an injected materialized-body policy.
+    pub fn with_input_token_counter(mut self, counter: Arc<dyn InputTokenCounter>) -> Self {
+        self.input_token_counter = counter;
+        self
+    }
+
+    /// Replace the tokenizer used when a response omits authoritative usage.
+    pub fn with_response_tokenizer(mut self, tokenizer: Arc<dyn TextTokenizer>) -> Self {
+        self.response_tokenizer = tokenizer;
+        self
     }
 
     fn session(
@@ -1203,6 +1335,7 @@ impl NativeDatasetConversationSource {
             endpoint_resolver: self.endpoint_resolver.clone(),
             materializer: self.materializer.clone(),
             response_tokenizer: self.response_tokenizer.clone(),
+            input_token_counter: self.input_token_counter.clone(),
             default_output_tokens: self.default_output_tokens,
         };
         Ok(SampledSession {
@@ -1351,6 +1484,38 @@ mod tests {
 
     use super::*;
 
+    struct FixedTemplateTokenizer;
+
+    impl TextTokenizer for FixedTemplateTokenizer {
+        fn encode(&self, text: &str) -> aiperf_dataset::Result<Vec<u32>> {
+            Ok((0..text.split_whitespace().count() as u32).collect())
+        }
+
+        fn decode(&self, _token_ids: &[u32]) -> aiperf_dataset::Result<String> {
+            Ok(String::new())
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn name(&self) -> &str {
+            "fixed-template"
+        }
+
+        fn apply_chat_template(
+            &self,
+            _messages: &[Value],
+            _add_generation_prompt: bool,
+        ) -> aiperf_dataset::Result<Option<Vec<u32>>> {
+            Ok(Some(vec![0; 5]))
+        }
+    }
+
     fn workload(turns: usize) -> SkeletonWorkload {
         SkeletonWorkload {
             num_requests: 0,
@@ -1359,6 +1524,34 @@ mod tests {
             turns,
             think_time_ms: Some(7),
         }
+    }
+
+    #[test]
+    fn endpoint_counter_matches_python_template_and_bare_paths() {
+        let body = serde_json::to_vec(&json!({
+            "messages":[{"role":"user","content":"hello world"}],
+            "tools":[{"type":"function","function":{"name":"weather"}}]
+        }))
+        .unwrap();
+        let tokenizer: Arc<dyn TextTokenizer> = Arc::new(FixedTemplateTokenizer);
+        let templated = EndpointInputTokenCounter::new(tokenizer.clone(), true);
+        let bare = EndpointInputTokenCounter::new(tokenizer, false);
+
+        assert_eq!(
+            templated
+                .count_input_tokens(&ChatEndpoint, &body, 99)
+                .unwrap(),
+            6
+        );
+        assert_eq!(
+            bare.count_input_tokens(&ChatEndpoint, &body, 99).unwrap(),
+            3
+        );
+        assert_eq!(
+            bare.count_input_tokens(&ChatEndpoint, b"not-json", 99)
+                .unwrap(),
+            99
+        );
     }
 
     #[test]

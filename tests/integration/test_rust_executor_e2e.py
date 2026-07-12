@@ -37,6 +37,28 @@ _SHAREGPT = orjson.dumps(
     ]
 )
 
+_WORDLEVEL_TOKENIZER = """{
+  "version":"1.0",
+  "truncation":null,
+  "padding":null,
+  "added_tokens":[
+    {"id":0,"content":"[UNK]","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":1,"content":"<s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":2,"content":"</s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}
+  ],
+  "normalizer":null,
+  "pre_tokenizer":{"type":"Whitespace"},
+  "post_processor":null,
+  "decoder":null,
+  "model":{"type":"WordLevel","vocab":{"[UNK]":0,"<s>":1,"</s>":2,"user":3,"hello":4,"assistant":5},"unk_token":"[UNK]"}
+}"""
+
+_WORDLEVEL_CONFIG = """{
+  "bos_token":"<s>",
+  "eos_token":"</s>",
+  "chat_template":"{{ bos_token }} {% for message in messages %}{{ message['role'] }} {{ message['content'] }} {% endfor %}{% if add_generation_prompt %}assistant{% endif %}"
+}"""
+
 
 class _ChatHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -131,8 +153,7 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
 
         dataset_path = tmp_path / "file-dataset.jsonl"
         dataset_path.write_bytes(
-            b'{"text":"first","output_length":1}\n'
-            b'{"text":"second","output_length":1}\n'
+            b'{"text":"first","output_length":1}\n{"text":"second","output_length":1}\n'
         )
         file_artifacts = tmp_path / "file-run"
         file_envelope = AIPerfConfig.model_validate(
@@ -176,7 +197,62 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert file_result.success, file_result.error
         assert file_result.summary_metrics["request_count"].avg == 2.0
         assert file_result.summary_metrics["input_sequence_length"].count == 2
-        assert len((file_artifacts / "profile_export.jsonl").read_text().splitlines()) == 2
+        assert (
+            len((file_artifacts / "profile_export.jsonl").read_text().splitlines()) == 2
+        )
+
+        tokenizer_dir = tmp_path / "wordlevel-tokenizer"
+        tokenizer_dir.mkdir()
+        (tokenizer_dir / "tokenizer.json").write_text(_WORDLEVEL_TOKENIZER)
+        (tokenizer_dir / "tokenizer_config.json").write_text(_WORDLEVEL_CONFIG)
+        template_artifacts = tmp_path / "template-run"
+        template_envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": False,
+                    },
+                    "dataset": {
+                        "type": "file",
+                        "format": "single_turn",
+                        "records": [{"text": "hello", "output_length": 1}],
+                    },
+                    "tokenizer": {
+                        "name": str(tokenizer_dir),
+                        "apply_chat_template": True,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                    },
+                    "artifacts": {"dir": str(template_artifacts)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        template_run = BenchmarkRun(
+            benchmark_id="python-rust-template-e2e",
+            cfg=template_envelope.benchmark,
+            artifact_dir=template_artifacts,
+            label="native-template",
+            random_seed=14,
+        )
+        template_result = RustSubprocessExecutor(
+            template_artifacts, binary=binary
+        ).execute_sync(template_run)
+
+        assert template_result.success, template_result.error
+        assert template_result.summary_metrics["input_sequence_length"].avg == 4.0
+        template_row = orjson.loads(
+            (template_artifacts / "profile_export.jsonl").read_bytes().splitlines()[0]
+        )
+        assert template_row["metrics"]["input_sequence_length"]["value"] == 4.0
 
         multimodal_artifacts = tmp_path / "multimodal-run"
         multimodal_envelope = AIPerfConfig.model_validate(
@@ -367,7 +443,10 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
             synthesis_rows[1]["metadata"]["request_start_ns"]
             - synthesis_rows[0]["metadata"]["request_start_ns"]
         )
-        assert 35_000_000 <= start_delta_ns <= 250_000_000
+        # The schedule is anchored before the first connection is established,
+        # so setup can consume part of the authored 51 ms interval. The real
+        # process proof must still show paced dispatch rather than a burst.
+        assert 15_000_000 <= start_delta_ns <= 250_000_000
     finally:
         server.shutdown()
         server.server_close()

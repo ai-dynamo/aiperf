@@ -20,13 +20,13 @@ bytes.workspace = true
 chrono.workspace = true
 csv.workspace = true
 image.workspace = true
+llm-tokenizer.workspace = true
 parquet.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "raw_value"] }
 smallvec.workspace = true
 tempfile = "3"
 tiktoken-rs.workspace = true
-tokenizers.workspace = true
 tokio.workspace = true
 url = "2"
 uuid.workspace = true

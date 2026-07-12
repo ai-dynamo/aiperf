@@ -11,6 +11,10 @@ use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use llm_tokenizer::chat_template::ChatTemplateParams;
+use llm_tokenizer::traits::{
+    Decoder as LlmDecoder, Encoder as LlmEncoder, Tokenizer as LlmTokenizer,
+};
 use serde_json::Value;
 use tiktoken_rs::{
     CoreBPE, cl100k_base_singleton, o200k_base_singleton, o200k_harmony_singleton,
@@ -44,6 +48,20 @@ pub trait TextTokenizer: Send + Sync {
     /// Count encoded tokens without retaining the vector.
     fn count(&self, text: &str) -> Result<usize> {
         self.encode(text).map(|tokens| tokens.len())
+    }
+
+    /// Render and tokenize chat messages when this tokenizer owns a template.
+    ///
+    /// `None` means that chat-template accounting is unavailable. Callers must
+    /// then use the ordinary bare-text path, matching Python AIPerf's
+    /// best-effort `apply_chat_template` policy in
+    /// `src/aiperf/records/inference_result_parser.py:394-428`.
+    fn apply_chat_template(
+        &self,
+        _messages: &[Value],
+        _add_generation_prompt: bool,
+    ) -> Result<Option<Vec<u32>>> {
+        Ok(None)
     }
 }
 
@@ -173,7 +191,7 @@ impl TextTokenizer for TiktokenTokenizer {
 
 /// Local Hugging Face `tokenizer.json` implementation.
 pub struct HuggingFaceTokenizer {
-    tokenizer: tokenizers::Tokenizer,
+    tokenizer: llm_tokenizer::HuggingFaceTokenizer,
     name: String,
     bos_token_id: Option<u32>,
     eos_token_id: Option<u32>,
@@ -183,13 +201,28 @@ impl HuggingFaceTokenizer {
     /// Load a standalone `tokenizer.json` file.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let tokenizer = tokenizers::Tokenizer::from_file(path)
+        let path_text = path.to_str().ok_or_else(|| {
+            DatasetError::Tokenizer(format!(
+                "tokenizer path is not valid UTF-8: {}",
+                path.display()
+            ))
+        })?;
+        let tokenizer = llm_tokenizer::HuggingFaceTokenizer::from_file(path_text)
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))?;
+        let special_tokens = LlmTokenizer::get_special_tokens(&tokenizer);
+        let bos_token_id = special_tokens
+            .bos_token
+            .as_deref()
+            .and_then(|token| LlmTokenizer::token_to_id(&tokenizer, token));
+        let eos_token_id = special_tokens
+            .eos_token
+            .as_deref()
+            .and_then(|token| LlmTokenizer::token_to_id(&tokenizer, token));
         Ok(Self {
             tokenizer,
             name: path.display().to_string(),
-            bos_token_id: None,
-            eos_token_id: None,
+            bos_token_id,
+            eos_token_id,
         })
     }
 
@@ -202,8 +235,10 @@ impl HuggingFaceTokenizer {
         let config_path = directory.join("tokenizer_config.json");
         if config_path.is_file() {
             let config: Value = serde_json::from_slice(&std::fs::read(&config_path)?)?;
-            tokenizer.bos_token_id = special_token_id(&tokenizer.tokenizer, &config, "bos_token");
-            tokenizer.eos_token_id = special_token_id(&tokenizer.tokenizer, &config, "eos_token");
+            tokenizer.bos_token_id = special_token_id(&tokenizer.tokenizer, &config, "bos_token")
+                .or(tokenizer.bos_token_id);
+            tokenizer.eos_token_id = special_token_id(&tokenizer.tokenizer, &config, "eos_token")
+                .or(tokenizer.eos_token_id);
         }
         Ok(tokenizer)
     }
@@ -223,15 +258,13 @@ impl HuggingFaceTokenizer {
 
 impl TextTokenizer for HuggingFaceTokenizer {
     fn encode(&self, text: &str) -> Result<Vec<u32>> {
-        self.tokenizer
-            .encode(text, false)
-            .map(|encoding| encoding.get_ids().to_vec())
+        LlmEncoder::encode(&self.tokenizer, text, false)
+            .map(|encoding| encoding.token_ids().to_vec())
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))
     }
 
     fn decode(&self, token_ids: &[u32]) -> Result<String> {
-        self.tokenizer
-            .decode(token_ids, false)
+        LlmDecoder::decode(&self.tokenizer, token_ids, false)
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))
     }
 
@@ -246,16 +279,42 @@ impl TextTokenizer for HuggingFaceTokenizer {
     fn name(&self) -> &str {
         &self.name
     }
+
+    fn apply_chat_template(
+        &self,
+        messages: &[Value],
+        add_generation_prompt: bool,
+    ) -> Result<Option<Vec<u32>>> {
+        let rendered = match LlmTokenizer::apply_chat_template(
+            &self.tokenizer,
+            messages,
+            ChatTemplateParams {
+                add_generation_prompt,
+                ..ChatTemplateParams::default()
+            },
+        ) {
+            Ok(rendered) => rendered,
+            Err(_) => return Ok(None),
+        };
+        match self.encode(&rendered) {
+            Ok(tokens) => Ok(Some(tokens)),
+            Err(_) => Ok(None),
+        }
+    }
 }
 
-fn special_token_id(tokenizer: &tokenizers::Tokenizer, config: &Value, field: &str) -> Option<u32> {
+fn special_token_id(
+    tokenizer: &llm_tokenizer::HuggingFaceTokenizer,
+    config: &Value,
+    field: &str,
+) -> Option<u32> {
     let value = config.get(field)?;
     let token = match value {
         Value::String(token) => token.as_str(),
         Value::Object(object) => object.get("content")?.as_str()?,
         _ => return None,
     };
-    tokenizer.token_to_id(token)
+    LlmTokenizer::token_to_id(tokenizer, token)
 }
 
 #[cfg(test)]
@@ -284,5 +343,53 @@ mod tests {
             TiktokenEncoding::Cl100kBase
         );
         assert!("unknown".parse::<TiktokenEncoding>().is_err());
+    }
+
+    #[test]
+    fn hugging_face_template_is_rendered_and_tokenized_natively() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("tokenizer.json"),
+            r#"{
+  "version":"1.0",
+  "truncation":null,
+  "padding":null,
+  "added_tokens":[
+    {"id":0,"content":"[UNK]","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":1,"content":"<s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":2,"content":"</s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}
+  ],
+  "normalizer":null,
+  "pre_tokenizer":{"type":"Whitespace"},
+  "post_processor":null,
+  "decoder":null,
+  "model":{"type":"WordLevel","vocab":{"[UNK]":0,"<s>":1,"</s>":2,"user":3,"hello":4,"assistant":5},"unk_token":"[UNK]"}
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("tokenizer_config.json"),
+            r#"{
+  "bos_token":"<s>",
+  "eos_token":"</s>",
+  "chat_template":"{{ bos_token }} {% for message in messages %}{{ message['role'] }} {{ message['content'] }} {% endfor %}{% if add_generation_prompt %}assistant{% endif %}"
+}"#,
+        )
+        .unwrap();
+
+        let tokenizer = HuggingFaceTokenizer::from_directory(directory.path()).unwrap();
+        let bare = tokenizer.encode("hello").unwrap();
+        let templated = tokenizer
+            .apply_chat_template(
+                &[serde_json::json!({"role":"user","content":"hello"})],
+                true,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(bare.len(), 1);
+        assert_eq!(templated.len(), 4);
+        assert_eq!(tokenizer.bos_token_id(), Some(1));
+        assert_eq!(tokenizer.eos_token_id(), Some(2));
     }
 }
