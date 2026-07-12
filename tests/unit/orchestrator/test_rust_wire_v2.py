@@ -106,6 +106,16 @@ def test_v2_envelope_and_default_scheduled_projection(
     assert authored["backend"] == {"type": "online_http", "config": {}}
     assert authored["workload"]["type"] == "scheduled"
     assert authored["workload"]["config"]["worker_count"] == 1
+    assert authored["workload"]["config"]["phases"] == [
+        {
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": False,
+            "seamless": False,
+            "requests": 2,
+            "concurrency": 1,
+        }
+    ]
     assert authored["endpoints"]["profiles"][0]["id"] == "default"
     assert authored["endpoints"]["profiles"][0]["type"] == "future_endpoint"
 

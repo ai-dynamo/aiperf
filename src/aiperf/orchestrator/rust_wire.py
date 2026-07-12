@@ -48,13 +48,13 @@ def build_authored_run_request(
     operation: RunnerOperationV2,
     expected_distribution_id: str,
 ) -> dict[str, Any]:
-    """Project one Config-v2 run into the provisional protocol-v2 envelope.
+    """Project one Config-v2 run into the strict protocol-v2 envelope.
 
     This projection reads authored/structurally normalized configuration only:
     it never reads ``BenchmarkRun.resolved``, loads a dataset, inspects the
     filesystem, warms a tokenizer, creates artifacts, or starts a worker. The
-    strict Rust protocol-v2 DTO is not built yet, so callers may inspect or test
-    this contract but must continue to execute protocol v1 for now.
+    Factory selection remains open, while every built-in policy object is
+    explicitly lowered into its stable runner-owned shape.
     """
     if operation not in ("validate", "execute"):
         raise RustWireError(
@@ -183,7 +183,7 @@ def _authored_workload(cfg: Any, dataset: Any) -> dict[str, Any]:
         "worker_count": _worker_count(cfg),
         "dataset": _authored_model_dump(dataset),
         "tokenizer": _authored_model_dump(cfg.tokenizer),
-        "phases": [_authored_model_dump(phase) for phase in cfg.phases],
+        "phases": [_phase(phase) for phase in cfg.phases],
     }
     if cfg.accuracy is not None and cfg.accuracy.enabled:
         current_fields["accuracy"] = _authored_model_dump(cfg.accuracy)
