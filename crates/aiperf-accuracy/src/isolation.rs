@@ -454,9 +454,12 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         args.extend(launch.args.iter().cloned());
 
         let proof_input = format!(
-            "aiperf-bwrap-v1\n{}\n{}\n{}\n{}\n{:?}\n{:?}",
+            "aiperf-bwrap-v1\n{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}",
             self.bubblewrap_sha256,
             attestation.launch_closure_sha256,
+            context
+                .binding_sha256()
+                .map_err(EvaluationProviderError::registry)?,
             worker_root.display(),
             staging.display(),
             self.limits,

@@ -8,6 +8,7 @@
 //! authored-config schema; run configuration cannot select an executable,
 //! module, argument vector, environment, or upstream endpoint.
 
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display};
 use std::path::PathBuf;
@@ -478,7 +479,7 @@ impl EvaluatorProtocolLimits {
     }
 }
 
-/// Rust-owned context supplied to a factory launch.
+/// Rust-owned context bound into a one-shot prepared provider launch.
 #[derive(Debug, Clone)]
 pub struct ProviderLaunchContext {
     /// Rust-minted evaluation session.
@@ -487,8 +488,6 @@ pub struct ProviderLaunchContext {
     pub staging_dir: PathBuf,
     /// Optional scoped local compatibility proxy.
     pub proxy: Option<ScopedProxyBinding>,
-    /// Rust-owned host/route identity copied into the frozen evaluation identity.
-    pub host_binding: crate::provider_protocol::EvaluationHostBinding,
     /// Hard evaluator protocol bounds.
     pub protocol_limits: EvaluatorProtocolLimits,
     /// Rust-minted nonce binding `hello` to this exact launch.
@@ -499,9 +498,6 @@ impl ProviderLaunchContext {
     /// Validate the contained launch context before process creation.
     pub fn validate(&self) -> Result<(), ProviderRegistryError> {
         self.protocol_limits.validate()?;
-        self.host_binding
-            .validate()
-            .map_err(|error| ProviderRegistryError::InvalidLaunch(error.to_string()))?;
         if !self.staging_dir.is_absolute()
             || self.launch_nonce.len() < 32
             || self.launch_nonce.len() > 512
@@ -519,6 +515,57 @@ impl ProviderLaunchContext {
         }
         Ok(())
     }
+
+    /// Digest the exact session/staging/proxy/limit/nonce context without
+    /// exposing proxy capability material.
+    pub fn binding_sha256(&self) -> Result<String, ProviderRegistryError> {
+        self.validate()?;
+        let staging_dir = self.staging_dir.to_str().ok_or_else(|| {
+            ProviderRegistryError::InvalidLaunch(
+                "provider staging root was not valid UTF-8".to_string(),
+            )
+        })?;
+        let proxy = self.proxy.as_ref().map(|proxy| {
+            serde_json::json!({
+                "grant_id": proxy.grant.grant_id,
+                "local_locator": proxy.local_locator,
+                "max_operations": proxy.grant.max_operations,
+                "max_request_bytes": proxy.grant.max_request_bytes,
+                "expires_after_ms": proxy.grant.expires_after_ms,
+                "process_scope_sha256": proxy.grant.process_scope_sha256,
+                "secret_sha256": sha256_hex(proxy.grant.secret.expose_secret().as_bytes()),
+                "semantic_operation_ids": proxy.grant.semantic_operation_ids,
+                "service_ids": proxy.grant.service_ids,
+            })
+        });
+        CanonicalJson::new(serde_json::json!({
+            "launch_nonce_sha256": sha256_hex(self.launch_nonce.as_bytes()),
+            "protocol_limits": self.protocol_limits,
+            "proxy": proxy,
+            "session_id": self.session_id,
+            "staging_dir": staging_dir,
+        }))
+        .map_err(|error| ProviderRegistryError::InvalidLaunch(error.to_string()))
+        .map(|value| value.normalized_result_sha256())
+    }
+}
+
+/// Opaque one-shot launch token minted by the selected factory launcher.
+///
+/// Implementations keep prepared command/isolation state private. Consuming
+/// the boxed token prevents reuse and lets the launcher reject foreign tokens.
+pub trait PreparedEvaluationProviderLaunch: fmt::Debug + Send {
+    /// Exact immutable distribution bound into this preparation.
+    fn distribution_id(&self) -> &EvaluationDistributionId;
+
+    /// Exact prelaunch context digest bound into isolation preparation.
+    fn prelaunch_context_sha256(&self) -> &str;
+
+    /// Independently inspectable isolation evidence minted before host binding.
+    fn isolation_evidence(&self) -> &crate::isolation::EvaluatorIsolationEvidence;
+
+    /// Consume this launcher-specific token for checked downcasting.
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send>;
 }
 
 /// Unified provider-neutral evaluator session seam.
@@ -608,13 +655,21 @@ pub trait EvaluationProviderLauncher: Send + Sync {
         distribution: &EvaluationDistributionDescriptor,
     ) -> Result<(), EvaluationProviderError>;
 
-    /// Attest, isolate, launch, and negotiate one exact registered distribution.
-    async fn launch(
+    /// Attest and isolate one exact launch context without starting a worker.
+    fn prepare_launch(
         &self,
         descriptor: &EvaluationProviderDescriptor,
         distribution: &EvaluationDistributionDescriptor,
+        context: ProviderLaunchContext,
+    ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError>;
+
+    /// Consume one prepared launch, bind Rust host identity, spawn, and negotiate.
+    async fn launch(
+        &self,
+        descriptor: &EvaluationProviderDescriptor,
         config: &ValidatedProviderConfig,
-        context: &ProviderLaunchContext,
+        host_binding: crate::provider_protocol::EvaluationHostBinding,
+        prepared: Box<dyn PreparedEvaluationProviderLaunch>,
     ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError>;
 }
 
@@ -639,12 +694,19 @@ pub trait EvaluationProviderFactory: Send + Sync {
         distribution: &EvaluationDistributionId,
     ) -> Result<(), EvaluationProviderError>;
 
-    /// Launch one registered immutable distribution.
-    async fn launch(
+    /// Mint an opaque one-shot prepared token for one exact prelaunch context.
+    fn prepare_launch(
         &self,
         distribution: &EvaluationDistributionId,
+        context: ProviderLaunchContext,
+    ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError>;
+
+    /// Consume a prepared token and bind the Rust-owned host identity.
+    async fn launch(
+        &self,
+        prepared: Box<dyn PreparedEvaluationProviderLaunch>,
         config: &ValidatedProviderConfig,
-        context: &ProviderLaunchContext,
+        host_binding: crate::provider_protocol::EvaluationHostBinding,
     ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError>;
 }
 
@@ -717,15 +779,52 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
         self.launcher.check_distribution_available(distribution)
     }
 
-    async fn launch(
+    fn prepare_launch(
         &self,
         distribution: &EvaluationDistributionId,
-        config: &ValidatedProviderConfig,
-        context: &ProviderLaunchContext,
-    ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
+        context: ProviderLaunchContext,
+    ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError> {
         context
             .validate()
             .map_err(EvaluationProviderError::registry)?;
+        let distribution = self.descriptor.distribution(distribution).ok_or_else(|| {
+            EvaluationProviderError::FactoryMismatch(format!(
+                "distribution {distribution} is not registered for provider {}",
+                self.descriptor.provider_id
+            ))
+        })?;
+        self.launcher.check_distribution_available(distribution)?;
+        let prepared = self
+            .launcher
+            .prepare_launch(&self.descriptor, distribution, context)?;
+        if prepared.distribution_id() != &distribution.distribution_id
+            || !is_sha256(prepared.prelaunch_context_sha256())
+            || prepared.isolation_evidence().enforced != self.descriptor.isolation
+        {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "prepared launch token drifted from distribution/context/isolation policy"
+                    .to_string(),
+            ));
+        }
+        prepared.isolation_evidence().validate_strict()?;
+        Ok(prepared)
+    }
+
+    async fn launch(
+        &self,
+        prepared: Box<dyn PreparedEvaluationProviderLaunch>,
+        config: &ValidatedProviderConfig,
+        host_binding: crate::provider_protocol::EvaluationHostBinding,
+    ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
+        host_binding.validate()?;
+        if !is_sha256(prepared.prelaunch_context_sha256())
+            || prepared.isolation_evidence().enforced != self.descriptor.isolation
+        {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "prepared launch token did not satisfy factory isolation policy".to_string(),
+            ));
+        }
+        prepared.isolation_evidence().validate_strict()?;
         if config.provider_id != self.descriptor.provider_id
             || config.schema_version != self.descriptor.config_schema_version
             || config.schema_sha256 != self.descriptor.config_schema_sha256
@@ -735,15 +834,24 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
                     .to_string(),
             ));
         }
-        let distribution = self.descriptor.distribution(distribution).ok_or_else(|| {
-            EvaluationProviderError::FactoryMismatch(format!(
-                "distribution {distribution} is not registered for provider {}",
-                self.descriptor.provider_id
-            ))
-        })?;
+        let distribution = self
+            .descriptor
+            .distribution(prepared.distribution_id())
+            .ok_or_else(|| {
+                EvaluationProviderError::FactoryMismatch(format!(
+                    "prepared distribution {} is not registered for provider {}",
+                    prepared.distribution_id(),
+                    self.descriptor.provider_id
+                ))
+            })?;
+        if prepared.isolation_evidence().proof_sha256 != host_binding.host.isolation_proof_sha256 {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "host binding isolation proof did not match the prepared launch token".to_string(),
+            ));
+        }
         self.launcher.check_distribution_available(distribution)?;
         self.launcher
-            .launch(&self.descriptor, distribution, config, context)
+            .launch(&self.descriptor, config, host_binding, prepared)
             .await
     }
 }
@@ -1043,13 +1151,21 @@ macro_rules! delegate_factory {
                 self.0.check_distribution_available(distribution)
             }
 
-            async fn launch(
+            fn prepare_launch(
                 &self,
                 distribution: &EvaluationDistributionId,
+                context: ProviderLaunchContext,
+            ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError> {
+                self.0.prepare_launch(distribution, context)
+            }
+
+            async fn launch(
+                &self,
+                prepared: Box<dyn PreparedEvaluationProviderLaunch>,
                 config: &ValidatedProviderConfig,
-                context: &ProviderLaunchContext,
+                host_binding: crate::provider_protocol::EvaluationHostBinding,
             ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
-                self.0.launch(distribution, config, context).await
+                self.0.launch(prepared, config, host_binding).await
             }
         }
     };
@@ -1421,12 +1537,21 @@ mod tests {
             Ok(())
         }
 
-        async fn launch(
+        fn prepare_launch(
             &self,
             _descriptor: &EvaluationProviderDescriptor,
             _distribution: &EvaluationDistributionDescriptor,
+            _context: ProviderLaunchContext,
+        ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError> {
+            panic!("pure validation test must not prepare a provider")
+        }
+
+        async fn launch(
+            &self,
+            _descriptor: &EvaluationProviderDescriptor,
             _config: &ValidatedProviderConfig,
-            _context: &ProviderLaunchContext,
+            _host_binding: crate::provider_protocol::EvaluationHostBinding,
+            _prepared: Box<dyn PreparedEvaluationProviderLaunch>,
         ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
             panic!("pure validation test must not launch a provider")
         }
@@ -1445,12 +1570,21 @@ mod tests {
             ))
         }
 
-        async fn launch(
+        fn prepare_launch(
             &self,
             _descriptor: &EvaluationProviderDescriptor,
             _distribution: &EvaluationDistributionDescriptor,
+            _context: ProviderLaunchContext,
+        ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError> {
+            panic!("an unavailable distribution must never prepare")
+        }
+
+        async fn launch(
+            &self,
+            _descriptor: &EvaluationProviderDescriptor,
             _config: &ValidatedProviderConfig,
-            _context: &ProviderLaunchContext,
+            _host_binding: crate::provider_protocol::EvaluationHostBinding,
+            _prepared: Box<dyn PreparedEvaluationProviderLaunch>,
         ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
             panic!("an unavailable distribution must never launch")
         }

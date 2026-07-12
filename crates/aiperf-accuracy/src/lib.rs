@@ -43,9 +43,9 @@ pub use provider::{
     EvaluationProviderDescriptor, EvaluationProviderError, EvaluationProviderFactory,
     EvaluationProviderLauncher, EvaluationProviderRegistry, EvaluationProviderRegistryBuilder,
     EvaluatorIsolationRequirements, EvaluatorProtocolLimits, NemoEvaluatorProviderFactory,
-    OpenBenchProviderFactory, ProviderConfigValidator, ProviderLaunchContext,
-    ProviderRegistryError, STOCK_EVALUATION_OPERATION_SCHEMAS, StockEvaluationOperationSchema,
-    ValidatedProviderConfig,
+    OpenBenchProviderFactory, PreparedEvaluationProviderLaunch, ProviderConfigValidator,
+    ProviderLaunchContext, ProviderRegistryError, STOCK_EVALUATION_OPERATION_SCHEMAS,
+    StockEvaluationOperationSchema, ValidatedProviderConfig,
 };
 pub use provider_protocol::{
     AggregateMetric, AggregationPolicy, ArtifactRef, ArtifactVisibility, CaseOutcome,

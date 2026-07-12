@@ -26,7 +26,7 @@ use crate::lifecycle::{EvaluationLifecycle, EvaluationLifecycleState};
 use crate::provider::{
     EvaluationDistributionDescriptor, EvaluationProvider, EvaluationProviderDescriptor,
     EvaluationProviderError, EvaluationProviderLauncher, EvaluatorProtocolLimits,
-    ProviderLaunchContext, ValidatedProviderConfig,
+    PreparedEvaluationProviderLaunch, ProviderLaunchContext, ValidatedProviderConfig,
 };
 use crate::provider_protocol::{
     BindAssetsResult, CancelledUnitsResult, EVALUATOR_WORKER_PROTOCOL_V2, EvaluationEventBatch,
@@ -72,6 +72,7 @@ pub struct SupervisedEvaluationProviderLauncher {
     isolation: Arc<dyn EvaluatorIsolation>,
     log_sink: Arc<dyn EvaluationProviderLogSink>,
     shutdown_timeout: Duration,
+    token_authority: Arc<()>,
 }
 
 impl fmt::Debug for SupervisedEvaluationProviderLauncher {
@@ -112,6 +113,7 @@ impl SupervisedEvaluationProviderLauncher {
             isolation,
             log_sink: Arc::new(StderrEvaluationProviderLogSink),
             shutdown_timeout: Duration::from_secs(30),
+            token_authority: Arc::new(()),
         })
     }
 
@@ -136,6 +138,36 @@ impl SupervisedEvaluationProviderLauncher {
     }
 }
 
+#[derive(Debug)]
+struct SupervisedPreparedEvaluationProviderLaunch {
+    provider_id: crate::provider_protocol::EvaluationProviderId,
+    distribution_id: crate::provider_protocol::EvaluationDistributionId,
+    prelaunch_context_sha256: String,
+    context: ProviderLaunchContext,
+    launch: AttestedWorkerLaunch,
+    attestation: crate::isolation::LaunchAttestation,
+    prepared: crate::isolation::PreparedEvaluatorLaunch,
+    token_authority: Arc<()>,
+}
+
+impl PreparedEvaluationProviderLaunch for SupervisedPreparedEvaluationProviderLaunch {
+    fn distribution_id(&self) -> &crate::provider_protocol::EvaluationDistributionId {
+        &self.distribution_id
+    }
+
+    fn prelaunch_context_sha256(&self) -> &str {
+        &self.prelaunch_context_sha256
+    }
+
+    fn isolation_evidence(&self) -> &crate::isolation::EvaluatorIsolationEvidence {
+        &self.prepared.evidence
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+        self
+    }
+}
+
 #[async_trait(?Send)]
 impl EvaluationProviderLauncher for SupervisedEvaluationProviderLauncher {
     fn check_distribution_available(
@@ -155,21 +187,12 @@ impl EvaluationProviderLauncher for SupervisedEvaluationProviderLauncher {
         self.isolation.check_available()
     }
 
-    async fn launch(
+    fn prepare_launch(
         &self,
         descriptor: &EvaluationProviderDescriptor,
         distribution: &EvaluationDistributionDescriptor,
-        config: &ValidatedProviderConfig,
-        context: &ProviderLaunchContext,
-    ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
-        if config.provider_id() != &descriptor.provider_id
-            || config.schema_sha256() != descriptor.config_schema_sha256
-            || config.schema_version() != descriptor.config_schema_version
-        {
-            return Err(EvaluationProviderError::FactoryMismatch(
-                "launcher received config from a different provider/schema".to_string(),
-            ));
-        }
+        mut context: ProviderLaunchContext,
+    ) -> Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError> {
         let launch = self
             .launches
             .get(&distribution.distribution_id)
@@ -179,14 +202,110 @@ impl EvaluationProviderLauncher for SupervisedEvaluationProviderLauncher {
                     distribution.distribution_id
                 ))
             })?;
+        let staging_dir = std::fs::canonicalize(&context.staging_dir).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "failed to resolve evaluator staging root: {error}"
+            ))
+        })?;
+        if !staging_dir.is_dir() {
+            return Err(EvaluationProviderError::Launch(
+                "evaluator staging root was not a directory".to_string(),
+            ));
+        }
+        context.staging_dir = staging_dir;
+        context
+            .validate()
+            .map_err(EvaluationProviderError::registry)?;
+        let prelaunch_context_sha256 = context
+            .binding_sha256()
+            .map_err(EvaluationProviderError::registry)?;
         let attestation = self.attestor.attest(launch, distribution)?;
-        let prepared = self.isolation.prepare(launch, &attestation, context)?;
+        let prepared = self.isolation.prepare(launch, &attestation, &context)?;
         prepared.evidence.validate_strict()?;
+        if prepared.evidence.enforced != descriptor.isolation {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "prepared isolation outcomes differed from the provider descriptor".to_string(),
+            ));
+        }
+        Ok(Box::new(SupervisedPreparedEvaluationProviderLaunch {
+            provider_id: descriptor.provider_id.clone(),
+            distribution_id: distribution.distribution_id.clone(),
+            prelaunch_context_sha256,
+            context,
+            launch: launch.clone(),
+            attestation,
+            prepared,
+            token_authority: Arc::clone(&self.token_authority),
+        }))
+    }
+
+    async fn launch(
+        &self,
+        descriptor: &EvaluationProviderDescriptor,
+        config: &ValidatedProviderConfig,
+        host_binding: crate::provider_protocol::EvaluationHostBinding,
+        prepared: Box<dyn PreparedEvaluationProviderLaunch>,
+    ) -> Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
+        if config.provider_id() != &descriptor.provider_id
+            || config.schema_sha256() != descriptor.config_schema_sha256
+            || config.schema_version() != descriptor.config_schema_version
+        {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "launcher received config from a different provider/schema".to_string(),
+            ));
+        }
+        let prepared = prepared
+            .into_any()
+            .downcast::<SupervisedPreparedEvaluationProviderLaunch>()
+            .map_err(|_| {
+                EvaluationProviderError::FactoryMismatch(
+                    "provider launcher received a foreign prepared token".to_string(),
+                )
+            })?;
+        if !Arc::ptr_eq(&prepared.token_authority, &self.token_authority)
+            || prepared.provider_id != descriptor.provider_id
+            || prepared.prelaunch_context_sha256
+                != prepared
+                    .context
+                    .binding_sha256()
+                    .map_err(EvaluationProviderError::registry)?
+        {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "prepared provider launch authority/context drifted".to_string(),
+            ));
+        }
+        let distribution = descriptor
+            .distribution(&prepared.distribution_id)
+            .ok_or_else(|| {
+                EvaluationProviderError::FactoryMismatch(format!(
+                    "prepared distribution {} is not registered for provider {}",
+                    prepared.distribution_id, descriptor.provider_id
+                ))
+            })?;
+        let measured = self.attestor.attest(&prepared.launch, distribution)?;
+        if measured != prepared.attestation {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "worker launch closure drifted after preparation".to_string(),
+            ));
+        }
+        self.isolation.check_available()?;
+        host_binding.validate()?;
+        if host_binding.host.isolation_proof_sha256 != prepared.prepared.evidence.proof_sha256 {
+            return Err(EvaluationProviderError::FactoryMismatch(
+                "host binding did not preserve prepared isolation evidence".to_string(),
+            ));
+        }
+        let SupervisedPreparedEvaluationProviderLaunch {
+            context, prepared, ..
+        } = *prepared;
         let provider = SupervisedEvaluationProvider::spawn(
             descriptor,
             distribution,
-            prepared,
-            context,
+            SupervisedSpawnInput {
+                prepared,
+                context,
+                host_binding,
+            },
             Arc::clone(&self.isolation),
             Arc::clone(&self.log_sink),
             self.shutdown_timeout,
@@ -254,6 +373,12 @@ pub struct SupervisedEvaluationProvider {
     quiescence_proof: Option<IsolationQuiescenceProof>,
 }
 
+struct SupervisedSpawnInput {
+    prepared: crate::isolation::PreparedEvaluatorLaunch,
+    context: ProviderLaunchContext,
+    host_binding: crate::provider_protocol::EvaluationHostBinding,
+}
+
 impl fmt::Debug for SupervisedEvaluationProvider {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -272,12 +397,16 @@ impl SupervisedEvaluationProvider {
     async fn spawn(
         descriptor: &EvaluationProviderDescriptor,
         distribution: &EvaluationDistributionDescriptor,
-        prepared: crate::isolation::PreparedEvaluatorLaunch,
-        context: &ProviderLaunchContext,
+        input: SupervisedSpawnInput,
         isolation: Arc<dyn EvaluatorIsolation>,
         log_sink: Arc<dyn EvaluationProviderLogSink>,
         shutdown_timeout: Duration,
     ) -> Result<Self, EvaluationProviderError> {
+        let SupervisedSpawnInput {
+            prepared,
+            context,
+            host_binding,
+        } = input;
         let (request_child, request_parent) = create_control_pipe()?;
         let (response_parent, response_child) = create_control_pipe()?;
 
@@ -367,7 +496,7 @@ impl SupervisedEvaluationProvider {
             limits: context.protocol_limits,
             next_request_id: 1,
             proxy: context.proxy.clone(),
-            host_binding: context.host_binding.clone(),
+            host_binding,
             plan_request: None,
             plan: None,
             frozen_identity: None,
@@ -1023,9 +1152,12 @@ mod tests {
     use crate::canonical::sha256_hex;
     use crate::isolation::{
         EvaluatorIsolationEvidence, EvaluatorResourceLimits, IsolationQuiescenceProof,
-        PreparedEvaluatorLaunch,
+        LaunchClosureFile, PreparedEvaluatorLaunch, Sha256LaunchAttestor,
     };
-    use crate::provider::{EvaluationOperationDescriptor, EvaluatorIsolationRequirements};
+    use crate::provider::{
+        EvaluationOperationDescriptor, EvaluationProviderFactory, EvaluatorIsolationRequirements,
+        NemoEvaluatorProviderFactory,
+    };
     use crate::provider_protocol::{
         EvaluationDistributionId, EvaluationExecutionGranularity, EvaluationProviderId,
         EvaluationSchedulingMode, EvaluationSessionId, SemanticOperationId,
@@ -1062,11 +1194,24 @@ mod tests {
 
         fn prepare(
             &self,
-            _launch: &AttestedWorkerLaunch,
+            launch: &AttestedWorkerLaunch,
             _attestation: &crate::isolation::LaunchAttestation,
-            _context: &ProviderLaunchContext,
+            context: &ProviderLaunchContext,
         ) -> Result<PreparedEvaluatorLaunch, EvaluationProviderError> {
-            unreachable!("dedicated-FD test supplies an already prepared launch")
+            Ok(PreparedEvaluatorLaunch {
+                program: launch.program.clone(),
+                args: launch.args.clone(),
+                environment: launch.environment.clone(),
+                current_dir: launch.current_dir.clone(),
+                resource_limits: EvaluatorResourceLimits::default(),
+                evidence: EvaluatorIsolationEvidence {
+                    profile_id: "fixture-isolation-v1".to_string(),
+                    proof_sha256: context
+                        .binding_sha256()
+                        .map_err(EvaluationProviderError::registry)?,
+                    enforced: EvaluatorIsolationRequirements::strict_process_tree(),
+                },
+            })
         }
 
         fn verify_quiescent(
@@ -1099,6 +1244,91 @@ mod tests {
             })
             .and_then(|path| std::fs::canonicalize(path).ok())
             .expect("Python fixture executable must be on PATH")
+    }
+
+    #[tokio::test]
+    async fn prepared_token_binds_context_and_must_match_host_isolation_proof() {
+        let python = find_python();
+        let worker_root = python.parent().unwrap().to_path_buf();
+        let executable_sha256 = sha256_hex(&std::fs::read(&python).unwrap());
+        let mut closure_bytes = Vec::new();
+        closure_bytes.extend_from_slice(python.to_string_lossy().as_bytes());
+        closure_bytes.push(0);
+        closure_bytes.extend_from_slice(executable_sha256.as_bytes());
+        closure_bytes.push(b'\n');
+        let distribution = EvaluationDistributionDescriptor {
+            distribution_id: EvaluationDistributionId::new("fixture-prepared").unwrap(),
+            package: "fixture-provider".to_string(),
+            package_version: "1.0".to_string(),
+            provider_source_sha256: "a".repeat(64),
+            worker_source_sha256: "b".repeat(64),
+            dependency_lock_sha256: "c".repeat(64),
+            oci_digest: None,
+            launch_closure_sha256: sha256_hex(&closure_bytes),
+        };
+        let launch = AttestedWorkerLaunch {
+            distribution_id: distribution.distribution_id.clone(),
+            program: python.clone(),
+            args: Vec::new(),
+            environment: BTreeMap::new(),
+            current_dir: worker_root.clone(),
+            worker_root,
+            closure: vec![LaunchClosureFile {
+                path: python,
+                artifact_content_sha256: executable_sha256,
+            }],
+        };
+        let launcher = Arc::new(
+            SupervisedEvaluationProviderLauncher::new(
+                vec![launch],
+                Arc::new(Sha256LaunchAttestor),
+                Arc::new(FixtureIsolation),
+            )
+            .unwrap(),
+        );
+        let factory =
+            NemoEvaluatorProviderFactory::new(vec![distribution.clone()], launcher).unwrap();
+        let staging =
+            std::env::temp_dir().join(format!("aiperf-provider-token-test-{}", std::process::id()));
+        std::fs::create_dir_all(&staging).unwrap();
+        let context = ProviderLaunchContext {
+            session_id: EvaluationSessionId::new("fixture-token-session").unwrap(),
+            staging_dir: staging.clone(),
+            proxy: None,
+            protocol_limits: EvaluatorProtocolLimits::default(),
+            launch_nonce: "prepared-launch-nonce-0123456789abcdef".to_string(),
+        };
+        let expected_context_sha256 = context.binding_sha256().unwrap();
+        let prepared = factory
+            .prepare_launch(&distribution.distribution_id, context)
+            .unwrap();
+        assert_eq!(prepared.prelaunch_context_sha256(), expected_context_sha256);
+        assert_eq!(
+            prepared.isolation_evidence().proof_sha256,
+            expected_context_sha256
+        );
+        let config = factory
+            .validate_authored_config(
+                &CanonicalJson::new(serde_json::json!({"benchmark": "fixture"})).unwrap(),
+            )
+            .unwrap();
+        let host_binding = crate::provider_protocol::EvaluationHostBinding {
+            host: crate::provider_protocol::EvaluationHostIdentity {
+                runner_sha256: "6".repeat(64),
+                capability_inventory_sha256: "7".repeat(64),
+                schema_inventory_sha256: "8".repeat(64),
+                isolation_proof_sha256: "9".repeat(64),
+            },
+            route_map_sha256: "a".repeat(64),
+            prepared_endpoints_sha256: "b".repeat(64),
+            sandbox_sha256: None,
+        };
+        let error = match factory.launch(prepared, &config, host_binding).await {
+            Ok(_) => panic!("mismatched host isolation proof launched a worker"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, EvaluationProviderError::FactoryMismatch(_)));
+        let _ = std::fs::remove_dir_all(staging);
     }
 
     fn fixture_descriptor() -> (
@@ -1181,19 +1411,19 @@ for line in reader:
             session_id: EvaluationSessionId::new("fixture-session").unwrap(),
             staging_dir: base.clone(),
             proxy: None,
-            host_binding: crate::provider_protocol::EvaluationHostBinding {
-                host: crate::provider_protocol::EvaluationHostIdentity {
-                    runner_sha256: "6".repeat(64),
-                    capability_inventory_sha256: "7".repeat(64),
-                    schema_inventory_sha256: "8".repeat(64),
-                    isolation_proof_sha256: "9".repeat(64),
-                },
-                route_map_sha256: "a".repeat(64),
-                prepared_endpoints_sha256: "b".repeat(64),
-                sandbox_sha256: None,
-            },
             protocol_limits: EvaluatorProtocolLimits::default(),
             launch_nonce: "launch-nonce-fixture-0123456789abcdef".to_string(),
+        };
+        let host_binding = crate::provider_protocol::EvaluationHostBinding {
+            host: crate::provider_protocol::EvaluationHostIdentity {
+                runner_sha256: "6".repeat(64),
+                capability_inventory_sha256: "7".repeat(64),
+                schema_inventory_sha256: "8".repeat(64),
+                isolation_proof_sha256: "9".repeat(64),
+            },
+            route_map_sha256: "a".repeat(64),
+            prepared_endpoints_sha256: "b".repeat(64),
+            sandbox_sha256: None,
         };
         let prepared = PreparedEvaluatorLaunch {
             program: python,
@@ -1210,8 +1440,11 @@ for line in reader:
         let mut provider = SupervisedEvaluationProvider::spawn(
             &descriptor,
             &distribution,
-            prepared,
-            &context,
+            SupervisedSpawnInput {
+                prepared,
+                context,
+                host_binding,
+            },
             Arc::new(FixtureIsolation),
             Arc::new(StderrEvaluationProviderLogSink),
             Duration::from_secs(5),
