@@ -79,6 +79,11 @@ impl AttestedWorkerLaunch {
             }
         }
         let root = normalize_absolute(&self.worker_root)?;
+        if root == Path::new("/") {
+            return Err(EvaluationProviderError::Launch(
+                "worker rootfs cannot expose the host filesystem root".to_string(),
+            ));
+        }
         if !normalize_absolute(&self.program)?.starts_with(&root)
             || !normalize_absolute(&self.current_dir)?.starts_with(&root)
         {
@@ -88,18 +93,20 @@ impl AttestedWorkerLaunch {
         }
         let mut paths = BTreeSet::new();
         let mut includes_program = false;
+        let normalized_program = normalize_absolute(&self.program)?;
         for entry in &self.closure {
+            let normalized_entry = normalize_absolute(&entry.path)?;
             if !is_sha256(&entry.artifact_content_sha256)
                 || !entry.path.is_absolute()
-                || !normalize_absolute(&entry.path)?.starts_with(&root)
-                || !paths.insert(entry.path.clone())
+                || !normalized_entry.starts_with(&root)
+                || !paths.insert(normalized_entry.clone())
             {
                 return Err(EvaluationProviderError::Launch(
                     "worker closure contained an invalid digest, escape, or duplicate path"
                         .to_string(),
                 ));
             }
-            includes_program |= entry.path == self.program;
+            includes_program |= normalized_entry == normalized_program;
         }
         if !includes_program {
             return Err(EvaluationProviderError::Launch(
@@ -118,7 +125,7 @@ pub struct LaunchAttestation {
     pub distribution_id: EvaluationDistributionId,
     /// Measured executable digest.
     pub executable_sha256: String,
-    /// Deterministic digest over every closure path/content digest pair.
+    /// Deterministic digest over sorted worker-root-relative path/content pairs.
     pub launch_closure_sha256: String,
     /// Number of independently verified files.
     pub verified_files: usize,
@@ -150,8 +157,16 @@ impl EvaluatorLaunchAttestor for Sha256LaunchAttestor {
                 "worker launch recipe selected a different registered distribution".to_string(),
             ));
         }
+        let worker_root = normalize_absolute(&launch.worker_root)?;
+        let declared_paths = launch
+            .closure
+            .iter()
+            .map(|entry| normalize_absolute(&entry.path))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        verify_complete_closure(&worker_root, &declared_paths)?;
         let mut measured = Vec::with_capacity(launch.closure.len());
         let mut executable_sha256 = None;
+        let normalized_program = normalize_absolute(&launch.program)?;
         for expected in &launch.closure {
             let metadata = std::fs::symlink_metadata(&expected.path).map_err(|error| {
                 EvaluationProviderError::Launch(format!(
@@ -172,15 +187,26 @@ impl EvaluatorLaunchAttestor for Sha256LaunchAttestor {
                     expected.path
                 )));
             }
-            if expected.path == launch.program {
+            let absolute = normalize_absolute(&expected.path)?;
+            if absolute == normalized_program {
                 executable_sha256 = Some(digest.clone());
             }
-            measured.push((
-                normalize_absolute(&expected.path)?
-                    .to_string_lossy()
-                    .into_owned(),
-                digest,
-            ));
+            let relative = absolute.strip_prefix(&worker_root).map_err(|_| {
+                EvaluationProviderError::Launch(
+                    "launch-closure path escaped its normalized worker root".to_string(),
+                )
+            })?;
+            if relative.as_os_str().is_empty() {
+                return Err(EvaluationProviderError::Launch(
+                    "launch-closure path cannot name the worker root itself".to_string(),
+                ));
+            }
+            let relative = relative.to_str().ok_or_else(|| {
+                EvaluationProviderError::Launch(
+                    "launch-closure logical path was not valid UTF-8".to_string(),
+                )
+            })?;
+            measured.push((relative.to_string(), digest));
         }
         measured.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
         let mut closure_bytes = Vec::new();
@@ -203,6 +229,70 @@ impl EvaluatorLaunchAttestor for Sha256LaunchAttestor {
             verified_files: measured.len(),
         })
     }
+}
+
+fn verify_complete_closure(
+    worker_root: &Path,
+    declared: &BTreeSet<PathBuf>,
+) -> Result<(), EvaluationProviderError> {
+    let root_metadata = std::fs::symlink_metadata(worker_root).map_err(|error| {
+        EvaluationProviderError::Launch(format!("failed to inspect worker rootfs: {error}"))
+    })?;
+    if !root_metadata.file_type().is_dir() || root_metadata.file_type().is_symlink() {
+        return Err(EvaluationProviderError::Launch(
+            "worker rootfs was not a regular non-symlink directory".to_string(),
+        ));
+    }
+    let mut pending = vec![worker_root.to_path_buf()];
+    let mut discovered = BTreeSet::new();
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "failed to enumerate worker rootfs directory {:?}: {error}",
+                directory
+            ))
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                EvaluationProviderError::Launch(format!(
+                    "failed to enumerate worker rootfs entry: {error}"
+                ))
+            })?;
+            let path = normalize_absolute(&entry.path())?;
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+                EvaluationProviderError::Launch(format!(
+                    "failed to inspect worker rootfs entry {:?}: {error}",
+                    path
+                ))
+            })?;
+            if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+                pending.push(path);
+            } else if metadata.file_type().is_file() && !metadata.file_type().is_symlink() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt as _;
+                    if metadata.nlink() != 1 {
+                        return Err(EvaluationProviderError::Launch(format!(
+                            "worker rootfs file {:?} was a hard link",
+                            path
+                        )));
+                    }
+                }
+                discovered.insert(path);
+            } else {
+                return Err(EvaluationProviderError::Launch(format!(
+                    "worker rootfs entry {:?} was a symlink or special file",
+                    path
+                )));
+            }
+        }
+    }
+    if &discovered != declared {
+        return Err(EvaluationProviderError::Launch(
+            "worker rootfs files did not exactly match the declared launch closure".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Hard resource ceilings applied to the complete evaluator process tree.
@@ -327,8 +417,10 @@ impl IsolationQuiescenceProof {
 /// Production Linux isolation using an independently attested Bubblewrap binary.
 ///
 /// `--unshare-all` creates private user, PID, mount, IPC, UTS, cgroup, and
-/// network namespaces. Only the immutable worker root, contained staging root,
-/// and an optional Unix-domain proxy socket are bound into the child view.
+/// network namespaces. The independently materialized immutable worker rootfs
+/// is mounted at `/` so its attested dynamic loader and libraries retain their
+/// logical absolute paths. Only the contained staging root and an optional
+/// Unix-domain proxy socket are added to that rootfs.
 pub struct BubblewrapEvaluatorIsolation {
     bubblewrap: PathBuf,
     bubblewrap_sha256: String,
@@ -407,19 +499,37 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         let worker_root = std::fs::canonicalize(&launch.worker_root).map_err(|error| {
             EvaluationProviderError::Launch(format!("failed to resolve worker root: {error}"))
         })?;
+        if worker_root == Path::new("/") {
+            return Err(EvaluationProviderError::Launch(
+                "worker rootfs cannot expose the host filesystem root".to_string(),
+            ));
+        }
         let staging = std::fs::canonicalize(&context.staging_dir).map_err(|error| {
             EvaluationProviderError::Launch(format!("failed to resolve staging root: {error}"))
         })?;
-        let relative_program = launch.program.strip_prefix(&worker_root).map_err(|_| {
+        let program = std::fs::canonicalize(&launch.program).map_err(|error| {
+            EvaluationProviderError::Launch(format!("failed to resolve worker program: {error}"))
+        })?;
+        let current_dir = std::fs::canonicalize(&launch.current_dir).map_err(|error| {
+            EvaluationProviderError::Launch(format!(
+                "failed to resolve worker current directory: {error}"
+            ))
+        })?;
+        let relative_program = program.strip_prefix(&worker_root).map_err(|_| {
             EvaluationProviderError::Launch("worker executable escaped worker root".to_string())
         })?;
-        let relative_current = launch.current_dir.strip_prefix(&worker_root).map_err(|_| {
+        let relative_current = current_dir.strip_prefix(&worker_root).map_err(|_| {
             EvaluationProviderError::Launch(
                 "worker current directory escaped worker root".to_string(),
             )
         })?;
-        let inside_program = Path::new("/worker").join(relative_program);
-        let inside_current = Path::new("/worker").join(relative_current);
+        if relative_program.as_os_str().is_empty() {
+            return Err(EvaluationProviderError::Launch(
+                "worker program could not name the rootfs itself".to_string(),
+            ));
+        }
+        let inside_program = Path::new("/").join(relative_program);
+        let inside_current = Path::new("/").join(relative_current);
 
         let mut args = vec![
             OsString::from("--die-with-parent"),
@@ -430,12 +540,18 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             OsString::from("2"),
             OsString::from("--ro-bind"),
             worker_root.as_os_str().to_owned(),
-            OsString::from("/worker"),
+            OsString::from("/"),
+            OsString::from("--dir"),
+            OsString::from("/staging"),
             OsString::from("--bind"),
             staging.as_os_str().to_owned(),
             OsString::from("/staging"),
+            OsString::from("--dir"),
+            OsString::from("/proc"),
             OsString::from("--proc"),
             OsString::from("/proc"),
+            OsString::from("--dir"),
+            OsString::from("/dev"),
             OsString::from("--dev"),
             OsString::from("/dev"),
             OsString::from("--chdir"),
@@ -454,7 +570,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         args.extend(launch.args.iter().cloned());
 
         let proof_input = format!(
-            "aiperf-bwrap-v1\n{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}",
+            "aiperf-bwrap-rootfs-v2\n{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}",
             self.bubblewrap_sha256,
             attestation.launch_closure_sha256,
             context
@@ -469,7 +585,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
                 .map(|binding| &binding.grant.process_scope_sha256),
         );
         let evidence = EvaluatorIsolationEvidence {
-            profile_id: "linux-bubblewrap-process-tree-v1".to_string(),
+            profile_id: "linux-bubblewrap-rootfs-process-tree-v2".to_string(),
             proof_sha256: sha256_hex(proof_input.as_bytes()),
             enforced: EvaluatorIsolationRequirements::strict_process_tree(),
         };
@@ -528,6 +644,10 @@ fn bind_proxy_socket(
             "scoped proxy Unix socket path was not absolute".to_string(),
         ));
     }
+    args.push(OsString::from("--dir"));
+    args.push(OsString::from("/run"));
+    args.push(OsString::from("--dir"));
+    args.push(OsString::from("/run/aiperf"));
     args.push(OsString::from("--ro-bind"));
     args.push(host_path.as_os_str().to_owned());
     args.push(OsString::from("/run/aiperf/evaluator-proxy.sock"));
@@ -601,7 +721,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
-    use crate::provider_protocol::EvaluationDistributionId;
+    use crate::provider_protocol::{EvaluationDistributionId, EvaluationSessionId};
 
     #[test]
     fn launch_attestation_hashes_files_not_worker_claims() {
@@ -618,7 +738,7 @@ mod tests {
         drop(file);
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
         let digest = hash_file(&program).unwrap();
-        let closure_line = format!("{}\0{}\n", program.display(), digest);
+        let closure_line = format!("worker\0{}\n", digest);
         let closure_digest = sha256_hex(closure_line.as_bytes());
         let launch = AttestedWorkerLaunch {
             distribution_id: EvaluationDistributionId::new("fixture").unwrap(),
@@ -643,9 +763,36 @@ mod tests {
             launch_closure_sha256: closure_digest,
         };
         Sha256LaunchAttestor.attest(&launch, &distribution).unwrap();
+
+        let relocated_root = root.with_extension("relocated");
+        let _ = std::fs::remove_dir_all(&relocated_root);
+        std::fs::create_dir_all(&relocated_root).unwrap();
+        let relocated_program = relocated_root.join("worker");
+        std::fs::copy(&program, &relocated_program).unwrap();
+        let relocated_launch = AttestedWorkerLaunch {
+            program: relocated_program.clone(),
+            current_dir: relocated_root.clone(),
+            worker_root: relocated_root.clone(),
+            closure: vec![LaunchClosureFile {
+                path: relocated_program,
+                artifact_content_sha256: launch.closure[0].artifact_content_sha256.clone(),
+            }],
+            ..launch.clone()
+        };
+        Sha256LaunchAttestor
+            .attest(&relocated_launch, &distribution)
+            .unwrap();
+        std::fs::write(relocated_root.join("undeclared"), b"escape").unwrap();
+        assert!(
+            Sha256LaunchAttestor
+                .attest(&relocated_launch, &distribution)
+                .is_err()
+        );
+
         std::fs::write(&program, b"tampered").unwrap();
         assert!(Sha256LaunchAttestor.attest(&launch, &distribution).is_err());
         let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(relocated_root);
     }
 
     #[test]
@@ -685,5 +832,78 @@ mod tests {
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(isolation.check_available().is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bubblewrap_mounts_attested_rootfs_at_root_for_dynamic_runtime_paths() {
+        let base = std::env::temp_dir().join(format!("aiperf-bwrap-rootfs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let worker_root = base.join("rootfs");
+        let staging = base.join("staging");
+        let program = worker_root.join("bin/worker");
+        let bubblewrap = base.join("bwrap");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(&program, b"worker").unwrap();
+        std::fs::write(&bubblewrap, b"bwrap").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&bubblewrap, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let isolation = BubblewrapEvaluatorIsolation::new(
+            &bubblewrap,
+            hash_file(&bubblewrap).unwrap(),
+            EvaluatorResourceLimits::default(),
+        )
+        .unwrap();
+        let launch = AttestedWorkerLaunch {
+            distribution_id: EvaluationDistributionId::new("fixture").unwrap(),
+            program,
+            args: vec![OsString::from("--fixture")],
+            environment: BTreeMap::new(),
+            current_dir: worker_root.clone(),
+            worker_root: worker_root.clone(),
+            closure: vec![LaunchClosureFile {
+                path: worker_root.join("bin/worker"),
+                artifact_content_sha256: hash_file(&worker_root.join("bin/worker")).unwrap(),
+            }],
+        };
+        let context = ProviderLaunchContext {
+            session_id: EvaluationSessionId::new("fixture-session").unwrap(),
+            staging_dir: staging,
+            proxy: None,
+            protocol_limits: crate::provider::EvaluatorProtocolLimits::default(),
+            launch_nonce: "fixture-bwrap-nonce-0123456789abcdef".to_string(),
+        };
+        let prepared = isolation
+            .prepare(
+                &launch,
+                &LaunchAttestation {
+                    distribution_id: launch.distribution_id.clone(),
+                    executable_sha256: "a".repeat(64),
+                    launch_closure_sha256: "b".repeat(64),
+                    verified_files: 1,
+                },
+                &context,
+            )
+            .unwrap();
+        let args = prepared
+            .args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let root_bind = args
+            .windows(3)
+            .find(|window| window[0] == "--ro-bind" && window[2] == "/")
+            .expect("worker rootfs must be mounted at /");
+        assert_eq!(root_bind[1], worker_root.to_string_lossy());
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--", "/bin/worker"])
+        );
+        assert_eq!(
+            prepared.evidence.profile_id,
+            "linux-bubblewrap-rootfs-process-tree-v2"
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 }

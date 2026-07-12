@@ -223,7 +223,8 @@ pub struct EvaluationDistributionDescriptor {
     /// Optional immutable OCI image digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oci_digest: Option<String>,
-    /// Factory-attested executable/closure digest.
+    /// Factory-attested closure digest over sorted normalized worker-root-relative
+    /// UTF-8 path, NUL, content SHA-256, and LF records.
     pub launch_closure_sha256: String,
 }
 

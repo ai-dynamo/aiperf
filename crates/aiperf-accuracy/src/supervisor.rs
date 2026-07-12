@@ -1248,11 +1248,20 @@ mod tests {
 
     #[tokio::test]
     async fn prepared_token_binds_context_and_must_match_host_isolation_proof() {
-        let python = find_python();
-        let worker_root = python.parent().unwrap().to_path_buf();
+        let source_python = find_python();
+        let base =
+            std::env::temp_dir().join(format!("aiperf-provider-token-test-{}", std::process::id()));
+        let worker_root = base.join("rootfs");
+        let python = worker_root.join("bin/python");
+        let staging = base.join("staging");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::copy(source_python, &python).unwrap();
         let executable_sha256 = sha256_hex(&std::fs::read(&python).unwrap());
+        let logical_program = python.strip_prefix(&worker_root).unwrap();
         let mut closure_bytes = Vec::new();
-        closure_bytes.extend_from_slice(python.to_string_lossy().as_bytes());
+        closure_bytes.extend_from_slice(logical_program.to_string_lossy().as_bytes());
         closure_bytes.push(0);
         closure_bytes.extend_from_slice(executable_sha256.as_bytes());
         closure_bytes.push(b'\n');
@@ -1288,9 +1297,6 @@ mod tests {
         );
         let factory =
             NemoEvaluatorProviderFactory::new(vec![distribution.clone()], launcher).unwrap();
-        let staging =
-            std::env::temp_dir().join(format!("aiperf-provider-token-test-{}", std::process::id()));
-        std::fs::create_dir_all(&staging).unwrap();
         let context = ProviderLaunchContext {
             session_id: EvaluationSessionId::new("fixture-token-session").unwrap(),
             staging_dir: staging.clone(),
@@ -1328,7 +1334,7 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, EvaluationProviderError::FactoryMismatch(_)));
-        let _ = std::fs::remove_dir_all(staging);
+        let _ = std::fs::remove_dir_all(base);
     }
 
     fn fixture_descriptor() -> (
