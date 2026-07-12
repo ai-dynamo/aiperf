@@ -49,15 +49,127 @@ impl GraphTraceSource for VecGraphTraceSource {
     }
 }
 
-/// Build a finite source from dataset-lowered graph references.
-pub fn lowered_trace_source(
-    lowered: &crate::dataset_lowering::LoweredDatasetGraph,
-) -> VecGraphTraceSource {
-    VecGraphTraceSource::new(lowered.parsed.traces.iter().map(|trace| GraphTracePlan {
-        graph: lowered.parsed.resolve_trace_graph(trace).clone(),
-        trace: trace.clone(),
-        arrival_offset_ns: None,
-    }))
+/// Sequential root-template cycling with unique execution-instance identities.
+///
+/// This source gives bounded phase request/session counts their ordinary
+/// resampling behavior without reparsing or relowering the authored DAG. Both
+/// budgets may be absent when a duration policy owns termination.
+pub struct CyclingGraphTraceSource {
+    templates: Vec<GraphTracePlan>,
+    session_limit: Option<u64>,
+    request_limit: Option<u64>,
+    next: Cell<u64>,
+    admitted_requests: Cell<u64>,
+    instance_sequence: GraphTraceInstanceSequence,
+}
+
+/// Run-scoped identity sequence shared by independently prepared graph phases.
+///
+/// Phase-local session and request budgets remain independent, while every
+/// emitted root instance receives one run-unique ordinal for correlation and
+/// metric identity.
+#[derive(Clone, Default)]
+pub struct GraphTraceInstanceSequence {
+    next: Rc<Cell<u64>>,
+}
+
+impl GraphTraceInstanceSequence {
+    fn take(&self) -> Result<u64, GraphWorkloadError> {
+        let ordinal = self.next.get();
+        self.next.set(ordinal.checked_add(1).ok_or_else(|| {
+            GraphWorkloadError("graph trace instance identity exhausted u64".into())
+        })?);
+        Ok(ordinal)
+    }
+}
+
+impl CyclingGraphTraceSource {
+    /// Construct a sequential cycle over at least one root template.
+    pub fn new(
+        templates: Vec<GraphTracePlan>,
+        session_limit: Option<u64>,
+    ) -> Result<Self, GraphWorkloadError> {
+        Self::with_budgets(templates, session_limit, None)
+    }
+
+    /// Construct with independent whole-trace session and static-node budgets.
+    ///
+    /// The next authored template is never split or skipped: if its static node
+    /// count would exceed `request_limit`, the finite source is exhausted.
+    pub fn with_budgets(
+        templates: Vec<GraphTracePlan>,
+        session_limit: Option<u64>,
+        request_limit: Option<u64>,
+    ) -> Result<Self, GraphWorkloadError> {
+        Self::with_budgets_and_sequence(
+            templates,
+            session_limit,
+            request_limit,
+            GraphTraceInstanceSequence::default(),
+        )
+    }
+
+    /// Construct with budgets and a run-scoped instance identity sequence.
+    pub fn with_budgets_and_sequence(
+        templates: Vec<GraphTracePlan>,
+        session_limit: Option<u64>,
+        request_limit: Option<u64>,
+        instance_sequence: GraphTraceInstanceSequence,
+    ) -> Result<Self, GraphWorkloadError> {
+        if templates.is_empty() {
+            return Err(GraphWorkloadError(
+                "graph trace cycling requires at least one root template".into(),
+            ));
+        }
+        if session_limit == Some(0) || request_limit == Some(0) {
+            return Err(GraphWorkloadError(
+                "graph trace session/request budgets must be positive when configured".into(),
+            ));
+        }
+        Ok(Self {
+            templates,
+            session_limit,
+            request_limit,
+            next: Cell::new(0),
+            admitted_requests: Cell::new(0),
+            instance_sequence,
+        })
+    }
+}
+
+impl GraphTraceSource for CyclingGraphTraceSource {
+    fn next_trace(&self) -> Result<Option<GraphTracePlan>, GraphWorkloadError> {
+        let ordinal = self.next.get();
+        if self.session_limit.is_some_and(|limit| ordinal >= limit) {
+            return Ok(None);
+        }
+        let template_count = u64::try_from(self.templates.len())
+            .map_err(|_| GraphWorkloadError("graph template count exceeds u64".into()))?;
+        let template_index = usize::try_from(ordinal % template_count)
+            .map_err(|_| GraphWorkloadError("graph template index exceeds usize".into()))?;
+        let mut plan = self.templates[template_index].clone();
+        let requests = u64::try_from(plan.graph.nodes.len()).map_err(|_| {
+            GraphWorkloadError("graph template static node count exceeds u64".into())
+        })?;
+        let admitted_requests = self.admitted_requests.get();
+        let next_requests = admitted_requests.checked_add(requests).ok_or_else(|| {
+            GraphWorkloadError("graph admitted static node count exceeds u64".into())
+        })?;
+        if self
+            .request_limit
+            .is_some_and(|limit| next_requests > limit)
+        {
+            return Ok(None);
+        }
+        let next_ordinal = ordinal
+            .checked_add(1)
+            .ok_or_else(|| GraphWorkloadError("graph admitted root count exceeds u64".into()))?;
+        let instance = self.instance_sequence.take()?;
+        plan.trace.id = format!("{}#instance-{instance}", plan.trace.id);
+        self.next.set(next_ordinal);
+        self.admitted_requests.set(next_requests);
+        Ok(Some(plan))
+    }
 }
 
 /// Arrival-pacing extension point.
@@ -71,6 +183,46 @@ pub trait GraphArrivalPolicy {
         ordinal: u64,
         plan: &GraphTracePlan,
     ) -> Result<(), GraphWorkloadError>;
+}
+
+/// Run-level admission stop policy owned by the graph coordinator.
+pub trait GraphStopPolicy {
+    /// Optional absolute stop deadline derived from the workload start.
+    fn deadline_ns(&self, run_start_ns: i64) -> Option<i64>;
+}
+
+/// No run-level admission deadline.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UnlimitedGraphStop;
+
+impl GraphStopPolicy for UnlimitedGraphStop {
+    fn deadline_ns(&self, _run_start_ns: i64) -> Option<i64> {
+        None
+    }
+}
+
+/// Clock-native duration bound that stops new roots and drains active traces.
+#[derive(Debug, Clone, Copy)]
+pub struct DurationGraphStop {
+    duration_ns: i64,
+}
+
+impl DurationGraphStop {
+    /// Construct a non-negative duration admission bound.
+    pub fn new(duration_ns: i64) -> Result<Self, GraphWorkloadError> {
+        if duration_ns < 0 {
+            return Err(GraphWorkloadError(
+                "graph stop duration must be non-negative".into(),
+            ));
+        }
+        Ok(Self { duration_ns })
+    }
+}
+
+impl GraphStopPolicy for DurationGraphStop {
+    fn deadline_ns(&self, run_start_ns: i64) -> Option<i64> {
+        Some(run_start_ns.saturating_add(self.duration_ns))
+    }
 }
 
 /// Immediate arrivals; session capacity governs throughput.
@@ -287,6 +439,7 @@ pub struct GraphWorkload {
     source: Rc<dyn GraphTraceSource>,
     arrival: Rc<dyn GraphArrivalPolicy>,
     admission: Rc<dyn TraceAdmissionPolicy>,
+    stop: Rc<dyn GraphStopPolicy>,
     backend: Rc<dyn GraphTraceExecutionBackend>,
     run_failure: Rc<dyn RunFailurePolicy>,
     observer: Rc<dyn GraphWorkloadObserver>,
@@ -305,6 +458,7 @@ impl GraphWorkload {
             source,
             arrival: Rc::new(ImmediateGraphArrival),
             admission: Rc::new(UnlimitedTraceAdmission),
+            stop: Rc::new(UnlimitedGraphStop),
             backend,
             run_failure: Rc::new(ContinueRunFailurePolicy),
             observer: Rc::new(NoopGraphWorkloadObserver),
@@ -321,6 +475,12 @@ impl GraphWorkload {
     /// Inject root-session admission.
     pub fn with_admission(mut self, admission: Rc<dyn TraceAdmissionPolicy>) -> Self {
         self.admission = admission;
+        self
+    }
+
+    /// Inject a run-level admission stop policy.
+    pub fn with_stop_policy(mut self, stop: Rc<dyn GraphStopPolicy>) -> Self {
+        self.stop = stop;
         self
     }
 
@@ -349,6 +509,7 @@ impl GraphWorkload {
     /// Execute all admitted traces on the caller's current-thread `LocalSet`.
     pub async fn execute(&self) -> Result<GraphWorkloadReport, GraphWorkloadError> {
         let run_start_ns = self.clock.now_ns();
+        let deadline_ns = self.stop.deadline_ns(run_start_ns);
         let (completed_tx, mut completed_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut active = 0_u64;
         let mut admitted = 0_u64;
@@ -357,18 +518,41 @@ impl GraphWorkload {
 
         loop {
             self.drain_ready_results(&mut completed_rx, &mut active, &mut report);
-            if self.cancelled.get() || !self.run_failure.may_admit() {
+            if self.cancelled.get()
+                || !self.run_failure.may_admit()
+                || deadline_ns.is_some_and(|deadline| self.clock.now_ns() >= deadline)
+            {
                 break;
             }
             let Some(plan) = self.source.next_trace()? else {
                 break;
             };
-            self.arrival
-                .wait_for_arrival(self.clock.clone(), run_start_ns, ordinal, &plan)
-                .await?;
+            {
+                let arrival =
+                    self.arrival
+                        .wait_for_arrival(self.clock.clone(), run_start_ns, ordinal, &plan);
+                tokio::pin!(arrival);
+                if let Some(deadline) = deadline_ns {
+                    let stop = self
+                        .clock
+                        .clone()
+                        .sleep(deadline.saturating_sub(self.clock.now_ns()));
+                    tokio::pin!(stop);
+                    tokio::select! {
+                        biased;
+                        () = &mut stop => break,
+                        result = &mut arrival => result?,
+                    }
+                } else {
+                    arrival.as_mut().await?;
+                }
+            }
             ordinal = ordinal.saturating_add(1);
             self.drain_ready_results(&mut completed_rx, &mut active, &mut report);
-            if self.cancelled.get() || !self.run_failure.may_admit() {
+            if self.cancelled.get()
+                || !self.run_failure.may_admit()
+                || deadline_ns.is_some_and(|deadline| self.clock.now_ns() >= deadline)
+            {
                 break;
             }
 
@@ -378,9 +562,27 @@ impl GraphWorkload {
                 arrival_ns: self.clock.now_ns(),
             };
             self.observer.on_trace_arrival(&info);
-            let permit = self.admission.acquire(&info).await?;
+            let acquire = self.admission.acquire(&info);
+            tokio::pin!(acquire);
+            let permit = if let Some(deadline) = deadline_ns {
+                let stop = self
+                    .clock
+                    .clone()
+                    .sleep(deadline.saturating_sub(self.clock.now_ns()));
+                tokio::pin!(stop);
+                tokio::select! {
+                    biased;
+                    () = &mut stop => break,
+                    permit = &mut acquire => permit?,
+                }
+            } else {
+                acquire.await?
+            };
             self.drain_ready_results(&mut completed_rx, &mut active, &mut report);
-            if self.cancelled.get() || !self.run_failure.may_admit() {
+            if self.cancelled.get()
+                || !self.run_failure.may_admit()
+                || deadline_ns.is_some_and(|deadline| self.clock.now_ns() >= deadline)
+            {
                 drop(permit);
                 break;
             }
@@ -514,6 +716,143 @@ mod tests {
         }
     }
 
+    #[test]
+    fn cycling_source_reuses_templates_with_unique_instance_ids() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        let source = CyclingGraphTraceSource::new(
+            vec![one_node_plan("a", handle), one_node_plan("b", handle)],
+            Some(3),
+        )
+        .unwrap();
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "a#instance-0"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "b#instance-1"
+        );
+        assert_eq!(
+            source.next_trace().unwrap().unwrap().trace.id,
+            "a#instance-2"
+        );
+        assert!(source.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn cycling_source_enforces_static_request_budget_at_trace_boundaries() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        let small = one_node_plan("small", handle);
+        let mut large = one_node_plan("large", handle);
+        let node = large.graph.nodes.values().next().unwrap().clone();
+        large
+            .graph
+            .nodes
+            .insert("large-extra-1".into(), node.clone());
+        large.graph.nodes.insert("large-extra-2".into(), node);
+
+        let exact = CyclingGraphTraceSource::with_budgets(
+            vec![small.clone(), large.clone()],
+            Some(10),
+            Some(4),
+        )
+        .unwrap();
+        assert_eq!(exact.next_trace().unwrap().unwrap().graph.nodes.len(), 1);
+        assert_eq!(exact.next_trace().unwrap().unwrap().graph.nodes.len(), 3);
+        assert!(exact.next_trace().unwrap().is_none());
+
+        let no_split = CyclingGraphTraceSource::with_budgets(
+            vec![small.clone(), large.clone()],
+            Some(10),
+            Some(3),
+        )
+        .unwrap();
+        assert_eq!(no_split.next_trace().unwrap().unwrap().graph.nodes.len(), 1);
+        assert!(no_split.next_trace().unwrap().is_none());
+
+        let sessions_first = CyclingGraphTraceSource::with_budgets(
+            vec![small.clone(), large.clone()],
+            Some(1),
+            Some(100),
+        )
+        .unwrap();
+        assert_eq!(
+            sessions_first
+                .next_trace()
+                .unwrap()
+                .unwrap()
+                .graph
+                .nodes
+                .len(),
+            1
+        );
+        assert!(sessions_first.next_trace().unwrap().is_none());
+
+        let requests_first =
+            CyclingGraphTraceSource::with_budgets(vec![small, large], Some(100), Some(3)).unwrap();
+        assert_eq!(
+            requests_first
+                .next_trace()
+                .unwrap()
+                .unwrap()
+                .graph
+                .nodes
+                .len(),
+            1
+        );
+        assert!(requests_first.next_trace().unwrap().is_none());
+    }
+
+    #[test]
+    fn independently_budgeted_phase_sources_share_run_unique_instance_ids() {
+        let mut pool = SegmentPool::new();
+        let handle = intern_message(
+            &mut pool,
+            &OpenAiChatMessage::new("user", "hello"),
+            None,
+            &TiktokenTokenizer::builtin(),
+        )
+        .unwrap();
+        let sequence = GraphTraceInstanceSequence::default();
+        let warmup = CyclingGraphTraceSource::with_budgets_and_sequence(
+            vec![one_node_plan("root", handle)],
+            Some(1),
+            None,
+            sequence.clone(),
+        )
+        .unwrap();
+        let profiling = CyclingGraphTraceSource::with_budgets_and_sequence(
+            vec![one_node_plan("root", handle)],
+            Some(1),
+            None,
+            sequence,
+        )
+        .unwrap();
+
+        assert_eq!(
+            warmup.next_trace().unwrap().unwrap().trace.id,
+            "root#instance-0"
+        );
+        assert_eq!(
+            profiling.next_trace().unwrap().unwrap().trace.id,
+            "root#instance-1"
+        );
+    }
+
     struct SelectiveSink;
 
     #[async_trait(?Send)]
@@ -609,6 +948,65 @@ mod tests {
             received[0].graph.nodes.keys().cloned().collect::<Vec<_>>(),
             vec!["left", "right"]
         );
+    }
+
+    struct SleepingBackend {
+        clock: Rc<dyn Clock>,
+        completed: Rc<RefCell<Vec<String>>>,
+    }
+
+    #[async_trait(?Send)]
+    impl crate::execution::GraphTraceExecutionBackend for SleepingBackend {
+        async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+            self.clock.clone().sleep(20).await;
+            self.completed.borrow_mut().push(plan.trace.id);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn duration_stop_cancels_root_admission_and_drains_active_trace() {
+        let clock = Rc::new(SimClock::new());
+        let plans = [
+            GraphTracePlan {
+                graph: GraphRecord::default(),
+                trace: TraceRecord {
+                    id: "active".into(),
+                    graph_ref: None,
+                    initial_state: BTreeMap::new(),
+                },
+                arrival_offset_ns: Some(0),
+            },
+            GraphTracePlan {
+                graph: GraphRecord::default(),
+                trace: TraceRecord {
+                    id: "after-deadline".into(),
+                    graph_ref: None,
+                    initial_state: BTreeMap::new(),
+                },
+                arrival_offset_ns: Some(15),
+            },
+        ];
+        let source: Rc<dyn GraphTraceSource> = Rc::new(VecGraphTraceSource::new(plans));
+        let completed = Rc::new(RefCell::new(Vec::new()));
+        let backend: Rc<dyn crate::execution::GraphTraceExecutionBackend> =
+            Rc::new(SleepingBackend {
+                clock: clock.clone(),
+                completed: completed.clone(),
+            });
+        let workload = GraphWorkload::new(clock.clone(), source, backend)
+            .with_arrival(Rc::new(ScheduledGraphArrival))
+            .with_stop_policy(Rc::new(DurationGraphStop::new(10).unwrap()));
+        let report = Rc::new(RefCell::new(None));
+        let report_slot = report.clone();
+        let outcome = crate::runtime::drive_sim(clock, move |_handle| async move {
+            *report_slot.borrow_mut() = Some(workload.execute().await.unwrap());
+        });
+
+        assert!(!outcome.deadlocked);
+        assert_eq!(report.borrow().as_ref().unwrap().admitted, 1);
+        assert_eq!(report.borrow().as_ref().unwrap().completed, 1);
+        assert_eq!(&*completed.borrow(), &["active"]);
     }
 
     #[test]

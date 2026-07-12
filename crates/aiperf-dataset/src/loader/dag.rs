@@ -1,42 +1,160 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Agentic DAG JSONL lowering into native conversation topology.
+//! One-pass parsing of the canonical agentic DAG JSONL source schema.
 //!
 //! The schema/desugaring is ported from
 //! `src/aiperf/dataset/loader/dag_jsonl_models.py:22-204`,
 //! `src/aiperf/dataset/loader/dag_jsonl.py:181-503`, and
-//! `src/aiperf/dataset/loader/_dag_jsonl_helpers.py:24-301`. Branches become
-//! native descriptors and prerequisites; no Python credit-orchestrator protocol
-//! is reproduced.
+//! `src/aiperf/dataset/loader/_dag_jsonl_helpers.py:24-301`. This leaf parser
+//! preserves owned exact wires and normalized branch declarations. Graph
+//! lowering lives above the dataset crate; no linear `Dataset`, conversation
+//! composition, or Python credit-orchestrator protocol is constructed here.
 
 use std::collections::{HashMap, HashSet};
 
+use crate::error::{DatasetError, Result};
+use crate::loader::public::load_public_rows;
+use crate::loader::{DatasetSource, LoadConfig, RowOrigin};
+use crate::tokenizer::TextTokenizer;
 use aiperf_endpoints::extract_payload;
-use async_trait::async_trait;
 use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Map, Value};
-use smallvec::SmallVec;
 
-use crate::compose::{ComposeConfig, Composer};
-use crate::error::{DatasetError, Result};
-use crate::loader::{DatasetLoader, DatasetProbe, LoadConfig, RawRow, jsonl_rows};
-use crate::model::{
-    BranchId, Conversation, ConversationBranch, ConversationBranchMode, ConversationContextMode,
-    DagMetadata, DispatchTiming, PrerequisiteKind, SessionId, Turn, TurnPrerequisite,
-};
-use crate::segment::SegmentPool;
-use crate::tokenizer::TextTokenizer;
+/// One validated `dag_jsonl` source before any linear-dataset composition.
+///
+/// Graph runtimes consume this owned program directly. It deliberately contains
+/// no linear conversation, DAG-metadata, sampler, or session-manager state.
+#[derive(Debug, Clone)]
+pub struct DagJsonlProgram {
+    /// Conversations in authored source order.
+    pub conversations: Vec<DagJsonlConversation>,
+}
 
-/// Loader for one DAG conversation per JSONL row.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DagJsonlDatasetLoader;
+/// One authored DAG conversation retained for direct Graph-IR lowering.
+#[derive(Debug, Clone)]
+pub struct DagJsonlConversation {
+    /// Source coordinate used by validation diagnostics.
+    pub origin: RowOrigin,
+    /// Stable authored identifier.
+    pub session_id: String,
+    /// Turns in authored order.
+    pub turns: Vec<DagJsonlTurn>,
+    /// Fresh-context children dispatched before root turn zero.
+    pub pre_session_spawns: Vec<String>,
+}
 
-/// Composer/lowerer for DAG JSONL rows.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DagJsonlComposer;
+/// One authored DAG turn with exact JSON object/array wires.
+#[derive(Debug, Clone)]
+pub struct DagJsonlTurn {
+    /// Exact authored message-array wire.
+    pub messages: Bytes,
+    /// Optional per-turn model override.
+    pub model: Option<String>,
+    /// Optional endpoint-adapter name.
+    pub endpoint: Option<String>,
+    /// Optional streaming override.
+    pub streaming: Option<bool>,
+    /// Optional generation cap.
+    pub max_tokens: Option<u32>,
+    /// Exact optional tools-array wire.
+    pub tools: Option<Bytes>,
+    /// Exact optional vendor system-array wire.
+    pub raw_system: Option<Bytes>,
+    /// Exact optional extra-body object wire.
+    pub extra: Option<Bytes>,
+    /// Exact optional extra-header object wire.
+    pub extra_headers: Option<Bytes>,
+    /// Exact optional query-parameter object wire.
+    pub request_parameters: Option<Bytes>,
+    /// FORK descriptors attached after this turn.
+    pub forks: Vec<DagJsonlFork>,
+    /// SPAWN descriptors attached after this turn.
+    pub spawns: Vec<DagJsonlSpawn>,
+    /// Authored delay in milliseconds.
+    pub delay_ms: f64,
+}
+
+/// One normalized FORK descriptor.
+#[derive(Debug, Clone)]
+pub struct DagJsonlFork {
+    /// Child conversation identifier.
+    pub child: String,
+    /// Whether the parent may continue without joining the child.
+    pub background: bool,
+}
+
+/// One normalized SPAWN group.
+#[derive(Debug, Clone)]
+pub struct DagJsonlSpawn {
+    /// Fresh-context child conversation identifiers.
+    pub children: Vec<String>,
+    /// Optional parent turn index that waits for every child terminal.
+    pub join_at: Option<usize>,
+}
+
+/// Parse and validate a `dag_jsonl` source exactly once for direct Graph-IR use.
+pub async fn load_dag_jsonl_program(config: &LoadConfig) -> Result<DagJsonlProgram> {
+    // A row is a graph vertex, not a sampling unit. Fetch and validate the
+    // complete program before the graph layer applies any limit to root plans;
+    // truncating here could silently delete a referenced child conversation.
+    let mut complete = config.clone();
+    complete.max_rows = None;
+    if let DatasetSource::HuggingFace { max_rows, .. } = &mut complete.source {
+        *max_rows = None;
+    }
+    complete.validate()?;
+    let rows = load_public_rows(&complete).await?;
+    if rows.is_empty() {
+        return Err(DatasetError::Validation(
+            "DAG JSONL source contains no conversations".into(),
+        ));
+    }
+    let mut ids = HashSet::new();
+    let mut conversations = Vec::with_capacity(rows.len());
+    for row in rows {
+        let retained_wire;
+        let wire = if let Some(wire) = row.wire.as_deref() {
+            wire
+        } else {
+            retained_wire = serde_json::to_vec(&row.value)?;
+            retained_wire.as_slice()
+        };
+        let parsed: DagConversationRaw<'_> = serde_json::from_slice(wire).map_err(|error| {
+            DatasetError::Validation(format!("{}: invalid DAG conversation: {error}", row.origin))
+        })?;
+        parsed.validate(&row.origin)?;
+        if !ids.insert(parsed.session_id.clone()) {
+            return Err(DatasetError::DuplicateSession(parsed.session_id));
+        }
+        conversations.push(parsed.into_program(row.origin)?);
+    }
+    Ok(DagJsonlProgram { conversations })
+}
+
+/// Count authored non-tool input tokens and tool tokens for one direct DAG turn.
+pub fn dag_jsonl_turn_token_counts(
+    messages: &[u8],
+    tools: Option<&[u8]>,
+    tokenizer: &dyn TextTokenizer,
+) -> Result<(u64, u64)> {
+    let messages: Value = serde_json::from_slice(messages)?;
+    let tools = tools.map(serde_json::from_slice).transpose()?;
+    let mut payload = Map::new();
+    payload.insert("messages".into(), messages);
+    if let Some(tools) = tools {
+        payload.insert("tools".into(), tools);
+    }
+    let extracted = extract_payload(&Value::Object(payload));
+    let input_tokens = input_tokens_excluding_tools(&extracted, tokenizer)?;
+    let tool_tokens = extracted
+        .tool_texts
+        .iter()
+        .try_fold(0_u64, |count, text| add_token_count(count, text, tokenizer))?;
+    Ok((input_tokens, tool_tokens))
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -202,525 +320,57 @@ impl DagConversationRaw<'_> {
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl DatasetLoader for DagJsonlDatasetLoader {
-    fn name(&self) -> &str {
-        "dag_jsonl"
-    }
-
-    fn can_load(&self, probe: &DatasetProbe) -> bool {
-        let Some(value) = probe.value.as_ref().and_then(Value::as_object) else {
-            return false;
-        };
-        value.get("session_id").is_some_and(Value::is_string)
-            && value
-                .get("turns")
-                .and_then(Value::as_array)
-                .is_some_and(|turns| {
-                    !turns.is_empty()
-                        && turns.iter().all(|turn| {
-                            turn.get("messages").is_some_and(Value::is_array)
-                                || turn.get("forks").is_some()
-                                || turn.get("spawns").is_some()
-                        })
-                })
-    }
-
-    async fn load(&self, config: &LoadConfig) -> Result<Vec<RawRow>> {
-        let rows = jsonl_rows(&config.source)?;
-        if rows.is_empty() {
-            return Err(DatasetError::Validation(
-                "DAG JSONL source contains no conversations".into(),
-            ));
-        }
-        let mut ids = HashSet::new();
-        for row in &rows {
-            let wire = row.wire.as_ref().ok_or_else(|| {
-                DatasetError::Validation(format!(
-                    "{}: DAG wire bytes were not retained",
-                    row.origin
-                ))
-            })?;
-            let parsed: DagConversationRaw<'_> = serde_json::from_slice(wire).map_err(|error| {
-                DatasetError::Validation(format!(
-                    "{}: invalid DAG conversation: {error}",
-                    row.origin
-                ))
-            })?;
-            parsed.validate(&row.origin)?;
-            if !ids.insert(parsed.session_id.clone()) {
-                return Err(DatasetError::DuplicateSession(parsed.session_id));
-            }
-        }
-        Ok(rows)
-    }
-
-    fn preferred_sampling_strategy(&self) -> &str {
-        "random"
-    }
-
-    fn default_context_mode(&self) -> Option<ConversationContextMode> {
-        Some(ConversationContextMode::DeltasWithoutResponses)
-    }
-}
-
-#[derive(Debug)]
-struct LoweredConversation {
-    conversation: Conversation,
-    referenced_children: HashSet<SessionId>,
-    system_message_turns: Vec<bool>,
-}
-
-impl Composer for DagJsonlComposer {
-    fn compose(
-        &self,
-        rows: Vec<RawRow>,
-        config: &ComposeConfig,
-        tokenizer: &dyn TextTokenizer,
-        segments: &mut SegmentPool,
-    ) -> Result<Vec<Conversation>> {
-        let delay_cap_ms = config
-            .format_options
-            .get("inter_turn_delay_cap_seconds")
-            .map(|value| {
-                value
-                    .as_f64()
-                    .filter(|value| value.is_finite() && *value >= 0.0)
-                    .map(|seconds| seconds * 1000.0)
-                    .ok_or_else(|| {
-                        DatasetError::Validation(
-                            "inter_turn_delay_cap_seconds must be finite and non-negative".into(),
-                        )
-                    })
-            })
-            .transpose()?;
-        let mut lowered = Vec::with_capacity(rows.len());
-        let mut finalizer = config.finalizer()?;
-        let mut all_ids = HashSet::new();
-        for row in rows {
-            let wire = row.wire.as_ref().expect("loader retains DAG wire");
-            let parsed: DagConversationRaw<'_> = serde_json::from_slice(wire)?;
-            parsed.validate(&row.origin)?;
-            all_ids.insert(SessionId::from(parsed.session_id.as_str()));
-            lowered.push(lower_conversation(
-                parsed,
-                delay_cap_ms,
-                tokenizer,
-                segments,
-                &mut finalizer,
-            )?);
-        }
-        validate_targets(&lowered, &all_ids)?;
-        stamp_topology(&mut lowered)?;
-        Ok(lowered
+    fn into_program(self, origin: RowOrigin) -> Result<DagJsonlConversation> {
+        let turns = self
+            .turns
             .into_iter()
-            .map(|lowered| lowered.conversation)
-            .collect())
-    }
-}
-
-fn lower_conversation(
-    parsed: DagConversationRaw<'_>,
-    delay_cap_ms: Option<f64>,
-    tokenizer: &dyn TextTokenizer,
-    segments: &mut SegmentPool,
-    finalizer: &mut crate::compose::TurnFinalizer<'_>,
-) -> Result<LoweredConversation> {
-    let session_id = SessionId::from(parsed.session_id.as_str());
-    let mut conversation = Conversation::new(session_id.clone());
-    conversation.context_mode = Some(ConversationContextMode::DeltasWithoutResponses);
-    let mut parent = None;
-    let mut branch_descriptors = SmallVec::new();
-    let mut referenced_children = HashSet::new();
-    let mut system_message_turns = Vec::with_capacity(parsed.turns.len());
-    let mut pending_prerequisites = vec![SmallVec::new(); parsed.turns.len()];
-
-    for (index, authored) in parsed.turns.iter().enumerate() {
-        system_message_turns.push(raw_messages_have_system(authored.messages)?);
-        let messages_handle = segments.intern_raw(
-            parent,
-            Bytes::copy_from_slice(authored.messages.get().as_bytes()),
-        )?;
-        parent = Some(messages_handle);
-        let tools_handle = authored
-            .tools
-            .map(|tools| {
-                segments.intern_raw(parent, Bytes::copy_from_slice(tools.get().as_bytes()))
-            })
-            .transpose()?;
-        if tools_handle.is_some() {
-            parent = tools_handle;
-        }
-        let raw_system_handle = authored
-            .raw_system
-            .map(|system| {
-                segments.intern_raw(parent, Bytes::copy_from_slice(system.get().as_bytes()))
-            })
-            .transpose()?;
-        if raw_system_handle.is_some() {
-            parent = raw_system_handle;
-        }
-        let extra_handle = authored
-            .extra
-            .map(|extra| {
-                segments.intern_raw(parent, Bytes::copy_from_slice(extra.get().as_bytes()))
-            })
-            .transpose()?;
-        let extra_headers = authored
-            .extra_headers
-            .map(|headers| {
-                segments.intern_raw(parent, Bytes::copy_from_slice(headers.get().as_bytes()))
-            })
-            .transpose()?;
-        let request_parameters = authored
-            .request_parameters
-            .map(|parameters| {
-                segments.intern_raw(parent, Bytes::copy_from_slice(parameters.get().as_bytes()))
-            })
-            .transpose()?;
-        let payload = message_payload(authored.messages, authored.tools)?;
-        let extracted = extract_payload(&payload);
-        let input_tokens = input_tokens_excluding_tools(&extracted, tokenizer)?;
-        let tool_tokens = extracted
-            .tool_texts
-            .iter()
-            .try_fold(0_u64, |count, text| add_token_count(count, text, tokenizer))?;
-        let mut turn = Turn {
-            model: authored.model.as_deref().map(crate::model::ModelId::from),
-            endpoint: authored.endpoint.clone(),
-            streaming: authored.streaming,
-            max_tokens: authored.max_tokens,
-            input_tokens,
-            tool_tokens,
-            delay_ms: Some(delay_cap_ms.map_or(authored.delay, |cap| authored.delay.min(cap))),
-            raw_messages: Some(messages_handle),
-            tools: tools_handle,
-            raw_system: raw_system_handle,
-            extra_body: extra_handle,
-            extra_headers,
-            request_parameters,
-            prerequisites: std::mem::take(&mut pending_prerequisites[index]),
-            ..Turn::default()
-        };
-        let forks = authored.forks.iter().collect::<Vec<_>>();
-        let foreground = forks
-            .iter()
-            .filter(|fork| !fork.background())
-            .map(|fork| SessionId::from(fork.child()))
-            .collect::<SmallVec<[_; 1]>>();
-        let background = forks
-            .iter()
-            .filter(|fork| fork.background())
-            .map(|fork| SessionId::from(fork.child()))
-            .collect::<SmallVec<[_; 1]>>();
-        let spawn_groups = spawn_groups(&authored.spawns)?;
-        let spawn_group_count = spawn_groups.len();
-        let mixed = (!foreground.is_empty() || !background.is_empty()) && !spawn_groups.is_empty();
-        let split_forks = !foreground.is_empty() && !background.is_empty();
-        if !foreground.is_empty() {
-            add_branch(
-                &mut turn,
-                &mut branch_descriptors,
-                branch_id(&session_id, index, (mixed || split_forks).then_some("fork")),
-                foreground,
-                ConversationBranchMode::Fork,
-                DispatchTiming::Post,
-                false,
-                &mut referenced_children,
-            );
-        }
-        if !background.is_empty() {
-            add_branch(
-                &mut turn,
-                &mut branch_descriptors,
-                branch_id(
-                    &session_id,
-                    index,
-                    (mixed || split_forks).then_some("bg_fork"),
-                ),
-                background,
-                ConversationBranchMode::Fork,
-                DispatchTiming::Post,
-                true,
-                &mut referenced_children,
-            );
-        }
-        for (group_index, (children, join_at)) in spawn_groups.into_iter().enumerate() {
-            let suffix = if mixed || spawn_group_count > 1 {
-                Some(if group_index == 0 {
-                    "spawn".to_string()
-                } else {
-                    format!("spawn{group_index}")
+            .map(|turn| {
+                let spawns = spawn_groups(&turn.spawns)?
+                    .into_iter()
+                    .map(|(children, join_at)| DagJsonlSpawn { children, join_at })
+                    .collect();
+                Ok(DagJsonlTurn {
+                    messages: Bytes::copy_from_slice(turn.messages.get().as_bytes()),
+                    model: turn.model,
+                    endpoint: turn.endpoint,
+                    streaming: turn.streaming,
+                    max_tokens: turn.max_tokens,
+                    tools: turn
+                        .tools
+                        .map(|value| Bytes::copy_from_slice(value.get().as_bytes())),
+                    raw_system: turn
+                        .raw_system
+                        .map(|value| Bytes::copy_from_slice(value.get().as_bytes())),
+                    extra: turn
+                        .extra
+                        .map(|value| Bytes::copy_from_slice(value.get().as_bytes())),
+                    extra_headers: turn
+                        .extra_headers
+                        .map(|value| Bytes::copy_from_slice(value.get().as_bytes())),
+                    request_parameters: turn
+                        .request_parameters
+                        .map(|value| Bytes::copy_from_slice(value.get().as_bytes())),
+                    forks: turn
+                        .forks
+                        .into_iter()
+                        .map(|fork| DagJsonlFork {
+                            child: fork.child().to_string(),
+                            background: fork.background(),
+                        })
+                        .collect(),
+                    spawns,
+                    delay_ms: turn.delay,
                 })
-            } else {
-                None
-            };
-            let id = branch_id(&session_id, index, suffix.as_deref());
-            let children = children
-                .iter()
-                .map(|child| SessionId::from(child.as_str()))
-                .collect::<SmallVec<[_; 1]>>();
-            add_branch(
-                &mut turn,
-                &mut branch_descriptors,
-                id.clone(),
-                children,
-                ConversationBranchMode::Spawn,
-                DispatchTiming::Post,
-                false,
-                &mut referenced_children,
-            );
-            let effective_join = join_at.unwrap_or(index + 1);
-            if effective_join < parsed.turns.len() {
-                pending_prerequisites[effective_join].push(TurnPrerequisite {
-                    kind: PrerequisiteKind::SpawnJoin,
-                    branch_id: Some(id),
-                    child_conversation_ids: SmallVec::new(),
-                    barrier_id: None,
-                    timer_seconds: None,
-                    event_name: None,
-                });
-            }
-        }
-        finalizer.finalize_turn(&mut turn)?;
-        conversation.turns.push(turn);
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(DagJsonlConversation {
+            origin,
+            session_id: self.session_id,
+            turns,
+            pre_session_spawns: self.pre_session_spawns,
+        })
     }
-
-    if !parsed.pre_session_spawns.is_empty() {
-        let id = BranchId::from(format!("{}:pre", session_id.as_str()));
-        let children = parsed
-            .pre_session_spawns
-            .iter()
-            .map(|child| SessionId::from(child.as_str()))
-            .collect::<SmallVec<[_; 1]>>();
-        add_branch(
-            &mut conversation.turns[0],
-            &mut branch_descriptors,
-            id,
-            children,
-            ConversationBranchMode::Spawn,
-            DispatchTiming::Pre,
-            false,
-            &mut referenced_children,
-        );
-    }
-    conversation.dag = Some(DagMetadata {
-        branches: branch_descriptors,
-        is_root: true,
-        agent_depth: 0,
-        parent_conversation_id: None,
-        root_conversation_id: session_id,
-    });
-    Ok(LoweredConversation {
-        conversation,
-        referenced_children,
-        system_message_turns,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn add_branch(
-    turn: &mut Turn,
-    descriptors: &mut SmallVec<[ConversationBranch; 0]>,
-    id: BranchId,
-    children: SmallVec<[SessionId; 1]>,
-    mode: ConversationBranchMode,
-    dispatch_timing: DispatchTiming,
-    background: bool,
-    referenced: &mut HashSet<SessionId>,
-) {
-    referenced.extend(children.iter().cloned());
-    turn.branch_ids.push(id.clone());
-    descriptors.push(ConversationBranch {
-        branch_id: id,
-        child_conversation_ids: children,
-        mode,
-        dispatch_timing,
-        background,
-    });
-}
-
-fn validate_targets(lowered: &[LoweredConversation], all_ids: &HashSet<SessionId>) -> Result<()> {
-    let mut fork_parent = HashMap::<SessionId, SessionId>::new();
-    let mut pre_spawns = HashSet::new();
-    for lowered_conversation in lowered {
-        let parent = &lowered_conversation.conversation.session_id;
-        for branch in &lowered_conversation
-            .conversation
-            .dag
-            .as_ref()
-            .expect("lowerer always stamps DAG metadata")
-            .branches
-        {
-            for child in &branch.child_conversation_ids {
-                if !all_ids.contains(child) {
-                    return Err(DatasetError::Validation(format!(
-                        "DAG session {:?} references unknown child {:?}",
-                        parent.as_str(),
-                        child.as_str()
-                    )));
-                }
-                if branch.mode == ConversationBranchMode::Fork
-                    && let Some(previous) = fork_parent.insert(child.clone(), parent.clone())
-                {
-                    return Err(DatasetError::Validation(format!(
-                        "DAG child {:?} has multiple fork parents {:?} and {:?}",
-                        child.as_str(),
-                        previous.as_str(),
-                        parent.as_str()
-                    )));
-                }
-                if branch.dispatch_timing == DispatchTiming::Pre {
-                    pre_spawns.insert(child.clone());
-                }
-            }
-        }
-    }
-    if let Some(child) = pre_spawns
-        .iter()
-        .find(|child| fork_parent.contains_key(*child))
-    {
-        return Err(DatasetError::Validation(format!(
-            "DAG child {:?} is both a pre-session spawn and a fork target",
-            child.as_str()
-        )));
-    }
-    Ok(())
-}
-
-fn stamp_topology(lowered: &mut [LoweredConversation]) -> Result<()> {
-    let index = lowered
-        .iter()
-        .enumerate()
-        .map(|(index, lowered)| (lowered.conversation.session_id.clone(), index))
-        .collect::<HashMap<_, _>>();
-    let referenced = lowered
-        .iter()
-        .flat_map(|lowered| lowered.referenced_children.iter().cloned())
-        .collect::<HashSet<_>>();
-    let mut fork_parent = HashMap::<SessionId, SessionId>::new();
-    let mut edges = HashMap::<SessionId, Vec<SessionId>>::new();
-    for lowered_conversation in lowered.iter() {
-        let parent = lowered_conversation.conversation.session_id.clone();
-        for branch in &lowered_conversation
-            .conversation
-            .dag
-            .as_ref()
-            .expect("lowered DAG")
-            .branches
-        {
-            for child in &branch.child_conversation_ids {
-                edges.entry(parent.clone()).or_default().push(child.clone());
-                if branch.mode == ConversationBranchMode::Fork {
-                    fork_parent.insert(child.clone(), parent.clone());
-                }
-            }
-        }
-    }
-    detect_cycles(&index, &edges)?;
-    for lowered_conversation in lowered.iter_mut() {
-        let id = lowered_conversation.conversation.session_id.clone();
-        let dag = lowered_conversation
-            .conversation
-            .dag
-            .as_mut()
-            .expect("lowered DAG");
-        dag.is_root = !referenced.contains(&id);
-        if !dag.is_root && !fork_parent.contains_key(&id) {
-            dag.root_conversation_id = id;
-        }
-    }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (child, parent) in &fork_parent {
-            let parent_index = index[parent];
-            let child_index = index[child];
-            let (parent_depth, parent_root) = {
-                let dag = lowered[parent_index].conversation.dag.as_ref().unwrap();
-                (dag.agent_depth, dag.root_conversation_id.clone())
-            };
-            let dag = lowered[child_index].conversation.dag.as_mut().unwrap();
-            if dag.parent_conversation_id.as_ref() != Some(parent)
-                || dag.agent_depth != parent_depth + 1
-                || dag.root_conversation_id != parent_root
-            {
-                dag.parent_conversation_id = Some(parent.clone());
-                dag.agent_depth = parent_depth + 1;
-                dag.root_conversation_id = parent_root;
-                changed = true;
-            }
-        }
-    }
-    validate_system_placement(lowered, &fork_parent)?;
-    Ok(())
-}
-
-fn validate_system_placement(
-    lowered: &[LoweredConversation],
-    fork_parent: &HashMap<SessionId, SessionId>,
-) -> Result<()> {
-    for lowered_conversation in lowered {
-        let id = &lowered_conversation.conversation.session_id;
-        for (index, has_system) in lowered_conversation
-            .system_message_turns
-            .iter()
-            .copied()
-            .enumerate()
-        {
-            if index == 0 && !fork_parent.contains_key(id) {
-                continue;
-            }
-            if has_system {
-                return Err(DatasetError::Validation(format!(
-                    "DAG session {:?} turn {index} contains a non-root system message",
-                    id.as_str()
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn detect_cycles(
-    index: &HashMap<SessionId, usize>,
-    edges: &HashMap<SessionId, Vec<SessionId>>,
-) -> Result<()> {
-    fn visit(
-        id: &SessionId,
-        edges: &HashMap<SessionId, Vec<SessionId>>,
-        visiting: &mut Vec<SessionId>,
-        visited: &mut HashSet<SessionId>,
-    ) -> Result<()> {
-        if let Some(position) = visiting.iter().position(|candidate| candidate == id) {
-            let mut cycle = visiting[position..]
-                .iter()
-                .map(|id| id.as_str())
-                .collect::<Vec<_>>();
-            cycle.push(id.as_str());
-            return Err(DatasetError::Validation(format!(
-                "DAG cycle detected: {}",
-                cycle.join(" -> ")
-            )));
-        }
-        if !visited.insert(id.clone()) {
-            return Ok(());
-        }
-        visiting.push(id.clone());
-        for child in edges.get(id).into_iter().flatten() {
-            visit(child, edges, visiting, visited)?;
-        }
-        visiting.pop();
-        Ok(())
-    }
-    let mut visiting = Vec::new();
-    let mut visited = HashSet::new();
-    for id in index.keys() {
-        visit(id, edges, &mut visiting, &mut visited)?;
-    }
-    Ok(())
 }
 
 fn spawn_groups(entries: &[SpawnEntry]) -> Result<Vec<(Vec<String>, Option<usize>)>> {
@@ -741,13 +391,6 @@ fn spawn_groups(entries: &[SpawnEntry]) -> Result<Vec<(Vec<String>, Option<usize
         groups.push((bare, None));
     }
     Ok(groups)
-}
-
-fn branch_id(session: &SessionId, turn: usize, suffix: Option<&str>) -> BranchId {
-    BranchId::from(match suffix {
-        Some(suffix) => format!("{}:{turn}:{suffix}", session.as_str()),
-        None => format!("{}:{turn}", session.as_str()),
-    })
 }
 
 fn reject_duplicates(values: &[String], context: &str) -> Result<()> {
@@ -777,15 +420,6 @@ fn validate_messages(raw: &RawValue, origin: &impl std::fmt::Display, turn: usiz
         )));
     }
     Ok(())
-}
-
-fn raw_messages_have_system(raw: &RawValue) -> Result<bool> {
-    let messages: Value = serde_json::from_str(raw.get())?;
-    Ok(messages.as_array().is_some_and(|messages| {
-        messages
-            .iter()
-            .any(|message| message.get("role").and_then(Value::as_str) == Some("system"))
-    }))
 }
 
 fn validate_optional_array(
@@ -841,15 +475,6 @@ fn validate_optional_string_object(
     Ok(())
 }
 
-fn message_payload(messages: &RawValue, tools: Option<&RawValue>) -> Result<Value> {
-    let mut object = Map::new();
-    object.insert("messages".into(), serde_json::from_str(messages.get())?);
-    if let Some(tools) = tools {
-        object.insert("tools".into(), serde_json::from_str(tools.get())?);
-    }
-    Ok(Value::Object(object))
-}
-
 fn input_tokens_excluding_tools(
     extracted: &aiperf_endpoints::ExtractedPayload,
     tokenizer: &dyn TextTokenizer,
@@ -879,120 +504,75 @@ fn add_token_count(count: u64, text: &str, tokenizer: &dyn TextTokenizer) -> Res
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use aiperf_rng::RngRoot;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
-    use crate::loader::{DatasetFormatRegistration, DatasetSource, LoaderRegistry};
-    use crate::tokenizer::TiktokenTokenizer;
+    use crate::loader::{DatasetSource, LoaderRegistry};
 
-    async fn build(value: Value) -> Result<crate::Dataset> {
-        let mut registry = LoaderRegistry::new();
-        registry.register(DatasetFormatRegistration::new(
-            Arc::new(DagJsonlDatasetLoader),
-            Arc::new(DagJsonlComposer),
-        ))?;
-        registry
-            .build_dataset(
-                Some("dag_jsonl"),
-                &LoadConfig::new(DatasetSource::Inline(value)),
-                &ComposeConfig::new("model", RngRoot::new(Some(4))),
-                &TiktokenTokenizer::builtin(),
-            )
-            .await
+    async fn program(value: Value) -> Result<DagJsonlProgram> {
+        load_dag_jsonl_program(&LoadConfig::new(DatasetSource::Inline(value))).await
     }
 
     #[tokio::test]
-    async fn forks_spawns_prebranches_and_delayed_join_lower_completely() {
-        let dataset = build(json!([
+    async fn parser_normalizes_forks_spawns_and_exact_turn_wires() {
+        let parsed = program(json!([
             {
                 "session_id":"root",
                 "pre_session_spawns":["pre"],
-                "turns":[
-                    {"messages":[{"role":"system","content":"s"},{"role":"user","content":"q0"}],
-                     "forks":[{"child":"fork","background":true}],
-                     "spawns":[{"children":["spawn"],"join_at":2}]},
-                    {"messages":[{"role":"user","content":"q1"}]},
-                    {"messages":[{"role":"user","content":"q2"}]}
-                ]
+                "turns":[{
+                    "messages":[{"role":"user","content":"q"}],
+                    "forks":[{"child":"fork","background":true}],
+                    "spawns":[{"children":["spawn"],"join_at":1}]
+                }, {"messages":[{"role":"user","content":"joined"}]}]
             },
             {"session_id":"fork","turns":[{"messages":[{"role":"user","content":"f"}]}]},
-            {"session_id":"spawn","turns":[{"messages":[{"role":"user","content":"x"}]}]},
+            {"session_id":"spawn","turns":[{"messages":[{"role":"user","content":"s"}]}]},
             {"session_id":"pre","turns":[{"messages":[{"role":"user","content":"p"}]}]}
         ]))
         .await
         .unwrap();
-        let root = dataset.get(&SessionId::from("root")).unwrap();
-        let dag = root.dag.as_ref().unwrap();
-        assert_eq!(dag.branches.len(), 3);
-        assert_eq!(root.turns[2].prerequisites.len(), 1);
-        assert_eq!(
-            root.turns[2].prerequisites[0].kind,
-            PrerequisiteKind::SpawnJoin
-        );
-        let fork = dataset.get(&SessionId::from("fork")).unwrap();
-        assert_eq!(
-            fork.dag
-                .as_ref()
-                .unwrap()
-                .parent_conversation_id
-                .as_ref()
-                .unwrap()
-                .as_str(),
-            "root"
-        );
-        assert_eq!(fork.dag.as_ref().unwrap().agent_depth, 1);
+        let root = &parsed.conversations[0];
+        assert_eq!(root.session_id, "root");
+        assert_eq!(root.pre_session_spawns, ["pre"]);
+        assert_eq!(root.turns[0].forks[0].child, "fork");
+        assert!(root.turns[0].forks[0].background);
+        assert_eq!(root.turns[0].spawns[0].children, ["spawn"]);
+        assert_eq!(root.turns[0].spawns[0].join_at, Some(1));
+        let messages: Value = serde_json::from_slice(&root.turns[0].messages).unwrap();
+        assert_eq!(messages[0]["content"], "q");
+    }
+
+    #[tokio::test]
+    async fn empty_and_locally_malformed_sources_fail_in_the_parser() {
+        assert!(program(json!([])).await.is_err());
         assert!(
-            !dataset
-                .get(&SessionId::from("spawn"))
-                .unwrap()
-                .dag
-                .as_ref()
-                .unwrap()
-                .is_root
+            program(json!([{"session_id":"x","turns":[{"messages":[]}]}]))
+                .await
+                .is_err()
         );
-        assert_eq!(dataset.sampleable_metadata().count(), 1);
+        assert!(
+            program(json!([{
+                "session_id":"x",
+                "turns":[{"messages":[{"role":"user"}],"spawns":["a","a"]}]
+            }]))
+            .await
+            .is_err()
+        );
     }
 
     #[tokio::test]
-    async fn dag_turns_preserve_endpoint_headers_parameters_and_streaming() {
-        let dataset = build(json!([{
-            "session_id":"root",
-            "turns":[{
-                "messages":[{"role":"user","content":"q"}],
-                "model":"turn-model",
-                "endpoint":"responses",
-                "streaming":false,
-                "raw_system":[{"type":"text","text":"cached system","cache_control":{"type":"ephemeral"}}],
-                "extra_headers":{"x-agent":"yes"},
-                "request_parameters":{"api-version":"2026-07"}
-            }]
-        }]))
-        .await
-        .unwrap();
-        let turn = &dataset.get(&SessionId::from("root")).unwrap().turns[0];
-        assert_eq!(turn.model.as_ref().unwrap().as_str(), "turn-model");
-        assert_eq!(turn.endpoint.as_deref(), Some("responses"));
-        assert_eq!(turn.streaming, Some(false));
-        assert!(turn.raw_system.is_some());
-        assert!(turn.extra_headers.is_some());
-        assert!(turn.request_parameters.is_some());
+    async fn row_cap_never_hides_an_invalid_dag_vertex() {
+        let mut config = LoadConfig::new(DatasetSource::Inline(json!([
+            {"session_id":"root","turns":[{"messages":[{"role":"user"}]}]},
+            {"session_id":"hidden-by-a-row-cap","turns":[{"messages":[]}]}
+        ])));
+        config.max_rows = Some(1);
+        assert!(load_dag_jsonl_program(&config).await.is_err());
     }
 
-    #[tokio::test]
-    async fn unknown_targets_cycles_duplicates_and_foreground_midturn_are_rejected() {
-        for value in [
-            json!([{"session_id":"a","turns":[{"messages":[{"role":"user"}],"forks":["missing"]}]}]),
-            json!([
-                {"session_id":"a","turns":[{"messages":[{"role":"user"}],"spawns":["b"]}]},
-                {"session_id":"b","turns":[{"messages":[{"role":"user"}],"spawns":["a"]}]}
-            ]),
-            json!([{"session_id":"a","turns":[{"messages":[{"role":"user"}],"spawns":["b","b"]}]},{"session_id":"b","turns":[{"messages":[{"role":"user"}]}]}]),
-            json!([{"session_id":"a","turns":[{"messages":[{"role":"user"}],"forks":["b"]},{"messages":[{"role":"user"}]}]},{"session_id":"b","turns":[{"messages":[{"role":"user"}]}]}]),
-        ] {
-            assert!(build(value).await.is_err());
-        }
+    #[test]
+    fn dag_jsonl_is_not_a_generic_dataset_registration() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        assert!(registry.get("dag_jsonl").is_err());
     }
 }

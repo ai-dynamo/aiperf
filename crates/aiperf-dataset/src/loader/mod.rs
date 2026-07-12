@@ -30,7 +30,10 @@ pub mod synthetic;
 pub mod trace;
 
 pub use asr::{HfAsrComposer, HfAsrDatasetLoader};
-pub use dag::{DagJsonlComposer, DagJsonlDatasetLoader};
+pub use dag::{
+    DagJsonlConversation, DagJsonlFork, DagJsonlProgram, DagJsonlSpawn, DagJsonlTurn,
+    dag_jsonl_turn_token_counts, load_dag_jsonl_program,
+};
 pub use exgentic::{ExgenticComposer, ExgenticDatasetLoader, ExgenticV2DatasetLoader};
 pub use public::{
     AccuracyComposer, AccuracyDatasetLoader, HfConversationComposer, HfConversationDatasetLoader,
@@ -375,10 +378,6 @@ impl LoaderRegistry {
             DatasetFormatRegistration::new(
                 Arc::new(SpeedBenchDatasetLoader),
                 Arc::new(SpeedBenchComposer),
-            ),
-            DatasetFormatRegistration::new(
-                Arc::new(DagJsonlDatasetLoader),
-                Arc::new(DagJsonlComposer),
             ),
             DatasetFormatRegistration::new(
                 Arc::new(SageMakerDataCaptureDatasetLoader),

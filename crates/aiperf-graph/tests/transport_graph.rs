@@ -13,13 +13,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aiperf_clock::clock::Clock;
 use aiperf_clock::real_clock::RealClock;
-use aiperf_dataset::loader::{
-    DagJsonlComposer, DagJsonlDatasetLoader, DatasetFormatRegistration, DatasetSource, LoadConfig,
-    LoaderRegistry,
-};
-use aiperf_dataset::{ComposeConfig, TiktokenTokenizer};
-use aiperf_graph::dataset_lowering::lower_dataset;
+use aiperf_dataset::TiktokenTokenizer;
+use aiperf_dataset::loader::{DatasetSource, LoadConfig};
 use aiperf_graph::execution::LocalGraphTraceExecutionBackend;
+use aiperf_graph::input::{DagJsonlGraphInputAdapter, GraphInputAdapter, GraphInputConfig};
 use aiperf_graph::materialize::SegmentItemsMaterializer;
 use aiperf_graph::model::{GraphRecord, TraceRecord};
 use aiperf_graph::policy::{
@@ -325,37 +322,31 @@ fn lowered_dataset_dag_dispatches_fanout_join_over_real_http() {
         .enable_all()
         .build()
         .unwrap();
-    let dataset = runtime.block_on(async {
-        let mut registry = LoaderRegistry::new();
-        registry
-            .register(DatasetFormatRegistration::new(
-                Arc::new(DagJsonlDatasetLoader),
-                Arc::new(DagJsonlComposer),
-            ))
-            .unwrap();
-        registry
-            .build_dataset(
-                Some("dag_jsonl"),
-                &LoadConfig::new(DatasetSource::Inline(json!([
-                    {"session_id":"root","turns":[
-                        {"messages":[{"role":"user","content":"root-0"}],"spawns":["child"]},
-                        {"messages":[{"role":"user","content":"root-1"}]}
-                    ]},
-                    {"session_id":"child","turns":[
-                        {"messages":[{"role":"user","content":"child-0"}]}
-                    ]}
-                ]))),
-                &ComposeConfig::new("gpt2", RngRoot::new(Some(2))),
+    let bundle = runtime.block_on(async {
+        DagJsonlGraphInputAdapter
+            .load(
+                GraphInputConfig {
+                    load: LoadConfig::new(DatasetSource::Inline(json!([
+                        {"session_id":"root","turns":[
+                            {"messages":[{"role":"user","content":"root-0"}],"spawns":["child"]},
+                            {"messages":[{"role":"user","content":"root-1"}]}
+                        ]},
+                        {"session_id":"child","turns":[
+                            {"messages":[{"role":"user","content":"child-0"}]}
+                        ]}
+                    ]))),
+                    root_limit: None,
+                },
                 &TiktokenTokenizer::builtin(),
             )
             .await
             .unwrap()
     });
     drop(runtime);
-    let lowered = lower_dataset(&dataset).unwrap();
-    let trace = lowered.parsed.traces[0].clone();
-    let graph = Rc::new(lowered.parsed.resolve_trace_graph(&trace).clone());
-    let materializer = Rc::new(SegmentItemsMaterializer::new(lowered.segments));
+    let plan = bundle.plans.into_iter().next().unwrap();
+    let trace = plan.trace;
+    let graph = Rc::new(plan.graph);
+    let materializer = Rc::new(SegmentItemsMaterializer::new(bundle.segments));
     let observer = Rc::new(CountObs::default());
     let clock: Rc<dyn Clock> = RealClock::new();
     let sink = Rc::new(TransportChatSink::new(

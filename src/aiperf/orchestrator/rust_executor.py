@@ -103,9 +103,33 @@ class RustSubprocessExecutor(RunExecutor):
 
     @staticmethod
     def _resolve_run(run: BenchmarkRun) -> None:
-        # Config resolution remains Python-owned. It resolves artifact paths,
-        # tokenizer aliases/cache, dataset paths/format metadata, and timing
-        # validation before the explicit Rust projection is built.
+        # ``dag_jsonl`` is an authored graph program, not a linear Python
+        # dataset. The runner's direct GraphInputAdapter owns its sole parse,
+        # topology validation, root selection, and Graph-IR lowering. Running
+        # DatasetResolver here would parse it once in Python, replace authored
+        # sequential sampling with the legacy loader preference, then make Rust
+        # parse it again. TimingResolver depends on that legacy dataset result,
+        # and CommConfigResolver exists only for the removed ZMQ execution path.
+        dataset = run.cfg.get_default_dataset()
+        if str(getattr(dataset, "format", "")) == "dag_jsonl":
+            from aiperf.config.resolution.resolvers import (
+                ArtifactDirResolver,
+                ConfigResolverChain,
+                GpuMetricsResolver,
+                TokenizerResolver,
+            )
+
+            ConfigResolverChain(
+                [
+                    ArtifactDirResolver(),
+                    TokenizerResolver(),
+                    GpuMetricsResolver(),
+                ]
+            ).resolve_all(run)
+            return
+
+        # Linear workloads retain the compatibility resolver chain until the
+        # strict authored protocol-v2 request replaces protocol v1.
         from aiperf.config.resolution.resolvers import build_default_resolver_chain
 
         build_default_resolver_chain().resolve_all(run)

@@ -4,10 +4,10 @@
 //! Native construction and execution of one resolved benchmark run.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
 use aiperf::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
@@ -56,6 +56,18 @@ use aiperf_dataset::{
 };
 use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_extensions::AiperfRegistry;
+use aiperf_graph::execution::GraphTraceExecutionBackend;
+use aiperf_graph::input::{
+    GraphInputAdapter, GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle,
+    GraphInputConfig,
+};
+use aiperf_graph::placement::ThreadPerCoreGraphTraceExecutionBackend;
+use aiperf_graph::policy::FailFastRunFailurePolicy;
+use aiperf_graph::workload::{
+    CyclingGraphTraceSource, DurationGraphStop, GraphArrivalPolicy, GraphTraceInstanceSequence,
+    GraphTraceSource, GraphWorkload, ImmediateGraphArrival, IntervalGraphArrival,
+    SlotPoolTraceAdmission,
+};
 use aiperf_metrics::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
     NativeReport, Phase as MetricsPhase, ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
@@ -81,6 +93,9 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::gpu_telemetry::GpuTelemetryRun;
+use crate::graph_execution::{
+    GraphCancellationConfig, RunnerGraphBackendFactory, RunnerGraphBackendFactoryConfig,
+};
 use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
 use crate::protocol::{
@@ -126,6 +141,16 @@ pub fn execute_run_with_backend_factory(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
 ) -> Result<RunTerminal> {
+    let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+    execute_run_with_factories(request, backend_factory, &graph_inputs)
+}
+
+/// Execute one request with independently injected linear and graph backends.
+pub fn execute_run_with_factories(
+    request: RunRequest,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_inputs: &dyn GraphInputAdapterResolver,
+) -> Result<RunTerminal> {
     validate_request(&request)?;
     let benchmark_id = request.run.benchmark_id.clone();
     let artifact_dir = request.run.artifact_dir.clone();
@@ -136,7 +161,10 @@ pub fn execute_run_with_backend_factory(
         .build()
         .context("creating native single-run Tokio runtime")?;
     let local = tokio::task::LocalSet::new();
-    let native = local.block_on(&runtime, execute_native(request, backend_factory))?;
+    let native = local.block_on(
+        &runtime,
+        execute_native(request, backend_factory, graph_inputs),
+    )?;
     let report_path = artifact_dir.join("native-v2.json");
     write_native_report_json(&native, &report_path)?;
     Ok(RunTerminal::succeeded(benchmark_id, report_path))
@@ -274,7 +302,12 @@ struct PreparedAccuracy<'a> {
 async fn execute_native(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_inputs: &dyn GraphInputAdapterResolver,
 ) -> Result<NativeReport> {
+    if let Some(adapter) = graph_input_adapter(&request.run.dataset, graph_inputs) {
+        validate_graph_request(&request)?;
+        return execute_graph_native(request, adapter).await;
+    }
     let mut live_streaming = if request.run.live_streaming.is_some() {
         match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
             .await
@@ -296,6 +329,463 @@ async fn execute_native(
         eprintln!("live telemetry extension failed to shut down cleanly: {error:#}");
     }
     result
+}
+
+fn graph_input_adapter(
+    dataset: &DatasetSpec,
+    resolver: &dyn GraphInputAdapterResolver,
+) -> Option<Arc<dyn GraphInputAdapter>> {
+    match dataset {
+        DatasetSpec::File(spec) => resolver.find(&spec.format),
+        DatasetSpec::Public(spec) => resolver.find(&spec.format),
+        DatasetSpec::Synthetic(_) => None,
+    }
+}
+
+fn validate_graph_request(request: &RunRequest) -> Result<()> {
+    ensure!(
+        request.run.accuracy.is_none(),
+        "authored Graph-IR datasets cannot be combined with an accuracy evaluator"
+    );
+    ensure!(
+        request.run.gpu_telemetry.is_none()
+            && request.run.network_latency.is_none()
+            && request.run.server_metrics.is_none()
+            && request.run.live_streaming.is_none(),
+        "authored Graph-IR runs do not yet support GPU, network, server, or live-streaming telemetry"
+    );
+    ensure!(
+        request.run.models.items.len() == 1,
+        "authored Graph-IR runs currently require exactly one configured default model; per-node model overrides remain supported"
+    );
+    ensure!(
+        matches!(
+            request.run.models.strategy,
+            ModelSelectionStrategy::RoundRobin
+        ),
+        "authored Graph-IR runs currently require round_robin model selection; other policies need a graph model-selection trait implementation"
+    );
+    let (sampling, entries, synthesis) = match &request.run.dataset {
+        DatasetSpec::File(spec) => (
+            spec.sampling.as_str(),
+            spec.entries,
+            spec.synthesis.as_ref(),
+        ),
+        DatasetSpec::Public(spec) => (spec.sampling.as_str(), spec.entries, None),
+        DatasetSpec::Synthetic(_) => unreachable!("synthetic datasets have no graph adapter"),
+    };
+    ensure!(
+        sampling.trim().eq_ignore_ascii_case("sequential"),
+        "authored Graph-IR runs currently require sequential dataset sampling; {sampling:?} would need an explicit GraphTraceSource implementation"
+    );
+    ensure!(
+        entries != Some(0),
+        "graph dataset entries must be positive when configured"
+    );
+    ensure!(
+        synthesis.is_none(),
+        "trace synthesis is not supported for authored Graph-IR datasets"
+    );
+    for (phase_index, phase) in request.run.phases.iter().enumerate() {
+        ensure!(
+            matches!(
+                phase,
+                PhaseSpec::Concurrency { .. }
+                    | PhaseSpec::Poisson { .. }
+                    | PhaseSpec::Gamma { .. }
+                    | PhaseSpec::Constant { .. }
+            ),
+            "graph phase {phase_index} must use concurrency, poisson, gamma, or constant scheduling"
+        );
+        let common = phase.common();
+        ensure!(
+            common.concurrency_ramp.is_none()
+                && common.prefill_ramp.is_none()
+                && common.rate_ramp.is_none(),
+            "graph phase {phase_index} does not yet support actuator ramps"
+        );
+        ensure!(
+            common.adaptive_scale.is_none(),
+            "graph phase {phase_index} does not yet support adaptive scale"
+        );
+        ensure!(
+            !common.seamless,
+            "graph phase {phase_index} does not yet support seamless handoff"
+        );
+        ensure!(
+            common.grace_period.is_none(),
+            "graph phase {phase_index} drains admitted traces and does not accept a separate grace_period"
+        );
+        ensure!(
+            common.requests != Some(0) && common.sessions != Some(0),
+            "graph phase {phase_index} request/session bounds must be positive when configured"
+        );
+        ensure!(
+            phase.concurrency() != Some(0),
+            "graph phase {phase_index} concurrency must be positive when configured"
+        );
+        ensure!(
+            common.prefill_concurrency != Some(0),
+            "graph phase {phase_index} prefill_concurrency must be positive when configured"
+        );
+        ensure!(
+            request.run.workers == 1 || common.prefill_concurrency.is_none(),
+            "graph prefill_concurrency is worker-local today; configure one worker or omit it until a distributed admission implementation is selected"
+        );
+        if common.duration.is_none() && common.requests.is_none() && common.sessions.is_none() {
+            // The direct source performs exactly one authored pass in this case.
+            continue;
+        }
+        if let Some(duration) = common.duration {
+            seconds_to_ns(duration)
+                .with_context(|| format!("validating graph phase {phase_index} duration"))?;
+        }
+    }
+    Ok(())
+}
+
+fn graph_input_config(dataset: &DatasetSpec) -> Result<GraphInputConfig> {
+    match dataset {
+        DatasetSpec::File(spec) => {
+            ensure!(
+                spec.path.is_some() ^ spec.records.is_some(),
+                "file dataset requires exactly one of path or records"
+            );
+            let source = match (&spec.path, &spec.records) {
+                (Some(path), None) => DatasetSource::Path(path.clone()),
+                (None, Some(records)) => DatasetSource::Inline(records.clone()),
+                _ => unreachable!("file graph source exclusivity validated above"),
+            };
+            let mut load = LoadConfig::new(source);
+            load.options = spec.options.clone();
+            Ok(GraphInputConfig {
+                load,
+                root_limit: spec.entries,
+            })
+        }
+        DatasetSpec::Public(spec) => {
+            ensure!(
+                !spec.name.trim().is_empty(),
+                "public dataset name cannot be empty"
+            );
+            let option_limit = match spec.options.get("max_conversations") {
+                None => None,
+                Some(value) => Some(
+                    value
+                        .as_u64()
+                        .and_then(|value| usize::try_from(value).ok())
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "public graph option max_conversations must be a positive usize"
+                            )
+                        })?,
+                ),
+            };
+            let root_limit = spec.entries.or(option_limit);
+            let source = match &spec.source {
+                PublicDatasetSourceSpec::Url { url } => {
+                    ensure!(!url.trim().is_empty(), "public dataset URL cannot be empty");
+                    DatasetSource::Url(url.clone())
+                }
+                PublicDatasetSourceSpec::HuggingFace {
+                    dataset,
+                    subset,
+                    split,
+                    revision,
+                } => DatasetSource::HuggingFace {
+                    dataset: dataset.clone(),
+                    config: subset.clone(),
+                    split: split.clone(),
+                    // DAG vertices must be acquired as one complete program.
+                    max_rows: None,
+                    revision: revision.clone(),
+                },
+            };
+            let mut load = LoadConfig::new(source);
+            load.options = spec.options.clone();
+            load.options.remove("max_conversations");
+            Ok(GraphInputConfig { load, root_limit })
+        }
+        DatasetSpec::Synthetic(_) => bail!("synthetic datasets do not author Graph-IR"),
+    }
+}
+
+struct PreparedGraphPhase {
+    workload: GraphWorkload,
+    records: mpsc::Receiver<Vec<CapturedRecord>>,
+}
+
+async fn execute_graph_native(
+    request: RunRequest,
+    adapter: Arc<dyn GraphInputAdapter>,
+) -> Result<NativeReport> {
+    let metrics_config = metrics_config(&request.run.metrics)?;
+    let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
+    let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
+        tokenizer.clone(),
+        request.run.tokenizer.apply_chat_template,
+    ));
+    let input = adapter
+        .load(
+            graph_input_config(&request.run.dataset)?,
+            tokenizer.as_ref(),
+        )
+        .await
+        .context("loading direct authored Graph-IR input")?;
+    ensure!(
+        !input.plans.is_empty(),
+        "authored Graph-IR input contains no root traces after root limiting"
+    );
+    let registry = AiperfRegistry::builtin()?;
+    let endpoint = endpoint_config(&request.run.endpoint)?;
+    let primary_model = request.run.models.items[0].name.clone();
+    let default_output_tokens = default_output_tokens(&request.run.dataset)?;
+    let request_timeout_ns = seconds_to_ns(request.run.endpoint.timeout_seconds)?;
+    let transport = TransportSinkConfig {
+        client: ClientConfig {
+            http_version: if request.run.endpoint.http2 {
+                HttpVersion::Http2PriorKnowledge
+            } else {
+                HttpVersion::Auto
+            },
+            total_timeout_ns: (request_timeout_ns > 0).then_some(request_timeout_ns),
+            ..ClientConfig::default()
+        },
+        connection_reuse: request.run.endpoint.connection_reuse,
+        session_header: request.run.endpoint.session_header.clone(),
+    };
+    let real_clock_anchor = RealClockAnchor::now();
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
+    let start_ns = clock.now_ns();
+    let rng_root = RngRoot::new(request.run.random_seed);
+    let trace_instances = GraphTraceInstanceSequence::default();
+
+    // Construct every phase's placement workers before the first root can be
+    // admitted. Any parser, policy, transport, or worker setup error therefore
+    // fails the entire run before HTTP traffic.
+    let mut phases = Vec::with_capacity(request.run.phases.len());
+    for (phase_index, phase) in request.run.phases.iter().enumerate() {
+        phases.push(prepare_graph_phase(
+            phase_index,
+            phase,
+            &request,
+            &input,
+            endpoint.clone(),
+            registry.endpoint_resolver(),
+            input_token_counter.clone(),
+            metrics_config.clone(),
+            transport.clone(),
+            real_clock_anchor,
+            clock.clone(),
+            start_ns,
+            &primary_model,
+            default_output_tokens,
+            rng_root,
+            trace_instances.clone(),
+        )?);
+    }
+
+    let mut captured = Vec::new();
+    for prepared in phases {
+        let report = prepared.workload.execute().await?;
+        let failure = report.traces.iter().find_map(|trace| {
+            trace
+                .result
+                .as_ref()
+                .err()
+                .map(|error| format!("graph trace {:?} failed: {error}", trace.trace_id))
+        });
+        drop(prepared.workload);
+        captured.extend(prepared.records.into_iter().flatten());
+        if report.failed > 0 {
+            bail!(
+                "graph phase aborted after {} failed trace(s): {}",
+                report.failed,
+                failure.unwrap_or_else(|| "unknown trace failure".into())
+            );
+        }
+    }
+    captured.sort_by(|left, right| {
+        left.ingest
+            .start_ns
+            .cmp(&right.ingest.start_ns)
+            .then_with(|| left.uuid.cmp(&right.uuid))
+    });
+
+    let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
+    for record in &captured {
+        accumulator.process_record(&record.ingest);
+    }
+    let profiling_metrics =
+        accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+    let warmup = captured
+        .iter()
+        .any(|record| record.ingest.phase == MetricsPhase::Warmup)
+        .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    write_graph_artifacts(&request, &captured, &metrics_config)?;
+
+    let profiling = captured
+        .iter()
+        .filter(|record| record.ingest.phase == MetricsPhase::Profiling)
+        .collect::<Vec<_>>();
+    let start_time = profiling.iter().map(|record| record.ingest.start_ns).min();
+    let end_time = profiling.iter().map(|record| record.ingest.end_ns).max();
+    let endpoints_successful = profiling
+        .iter()
+        .filter(|record| !record.ingest.errored && !record.ingest.canceled)
+        .filter_map(|record| record.ingest.dimensions.endpoint_url.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let summary = ReportSummary {
+        start_time,
+        end_time,
+        duration_s: start_time
+            .zip(end_time)
+            .map(|(start, end)| end.saturating_sub(start) as f64 / 1_000_000_000.0),
+        was_cancelled: false,
+        endpoints_configured: request.run.endpoint.urls.clone(),
+        endpoints_successful,
+        server_metrics: None,
+    };
+    let outcome = RunOutcome {
+        run: ReportRunInfo {
+            mode: Some("graph".into()),
+            model: Some(primary_model),
+        },
+        summary,
+        warmup,
+        ..RunOutcome::default()
+    };
+    Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_graph_phase(
+    phase_index: usize,
+    phase: &PhaseSpec,
+    request: &RunRequest,
+    input: &GraphInputBundle,
+    endpoint: EndpointConfig,
+    endpoint_resolver: Arc<dyn aiperf_dataset::EndpointResolver>,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+    metrics: MetricsConfig,
+    transport: TransportSinkConfig,
+    real_clock_anchor: RealClockAnchor,
+    clock: Rc<dyn Clock>,
+    run_origin_ns: i64,
+    primary_model: &str,
+    default_output_tokens: usize,
+    rng_root: RngRoot,
+    trace_instances: GraphTraceInstanceSequence,
+) -> Result<PreparedGraphPhase> {
+    let common = phase.common();
+    let one_pass =
+        common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
+    let session_limit = if one_pass {
+        Some(u64::try_from(input.plans.len()).context("graph root count exceeds u64")?)
+    } else {
+        common.sessions
+    };
+    let source: Rc<dyn GraphTraceSource> =
+        Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
+            input.plans.clone(),
+            session_limit,
+            common.requests,
+            trace_instances,
+        )?);
+    let arrival: Rc<dyn GraphArrivalPolicy> = match phase {
+        PhaseSpec::Concurrency { .. } => Rc::new(ImmediateGraphArrival),
+        PhaseSpec::Poisson { .. } | PhaseSpec::Gamma { .. } | PhaseSpec::Constant { .. } => {
+            let (pattern, rate, smoothness) = phase
+                .request_arrival()
+                .expect("validated graph rate phase has an arrival policy");
+            let seed = rng_root
+                .derive_seed(&format!("runner.graph.phase.{phase_index}.arrival"))
+                .unwrap_or(phase_index as u64);
+            Rc::new(IntervalGraphArrival::new(Rc::new(RefCell::new(
+                make_interval_generator(pattern, rate, smoothness, seed),
+            ))))
+        }
+        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } => {
+            unreachable!("unsupported graph phase rejected before input acquisition")
+        }
+    };
+    let (records_tx, records_rx) = mpsc::channel();
+    let cancellation = common
+        .cancellation
+        .map(|cancellation| GraphCancellationConfig {
+            rate: cancellation.rate,
+            delay_seconds: cancellation.delay,
+            seed: rng_root
+                .derive_seed(&format!("runner.graph.phase.{phase_index}.cancellation"))
+                .unwrap_or(phase_index as u64),
+            phase: if common.name == "warmup" {
+                aiperf_timing::Phase::Warmup
+            } else {
+                aiperf_timing::Phase::Profiling
+            },
+        });
+    let worker_factory = Arc::new(RunnerGraphBackendFactory::new(
+        RunnerGraphBackendFactoryConfig {
+            real_clock_anchor,
+            run_origin_ns,
+            base_urls: request.run.endpoint.urls.clone(),
+            model: primary_model.to_string(),
+            default_max_tokens: default_output_tokens,
+            transport,
+            endpoint,
+            endpoint_resolver,
+            segments: input.segments.clone(),
+            input_token_counter,
+            metrics,
+            phase: metrics_phase(phase)?,
+            prefill_concurrency: common.prefill_concurrency,
+            cancellation,
+            raw_enabled: request.run.artifacts.raw_path.is_some(),
+            captured: records_tx,
+        },
+    ));
+    let placement: Rc<dyn GraphTraceExecutionBackend> = Rc::new(
+        ThreadPerCoreGraphTraceExecutionBackend::new(request.run.workers, worker_factory)?,
+    );
+    let mut workload = GraphWorkload::new(clock, source, placement)
+        .with_arrival(arrival)
+        .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
+    if let Some(concurrency) = phase.concurrency() {
+        workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(Rc::new(
+            SlotPool::new(concurrency),
+        ))));
+    }
+    if let Some(duration) = common.duration {
+        workload =
+            workload.with_stop_policy(Rc::new(DurationGraphStop::new(seconds_to_ns(duration)?)?));
+    }
+    Ok(PreparedGraphPhase {
+        workload,
+        records: records_rx,
+    })
+}
+
+fn write_graph_artifacts(
+    request: &RunRequest,
+    captured: &[CapturedRecord],
+    metrics_config: &MetricsConfig,
+) -> Result<()> {
+    if let Some(records_path) = &request.run.artifacts.records_path {
+        let path = artifact_path(&request.run.artifact_dir, records_path, "records_path")?;
+        write_records_jsonl(&path, captured, metrics_config, request.run.artifacts.trace)?;
+    }
+    if let Some(raw_path) = &request.run.artifacts.raw_path {
+        let path = artifact_path(&request.run.artifact_dir, raw_path, "raw_path")?;
+        write_raw_records_jsonl(&path, captured)?;
+    }
+    if let Some(outputs_path) = &request.run.artifacts.outputs_path {
+        let path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
+        write_outputs_json(&path, captured, metrics_config)?;
+    }
+    Ok(())
 }
 
 async fn execute_native_with_accuracy(

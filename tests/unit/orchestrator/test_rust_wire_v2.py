@@ -155,6 +155,48 @@ def test_dag_jsonl_rows_enter_graph_workload_once_without_conversion(
     assert "graph_ir" not in workload["config"]["dataset"]
 
 
+def test_v1_dag_jsonl_skips_legacy_dataset_timing_and_zmq_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    authored_rows = [
+        {
+            "session_id": "root",
+            "turns": [{"messages": [{"role": "user", "content": "root"}]}],
+        }
+    ]
+    run = _run(
+        tmp_path / "graph-target",
+        dataset={
+            "type": "file",
+            "format": "dag_jsonl",
+            "records": authored_rows,
+        },
+    )
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("legacy resolver touched a runner-owned dag_jsonl program")
+
+    monkeypatch.setattr(
+        "aiperf.config.resolution.resolvers.DatasetResolver.resolve",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "aiperf.config.resolution.resolvers.TimingResolver.resolve",
+        fail_if_called,
+    )
+    monkeypatch.setattr(
+        "aiperf.config.resolution.resolvers.CommConfigResolver.resolve",
+        fail_if_called,
+    )
+
+    rust_executor.RustSubprocessExecutor._resolve_run(run)
+    dataset = build_run_request(run)["run"]["dataset"]
+
+    assert dataset["format"] == "dag_jsonl"
+    assert dataset["sampling"] == "sequential"
+    assert dataset["records"] == authored_rows
+
+
 def test_projection_never_reads_resolved_or_performs_resolver_io(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

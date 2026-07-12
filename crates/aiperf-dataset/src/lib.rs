@@ -42,8 +42,10 @@ pub use generator::{
     SyntheticVideoPattern, audio_duration_seconds, transcode_audio_to_wav,
 };
 pub use loader::{
-    AccuracyComposer, AccuracyDatasetLoader, DatasetFormatRegistration, DatasetLoader,
-    DatasetProbe, DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin,
+    AccuracyComposer, AccuracyDatasetLoader, DagJsonlConversation, DagJsonlFork, DagJsonlProgram,
+    DagJsonlSpawn, DagJsonlTurn, DatasetFormatRegistration, DatasetLoader, DatasetProbe,
+    DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin, dag_jsonl_turn_token_counts,
+    load_dag_jsonl_program,
 };
 pub use materialize::{
     AssemblyItem, MessageSpliceResolver, Overrides, SegmentItemsMaterializer,

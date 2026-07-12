@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native dataset-DAG to Graph-IR lowering.
+//! Canonical authored DAG to Graph-IR lowering.
 //!
 //! The semantic source is the complete Python DAG loader and branch runtime:
 //! `src/aiperf/dataset/loader/dag_jsonl.py:189-503`,
@@ -18,7 +18,8 @@
 //!   channel, so the channel store owns fan-in and cannot satisfy early.
 //!
 //! Every static prompt item retains the dense [`aiperf_dataset::Handle`] from
-//! the one shared store. No graph-private content arena is constructed.
+//! the direct input adapter's one shared store. No graph-private content arena
+//! or alternate `Dataset` conversion is constructed.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
@@ -26,8 +27,8 @@ use std::fmt::{self, Display};
 use std::sync::Arc;
 
 use aiperf_dataset::{
-    Conversation, ConversationBranch, ConversationBranchMode, ConversationContextMode, Dataset,
-    DispatchTiming, Handle, MediaKind, Payload, PrerequisiteKind, SegmentStore, SessionId, Turn,
+    ConversationBranchMode, ConversationContextMode, DispatchTiming, Handle, MediaKind, Payload,
+    PrerequisiteKind, SegmentStore,
 };
 
 use crate::model::{
@@ -35,20 +36,20 @@ use crate::model::{
     ParsedGraph, PromptItem, ReducerName, START_NODE_ID, StaticEdge, TraceRecord,
 };
 
-const LOWERING_VERSION: &str = "aiperf-dataset-dag-v1";
+const LOWERING_VERSION: &str = "aiperf-authored-dag-v1";
 
-/// One lowered multi-root dataset plus the unchanged shared segment store.
+/// One lowered multi-root authored input plus its unchanged shared segment store.
 #[derive(Clone)]
-pub struct LoweredDatasetGraph {
+pub(crate) struct LoweredGraphInput {
     /// Graph-per-root records and one trace referencing each graph.
     pub parsed: ParsedGraph,
     /// The dataset's immutable content-addressed segment arena.
     pub segments: Arc<dyn SegmentStore>,
 }
 
-impl fmt::Debug for LoweredDatasetGraph {
+impl fmt::Debug for LoweredGraphInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoweredDatasetGraph")
+        f.debug_struct("LoweredGraphInput")
             .field("graphs", &self.parsed.graphs.len())
             .field("traces", &self.parsed.traces.len())
             .field("segments", &self.segments.len())
@@ -56,63 +57,89 @@ impl fmt::Debug for LoweredDatasetGraph {
     }
 }
 
-/// Dataset-to-Graph-IR extension point.
-pub trait DatasetGraphLowerer: Send + Sync {
-    /// Lower every sampleable DAG root in authored order.
-    fn lower(&self, dataset: &Dataset) -> Result<LoweredDatasetGraph, DatasetGraphLowerError>;
-}
-
-/// Canonical static lowering for native [`aiperf_dataset::DagMetadata`].
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NativeDatasetGraphLowerer;
-
-impl DatasetGraphLowerer for NativeDatasetGraphLowerer {
-    fn lower(&self, dataset: &Dataset) -> Result<LoweredDatasetGraph, DatasetGraphLowerError> {
-        lower_dataset(dataset)
-    }
-}
-
-/// Lower every sampleable root conversation into its own graph and trace.
-pub fn lower_dataset(dataset: &Dataset) -> Result<LoweredDatasetGraph, DatasetGraphLowerError> {
-    let roots = dataset
-        .conversations()
-        .iter()
-        .filter(|conversation| {
-            conversation
-                .dag
-                .as_ref()
-                .is_some_and(|metadata| metadata.is_root)
-        })
-        .collect::<Vec<_>>();
-    if roots.is_empty() {
-        return Err(DatasetGraphLowerError::NoDagRoots);
-    }
-
+pub(crate) fn lower_catalog(
+    catalog: &GraphCatalog,
+) -> Result<LoweredGraphInput, GraphLoweringError> {
     let mut parsed = ParsedGraph::default();
-    for root in roots {
-        let graph_name = format!("dag:{}", root.session_id.as_str());
-        let graph = GraphBuilder::new(dataset).lower_root(root)?;
+    for root_id in &catalog.roots {
+        let root = catalog.conversations.get(root_id).ok_or_else(|| {
+            GraphLoweringError::Branch(format!("DAG root {root_id:?} is not in its catalog"))
+        })?;
+        let graph_name = format!("dag:{}", root.id);
+        let graph = GraphBuilder::new(catalog).lower_root(root)?;
         parsed.graphs.insert(graph_name.clone(), graph);
         parsed.traces.push(TraceRecord {
-            id: root.session_id.as_str().to_string(),
+            id: root.id.clone(),
             graph_ref: Some(graph_name),
             initial_state: BTreeMap::new(),
         });
     }
 
-    Ok(LoweredDatasetGraph {
+    Ok(LoweredGraphInput {
         parsed,
-        segments: dataset.segments().clone(),
+        segments: catalog.segments.clone(),
     })
 }
 
-/// A deterministic graph-build failure with authored dataset context.
+#[derive(Clone)]
+pub(crate) struct GraphCatalog {
+    pub(crate) conversations: HashMap<String, CatalogConversation>,
+    pub(crate) roots: Vec<String>,
+    pub(crate) segments: Arc<dyn SegmentStore>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CatalogConversation {
+    pub(crate) id: String,
+    pub(crate) context_mode: ConversationContextMode,
+    pub(crate) system: Option<Handle>,
+    pub(crate) user_context: Option<Handle>,
+    pub(crate) turns: Vec<CatalogTurn>,
+    pub(crate) branches: Vec<CatalogBranch>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CatalogBranch {
+    pub(crate) id: String,
+    pub(crate) children: Vec<String>,
+    pub(crate) mode: ConversationBranchMode,
+    pub(crate) dispatch_timing: DispatchTiming,
+    pub(crate) background: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct CatalogTurn {
+    pub(crate) messages: Vec<Handle>,
+    pub(crate) raw_messages: Option<Handle>,
+    pub(crate) raw_payload: bool,
+    pub(crate) content: Vec<(MediaKind, Vec<Handle>)>,
+    pub(crate) role: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) endpoint: Option<String>,
+    pub(crate) streaming: Option<bool>,
+    pub(crate) max_tokens: Option<u32>,
+    pub(crate) input_tokens: u64,
+    pub(crate) timestamp_ms: Option<f64>,
+    pub(crate) delay_ms: Option<f64>,
+    pub(crate) tools: Option<Handle>,
+    pub(crate) raw_system: Option<Handle>,
+    pub(crate) extra_body: Option<Handle>,
+    pub(crate) extra_headers: Option<Handle>,
+    pub(crate) request_parameters: Option<Handle>,
+    pub(crate) branch_ids: Vec<String>,
+    pub(crate) prerequisites: Vec<CatalogPrerequisite>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CatalogPrerequisite {
+    pub(crate) kind: PrerequisiteKind,
+    pub(crate) branch_id: Option<String>,
+    pub(crate) child_ids: Vec<String>,
+}
+
+/// A deterministic graph-build failure with authored input context.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DatasetGraphLowerError {
-    /// No conversation is both DAG-authored and sampleable as a root.
-    NoDagRoots,
-    /// A referenced conversation unexpectedly lacks DAG lineage.
-    MissingDagMetadata(String),
+pub(crate) enum GraphLoweringError {
     /// The Graph-IR prompt program cannot represent this context mode faithfully.
     UnsupportedContextMode {
         /// Authored conversation identifier.
@@ -151,13 +178,9 @@ pub enum DatasetGraphLowerError {
     },
 }
 
-impl Display for DatasetGraphLowerError {
+impl Display for GraphLoweringError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoDagRoots => write!(f, "dataset contains no sampleable DAG root conversations"),
-            Self::MissingDagMetadata(id) => {
-                write!(f, "DAG conversation {id:?} has no lineage metadata")
-            }
             Self::UnsupportedContextMode {
                 conversation_id,
                 mode,
@@ -181,7 +204,7 @@ impl Display for DatasetGraphLowerError {
                 f,
                 "DAG conversation {conversation_id:?} turn {turn_index} uses unsupported prerequisite {kind:?}"
             ),
-            Self::Branch(message) => write!(f, "invalid dataset DAG for Graph-IR: {message}"),
+            Self::Branch(message) => write!(f, "invalid authored DAG for Graph-IR: {message}"),
             Self::Payload {
                 handle,
                 expected,
@@ -194,7 +217,7 @@ impl Display for DatasetGraphLowerError {
     }
 }
 
-impl Error for DatasetGraphLowerError {}
+impl Error for GraphLoweringError {}
 
 #[derive(Debug, Clone)]
 enum EntryTrigger {
@@ -210,21 +233,21 @@ struct ConversationExpansion {
 #[derive(Debug, Clone)]
 struct BranchExpansion {
     mode: ConversationBranchMode,
-    child_terminals: Vec<(SessionId, String)>,
+    child_terminals: Vec<(String, String)>,
 }
 
 struct GraphBuilder<'a> {
-    dataset: &'a Dataset,
+    catalog: &'a GraphCatalog,
     graph: GraphRecord,
     next_node: u64,
     next_occurrence: u64,
-    active_path: Vec<SessionId>,
+    active_path: Vec<String>,
 }
 
 impl<'a> GraphBuilder<'a> {
-    fn new(dataset: &'a Dataset) -> Self {
+    fn new(catalog: &'a GraphCatalog) -> Self {
         Self {
-            dataset,
+            catalog,
             graph: GraphRecord {
                 version: Some(LOWERING_VERSION.to_string()),
                 ..GraphRecord::default()
@@ -235,8 +258,8 @@ impl<'a> GraphBuilder<'a> {
         }
     }
 
-    fn lower_root(mut self, root: &Conversation) -> Result<GraphRecord, DatasetGraphLowerError> {
-        self.graph.system = Some(root.session_id.as_str().to_string());
+    fn lower_root(mut self, root: &CatalogConversation) -> Result<GraphRecord, GraphLoweringError> {
+        self.graph.system = Some(root.id.clone());
         self.expand_conversation(root, Vec::new(), EntryTrigger::Start, true)?;
         self.attach_terminal_edges();
         Ok(self.graph)
@@ -244,28 +267,24 @@ impl<'a> GraphBuilder<'a> {
 
     fn expand_conversation(
         &mut self,
-        conversation: &Conversation,
+        conversation: &CatalogConversation,
         inherited: Vec<PromptItem>,
         trigger: EntryTrigger,
         root_instance: bool,
-    ) -> Result<ConversationExpansion, DatasetGraphLowerError> {
-        if self
-            .active_path
-            .iter()
-            .any(|id| id == &conversation.session_id)
-        {
+    ) -> Result<ConversationExpansion, GraphLoweringError> {
+        if self.active_path.iter().any(|id| id == &conversation.id) {
             let mut cycle = self
                 .active_path
                 .iter()
-                .map(SessionId::as_str)
+                .map(String::as_str)
                 .collect::<Vec<_>>();
-            cycle.push(conversation.session_id.as_str());
-            return Err(DatasetGraphLowerError::Branch(format!(
+            cycle.push(conversation.id.as_str());
+            return Err(GraphLoweringError::Branch(format!(
                 "cycle reached while expanding {}",
                 cycle.join(" -> ")
             )));
         }
-        self.active_path.push(conversation.session_id.clone());
+        self.active_path.push(conversation.id.clone());
         let result =
             self.expand_conversation_inner(conversation, inherited, trigger, root_instance);
         self.active_path.pop();
@@ -274,34 +293,31 @@ impl<'a> GraphBuilder<'a> {
 
     fn expand_conversation_inner(
         &mut self,
-        conversation: &Conversation,
+        conversation: &CatalogConversation,
         inherited: Vec<PromptItem>,
         trigger: EntryTrigger,
         root_instance: bool,
-    ) -> Result<ConversationExpansion, DatasetGraphLowerError> {
-        let dag = conversation.dag.as_ref().ok_or_else(|| {
-            DatasetGraphLowerError::MissingDagMetadata(conversation.session_id.as_str().to_string())
-        })?;
-        let mode = self.dataset.context_mode(conversation);
+    ) -> Result<ConversationExpansion, GraphLoweringError> {
+        let mode = conversation.context_mode;
         if mode != ConversationContextMode::DeltasWithoutResponses {
-            return Err(DatasetGraphLowerError::UnsupportedContextMode {
-                conversation_id: conversation.session_id.as_str().to_string(),
+            return Err(GraphLoweringError::UnsupportedContextMode {
+                conversation_id: conversation.id.clone(),
                 mode,
             });
         }
         if conversation.turns.is_empty() {
-            return Err(DatasetGraphLowerError::Branch(format!(
+            return Err(GraphLoweringError::Branch(format!(
                 "conversation {:?} has no turns",
-                conversation.session_id.as_str()
+                conversation.id
             )));
         }
 
         let occurrence = self.next_occurrence;
         self.next_occurrence = self.next_occurrence.saturating_add(1);
-        let branches = dag
+        let branches = conversation
             .branches
             .iter()
-            .map(|branch| (branch.branch_id.as_str(), branch))
+            .map(|branch| (branch.id.as_str(), branch))
             .collect::<HashMap<_, _>>();
         let mut expanded_branches = HashMap::<String, BranchExpansion>::new();
 
@@ -310,23 +326,22 @@ impl<'a> GraphBuilder<'a> {
         // deterministic same-instant order, so expand these START entries first.
         for branch_id in &conversation.turns[0].branch_ids {
             let branch = branches.get(branch_id.as_str()).ok_or_else(|| {
-                DatasetGraphLowerError::Branch(format!(
+                GraphLoweringError::Branch(format!(
                     "conversation {:?} turn 0 references unknown branch {:?}",
-                    conversation.session_id.as_str(),
-                    branch_id.as_str()
+                    conversation.id, branch_id
                 ))
             })?;
             if branch.dispatch_timing != DispatchTiming::Pre {
                 continue;
             }
             if !root_instance || branch.mode != ConversationBranchMode::Spawn {
-                return Err(DatasetGraphLowerError::Branch(format!(
+                return Err(GraphLoweringError::Branch(format!(
                     "pre-session branch {:?} must be a SPAWN attached to a sampleable root",
-                    branch.branch_id.as_str()
+                    branch.id
                 )));
             }
             let expansion = self.expand_branch(branch, Vec::new(), EntryTrigger::Start)?;
-            expanded_branches.insert(branch.branch_id.as_str().to_string(), expansion);
+            expanded_branches.insert(branch.id.clone(), expansion);
         }
 
         let mut context = inherited;
@@ -351,8 +366,8 @@ impl<'a> GraphBuilder<'a> {
             self.add_prerequisites(conversation, turn_index, turn, &expanded_branches, &node_id)?;
 
             let delay_us = millis_to_micros(turn.delay_ms).ok_or_else(|| {
-                DatasetGraphLowerError::UnsupportedTurn {
-                    conversation_id: conversation.session_id.as_str().to_string(),
+                GraphLoweringError::UnsupportedTurn {
+                    conversation_id: conversation.id.clone(),
                     turn_index,
                     reason: "delay_ms is non-finite or outside Graph-IR time range".into(),
                 }
@@ -376,17 +391,16 @@ impl<'a> GraphBuilder<'a> {
 
             for branch_id in &turn.branch_ids {
                 let branch = branches.get(branch_id.as_str()).ok_or_else(|| {
-                    DatasetGraphLowerError::Branch(format!(
+                    GraphLoweringError::Branch(format!(
                         "conversation {:?} turn {turn_index} references unknown branch {:?}",
-                        conversation.session_id.as_str(),
-                        branch_id.as_str()
+                        conversation.id, branch_id
                     ))
                 })?;
                 if branch.dispatch_timing == DispatchTiming::Pre {
                     if turn_index != 0 {
-                        return Err(DatasetGraphLowerError::Branch(format!(
+                        return Err(GraphLoweringError::Branch(format!(
                             "pre-session branch {:?} is attached after turn 0",
-                            branch.branch_id.as_str()
+                            branch.id
                         )));
                     }
                     continue;
@@ -395,9 +409,9 @@ impl<'a> GraphBuilder<'a> {
                     && !branch.background
                     && turn_index + 1 != conversation.turns.len()
                 {
-                    return Err(DatasetGraphLowerError::Branch(format!(
+                    return Err(GraphLoweringError::Branch(format!(
                         "foreground FORK {:?} is attached before the terminal parent turn",
-                        branch.branch_id.as_str()
+                        branch.id
                     )));
                 }
                 let inherited = match branch.mode {
@@ -406,7 +420,7 @@ impl<'a> GraphBuilder<'a> {
                 };
                 let expansion =
                     self.expand_branch(branch, inherited, EntryTrigger::After(node_id.clone()))?;
-                expanded_branches.insert(branch.branch_id.as_str().to_string(), expansion);
+                expanded_branches.insert(branch.id.clone(), expansion);
             }
 
             context = after;
@@ -421,17 +435,16 @@ impl<'a> GraphBuilder<'a> {
 
     fn expand_branch(
         &mut self,
-        branch: &ConversationBranch,
+        branch: &CatalogBranch,
         inherited: Vec<PromptItem>,
         trigger: EntryTrigger,
-    ) -> Result<BranchExpansion, DatasetGraphLowerError> {
-        let mut child_terminals = Vec::with_capacity(branch.child_conversation_ids.len());
-        for child_id in &branch.child_conversation_ids {
-            let child = self.dataset.get(child_id).map_err(|error| {
-                DatasetGraphLowerError::Branch(format!(
-                    "branch {:?} cannot resolve child {:?}: {error}",
-                    branch.branch_id.as_str(),
-                    child_id.as_str()
+    ) -> Result<BranchExpansion, GraphLoweringError> {
+        let mut child_terminals = Vec::with_capacity(branch.children.len());
+        for child_id in &branch.children {
+            let child = self.catalog.conversations.get(child_id).ok_or_else(|| {
+                GraphLoweringError::Branch(format!(
+                    "branch {:?} cannot resolve child {:?}",
+                    branch.id, child_id
                 ))
             })?;
             let expansion =
@@ -446,18 +459,18 @@ impl<'a> GraphBuilder<'a> {
 
     fn append_conversation_context(
         &self,
-        conversation: &Conversation,
+        conversation: &CatalogConversation,
         items: &mut Vec<PromptItem>,
-    ) -> Result<(), DatasetGraphLowerError> {
+    ) -> Result<(), GraphLoweringError> {
         for (handle, role) in [
             (conversation.system, "system"),
             (conversation.user_context, "user"),
         ] {
             let Some(handle) = handle else { continue };
-            match self.dataset.segments().get(handle).map_err(|error| {
-                DatasetGraphLowerError::Branch(format!(
+            match self.catalog.segments.get(handle).map_err(|error| {
+                GraphLoweringError::Branch(format!(
                     "conversation {:?} context handle {handle}: {error}",
-                    conversation.session_id.as_str()
+                    conversation.id
                 ))
             })? {
                 Payload::Message { .. } => items.push(PromptItem::Seg { seg: handle }),
@@ -466,7 +479,7 @@ impl<'a> GraphBuilder<'a> {
                     role: role.to_string(),
                 }),
                 payload => {
-                    return Err(DatasetGraphLowerError::Payload {
+                    return Err(GraphLoweringError::Payload {
                         handle,
                         expected: "message or text-only context",
                         actual: payload.kind_name(),
@@ -479,27 +492,27 @@ impl<'a> GraphBuilder<'a> {
 
     fn append_turn_items(
         &self,
-        conversation: &Conversation,
+        conversation: &CatalogConversation,
         turn_index: usize,
-        turn: &Turn,
+        turn: &CatalogTurn,
         items: &mut Vec<PromptItem>,
-    ) -> Result<(), DatasetGraphLowerError> {
-        if turn.raw_payload.is_some() {
-            return Err(DatasetGraphLowerError::UnsupportedTurn {
-                conversation_id: conversation.session_id.as_str().to_string(),
+    ) -> Result<(), GraphLoweringError> {
+        if turn.raw_payload {
+            return Err(GraphLoweringError::UnsupportedTurn {
+                conversation_id: conversation.id.clone(),
                 turn_index,
                 reason: "raw_payload bypasses chat-message materialization".into(),
             });
         }
         for handle in &turn.messages {
-            let payload = self.dataset.segments().get(*handle).map_err(|error| {
-                DatasetGraphLowerError::Branch(format!(
+            let payload = self.catalog.segments.get(*handle).map_err(|error| {
+                GraphLoweringError::Branch(format!(
                     "conversation {:?} turn {turn_index} message handle {handle}: {error}",
-                    conversation.session_id.as_str()
+                    conversation.id
                 ))
             })?;
             if !matches!(payload, Payload::Message { .. }) {
-                return Err(DatasetGraphLowerError::Payload {
+                return Err(GraphLoweringError::Payload {
                     handle: *handle,
                     expected: "message",
                     actual: payload.kind_name(),
@@ -508,14 +521,14 @@ impl<'a> GraphBuilder<'a> {
             items.push(PromptItem::Seg { seg: *handle });
         }
         if let Some(raw_messages) = turn.raw_messages {
-            let payload = self.dataset.segments().get(raw_messages).map_err(|error| {
-                DatasetGraphLowerError::Branch(format!(
+            let payload = self.catalog.segments.get(raw_messages).map_err(|error| {
+                GraphLoweringError::Branch(format!(
                     "conversation {:?} turn {turn_index} raw_messages handle {raw_messages}: {error}",
-                    conversation.session_id.as_str()
+                    conversation.id
                 ))
             })?;
             if !matches!(payload, Payload::Raw { .. }) {
-                return Err(DatasetGraphLowerError::Payload {
+                return Err(GraphLoweringError::Payload {
                     handle: raw_messages,
                     expected: "raw message array",
                     actual: payload.kind_name(),
@@ -523,27 +536,27 @@ impl<'a> GraphBuilder<'a> {
             }
             items.push(PromptItem::RawMessages { raw_messages });
         }
-        for group in &turn.content {
-            if group.kind != MediaKind::Text {
-                return Err(DatasetGraphLowerError::UnsupportedTurn {
-                    conversation_id: conversation.session_id.as_str().to_string(),
+        for (kind, handles) in &turn.content {
+            if *kind != MediaKind::Text {
+                return Err(GraphLoweringError::UnsupportedTurn {
+                    conversation_id: conversation.id.clone(),
                     turn_index,
                     reason: format!(
                         "{:?} content requires an endpoint-specific multimodal materializer",
-                        group.kind
+                        kind
                     ),
                 });
             }
-            let role = turn.role.as_ref().map_or("user", |role| role.as_str());
-            for handle in &group.handles {
-                let payload = self.dataset.segments().get(*handle).map_err(|error| {
-                    DatasetGraphLowerError::Branch(format!(
+            let role = turn.role.as_deref().unwrap_or("user");
+            for handle in handles {
+                let payload = self.catalog.segments.get(*handle).map_err(|error| {
+                    GraphLoweringError::Branch(format!(
                         "conversation {:?} turn {turn_index} text handle {handle}: {error}",
-                        conversation.session_id.as_str()
+                        conversation.id
                     ))
                 })?;
                 if !matches!(payload, Payload::Text { .. }) {
-                    return Err(DatasetGraphLowerError::Payload {
+                    return Err(GraphLoweringError::Payload {
                         handle: *handle,
                         expected: "text-only",
                         actual: payload.kind_name(),
@@ -556,8 +569,8 @@ impl<'a> GraphBuilder<'a> {
             }
         }
         if items.is_empty() {
-            return Err(DatasetGraphLowerError::UnsupportedTurn {
-                conversation_id: conversation.session_id.as_str().to_string(),
+            return Err(GraphLoweringError::UnsupportedTurn {
+                conversation_id: conversation.id.clone(),
                 turn_index,
                 reason: "turn materializes no messages".into(),
             });
@@ -579,19 +592,19 @@ impl<'a> GraphBuilder<'a> {
 
     fn allocate_node(
         &mut self,
-        conversation: &Conversation,
+        conversation: &CatalogConversation,
         occurrence: u64,
         turn_index: usize,
-        turn: &Turn,
+        turn: &CatalogTurn,
         items: Vec<PromptItem>,
         output: String,
-    ) -> Result<String, DatasetGraphLowerError> {
+    ) -> Result<String, GraphLoweringError> {
         let node_id = format!("n{:08}", self.next_node);
         self.next_node = self.next_node.saturating_add(1);
         let mut metadata = BTreeMap::new();
         metadata.insert(
             "conversation_id".into(),
-            serde_json::Value::String(conversation.session_id.as_str().to_string()),
+            serde_json::Value::String(conversation.id.clone()),
         );
         metadata.insert("turn_index".into(), serde_json::Value::from(turn_index));
         metadata.insert("occurrence".into(), serde_json::Value::from(occurrence));
@@ -600,10 +613,7 @@ impl<'a> GraphBuilder<'a> {
             serde_json::Value::from(turn.input_tokens),
         );
         if let Some(model) = &turn.model {
-            metadata.insert(
-                "model".into(),
-                serde_json::Value::String(model.as_str().to_string()),
-            );
+            metadata.insert("model".into(), serde_json::Value::String(model.clone()));
         }
         if let Some(endpoint) = &turn.endpoint {
             metadata.insert(
@@ -616,6 +626,7 @@ impl<'a> GraphBuilder<'a> {
         }
         for (name, handle) in [
             ("tools_handle", turn.tools),
+            ("raw_system_handle", turn.raw_system),
             ("extra_body_handle", turn.extra_body),
             ("extra_headers_handle", turn.extra_headers),
             ("request_parameters_handle", turn.request_parameters),
@@ -641,46 +652,44 @@ impl<'a> GraphBuilder<'a> {
 
     fn add_prerequisites(
         &mut self,
-        conversation: &Conversation,
+        conversation: &CatalogConversation,
         turn_index: usize,
-        turn: &Turn,
+        turn: &CatalogTurn,
         branches: &HashMap<String, BranchExpansion>,
         node_id: &str,
-    ) -> Result<(), DatasetGraphLowerError> {
+    ) -> Result<(), GraphLoweringError> {
         let mut required_channels = Vec::new();
         for prerequisite in &turn.prerequisites {
             match prerequisite.kind {
                 PrerequisiteKind::SpawnJoin => {
                     let branch_id = prerequisite.branch_id.as_ref().ok_or_else(|| {
-                        DatasetGraphLowerError::Branch(format!(
+                        GraphLoweringError::Branch(format!(
                             "conversation {:?} turn {turn_index} has SPAWN_JOIN without branch_id",
-                            conversation.session_id.as_str()
+                            conversation.id
                         ))
                     })?;
                     let expansion = branches.get(branch_id.as_str()).ok_or_else(|| {
-                        DatasetGraphLowerError::Branch(format!(
+                        GraphLoweringError::Branch(format!(
                             "conversation {:?} turn {turn_index} joins branch {:?} before it expands",
-                            conversation.session_id.as_str(),
-                            branch_id.as_str()
+                            conversation.id, branch_id
                         ))
                     })?;
                     if expansion.mode != ConversationBranchMode::Spawn {
-                        return Err(DatasetGraphLowerError::Branch(format!(
+                        return Err(GraphLoweringError::Branch(format!(
                             "conversation {:?} turn {turn_index} SPAWN_JOIN references non-SPAWN branch {:?}",
-                            conversation.session_id.as_str(),
-                            branch_id.as_str()
+                            conversation.id, branch_id
                         )));
                     }
                     let selected = select_terminals(
                         &expansion.child_terminals,
-                        &prerequisite.child_conversation_ids,
+                        &prerequisite.child_ids,
                         conversation,
                         turn_index,
                     )?;
                     required_channels.extend(selected);
                 }
                 PrerequisiteKind::ChildSessionComplete => {
-                    for child_id in &prerequisite.child_conversation_ids {
+                    for child_id in &prerequisite.child_ids {
                         let mut found = false;
                         for expansion in branches.values() {
                             for (candidate, channel) in &expansion.child_terminals {
@@ -691,10 +700,9 @@ impl<'a> GraphBuilder<'a> {
                             }
                         }
                         if !found {
-                            return Err(DatasetGraphLowerError::Branch(format!(
+                            return Err(GraphLoweringError::Branch(format!(
                                 "conversation {:?} turn {turn_index} waits for undeclared child {:?}",
-                                conversation.session_id.as_str(),
-                                child_id.as_str()
+                                conversation.id, child_id
                             )));
                         }
                     }
@@ -702,8 +710,8 @@ impl<'a> GraphBuilder<'a> {
                 PrerequisiteKind::Timer
                 | PrerequisiteKind::ExternalEvent
                 | PrerequisiteKind::Barrier => {
-                    return Err(DatasetGraphLowerError::UnsupportedPrerequisite {
-                        conversation_id: conversation.session_id.as_str().to_string(),
+                    return Err(GraphLoweringError::UnsupportedPrerequisite {
+                        conversation_id: conversation.id.clone(),
                         turn_index,
                         kind: prerequisite.kind,
                     });
@@ -777,11 +785,11 @@ impl<'a> GraphBuilder<'a> {
 }
 
 fn select_terminals(
-    terminals: &[(SessionId, String)],
-    subset: &[SessionId],
-    conversation: &Conversation,
+    terminals: &[(String, String)],
+    subset: &[String],
+    conversation: &CatalogConversation,
     turn_index: usize,
-) -> Result<Vec<String>, DatasetGraphLowerError> {
+) -> Result<Vec<String>, GraphLoweringError> {
     if subset.is_empty() {
         return Ok(terminals
             .iter()
@@ -791,10 +799,9 @@ fn select_terminals(
     let mut selected = Vec::with_capacity(subset.len());
     for child in subset {
         let Some((_, channel)) = terminals.iter().find(|(candidate, _)| candidate == child) else {
-            return Err(DatasetGraphLowerError::Branch(format!(
+            return Err(GraphLoweringError::Branch(format!(
                 "conversation {:?} turn {turn_index} prerequisite selects child {:?} outside its branch",
-                conversation.session_id.as_str(),
-                child.as_str()
+                conversation.id, child
             )));
         };
         selected.push(channel.clone());
@@ -816,43 +823,44 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use aiperf_dataset::loader::{
-        DagJsonlComposer, DagJsonlDatasetLoader, DatasetFormatRegistration, DatasetSource,
-        LoadConfig, LoaderRegistry,
-    };
-    use aiperf_dataset::{ComposeConfig, TiktokenTokenizer};
-    use aiperf_rng::RngRoot;
+    use aiperf_dataset::TiktokenTokenizer;
+    use aiperf_dataset::loader::{DatasetSource, LoadConfig};
     use async_trait::async_trait;
     use bytes::Bytes;
     use serde_json::{Value, json};
 
     use super::*;
     use crate::executor::{ExecutorFlags, TraceExecutor};
+    use crate::input::{DagJsonlGraphInputAdapter, GraphInputAdapter, GraphInputConfig};
     use crate::materialize::{PromptMaterializer, SegmentItemsMaterializer};
     use crate::runtime::{Handle as RuntimeHandle, drive_sim};
     use crate::sink::{GraphReply, GraphSink};
     use crate::wire::OpenAiChatMessage;
     use aiperf_clock::sim_clock::SimClock;
 
-    async fn dataset(value: Value) -> Arc<Dataset> {
-        let mut registry = LoaderRegistry::new();
-        registry
-            .register(DatasetFormatRegistration::new(
-                Arc::new(DagJsonlDatasetLoader),
-                Arc::new(DagJsonlComposer),
-            ))
+    async fn lowered(value: Value) -> LoweredGraphInput {
+        let bundle = DagJsonlGraphInputAdapter
+            .load(
+                GraphInputConfig {
+                    load: LoadConfig::new(DatasetSource::Inline(value)),
+                    root_limit: None,
+                },
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
             .unwrap();
-        Arc::new(
-            registry
-                .build_dataset(
-                    Some("dag_jsonl"),
-                    &LoadConfig::new(DatasetSource::Inline(value)),
-                    &ComposeConfig::new("model", RngRoot::new(Some(7))),
-                    &TiktokenTokenizer::builtin(),
-                )
-                .await
-                .unwrap(),
-        )
+        let mut parsed = ParsedGraph::default();
+        for plan in bundle.plans {
+            let graph_name = format!("dag:{}", plan.trace.id);
+            parsed.graphs.insert(graph_name.clone(), plan.graph);
+            let mut trace = plan.trace;
+            trace.graph_ref = Some(graph_name);
+            parsed.traces.push(trace);
+        }
+        LoweredGraphInput {
+            parsed,
+            segments: bundle.segments,
+        }
     }
 
     fn metadata_node<'a>(
@@ -873,7 +881,7 @@ mod tests {
 
     #[tokio::test]
     async fn lowers_pre_spawn_fork_inheritance_and_delayed_join() {
-        let dataset = dataset(json!([
+        let lowered = lowered(json!([
             {"session_id":"root","pre_session_spawns":["pre"],"turns":[
                 {"messages":[{"role":"system","content":"sys"},{"role":"user","content":"r0"}],
                  "forks":[{"child":"fork","background":true}],
@@ -886,8 +894,6 @@ mod tests {
             {"session_id":"pre","turns":[{"messages":[{"role":"system","content":"pre-sys"},{"role":"user","content":"p0"}]}]}
         ]))
         .await;
-
-        let lowered = lower_dataset(&dataset).unwrap();
         let trace = &lowered.parsed.traces[0];
         let graph = &lowered.parsed.graphs[trace.graph_ref.as_ref().unwrap()];
         assert!(crate::validate::validate(graph).is_empty());
@@ -975,7 +981,7 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let dataset = runtime.block_on(dataset(json!([
+        let lowered = runtime.block_on(lowered(json!([
                 {"session_id":"root","turns":[
                     {"messages":[{"role":"user","content":"root"}],"forks":[{"child":"fork","background":true}],"spawns":["spawn"]},
                     {"messages":[{"role":"user","content":"joined"}]}
@@ -984,7 +990,6 @@ mod tests {
                 {"session_id":"spawn","turns":[{"messages":[{"role":"user","content":"spawn"}]}]}
             ])));
         drop(runtime);
-        let lowered = lower_dataset(&dataset).unwrap();
         let trace = lowered.parsed.traces[0].clone();
         let graph = Rc::new(lowered.parsed.resolve_trace_graph(&trace).clone());
         let (root0_id, root0) = metadata_node(&graph, "root", 0);
@@ -1061,13 +1066,12 @@ mod tests {
 
     #[tokio::test]
     async fn reused_spawn_template_is_instantiated_once_per_parent_root() {
-        let dataset = dataset(json!([
+        let lowered = lowered(json!([
             {"session_id":"a","turns":[{"messages":[{"role":"user","content":"a"}],"spawns":["shared"]}]},
             {"session_id":"b","turns":[{"messages":[{"role":"user","content":"b"}],"spawns":["shared"]}]},
             {"session_id":"shared","turns":[{"messages":[{"role":"user","content":"s"}]}]}
         ]))
         .await;
-        let lowered = lower_dataset(&dataset).unwrap();
         assert_eq!(lowered.parsed.traces.len(), 2);
         for trace in &lowered.parsed.traces {
             let graph = lowered.parsed.resolve_trace_graph(trace);
@@ -1087,7 +1091,7 @@ mod tests {
 
     #[tokio::test]
     async fn three_level_fork_chain_inherits_each_ancestor_reply() {
-        let dataset = dataset(json!([
+        let lowered = lowered(json!([
             {"session_id":"root","turns":[
                 {"messages":[{"role":"user","content":"root"}],"forks":[{"child":"level-one"}]}
             ]},
@@ -1099,8 +1103,6 @@ mod tests {
             ]}
         ]))
         .await;
-
-        let lowered = lower_dataset(&dataset).unwrap();
         let graph = lowered
             .parsed
             .resolve_trace_graph(&lowered.parsed.traces[0]);
