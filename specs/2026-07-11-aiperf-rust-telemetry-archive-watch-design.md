@@ -901,99 +901,221 @@ Retries of persistence retain `batch_id`/`frame_id`. A new source request always
 
 ## 10. Local durability and crash recovery
 
-### 10.1 WAL, not a mutable full-buffer checkpoint
+### 10.1 Durable genesis and sealed WAL segments
 
-Each admitted batch is encoded as a length-delimited, schema-versioned frame with batch ID, CRC,
-and payload in a session WAL. Under the default durable policy, `AppendReceipt::LocalDurable` is
-returned only after the frame and containing directory metadata meet the configured fsync policy.
+After all side-effect-free preparation succeeds, create/exact-resume acquires the exclusive archive
+lock and commits generation zero before source activation, decode admission, or the first frame.
+Genesis and its empty index root are written to content-addressed temporary files, file-fsynced,
+renamed, directory-fsynced, then installed through a file- and parent-directory-fsynced
+`LOCAL-LATEST`. A new session WAL header contains the verified genesis hash, schema fingerprints,
+archive/session IDs, writer compatibility ID, and first accepted sequence. No frame is valid under
+an unknown genesis.
 
-The Parquet builder consumes WAL frames. A crash may lose unacknowledged memory, but it cannot turn
-an acknowledged batch into an unreported disappearance or duplicate.
+WAL files are numbered immutable segments. One `.open` segment is append-only; complete segments
+are footer-checksummed, file-fsynced, renamed `.wal`, and directory-fsynced. A frame is
+length-delimited and contains wire version, frame/batch ID, accepted sequence, payload kind,
+payload, and CRC. A corrupt/truncated final frame is never guessed past. A segment is never
+front-truncated or rewritten to remove a prefix.
 
-### 10.2 Immutable partition commit protocol
+Acknowledgment vocabulary is exact:
 
-For each rotated partition:
+1. **accepted:** the archive owner assigned `accepted_seq` and owns the frame, but it may exist only
+   in memory;
+2. **local durable:** the complete frame and required segment/directory metadata passed the
+   configured fsync policy;
+3. **receipt observed:** the producer received `AppendReceipt::LocalDurable`.
 
-1. select a complete prefix of WAL frames;
-2. write `part-<content-hash>.parquet.tmp`;
-3. finish Parquet footer, flush, and fsync the file;
-4. atomically rename to its content-addressed final key and fsync the directory;
-5. write a new local manifest generation to a temporary file, flush/fsync, then atomically rename;
-6. only after the manifest references the partition, advance/delete the committed WAL prefix.
+Every observed durable receipt is recovered exactly once. A crash after fsync but before response
+may recover an uncertain local-durable frame that the producer did not observe; retrying
+persistence uses the same frame ID. A new source scrape is never used to resolve receipt
+uncertainty.
 
-No `current.arrow` participates in final assembly. The authoritative logical dataset is the set of
-immutable partitions referenced by the latest valid manifest generation.
+### 10.2 Immutable partition/index/head transaction
 
-### 10.3 Recovery cases
+Physical table builders rotate independently, but logical coverage is per `(frame_id, table)`.
+Each frame declares its required projections (`attempts`, zero-or-more `samples`, or `markers`/
+loss). A partition footer carries exact frame/table coverage and row count; recovery never treats a
+frame as globally committed merely because one table projection exists.
 
-Recovery deterministically handles every crash point:
+One local commit performs these ordered durability steps:
 
-- truncated/corrupt final WAL frame: discard only that unacknowledged suffix;
-- complete WAL frame absent from manifest: replay into a partition;
-- temporary Parquet without valid footer/hash: delete locally;
-- valid content-addressed Parquet absent from manifest: verify its batch IDs, then either adopt it
-  if it exactly covers pending WAL or leave it as an orphan for GC;
-- manifest generation with bad checksum/schema: fall back to the preceding valid generation;
-- partition referenced by manifest but missing/corrupt locally: recover from remote or fail closed;
-- batch already referenced plus repeated in WAL: skip by batch ID and advance WAL;
-- configuration/source identity mismatch: refuse resume before source activation.
+1. choose completed projections from a WAL prefix; keep any not-yet-rotated table projection
+   pending;
+2. write every due `part-<content-hash>.parquet.tmp`, finish footer, flush, file-fsync, rename to its
+   content-addressed key, and directory-fsync;
+3. copy-on-write the bounded manifest-index path adding partitions and coverage; file-fsync,
+   rename, and directory-fsync every new content-addressed page;
+4. write the immutable hash-linked generation transaction, file-fsync, rename, and
+   directory-fsync;
+5. write a new `LOCAL-LATEST.tmp` containing current and preceding valid heads, file-fsync,
+   atomically rename it, and fsync its parent directory;
+6. only now mark those exact projections committed;
+7. unlink and directory-fsync only whole sealed WAL segments for which every required projection
+   of every frame is covered by the authoritative index. A partially covered segment remains
+   intact even if it repeats already covered projections.
 
-Property tests inject a crash after every numbered commit step and prove the recovered logical batch
-set equals the acknowledged set with no duplicates.
+The owner may group several ready table partitions into one generation, but does not force all
+tables to share a physical rotation size. No mutable Arrow checkpoint participates in assembly.
 
-### 10.4 Spool quota
+### 10.3 Ordered stop and finalization watermark
 
-Remote targets require a local spool. Byte/file quotas are validated before execution and monitored
-continuously. The manifest reports current/high-water usage. Primary watch fails or applies its
-explicit admission policy before exhaustion; attached mode degrades with visible loss accounting.
-The writer never deletes the only durable copy of a referenced partition.
+Data and reserved control channels do not define commit order by receive order. Graceful stop:
+
+1. stops source issuance;
+2. atomically closes data admission and captures `final_accepted_seq`;
+3. submits exact lifecycle and coalesced loss-ledger frames;
+4. drains/locally-durably acknowledges every accepted sequence through the watermark, or persists
+   an explicit loss frame for an attached-mode rejection that never became accepted;
+5. rotates every open builder until all required frame/table projections are covered;
+6. commits a `locally_finalized` generation and retires eligible whole WAL segments;
+7. attempts requested remote publication under §11.
+
+A finalize command received early on the control lane cannot bypass the watermark. Forced process
+termination may interrupt any step; recovery resumes from the preceding authoritative head and
+WAL.
+
+### 10.4 Recovery cases and proof target
+
+Recovery reads fixed `LOCAL-LATEST`, verifies its checksum, current/preceding head descriptors,
+generation ancestry, genesis, index root/pages, and referenced partitions. It never repairs
+identity by directory globbing. It deterministically handles:
+
+- truncated/corrupt final open-WAL frame: discard only the incomplete non-durable suffix;
+- complete durable frame with no observed receipt: recover it under its existing frame ID;
+- frame projection absent from the index: replay only that missing table projection;
+- repeated WAL frame whose subset of projections is indexed: skip only covered projections;
+- temporary Parquet/index/generation files: delete after verification or leave as orphans;
+- valid immutable unreferenced partition: adopt only when its exact coverage and content hash match
+  pending WAL; otherwise leave for explicit GC;
+- bad current generation/index: use the preceding descriptor retained in `LOCAL-LATEST`; if neither
+  verifies, fail closed;
+- referenced missing/corrupt local object: restore the exact hash from remote or fail closed;
+- schema/config/source/identity-key/writer-compatibility mismatch: refuse resume before session or
+  source activation.
+
+Crash/property tests stop after every file flush, fsync, rename, directory fsync, head replacement,
+WAL seal/unlink, watermark, local-finalization, and remote-publication edge. They prove:
+
+```text
+observed-durable frame projections ⊆ recovered projections exactly once
+recovered projections = all complete local-durable frames (including uncertain receipts)
+```
+
+No frame/table pair appears twice in the resolved index.
+
+### 10.5 Spool quota and transaction reserve
+
+Remote targets require a local spool. Admission accounts separately for configured logical
+bytes/files and actual filesystem free blocks/inodes. It preserves a conservative reserve for the
+largest admitted WAL frame, every open/temporary Parquet builder, copy-on-write index path,
+generation/head files, optional raw object, WAL seal, and emergency finalization. The reserve is
+recomputed when limits/rotation state change and is unavailable to normal admission.
+
+The manifest/head health records current/high-water use and reserve failures. Primary watch applies
+its explicit policy before reserve violation; attached mode records visible loss. The writer never
+deletes the only durable copy of a referenced partition or consumes finalization reserve merely to
+extend normal collection.
 
 ---
 
 ## 11. Object-store synchronization
 
-### 11.1 Existing abstraction
+### 11.1 Required store capability seam
 
-Use the `object_store::ObjectStore` trait (or a smaller AIPerf wrapper around it) for local/S3-like
-implementations. Credentials come from the normal provider/environment chain and never from
+`object_store::ObjectStore` may back an adapter, but the archive depends on the narrower seam it can
+actually prove:
+
+```rust
+#[async_trait]
+pub trait ArchiveObjectStore: Debug + Send + Sync {
+    fn capabilities(&self) -> ArchiveStoreCapabilities;
+    async fn put_if_absent(&self, key: &str, body: Bytes, digest: Digest)
+        -> Result<CreateReceipt, ArchiveStoreError>;
+    async fn get_verified(&self, key: &str, expected: Digest)
+        -> Result<Bytes, ArchiveStoreError>;
+    async fn read_head(&self, key: &str) -> Result<VersionedHead, ArchiveStoreError>;
+    async fn compare_and_swap_head(
+        &self,
+        key: &str,
+        expected_version: &ObjectVersion,
+        replacement: Bytes,
+    ) -> Result<ObjectVersion, HeadConflict>;
+}
+```
+
+Authoritative remote resume requires immutable create-if-absent, cryptographic exact-byte
+verification, and linearizable versioned head CAS. GET followed by unconditional PUT is never a
+CAS implementation. An ETag or size alone is not integrity; the default reads back and checks
+BLAKE3, while a provider checksum is accepted only when the adapter proves a named cryptographic
+algorithm covers the exact bytes. Credentials come from provider references/environment and never
 serializable archive config.
 
-### 11.2 Immutable upload protocol
+The adapter declares named-object read-after-write visibility. A weaker store may be accepted only
+with an authored consistency horizon: transient missing/unavailable referenced immutable objects
+retry within that bound; hash mismatch fails immediately; expiry fails closed and reports
+visibility lag separately from corruption.
 
-Periodic sync:
+### 11.2 Immutable publication protocol
 
-1. uploads each locally committed content-addressed partition not yet remote-durable;
-2. verifies size/hash or provider checksum;
-3. uploads an immutable manifest generation referencing only verified remote objects;
-4. conditionally advances `LATEST` from generation N to N+1;
-5. marks batches remote-referenced only after the pointer succeeds.
+Periodic sync drives bounded asynchronous uploads while the sole owner continues local WAL work:
 
-Retries may create the same physical object again, but content addressing and manifest identity
-make the logical commit idempotent. Historical partitions are never merged/reuploaded merely
-because a new partition arrived.
+1. create-if-absent every newly referenced partition and manifest-index page;
+2. verify exact bytes by the §11.1 integrity contract;
+3. create-if-absent every hash-linked generation from the remote head's descendant path;
+4. verify the target generation and root reference only verified immutable objects;
+5. conditionally replace `LATEST` from its exact object version/head hash with the new head;
+6. only after CAS success mark covered frames remote-referenced.
 
-### 11.3 Concurrency
+Remote generation identities equal local generation identities; one CAS may advance over several
+already uploaded ancestors but cannot coalesce or renumber them. `LATEST` contains archive ID,
+local commit sequence, generation key/hash, index-root key/hash, parent hash, writer session ID, and
+archive state. Manifest-generation keys are content-addressed/create-only, so a losing writer cannot
+overwrite the winner's generation before losing CAS. Retries are physically and logically
+idempotent.
 
-An archive ID has one writer. Create-new uses a unique ID. Exact-resume obtains a local exclusive
-lock and advances the remote generation with conditional compare-and-set. A failed CAS means
-another writer or stale state; the process stops rather than forking history. Distributed
-multi-writer merge is out of scope.
+### 11.3 Locking, ancestry, and reconciliation
 
-### 11.4 Finalization and partial availability
+An archive ID has one writer. Create-new uses a unique ID. Exact-resume takes a local exclusive lock
+and conditions every remote head update on the exact version it read. A CAS conflict stops the
+process; distributed merge is out of scope.
 
-Graceful finalization drains accepted batches, rotates open segments, commits local and requested
-remote manifests, writes `finalized=true` with termination reason, and returns the manifest URI.
+Before source activation, recovery compares verified hash-linked heads:
 
-A network outage does not destroy locally durable history. Terminal status distinguishes:
+| Relationship | Action |
+|---|---|
+| equal | continue |
+| remote is ancestor of local | upload the verified descendant path, then CAS forward |
+| local is ancestor of remote, with no pending local WAL | verify/download exact remote objects and advance local head |
+| local is ancestor of remote, with pending local WAL | fail closed as concurrent/stale history |
+| neither is an ancestor | fail closed as divergence |
+| remote absent | create only from validated local genesis |
 
-- finalized locally and remotely;
-- finalized locally, remote incomplete;
-- degraded/lossy;
-- failed before authoritative finalization.
+No state is inferred from object listing. A remote descendant may be adopted only when archive,
+schema, config, source, identity-key, and writer-compatibility identities match.
 
-No global `final.parquet` is required. An optional post-run compactor may create larger replacement
-partitions and a new manifest generation, but old partitions remain referenced until the new
-generation is completely committed. Garbage collection is a separate policy/tool.
+### 11.4 Lifecycle, sync-only resume, and partial availability
+
+The operation lifecycle distinguishes `open`, `stop_requested`, `locally_finalized`,
+`remotely_finalized`, and `failed`. `locally_finalized` is an immutable sealed generation;
+`remotely_finalized` means verified remote `LATEST` references that exact sealed head and a local
+publication receipt is durable. A locally finalized/remote-incomplete archive may start a fenced
+sync-only resume. That mode may upload, verify, CAS, and record receipts, but cannot create a new
+telemetry session, activate sources, admit frames, or reopen the sealed generation.
+
+A network outage does not destroy locally durable history. Terminal status distinguishes local and
+remote finalization, loss, and failure before local authoritative finalization. Reports return both
+`head_uri` (mutable discovery) and the exact immutable generation URI/hash; no ambiguous
+`archive-manifest.json` or global `final.parquet` is required.
+
+### 11.5 Transactional compaction
+
+Optional compaction runs only against a locally finalized archive under its exclusive lock. It
+binds to an exact parent generation/root, writes and verifies immutable replacement partitions,
+and proves complete `(frame_id, table)` coverage equality. One new generation atomically removes
+old partition IDs and adds replacements in its copy-on-write index; then local head replacement and
+remote CAS use that exact parent. A changed head leaves outputs unreferenced orphans. Old
+partitions remain authoritative until the replacement head commits and are retained until a
+separate GC policy proves no retained head references them.
 
 ---
 
@@ -1010,19 +1132,32 @@ Static and discovered topology data goes into `attributes`, for example:
 - user-defined run/experiment tags.
 
 Enrichers cannot rename metric families, remove source labels, aggregate CPU counters, collapse
-devices, or change numeric values. Derived/materialized views belong downstream.
+devices, or change numeric values because their API receives an immutable sample view and returns
+only an `AttributePatch`. Reserved `aiperf.*` attributes, duplicate keys, and post-patch limit
+violations are errors. Derived/materialized views belong downstream. Discovered changes advance the
+source's attribute epoch and emit a marker; they do not change series identity.
 
 ### 12.2 Redaction order
 
 Pipeline order is:
 
 ```text
-parse exact structured source -> enrich -> redact -> canonicalize -> hash/encode
+parse exact source
+  -> canonicalize pre-redaction source identity
+  -> keyed source_series_key
+  -> additive attribute patch
+  -> typed structured-surface sanitizer
+  -> canonicalize stored identity/series_key
+  -> encode
 ```
 
-Redaction therefore affects both stored labels and `series_key`. The manifest records the redaction
-policy ID/config digest, never secret values. Endpoint userinfo and configured secret headers are
-removed before source identity exists.
+The sanitizer has capability-limited transformations for source descriptors, sample labels and
+attributes, exemplar labels, marker attributes, diagnostics, and report/archive health fields. It
+cannot change a numeric value or semantic role. Redaction affects stored labels and display
+`series_key`, but protected keyed `source_series_key` preserves distinct source identity. The
+manifest records sanitizer and identity-key provider IDs/config digests, never secret values.
+Endpoint userinfo and configured secret headers are removed before any durable source descriptor
+exists. Exact raw-body retention follows §8.7 instead of this structured pipeline.
 
 ### 12.3 Bounds
 
@@ -1034,10 +1169,26 @@ Validation/runtime enforce configured limits for:
 - samples and histogram buckets per scrape;
 - unique series per source/window;
 - response body and retained raw-body size;
+- compressed and decompressed entity bytes plus expansion ratio;
 - diagnostic length.
 
 Exceeding a bound produces an explicit failed/degraded scrape record. It never truncates labels or
 silently merges series. Cardinality-limit implementations live behind a policy trait.
+
+### 12.4 Prometheus HTTP security and negotiation
+
+`prometheus_http` source config is strict and includes credential-provider ID, TLS trust roots and
+optional mTLS provider references, redirect policy, proxy policy, accepted media versions,
+content-encoding policy, connect/request/total deadline ceilings, and compressed/decompressed
+limits. Raw secret values are never authored wire fields. Redirects and ambient proxies default to
+disabled; enabling a named proxy requires an explicit provider/config and never changes the native
+transport's loopback bypass silently. Cross-origin redirects require a separately acknowledged
+policy and never forward credentials by default.
+
+The request advertises only the two §8.1 formats, validates the response `Content-Type` and
+`Content-Encoding`, applies compressed/decompressed limits while receiving, and rejects a metric-
+looking non-2xx body before parse. TLS, DNS, connection reuse, byte capture, and Clock deadlines are
+implemented by the prepared backend's `ControlPlaneHttp`, not a source-private client.
 
 ---
 
@@ -1052,34 +1203,47 @@ The archive exposition projection may preserve families (for example summaries o
 that benchmark projection intentionally excludes. That is expected. One parsed `Exposition` can
 feed two explicit projection policies; archive completeness must not broaden benchmark metrics.
 
-### 13.2 Sidecar hook
+### 13.2 Attempt observation hook
 
-Sidecar composition gains an optional batch observer rather than file-writing branches:
+Run-owned source composition gains an all-outcome observer before lossy domain projection rather
+than file-writing branches on `ServerMetricsRecord`/`GpuScrape`:
 
 ```rust
-pub trait TelemetryBatchObserver<Record> {
-    fn observe(&self, record: &Record, context: &TelemetryObservationContext);
+pub trait TelemetryAttemptObserver<Entity, Record> {
+    fn observe(
+        &self,
+        attempt: &DecodedAttempt<Entity>,
+        native: Option<&Record>,
+        context: &TelemetryObservationContext,
+    );
 }
 ```
 
-Concrete observers include accumulator ingestion, archive encoding/ingress, and test recorders.
-The runner assembles a small static tee at preparation. Observation occurs once per completed
-scrape and never per token.
+Concrete consumers include native accumulator delivery, archive ingress, and test recorders. The
+runner assembles a small generic/static tee at preparation. Every transport/parse/unsupported/
+success outcome is observed once; exact raw bytes remain policy-gated and are not exposed to an
+arbitrary observer. Observation never occurs per token.
 
 Boundary order remains:
 
-1. force/decode source scrape;
-2. feed accumulator/boundary snapshot synchronously;
-3. submit archive batch/attempt record according to admission policy;
-4. return phase barrier result.
+1. submit a typed boundary command with an absolute Clock deadline;
+2. fetch once, decode once, and create the all-outcome envelope;
+3. feed the supported native projection/boundary snapshot synchronously;
+4. submit the archive attempt/batch according to admission policy;
+5. return the phase barrier result or typed timeout/failure according to required-sidecar policy.
 
 Archive remote durability is not awaited at a phase boundary.
 
 ### 13.3 Lifecycle markers
 
-The phase driver already owns authoritative phase timestamps. It emits markers using the same
-values passed to `ScheduledPhaseSidecar::on_phase_start/on_phase_end`. Warmup/profiling names and
-run identity are typed attributes. No post-hoc timestamp inference assigns phases.
+The archive installs a tee on the existing typed `PhaseObserver`. `STARTED`,
+`SENDING_COMPLETE`, and `COMPLETE` markers copy the exact `PhaseConfig`/`PhaseStats` state,
+`start_ns`, `sent_end_ns`, `requests_end_ns`, phase ID/kind, completion reason, and optional branch
+facts delivered at the authoritative transition. Independently sampled
+`ScheduledPhaseSidecar::on_phase_start/on_phase_end` timestamps are not lifecycle authority and are
+not used for markers. Warmup/profiling names and run identity are typed fields. Forced-scrape
+request/capture timestamps remain attempt facts, so a query can distinguish transition from sample
+availability without post-hoc inference.
 
 ---
 
