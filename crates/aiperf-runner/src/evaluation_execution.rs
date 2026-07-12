@@ -325,6 +325,10 @@ pub fn build_evaluation_capability_inventory<'a>(
         descriptor
             .validate()
             .map_err(|error| anyhow!(error.to_string()))?;
+        let available_distributions = providers.available_distributions(&descriptor.provider_id);
+        if available_distributions.is_empty() {
+            continue;
+        }
         let declared_operations = descriptor
             .operations
             .iter()
@@ -340,8 +344,7 @@ pub fn build_evaluation_capability_inventory<'a>(
             })
             .map(|operation| operation.operation_id.as_str().to_owned())
             .collect::<Vec<_>>();
-        let distributions = descriptor
-            .distributions
+        let distributions = available_distributions
             .iter()
             .map(|distribution| EvaluationDistributionCapability {
                 id: distribution.distribution_id.as_str().to_owned(),
@@ -383,7 +386,7 @@ pub fn build_evaluation_capability_inventory<'a>(
             distributions,
         });
         if executable_pair && !operations.is_empty() {
-            for distribution in &descriptor.distributions {
+            for distribution in available_distributions {
                 supported_combinations.push(SupportedEvaluationCombination {
                     backend: "online_http".to_owned(),
                     workload: EVALUATION_WORKLOAD_DESCRIPTOR.id.to_owned(),
@@ -438,6 +441,13 @@ mod tests {
 
     #[async_trait(?Send)]
     impl EvaluationProviderLauncher for NeverLaunch {
+        fn check_distribution_available(
+            &self,
+            _distribution: &EvaluationDistributionDescriptor,
+        ) -> std::result::Result<(), EvaluationProviderError> {
+            Ok(())
+        }
+
         async fn launch(
             &self,
             _descriptor: &EvaluationProviderDescriptor,
@@ -449,7 +459,37 @@ mod tests {
         }
     }
 
+    struct UnavailableLaunch;
+
+    #[async_trait(?Send)]
+    impl EvaluationProviderLauncher for UnavailableLaunch {
+        fn check_distribution_available(
+            &self,
+            _distribution: &EvaluationDistributionDescriptor,
+        ) -> std::result::Result<(), EvaluationProviderError> {
+            Err(EvaluationProviderError::Launch(
+                "fixture isolation mechanism is unavailable".to_owned(),
+            ))
+        }
+
+        async fn launch(
+            &self,
+            _descriptor: &EvaluationProviderDescriptor,
+            _distribution: &EvaluationDistributionDescriptor,
+            _config: &ValidatedProviderConfig,
+            _context: &ProviderLaunchContext,
+        ) -> std::result::Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
+            unreachable!("an unavailable distribution cannot launch")
+        }
+    }
+
     fn providers() -> Arc<EvaluationProviderRegistry> {
+        providers_with_launcher(Arc::new(NeverLaunch))
+    }
+
+    fn providers_with_launcher(
+        launcher: Arc<dyn EvaluationProviderLauncher>,
+    ) -> Arc<EvaluationProviderRegistry> {
         let digest = "a".repeat(64);
         let distribution = EvaluationDistributionDescriptor {
             distribution_id: EvaluationDistributionId::new("nvidia_nemo_evaluator_0_4_locked")
@@ -462,8 +502,7 @@ mod tests {
             oci_digest: None,
             launch_closure_sha256: digest,
         };
-        let factory =
-            NemoEvaluatorProviderFactory::new(vec![distribution], Arc::new(NeverLaunch)).unwrap();
+        let factory = NemoEvaluatorProviderFactory::new(vec![distribution], launcher).unwrap();
         let mut builder = EvaluationProviderRegistryBuilder::new();
         builder.register(Arc::new(factory)).unwrap();
         Arc::new(builder.freeze().unwrap())
@@ -678,7 +717,8 @@ mod tests {
         stream.stream_schema_fingerprint = Some("3".repeat(64));
         mismatches.push(stream);
         let mut endpoint_capabilities = matching;
-        endpoint_capabilities.endpoint_capabilities = BTreeSet::from(["model.complete".to_owned()]);
+        endpoint_capabilities.endpoint_capabilities =
+            BTreeSet::from(["model.complete".to_owned()]);
         mismatches.push(endpoint_capabilities);
 
         for mismatch in &mismatches {
@@ -695,5 +735,26 @@ mod tests {
                 "ID-only match overclaimed executable capability for {mismatch:?}"
             );
         }
+    }
+
+    #[test]
+    fn capabilities_omit_unattested_provider_distributions() {
+        let providers = providers_with_launcher(Arc::new(UnavailableLaunch));
+        let inventory = build_evaluation_capability_inventory(
+            providers.as_ref(),
+            std::iter::empty(),
+            std::iter::empty(),
+            "strict_process_tree_v1",
+            true,
+        )
+        .unwrap();
+
+        assert!(inventory.providers.is_empty());
+        assert!(inventory.supported_combinations.is_empty());
+        assert!(
+            providers
+                .available_distributions(&EvaluationProviderId::new("nemo_evaluator").unwrap())
+                .is_empty()
+        );
     }
 }
