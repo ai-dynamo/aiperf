@@ -62,6 +62,16 @@ fn capabilities_are_a_single_versioned_json_line() {
             .contains(&serde_json::json!("http_transport_policy"))
     );
     assert!(
+        capabilities["run_features"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("server_metrics"))
+    );
+    assert_eq!(
+        capabilities["server_metrics_formats"],
+        serde_json::json!(["json", "csv", "jsonl", "parquet"])
+    );
+    assert!(
         capabilities["telemetry_source_types"]
             .as_array()
             .unwrap()

@@ -172,6 +172,202 @@ class _ConnectionHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _ServerMetricsHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    primary_scrapes = 0
+    prometheus_scrapes = 0
+    lock = threading.Lock()
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/v1/chat/completions/metrics":
+            with self.lock:
+                type(self).primary_scrapes += 1
+            body = b'{"iteration_stats": []}'
+            content_type = "application/json"
+        elif self.path == "/v1/chat/completions/prometheus/metrics":
+            with self.lock:
+                type(self).prometheus_scrapes += 1
+                scrape = type(self).prometheus_scrapes
+            body = "\n".join(
+                [
+                    "# HELP requests_total Completed requests",
+                    "# TYPE requests_total counter",
+                    f'requests_total{{status="ok"}} {scrape * 10}',
+                    "# HELP kv_cache_usage_ratio KV cache usage",
+                    "# TYPE kv_cache_usage_ratio gauge",
+                    f'kv_cache_usage_ratio{{model="mock-model"}} {scrape / 10}',
+                    "# HELP request_latency_seconds Request latency",
+                    "# TYPE request_latency_seconds histogram",
+                    f'request_latency_seconds_bucket{{le="0.1"}} {scrape}',
+                    f'request_latency_seconds_bucket{{le="0.5"}} {scrape * 2}',
+                    f'request_latency_seconds_bucket{{le="+Inf"}} {scrape * 3}',
+                    f"request_latency_seconds_sum {scrape * 0.9}",
+                    f"request_latency_seconds_count {scrape * 3}",
+                    "",
+                ]
+            ).encode()
+            content_type = "text/plain; version=0.0.4"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(length)
+        if self.path != "/v1/chat/completions":
+            self.send_error(404)
+            return
+        time.sleep(0.03)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(_SSE)))
+        self.end_headers()
+        self.wfile.write(_SSE)
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+def test_config_v2_collects_server_metrics_in_rust_across_exact_phase_boundaries(
+    tmp_path: Path,
+) -> None:
+    import pyarrow.parquet as pq
+
+    from aiperf.common.environment import Environment
+    from aiperf.common.models.server_metrics_models import SlimRecord
+
+    _ServerMetricsHandler.primary_scrapes = 0
+    _ServerMetricsHandler.prometheus_scrapes = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ServerMetricsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 5,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "phases": [
+                        {
+                            "name": "warmup",
+                            "type": "concurrency",
+                            "requests": 2,
+                            "concurrency": 1,
+                        },
+                        {
+                            "name": "profiling",
+                            "type": "concurrency",
+                            "requests": 3,
+                            "concurrency": 1,
+                        },
+                    ],
+                    "artifacts": {
+                        "dir": str(tmp_path),
+                        "slice_duration": 0.02,
+                    },
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"formats": ["json", "csv", "jsonl", "parquet"]},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="python-rust-server-metrics-e2e",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="native-server-metrics",
+            random_seed=31,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+
+        with mock.patch.object(Environment.SERVER_METRICS, "COLLECTION_INTERVAL", 0.01):
+            result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+
+        assert result.success, result.error
+        assert result.summary_metrics["request_count"].avg == 3.0
+        assert _ServerMetricsHandler.primary_scrapes == 1
+        assert _ServerMetricsHandler.prometheus_scrapes >= 6
+
+        native = orjson.loads((tmp_path / "native-v2.json").read_bytes())
+        metadata = native["summary"]["server_metrics"]
+        assert metadata["profiling"]["start_ns"] < metadata["profiling"]["end_ns"]
+        assert metadata["warmup"]["start_ns"] < metadata["warmup"]["end_ns"]
+        assert metadata["endpoints_successful"] == [
+            f"http://127.0.0.1:{port}/v1/chat/completions/prometheus/metrics"
+        ]
+        assert set(native["server_metrics"]) == {
+            "kv_cache_usage_ratio",
+            "request_latency_seconds",
+            "requests",
+        }
+        assert set(native["warmup_server_metrics"]) == set(native["server_metrics"])
+        assert native["server_metrics"]["requests"]["type"] == "counter"
+        assert native["server_metrics"]["requests"]["series"][0]["stats"]["total"] > 0
+        assert (
+            native["server_metrics"]["request_latency_seconds"]["type"] == "histogram"
+        )
+        assert (
+            native["server_metrics"]["request_latency_seconds"]["series"][0]["stats"][
+                "count"
+            ]
+            > 0
+        )
+
+        slim_rows = [
+            SlimRecord.model_validate(orjson.loads(line))
+            for line in (tmp_path / "server_metrics_export.jsonl")
+            .read_bytes()
+            .splitlines()
+        ]
+        assert len(slim_rows) >= 4
+        assert {str(row.benchmark_phase) for row in slim_rows} == {
+            "warmup",
+            "profiling",
+        }
+        assert all("requests" in row.metrics for row in slim_rows)
+
+        compatibility = orjson.loads(
+            (tmp_path / "server_metrics_export.json").read_bytes()
+        )
+        assert compatibility["metrics"]["requests"]["type"] == "counter"
+        assert compatibility["warmup_metrics"]["requests"]["type"] == "counter"
+        assert compatibility["metrics"]["request_latency_seconds"]["type"] == (
+            "histogram"
+        )
+        assert "requests" in (tmp_path / "server_metrics_export.csv").read_text()
+
+        parquet_path = tmp_path / "server_metrics_export.parquet"
+        table = pq.read_table(parquet_path)
+        assert table.num_rows > 0
+        assert set(table.column("metric_type").to_pylist()) == {
+            "counter",
+            "gauge",
+            "histogram",
+        }
+        assert not (tmp_path / ".aiperf-server-metrics-parquet-wire.jsonl").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -> None:
     _ChatHandler.bodies.clear()
     _ChatHandler.telemetry_scrapes = 0
