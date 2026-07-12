@@ -426,3 +426,218 @@ fn online_product_path_matches_native_live_replay_within_3pct() {
 
     std::fs::remove_dir_all(target).unwrap();
 }
+
+/// Locate the sibling `dynamo-aiperf-native` checkout that provides the native
+/// `python -m dynamo.replay` CLI (its compiled bindings + components). Honors
+/// `AIPERF_DYNAMO_NATIVE_DIR`, else falls back to the conventional sibling path.
+fn dynamo_native_dir() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("AIPERF_DYNAMO_NATIVE_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join("nvidia/projects/dynamo-aiperf-native"));
+    }
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("components/src/dynamo/replay").is_dir())
+}
+
+fn python_bin() -> Option<&'static str> {
+    for bin in ["python3", "python"] {
+        if Command::new(bin).arg("--version").output().is_ok_and(|o| o.status.success()) {
+            return Some(bin);
+        }
+    }
+    None
+}
+
+/// End-to-end **subprocess vs subprocess** apples-to-apples gate: the SAME
+/// mooncake hash-block trace file is replayed under the real clock by
+///   (1) the AIPerf product path — the `aiperf-runner` binary with
+///       `dynamo_offline` + `replay_mode=online` (AIPerf's own flow), and
+///   (2) Dynamo's own native CLI — `python -m dynamo.replay --replay-mode online`.
+/// Both drive the same passive engine and measure real wall-clock latency; the
+/// gate asserts input/output tokens exact, every latency mean within 3%, and the
+/// AIPerf product throughput >= native. Skips when the native checkout/python is
+/// unavailable (cross-repo integration gate).
+#[test]
+fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
+    let Some(native_dir) = dynamo_native_dir() else {
+        eprintln!("SKIP: no dynamo-aiperf-native checkout (set AIPERF_DYNAMO_NATIVE_DIR)");
+        return;
+    };
+    let Some(python) = python_bin() else {
+        eprintln!("SKIP: no python interpreter");
+        return;
+    };
+    let pythonpath = format!(
+        "{}:{}",
+        native_dir.join("components/src").display(),
+        native_dir.join("lib/bindings/python/src").display()
+    );
+    // Verify the native replay CLI actually imports before committing the run.
+    let probe = Command::new(python)
+        .env("PYTHONPATH", &pythonpath)
+        .args(["-m", "dynamo.replay", "--help"])
+        .output();
+    if !probe.is_ok_and(|o| o.status.success()) {
+        eprintln!("SKIP: `python -m dynamo.replay` not runnable with PYTHONPATH={pythonpath}");
+        return;
+    }
+
+    const REQUESTS: usize = 16;
+    const BLOCK_SIZE: usize = 16;
+    const BLOCKS: usize = 16;
+    const ISL: usize = BLOCK_SIZE * BLOCKS;
+    const OSL: usize = 8;
+
+    // One mooncake trace file, unique hash-block ids per request (no cross-request
+    // reuse → full prefill each → engine-compute-dominated TTFT). Consumed byte
+    // for byte by BOTH subprocesses.
+    let base = std::env::temp_dir().join(format!("aiperf-apples-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let trace_path = base.join("trace.jsonl");
+    {
+        let mut trace = String::new();
+        for i in 0..REQUESTS {
+            let hash_ids: Vec<i64> = (0..BLOCKS as i64).map(|b| (i as i64) * 1000 + b).collect();
+            trace.push_str(
+                &serde_json::to_string(&json!({
+                    "timestamp": 0,
+                    "input_length": ISL,
+                    "output_length": OSL,
+                    "hash_ids": hash_ids
+                }))
+                .unwrap(),
+            );
+            trace.push('\n');
+        }
+        std::fs::write(&trace_path, trace).unwrap();
+    }
+
+    // (1) AIPerf product path: aiperf-runner subprocess, replay_mode=online,
+    //     reading the SAME trace file.
+    let distribution_id = distribution_id();
+    let target = base.join("aiperf");
+    let request = json!({
+        "protocol_version": 2,
+        "operation": "execute",
+        "expected_distribution_id": distribution_id,
+        "run": {
+            "identity": {"benchmark_id": "online-apples-subproc", "random_seed": 41},
+            "artifact_target": target,
+            "backend": {
+                "type": "dynamo_offline",
+                "config": {
+                    "replay_mode": "online",
+                    "engine": {"block_size": BLOCK_SIZE},
+                    "artifacts": {}
+                }
+            },
+            "workload": {
+                "type": "scheduled",
+                "config": {
+                    "worker_count": 1,
+                    "dataset": {
+                        "type": "file",
+                        "format": "mooncake_trace",
+                        "sampling": "sequential",
+                        "path": trace_path,
+                        "osl": {"value": OSL as f64}
+                    },
+                    "tokenizer": {
+                        "name": "builtin", "revision": "main",
+                        "trust_remote_code": false, "apply_chat_template": false
+                    },
+                    "phases": [{
+                        "type": "concurrency", "name": "profiling",
+                        "exclude_from_results": false,
+                        "requests": REQUESTS, "concurrency": REQUESTS
+                    }]
+                }
+            },
+            "resources": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default", "type": "chat_completions",
+                    "urls": ["http://127.0.0.1:9"]
+                }]},
+                "metrics": {"slice_duration_seconds": 0.5, "slos": {}},
+                "artifacts": {}, "sidecars": {}
+            }
+        }
+    });
+    let output = run(&request);
+    let terminal = one_line(&output);
+    assert!(
+        output.status.success(),
+        "aiperf terminal={terminal}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(terminal["provenance"]["replay_mode"], "online");
+    let aiperf: Value =
+        serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
+    let a_avg = |tag: &str| -> f64 {
+        aiperf["metrics"][tag]["series"][0]["stats"]["avg"].as_f64().unwrap()
+    };
+    let a_total = |tag: &str| -> f64 {
+        aiperf["metrics"][tag]["series"][0]["stats"]["total"]
+            .as_f64()
+            .or_else(|| aiperf["metrics"][tag]["series"][0]["stats"]["value"].as_f64())
+            .unwrap()
+    };
+
+    // (2) Native path: python -m dynamo.replay subprocess on the SAME trace.
+    let native_report = base.join("native.json");
+    let native_out = Command::new(python)
+        .env("PYTHONPATH", &pythonpath)
+        .args([
+            "-m", "dynamo.replay",
+            trace_path.to_str().unwrap(),
+            "--replay-mode", "online",
+            "--replay-concurrency", &REQUESTS.to_string(),
+            "--num-workers", "1",
+            "--extra-engine-args", &format!(r#"{{"block_size":{BLOCK_SIZE}}}"#),
+            "--trace-format", "mooncake",
+            "--report-json", native_report.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        native_out.status.success(),
+        "python dynamo.replay failed: {}",
+        String::from_utf8_lossy(&native_out.stderr)
+    );
+    let native: Value =
+        serde_json::from_slice(&std::fs::read(&native_report).unwrap()).unwrap();
+    let n = |key: &str| -> f64 { native[key].as_f64().unwrap() };
+
+    // Counts: exact.
+    assert_eq!(a_total("total_usage_prompt_tokens"), n("total_input_tokens"));
+    assert_eq!(a_total("total_usage_completion_tokens"), n("total_output_tokens"));
+    assert_eq!(a_total("request_count"), n("completed_requests"));
+
+    // Latency means: within 3% (1ms floor).
+    let within_3pct = |name: &str, a: f64, nv: f64| {
+        let tol = (nv.abs() * 0.03).max(1.0);
+        assert!(
+            (a - nv).abs() <= tol,
+            "{name}: aiperf={a:.4} python-dynamo={nv:.4} delta={:.4} exceeds 3% (tol={tol:.4})",
+            (a - nv).abs()
+        );
+    };
+    within_3pct("ttft", a_avg("time_to_first_token"), n("mean_ttft_ms"));
+    within_3pct("e2e", a_avg("request_latency"), n("mean_e2e_latency_ms"));
+    within_3pct("itl", a_avg("inter_token_latency"), n("mean_itl_ms"));
+
+    // Throughput: AIPerf product path >= native (3% slack for real-timer jitter).
+    let a_rps = a_total("request_throughput");
+    assert!(
+        a_rps >= n("request_throughput_rps") * 0.97,
+        "aiperf rps {a_rps:.3} < python-dynamo rps {:.3}",
+        n("request_throughput_rps")
+    );
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
