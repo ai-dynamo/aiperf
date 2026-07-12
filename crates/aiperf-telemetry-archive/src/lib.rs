@@ -57,9 +57,10 @@ pub use identity::{
     SourceOutcome, TerminalKind,
 };
 pub use index::{
-    CompositeIndexKeyV1, IndexEntry, IndexError, IndexKey, IndexMutationSetV1, IndexObjectKind,
-    IndexPageSink, IndexPageSource, IndexRemoval, IndexRootV1, IndexSnapshot, MemoryIndexPageStore,
-    MutationMode,
+    CompositeIndexKeyV1, IndexClockRangeV1, IndexEntry, IndexError, IndexKey, IndexMutationSetV1,
+    IndexObjectKind, IndexPageSink, IndexPageSource, IndexPruningSummaryV1, IndexRemoval,
+    IndexRootV1, IndexScanPredicateV1, IndexScanStatsV1, IndexScanV1, IndexSnapshot,
+    IndexSourceSelectionV1, MemoryIndexPageStore, MutationMode,
 };
 pub use key::{
     ArchiveKeyError, ArchiveKeyProvider, ArchiveSubkey, Blake3ArchiveKeyProvider,

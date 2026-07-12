@@ -1677,43 +1677,11 @@ fn receipt_head_key(commit_seq: u64, hash: Digest) -> String {
 }
 
 fn index_root_value(root: &IndexRootV1) -> CanonicalJsonValue {
-    object(vec![
-        ("height", integer(i128::from(root.height))),
-        (
-            "logical_entry_count",
-            integer(i128::from(root.logical_entry_count)),
-        ),
-        (
-            "maximum_key",
-            root.maximum_key
-                .as_ref()
-                .map_or(CanonicalJsonValue::Null, |key| string(hex(key.as_bytes()))),
-        ),
-        (
-            "minimum_key",
-            root.minimum_key
-                .as_ref()
-                .map_or(CanonicalJsonValue::Null, |key| string(hex(key.as_bytes()))),
-        ),
-        (
-            "root_byte_length",
-            integer(i128::from(root.root_byte_length)),
-        ),
-        ("root_hash", string(root.root_hash.to_hex())),
-    ])
+    root.embedded_value()
 }
 
 fn parse_index_root(value: &CanonicalJsonValue) -> Result<IndexRootV1, ReceiptError> {
-    let fields = as_object(value, "index_root")?;
-    Ok(IndexRootV1 {
-        root_hash: digest(fields, "root_hash")?,
-        root_byte_length: unsigned(fields, "root_byte_length")?,
-        height: u16::try_from(unsigned(fields, "height")?)
-            .map_err(|_| ReceiptError::InvalidField("height"))?,
-        logical_entry_count: unsigned(fields, "logical_entry_count")?,
-        minimum_key: parse_optional_key(fields.get("minimum_key"))?,
-        maximum_key: parse_optional_key(fields.get("maximum_key"))?,
-    })
+    IndexRootV1::from_embedded_value(value).map_err(ReceiptError::Index)
 }
 
 fn archive_state_name(state: ArchiveState) -> &'static str {
@@ -1829,18 +1797,6 @@ fn parse_optional_u64(value: Option<&CanonicalJsonValue>) -> Result<Option<u64>,
             .map(Some)
             .map_err(|_| ReceiptError::InvalidField("optional_u64")),
         _ => Err(ReceiptError::InvalidField("optional_u64")),
-    }
-}
-
-fn parse_optional_key(
-    value: Option<&CanonicalJsonValue>,
-) -> Result<Option<IndexKey>, ReceiptError> {
-    match value {
-        Some(CanonicalJsonValue::Null) => Ok(None),
-        Some(CanonicalJsonValue::String(value)) => IndexKey::new(decode_hex(value)?)
-            .map(Some)
-            .map_err(ReceiptError::Index),
-        _ => Err(ReceiptError::InvalidField("optional_index_key")),
     }
 }
 

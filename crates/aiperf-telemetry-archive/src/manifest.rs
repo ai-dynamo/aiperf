@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    ArchiveId, CanonicalJsonError, CanonicalJsonValue, Digest, EpochAnchor, IndexKey,
+    ArchiveId, CanonicalJsonError, CanonicalJsonValue, Digest, EpochAnchor, IndexError, IndexKey,
     IndexMutationSetV1, IndexRootV1, SessionId, domain_digest,
 };
 
@@ -675,6 +675,8 @@ pub enum ManifestError {
     InvalidHeadLink,
     /// Integer/collection length overflowed a frozen width.
     LengthOverflow,
+    /// Embedded persistent-index root summary is malformed.
+    Index(IndexError),
 }
 
 impl Display for ManifestError {
@@ -696,11 +698,20 @@ impl Display for ManifestError {
             Self::Checksum => formatter.write_str("manifest envelope checksum mismatch"),
             Self::InvalidHeadLink => formatter.write_str("current/preceding head link mismatch"),
             Self::LengthOverflow => formatter.write_str("manifest length overflow"),
+            Self::Index(error) => write!(formatter, "manifest index root failed: {error}"),
         }
     }
 }
 
-impl std::error::Error for ManifestError {}
+impl std::error::Error for ManifestError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Canonical(error) => Some(error),
+            Self::Index(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Returns the deterministic generation object key.
 #[must_use]
@@ -770,33 +781,11 @@ fn manifest_object_hash(bytes: &[u8]) -> Digest {
 }
 
 fn index_root_value(root: &IndexRootV1) -> CanonicalJsonValue {
-    object(vec![
-        ("height", integer(i128::from(root.height))),
-        (
-            "logical_entry_count",
-            integer(i128::from(root.logical_entry_count)),
-        ),
-        ("maximum_key", optional_key(root.maximum_key.as_ref())),
-        ("minimum_key", optional_key(root.minimum_key.as_ref())),
-        (
-            "root_byte_length",
-            integer(i128::from(root.root_byte_length)),
-        ),
-        ("root_hash", string(root.root_hash.to_hex())),
-    ])
+    root.embedded_value()
 }
 
 fn parse_index_root(value: &CanonicalJsonValue) -> Result<IndexRootV1, ManifestError> {
-    let object = as_object(value, "index_root")?;
-    Ok(IndexRootV1 {
-        root_hash: digest(object, "root_hash")?,
-        root_byte_length: unsigned(object, "root_byte_length")?,
-        height: u16::try_from(unsigned(object, "height")?)
-            .map_err(|_| ManifestError::InvalidField("height"))?,
-        logical_entry_count: unsigned(object, "logical_entry_count")?,
-        minimum_key: parse_optional_key(object.get("minimum_key"))?,
-        maximum_key: parse_optional_key(object.get("maximum_key"))?,
-    })
+    IndexRootV1::from_embedded_value(value).map_err(ManifestError::Index)
 }
 
 fn epoch_anchor_value(anchor: Option<EpochAnchor>) -> CanonicalJsonValue {
@@ -860,10 +849,6 @@ fn optional_session(value: Option<SessionId>) -> CanonicalJsonValue {
     value.map_or(CanonicalJsonValue::Null, |session| {
         string(uuid(session.as_bytes()))
     })
-}
-
-fn optional_key(value: Option<&IndexKey>) -> CanonicalJsonValue {
-    value.map_or(CanonicalJsonValue::Null, |key| string(hex(key.as_bytes())))
 }
 
 fn as_object<'a>(
@@ -944,18 +929,6 @@ fn parse_optional_session(
         Some(CanonicalJsonValue::Null) => Ok(None),
         Some(CanonicalJsonValue::String(value)) => parse_session_id(value).map(Some),
         _ => Err(ManifestError::InvalidField("session_id")),
-    }
-}
-
-fn parse_optional_key(
-    value: Option<&CanonicalJsonValue>,
-) -> Result<Option<IndexKey>, ManifestError> {
-    match value {
-        Some(CanonicalJsonValue::Null) => Ok(None),
-        Some(CanonicalJsonValue::String(value)) => IndexKey::new(decode_hex(value)?)
-            .map(Some)
-            .map_err(|_| ManifestError::InvalidField("index key")),
-        _ => Err(ManifestError::InvalidField("index key")),
     }
 }
 

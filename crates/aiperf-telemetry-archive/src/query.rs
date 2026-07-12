@@ -14,10 +14,11 @@ use arrow_array::{Array, FixedSizeBinaryArray, RecordBatch, StringArray};
 use bytes::Bytes;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
+use crate::index::{IndexScanPredicateV1, IndexSourceSelectionV1};
 use crate::parquet::{PartitionDescriptorV1, PartitionProjectionEvidenceV1};
 use crate::{
-    ArchiveId, ArchiveSchemasV1, Digest, GenerationObjectV1, HeadDescriptorV1, IndexObjectKind,
-    IndexSnapshot, SchemaError, SessionId, TableId, domain_digest,
+    ArchiveId, ArchiveSchemasV1, Digest, GenerationObjectV1, HeadDescriptorV1, IndexSnapshot,
+    SchemaError, SessionId, TableId, domain_digest,
 };
 
 /// Source selection over the explicit global/source partition key.
@@ -46,6 +47,8 @@ pub struct PartitionPredicateV1 {
     pub maximum_clock_ns: Option<i64>,
     /// Hard ceiling on index entries examined by this resolver invocation.
     pub max_index_entries: u64,
+    /// Hard ceiling on authenticated index pages read by this resolver invocation.
+    pub max_index_pages: u64,
     /// Hard ceiling on returned partition descriptors.
     pub max_partitions: usize,
 }
@@ -59,6 +62,7 @@ impl Default for PartitionPredicateV1 {
             minimum_clock_ns: None,
             maximum_clock_ns: None,
             max_index_entries: 1_000_000,
+            max_index_pages: 100_000,
             max_partitions: 100_000,
         }
     }
@@ -67,7 +71,7 @@ impl Default for PartitionPredicateV1 {
 impl PartitionPredicateV1 {
     /// Validates explicit query work bounds and range ordering.
     pub fn validate(&self) -> Result<(), QueryError> {
-        if self.max_index_entries == 0 || self.max_partitions == 0 {
+        if self.max_index_entries == 0 || self.max_index_pages == 0 || self.max_partitions == 0 {
             return Err(QueryError::ZeroWorkBound);
         }
         if self
@@ -91,6 +95,10 @@ pub struct PartitionDiscoveryV1 {
     pub partitions: Vec<PartitionDescriptorV1>,
     /// Number of root-reachable entries examined; never a directory count.
     pub index_entries_examined: u64,
+    /// Number of authenticated root/child index pages read.
+    pub index_pages_read: u64,
+    /// Number of direct child pages rejected without reading their bytes.
+    pub index_child_pages_pruned: u64,
 }
 
 /// Query resolver bound to one verified immutable head/generation/root triple.
@@ -148,20 +156,28 @@ impl<'a> VerifiedQueryRootV1<'a> {
         predicate: &PartitionPredicateV1,
     ) -> Result<PartitionDiscoveryV1, QueryError> {
         predicate.validate()?;
-        let mut examined = 0_u64;
+        let scan_predicate = IndexScanPredicateV1::table_partitions(
+            predicate.tables.clone(),
+            predicate.session_id,
+            match &predicate.source {
+                SourcePredicateV1::Any => IndexSourceSelectionV1::Any,
+                SourcePredicateV1::Exact(source) => IndexSourceSelectionV1::Exact(source.clone()),
+                SourcePredicateV1::Global => IndexSourceSelectionV1::Global,
+            },
+            predicate.minimum_clock_ns,
+            predicate.maximum_clock_ns,
+        )
+        .map_err(QueryError::Index)?;
+        let scan = self
+            .index
+            .scan(
+                &scan_predicate,
+                predicate.max_index_pages,
+                predicate.max_index_entries,
+            )
+            .map_err(map_index_scan_error)?;
         let mut partitions = Vec::new();
-        for entry in self.index.entries() {
-            examined = examined.checked_add(1).ok_or(QueryError::LengthOverflow)?;
-            if examined > predicate.max_index_entries {
-                return Err(QueryError::IndexWorkBoundExceeded {
-                    bound: predicate.max_index_entries,
-                });
-            }
-            if entry.key().as_bytes().first().copied()
-                != Some(IndexObjectKind::TablePartition as u8)
-            {
-                continue;
-            }
+        for entry in scan.entries() {
             let descriptor = PartitionDescriptorV1::from_canonical_bytes(entry.descriptor_bytes())
                 .map_err(QueryError::Partition)?;
             self.verify_partition_entry(entry.key(), &descriptor)?;
@@ -177,7 +193,9 @@ impl<'a> VerifiedQueryRootV1<'a> {
         }
         Ok(PartitionDiscoveryV1 {
             partitions,
-            index_entries_examined: examined,
+            index_entries_examined: scan.stats().entries_examined,
+            index_pages_read: scan.stats().pages_read,
+            index_child_pages_pruned: scan.stats().child_pages_pruned,
         })
     }
 
@@ -199,6 +217,18 @@ impl<'a> VerifiedQueryRootV1<'a> {
             return Err(QueryError::PartitionIndexKeyMismatch);
         }
         Ok(())
+    }
+}
+
+fn map_index_scan_error(error: crate::IndexError) -> QueryError {
+    match error {
+        crate::IndexError::PageWorkBoundExceeded(bound) => {
+            QueryError::IndexPageWorkBoundExceeded { bound }
+        }
+        crate::IndexError::EntryWorkBoundExceeded(bound) => {
+            QueryError::IndexWorkBoundExceeded { bound }
+        }
+        other => QueryError::Index(other),
     }
 }
 
@@ -625,6 +655,11 @@ pub enum QueryError {
         /// Configured entry ceiling.
         bound: u64,
     },
+    /// Authenticated page traversal reached its explicit ceiling.
+    IndexPageWorkBoundExceeded {
+        /// Configured page-read ceiling.
+        bound: u64,
+    },
     /// Matching partitions reached their explicit ceiling.
     PartitionBoundExceeded {
         /// Configured result ceiling.
@@ -699,6 +734,9 @@ impl Display for QueryError {
             Self::EmptySourceId => formatter.write_str("query source ID cannot be empty"),
             Self::IndexWorkBoundExceeded { bound } => {
                 write!(formatter, "query exceeded {bound} index entries")
+            }
+            Self::IndexPageWorkBoundExceeded { bound } => {
+                write!(formatter, "query exceeded {bound} index page reads")
             }
             Self::PartitionBoundExceeded { bound } => {
                 write!(formatter, "query exceeded {bound} partitions")
@@ -802,11 +840,81 @@ mod tests {
                 minimum_clock_ns: Some(15),
                 maximum_clock_ns: Some(25),
                 max_index_entries: 10,
+                max_index_pages: 10,
                 max_partitions: 10,
             })
             .unwrap();
         assert_eq!(result.partitions, vec![descriptors[0].clone()]);
         assert_eq!(result.index_entries_examined, 3);
+        assert_eq!(result.index_pages_read, 1);
+        assert_eq!(result.index_child_pages_pruned, 0);
+    }
+
+    #[test]
+    fn discovery_obeys_authenticated_page_and_entry_pruning_bounds() {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let mut descriptors = Vec::new();
+        for clock in 0..300_i64 {
+            descriptors.push(descriptor(
+                "source-a",
+                clock,
+                clock,
+                u8::try_from(clock.rem_euclid(250) + 1).unwrap(),
+                TableId::Families,
+                &schemas,
+            ));
+        }
+        for offset in 0..300_i64 {
+            descriptors.push(descriptor(
+                "source-b",
+                10_000 + offset,
+                10_000 + offset,
+                u8::try_from(offset.rem_euclid(250) + 1).unwrap(),
+                TableId::Samples,
+                &schemas,
+            ));
+        }
+        let additions = descriptors
+            .iter()
+            .map(PartitionDescriptorV1::index_entry)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let index = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(Vec::new(), additions).unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        let generation = GenerationObjectV1::new(genesis(index.root().clone())).unwrap();
+        let head = HeadDescriptorV1::from_generation(&generation).unwrap();
+        let resolver = VerifiedQueryRootV1::new(&head, &generation, &index, &schemas).unwrap();
+        let predicate = PartitionPredicateV1 {
+            tables: BTreeSet::from([TableId::Families]),
+            session_id: Some(session()),
+            source: SourcePredicateV1::Exact("source-a".to_owned()),
+            minimum_clock_ns: Some(10),
+            maximum_clock_ns: Some(10),
+            max_index_entries: 128,
+            max_index_pages: 2,
+            max_partitions: 2,
+        };
+        let result = resolver.discover(&predicate).unwrap();
+        assert_eq!(result.partitions, vec![descriptors[10].clone()]);
+        assert_eq!(result.index_pages_read, 2);
+        assert_eq!(result.index_child_pages_pruned, 3);
+        assert_eq!(result.index_entries_examined, 128);
+
+        let page_bound = resolver
+            .discover(&PartitionPredicateV1 {
+                max_index_pages: 1,
+                ..predicate
+            })
+            .unwrap_err();
+        assert!(matches!(
+            page_bound,
+            QueryError::IndexPageWorkBoundExceeded { bound: 1 }
+        ));
     }
 
     #[test]
