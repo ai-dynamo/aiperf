@@ -33,15 +33,19 @@ use aiperf::dynamo_offline::{
     write_dynamo_worker_artifacts_json,
 };
 use aiperf::metrics::NativeMetricsObserver;
-use aiperf::multiturn::{EndpointInputTokenCounter, InputTokenCounter};
+use aiperf::multiturn::{
+    ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
+    NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
+    PreparedTurnEndpointResolver,
+};
 use aiperf::phase_runtime::run_scheduled_phases_with_aggregate;
 use aiperf::report::write_native_report_json;
 use aiperf_clock::Clock;
 use aiperf_dataset::{
-    DatasetSource, HuggingFaceTokenizer, LoadConfig, SegmentStore, TextTokenizer, TiktokenEncoding,
-    TiktokenTokenizer,
+    DatasetSource, HuggingFaceTokenizer, LoadConfig, SamplerRegistry, SegmentStore, TextTokenizer,
+    TiktokenEncoding, TiktokenTokenizer,
 };
-use aiperf_endpoints::EndpointConfig;
+use aiperf_endpoints::{Modality, PreparedEndpointTable};
 use aiperf_graph::bench::BenchConfig;
 use aiperf_graph::input::{GraphInputBundle, GraphInputConfig};
 use aiperf_graph::policy::{
@@ -66,8 +70,9 @@ use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
+use crate::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
 use crate::execute::{
-    build_dataset, build_native_scheduled_phase_plan, dataset_rng_root, default_output_tokens,
+    NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources,
 };
 use crate::online_execution::{
@@ -588,10 +593,10 @@ impl DynamoOfflineBackendSpec {
         let capture_per_request = self.capture_per_request || artifacts.per_request_jsonl.is_some();
         let mut engine = OfflineEngineConfig {
             profile: self.engine_profile,
-            extra_engine_args: self.engine.map(raw_into_string),
-            prefill_engine_args: self.prefill_engine.map(raw_into_string),
-            decode_engine_args: self.decode_engine.map(raw_into_string),
-            router_config: self.router.map(raw_into_string),
+            extra_engine_args: self.engine.map(|value| value.get().to_owned()),
+            prefill_engine_args: self.prefill_engine.map(|value| value.get().to_owned()),
+            decode_engine_args: self.decode_engine.map(|value| value.get().to_owned()),
+            router_config: self.router.map(|value| value.get().to_owned()),
             router_policy_config: self.router_policy_config,
             router_model_name: self.router_model_name,
             aic,
@@ -613,10 +618,6 @@ impl DynamoOfflineBackendSpec {
             required_features: required,
         })
     }
-}
-
-fn raw_into_string(value: Box<RawValue>) -> String {
-    value.get().to_owned()
 }
 
 fn validate_raw_object(name: &str, value: Option<&RawValue>) -> Result<()> {
@@ -843,13 +844,6 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         let workload = validated_scheduled_workload(workload.as_ref())?;
         validate_offline_scheduled_phases(&workload.phases)?;
 
-        let dataset = serde_json::from_str::<crate::protocol::DatasetSpec>(workload.dataset.get())
-            .context("decoding protocol-v2 scheduled dataset policy")?;
-        ensure!(
-            !matches!(&dataset, crate::protocol::DatasetSpec::File(spec) if spec.format == "dag_jsonl")
-                && !matches!(&dataset, crate::protocol::DatasetSpec::Public(spec) if spec.format == "dag_jsonl"),
-            "scheduled workloads cannot consume a direct dag_jsonl graph program"
-        );
         let tokenizer_spec =
             lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
         let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
@@ -857,36 +851,46 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             EndpointInputTokenCounter::new(tokenizer.clone(), tokenizer_spec.apply_chat_template),
         );
         let profile = context.default_endpoint_profile()?;
-        let legacy = context
+        let prepared_endpoint = context
             .product_registry()
             .endpoints()
-            .legacy_endpoint(&profile.endpoint_id)
-            .context("offline scheduled materialization requires a registered endpoint compatibility adapter")?;
-        let endpoint =
-            EndpointConfig::from_raw(legacy.metadata().endpoint_type, profile.config.clone())
-                .validate()
-                .context("validating offline scheduled endpoint materialization policy")?;
+            .prepare(&profile.endpoint_id, profile.config.clone())
+            .context("preparing offline scheduled endpoint materialization policy")?;
+        let rankings = prepared_endpoint
+            .descriptor()
+            .output_modalities
+            .contains(&Modality::Rankings);
+        let mut endpoint_table = PreparedEndpointTable::new();
+        let endpoint_key = endpoint_table.push(prepared_endpoint)?;
+        let endpoint_reference = PreparedEndpointReference {
+            key: endpoint_key,
+            endpoint_id: profile.endpoint_id.clone(),
+        };
+        let endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver> = Rc::new(
+            PreparedEndpointTableResolver::single(Rc::new(endpoint_table), endpoint_reference)?,
+        );
 
         let rng_root = RngRoot::new(run.identity.random_seed);
-        let dataset_rng_root = dataset_rng_root(&dataset, rng_root);
-        let registry = context.product_registry_handle();
+        let dataset_context = RunnerDatasetInputContext {
+            registry: context.product_registry(),
+            models: &run.models,
+            run_rng_root: rng_root,
+            tokenizer: tokenizer.as_ref(),
+            rankings,
+        };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .context("creating offline scheduled preparation runtime")?;
         let local = tokio::task::LocalSet::new();
-        let prepared_dataset = local.block_on(
-            &runtime,
-            build_dataset(
-                registry.as_ref(),
-                &dataset,
-                &run.models,
-                dataset_rng_root,
-                tokenizer.as_ref(),
-                endpoint.endpoint_type,
-            ),
-        )?;
-        let default_output_tokens = default_output_tokens(&dataset)?;
+        let prepared_dataset = local
+            .block_on(
+                &runtime,
+                context
+                    .dataset_inputs()
+                    .load(&workload.dataset, &dataset_context),
+            )
+            .context("loading and validating authored offline scheduled dataset")?;
         let metrics = metrics_config(&run.metrics)?;
         let model = run
             .models
@@ -926,18 +930,18 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         Ok(Box::new(PreparedDynamoOfflineScheduledOperation {
             backend,
             dataset: prepared_dataset,
-            endpoint,
-            registry,
+            source_factory: DynamoOfflinePreparedConversationSourceFactory {
+                endpoint_resolver,
+                samplers: context.product_registry().samplers().clone(),
+            },
             tokenizer,
             input_token_counter,
             phases: workload.phases.clone(),
             metrics,
             model,
             rng_root,
-            dataset_rng_root,
             artifact_target: run.artifact_target.clone(),
             benchmark_id: run.identity.benchmark_id.clone(),
-            default_output_tokens,
         }))
     }
 }
@@ -1040,21 +1044,59 @@ fn validate_offline_scheduled_phases(phases: &[PhaseSpec]) -> Result<()> {
     Ok(())
 }
 
+struct DynamoOfflinePreparedConversationSourceFactory {
+    endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
+    samplers: SamplerRegistry,
+}
+
+impl NativeConversationSourceFactory for DynamoOfflinePreparedConversationSourceFactory {
+    fn build(
+        &self,
+        dataset: aiperf_dataset::Dataset,
+        model: String,
+        default_output_tokens: usize,
+        rng_root: RngRoot,
+        tokenizer: Arc<dyn TextTokenizer>,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+        sequential: bool,
+    ) -> Result<Box<dyn ConversationSource>> {
+        let source = if sequential {
+            NativeDatasetConversationSource::sequential_with_prepared_resolver(
+                dataset,
+                model,
+                default_output_tokens,
+                self.endpoint_resolver.clone(),
+            )?
+        } else {
+            NativeDatasetConversationSource::preferred_with_prepared_resolver(
+                dataset,
+                model,
+                default_output_tokens,
+                rng_root,
+                &self.samplers,
+                self.endpoint_resolver.clone(),
+            )?
+        };
+        Ok(Box::new(
+            source
+                .with_response_tokenizer(tokenizer)
+                .with_input_token_counter(input_token_counter),
+        ))
+    }
+}
+
 struct PreparedDynamoOfflineScheduledOperation {
     backend: ValidatedDynamoOfflineBackend,
-    dataset: aiperf_dataset::Dataset,
-    endpoint: EndpointConfig,
-    registry: Arc<aiperf_extensions::AiperfRegistry>,
+    dataset: PreparedDatasetInput,
+    source_factory: DynamoOfflinePreparedConversationSourceFactory,
     tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
     phases: Vec<PhaseSpec>,
     metrics: MetricsConfig,
     model: String,
     rng_root: RngRoot,
-    dataset_rng_root: RngRoot,
     artifact_target: PathBuf,
     benchmark_id: String,
-    default_output_tokens: usize,
 }
 
 impl fmt::Debug for PreparedDynamoOfflineScheduledOperation {
@@ -1073,19 +1115,21 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
         let Self {
             backend,
             dataset,
-            endpoint,
-            registry,
+            source_factory,
             tokenizer,
             input_token_counter,
             phases,
             metrics,
             model,
             rng_root,
-            dataset_rng_root,
             artifact_target,
             benchmark_id,
-            default_output_tokens,
         } = *self;
+        let dataset_rng_root = dataset
+            .random_seed
+            .map_or(rng_root, |seed| RngRoot::new(Some(seed)));
+        let default_output_tokens = dataset.default_output_tokens;
+        let dataset = dataset.dataset;
         ensure!(
             !artifact_target.exists(),
             "artifact_target already exists: {}",
@@ -1120,7 +1164,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                     });
                     let mut plans = Vec::with_capacity(phases.len());
                     for (phase_index, phase) in phases.iter().enumerate() {
-                        let mut plan = build_native_scheduled_phase_plan(
+                        let mut plan = build_native_scheduled_phase_plan_with_source_factory(
                             phase_index,
                             phase,
                             &dataset,
@@ -1128,8 +1172,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                             default_output_tokens,
                             dataset_rng_root,
                             rng_root,
-                            &endpoint,
-                            registry.as_ref(),
+                            &source_factory,
                             tokenizer.clone(),
                             input_token_counter.clone(),
                             clock.clone(),

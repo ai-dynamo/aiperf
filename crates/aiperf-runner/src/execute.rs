@@ -2099,51 +2099,6 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(feature = "dynamo-offline"), allow(dead_code))]
-pub(crate) fn build_native_scheduled_phase_plan(
-    phase_index: usize,
-    phase: &PhaseSpec,
-    dataset: &Dataset,
-    primary_model: &str,
-    default_output_tokens: usize,
-    dataset_rng_root: RngRoot,
-    rng_root: RngRoot,
-    endpoint: &EndpointConfig,
-    registry: &AiperfRegistry,
-    tokenizer: Arc<dyn TextTokenizer>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
-    clock: Rc<dyn Clock>,
-    start_ns: i64,
-    benchmark_id: &str,
-    artifact_dir: &Path,
-    endpoint_names: &[String],
-    shared: &NativeScheduledResources,
-) -> Result<ScheduledPhasePlan> {
-    let source_factory = LegacyNativeConversationSourceFactory {
-        endpoint: endpoint.clone(),
-        registry,
-    };
-    build_native_scheduled_phase_plan_with_source_factory(
-        phase_index,
-        phase,
-        dataset,
-        primary_model,
-        default_output_tokens,
-        dataset_rng_root,
-        rng_root,
-        &source_factory,
-        tokenizer,
-        input_token_counter,
-        clock,
-        start_ns,
-        benchmark_id,
-        artifact_dir,
-        endpoint_names,
-        shared,
-    )
-}
-
 /// Lower one authored phase into the shared scheduled runtime above the
 /// injected `{transport, clock}` seams.
 ///

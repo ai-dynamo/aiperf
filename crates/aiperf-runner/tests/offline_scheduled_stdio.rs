@@ -270,6 +270,7 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
                 "concurrency": 2,
                 "concurrency_ramp": {"duration": 0.1, "strategy": "linear"}
             }),
+            4.0,
         ),
         (
             "poisson-exponential",
@@ -283,6 +284,7 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
                 "concurrency": 2,
                 "rate_ramp": {"duration": 0.2, "strategy": "exponential"}
             }),
+            4.0,
         ),
         (
             "gamma-cancellation",
@@ -297,6 +299,7 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
                 "concurrency": 2,
                 "cancellation": {"rate": 50.0, "delay": 0.001}
             }),
+            1.0,
         ),
         (
             "constant-poisson",
@@ -310,6 +313,7 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
                 "concurrency": 2,
                 "rate_ramp": {"duration": 0.2, "strategy": "poisson"}
             }),
+            4.0,
         ),
         (
             "user-centric",
@@ -324,6 +328,7 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
                 "concurrency": 2,
                 "concurrency_ramp": {"duration": 0.1, "strategy": "exponential"}
             }),
+            4.0,
         ),
         (
             "fixed-schedule",
@@ -334,10 +339,11 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
                 "exclude_from_results": false,
                 "auto_offset": true
             }),
+            2.0,
         ),
     ];
 
-    for (name, dataset, phase) in cases {
+    for (name, dataset, phase, expected_request_count) in cases {
         let target = target(name);
         let _ = std::fs::remove_dir_all(&target);
         let request = envelope(
@@ -348,6 +354,13 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
             json!([phase]),
         );
         assert_success(run(&request), &target, "scheduled");
+        let native: Value =
+            serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
+        assert_eq!(
+            native["metrics"]["request_count"]["series"][0]["stats"]["total"],
+            expected_request_count,
+            "phase family {name} did not report its deterministic expected request count"
+        );
         std::fs::remove_dir_all(target).unwrap();
     }
 }
