@@ -136,7 +136,7 @@ construction.
 - a bounded single-owner archive writer with local WAL and immutable Parquet partitions;
 - local filesystem and object-store sinks behind traits;
 - restart recovery, exact-resume validation, orphan handling, and terminal finalization;
-- optional attachment to existing benchmark telemetry sidecars without a second scrape;
+- optional attachment to existing scheduled benchmark telemetry without a second scrape;
 - native-v2 archive provenance/health metadata;
 - query and process acceptance gates.
 
@@ -149,6 +149,10 @@ construction.
 - changing the authoritative GPU/server/network aggregate algorithms;
 - MLflow/W&B upload of raw archive partitions;
 - cross-archive joins or fleet catalog services.
+- Graph-mode attachment until Graph owns a built workload-neutral lifecycle/phase observer,
+  boundary commands, and telemetry/report join;
+- product offline attachment until the in-process engine sink and deterministic external-progress
+  integration are built. Virtual library tests use the inline strategy described in §5.
 
 ### 2.3 Non-negotiable invariants
 
@@ -178,8 +182,9 @@ construction.
     source descriptors, identity-key digest, and archive-writer compatibility ID. The exact runner
     distribution remains recorded provenance but may change only through an explicitly compatible
     writer implementation.
-14. **Secrets never become archive dimensions.** URLs are credential-free; credentials remain in
-    environment/secret providers; diagnostics and manifests are redacted.
+14. **Known credentials never become archive dimensions.** AIPerf-authored/provider credentials are
+    removed by a non-disableable baseline; arbitrary endpoint metric content remains classified
+    potentially sensitive source data and follows explicit sanitization/storage policy.
 15. **Compile-time extensibility.** Source, enrichment, redaction, rotation, admission, recovery,
     and sink choices cross traits/factories, not closed implementation enums.
 
@@ -220,13 +225,17 @@ required. Every workload factory declares each resource block as `required`, `op
 `forbidden`; missing required or present forbidden resources fail before backend preparation.
 This does not make validation permissive.
 
-The `online_http` prepared backend exposes a LocalSet-compatible `ControlPlaneHttp` capability
-over its injected `Clock` and native transport. It accepts an owned request plus an absolute
-Clock deadline and returns exact entity bytes, response status/headers, and native transport
-timings. Per-call deadlines override only request/total lifetime; connection/TLS/reuse policy
-remains backend-owned. A workload requirement asks for this typed capability, so the compatibility
-matrix is derived rather than special-casing the `telemetry_watch` ID. This is not a second HTTP
-client or a special `reqwest` path.
+The `online_http` prepared backend exposes a LocalSet-compatible `ControlPlaneHttpProvider`
+capability over its injected `Clock` and native transport. It validates a secret-free per-source
+transport profile and resolves provider-held credentials/TLS material into a prepared
+`ControlPlaneHttp` handle. Equivalent profiles may share a dedicated control-plane pool, but that
+pool and its capacity/configuration are isolated from inference connections. The handle accepts an
+owned request plus an absolute call deadline and returns exact entity bytes, allowlisted response
+metadata, and native transport timings. Connection/TLS/proxy/reuse/connect-timeout policy is bound
+at handle preparation; request/total lifetime is bounded again per call. A workload requirement
+asks for the provider capability, so the compatibility matrix is derived rather than special-
+casing the `telemetry_watch` ID. This reuses the native stack, not its hot-path pool, and is not a
+special `reqwest` path.
 
 The computed capability matrix adds:
 
@@ -236,12 +245,15 @@ The computed capability matrix adds:
 | `dynamo_offline` | no |
 
 Replay/fault-injection tests may drive the library runtime with `SimClock`, but the product pair is
-real-clock only. Offline benchmarks may still archive their in-process telemetry/event records
-through the attachment seam; that does not make standalone HTTP watch an offline workload.
+real-clock only. Virtual tests use a deterministic inline decoder plus `MemoryArchiveSink`, then
+persist captured frames after the simulation. A future threaded virtual implementation must expose
+pending external work through the DES quiescence source and sort same-instant completions by stable
+attempt sequence; OS-worker latency never advances virtual time. Product offline and Graph
+attachment remain deferred as stated in §2.2.
 
 ### 3.3 Attached benchmark mode
 
-An ordinary scheduled/graph run may request an archive target in addition to existing telemetry
+An ordinary scheduled run may request an archive target in addition to existing telemetry
 summaries. The run owns exactly one fixed-deadline driver per physical telemetry source across all
 phases. Phase sidecars subscribe to that driver and submit typed boundary commands; they do not own
 cadence loops. Each all-outcome attempt envelope is projected twice where applicable:
@@ -252,12 +264,17 @@ one physical source attempt
   `-- archive attempt/exposition projection (every outcome)
 ```
 
-Continuous samples are attributed to every active phase window by marker-time joins; a seamless
-phase overlap never causes a second source request. Coincident boundary commands coalesce into one
-physical scrape whose envelope names every requesting boundary. Exact phase lifecycle markers come
-from a `PhaseObserver` tee, while boundary scrape capture time remains a separate fact. Archive
-availability cannot change request timings or metric formulas. The terminal report records archive
-completeness separately.
+Every physical attempt has a stable source-attempt ID and the active phase-membership set captured
+at its snapshot instant. Native phase-local projections consume that membership; run-level source/
+endpoint facts deduplicate by physical attempt ID, so seamless overlap neither loses one phase nor
+counts two fetches. Exact old/new summary parity is a shipping gate.
+
+Boundary coalescing never uses timestamp proximity. The phase orchestrator assigns a typed
+`coalescing_group_id` to exactly those transition subscribers that share one physical snapshot;
+their lifecycle markers remain distinct. Commands without the same group never coalesce. Exact
+phase lifecycle markers come from a `PhaseObserver` tee, while boundary scrape capture time remains
+a separate fact. Archive availability cannot change request timings or metric formulas. The
+terminal report records archive completeness separately.
 
 ### 3.4 Why Rust owns this IO
 
@@ -276,8 +293,8 @@ post-run analysis.
 
 `aiperf-prometheus` is an IO-free leaf containing an exposition model and bounded parser seam for
 exactly two advertised formats: Prometheus text 0.0.4 and OpenMetrics text 1.0.0. Content type
-selects the parser; a body is never silently reinterpreted under a different format after a parse
-failure. It extracts and replaces—not merely wraps—the narrower lexical/state-machine core
+selects the strict archive parser; a strict failure is never silently reclassified as success under
+a different format. It extracts and replaces—not merely wraps—the narrower lexical/state-machine core
 currently embedded in server metrics:
 
 ```rust
@@ -301,6 +318,14 @@ though they share the archive `unknown` semantic branch. Projection policies—n
 whether benchmark accumulation excludes summaries, `_created`, uptime, or unsupported domain
 families. An accepted wire feature is never silently dropped or normalized into another semantic
 type.
+
+Current native server-metrics compatibility is a separate projection policy. For the pinned vLLM
+case, one bounded fetched body may produce (a) a strict declared-format archive parse outcome and
+(b) an explicitly named classic-text fallback entity used only by the native projection. The
+attempt records declared media type, strict parser format/outcome, actual compatibility grammar,
+and `native_compatibility_fallback=true`. The fallback never creates archive sample/family rows or
+turns the strict outcome into success. Thus one network response may be parsed twice by one bounded
+decode job without doubling source traffic or changing current native metrics.
 
 `aiperf-telemetry-archive` owns domain-neutral archive DTOs, ingress/sink/policy traits, WAL,
 Parquet partition writing, manifests, recovery, and object-store synchronization. It depends on
@@ -342,6 +367,14 @@ error enums. Generic `Entity`/`Record` types are monomorphized inside each prepa
 the registry erases only startup construction and does not require a closed enum of source kinds.
 
 ```rust
+pub trait ControlPlaneHttpProvider {
+    fn prepare(
+        &self,
+        profile: ValidatedControlPlaneProfile,
+        secrets: &dyn SecretProviderResolver,
+    ) -> Result<Rc<dyn ControlPlaneHttp>, ControlPlanePrepareError>;
+}
+
 #[async_trait(?Send)]
 pub trait ControlPlaneHttp {
     async fn execute(
@@ -358,43 +391,54 @@ pub trait ArchiveSourceFactory: Debug + Send + Sync {
         &self,
         config: ValidatedSourceConfig,
         context: &ArchiveSourceContext,
-    ) -> Result<Box<dyn ArchiveSource>, SourcePrepareError>;
+    ) -> Result<Box<dyn PreparedTelemetryDriver>, SourcePrepareError>;
+}
+
+pub trait PreparedTelemetryDriver {
+    fn source_id(&self) -> &str;
+    fn start(
+        self: Box<Self>,
+        context: PreparedDriverContext,
+    ) -> Result<RunningTelemetryDriver, DriverStartError>;
 }
 
 #[async_trait(?Send)]
-pub trait ArchiveSource {
-    fn source_id(&self) -> &str;
-    async fn fetch(&self, reason: ScrapeReason, deadline_ns: i64) -> FetchedAttempt;
+pub trait TelemetryFetcher {
+    async fn fetch(&self, request: FetchRequest, deadline_ns: i64) -> FetchedAttempt;
     async fn shutdown(&self) -> Result<(), ArchiveSourceError>;
 }
 
-pub trait AttemptDecoder<Entity>: Debug + Send + Sync {
+pub trait AttemptDecoder<ArchiveEntity, NativeEntity>: Debug + Send + Sync {
     fn decode(
         &self,
         fetched: FetchedAttempt,
         limits: &DecodeLimits,
-    ) -> DecodedAttempt<Entity>;
+    ) -> DecodedAttempt<ArchiveEntity, NativeEntity>;
 }
 
-pub struct DecodedAttempt<Entity> {
+pub struct DecodedAttempt<ArchiveEntity, NativeEntity> {
     pub facts: AttemptFacts,
-    pub entity: Option<Entity>,
-    pub parse_outcome: ParseOutcome,
+    pub strict_archive_entity: Option<ArchiveEntity>,
+    pub native_entity: Option<NativeEntity>,
+    pub strict_parse_outcome: ParseOutcome,
+    pub native_compatibility: Option<CompatibilityFallback>,
+    pub exact_entity: Option<ExactEntityLease>,
 }
 
-pub trait NativeProjection<Entity, Record>: Debug + Send + Sync {
-    fn project(&self, entity: &Entity) -> Result<Option<Record>, NativeProjectionError>;
+pub trait NativeProjection<NativeEntity, Record>: Debug + Send + Sync {
+    fn project(&self, entity: &NativeEntity) -> Result<Option<Record>, NativeProjectionError>;
 }
 
-pub trait ArchiveProjection<Entity>: Debug + Send + Sync {
+pub trait ArchiveProjection<ArchiveEntity, NativeEntity>: Debug + Send + Sync {
     fn project(
         &self,
-        attempt: &DecodedAttempt<Entity>,
+        attempt: &DecodedAttempt<ArchiveEntity, NativeEntity>,
+        permit: ArchiveProjectionPermit,
         context: &ArchiveProjectionContext,
-    ) -> Result<ArchiveBatch, ArchiveProjectionError>;
+    ) -> Result<ArchiveFrameDraft, ArchiveProjectionError>;
 }
 
-pub trait TelemetryEnricher {
+pub trait TelemetryEnricher: Debug + Send + Sync {
     fn attributes(
         &self,
         sample: &ArchiveSampleView<'_>,
@@ -402,7 +446,7 @@ pub trait TelemetryEnricher {
     ) -> Result<AttributePatch, EnrichmentError>;
 }
 
-pub trait ArchiveSanitizer {
+pub trait ArchiveSanitizer: Debug + Send + Sync {
     fn sanitize_source(&self, source: SourceDescriptorView<'_>) -> SanitizedSourceDescriptor;
     fn sanitize_sample(&self, sample: ArchiveSampleView<'_>) -> SanitizedSample;
     fn sanitize_marker(&self, marker: ArchiveMarkerView<'_>) -> SanitizedMarker;
@@ -414,7 +458,11 @@ pub trait SegmentRotationPolicy: Debug + Send {
 }
 
 pub trait ArchiveAdmissionPolicy {
-    fn admit(&self, state: ArchiveIngressState, batch: &ArchiveBatch) -> AdmissionDecision;
+    fn try_reserve(
+        &self,
+        state: ArchiveIngressState,
+        upper_bound: ArchiveProjectionFootprint,
+    ) -> Result<ArchiveProjectionPermit, AdmissionRejection>;
 }
 
 pub trait ArchiveRecoveryPolicy: Debug + Send {
@@ -437,31 +485,50 @@ pub trait EpochAnchorProvider {
 }
 ```
 
-`FetchedAttempt` owns bounded exact entity bytes plus transport status/headers/timestamps and never
-contains credentials. `ArchiveWalFrame` is a versioned persisted sum of attempt/sample batch,
-lifecycle marker, and coalesced loss-range frames. It is a closed wire schema, not a source
-extension point. Every frame has a stable frame ID, source/control sequence, and CRC, and every
-successful `append_frame` has the same local-durable meaning.
+`ArchiveSourceFactory::prepare` constructs a concrete
+`TypedTelemetryDriver<Fetcher, Decoder, ArchiveEntity, NativeEntity, Record, NativeProjection,
+ArchiveProjection>` and erases only that complete driver. The object-safe boundary starts/commands
+the already composed pipeline; neither the runner nor a registry recovers entity types through
+`Any`, source IDs, or a second lookup. For the threaded strategy, archive/native entities, returned
+records, frame drafts, and job results are `Send + 'static`, and pure decoder/projection/enrichment/
+sanitizer objects are `Send + Sync + 'static`. The `TelemetryFetcher`, Clock, admission policy,
+running driver handle, and observer graph stay LocalSet-owned `?Send`. The virtual inline strategy
+may use a separately prepared local pipeline and never crosses an OS-thread boundary.
 
-Source fetch and Clock/lifecycle ownership stay on the LocalSet. After a driver reserves bounded
-decode and archive-ingress credits, it sends owned bytes/facts to an ordered bounded CPU pool. The
-pure decoder creates one `DecodedAttempt`; native and archive projections consume that same value.
-Results return in source-attempt order so a boundary can synchronously feed its native accumulator
-before the phase barrier returns. A factory may keep decode on the LocalSet only when its advertised
-maximum body/CPU budget passes the attached regression profile; the generic Prometheus path uses
-the pool.
+`FetchedAttempt` owns bounded received encoded bytes, validated content-decoded exposition bytes,
+transport facts, and typed allowlisted response metadata. A mandatory baseline strips all
+AIPerf-authored/provider credential material before construction; arbitrary headers never enter the
+DTO. If raw retention is enabled, the prepared policy receives an opaque reference-counted
+`ExactEntityLease` with explicitly separate encoded/decoded byte handles. Only archive/raw
+projection can open it; generic observers cannot.
+
+Source fetch and Clock/lifecycle ownership stay on the LocalSet. Shared fetch/native-decode capacity
+is independently bounded and guaranteed for an accepted attached telemetry attempt. The driver
+sends exact owned bytes/facts to the ordered CPU pool, receives the decoded native result, and feeds
+the native accumulator even when archive admission is unavailable. Only then does it
+nonblockingly acquire `ArchiveProjectionPermit` from a validated worst-case footprint. The permit
+owns byte/frame/WAL quota, is consumed by one draft, and refunds unused capacity. Denial records a
+loss range without repeating parse or delaying native delivery. Primary watch may wait/fail before
+fetch according to its durable admission policy because the archive is its product.
+
+The CPU pool returns `ArchiveFrameDraft` without a global accepted sequence. The single archive
+owner assigns the inclusive global `record_seq`, computes the final frame ID, and writes the
+`ArchiveWalFrame`. The frame is a versioned persisted sum of attempt/family/sample batch,
+lifecycle, receipt-range, raw-object descriptor, and coalesced loss-range payloads. It is a closed
+wire schema, not a source extension point. Every frame has stable source/control identity and CRC,
+and every successful `append_frame` has the same local-durable meaning.
 
 Every wire-selected family—source, sink, rotation, admission, recovery, enrichment, sanitizer,
 raw-body retention, and identity-key provider—has its own frozen descriptor/strict-validate/prepare
-factory registry. Only sink-owned objects crossing to the IO worker require `Send`; LocalSet-owned
-sources, admission, and observation graphs remain `?Send`. Stable IDs never select a core string
-branch.
+factory registry. Thread bounds follow the two explicit execution strategies above rather than a
+blanket rule. Stable IDs never select a core string branch.
 
 At least these concrete implementations ship:
 
 - `PrometheusArchiveSource` and replay/fault-injection sources;
 - `StaticLabelEnricher` and `NoopEnricher`;
-- allow/deny-key structured sanitizers and `NoopSanitizer`;
+- `BaselineCredentialSanitizer` plus allow/deny-key structured sanitizers; `NoopSanitizer` applies
+  only after the non-disableable baseline and means no additional content policy;
 - row/byte/Clock-age segment rotation policies composed by `AnyRotationPolicy`;
 - primary-watch and attached-best-effort admission policies;
 - create-new and exact-resume recovery policies;
@@ -487,13 +554,26 @@ The driver owns:
 
 - the prepared source;
 - cadence anchor and tick index;
-- attempt sequence;
+- source-record sequence (issued attempts and compact gap ranges share this namespace);
 - consecutive/total failure counters;
 - current source state (`active`, `degraded`, `disabled`, `stopped`);
 - a command channel with reserved capacity for boundary/shutdown commands.
 
-Each request has `deadline_ns = min(scheduled_or_boundary_budget, shutdown_budget)` and passes that
-absolute value through `ControlPlaneHttp`. Deadline cancellation must release the transport body/
+`scheduled_ns` is a cadence target/lateness fact, never the request-completion deadline. At launch:
+
+```text
+absolute_call_deadline_ns = min(
+    request_start_ns + validated_source_request_timeout_ns,
+    boundary_deadline_ns if present,
+    run_duration_deadline_ns if present,
+    shutdown_deadline_ns if stopping
+)
+```
+
+The profile-bound control handle owns connect/TLS timeout; validation requires it not exceed the
+source's authored connect ceiling. Its per-call request/total lifetime uses the absolute minimum
+above. A call already beyond its boundary/run deadline emits a timeout without network IO. Deadline
+cancellation must release the transport body/
 connection state and returns one timeout attempt; it never detaches an unobserved request. Source
 policy declares whether a boundary timeout merely degrades telemetry or fails a phase when the
 sidecar is required.
@@ -519,12 +599,14 @@ slow. `SimClock` tests pin same-instant ordering and overrun arithmetic.
 ### 6.3 Boundary priority
 
 Attached phase barriers submit a forced `BoundaryStart` or `BoundaryEnd` command with phase ID,
-boundary identity, and absolute deadline. It preempts the next continuous deadline but never
-interrupts an already issued HTTP request. Coincident commands coalesce and all requesting
-boundaries are recorded on the one attempt. The phase waits for the forced result under the same
-Clock deadline. The same `DecodedAttempt` feeds the supported native projection and archive
-projection. Continuous scheduling re-anchors from the original cadence, not the boundary
-completion time.
+boundary identity, orchestrator-issued optional `coalescing_group_id`, and absolute deadline. It
+preempts the next continuous deadline but never interrupts an already issued HTTP request. Only
+commands carrying the identical non-null coalescing group share a physical attempt; timestamp
+proximity is irrelevant. All requesting boundaries are recorded on the attempt and receive the
+same snapshot, while their lifecycle markers remain distinct. The phase waits for the forced result
+under the same Clock deadline. Shared decode feeds native delivery first; archive projection uses
+its independent permit. Continuous scheduling re-anchors from the original cadence, not the
+boundary completion time.
 
 ### 6.4 Failure classification
 
@@ -840,10 +922,13 @@ current-thread LocalSet
     +-- source fetch drivers and native accumulator delivery
     +-- Clock maintenance driver
     `-- fixed-memory per-source loss ledger
-              | bounded owned bytes + reserved credits
+              | bounded owned bytes + shared-decode credit
               v
-bounded ordered decode/projection CPU pool
-              | ArchiveWalFrame, accepted_seq
+bounded ordered decode CPU pool
+              | native result, decoded archive entity, exact-entity lease
+              v
+LocalSet native delivery + nonblocking ArchiveProjectionPermit
+              | ArchiveFrameDraft (unsequenced)
               v
 single mutable archive-state owner
     +-- WAL and open-partition builders
@@ -875,11 +960,13 @@ The same runtime supports two explicit policies:
   source driver does not issue unbounded new scrapes. It waits or skips future cadence deadlines
   according to the selected policy, records missed intervals, and fails the operation if local
   durability cannot progress within its budget. Default: fail rather than silently discard.
-- **attached benchmark:** the benchmark is the product. Source/native accumulator work proceeds;
-  archive-only decode/projection first tries a nonblocking byte/CPU/ingress reservation. Rejection
+- **attached benchmark:** the benchmark is the product. Bounded shared/native decode is guaranteed
+  once the telemetry attempt is accepted and native delivery occurs first. Archive projection then
+  tries a nonblocking byte/frame/WAL reservation using its validated upper bound. Rejection
   updates a fixed-memory per-source loss ledger that coalesces contiguous attempt/deadline ranges
   by reason. The reserved control lane persists those ranges at checkpoint/finalize. If the writer
-  itself is dead, the same structured ranges appear in the failed terminal diagnostic. The request
+  itself is dead, the LocalSet-owned ledger reaches `ReportTelemetryArchive.health` on best-effort
+  success; primary/required failures place it in the typed diagnostic artifact. The request
   path never waits. `archive.required=true` may convert archive degradation into a reporting-stage
   failed terminal after benchmark execution; it still cannot change measured request data or emit
   a partial result on the authoritative report path.
@@ -889,12 +976,13 @@ Boundary scrapes always reach their native accumulator even if archive admission
 ### 9.3 Batch identity
 
 `batch_id` uses the domain-separated, length-prefixed digest rule from §8.1 over archive/session/
-source, attempt sequence, outcome, and keyed exact-body digest when present. `frame_id` similarly
-includes frame schema/kind and control/source sequence. Marker and loss frames therefore share the
-same persistence identity discipline as attempt/sample batches.
+source, source-record sequence, outcome, and the configured decoded-entity unchanged digest when
+present. The archive owner stamps global `record_seq`; `frame_id` then includes frame schema/kind,
+source/control identity, and that sequence. Marker and loss frames therefore share the same
+persistence identity discipline as attempt/sample batches.
 
-Retries of persistence retain `batch_id`/`frame_id`. A new source request always gets a new
-`attempt_seq`; a persistence retry never does. Partitions and recovery deduplicate exact
+Retries of persistence retain `batch_id`/`frame_id`. Every issued request or compact gap range gets
+a new source-record sequence; a persistence retry never does. Partitions and recovery deduplicate exact
 `(frame_id, table)` projections, not a frame globally before all tables are covered.
 
 ---
@@ -1196,12 +1284,17 @@ implemented by the prepared backend's `ControlPlaneHttp`, not a source-private c
 
 ### 13.1 Preserve current semantics
 
-The server/GPU/network accumulator inputs, boundary snapshots, reset-clamp, histogram learner,
-unit inference, vLLM/SGLang atlas, GPU scaling, energy joins, and RTT delivery do not change.
+The server/GPU/network formulas, boundary snapshots, reset-clamp, histogram learner, unit inference,
+vLLM/SGLang atlas, GPU scaling, energy joins, and RTT delivery do not change. The delivery wrapper
+gains physical attempt identity plus a phase-membership set. A phase-projection adapter presents the
+record once to every active phase-local view; run-level source/endpoint fetch and update metadata is
+ingested once per attempt ID. Duplicate attempt IDs are rejected. Exact parity tests pin every old
+native summary across ordinary and seamless overlap before replacing phase-owned cadence loops.
 
 The archive exposition projection may preserve families (for example summaries or `_created`)
-that benchmark projection intentionally excludes. That is expected. One parsed `Exposition` can
-feed two explicit projection policies; archive completeness must not broaden benchmark metrics.
+that benchmark projection intentionally excludes. That is expected. One bounded decode job can
+produce a strict archive entity and the separately named native-compatible entity described in §4;
+archive completeness must not broaden benchmark metrics.
 
 ### 13.2 Attempt observation hook
 
@@ -1209,27 +1302,28 @@ Run-owned source composition gains an all-outcome observer before lossy domain p
 than file-writing branches on `ServerMetricsRecord`/`GpuScrape`:
 
 ```rust
-pub trait TelemetryAttemptObserver<Entity, Record> {
+pub trait TelemetryAttemptObserver<Record> {
     fn observe(
         &self,
-        attempt: &DecodedAttempt<Entity>,
-        native: Option<&Record>,
+        observation: &AttemptObservation<'_, Record>,
         context: &TelemetryObservationContext,
     );
 }
 ```
 
-Concrete consumers include native accumulator delivery, archive ingress, and test recorders. The
-runner assembles a small generic/static tee at preparation. Every transport/parse/unsupported/
-success outcome is observed once; exact raw bytes remain policy-gated and are not exposed to an
-arbitrary observer. Observation never occurs per token.
+`AttemptObservation` exposes attempt facts, strict/native parse dispositions, phase membership,
+optional native record, and archive admission outcome—but neither decoded archive entity nor exact
+bytes. Concrete consumers include native phase/run delivery, report health, and test recorders;
+archive projection is already encapsulated inside the prepared driver. The runner assembles a small
+generic/static tee at preparation. Every transport/parse/unsupported/success outcome is observed
+once. Observation never occurs per token.
 
 Boundary order remains:
 
 1. submit a typed boundary command with an absolute Clock deadline;
-2. fetch once, decode once, and create the all-outcome envelope;
+2. fetch once and run one bounded decode job (strict plus named native fallback when applicable);
 3. feed the supported native projection/boundary snapshot synchronously;
-4. submit the archive attempt/batch according to admission policy;
+4. nonblockingly reserve/project/submit the archive frame draft or record an archive loss range;
 5. return the phase barrier result or typed timeout/failure according to required-sidecar policy.
 
 Archive remote durability is not awaited at a phase boundary.
