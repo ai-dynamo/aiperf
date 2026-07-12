@@ -239,6 +239,20 @@ fn evaluator_problem_row(index: usize, problem: EvaluatorProblem) -> anyhow::Res
     );
     let messages = serde_json::to_value(problem.messages)
         .context("serializing evaluator-authored messages")?;
+    let mut extra_body = serde_json::Map::new();
+    extra_body.insert(
+        "temperature".into(),
+        json!(problem.generation.temperature),
+    );
+    extra_body.insert("top_p".into(), json!(problem.generation.top_p));
+    // Emit `stop` only when non-empty. OpenAI treats an empty stop array as
+    // equivalent to no stop, but Dynamo's frontend rejects `stop: []` with
+    // HTTP 400 ("Stop sequences array cannot be empty") before generation, so
+    // stop-less benchmarks (math_500, aime, gpqa_diamond, mmlu_pro) would fail
+    // every request in the native transport.
+    if !problem.generation.stop.is_empty() {
+        extra_body.insert("stop".into(), json!(problem.generation.stop));
+    }
     Ok(RawRow {
         value: json!({
             "prompt": problem.prompt,
@@ -247,11 +261,7 @@ fn evaluator_problem_row(index: usize, problem: EvaluatorProblem) -> anyhow::Res
             "correlation_id": problem_id,
             "raw_messages": messages,
             "metadata": {"generation_size": generation_size},
-            "extra_body": {
-                "temperature": problem.generation.temperature,
-                "top_p": problem.generation.top_p,
-                "stop": problem.generation.stop,
-            },
+            "extra_body": extra_body,
         }),
         wire: None,
         session_id: None,
