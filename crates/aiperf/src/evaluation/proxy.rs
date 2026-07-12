@@ -414,7 +414,7 @@ impl ProxyProcessScopeAuthorizer for LinuxProcessSubtreeAuthorizer {
     }
 }
 
-impl aiperf_accuracy::EvaluatorProcessRootBinder for LinuxProcessSubtreeAuthorizer {
+impl aiperf_accuracy::provider::EvaluatorProcessRootBinder for LinuxProcessSubtreeAuthorizer {
     fn bind_attested_root(
         &self,
         root_pid: u32,
