@@ -95,7 +95,7 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
             .iter()
             .any(|entry| entry["id"] == "online_http")
     );
-    for workload in ["scheduled", "graph", "static_accuracy"] {
+    for workload in ["scheduled", "graph", "static_accuracy", "agentic"] {
         assert!(
             capabilities["workloads"]
                 .as_array()

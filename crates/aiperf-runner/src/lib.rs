@@ -8,6 +8,7 @@
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
 
+pub mod agentic_execution;
 pub mod distribution_identity;
 pub mod execute;
 mod gpu_telemetry;

@@ -522,7 +522,7 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // Feature-bearing modules add registrations here without changing lookup,
     // validation, or dispatch. Keeping the composition function even in the
     // base build prevents capability code from growing mode string branches.
-    let _ = builder;
+    crate::agentic_execution::register_agentic_workload(builder)?;
     Ok(())
 }
 
@@ -1187,12 +1187,13 @@ mod tests {
                 .into_iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            vec!["graph", "scheduled", "static_accuracy"]
+            vec!["agentic", "graph", "scheduled", "static_accuracy"]
         );
         assert_eq!(registry.supported_pairs(), Vec::<(&str, &str)>::new());
         assert_eq!(
             registry.statically_compatible_pairs(),
             vec![
+                ("online_http", "agentic"),
                 ("online_http", "graph"),
                 ("online_http", "scheduled"),
                 ("online_http", "static_accuracy"),
