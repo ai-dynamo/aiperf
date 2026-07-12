@@ -20,8 +20,9 @@ use aiperf::http::{
     TransportSinkConfig,
 };
 use aiperf::multiturn::TurnToSend;
+use aiperf::scheduled::TurnResponseObserver;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_endpoints::PreparedEndpointTable;
+use aiperf_endpoints::{ParsedResponse, PreparedEndpointTable};
 use aiperf_metrics::InferenceDimensions;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -34,6 +35,7 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 const WORKER_QUEUE_CAPACITY: usize = 256;
+const WORKER_RESPONSE_CAPACITY: usize = 256;
 
 /// Inputs available to an execution-placement factory for one benchmark run.
 pub struct HttpExecutionBackendConfig {
@@ -224,6 +226,7 @@ struct WorkerReply {
 struct WorkerCommand {
     turn: PreparedHttpTurn,
     first_token: oneshot::Sender<i64>,
+    responses: Option<mpsc::Sender<ParsedResponse>>,
     completed: oneshot::Sender<WorkerReply>,
 }
 
@@ -343,11 +346,43 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         )
     }
 
+    fn supports_response_streaming(&self) -> bool {
+        true
+    }
+
     async fn execute_turn(
         &self,
         turn: PreparedHttpTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpTurnDispatchResult> {
+        self.execute_command(turn, observer, on_first_token, None)
+            .await
+    }
+
+    async fn execute_turn_streaming(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<HttpTurnDispatchResult> {
+        self.execute_command(turn, observer, on_first_token, Some(responses))
+            .await
+    }
+
+    fn shutdown(&self) -> Result<()> {
+        self.shutdown_workers()
+    }
+}
+
+impl ThreadPerCoreHttpExecutionBackend {
+    async fn execute_command(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<HttpTurnDispatchResult> {
         let run_origin_ns = self
             .run_origin_ns
@@ -363,17 +398,20 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
             senders[index].clone()
         };
         let (first_token_tx, mut first_token_rx) = oneshot::channel();
+        let (response_tx, mut response_rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
         let (completed_tx, mut completed_rx) = oneshot::channel();
         sender
             .send(WorkerCommand {
                 turn,
                 first_token: first_token_tx,
+                responses: responses.map(|_| response_tx),
                 completed: completed_tx,
             })
             .await
             .map_err(|_| anyhow!("HTTP execution worker stopped before accepting a command"))?;
 
         let mut first_token_channel_done = false;
+        let mut response_channel_done = responses.is_none();
         let reply = loop {
             tokio::select! {
                 biased;
@@ -381,6 +419,14 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
                     first_token_channel_done = true;
                     if let Ok(ttft_ns) = first {
                         on_first_token(ttft_ns);
+                    }
+                }
+                response = response_rx.recv(), if !response_channel_done => {
+                    match response {
+                        Some(response) => responses
+                            .expect("response channel exists only for streaming dispatch")
+                            .on_response(response),
+                        None => response_channel_done = true,
                     }
                 }
                 completed = &mut completed_rx => {
@@ -393,14 +439,15 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         if !first_token_channel_done && let Ok(ttft_ns) = first_token_rx.try_recv() {
             on_first_token(ttft_ns);
         }
+        if let Some(responses) = responses {
+            while let Ok(response) = response_rx.try_recv() {
+                responses.on_response(response);
+            }
+        }
         for event in reply.events {
             event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
         }
         reply.result
-    }
-
-    fn shutdown(&self) -> Result<()> {
-        self.shutdown_workers()
     }
 }
 
@@ -495,6 +542,42 @@ async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<Transp
     }
 }
 
+struct WorkerResponseObserver {
+    sender: mpsc::Sender<ParsedResponse>,
+    failure: RefCell<Option<String>>,
+}
+
+impl WorkerResponseObserver {
+    fn new(sender: mpsc::Sender<ParsedResponse>) -> Self {
+        Self {
+            sender,
+            failure: RefCell::new(None),
+        }
+    }
+
+    fn take_failure(&self) -> Option<String> {
+        self.failure.borrow_mut().take()
+    }
+}
+
+impl TurnResponseObserver for WorkerResponseObserver {
+    fn on_response(&self, response: ParsedResponse) {
+        if let Err(error) = self.sender.try_send(response) {
+            self.failure
+                .borrow_mut()
+                .get_or_insert_with(|| match error {
+                    mpsc::error::TrySendError::Full(_) => {
+                        "HTTP execution response stream exceeded its bounded placement channel"
+                            .to_string()
+                    }
+                    mpsc::error::TrySendError::Closed(_) => {
+                        "HTTP execution response stream receiver closed before terminal".to_string()
+                    }
+                });
+        }
+    }
+}
+
 async fn execute_worker_command(sink: Rc<TransportSink>, command: WorkerCommand) {
     let observer = Rc::new(BufferedObserver::default());
     let first_token = RefCell::new(Some(command.first_token));
@@ -503,9 +586,31 @@ async fn execute_worker_command(sink: Rc<TransportSink>, command: WorkerCommand)
             let _ = sender.send(ttft_ns);
         }
     };
-    let result = sink
-        .dispatch_prepared_turn_collect_record(command.turn, observer.as_ref(), &on_first_token)
-        .await;
+    let response_observer = command.responses.map(WorkerResponseObserver::new);
+    let mut result = match response_observer.as_ref() {
+        Some(responses) => {
+            sink.dispatch_prepared_turn_collect_record_streaming(
+                command.turn,
+                observer.as_ref(),
+                &on_first_token,
+                responses,
+            )
+            .await
+        }
+        None => {
+            sink.dispatch_prepared_turn_collect_record(
+                command.turn,
+                observer.as_ref(),
+                &on_first_token,
+            )
+            .await
+        }
+    };
+    if let Some(failure) = response_observer.and_then(|responses| responses.take_failure())
+        && result.is_ok()
+    {
+        result = Err(anyhow!(failure));
+    }
     drop(first_token.borrow_mut().take());
     let _ = command.completed.send(WorkerReply {
         result,
@@ -535,6 +640,14 @@ fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use aiperf::http::{HttpRequest, PreparedHttpEndpoint};
+    use aiperf::multiturn::PreparedEndpointReference;
+    use aiperf_endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
 
     #[test]
@@ -573,5 +686,148 @@ mod tests {
             observer.events.borrow().as_slice(),
             &["admit", "token", "usage", "terminal"]
         );
+    }
+
+    #[derive(Clone)]
+    struct StreamingEndpointTableFactory {
+        registry: EndpointRegistry,
+        url: String,
+    }
+
+    impl HttpPreparedEndpointTableFactory for StreamingEndpointTableFactory {
+        fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
+            let endpoint = self.registry.prepare(
+                &EndpointId::new("chat")?,
+                RawEndpointConfig {
+                    urls: vec![self.url.clone()],
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..RawEndpointConfig::default()
+                },
+            )?;
+            let mut table = PreparedEndpointTable::new();
+            assert_eq!(table.push(endpoint)?, EndpointKey::from_index(0));
+            Ok(table)
+        }
+    }
+
+    struct ResponseCollector {
+        responses: RefCell<Vec<ParsedResponse>>,
+        server_sent_terminal: Arc<AtomicBool>,
+        saw_frame_before_terminal: Cell<bool>,
+    }
+
+    impl TurnResponseObserver for ResponseCollector {
+        fn on_response(&self, response: ParsedResponse) {
+            if !self.server_sent_terminal.load(Ordering::SeqCst) {
+                self.saw_frame_before_terminal.set(true);
+            }
+            self.responses.borrow_mut().push(response);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn thread_per_core_placement_forwards_live_normalized_sse_frames() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_sent_terminal = Arc::new(AtomicBool::new(false));
+        let server_terminal = server_sent_terminal.clone();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 16 * 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            let first = "data: {\"id\":\"response\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel\"}}]}\n\n";
+            let terminal = concat!(
+                "data: {\"id\":\"response\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: {\"id\":\"response\",\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                first.len() + terminal.len(),
+            );
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            socket.write_all(first.as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            server_terminal.store(true, Ordering::SeqCst);
+            socket.write_all(terminal.as_bytes()).await.unwrap();
+        });
+
+        let anchor = RealClockAnchor::now();
+        let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
+        let url = format!("http://{address}");
+        let table_factory = Arc::new(StreamingEndpointTableFactory {
+            registry: EndpointRegistry::builtin().unwrap(),
+            url: url.clone(),
+        });
+        let backend = NativeHttpExecutionBackendFactory
+            .build(HttpExecutionBackendConfig {
+                workers: 2,
+                coordinator_clock: clock.clone(),
+                real_clock_anchor: anchor,
+                base_urls: vec![url],
+                model: "fixture-model".to_string(),
+                transport: TransportSinkConfig::default(),
+                prepared_endpoints: Some(table_factory),
+            })
+            .unwrap();
+        backend.set_run_origin(clock.now_ns()).unwrap();
+        assert!(backend.supports_response_streaming());
+        let turn = PreparedHttpTurn {
+            request: HttpRequest {
+                uuid: Uuid::new_v4(),
+                input_length: 1,
+                max_output_tokens: 4,
+                prompt_text: None,
+                request_body: Some(serde_json::json!({
+                    "model": "fixture-model",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 4,
+                    "stream": true,
+                    "stream_options": {"include_usage": true}
+                })),
+                request_body_bytes: None,
+                headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                endpoint_path: None,
+                streaming: true,
+                x_correlation_id: Some("evaluation-unit".to_string()),
+                is_final_turn: true,
+                cancel_after_ns: None,
+                url_index: None,
+            },
+            model: "fixture-model".to_string(),
+            endpoint: PreparedHttpEndpoint::Prepared(PreparedEndpointReference {
+                key: EndpointKey::from_index(0),
+                endpoint_id: EndpointId::new("chat").unwrap(),
+            }),
+            endpoint_aware: true,
+        };
+        let responses = ResponseCollector {
+            responses: RefCell::new(Vec::new()),
+            server_sent_terminal,
+            saw_frame_before_terminal: Cell::new(false),
+        };
+        let observer = BufferedObserver::default();
+        let first_tokens = Cell::new(0_usize);
+        let result = backend
+            .execute_turn_streaming(
+                turn,
+                &observer,
+                &|_| first_tokens.set(first_tokens.get() + 1),
+                &responses,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.outcome.response_text, "hello");
+        assert_eq!(first_tokens.get(), 1);
+        assert!(!responses.responses.borrow().is_empty());
+        assert!(
+            responses.saw_frame_before_terminal.get(),
+            "cross-thread placement buffered SSE until terminal"
+        );
+        backend.shutdown().unwrap();
+        server.await.unwrap();
     }
 }
