@@ -24,13 +24,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::dynamo_offline::{
-    CanonicalSharedMetrics, DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
-    OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig, OfflineGraphReport,
-    OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity, OfflineRouterMode,
-    OfflineRunReport, OfflineScheduledExecution, OfflineScheduledExecutionFinalizer,
-    OfflineScheduledReport, OfflineTopology, OfflineTraceConfig, run_graph_offline,
-    run_graph_workload_offline, run_scheduled_backend_offline_deferred, run_trace_offline,
-    write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
+    CanonicalSharedMetrics, OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig,
+    OfflineGraphReport, OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity,
+    OfflineRouterMode, OfflineRunReport, OfflineScheduledExecution, OfflineScheduledFuture,
+    OfflineScheduledReport, OfflineScheduledRunFactory, OfflineTopology, OfflineTraceConfig,
+    run_graph_offline, run_graph_workload_offline, run_scheduled_backend_offline,
+    run_trace_offline, write_dynamo_per_request_jsonl, write_dynamo_report_json,
+    write_dynamo_worker_artifacts_json,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::{
@@ -38,7 +38,7 @@ use aiperf::multiturn::{
     NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
     PreparedTurnEndpointResolver,
 };
-use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
+use aiperf::phase_runtime::run_scheduled_phases_with_aggregate;
 use aiperf_clock::Clock;
 use aiperf_dataset::{
     DatasetSource, HuggingFaceTokenizer, LoadConfig, SamplerRegistry, SegmentStore, TextTokenizer,
@@ -1184,7 +1184,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
         let artifact_for_factory = artifact_target.clone();
         let benchmark_for_factory = benchmark_id.clone();
         let model_for_factory = model.clone();
-        let factory: Box<dyn DeferredOfflineScheduledRunFactory> =
+        let factory: Box<dyn OfflineScheduledRunFactory> =
             Box::new(move |clock: Rc<dyn Clock>, start_ns, dispatcher| {
                 Box::pin(async move {
                     let shared = native_scheduled_resources(&phases);
@@ -1220,7 +1220,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         }
                         plans.push(plan);
                     }
-                    let aggregate = run_scheduled_phases_with_aggregate_deferred(
+                    let aggregate = run_scheduled_phases_with_aggregate(
                         plans,
                         clock.clone(),
                         start_ns,
@@ -1228,32 +1228,22 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         Rc::new(NoopPhaseObserver),
                     )
                     .await?;
-                    let finalizer: Box<dyn OfflineScheduledExecutionFinalizer> =
-                        Box::new(move || {
-                            let aggregate = aggregate.finish();
-                            let mut execution = OfflineScheduledExecution::phased(
-                                aggregate.phased,
-                                aggregate.performance,
-                            )?;
-                            if let Some(observer) = backend_goodput {
-                                let goodput = observer.finish();
-                                for tag in [
-                                    MetricTag::GoodRequestCount,
-                                    MetricTag::Goodput,
-                                    MetricTag::GoodRequestFraction,
-                                ] {
-                                    if let Some(value) = goodput.finite_value(tag) {
-                                        execution
-                                            .profiling
-                                            .native_metrics
-                                            .insert_finite(tag, value);
-                                    }
-                                }
+                    let mut execution =
+                        OfflineScheduledExecution::phased(aggregate.phased, aggregate.performance)?;
+                    if let Some(observer) = backend_goodput {
+                        let goodput = observer.finish();
+                        for tag in [
+                            MetricTag::GoodRequestCount,
+                            MetricTag::Goodput,
+                            MetricTag::GoodRequestFraction,
+                        ] {
+                            if let Some(value) = goodput.finite_value(tag) {
+                                execution.profiling.native_metrics.insert_finite(tag, value);
                             }
-                            Ok(execution)
-                        });
-                    Ok(finalizer)
-                }) as DeferredOfflineScheduledFuture
+                        }
+                    }
+                    Ok(execution)
+                }) as OfflineScheduledFuture
             });
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
@@ -1955,17 +1945,14 @@ impl DynamoOfflineExecutor {
     /// dispatcher supplied by `aiperf::dynamo_offline`.
     pub fn execute_scheduled(
         self,
-        workload: Box<dyn DeferredOfflineScheduledRunFactory>,
+        workload: Box<dyn OfflineScheduledRunFactory>,
     ) -> Result<DynamoOfflineScheduledOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report = run_scheduled_backend_offline_deferred(
-            self.engine.clone(),
-            self.model.clone(),
-            workload,
-        )?;
+        let report =
+            run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
