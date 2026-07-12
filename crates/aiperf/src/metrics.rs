@@ -165,6 +165,13 @@ impl ObserverState {
         let slot = *self.request_slots.get(&uuid)?;
         Some(&mut self.requests.get_mut(slot)?.as_mut()?.request)
     }
+
+    fn take_terminal(&mut self, uuid: Uuid) -> Option<PendingEntry> {
+        let slot = *self.request_slots.get(&uuid)?;
+        self.requests.get(slot)?.as_ref()?.request.terminal?;
+        self.request_slots.remove(&uuid);
+        self.requests.get_mut(slot)?.take()
+    }
 }
 
 /// Observer-backed native metrics collector sharing the runtime's clock origin.
@@ -278,6 +285,26 @@ impl NativeMetricsObserver {
             .request(uuid)
             .cloned()
             .map(|request| request.into_record(uuid, ordinal, finish_ns))
+    }
+
+    /// Move one terminal request out of the observer without cloning token data.
+    ///
+    /// Worker-local streaming collectors use this when the returned record is
+    /// transferred to a coordinator that owns final aggregation. The request
+    /// must already have received its terminal callback; nonterminal or unknown
+    /// UUIDs return `None` without changing observer state.
+    pub fn drain_terminal_record(&self, uuid: Uuid, ordinal: u64) -> Option<RecordIngest> {
+        let finish_ns = self.relative_now_ns();
+        self.state
+            .borrow_mut()
+            .take_terminal(uuid)
+            .map(|entry| entry.request.into_record(entry.uuid, ordinal, finish_ns))
+    }
+
+    /// Total arrivals and terminal records still retained by this observer.
+    pub fn record_counts(&self) -> (usize, usize) {
+        let state = self.state.borrow();
+        (state.order.len(), state.request_slots.len())
     }
 
     /// Finalizes every retained request and returns the full native summary.
@@ -812,6 +839,31 @@ mod tests {
 
         let collection = observer.finish_with_records();
         assert_eq!(collection.records, vec![snapshot]);
+    }
+
+    #[test]
+    fn terminal_drain_moves_token_storage_to_streaming_owner() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(8);
+        observer.on_arrival(uuid, 0.0, 4, 1);
+        observer.on_token(uuid, 2.0);
+        observer.on_token(uuid, 4.0);
+        clock.advance_to(5_000_000);
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        assert_eq!(observer.record_counts(), (1, 1));
+        let record = observer.drain_terminal_record(uuid, 0).unwrap();
+        assert_eq!(record.token_arrival_ns, vec![2_000_000, 4_000_000]);
+        assert_eq!(observer.record_counts(), (1, 0));
+        assert!(observer.drain_terminal_record(uuid, 0).is_none());
+
+        let collection = observer.finish_with_records();
+        assert!(collection.records.is_empty());
+        assert_eq!(
+            collection.summary.finite_value(MetricTag::RequestCount),
+            None
+        );
     }
 
     #[test]
