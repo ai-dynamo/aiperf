@@ -1,0 +1,553 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! GPU gauge accumulation, boundary-counter attribution, and efficiency joins.
+//!
+//! Per-GPU distributions and cross-GPU rollups port
+//! `src/aiperf/gpu_telemetry/accumulator.py:185-241,243-345,348-539` and the
+//! NaN-aware `ddof=1` kernel at
+//! `src/aiperf/common/models/telemetry_models.py:423-538`. Counter lookup is
+//! intentionally replaced by the telemetry design addendum's exact synchronous
+//! phase snapshots; only the source-grounded reset clamp and MJ-to-J rollup
+//! remain.
+
+use std::collections::BTreeMap;
+use std::fmt::{Display, Formatter, Result as FmtResult};
+
+use aiperf_metrics::{
+    Accumulator, AccumulatorSummary, ExportContext, MetricTag, MetricValue, MetricsAccumulator,
+    SidecarMetric, SidecarSeries, SidecarStats, boundary_counter_delta, linear_distribution,
+};
+
+use crate::fields::{AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec};
+use crate::model::{GpuBoundarySnapshot, GpuMetadata, GpuSeriesKey, GpuTelemetryRecord};
+use crate::source::GpuTelemetryError;
+
+const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+const MEGAJOULE_TO_JOULE: f64 = 1_000_000.0;
+
+#[derive(Debug, Clone, PartialEq)]
+struct GpuSample {
+    timestamp_ns: i64,
+    metrics: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct GpuSeriesState {
+    metadata: GpuMetadata,
+    samples: Vec<GpuSample>,
+}
+
+/// Exact start/final snapshots for one phase.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuPhaseBoundary {
+    /// Counter values forced at phase start.
+    pub start: GpuBoundarySnapshot,
+    /// Counter values forced at phase end.
+    pub end: GpuBoundarySnapshot,
+}
+
+impl GpuPhaseBoundary {
+    /// Validates and builds a phase boundary pair.
+    pub fn new(
+        start: GpuBoundarySnapshot,
+        end: GpuBoundarySnapshot,
+    ) -> Result<Self, GpuTelemetryError> {
+        if end.timestamp_ns < start.timestamp_ns {
+            return Err(GpuTelemetryError::InvalidBoundary {
+                start_ns: start.timestamp_ns,
+                end_ns: end.timestamp_ns,
+            });
+        }
+        Ok(Self { start, end })
+    }
+
+    /// Exact authoritative phase duration in seconds.
+    pub fn duration_seconds(&self) -> Option<f64> {
+        let duration_ns = self.end.timestamp_ns - self.start.timestamp_ns;
+        (duration_ns > 0).then_some(duration_ns as f64 / NANOS_PER_SECOND)
+    }
+}
+
+/// Incompatibility detected while merging worker-local GPU telemetry state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuMergeError {
+    /// The same endpoint/UUID key carried different metadata.
+    MetadataConflict(GpuSeriesKey),
+    /// Workers carried different phase-boundary snapshots.
+    BoundaryConflict,
+}
+
+impl Display for GpuMergeError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::MetadataConflict(key) => write!(
+                formatter,
+                "conflicting GPU metadata for {} at {}",
+                key.gpu_uuid, key.endpoint_url
+            ),
+            Self::BoundaryConflict => {
+                formatter.write_str("conflicting GPU phase-boundary snapshots")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GpuMergeError {}
+
+/// Fully computed GPU telemetry output for one authoritative phase.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GpuTelemetrySummary {
+    sidecar_metrics: BTreeMap<String, SidecarMetric>,
+    injections: BTreeMap<MetricTag, MetricValue>,
+    power_gpu_count: usize,
+    energy_gpu_count: usize,
+}
+
+impl GpuTelemetrySummary {
+    /// Returns per-GPU metrics keyed by normalized signal name.
+    pub fn sidecar_metrics(&self) -> &BTreeMap<String, SidecarMetric> {
+        &self.sidecar_metrics
+    }
+
+    /// Returns catalog scalar joins keyed by native metric identity.
+    pub fn injections(&self) -> &BTreeMap<MetricTag, MetricValue> {
+        &self.injections
+    }
+
+    /// Number of GPUs contributing to total power.
+    pub fn power_gpu_count(&self) -> usize {
+        self.power_gpu_count
+    }
+
+    /// Number of GPUs contributing to total energy.
+    pub fn energy_gpu_count(&self) -> usize {
+        self.energy_gpu_count
+    }
+
+    /// Delivers GPU efficiency scalars before the main metrics accumulator summarizes.
+    pub fn inject_into(&self, accumulator: &mut MetricsAccumulator) {
+        for (tag, value) in &self.injections {
+            accumulator.inject_scalar(*tag, *value);
+        }
+    }
+
+    /// Attaches scalar joins and per-GPU series to an already-produced summary.
+    ///
+    /// This path lets finalization read `total_output_tokens` from the primary
+    /// summary, compute tokens/J, and then complete that same summary without a
+    /// second request-metrics pass.
+    pub fn attach_to(&self, summary: &mut AccumulatorSummary) {
+        for (tag, value) in &self.injections {
+            summary.insert(*tag, *value);
+        }
+        summary.extend_sidecar_metrics(
+            self.sidecar_metrics
+                .iter()
+                .map(|(name, metric)| (name.clone(), metric.clone())),
+        );
+    }
+}
+
+/// Append-only, lock-free GPU telemetry accumulator.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GpuTelemetryAccumulator {
+    timestamps_ns: Vec<i64>,
+    series: BTreeMap<GpuSeriesKey, GpuSeriesState>,
+    phase_boundary: Option<GpuPhaseBoundary>,
+}
+
+impl GpuTelemetryAccumulator {
+    /// Builds an empty accumulator.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of ingested per-GPU records.
+    pub fn len(&self) -> usize {
+        self.timestamps_ns.len()
+    }
+
+    /// Whether no per-GPU record has been ingested.
+    pub fn is_empty(&self) -> bool {
+        self.timestamps_ns.is_empty()
+    }
+
+    /// Appends one decoded per-GPU scrape record.
+    pub fn ingest_record(&mut self, record: &GpuTelemetryRecord) {
+        self.timestamps_ns.push(record.timestamp_ns);
+        let key = record.series_key();
+        let state = self.series.entry(key).or_insert_with(|| GpuSeriesState {
+            metadata: record.metadata.clone(),
+            samples: Vec::new(),
+        });
+        let sample = GpuSample {
+            timestamp_ns: record.timestamp_ns,
+            metrics: record
+                .metrics
+                .iter()
+                .filter(|(_, value)| value.is_finite())
+                .map(|(name, value)| (name.clone(), *value))
+                .collect(),
+        };
+        let position = state
+            .samples
+            .partition_point(|existing| existing.timestamp_ns <= sample.timestamp_ns);
+        state.samples.insert(position, sample);
+    }
+
+    /// Stores the exact snapshots used by [`Accumulator::export_results`].
+    pub fn set_phase_boundary(&mut self, boundary: GpuPhaseBoundary) {
+        self.phase_boundary = Some(boundary);
+    }
+
+    /// Computes per-GPU series and run-level efficiency joins for one phase.
+    pub fn summarize_phase(
+        &self,
+        boundary: &GpuPhaseBoundary,
+        total_output_tokens: Option<f64>,
+        concurrency: Option<u64>,
+    ) -> GpuTelemetrySummary {
+        let mut summary = GpuTelemetrySummary::default();
+        for spec in DCGM_METRICS.iter().chain(AMD_METRICS) {
+            let mut output_series = Vec::new();
+            for (key, state) in &self.series {
+                let stats = match spec.kind {
+                    GpuMetricKind::Gauge => self.gauge_stats(key, state, spec, boundary),
+                    GpuMetricKind::Counter => self.counter_stats(key, spec, boundary),
+                };
+                if let Some(stats) = stats {
+                    output_series.push(SidecarSeries {
+                        labels: Some(labels_for(&state.metadata)),
+                        endpoint_url: Some(key.endpoint_url.clone()),
+                        stats,
+                        timeslices: Vec::new(),
+                    });
+                }
+            }
+            if !output_series.is_empty() {
+                summary.sidecar_metrics.insert(
+                    spec.name.to_string(),
+                    SidecarMetric::new(Some(spec.unit), output_series),
+                );
+            }
+        }
+
+        let (total_power, power_gpu_count) = self.total_power(boundary);
+        let (total_energy, energy_gpu_count) = self.total_energy(boundary);
+        summary.power_gpu_count = power_gpu_count;
+        summary.energy_gpu_count = energy_gpu_count;
+        if power_gpu_count > 0 {
+            summary.injections.insert(
+                MetricTag::TotalGpuPower,
+                MetricValue::from_f64(total_power, false),
+            );
+        }
+        if energy_gpu_count > 0 {
+            summary.injections.insert(
+                MetricTag::TotalGpuEnergy,
+                MetricValue::from_f64(total_energy, false),
+            );
+            if total_energy > 0.0 {
+                if let Some(tokens) = total_output_tokens.filter(|value| value.is_finite()) {
+                    summary.injections.insert(
+                        MetricTag::OutputTokensPerJoule,
+                        MetricValue::from_f64(tokens / total_energy, false),
+                    );
+                }
+                if let Some(users) = concurrency.filter(|value| *value > 0) {
+                    summary.injections.insert(
+                        MetricTag::EnergyPerUser,
+                        MetricValue::from_f64(total_energy / users as f64, false),
+                    );
+                }
+            }
+        }
+        summary
+    }
+
+    fn gauge_stats(
+        &self,
+        _key: &GpuSeriesKey,
+        state: &GpuSeriesState,
+        spec: &GpuMetricSpec,
+        boundary: &GpuPhaseBoundary,
+    ) -> Option<SidecarStats> {
+        let values = state
+            .samples
+            .iter()
+            .filter(|sample| {
+                sample.timestamp_ns >= boundary.start.timestamp_ns
+                    && sample.timestamp_ns <= boundary.end.timestamp_ns
+            })
+            .filter_map(|sample| sample.metrics.get(spec.name).copied())
+            .filter(|value| value.is_finite())
+            .collect::<Vec<_>>();
+        let sum = values.iter().sum();
+        linear_distribution(spec.name, values, sum, 1).map(SidecarStats::Gauge)
+    }
+
+    fn counter_stats(
+        &self,
+        key: &GpuSeriesKey,
+        spec: &GpuMetricSpec,
+        boundary: &GpuPhaseBoundary,
+    ) -> Option<SidecarStats> {
+        let delta = boundary_counter_delta(
+            boundary.start.counter(key, spec.name),
+            boundary.end.counter(key, spec.name),
+        )?;
+        let rate = boundary
+            .duration_seconds()
+            .map(|seconds| MetricValue::from_f64(delta.delta / seconds, false));
+        Some(SidecarStats::Counter {
+            total: MetricValue::from_f64(delta.delta, false),
+            rate,
+        })
+    }
+
+    fn total_power(&self, boundary: &GpuPhaseBoundary) -> (f64, usize) {
+        self.series
+            .iter()
+            .filter_map(|(key, state)| {
+                ["gpu_power_usage", "amd_power"]
+                    .into_iter()
+                    .find_map(|name| {
+                        let spec = crate::fields::metric_spec(name)?;
+                        match self.gauge_stats(key, state, spec, boundary)? {
+                            SidecarStats::Gauge(stats) => stats.avg.as_f64(),
+                            SidecarStats::Counter { .. } | SidecarStats::Histogram { .. } => None,
+                        }
+                    })
+            })
+            .fold((0.0, 0), |(sum, count), value| (sum + value, count + 1))
+    }
+
+    fn total_energy(&self, boundary: &GpuPhaseBoundary) -> (f64, usize) {
+        self.series
+            .keys()
+            .filter_map(|key| {
+                ["energy_consumption", "amd_energy_consumption"]
+                    .into_iter()
+                    .find_map(|name| {
+                        boundary_counter_delta(
+                            boundary.start.counter(key, name),
+                            boundary.end.counter(key, name),
+                        )
+                        .map(|delta| delta.delta * MEGAJOULE_TO_JOULE)
+                    })
+            })
+            .fold((0.0, 0), |(sum, count), value| (sum + value, count + 1))
+    }
+
+    fn merge_state(&mut self, other: &Self) -> Result<(), GpuMergeError> {
+        if self.phase_boundary.is_some()
+            && other.phase_boundary.is_some()
+            && self.phase_boundary != other.phase_boundary
+        {
+            return Err(GpuMergeError::BoundaryConflict);
+        }
+        self.phase_boundary = self
+            .phase_boundary
+            .clone()
+            .or_else(|| other.phase_boundary.clone());
+        self.timestamps_ns.extend_from_slice(&other.timestamps_ns);
+        for (key, incoming) in &other.series {
+            if let Some(existing) = self.series.get_mut(key) {
+                if existing.metadata != incoming.metadata {
+                    return Err(GpuMergeError::MetadataConflict(key.clone()));
+                }
+                existing.samples.extend_from_slice(&incoming.samples);
+                existing.samples.sort_by_key(|sample| sample.timestamp_ns);
+            } else {
+                self.series.insert(key.clone(), incoming.clone());
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Accumulator<GpuTelemetryRecord> for GpuTelemetryAccumulator {
+    type Summary = GpuTelemetrySummary;
+    type MergeError = GpuMergeError;
+
+    fn process_record(&mut self, record: &GpuTelemetryRecord) {
+        self.ingest_record(record);
+    }
+
+    fn query_time_range(&self, start_ns: i64, end_ns: i64) -> Vec<bool> {
+        self.timestamps_ns
+            .iter()
+            .map(|timestamp| *timestamp >= start_ns && *timestamp < end_ns)
+            .collect()
+    }
+
+    fn export_results(&self, context: &ExportContext) -> Self::Summary {
+        let Some(boundary) = self.phase_boundary.as_ref() else {
+            return GpuTelemetrySummary::default();
+        };
+        if context
+            .start_ns
+            .is_some_and(|start| start != boundary.start.timestamp_ns)
+            || context
+                .end_ns
+                .is_some_and(|end| end != boundary.end.timestamp_ns)
+        {
+            return GpuTelemetrySummary::default();
+        }
+        self.summarize_phase(boundary, None, None)
+    }
+
+    fn merge(&mut self, other: &Self) -> Result<(), Self::MergeError> {
+        self.merge_state(other)
+    }
+}
+
+fn labels_for(metadata: &GpuMetadata) -> BTreeMap<String, String> {
+    let mut labels = BTreeMap::from([
+        ("gpu".to_string(), metadata.gpu_index.to_string()),
+        ("gpu_uuid".to_string(), metadata.gpu_uuid.clone()),
+        ("model_name".to_string(), metadata.gpu_model_name.clone()),
+    ]);
+    for (name, value) in [
+        ("pci_bus_id", metadata.pci_bus_id.as_ref()),
+        ("device", metadata.device.as_ref()),
+        ("hostname", metadata.hostname.as_ref()),
+        ("namespace", metadata.namespace.as_ref()),
+        ("pod", metadata.pod_name.as_ref()),
+    ] {
+        if let Some(value) = value {
+            labels.insert(name.to_string(), value.clone());
+        }
+    }
+    labels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(timestamp_ns: i64, gpu: i32, power: f64, energy_mj: f64) -> GpuTelemetryRecord {
+        GpuTelemetryRecord {
+            timestamp_ns,
+            endpoint_url: "http://dcgm/metrics".to_string(),
+            metadata: GpuMetadata {
+                gpu_index: gpu,
+                gpu_uuid: format!("GPU-{gpu}"),
+                gpu_model_name: "H100".to_string(),
+                pci_bus_id: None,
+                device: None,
+                hostname: Some("node".to_string()),
+                namespace: None,
+                pod_name: None,
+            },
+            metrics: BTreeMap::from([
+                ("gpu_power_usage".to_string(), power),
+                ("energy_consumption".to_string(), energy_mj),
+            ]),
+        }
+    }
+
+    fn snapshot(timestamp_ns: i64, records: &[GpuTelemetryRecord]) -> GpuBoundarySnapshot {
+        let scrape = crate::GpuScrape {
+            timestamp_ns,
+            endpoint_url: "http://dcgm/metrics".to_string(),
+            records: records.to_vec(),
+        };
+        GpuBoundarySnapshot::from_scrape(&scrape)
+    }
+
+    #[test]
+    fn exact_boundaries_drive_reset_clamped_energy_and_ddof_one_power() {
+        let start_records = vec![record(10, 0, 100.0, 0.001), record(10, 1, 200.0, 0.010)];
+        let middle_records = vec![record(15, 0, 120.0, 0.002), record(15, 1, 220.0, 0.005)];
+        let end_records = vec![record(20, 0, 140.0, 0.003), record(20, 1, 240.0, 0.008)];
+        let mut accumulator = GpuTelemetryAccumulator::new();
+        for record in start_records
+            .iter()
+            .chain(&middle_records)
+            .chain(&end_records)
+        {
+            accumulator.ingest_record(record);
+        }
+        let boundary =
+            GpuPhaseBoundary::new(snapshot(10, &start_records), snapshot(20, &end_records))
+                .unwrap();
+        let summary = accumulator.summarize_phase(&boundary, Some(2_000.0), Some(4));
+
+        // GPU 0 contributes 0.002 MJ = 2,000 J; GPU 1 reset-clamps to zero.
+        assert_eq!(
+            summary
+                .injections()
+                .get(&MetricTag::TotalGpuEnergy)
+                .and_then(|value| value.as_f64()),
+            Some(2_000.0)
+        );
+        assert_eq!(summary.energy_gpu_count(), 2);
+        assert_eq!(
+            summary
+                .injections()
+                .get(&MetricTag::TotalGpuPower)
+                .and_then(|value| value.as_f64()),
+            Some(340.0)
+        );
+        assert_eq!(
+            summary
+                .injections()
+                .get(&MetricTag::OutputTokensPerJoule)
+                .and_then(|value| value.as_f64()),
+            Some(1.0)
+        );
+        assert_eq!(
+            summary
+                .injections()
+                .get(&MetricTag::EnergyPerUser)
+                .and_then(|value| value.as_f64()),
+            Some(500.0)
+        );
+
+        let power = &summary.sidecar_metrics()["gpu_power_usage"].series[0].stats;
+        let SidecarStats::Gauge(power) = power else {
+            panic!("expected gauge")
+        };
+        assert_eq!(power.avg.as_f64(), Some(120.0));
+        assert!((power.std.unwrap() - 20.0).abs() < 1e-12);
+
+        let mut primary = AccumulatorSummary::new();
+        summary.attach_to(&mut primary);
+        assert_eq!(
+            primary.finite_value(MetricTag::TotalGpuEnergy),
+            Some(2_000.0)
+        );
+        assert!(primary.sidecar_metrics().contains_key("gpu_power_usage"));
+    }
+
+    #[test]
+    fn query_contract_is_half_open_even_though_phase_gauges_include_end_boundary() {
+        let mut accumulator = GpuTelemetryAccumulator::new();
+        for timestamp in [10, 20, 30] {
+            accumulator.ingest_record(&record(timestamp, 0, 1.0, 1.0));
+        }
+        assert_eq!(
+            accumulator.query_time_range(10, 30),
+            vec![true, true, false]
+        );
+    }
+
+    #[test]
+    fn invalid_boundary_is_rejected_and_missing_concurrency_omits_energy_per_user() {
+        let records = vec![record(10, 0, 100.0, 1.0)];
+        assert!(matches!(
+            GpuPhaseBoundary::new(snapshot(20, &records), snapshot(10, &records)),
+            Err(GpuTelemetryError::InvalidBoundary { .. })
+        ));
+
+        let mut accumulator = GpuTelemetryAccumulator::new();
+        accumulator.ingest_record(&records[0]);
+        let end = vec![record(20, 0, 100.0, 2.0)];
+        accumulator.ingest_record(&end[0]);
+        let boundary = GpuPhaseBoundary::new(snapshot(10, &records), snapshot(20, &end)).unwrap();
+        let summary = accumulator.summarize_phase(&boundary, None, None);
+        assert!(!summary.injections().contains_key(&MetricTag::EnergyPerUser));
+    }
+}

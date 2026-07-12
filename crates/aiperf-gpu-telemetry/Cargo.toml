@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-gpu-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Clock-injected GPU telemetry collection, DCGM decoding, boundary snapshots, and efficiency rollups for AIPerf."
+
+[dependencies]
+aiperf-clock.workspace = true
+aiperf-metrics.workspace = true
+aiperf-transport.workspace = true
+async-trait.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
