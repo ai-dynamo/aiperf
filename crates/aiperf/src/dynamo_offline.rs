@@ -106,6 +106,20 @@ pub enum OfflineRouterMode {
     Kv,
 }
 
+/// Construction seam for an in-process offline replay engine.
+///
+/// The workload, clock pump, observers, and reports depend only on the
+/// [`SteppableReplay`] contract. A different simulator can therefore replace
+/// Dynamo's native constructor without changing any scheduling policy.
+pub trait OfflineEngineFactory {
+    /// Build one passive engine from the validated frontend configuration.
+    fn build(&self, config: &OfflineEngineConfig) -> Result<Box<dyn SteppableReplay>>;
+}
+
+/// Native Dynamo implementation of [`OfflineEngineFactory`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NativeDynamoEngineFactory;
+
 /// Canonical Dynamo trace input format accepted by native AIPerf offline runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfflineTraceFormat {
@@ -499,7 +513,7 @@ impl OfflineEngineConfig {
         Ok(Some(config))
     }
 
-    fn build(&self) -> Result<Box<dyn SteppableReplay>> {
+    fn build_native(&self) -> Result<Box<dyn SteppableReplay>> {
         let router_config = self.replay_router_config()?;
         let mut engine: Box<dyn SteppableReplay> = match self.topology {
             // The routed runtime is the eventized form of one scheduler worker:
@@ -561,6 +575,16 @@ impl OfflineEngineConfig {
         engine.set_capture_per_request(self.capture_per_request);
         engine.set_sla_thresholds(self.sla);
         Ok(engine)
+    }
+
+    fn build(&self) -> Result<Box<dyn SteppableReplay>> {
+        NativeDynamoEngineFactory.build(self)
+    }
+}
+
+impl OfflineEngineFactory for NativeDynamoEngineFactory {
+    fn build(&self, config: &OfflineEngineConfig) -> Result<Box<dyn SteppableReplay>> {
+        config.build_native()
     }
 }
 
@@ -916,9 +940,17 @@ struct EngineHost {
 
 impl EngineHost {
     fn new(clock: Rc<SimClock>, config: &OfflineEngineConfig) -> Result<Rc<Self>> {
+        Self::new_with_factory(clock, config, &NativeDynamoEngineFactory)
+    }
+
+    fn new_with_factory(
+        clock: Rc<SimClock>,
+        config: &OfflineEngineConfig,
+        factory: &dyn OfflineEngineFactory,
+    ) -> Result<Rc<Self>> {
         Ok(Rc::new(Self {
             clock,
-            engine: RefCell::new(config.build()?),
+            engine: RefCell::new(factory.build(config)?),
             waiters: RefCell::new(HashMap::new()),
             next_cancellation_seq: Cell::new(0),
             cancellations: RefCell::new(BinaryHeap::new()),
@@ -1173,11 +1205,19 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 /// Request-to-token seam for the mock engine. Endpoint-specific offline
 /// adapters can implement this trait without changing the engine host.
-trait OfflineRequestEncoder<R> {
+pub trait OfflineRequestEncoder<R> {
+    /// Convert one endpoint request into the token ids consumed by the engine.
     fn encode(&self, request: &R) -> Result<Vec<u32>>;
 }
 
-struct OpenAiRequestEncoder {
+/// Graph-message tokenization seam for an offline engine adapter.
+pub trait OfflineGraphRequestEncoder {
+    /// Convert already-materialized graph message wires to an exact input size.
+    fn encode_graph_messages(&self, wires: &[Bytes], requested: usize) -> Result<Vec<u32>>;
+}
+
+/// Tiktoken-backed encoder for OpenAI-compatible request and graph wires.
+pub struct OpenAiRequestEncoder {
     tokenizer: TiktokenTokenizer,
 }
 
@@ -1271,23 +1311,42 @@ impl OfflineRequestEncoder<HttpRequest> for OpenAiRequestEncoder {
     }
 }
 
+impl OfflineGraphRequestEncoder for OpenAiRequestEncoder {
+    fn encode_graph_messages(&self, wires: &[Bytes], requested: usize) -> Result<Vec<u32>> {
+        self.encode_wires(wires, requested)
+    }
+}
+
 /// `RequestSink<HttpRequest>` and scheduled-turn adapter over one [`EngineHost`].
 struct DynamoOfflineSink {
     host: Rc<EngineHost>,
     clock: Rc<SimClock>,
     start_ns: i64,
     model: String,
-    encoder: OpenAiRequestEncoder,
+    request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
+    graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
 }
 
 impl DynamoOfflineSink {
     fn new(host: Rc<EngineHost>, clock: Rc<SimClock>, model: String) -> Rc<Self> {
+        let encoder = Rc::new(OpenAiRequestEncoder::default());
+        Self::new_with_encoders(host, clock, model, encoder.clone(), encoder)
+    }
+
+    fn new_with_encoders(
+        host: Rc<EngineHost>,
+        clock: Rc<SimClock>,
+        model: String,
+        request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
+        graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
+    ) -> Rc<Self> {
         Rc::new(Self {
             host,
             start_ns: clock.now_ns(),
             clock,
             model,
-            encoder: OpenAiRequestEncoder::default(),
+            request_encoder,
+            graph_encoder,
         })
     }
 
@@ -1434,7 +1493,7 @@ impl DynamoOfflineSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpDispatchResult> {
-        let tokens = self.encoder.encode(request)?;
+        let tokens = self.request_encoder.encode(request)?;
         self.dispatch_tokens(
             request.uuid,
             tokens,
@@ -1856,7 +1915,7 @@ struct TraceClientState {
     admitted: bool,
 }
 
-const OFFLINE_REPORT_DECIMAL_SCALE: f64 = 1_000_000_000.0;
+const OFFLINE_REPORT_DECIMAL_SCALE: f64 = 1_000_000.0;
 
 fn canonicalize_offline_float(value: &mut f64) {
     if !value.is_finite() {
@@ -2223,7 +2282,10 @@ impl GraphSink<GraphMessage> for DynamoGraphSink {
             .get(node_id)
             .copied()
             .unwrap_or_else(|| messages.len().max(1));
-        let tokens = self.backend.encoder.encode_wires(&messages, input_tokens)?;
+        let tokens = self
+            .backend
+            .graph_encoder
+            .encode_graph_messages(&messages, input_tokens)?;
         let output_tokens = max_tokens.unwrap_or(self.max_tokens).max(1);
         let now_ns = self.backend.clock.now_ns();
         self.native_metrics.register_metadata(
@@ -2820,6 +2882,7 @@ mod tests {
         events: RefCell<Vec<&'static str>>,
         admit_ms: Cell<Option<f64>>,
         tokens: Cell<usize>,
+        usage_prompt_tokens: Cell<Option<usize>>,
     }
 
     impl RequestObserver for RecordingObserver {
@@ -2843,7 +2906,8 @@ mod tests {
             self.events.borrow_mut().push("token");
         }
 
-        fn on_usage(&self, _uuid: Uuid, _usage: ObservedUsage) {
+        fn on_usage(&self, _uuid: Uuid, usage: ObservedUsage) {
+            self.usage_prompt_tokens.set(usage.prompt_tokens);
             self.events.borrow_mut().push("usage");
         }
 
@@ -2860,6 +2924,65 @@ mod tests {
             turns: 1,
             think_time_ms: None,
         }
+    }
+
+    struct RecordingEngineFactory<'a> {
+        called: &'a Cell<bool>,
+    }
+
+    impl OfflineEngineFactory for RecordingEngineFactory<'_> {
+        fn build(&self, config: &OfflineEngineConfig) -> Result<Box<dyn SteppableReplay>> {
+            self.called.set(true);
+            NativeDynamoEngineFactory.build(config)
+        }
+    }
+
+    struct FixedRequestEncoder;
+
+    impl OfflineRequestEncoder<HttpRequest> for FixedRequestEncoder {
+        fn encode(&self, _request: &HttpRequest) -> Result<Vec<u32>> {
+            Ok(vec![11, 22, 33])
+        }
+    }
+
+    impl OfflineGraphRequestEncoder for FixedRequestEncoder {
+        fn encode_graph_messages(&self, _wires: &[Bytes], requested: usize) -> Result<Vec<u32>> {
+            Ok(vec![7; requested])
+        }
+    }
+
+    #[test]
+    fn engine_and_request_encoding_are_injected_behind_traits() {
+        let clock = Rc::new(SimClock::new());
+        let called = Cell::new(false);
+        let factory = RecordingEngineFactory { called: &called };
+        let host =
+            EngineHost::new_with_factory(clock.clone(), &OfflineEngineConfig::default(), &factory)
+                .unwrap();
+        assert!(called.get());
+
+        let encoder = Rc::new(FixedRequestEncoder);
+        let sink = DynamoOfflineSink::new_with_encoders(
+            host.clone(),
+            clock.clone(),
+            "model".to_string(),
+            encoder.clone(),
+            encoder,
+        );
+        let observer = Rc::new(RecordingObserver::default());
+        let observer_for_body = observer.clone();
+        let source: Rc<dyn SimEventSource> = host;
+        let mut request = workload(1).make_request();
+        request.uuid = Uuid::from_u128(123);
+
+        let outcome = drive_sim_with_source(clock, source, move |_handle| async move {
+            sink.dispatch(request, observer_for_body.as_ref())
+                .await
+                .unwrap();
+        })
+        .unwrap();
+        assert!(!outcome.deadlocked);
+        assert_eq!(observer.usage_prompt_tokens.get(), Some(3));
     }
 
     #[test]
