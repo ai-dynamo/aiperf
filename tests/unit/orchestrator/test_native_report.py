@@ -246,6 +246,34 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
         },
         "errors": [],
     }
+    report["metrics"]["request_latency"]["series"][0]["timeslices"] = [
+        {
+            "start_ns": 0,
+            "end_ns": 1_000_000_000,
+            "complete": True,
+            "stats": {
+                "count": 1,
+                "avg": 10.0,
+                "min": 10.0,
+                "max": 10.0,
+                "std": 0.0,
+                "percentiles": {"p50": 10.0, "p99": 10.0},
+            },
+        },
+        {
+            "start_ns": 1_000_000_000,
+            "end_ns": 1_500_000_000,
+            "complete": False,
+            "stats": {
+                "count": 1,
+                "avg": 15.0,
+                "min": 15.0,
+                "max": 15.0,
+                "std": 0.0,
+                "percentiles": {"p50": 15.0, "p99": 15.0},
+            },
+        },
+    ]
     envelope = AIPerfConfig.model_validate(
         {
             "benchmark": {
@@ -257,7 +285,7 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
                     "requests": 2,
                     "concurrency": 1,
                 },
-                "artifacts": {"dir": str(tmp_path)},
+                "artifacts": {"dir": str(tmp_path), "slice_duration": 1.0},
                 "gpu_telemetry": {"enabled": False},
                 "server_metrics": {"enabled": False},
             }
@@ -311,6 +339,19 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
     assert "12.50" in csv
     assert "GPU Power Usage (W)" in csv
     assert "GPU-native" in csv
+    timeslices = orjson.loads(
+        (tmp_path / "profile_export_aiperf_timeslices.json").read_bytes()
+    )
+    assert [item["request_latency"]["avg"] for item in timeslices["timeslices"]] == [
+        10.0,
+        15.0,
+    ]
+    assert timeslices["timeslices"][1]["is_complete"] is False
+    assert (
+        "Request Latency"
+        in (tmp_path / "profile_export_aiperf_timeslices.csv").read_text()
+    )
+    assert (tmp_path / "profile_export_console.txt").exists()
     (tmp_path / "profile_export.jsonl").write_text("{}\n")
     from aiperf.plot.core.mode_detector import ModeDetector, VisualizationMode
 
@@ -321,6 +362,71 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
     native_path = tmp_path / "native-v2.json"
     native_path.write_bytes(orjson.dumps(report))
     assert load_native_report(native_path) == report
+
+
+def test_python_export_plugin_extensions_receive_native_results(
+    tmp_path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from aiperf.plugin.enums import PluginType
+
+    marker = tmp_path / "custom-extension.txt"
+
+    class CustomExporter:
+        def __init__(self, exporter_config) -> None:
+            assert exporter_config.run.benchmark_id == "plugin-proof"
+            assert exporter_config.results.records[0].tag == "request_count"
+
+        async def export(self) -> None:
+            marker.write_text("native results reached Python extension")
+
+        def get_export_info(self):
+            return SimpleNamespace(file_path=marker)
+
+    def iter_all(plugin_type):
+        if plugin_type == PluginType.DATA_EXPORTER:
+            return [(SimpleNamespace(name="custom-native-proof"), CustomExporter)]
+        return []
+
+    monkeypatch.setattr("aiperf.exporters.exporter_manager.plugins.iter_all", iter_all)
+    report = {
+        "schema_version": "2.0",
+        "aiperf_version": "0.0.0",
+        "run": {"mode": "online", "model": "mock-model"},
+        "summary": {"was_cancelled": False},
+        "metrics": {
+            "request_count": _entry("counter", "requests", {"total": 1.0, "rate": 1.0})
+        },
+        "errors": [],
+    }
+    envelope = AIPerfConfig.model_validate(
+        {
+            "benchmark": {
+                "models": ["mock-model"],
+                "endpoint": {"urls": ["http://127.0.0.1:8000"]},
+                "dataset": {"type": "synthetic"},
+                "profiling": {
+                    "type": "concurrency",
+                    "requests": 1,
+                    "concurrency": 1,
+                },
+                "artifacts": {"dir": str(tmp_path)},
+                "gpu_telemetry": {"enabled": False},
+                "server_metrics": {"enabled": False},
+            }
+        }
+    )
+    run = BenchmarkRun(
+        benchmark_id="plugin-proof",
+        cfg=envelope.benchmark,
+        artifact_dir=tmp_path,
+        label="plugin-proof",
+    )
+
+    export_python_compatibility_reports(report, project_native_summary(report), run)
+
+    assert marker.read_text() == "native results reached Python extension"
 
 
 def test_python_server_exporters_render_typed_native_server_series(tmp_path) -> None:

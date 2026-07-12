@@ -115,12 +115,13 @@ def export_python_compatibility_reports(
     only serializes those values into the established Config-v2 report files so
     plotters and upload extensions keep working during the native transition.
     """
-    from aiperf.common.models import MetricResult, ProfileResults
+    import asyncio
+
+    from rich.console import Console
+
+    from aiperf.common.models import ProfileResults
     from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
-    from aiperf.exporters.exporter_config import ExporterConfig
-    from aiperf.exporters.metrics_csv_exporter import MetricsCsvExporter
-    from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
-    from aiperf.metrics.metric_registry import MetricRegistry
+    from aiperf.exporters.exporter_manager import ExporterManager
 
     native_summary = _mapping(payload.get("summary"), "native report summary")
     warmup_authored = payload.get("warmup_metrics")
@@ -129,14 +130,6 @@ def export_python_compatibility_reports(
         if warmup_authored is not None
         else {}
     )
-
-    def metric_result(tag: str, value: JsonMetricResult) -> MetricResult:
-        metric_class = MetricRegistry.get_class_or_none(tag)
-        return MetricResult(
-            tag=tag,
-            header=metric_class.header if metric_class is not None else tag,
-            **value.model_dump(),
-        )
 
     successful = _counter_value(summary_metrics.get("request_count"))
     failed = _counter_value(summary_metrics.get("error_request_count"))
@@ -155,11 +148,12 @@ def export_python_compatibility_reports(
             )
         )
     results = ProfileResults(
-        records=[metric_result(tag, value) for tag, value in summary_metrics.items()],
+        records=[_metric_result(tag, value) for tag, value in summary_metrics.items()],
         warmup_records=[
-            metric_result(tag, value) for tag, value in warmup_metrics.items()
+            _metric_result(tag, value) for tag, value in warmup_metrics.items()
         ]
         or None,
+        timeslices=_project_native_timeslices(payload),
         completed=successful + failed,
         start_ns=0,
         end_ns=0,
@@ -170,37 +164,80 @@ def export_python_compatibility_reports(
     )
     telemetry_results = _project_gpu_telemetry(payload, native_summary)
     server_metrics_results = _project_server_metrics(payload, native_summary, run)
-    exporter_config = ExporterConfig(
-        results=results,
-        cfg=run.cfg,
-        telemetry_results=telemetry_results,
-        server_metrics_results=server_metrics_results,
-        run=run,
-    )
-
-    exporters = [MetricsCsvExporter(exporter_config)]
-    authored_summary = run.cfg.artifacts.summary
-    if authored_summary is not False and "json" in authored_summary:
-        exporters.append(MetricsJsonExporter(exporter_config))
-    for exporter in exporters:
-        destination = exporter.get_export_info().file_path
-        _atomic_write_text(destination, exporter.render())
-
     if server_metrics_results is not None:
-        from aiperf.server_metrics.csv_exporter import ServerMetricsCsvExporter
-        from aiperf.server_metrics.json_exporter import ServerMetricsJsonExporter
-
         formats = {str(value) for value in run.cfg.server_metrics.formats}
-        server_exporters = []
-        if "json" in formats:
-            server_exporters.append(ServerMetricsJsonExporter(exporter_config))
-        if "csv" in formats:
-            server_exporters.append(ServerMetricsCsvExporter(exporter_config))
-        for exporter in server_exporters:
-            destination = exporter.get_export_info().file_path
-            _atomic_write_text(destination, exporter.render())
         if "parquet" in formats:
             _render_server_metrics_parquet(run, server_metrics_results)
+
+    manager = ExporterManager(
+        results=results,
+        run=run,
+        telemetry_results=telemetry_results,
+        server_metrics_results=server_metrics_results,
+    )
+    asyncio.run(manager.export_data())
+    asyncio.run(manager.export_console(Console()))
+
+
+def _metric_result(tag: str, value: JsonMetricResult) -> Any:
+    """Build the canonical Python metric model without changing native values."""
+    from aiperf.common.models import MetricResult
+    from aiperf.metrics.metric_registry import MetricRegistry
+
+    metric_class = MetricRegistry.get_class_or_none(tag)
+    return MetricResult(
+        tag=tag,
+        header=metric_class.header if metric_class is not None else tag,
+        **value.model_dump(),
+    )
+
+
+def _project_native_timeslices(payload: dict[str, Any]) -> list[Any] | None:
+    """Align native per-metric slices into Python's canonical slice records."""
+    from aiperf.common.models.record_models import TimesliceResult
+
+    metrics = _mapping(payload.get("metrics"), "native report metrics")
+    grouped: dict[tuple[int, int, bool], dict[str, Any]] = {}
+    for name, authored_entry in metrics.items():
+        entry = _mapping(authored_entry, f"metric {name!r}")
+        series = _summary_series(entry, name)
+        if series is None:
+            continue
+        unit = entry.get("unit")
+        metric_type = entry.get("type")
+        if not isinstance(unit, str):
+            raise NativeReportError(f"metric {name!r} unit must be a string")
+        authored_timeslices = series.get("timeslices", [])
+        if not isinstance(authored_timeslices, list):
+            raise NativeReportError(f"metric {name!r} timeslices must be an array")
+        for index, authored_slice in enumerate(authored_timeslices):
+            timeslice = _mapping(authored_slice, f"metric {name!r} timeslice[{index}]")
+            start_ns = _required_int(timeslice.get("start_ns"), name, "start_ns")
+            end_ns = _required_int(timeslice.get("end_ns"), name, "end_ns")
+            complete = timeslice.get("complete")
+            if not isinstance(complete, bool):
+                raise NativeReportError(
+                    f"metric {name!r} timeslice complete must be a boolean"
+                )
+            stats = _mapping(timeslice.get("stats"), f"metric {name!r} timeslice stats")
+            values = JsonMetricResult(
+                unit=unit,
+                **_legacy_stats(metric_type, stats, name),
+            )
+            grouped.setdefault((start_ns, end_ns, complete), {})[name] = _metric_result(
+                name, values
+            )
+    if not grouped:
+        return None
+    return [
+        TimesliceResult(
+            start_ns=start_ns,
+            end_ns=end_ns,
+            is_complete=None if complete else False,
+            metric_results=metrics,
+        )
+        for (start_ns, end_ns, complete), metrics in sorted(grouped.items())
+    ]
 
 
 def _project_server_metrics(
@@ -667,20 +704,6 @@ def _project_gpu_telemetry(
         endpoints=endpoints,
         error_summary=None,
     )
-
-
-def _atomic_write_text(path: Path, content: str) -> None:
-    """Commit one rendered compatibility report without a partial-file window."""
-    import os
-    from uuid import uuid4
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    try:
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _counter_value(metric: JsonMetricResult | None) -> int:
