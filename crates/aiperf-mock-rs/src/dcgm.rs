@@ -489,12 +489,12 @@ mod tests {
 
     fn extract_metric(text: &str, name: &str) -> Option<f64> {
         for line in text.lines() {
-            if line.starts_with(name) && line.contains('{') {
-                if let Some(value) = line.split_whitespace().last() {
-                    if let Ok(v) = value.parse::<f64>() {
-                        return Some(v);
-                    }
-                }
+            if line.starts_with(name)
+                && line.contains('{')
+                && let Some(value) = line.split_whitespace().last()
+                && let Ok(v) = value.parse::<f64>()
+            {
+                return Some(v);
             }
         }
         None

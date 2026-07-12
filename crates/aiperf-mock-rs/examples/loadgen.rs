@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
     let total_tokens = total_tokens.load(Ordering::Relaxed);
     let sum_us = total_latency_us.load(Ordering::Relaxed);
     let max_us = max_latency_us.load(Ordering::Relaxed);
-    let avg_us = if completed > 0 { sum_us / completed } else { 0 };
+    let avg_us = sum_us.checked_div(completed).unwrap_or(0);
 
     println!("elapsed: {:.3}s", elapsed.as_secs_f64());
     println!(

@@ -174,7 +174,8 @@ impl BatchScheduler {
         }
         // Fraction of prefill still required after cache reuse (in (0, 1]).
         let uncached = if prompt_tokens > 0 {
-            (prompt_tokens.saturating_sub(cached_tokens) as f64 / prompt_tokens as f64).clamp(0.0, 1.0)
+            (prompt_tokens.saturating_sub(cached_tokens) as f64 / prompt_tokens as f64)
+                .clamp(0.0, 1.0)
         } else {
             1.0
         };

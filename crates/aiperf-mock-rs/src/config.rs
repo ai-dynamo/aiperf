@@ -31,17 +31,17 @@ pub struct MockServerConfig {
     /// cost that scales with prompt length (e.g. 0.05 ~= 50ms per 1k input
     /// tokens). Default 0.0 keeps TTFT a flat constant. Name matches the
     /// Python mock server's knob.
-    #[arg(
-        long,
-        env = "MOCK_SERVER_TTFT_PER_ISL_TOKEN_MS",
-        default_value_t = 0.0
-    )]
+    #[arg(long, env = "MOCK_SERVER_TTFT_PER_ISL_TOKEN_MS", default_value_t = 0.0)]
     pub ttft_per_isl_token_ms: f64,
 
     /// TTFT concurrency penalty (ms): `ttft_ms += ttft_concurrency_quad_ms *
     /// active_inflight^2`, modeling prefill contention that grows super-linearly
     /// with load. Analytic mode only (ignored when the scheduler is enabled).
-    #[arg(long, env = "MOCK_SERVER_TTFT_CONCURRENCY_QUAD_MS", default_value_t = 0.0)]
+    #[arg(
+        long,
+        env = "MOCK_SERVER_TTFT_CONCURRENCY_QUAD_MS",
+        default_value_t = 0.0
+    )]
     pub ttft_concurrency_quad_ms: f64,
 
     /// Per-OSL-token ITL scaling (ms): `itl_ms += itl_per_osl_token_ms *
@@ -51,7 +51,11 @@ pub struct MockServerConfig {
 
     /// Concurrency-linear ITL penalty (ms): `itl_ms += itl_concurrency_lin_ms *
     /// active_inflight`. Analytic mode only.
-    #[arg(long, env = "MOCK_SERVER_ITL_CONCURRENCY_LIN_MS", default_value_t = 0.0)]
+    #[arg(
+        long,
+        env = "MOCK_SERVER_ITL_CONCURRENCY_LIN_MS",
+        default_value_t = 0.0
+    )]
     pub itl_concurrency_lin_ms: f64,
 
     /// Lognormal TTFT jitter coefficient of variation (stddev/mean). 0 = none.
@@ -76,7 +80,11 @@ pub struct MockServerConfig {
 
     /// Maximum concurrent decoders served per step (the effective batch size);
     /// the saturation knee lands at concurrency ~= this value.
-    #[arg(long, env = "MOCK_SERVER_SCHEDULER_MAX_BATCH_SIZE", default_value_t = 256)]
+    #[arg(
+        long,
+        env = "MOCK_SERVER_SCHEDULER_MAX_BATCH_SIZE",
+        default_value_t = 256
+    )]
     pub scheduler_max_batch_size: usize,
 
     /// Maximum prefill chunks admitted per step. Lower = prefill becomes the
@@ -97,7 +105,7 @@ pub struct MockServerConfig {
     pub scheduler_prefill_chunk_tokens: usize,
 
     /// Fixed prefill chunks per request, overriding the ISL-derived count when
-    /// > 0. Use this to make TTFT (queue wait) independent of prompt length —
+    /// positive. Use this to make TTFT (queue wait) independent of prompt length —
     /// matching servers where TTFT is dominated by scheduling/queueing rather
     /// than raw prefill compute. 0 = derive from ISL and chunk size.
     #[arg(
@@ -233,11 +241,7 @@ pub struct MockServerConfig {
     /// Override: force this fraction (0..1) of every prompt to be served from
     /// cache, bypassing content addressing. Use to study a target hit rate on
     /// workloads without natural prefix sharing. 0 = content-addressed matching.
-    #[arg(
-        long,
-        env = "MOCK_SERVER_PREFIX_CACHE_HIT_RATE",
-        default_value_t = 0.0
-    )]
+    #[arg(long, env = "MOCK_SERVER_PREFIX_CACHE_HIT_RATE", default_value_t = 0.0)]
     pub prefix_cache_hit_rate: f64,
 
     /// Let prefix-cache hits reduce prefill work (and thus TTFT). OFF by default:

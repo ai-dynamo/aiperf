@@ -37,14 +37,15 @@ pub struct ErrorRng {
 
 impl ErrorRng {
     /// Build the error-injection RNG. When a root seed is provided, the
-    /// actual seed used is `derive_child_seed(root, "mock.errors")` — the
-    /// same namespaced hierarchy used by `aiperf-common::rng`. When `None`,
-    /// we seed from OS entropy.
+    /// actual seed is derived from the canonical `mock.errors` namespace.
+    /// When `None`, we seed from OS entropy.
     pub fn new(seed: Option<u64>) -> Self {
         use rand::SeedableRng;
         let rng = match seed {
             Some(root) => rand::rngs::SmallRng::seed_from_u64(
-                aiperf_common::rng::derive_child_seed(root, "mock.errors"),
+                aiperf_rng::RngRoot::new(Some(root))
+                    .derive_seed(aiperf_rng::namespace::MOCK_ERRORS)
+                    .expect("a seeded RNG root always derives a seed"),
             ),
             None => rand::rngs::SmallRng::from_entropy(),
         };
@@ -102,16 +103,17 @@ impl AppState {
     fn build_dcgm_pool(config: &MockServerConfig) -> DcgmPool {
         // Resolve per-faker DCGM seeds:
         // - Explicit `--dcgm-seed` wins (legacy behavior: seed + faker_idx).
-        // - Otherwise derive from `--random-seed` via the rng engine under
-        //   `"mock.dcgm.<idx>"`. This keeps all mock-server RNGs under a
+        // - Otherwise derive from `--random-seed` via the RNG engine under
+        //   the indexed `"mock.dcgm"` namespace. This keeps all mock-server RNGs under a
         //   single reproducibility root.
         let faker_seed = |idx: u64| -> Option<u64> {
             if let Some(s) = config.dcgm_seed {
                 Some(s + idx)
             } else {
-                config
-                    .random_seed
-                    .map(|root| aiperf_common::rng::derive_child_seed(root, &format!("mock.dcgm.{idx}")))
+                config.random_seed.and_then(|root| {
+                    aiperf_rng::RngRoot::new(Some(root))
+                        .derive_indexed_seed(aiperf_rng::namespace::MOCK_DCGM, idx)
+                })
             }
         };
         // Two fakers by default - matches Python behavior.

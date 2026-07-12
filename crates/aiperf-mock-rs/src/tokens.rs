@@ -303,12 +303,11 @@ fn extract_chat_text(messages: &[crate::models::Message]) -> String {
             Value::String(s) => parts.push(s.clone()),
             Value::Array(items) => {
                 for item in items {
-                    if let Some(obj) = item.as_object() {
-                        if obj.get("type").and_then(Value::as_str) == Some("text") {
-                            if let Some(t) = obj.get("text").and_then(Value::as_str) {
-                                parts.push(t.to_string());
-                            }
-                        }
+                    if let Some(obj) = item.as_object()
+                        && obj.get("type").and_then(Value::as_str) == Some("text")
+                        && let Some(t) = obj.get("text").and_then(Value::as_str)
+                    {
+                        parts.push(t.to_string());
                     }
                 }
             }

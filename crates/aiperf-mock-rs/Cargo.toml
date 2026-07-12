@@ -1,10 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 name = "aiperf-mock-rs"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
-repository.workspace = true
+description = "High-throughput OpenAI-compatible mock inference server for AIPerf integration tests and benchmarks."
 
 [[bin]]
 name = "aiperf-mock-rs"
@@ -14,23 +16,20 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-aiperf-common = { workspace = true }
+aiperf-rng.workspace = true
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = { workspace = true }
-clap = { workspace = true }
-parking_lot = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
+parking_lot = "0.12"
 futures = { workspace = true }
-async-trait = { workspace = true }
 bytes = { workspace = true }
-axum = { version = "0.7", features = ["macros"] }
+axum = { workspace = true, features = ["macros"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["trace"] }
-hyper = { workspace = true, features = ["server", "http1", "http2"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"] }
 base64 = "0.22"
 blake2 = "0.10"
@@ -43,16 +42,12 @@ async-stream = "0.3"
 dashmap = "6"
 socket2 = { version = "0.5", features = ["all"] }
 num_cpus = "1"
-itoa = "1"
-smallvec = "1"
+itoa.workspace = true
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-rstest = { workspace = true }
-reqwest = { workspace = true, features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 futures = { workspace = true }
-anyhow = { workspace = true }
 
 [[example]]
 name = "loadgen"

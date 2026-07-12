@@ -84,9 +84,7 @@ impl BlockMeta {
             EvictionPolicy::Mru => (-la, 0, 0),
             EvictionPolicy::Filo => (-cr, 0, 0),
             EvictionPolicy::Priority => (self.priority, la, 0),
-            EvictionPolicy::Slru => {
-                ((self.hit_count >= SLRU_PROTECTED_THRESHOLD) as i64, la, 0)
-            }
+            EvictionPolicy::Slru => ((self.hit_count >= SLRU_PROTECTED_THRESHOLD) as i64, la, 0),
         }
     }
 }
@@ -253,9 +251,11 @@ mod tests {
     use super::*;
 
     fn cache(block_tokens: usize, capacity: usize) -> PrefixCache {
-        let mut cfg = MockServerConfig::default(); // prefix cache on by default
-        cfg.prefix_cache_block_tokens = block_tokens;
-        cfg.prefix_cache_capacity_blocks = capacity;
+        let cfg = MockServerConfig {
+            prefix_cache_block_tokens: block_tokens,
+            prefix_cache_capacity_blocks: capacity,
+            ..MockServerConfig::default()
+        }; // prefix cache on by default
         PrefixCache::from_config(&cfg).unwrap()
     }
 
@@ -267,7 +267,10 @@ mod tests {
         assert_eq!(pc.cached_tokens(text, 64, 0), 0);
         // Exact repeat: almost everything cached (all but the final block of work).
         let again = pc.cached_tokens(text, 64, 0);
-        assert!(again >= 60 && again < 64, "warm repeat should be near-full, got {again}");
+        assert!(
+            (60..64).contains(&again),
+            "warm repeat should be near-full, got {again}"
+        );
     }
 
     #[test]
@@ -277,7 +280,11 @@ mod tests {
         pc.cached_tokens(&format!("{shared}question one about apples"), 80, 0);
         // A different request reusing the same leading prefix hits on the prefix
         // only — not on its unique tail.
-        let cached = pc.cached_tokens(&format!("{shared}a totally different unique tail here"), 80, 0);
+        let cached = pc.cached_tokens(
+            &format!("{shared}a totally different unique tail here"),
+            80,
+            0,
+        );
         assert!(cached > 0, "shared prefix should hit");
         assert!(cached < 80, "unique tail must not be cached");
     }
@@ -285,8 +292,14 @@ mod tests {
     #[test]
     fn unique_prompts_never_hit() {
         let pc = cache(4, 10_000);
-        assert_eq!(pc.cached_tokens("alpha beta gamma delta epsilon zeta", 48, 0), 0);
-        assert_eq!(pc.cached_tokens("completely different words here now ok", 48, 0), 0);
+        assert_eq!(
+            pc.cached_tokens("alpha beta gamma delta epsilon zeta", 48, 0),
+            0
+        );
+        assert_eq!(
+            pc.cached_tokens("completely different words here now ok", 48, 0),
+            0
+        );
     }
 
     #[test]
@@ -298,13 +311,19 @@ mod tests {
         for i in 0..50 {
             pc.cached_tokens(&format!("flood traffic number {i} xxxx yyyy"), 64, 0);
         }
-        assert_eq!(pc.cached_tokens(a, 64, 0), 0, "evicted prefix should be cold again");
+        assert_eq!(
+            pc.cached_tokens(a, 64, 0),
+            0,
+            "evicted prefix should be cold again"
+        );
     }
 
     #[test]
     fn hit_rate_override_forces_fraction_without_content() {
-        let mut cfg = MockServerConfig::default();
-        cfg.prefix_cache_hit_rate = 0.6;
+        let cfg = MockServerConfig {
+            prefix_cache_hit_rate: 0.6,
+            ..MockServerConfig::default()
+        };
         let pc = PrefixCache::from_config(&cfg).unwrap();
         // 60% of 100 tokens cached, regardless of (unique) content.
         assert_eq!(pc.cached_tokens("anything at all goes here", 100, 0), 60);

@@ -262,13 +262,7 @@ pub async fn chat_completions(
     let start = Instant::now();
     state.recorder.init_model_config(&req.model);
     let req_gen = GenRequest::Chat(&req);
-    let ctx = RequestCtx::build(
-        "chatcmpl",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
 
     if req.stream {
         state.recorder.record_streaming_start(endpoint, &ctx.model);
@@ -347,13 +341,7 @@ pub async fn text_completions(
     let start = Instant::now();
     state.recorder.init_model_config(&req.model);
     let req_gen = GenRequest::Completion(&req);
-    let ctx = RequestCtx::build(
-        "cmpl",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("cmpl", &req_gen, endpoint, start, &state);
 
     if req.stream {
         state.recorder.record_streaming_start(endpoint, &ctx.model);
@@ -424,13 +412,7 @@ pub async fn embeddings(
     let endpoint = "/v1/embeddings";
     let start = Instant::now();
     let req_gen = GenRequest::Embedding(&req);
-    let ctx = RequestCtx::build(
-        "emb",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("emb", &req_gen, endpoint, start, &state);
     let inputs = req.inputs();
 
     state.recorder.record_request_start(endpoint, &req.model);
@@ -783,13 +765,7 @@ pub async fn custom_multimodal(
         priority: None,
     };
     let req_gen = GenRequest::Chat(&mock_req);
-    let ctx = RequestCtx::build(
-        "chatcmpl",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
 
     state.recorder.record_request_start(endpoint, &model_id);
     state.recorder.record_llm_inflight_start(&model_id);
@@ -850,13 +826,7 @@ pub async fn tgi_generate(
     let endpoint = "/generate";
     let start = Instant::now();
     let req_gen = GenRequest::TGI(&req);
-    let ctx = RequestCtx::build(
-        "cmpl",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("cmpl", &req_gen, endpoint, start, &state);
 
     state.recorder.record_request_start(endpoint, &ctx.model);
     let _ = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
@@ -879,13 +849,7 @@ pub async fn tgi_generate_stream(
     let endpoint = "/generate_stream";
     let start = Instant::now();
     let req_gen = GenRequest::TGI(&req);
-    let ctx = RequestCtx::build(
-        "cmpl",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("cmpl", &req_gen, endpoint, start, &state);
 
     state.recorder.record_streaming_start(endpoint, &ctx.model);
     let body = tgi_stream(state.clone(), ctx, endpoint.to_string());
@@ -954,13 +918,7 @@ pub async fn image_generation(
         priority: None,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
-    let ctx = RequestCtx::build(
-        "img",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("img", &req_gen, endpoint, start, &state);
 
     if req.stream {
         state.recorder.record_streaming_start(endpoint, &ctx.model);
@@ -1047,13 +1005,7 @@ pub async fn solido_rag(
         priority: None,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
-    let ctx = RequestCtx::build(
-        "rag",
-        &req_gen,
-        endpoint,
-        start,
-        &state,
-    );
+    let ctx = RequestCtx::build("rag", &req_gen, endpoint, start, &state);
 
     state
         .recorder

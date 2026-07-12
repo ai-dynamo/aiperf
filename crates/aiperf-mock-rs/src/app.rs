@@ -19,7 +19,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(handlers::health))
         // OpenAI-compatible model listing.
         .route("/v1/models", get(handlers::list_models))
-        .route("/v1/models/:id", get(handlers::get_model))
+        .route("/v1/models/{id}", get(handlers::get_model))
         // LLM endpoints
         .route("/v1/chat/completions", post(handlers::chat_completions))
         .route("/v1/completions", post(handlers::text_completions))

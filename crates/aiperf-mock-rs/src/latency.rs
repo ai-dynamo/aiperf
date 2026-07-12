@@ -110,10 +110,9 @@ impl LatencySimulator {
         // ITL jitter is applied once per request here (the Python model
         // resamples per token); identical unless itl_jitter_cv is set with the
         // scheduler off, and it preserves the lock-free cumulative-target design.
-        let itl_ms = (cfg.itl
-            + cfg.itl_per_osl_token_ms * osl as f64
-            + cfg.itl_concurrency_lin_ms * active)
-            * lognormal_jitter(&mut rng, cfg.itl_jitter_cv);
+        let itl_ms =
+            (cfg.itl + cfg.itl_per_osl_token_ms * osl as f64 + cfg.itl_concurrency_lin_ms * active)
+                * lognormal_jitter(&mut rng, cfg.itl_jitter_cv);
 
         Self {
             start,
@@ -143,9 +142,15 @@ impl LatencySimulator {
         if let Some(sched) = &self.sched {
             if index == 0 {
                 sched
-                    .run_prefill(&self.request_key, self.isl.max(1), self.cached_tokens, self.seed)
+                    .run_prefill(
+                        &self.request_key,
+                        self.isl.max(1),
+                        self.cached_tokens,
+                        self.seed,
+                    )
                     .await;
-                self.sleep_jitter_extra(self.ttft_base_ms, self.ttft_cv, 0).await;
+                self.sleep_jitter_extra(self.ttft_base_ms, self.ttft_cv, 0)
+                    .await;
             } else {
                 sched.next_decode_step(&self.request_key).await;
                 self.sleep_jitter_extra(self.itl_base_ms, self.itl_cv, index as u64)
@@ -169,9 +174,15 @@ impl LatencySimulator {
     pub async fn wait_for_tokens(&self, num_tokens: usize) -> (Duration, Duration) {
         if let Some(sched) = &self.sched {
             sched
-                .run_prefill(&self.request_key, self.isl.max(1), self.cached_tokens, self.seed)
+                .run_prefill(
+                    &self.request_key,
+                    self.isl.max(1),
+                    self.cached_tokens,
+                    self.seed,
+                )
                 .await;
-            self.sleep_jitter_extra(self.ttft_base_ms, self.ttft_cv, 0).await;
+            self.sleep_jitter_extra(self.ttft_base_ms, self.ttft_cv, 0)
+                .await;
             let measured_ttft = Instant::now().saturating_duration_since(self.start);
             for i in 0..num_tokens {
                 sched.next_decode_step(&self.request_key).await;
