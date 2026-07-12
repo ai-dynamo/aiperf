@@ -1,0 +1,31 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Durable telemetry archive foundations.
+//!
+//! This crate owns the byte and durability authorities shared by future
+//! archive writers. It deliberately has no Arrow, Parquet, metrics, telemetry
+//! source, runner, or object-store SDK dependency. Physical table writers and
+//! provider adapters consume these types rather than defining competing frame,
+//! manifest, receipt, or content-addressing rules.
+
+pub mod canonical_json;
+pub mod descriptor;
+pub mod digest;
+pub mod evidence;
+pub mod identity;
+pub mod time;
+
+pub use canonical_json::{CanonicalJsonError, CanonicalJsonValue};
+pub use descriptor::{CanonicalDescriptor, DescriptorError};
+pub use digest::{Digest, DigestError, domain_digest};
+pub use evidence::{
+    CanonicalLogicalRow, LogicalField, LogicalRowError, LogicalSchema, LogicalType, LogicalValue,
+    ProjectionEvidence, RequiredProjection, TableId,
+};
+pub use identity::{
+    ArchiveId, BatchId, ExactLossBatchInput, FrameId, FrameIdentityError, FrameIdentityV1,
+    LifecycleBatchInput, ProjectionReservationId, ReservationKind, SaturationBatchInput, SessionId,
+    SourceOutcome, TerminalKind,
+};
+pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};

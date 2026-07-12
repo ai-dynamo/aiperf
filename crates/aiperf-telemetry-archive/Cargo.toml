@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-telemetry-archive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Durable telemetry archive identities, WAL, manifests, recovery, and store seams for AIPerf."
+
+[dependencies]
+aiperf-clock.workspace = true
+async-trait.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+libc.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio.workspace = true

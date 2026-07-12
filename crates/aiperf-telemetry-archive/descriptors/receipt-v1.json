@@ -1,0 +1,1 @@
+{"batch_limits":{"bytes":1048576,"records":1024},"event_key":"03-target-id-receipt-seq-event-id","name":"receipt-v1","observer_epoch_key":"01-observer-epoch-id","target_key":"02-kind-session-first-seq-generation-target-id","version":1}

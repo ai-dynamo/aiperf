@@ -1,0 +1,1 @@
+{"borrow":"left-then-right","entry_bounds":{"max":256,"min_non_root":128},"insert_split":"128-left-129-right","merge":"left-when-present-else-right","mutation_order":"ascending-removals-then-ascending-additions","name":"index-v1","page_limit_bytes":1048576,"version":1}
