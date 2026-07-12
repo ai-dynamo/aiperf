@@ -450,6 +450,15 @@ pub trait NativeProjection<NativeEntity, Record>: Debug + Send + Sync {
     fn project(&self, entity: &NativeEntity) -> Result<Option<Record>, NativeProjectionError>;
 }
 
+pub trait InfoLabelPartitionPolicy: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static InfoLabelPartitionDescriptor;
+    fn partition(
+        &self,
+        family: &str,
+        wire_merged_labels: &StringMap,
+    ) -> Result<InfoLabelPartition, InfoLabelPartitionError>;
+}
+
 pub trait ArchiveProjection<ArchiveEntity, NativeEntity>: Debug + Send + Sync {
     fn project(
         &self,
@@ -1091,13 +1100,21 @@ source. Table partitions are homogeneous in session and source; a builder rotate
 changes, so plural `source_ids` never choose a key. Every frame header carries
 `authoritative_frame_clock_ns` selected by this closed matrix: successful/empty scrape uses required
 `capture_ns`; every HTTP/transport/timeout/parse/unsupported/disabled/shutdown attempt uses required
-`outcome_observed_ns`; lifecycle-only frames use marker `clock_ns`; loss frames use required
-`loss_observed_ns`; topology/raw-reference projections sharing a scrape frame inherit that scrape
-value. The attempt role matrix requires capture for success/empty and a non-null terminal outcome
-observation for every outcome. A one-frame coverage entry has equal min/max at this header value;
-partition min/max reduce only those header values. Coverage and clockless family/raw-reference rows
-use that value. Signed Clock value `t` sorts as `u64_be((t as u64) XOR 0x8000000000000000)`; the raw
-none sentinel is all zero and is unambiguous under its object kind.
+`outcome_observed_ns`; a lifecycle-only frame contains exactly one marker and uses its `clock_ns`;
+a loss frame contains exactly one exact-range or saturation-snapshot row and uses its required
+`loss_observed_ns`. A coalesced range is one row, never a multi-row frame. Every sample row in a
+scrape frame has `clock_ns == authoritative_frame_clock_ns`. A topology marker may share that
+scrape frame only with `marker.clock_ns == authoritative_frame_clock_ns`; otherwise it becomes its
+own lifecycle-only frame. Raw-reference/family rows are clockless and inherit the frame value only
+for coverage. No frame may contain two authoritative row-time values.
+
+The attempt role matrix requires capture for success/empty and a non-null terminal outcome
+observation for every outcome. Because the row-time invariant is closed, a one-frame coverage entry
+has equal min/max at the header value and partition min/max may reduce those header values without
+false-negative pruning. Transport sub-timestamps remain facts inside an attempt, not alternative
+row-time keys. Signed Clock value `t` sorts as
+`u64_be((t as u64) XOR 0x8000000000000000)`; the raw none sentinel is all zero and is unambiguous
+under its object kind.
 
 A leaf stores sorted partition, raw-object, raw-nonce-reservation, or projection-coverage
 descriptors. A root leaf stores
@@ -1113,6 +1130,21 @@ empty root becomes the canonical empty leaf. Separators and aggregate pruning su
 from child contents after every borrow/merge. Pages are at most 1 MiB;
 validated source/cardinality limits make 256-entry worst cases fit. The root descriptor carries
 height, logical entry count, and the same aggregate pruning summary.
+
+Every multi-key generation uses canonical `IndexMutationSetV1`, not authored operation order.
+Validation rejects duplicate removal keys, duplicate addition keys, two different descriptors for
+one key, a missing removal target/hash, and an addition that collides with an existing unequal
+descriptor. A key present in both sets is an explicit replacement only when its removal names the
+exact parent descriptor hash and its object kind permits replacement; append-only raw-nonce
+reservations never do. An exact already-present addition is an idempotent no-op only during
+recovery of that same transaction.
+
+The writer sorts all validated removals by composite key and applies them in ascending order,
+including every borrow/merge, then sorts all additions/replacements and applies them in ascending
+order, including every split. Generation mutation arrays are serialized in that same removals-then-
+additions order. Thus one logical mutation set has one page shape/root hash regardless of caller
+permutation. Independent fixtures permute mixed removal/replacement/addition sets around leaf and
+internal underflow/overflow boundaries and require byte-identical pages and roots.
 
 Partition descriptors contain table, key, physical content hash/bytes/rows, min/max Clock time,
 one source/global sentinel, schema fingerprint, and per-projection evidence:
@@ -1233,6 +1265,9 @@ with multiple points therefore produce multiple rows:
 | `semantic_type` | `Enum8` | no |
 | `source_series_key`, `series_key` | `Digest` | no |
 | `labels`, `attributes` | `StringMap` | no |
+| `wire_merged_info_labels` | `StringMap` | yes |
+| `info_label_partition_status` | `Enum8` | no |
+| `info_label_partition_policy_id` | `Utf8` | yes |
 | `attribute_epoch_id` | `Digest` | no |
 | `point_time_status` | `Enum8` | no |
 | `source_timestamp` | `SourceTimestamp` | no |
@@ -1243,11 +1278,12 @@ with multiple points therefore produce multiple rows:
 `gauge_histogram`, or `summary`. `payload` is a non-null struct with nullable branches
 `scalar`, `counter`, `stateset`, `info`, `histogram`, and `summary`; validation requires exactly
 the branch selected by `semantic_type` (unknown/gauge use scalar, gauge-histogram uses histogram).
-Branches use only `ArchiveNumber`, `StringMap`, lists, and these exact child structs:
+Branches use only `ArchiveNumber`, `StringMap`, `Utf8`, lists, and these exact child structs:
 
 - counter: `total`, `created: CreatedTimestamp`, and scalar exemplar;
 - stateset: ordered list of `{state: Utf8, enabled: ArchiveNumber}`;
-- info: its point label map;
+- info: `wire_merged_labels`, nullable `partitioned_metric_labels`, nullable
+  `partitioned_value_labels`, and nullable `partition_policy_id`;
 - histogram/gauge-histogram: `sum`, `count`, `count_origin: Enum8`,
   `created: CreatedTimestamp`, and ordered buckets of
   `{upper_bound_lexeme: Utf8, upper_bound: ArchiveNumber, cumulative_count: ArchiveNumber,
@@ -1260,9 +1296,11 @@ The checked-in per-format/per-role projection matrix is normative, not merely pa
 - `wire_samples` is the exact emitted source-order evidence. Payload children copy the exact
   `ArchiveNumber`/Created/exemplar from their assigned role unless the matrix explicitly names a
   derivation; payload never becomes evidence that a wire line existed.
-- Point identity removes only that format/role's declared component label (`le`, `quantile`, state,
-  or info value label); every other label must match exactly across components. Component-specific
-  labels remain on `wire_samples`. Ambiguous groups or duplicate semantic roles reject atomically.
+- Point identity removes only that format/role's wire-distinguishable component label (`le`,
+  `quantile`, or state); every other label must match exactly across components. Text Info has no
+  wire-distinguishable value-label partition, so no Info label is removed from identity.
+  Component-specific labels remain on `wire_samples`. Ambiguous groups or duplicate semantic roles
+  reject atomically.
 - Unknown/gauge scalar and counter total come from their emitted primary sample. Counter Created is
   present only when the semantic Created role was emitted. A scalar/counter exemplar remains owned
   by its exact primary wire sample.
@@ -1275,8 +1313,23 @@ The checked-in per-format/per-role projection matrix is normative, not merely pa
   remain on the exact bucket.
 - Summary sum/count copy their emitted roles; quantiles sort by exact numeric value with source
   order as the tie-breaker, retain lexemes, and reject duplicate numeric quantiles. State-set
-  entries retain source order after role-label extraction; info payload retains the exact declared
-  info-value label map.
+  entries retain source order after role-label extraction.
+
+Prometheus/OpenMetrics text serializes a Metric LabelSet and an Info value LabelSet as one merged
+brace label set; the abstract partition in the
+[OpenMetrics Info model](https://github.com/prometheus/OpenMetrics/blob/main/specification/OpenMetrics.md#info)
+is not recoverable from those bytes. Therefore every text Info point requires value exactly `1`,
+uses the complete merged wire label map for `labels`, `source_series_key`, and `series_key`, copies
+it to `wire_merged_info_labels` and `payload.info.wire_merged_labels`, and sets
+`info_label_partition_status=unavailable_from_text` with null partition maps/policy ID. The shipped
+`UnavailableTextInfoPartition` is the default concrete `InfoLabelPartitionPolicy`.
+
+A future named policy may provide an analytical split only when its descriptor/config and exact
+family mapping are secret-free genesis identity. Then status is `policy_applied`, policy ID and both
+partition maps are non-null, disjoint, and their union equals the merged map. Even then the merged
+map remains source identity; a policy cannot merge wire-distinct Info series. Non-Info points have
+null merged/policy fields and `info_label_partition_status=not_applicable`. Label names, suffixes,
+or source order never imply a split.
 
 No suffix heuristic may override the declared parser format/type. The matrix contains every
 accepted role, its required/optional cardinality, label-removal rule, payload destination,
@@ -1339,7 +1392,8 @@ snapshot write one ordinary marker and leave all boundary fields and `source_id`
 boundary marker joins through its complete structured reference to exactly one attempt
 `boundary_refs` member or one exact loss `boundary_refs` member. Capture completion remains a
 separate attempt fact. A topology marker and the first point/family rows for its epoch share one
-frame, with marker logical row order first.
+frame only when the marker Clock equals the scrape's capture Clock, with marker logical row order
+first. Every other lifecycle frame contains exactly one marker row.
 
 ### 8.8 Loss-range table
 
@@ -1383,7 +1437,8 @@ matrix, including `count` equations for inclusive contiguous ranges and legal bo
 source-scoped or global; it is never reset per source. Unknown enum values require a schema-version
 upgrade rather than an implementation-local string. `loss_observed_ns` is the LocalSet Clock value
 when the exact range/saturation snapshot is sealed for handoff; scheduled deadlines remain separate
-facts.
+facts. One loss frame contains exactly one row. Range coalescing changes that row's inclusive
+bounds/count, not its frame cardinality; each saturation snapshot likewise owns one frame.
 
 The fixed-memory attached ledger has a validated `max_exact_ranges`. Once those slots are full, a
 new non-coalescible entry updates one preallocated saturation slot keyed by the bounded tuple
@@ -1485,9 +1540,12 @@ The owner may coalesce contiguous WAL frames only while forming one aggregate
 `DurabilityCompletion`, before that immutable target crosses the Clock bridge. Its coverage digest
 is `digest("aiperf.archive.receipt-range-coverage.v1", each ascending(record_seq,
 declared_projection_coverage_digest))`. The one aggregate receives one later observation event.
-Once a completion token, target ID, or event draft exists, its range is immutable: separately
-observed ranges remain separate; recovery may append a newly verified aggregate target/event but
-never rebind an earlier event or backdate later durability.
+Every aggregate is a contiguous subrange of exactly one named WAL segment and ends at the exact
+durable prefix named by its target. Segment rotation closes the current aggregate and starts a
+separate target/event even when global record sequences are adjacent; a v1 target can encode only
+one segment ID/prefix. Once a completion token, target ID, or event draft exists, its range is
+immutable: separately observed ranges remain separate; recovery may append a newly verified
+same-segment aggregate target/event but never rebind an earlier event or backdate later durability.
 
 A separate content-addressed persistent B-tree uses the §8.3 page/split/delete rules and these
 lexicographic tagged keys:
@@ -1693,13 +1751,59 @@ Boundary scrapes always reach their native accumulator even if archive admission
 
 ### 9.3 Batch identity
 
-`batch_id` uses the domain-separated, length-prefixed digest rule from §8.1 over archive/session/
-source, source-record sequence, outcome, and the configured decoded-entity unchanged digest when
-present. On accepting a projection reservation, the archive owner stamps global `record_seq`;
-an outcome-neutral reservation ID binds archive/session, source/control identity, batch, and that
-sequence. Only after terminal payload kind is known does the success worker or failure owner derive
-`frame_id` from frame schema/kind, reservation ID, and sequence, insert it into rows, and hash. Marker
-and loss frames therefore share the same persistence identity discipline as attempt/sample batches.
+The checked-in canonical `FrameIdentityV1` descriptor assigns numeric discriminants, required/null
+inputs, and these exact `batch_id` preimages. Every field uses §8.1 length-prefix encoding and an
+explicit null tag:
+
+| Candidate/control kind | `batch_id = digest("aiperf.archive.batch.v1", ...)` preimage |
+|---|---|
+| source scrape | archive, session, `source_scrape`, source ID, source-record sequence, terminal source outcome, decoded unchanged digest or null |
+| lifecycle-only marker | archive, session, `lifecycle_marker`, assigned record sequence, marker kind, run/phase/state/completion fields, complete boundary reference or null |
+| exact source/global loss | archive, session, `exact_loss`, loss sequence, source ID or global sentinel, loss kind/reason, canonical inclusive range fields, canonical boundary-reference list/overflow evidence |
+| saturation snapshot | archive, session, `loss_saturation`, saturation-slot ID, saturation-snapshot sequence, cumulative counts, omitted rolling digest |
+
+An archive-rejected, missed-cadence, writer-failed, or shutdown-abandoned row uses the exact-loss
+entry; global loss uses its explicit source sentinel. A topology marker and raw material/reference
+share their source-scrape batch/frame and have no independent identity. Because every lifecycle-
+only frame has one marker, `marker_seq == record_seq` in v1. An owner may assign a control
+`record_seq` before deriving its control batch; no durable identity exists at that point.
+
+For every new candidate, the outcome-neutral reservation is
+
+```text
+projection_reservation_id = digest(
+  "aiperf.archive.projection-reservation.v1",
+  FrameIdentityV1 fingerprint,
+  archive_id, session_id,
+  reservation_kind,
+  source_id_or_global_sentinel,
+  batch_id,
+  record_seq,
+)
+```
+
+`reservation_kind` is `source_scrape`, `lifecycle_marker`, `exact_loss`, or `loss_saturation`.
+Only after terminal payload kind is known is the terminal ID derived:
+
+```text
+frame_id = digest(
+  "aiperf.archive.frame.v1",
+  FrameIdentityV1 fingerprint,
+  terminal_kind,
+  projection_reservation_id,
+  record_seq,
+)
+```
+
+`terminal_kind` is the closed set `source_scrape`, `lifecycle_marker`, `loss_exact`,
+`loss_saturation`, or `source_projection_failed`. A source projection/owner-terminalization failure
+reuses the source-scrape `batch_id`, reservation, and sequence, discards the success-candidate ID,
+and selects `source_projection_failed`; its exact loss row receives a new `loss_seq` but that value
+is payload/frame-digest evidence rather than a replacement reservation. The terminal kind therefore
+distinguishes success and loss without inventing a second reservation. The success worker or
+failure owner inserts the terminal ID into rows before logical-row/projection hashes. Independent
+goldens cover every matrix row, global sentinel, boundary-bearing loss, saturation snapshot, and
+success-candidate-to-projection-failure transition; no factory chooses another preimage.
 
 Before WAL append a process crash loses the in-memory reservation and recovery may reuse its
 sequence; no durable identity existed. Once a terminal frame is appended, persistence retries retain
@@ -1736,12 +1840,20 @@ head/genesis hashes, schema fingerprints, archive/session IDs, writer compatibil
 global record sequence. No frame is valid under an unknown authoritative session.
 
 WAL files are numbered immutable segments. One `.open` segment is append-only. A frame is encoded
-as length, canonical final header, payload, 32-byte `frame_digest`, and CRC32C. The final header
+as `u64_be(frame_length)`, canonical final header, payload, 32-byte `frame_digest`, and four-byte
+CRC-32C; `frame_length` counts every subsequent byte through and including the stored CRC. The final header
 includes wire/schema version, terminal frame/batch/reservation IDs, global record sequence,
 authoritative frame Clock, payload kind, required projection declarations/evidence, raw-reference/
 material declarations, and payload length. The digest is
-`digest("aiperf.archive.wal-frame.v1", exact_final_header_bytes, exact_payload_bytes)`; CRC32C covers
-the whole encoded frame only as a fast torn-write/corruption check and is never integrity authority.
+`digest("aiperf.archive.wal-frame.v1", exact_final_header_bytes, exact_payload_bytes)`.
+
+The CRC uses the standard reflected CRC-32C/Castagnoli profile: polynomial `0x1edc6f41`
+(`0x82f63b78` reflected table form), initial register `0xffffffff`, reflected input/output, final
+XOR `0xffffffff`, and check value `0xe3069283` for ASCII `123456789`. The stored value is `u32_be`.
+Its exact preimage is
+`u64_be(frame_length) || exact_final_header_bytes || exact_payload_bytes || frame_digest`; the CRC
+field itself is excluded. It is only a fast torn-write/corruption check and never integrity
+authority. A checked-in complete frame golden pins every byte and both CRC implementations.
 
 Each segment maintains an ordered cryptographic prefix:
 
@@ -2800,7 +2912,8 @@ version or material schema/writer change invalidates the profile until rerun.
 2. escaped labels, UTF-8, commas, quotes, backslashes, HELP/TYPE/UNIT, info, stateset, unknown/
    untyped, gauge histogram, summary, histogram, semantic Created timestamps, source timestamps,
    and scalar/bucket exemplars retain emitted names/roles; arbitrary classic `_created` samples are
-   not retyped without a semantic role;
+   not retyped without a semantic role; ambiguous multi-label Info fixtures retain the complete
+   merged wire identity and report `unavailable_from_text` rather than inventing a value-label split;
 3. zero-point metadata-only families, empty MetricSets, repeated MetricPoints for one label set, and
    point-owned wire samples/timestamps round-trip distinctly; classic all-absent/uniform/mixed/
    partial component timestamps produce the exact point status without losing component lexemes,
@@ -2819,16 +2932,20 @@ version or material schema/writer change invalidates the profile until rerun.
 6. the per-format/per-role semantic matrix accepts every legal NaN/Inf case, atomically rejects
    every illegal count/sum/bucket/state/info/metadata case, and emits no raw non-finite boundary;
 7. deterministic keyed pre-redaction identity, post-redaction identity, map order, digest domains,
-   topology epochs, schema descriptors/fingerprints, manifest/index, and report goldens; independent
+   topology epochs, every `FrameIdentityV1` candidate/terminal transition, schema descriptors/
+   fingerprints, manifest/index, and report goldens; independent
    Rust/Python logical-row fixtures cover every scalar/nested type, null, negative zero, map order,
    and full semantic rows; canonical-JSON fixtures cover duplicate/escape/slash/non-ASCII/control/
-   key-order cases, and index fixtures cover every object-kind sentinel/Clock/source mapping;
+   key-order cases, and index fixtures cover every object-kind sentinel/Clock/source mapping plus
+   permutation-invariant removal/replacement/addition roots;
 8. exact field/type/nullability/dictionary/metadata compatibility through pinned Arrow, Parquet,
    DuckDB, Polars, and pyarrow versions;
 9. streaming size/cardinality limits, property parse/encode/decode round trips, and malformed-input
    atomic failure;
 10. every success/failure/pre-IO-timeout/lifecycle/loss frame kind pins its non-null outcome/
-    authoritative Clock field and identical coverage/index key in independent writers.
+    authoritative Clock field, exact one-row/equal-scrape-clock invariant, terminal identity
+    preimage, and identical coverage/index key in independent writers; time-pruning goldens cannot
+    hide topology, lifecycle, or loss rows.
 
 ### 18.2 Scheduling gates
 
@@ -2875,16 +2992,18 @@ version or material schema/writer change invalidates the profile until rerun.
    fsync/CAS completion, LocalSet Clock observation, receipt-draft return, and receipt-head
    durability preserve absent response time and a distinct recovery-verification event bound to a
    newly durable observer epoch; sync-only Clock values resolve only through that epoch's anchor,
-   and separately observed WAL ranges never coalesce into a backdated event;
+   separately observed WAL ranges never coalesce into a backdated event, and a segment-seal
+   boundary always produces separate single-segment targets/prefixes;
 3. independently rotated multi-table projections cannot make global dedup omit a table, and stale/
    repeated WAL frames cannot duplicate logical projection evidence; empty exposition and metadata-
    only cases persist zero-row coverage with the empty multiset digest; authoritative hashes are
    computed only after owner identity and terminal kind; projection failure derives a distinct loss
    frame ID under the same sequence, and a crash cannot expose preliminary coverage;
 4. finalize on the reserved control lane cannot overtake accepted data or loss-ledger frames;
-5. only incomplete physical WAL tails discard; every complete open/sealed frame verifies final
-   header/payload BLAKE3 plus ordered prefix/footer before replay, checksum failures restore/fail
-   closed, and one-generation-lag WAL makes preceding-head rollback complete without directory guessing;
+5. only incomplete physical WAL tails discard; every complete open/sealed frame verifies the
+   byte-golden CRC-32C preimage/value, final header/payload BLAKE3, and ordered prefix/footer before
+   replay; checksum failures restore/fail closed, and one-generation-lag WAL makes preceding-head
+   rollback complete without directory guessing;
 6. transaction-reserve exhaustion and real ENOSPC/inode exhaustion fail before destroying the only
    durable copy;
 7. raw-reference coverage, one randomized bytes-only physical envelope per equality ID, duplicate/
@@ -2898,7 +3017,8 @@ version or material schema/writer change invalidates the profile until rerun.
 9. exact-resume identity/writer mismatch fails before session/source activation;
 10. bounded exact-parent compaction verifies per-projection logical row counts/multiset digests;
     failure leaves the old head authoritative and cannot expose duplicate/missing replacement rows;
-    deletion goldens exhaust left/right borrow, merge cascades, and root collapse;
+    deletion goldens exhaust left/right borrow, merge cascades, and root collapse, while every
+    permutation of one validated mutation set produces the same page bytes/root;
 11. the 24-hour profile produces immutable partitions and O(K log₂₅₆ P) manifest-index update
     work rather than flat full-history rewrites; receipt batches/index pages remain bounded with the
     same asymptotic property;
@@ -2978,11 +3098,12 @@ for passing standalone and attached profile artifacts rather than trusting docum
 
 1. implement the bounded Prometheus 0.0.4/OpenMetrics 1.0.0 `aiperf-prometheus` model/parser seam;
 2. implement the frozen role-validity matrix, strict archive/native-fallback split, metadata-only
-   families, repeated MetricPoints, exact payload/wire projection, binary64 conversion, timestamps,
-   and preserve current server/DCGM parity;
+   families, repeated MetricPoints, text-native merged Info identity, exact payload/wire projection,
+   binary64 conversion, timestamps, and preserve current server/DCGM parity;
 3. check in canonical Arrow/head/generation/index/receipt/parity descriptors; implement canonical
-   JSON, per-kind index keys/deletion, logical-row evidence, every digest/identity/epoch rule,
-   sanitizer surface, and golden Parquet/index/manifest/report;
+   JSON, `FrameIdentityV1`, per-kind index keys and canonical mutation transactions, logical-row
+   evidence, every digest/identity/epoch rule, sanitizer surface, and golden Parquet/index/manifest/
+   report;
 4. add the five Tachometer regression fixtures as mandatory tests.
 
 ### Increment 2 — local writer and recovery
@@ -2992,12 +3113,13 @@ for passing standalone and attached profile artifacts rather than trusting docum
    inline strategies, the fsync/CAS-to-LocalSet receipt Clock bridge, and the single mutable archive
    owner;
 2. add qualified lifetime lock, create-only genesis/resumed-session transaction, cryptographically
-   bound final frames/prefixes in sealed WAL with
+   bound byte-golden CRC-32C/final frames/prefixes in sealed WAL with
    lagged retirement, persistent zero/nonzero table coverage, shared raw-object plus nonce-
    reservation/key-count registries, the concrete raw-envelope profile, raw-reference rows with
    per-response encoding, owner-terminal attribute-epoch commit, immutable Parquet/index/
    generations/head, and the
-   bounded indexed non-self-referential receipt journal with epoch-only bootstrap;
+   bounded indexed non-self-referential receipt journal with epoch-only bootstrap and single-
+   segment WAL targets;
 3. add every-step crash/property/corruption recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
 
@@ -3137,19 +3259,20 @@ This design is complete only when:
   driver, dynamically tightened shutdown deadline/cancellation join, one command in an atomically
   sealed source-cardinal boundary plan, and a bounded ordered decode path;
 - Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves strict grammar, every valid role,
-  zero-point families, repeated MetricPoints, numeric/timestamp lexemes, exemplars, and a separately
-  named native fallback without changing benchmark semantics;
+  zero-point families, repeated MetricPoints, merged Info wire identity without invented label
+  partition, numeric/timestamp lexemes, exemplars, and a separately named native fallback without
+  changing benchmark semantics;
 - canonical Arrow/head/generation/index/receipt/logical-row/parity descriptors and canonical JSON,
-  keyed pre/post-redaction/body identities, exact payload/wire projection, correctly rounded
-  analytical numbers, combined component timestamp status, authoritative per-outcome frame Clock,
-  per-kind index keys/deletion, attribute epochs, and native-v2 DTO are deterministic and readable/
-  prunable by the pinned query ecosystem;
+  keyed pre/post-redaction/body identities, closed `FrameIdentityV1`, exact payload/wire projection,
+  correctly rounded analytical numbers, combined component timestamp status, one authoritative row
+  Clock per frame, per-kind index keys/canonical mutation order, attribute epochs, and native-v2 DTO
+  are deterministic and readable/prunable by the pinned query ecosystem;
 - qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
   persistent zero/nonzero projection coverage, shared encrypted raw objects with per-frame
   references and reference-owned content encoding, a concrete misuse-resistant CSPRNG/nonce/key-
   limit profile whose terminalization gates attribute-epoch commit, immutable partitions/
-  generations/index/head,
-  cryptographically bound final WAL frames/prefixes, and bounded indexed receipt journal with
+  generations/index/head, byte-golden CRC-32C and cryptographically bound final WAL frames/
+  prefixes, and a bounded indexed receipt journal with single-segment targets and
   independently reachable per-execution observer epochs
   recover every complete durable projection exactly once across all injected crash/finalization
   points;
@@ -3157,7 +3280,8 @@ This design is complete only when:
   writer claim, and advances a linearizable conditional head without flat rewrites; uncertain CAS
   and exact/sync-only resume reconcile ancestry fail-closed;
 - exact collect-resume fails closed on archive-identity/schema/key/writer mismatch and concurrent
-  writers, while source-free sync verifies genesis identity without source credentials;
+  writers, while source-free sync verifies genesis writer identity, authors only store access, and
+  needs no source credentials;
 - failures, gaps, unchanged bodies, misses, drops/loss ranges and bounded saturation summaries,
   local durability, visibility lag, and remote publication are observable;
 - enrichment is API-limited to attributes, sanitization covers every structured surface, source
