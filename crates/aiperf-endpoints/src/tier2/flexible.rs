@@ -9,17 +9,23 @@
 //! deliberately failure-soft for raw responses; an explicitly valid template
 //! selector that does not match is a hard parse miss, matching Python.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use minijinja::{AutoEscape, Environment};
 use serde_json::{Map, Value, json};
 
-use super::effective_model;
-use crate::config::EndpointConfig;
+use crate::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
 use crate::endpoints::{Endpoint, number_array, try_extract_embeddings};
-use crate::metadata::{EndpointMetadata, EndpointType, metadata_for};
+use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
 use crate::models::{
-    EndpointError, EndpointResult, Media, ParsedResponse, RequestInfo, ResponseData, ServerResponse,
+    EndpointError, EndpointResult, ExtractedPayload, Media, ParsedResponse, RequestInfo,
+    RequestRecord, ResponseData, ServerResponse, Turn,
+};
+use crate::registry::{
+    EndpointFactory, PreparedEndpoint, PreparedEndpointBehavior, PreparedRequest, ReadinessPolicy,
+    format_legacy_payload,
 };
 
 const NV_EMBEDQA: &str = r#"{"text": {{ texts|tojson }}}"#;
@@ -32,21 +38,71 @@ pub struct RawEndpoint;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TemplateEndpoint;
 
+/// Startup factory that compiles a raw endpoint's response selector once per worker/profile.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RawEndpointFactory;
+
+/// Startup factory that compiles template and response selector state once per worker/profile.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TemplateEndpointFactory;
+
+const RAW_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "raw",
+    aliases: &[],
+    description: "Raw JSON passthrough endpoint",
+    endpoint_path: None,
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[
+        Modality::Text,
+        Modality::Image,
+        Modality::Audio,
+        Modality::Video,
+    ],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
+const TEMPLATE_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "template",
+    aliases: &[],
+    description: "Minijinja JSON-template endpoint",
+    endpoint_path: None,
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[
+        Modality::Text,
+        Modality::Image,
+        Modality::Audio,
+        Modality::Video,
+    ],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
 impl Endpoint for RawEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &RAW_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::Raw)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        request_info
-            .turns
-            .last()
-            .and_then(|turn| turn.raw_payload.clone())
-            .ok_or_else(|| {
-                EndpointError::InvalidRequest(
-                    "raw endpoint requires raw_payload on the dispatching turn".into(),
-                )
-            })
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -67,120 +123,16 @@ impl Endpoint for RawEndpoint {
 }
 
 impl Endpoint for TemplateEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &TEMPLATE_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::Template)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turn = request_info.turns.last().ok_or_else(|| {
-            EndpointError::InvalidRequest("Template endpoint requires at least one turn".into())
-        })?;
-        let config = &request_info.model_endpoint.endpoint;
-        let (source, legacy_extra_config) = template_source(config)?;
-        let source = resolve_template_source(source);
-
-        let (texts, texts_by_name) = named_contents(&turn.texts);
-        let (images, images_by_name) = named_contents(&turn.images);
-        let (audios, audios_by_name) = named_contents(&turn.audios);
-        let (videos, videos_by_name) = named_contents(&turn.videos);
-        let queries = texts_by_name
-            .get("query")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let passages = texts_by_name
-            .get("passages")
-            .or_else(|| texts_by_name.get("passage"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut variables = Map::new();
-        variables.insert("texts".into(), strings_value(&texts));
-        variables.insert("images".into(), strings_value(&images));
-        variables.insert("audios".into(), strings_value(&audios));
-        variables.insert("videos".into(), strings_value(&videos));
-        variables.insert("text".into(), first_or_null(&texts));
-        variables.insert("image".into(), first_or_null(&images));
-        variables.insert("audio".into(), first_or_null(&audios));
-        variables.insert("video".into(), first_or_null(&videos));
-        variables.insert("queries".into(), Value::Array(queries.clone()));
-        variables.insert("passages".into(), Value::Array(passages.clone()));
-        variables.insert(
-            "query".into(),
-            queries.first().cloned().unwrap_or(Value::Null),
-        );
-        variables.insert(
-            "passage".into(),
-            passages.first().cloned().unwrap_or(Value::Null),
-        );
-        variables.insert("texts_by_name".into(), Value::Object(texts_by_name));
-        variables.insert("images_by_name".into(), Value::Object(images_by_name));
-        variables.insert("audios_by_name".into(), Value::Object(audios_by_name));
-        variables.insert("videos_by_name".into(), Value::Object(videos_by_name));
-        variables.insert(
-            "model".into(),
-            Value::String(effective_model(request_info, turn)),
-        );
-        variables.insert(
-            "max_tokens".into(),
-            turn.max_tokens.map_or(Value::Null, |tokens| json!(tokens)),
-        );
-        variables.insert(
-            "role".into(),
-            turn.role.clone().map_or(Value::Null, Value::String),
-        );
-        variables.insert(
-            "turn".into(),
-            serde_json::to_value(turn).map_err(|error| {
-                EndpointError::InvalidRequest(format!("serialize template turn: {error}"))
-            })?,
-        );
-        variables.insert(
-            "turns".into(),
-            serde_json::to_value(&request_info.turns).map_err(|error| {
-                EndpointError::InvalidRequest(format!("serialize template turns: {error}"))
-            })?,
-        );
-        variables.insert(
-            "request_info".into(),
-            serde_json::to_value(request_info).map_err(|error| {
-                EndpointError::InvalidRequest(format!("serialize template request: {error}"))
-            })?,
-        );
-        variables.insert("stream".into(), Value::Bool(config.streaming));
-
-        let mut environment = Environment::new();
-        environment.set_auto_escape_callback(|_| AutoEscape::Html);
-        let rendered = environment
-            .render_str(&source, Value::Object(variables))
-            .map_err(|error| {
-                EndpointError::InvalidRequest(format!("render payload template: {error}"))
-            })?;
-        let value = serde_json::from_str::<Value>(&rendered).map_err(|error| {
-            EndpointError::InvalidRequest(format!(
-                "template did not render valid JSON {error}: {}",
-                rendered.chars().take(100).collect::<String>()
-            ))
-        })?;
-        let mut payload = value.as_object().cloned().ok_or_else(|| {
-            EndpointError::InvalidRequest("template must render a JSON object".into())
-        })?;
-        if let Some(extra) = config.extra.as_ref() {
-            for (key, value) in extra {
-                if legacy_extra_config
-                    && matches!(key.as_str(), "payload_template" | "response_field")
-                {
-                    continue;
-                }
-                payload.insert(key.clone(), value.clone());
-            }
-        }
-        if let Some(extra) = turn.extra_body.as_ref() {
-            for (key, value) in extra {
-                payload.insert(key.clone(), value.clone());
-            }
-        }
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -197,7 +149,358 @@ impl Endpoint for TemplateEndpoint {
     }
 }
 
-fn template_source(config: &EndpointConfig) -> EndpointResult<(&str, bool)> {
+impl PreparedEndpointBehavior for RawEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        _config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        request
+            .turns()
+            .last()
+            .and_then(|turn| turn.raw_payload.clone())
+            .ok_or_else(|| {
+                EndpointError::InvalidRequest(
+                    "raw endpoint requires raw_payload on the dispatching turn".into(),
+                )
+            })
+    }
+}
+
+impl PreparedEndpointBehavior for TemplateEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let (source, legacy_extra_config) = template_source(config)?;
+        let mut environment = Environment::new();
+        environment.set_auto_escape_callback(|_| AutoEscape::Html);
+        environment
+            .add_template_owned("payload", resolve_template_source(source))
+            .map_err(|error| {
+                EndpointError::InvalidConfig(format!("compile payload template: {error}"))
+            })?;
+        render_template_payload(&environment, request, config, legacy_extra_config)
+    }
+}
+
+impl EndpointFactory for RawEndpointFactory {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &RAW_DESCRIPTOR
+    }
+
+    fn prepare(
+        &self,
+        config: EffectiveEndpointConfig,
+    ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
+        let selector = PreparedSelector::compile(response_field_raw(config.as_raw()));
+        let legacy_config = EndpointConfig::from_raw(EndpointType::Raw, config.to_raw());
+        let headers = RawEndpoint.format_headers(&legacy_config);
+        Ok(Box::new(PreparedRawEndpoint {
+            config,
+            legacy_config,
+            headers,
+            selector,
+        }))
+    }
+
+    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+        Some(Arc::new(RawEndpoint))
+    }
+}
+
+impl EndpointFactory for TemplateEndpointFactory {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &TEMPLATE_DESCRIPTOR
+    }
+
+    fn validate_config(&self, config: &mut RawEndpointConfig) -> EndpointResult<()> {
+        template_source(config).map(|_| ())
+    }
+
+    fn prepare(
+        &self,
+        config: EffectiveEndpointConfig,
+    ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
+        let (source, legacy_extra_config) = template_source(config.as_raw())?;
+        let mut environment = Environment::new();
+        environment.set_auto_escape_callback(|_| AutoEscape::Html);
+        environment
+            .add_template_owned("payload", resolve_template_source(source))
+            .map_err(|error| {
+                EndpointError::InvalidConfig(format!("compile payload template: {error}"))
+            })?;
+        let selector = PreparedSelector::compile(
+            response_field_raw(config.as_raw()).filter(|field| *field != "text"),
+        );
+        let legacy_config = EndpointConfig::from_raw(EndpointType::Template, config.to_raw());
+        let headers = TemplateEndpoint.format_headers(&legacy_config);
+        Ok(Box::new(PreparedTemplateEndpoint {
+            config,
+            legacy_config,
+            headers,
+            environment,
+            selector,
+            legacy_extra_config,
+        }))
+    }
+
+    fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
+        Some(Arc::new(TemplateEndpoint))
+    }
+}
+
+#[derive(Debug)]
+struct PreparedRawEndpoint {
+    config: EffectiveEndpointConfig,
+    legacy_config: EndpointConfig,
+    headers: BTreeMap<String, String>,
+    selector: PreparedSelector,
+}
+
+impl PreparedEndpoint for PreparedRawEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &RAW_DESCRIPTOR
+    }
+
+    fn config(&self) -> &EffectiveEndpointConfig {
+        &self.config
+    }
+
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+        RawEndpoint.format_prepared_payload(request, self.config.as_raw())
+    }
+
+    fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
+        RawEndpoint.readiness_policy(&self.legacy_config, model)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_flexible_response_prepared(response, &self.selector, MissingSelectorPolicy::Fallback)
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        RawEndpoint.extract_payload_inputs(body)
+    }
+
+    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
+        extract_prepared_responses(self, record)
+    }
+
+    fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
+        RawEndpoint.build_assistant_turn(record)
+    }
+
+    fn captures_assistant_turn(&self) -> bool {
+        RawEndpoint.captures_assistant_turn()
+    }
+}
+
+#[derive(Debug)]
+struct PreparedTemplateEndpoint {
+    config: EffectiveEndpointConfig,
+    legacy_config: EndpointConfig,
+    headers: BTreeMap<String, String>,
+    environment: Environment<'static>,
+    selector: PreparedSelector,
+    legacy_extra_config: bool,
+}
+
+impl PreparedEndpoint for PreparedTemplateEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &TEMPLATE_DESCRIPTOR
+    }
+
+    fn config(&self) -> &EffectiveEndpointConfig {
+        &self.config
+    }
+
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+        render_template_payload(
+            &self.environment,
+            request,
+            self.config.as_raw(),
+            self.legacy_extra_config,
+        )
+    }
+
+    fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    fn readiness_policy(&self, model: &str) -> EndpointResult<ReadinessPolicy> {
+        TemplateEndpoint.readiness_policy(&self.legacy_config, model)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_flexible_response_prepared(response, &self.selector, MissingSelectorPolicy::Fail)
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        TemplateEndpoint.extract_payload_inputs(body)
+    }
+
+    fn extract_response_data(&self, record: &RequestRecord) -> EndpointResult<Vec<ParsedResponse>> {
+        extract_prepared_responses(self, record)
+    }
+
+    fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
+        TemplateEndpoint.build_assistant_turn(record)
+    }
+
+    fn captures_assistant_turn(&self) -> bool {
+        TemplateEndpoint.captures_assistant_turn()
+    }
+}
+
+fn extract_prepared_responses(
+    endpoint: &dyn PreparedEndpoint,
+    record: &RequestRecord,
+) -> EndpointResult<Vec<ParsedResponse>> {
+    let mut parsed = Vec::new();
+    for response in &record.responses {
+        if let Some(response) = endpoint.parse_response(response)? {
+            parsed.push(response);
+        }
+    }
+    Ok(parsed)
+}
+
+fn render_template_payload(
+    environment: &Environment<'_>,
+    request: &PreparedRequest<'_>,
+    config: &RawEndpointConfig,
+    legacy_extra_config: bool,
+) -> EndpointResult<Value> {
+    let turn = request.turns().last().ok_or_else(|| {
+        EndpointError::InvalidRequest("Template endpoint requires at least one turn".into())
+    })?;
+    let (texts, texts_by_name) = named_contents(&turn.texts);
+    let (images, images_by_name) = named_contents(&turn.images);
+    let (audios, audios_by_name) = named_contents(&turn.audios);
+    let (videos, videos_by_name) = named_contents(&turn.videos);
+    let queries = texts_by_name
+        .get("query")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let passages = texts_by_name
+        .get("passages")
+        .or_else(|| texts_by_name.get("passage"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut variables = Map::new();
+    variables.insert("texts".into(), strings_value(&texts));
+    variables.insert("images".into(), strings_value(&images));
+    variables.insert("audios".into(), strings_value(&audios));
+    variables.insert("videos".into(), strings_value(&videos));
+    variables.insert("text".into(), first_or_null(&texts));
+    variables.insert("image".into(), first_or_null(&images));
+    variables.insert("audio".into(), first_or_null(&audios));
+    variables.insert("video".into(), first_or_null(&videos));
+    variables.insert("queries".into(), Value::Array(queries.clone()));
+    variables.insert("passages".into(), Value::Array(passages.clone()));
+    variables.insert(
+        "query".into(),
+        queries.first().cloned().unwrap_or(Value::Null),
+    );
+    variables.insert(
+        "passage".into(),
+        passages.first().cloned().unwrap_or(Value::Null),
+    );
+    variables.insert("texts_by_name".into(), Value::Object(texts_by_name));
+    variables.insert("images_by_name".into(), Value::Object(images_by_name));
+    variables.insert("audios_by_name".into(), Value::Object(audios_by_name));
+    variables.insert("videos_by_name".into(), Value::Object(videos_by_name));
+    variables.insert(
+        "model".into(),
+        Value::String(
+            turn.model
+                .clone()
+                .unwrap_or_else(|| request.primary_model_name().to_string()),
+        ),
+    );
+    variables.insert(
+        "max_tokens".into(),
+        turn.max_tokens.map_or(Value::Null, |tokens| json!(tokens)),
+    );
+    variables.insert(
+        "role".into(),
+        turn.role.clone().map_or(Value::Null, Value::String),
+    );
+    variables.insert(
+        "turn".into(),
+        serde_json::to_value(turn).map_err(|error| {
+            EndpointError::InvalidRequest(format!("serialize template turn: {error}"))
+        })?,
+    );
+    variables.insert(
+        "turns".into(),
+        serde_json::to_value(request.turns()).map_err(|error| {
+            EndpointError::InvalidRequest(format!("serialize template turns: {error}"))
+        })?,
+    );
+    variables.insert(
+        "request_info".into(),
+        prepared_request_value(request, config),
+    );
+    variables.insert("stream".into(), Value::Bool(config.streaming));
+
+    let rendered = environment
+        .get_template("payload")
+        .and_then(|template| template.render(Value::Object(variables)))
+        .map_err(|error| {
+            EndpointError::InvalidRequest(format!("render payload template: {error}"))
+        })?;
+    let value = serde_json::from_str::<Value>(&rendered).map_err(|error| {
+        EndpointError::InvalidRequest(format!(
+            "template did not render valid JSON {error}: {}",
+            rendered.chars().take(100).collect::<String>()
+        ))
+    })?;
+    let mut payload = value.as_object().cloned().ok_or_else(|| {
+        EndpointError::InvalidRequest("template must render a JSON object".into())
+    })?;
+    if let Some(extra) = config.extra.as_ref() {
+        for (key, value) in extra {
+            if legacy_extra_config && matches!(key.as_str(), "payload_template" | "response_field")
+            {
+                continue;
+            }
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+    if let Some(extra) = turn.extra_body.as_ref() {
+        for (key, value) in extra {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(Value::Object(payload))
+}
+
+fn prepared_request_value(request: &PreparedRequest<'_>, config: &RawEndpointConfig) -> Value {
+    json!({
+        "model_endpoint": {
+            "primary_model_name": request.primary_model_name(),
+            "endpoint": config,
+        },
+        "turns": request.turns(),
+        "system_message": request.system_message(),
+        "user_context_message": request.user_context_message(),
+        "credit_phase": request.credit_phase(),
+        "x_request_id": request.x_request_id(),
+        "x_correlation_id": request.x_correlation_id(),
+        "conversation_id": request.conversation_id(),
+    })
+}
+
+fn template_source(config: &RawEndpointConfig) -> EndpointResult<(&str, bool)> {
     if let Some(template) = config.template.as_deref() {
         return Ok((template, false));
     }
@@ -299,6 +602,16 @@ fn response_field(config: &EndpointConfig) -> Option<&str> {
     })
 }
 
+fn response_field_raw(config: &RawEndpointConfig) -> Option<&str> {
+    config.response_field.as_deref().or_else(|| {
+        config
+            .extra
+            .as_ref()
+            .and_then(|extra| extra.get("response_field"))
+            .and_then(Value::as_str)
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 enum MissingSelectorPolicy {
     Fallback,
@@ -309,6 +622,44 @@ enum SelectorResult {
     Invalid,
     NoMatch,
     Match(Value),
+}
+
+#[derive(Debug)]
+enum PreparedSelector {
+    Absent,
+    Invalid,
+    Compiled(jmespath::Expression<'static>),
+}
+
+impl PreparedSelector {
+    fn compile(selector: Option<&str>) -> Self {
+        match selector {
+            None => Self::Absent,
+            Some(selector) => jmespath::compile(selector)
+                .map(Self::Compiled)
+                .unwrap_or(Self::Invalid),
+        }
+    }
+
+    fn select(&self, json: &Value) -> SelectorResult {
+        match self {
+            Self::Absent => SelectorResult::Invalid,
+            Self::Invalid => SelectorResult::Invalid,
+            Self::Compiled(expression) => {
+                let Ok(result) = expression.search(json) else {
+                    return SelectorResult::Invalid;
+                };
+                let Ok(value) = serde_json::to_value(result.as_ref()) else {
+                    return SelectorResult::Invalid;
+                };
+                if is_truthy(&value) {
+                    SelectorResult::Match(value)
+                } else {
+                    SelectorResult::NoMatch
+                }
+            }
+        }
+    }
 }
 
 fn parse_flexible_response(
@@ -334,6 +685,32 @@ fn parse_flexible_response(
         }
     } else {
         auto_detect(json)
+    };
+    Ok(data.map(|data| parsed(response.perf_ns, data)))
+}
+
+fn parse_flexible_response_prepared(
+    response: &ServerResponse,
+    selector: &PreparedSelector,
+    missing_policy: MissingSelectorPolicy,
+) -> EndpointResult<Option<ParsedResponse>> {
+    let Some(json) = response.json.as_ref() else {
+        return Ok(response
+            .raw
+            .as_ref()
+            .filter(|text| !text.is_empty())
+            .map(|text| parsed(response.perf_ns, ResponseData::Text { text: text.clone() })));
+    };
+
+    let data = match selector {
+        PreparedSelector::Absent => auto_detect(json),
+        _ => match selector.select(json) {
+            SelectorResult::Match(value) => convert_to_response_data(&value),
+            SelectorResult::NoMatch if matches!(missing_policy, MissingSelectorPolicy::Fail) => {
+                return Ok(None);
+            }
+            SelectorResult::Invalid | SelectorResult::NoMatch => auto_detect(json),
+        },
     };
     Ok(data.map(|data| parsed(response.perf_ns, data)))
 }

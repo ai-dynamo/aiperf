@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::metadata::{EndpointType, metadata_for};
+use crate::metadata::{EndpointDescriptor, EndpointType, metadata_for};
 use crate::models::{EndpointError, EndpointResult};
 
 /// Wire request content type.
@@ -21,6 +21,110 @@ pub enum RequestContentType {
     ApplicationJson,
     /// Multipart form-data request body.
     MultipartFormData,
+}
+
+/// Authored endpoint policy with identity selected separately by [`crate::EndpointId`].
+///
+/// This is the canonical runner-facing configuration. [`EndpointConfig`] is a
+/// protocol-v1 compatibility shape that adds the former closed enum identity.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct RawEndpointConfig {
+    /// Base URLs.
+    pub urls: Vec<String>,
+    /// Optional path override.
+    pub path: Option<String>,
+    /// Whether streaming is requested.
+    pub streaming: bool,
+    /// Request content type override or derived value.
+    pub request_content_type: Option<RequestContentType>,
+    /// Template body for template endpoints.
+    pub template: Option<String>,
+    /// Optional JMESPath response selector for raw/template endpoints.
+    pub response_field: Option<String>,
+    /// Whole polling-lifecycle timeout in seconds.
+    pub timeout_seconds: f64,
+    /// Delay between async-job status polls in seconds.
+    pub polling_interval_seconds: f64,
+    /// Download completed video bytes after polling when true.
+    pub download_video_content: bool,
+    /// Wait-for-model probe timeout in seconds; zero disables probing.
+    pub wait_for_model_timeout: f64,
+    /// Wait-for-model probe interval.
+    pub wait_for_model_interval: f64,
+    /// Wait-for-model probe mode.
+    pub wait_for_model_mode: String,
+    /// Whether the interval was supplied explicitly.
+    pub wait_for_model_interval_set: bool,
+    /// Whether the mode was supplied explicitly.
+    pub wait_for_model_mode_set: bool,
+    /// Use legacy `max_tokens` for chat.
+    pub use_legacy_max_tokens: bool,
+    /// Request usage in streaming frames when supported.
+    pub use_server_token_count: bool,
+    /// Headers merged into every request before per-turn header overrides.
+    #[serde(default, skip_serializing)]
+    pub headers: BTreeMap<String, String>,
+    /// Endpoint API key. It is deliberately never serialized into artifacts.
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
+    /// Endpoint-level extra body fields.
+    pub extra: Option<Map<String, Value>>,
+}
+
+impl Default for RawEndpointConfig {
+    fn default() -> Self {
+        Self {
+            urls: Vec::new(),
+            path: None,
+            streaming: false,
+            request_content_type: None,
+            template: None,
+            response_field: None,
+            timeout_seconds: 6.0 * 60.0 * 60.0,
+            polling_interval_seconds: 0.1,
+            download_video_content: false,
+            wait_for_model_timeout: 0.0,
+            wait_for_model_interval: 5.0,
+            wait_for_model_mode: "inference".to_string(),
+            wait_for_model_interval_set: false,
+            wait_for_model_mode_set: false,
+            use_legacy_max_tokens: false,
+            use_server_token_count: false,
+            headers: BTreeMap::new(),
+            api_key: None,
+            extra: None,
+        }
+    }
+}
+
+impl fmt::Debug for RawEndpointConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RawEndpointConfig")
+            .field("urls", &self.urls)
+            .field("path", &self.path)
+            .field("streaming", &self.streaming)
+            .field("request_content_type", &self.request_content_type)
+            .field("template", &self.template)
+            .field("response_field", &self.response_field)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("polling_interval_seconds", &self.polling_interval_seconds)
+            .field("download_video_content", &self.download_video_content)
+            .field("wait_for_model_timeout", &self.wait_for_model_timeout)
+            .field("wait_for_model_interval", &self.wait_for_model_interval)
+            .field("wait_for_model_mode", &self.wait_for_model_mode)
+            .field(
+                "wait_for_model_interval_set",
+                &self.wait_for_model_interval_set,
+            )
+            .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
+            .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
+            .field("use_server_token_count", &self.use_server_token_count)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("has_api_key", &self.api_key.is_some())
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 /// Endpoint configuration used by endpoint formatters and validators.
@@ -104,39 +208,127 @@ impl fmt::Debug for EndpointConfig {
 
 impl Default for EndpointConfig {
     fn default() -> Self {
+        Self::from_raw(EndpointType::Chat, RawEndpointConfig::default())
+    }
+}
+
+impl From<&EndpointConfig> for RawEndpointConfig {
+    fn from(config: &EndpointConfig) -> Self {
         Self {
-            endpoint_type: EndpointType::Chat,
-            urls: Vec::new(),
-            path: None,
-            streaming: false,
-            request_content_type: None,
-            template: None,
-            response_field: None,
-            timeout_seconds: 6.0 * 60.0 * 60.0,
-            polling_interval_seconds: 0.1,
-            download_video_content: false,
-            wait_for_model_timeout: 0.0,
-            wait_for_model_interval: 5.0,
-            wait_for_model_mode: "inference".to_string(),
-            wait_for_model_interval_set: false,
-            wait_for_model_mode_set: false,
-            use_legacy_max_tokens: false,
-            use_server_token_count: false,
-            headers: BTreeMap::new(),
-            api_key: None,
-            extra: None,
+            urls: config.urls.clone(),
+            path: config.path.clone(),
+            streaming: config.streaming,
+            request_content_type: config.request_content_type,
+            template: config.template.clone(),
+            response_field: config.response_field.clone(),
+            timeout_seconds: config.timeout_seconds,
+            polling_interval_seconds: config.polling_interval_seconds,
+            download_video_content: config.download_video_content,
+            wait_for_model_timeout: config.wait_for_model_timeout,
+            wait_for_model_interval: config.wait_for_model_interval,
+            wait_for_model_mode: config.wait_for_model_mode.clone(),
+            wait_for_model_interval_set: config.wait_for_model_interval_set,
+            wait_for_model_mode_set: config.wait_for_model_mode_set,
+            use_legacy_max_tokens: config.use_legacy_max_tokens,
+            use_server_token_count: config.use_server_token_count,
+            headers: config.headers.clone(),
+            api_key: config.api_key.clone(),
+            extra: config.extra.clone(),
+        }
+    }
+}
+
+impl From<EndpointConfig> for RawEndpointConfig {
+    fn from(config: EndpointConfig) -> Self {
+        Self {
+            urls: config.urls,
+            path: config.path,
+            streaming: config.streaming,
+            request_content_type: config.request_content_type,
+            template: config.template,
+            response_field: config.response_field,
+            timeout_seconds: config.timeout_seconds,
+            polling_interval_seconds: config.polling_interval_seconds,
+            download_video_content: config.download_video_content,
+            wait_for_model_timeout: config.wait_for_model_timeout,
+            wait_for_model_interval: config.wait_for_model_interval,
+            wait_for_model_mode: config.wait_for_model_mode,
+            wait_for_model_interval_set: config.wait_for_model_interval_set,
+            wait_for_model_mode_set: config.wait_for_model_mode_set,
+            use_legacy_max_tokens: config.use_legacy_max_tokens,
+            use_server_token_count: config.use_server_token_count,
+            headers: config.headers,
+            api_key: config.api_key,
+            extra: config.extra,
         }
     }
 }
 
 impl EndpointConfig {
+    /// Construct the protocol-v1 compatibility shape from identity-free policy.
+    pub fn from_raw(endpoint_type: EndpointType, raw: RawEndpointConfig) -> Self {
+        Self {
+            endpoint_type,
+            urls: raw.urls,
+            path: raw.path,
+            streaming: raw.streaming,
+            request_content_type: raw.request_content_type,
+            template: raw.template,
+            response_field: raw.response_field,
+            timeout_seconds: raw.timeout_seconds,
+            polling_interval_seconds: raw.polling_interval_seconds,
+            download_video_content: raw.download_video_content,
+            wait_for_model_timeout: raw.wait_for_model_timeout,
+            wait_for_model_interval: raw.wait_for_model_interval,
+            wait_for_model_mode: raw.wait_for_model_mode,
+            wait_for_model_interval_set: raw.wait_for_model_interval_set,
+            wait_for_model_mode_set: raw.wait_for_model_mode_set,
+            use_legacy_max_tokens: raw.use_legacy_max_tokens,
+            use_server_token_count: raw.use_server_token_count,
+            headers: raw.headers,
+            api_key: raw.api_key,
+            extra: raw.extra,
+        }
+    }
+
     /// Validate and normalize config fields.
     pub fn validate(mut self) -> EndpointResult<Self> {
         if self.template.is_some() && self.endpoint_type == EndpointType::Chat {
             self.endpoint_type = EndpointType::Template;
         }
-        let metadata = metadata_for(self.endpoint_type);
-        if self.streaming && !metadata.supports_streaming {
+        let endpoint_type = self.endpoint_type;
+        let metadata = metadata_for(endpoint_type);
+        let raw = RawEndpointConfig::from(self).validate_against(
+            metadata.supports_streaming,
+            metadata.requires_form_data,
+            endpoint_type.canonical_id(),
+            endpoint_type == EndpointType::Template,
+        )?;
+        Ok(Self::from_raw(endpoint_type, raw))
+    }
+}
+
+impl RawEndpointConfig {
+    pub(crate) fn validate_for_descriptor(
+        self,
+        descriptor: &EndpointDescriptor,
+    ) -> EndpointResult<Self> {
+        self.validate_against(
+            descriptor.supports_streaming,
+            descriptor.requires_form_data,
+            descriptor.id,
+            false,
+        )
+    }
+
+    fn validate_against(
+        mut self,
+        supports_streaming: bool,
+        requires_form_data: bool,
+        endpoint_id: &str,
+        require_template: bool,
+    ) -> EndpointResult<Self> {
+        if self.streaming && !supports_streaming {
             self.streaming = false;
         }
         for url in &self.urls {
@@ -154,9 +346,7 @@ impl EndpointConfig {
             .as_ref()
             .and_then(|extra| extra.get("payload_template"))
             .and_then(Value::as_str);
-        if self.endpoint_type == EndpointType::Template
-            && self.template.is_none()
-            && legacy_template.is_none()
+        if require_template && self.template.is_none() && legacy_template.is_none()
         {
             return Err(EndpointError::InvalidConfig(
                 "template or extra.payload_template is required when endpoint type is 'template'"
@@ -192,26 +382,68 @@ impl EndpointConfig {
             }
         }
         match self.request_content_type {
-            None if metadata.requires_form_data => {
+            None if requires_form_data => {
                 self.request_content_type = Some(RequestContentType::MultipartFormData);
             }
             None => {}
-            Some(RequestContentType::ApplicationJson) if metadata.requires_form_data => {
+            Some(RequestContentType::ApplicationJson) if requires_form_data => {
                 return Err(EndpointError::InvalidConfig(format!(
-                    "endpoint type {:?} requires multipart/form-data; application/json is not supported",
-                    self.endpoint_type
+                    "endpoint {endpoint_id:?} requires multipart/form-data; application/json is not supported"
                 )));
             }
             Some(RequestContentType::ApplicationJson) => {}
-            Some(RequestContentType::MultipartFormData) if !metadata.requires_form_data => {
+            Some(RequestContentType::MultipartFormData) if !requires_form_data => {
                 return Err(EndpointError::InvalidConfig(format!(
-                    "request_content_type=multipart_form_data is only supported for endpoint types that accept form-data; endpoint type {:?} does not",
-                    self.endpoint_type
+                    "request_content_type=multipart_form_data is only supported for endpoints that accept form-data; endpoint {endpoint_id:?} does not"
                 )));
             }
             Some(RequestContentType::MultipartFormData) => {}
         }
         Ok(self)
+    }
+}
+
+/// Validated endpoint policy bound to one selected endpoint factory.
+///
+/// Fields remain private so callers cannot assemble an adapter/config pair by
+/// struct literal. The frozen registry is the only constructor.
+#[derive(Clone, PartialEq)]
+pub struct EffectiveEndpointConfig {
+    inner: RawEndpointConfig,
+}
+
+impl EffectiveEndpointConfig {
+    pub(crate) fn from_validated(inner: RawEndpointConfig) -> Self {
+        Self { inner }
+    }
+
+    /// Borrow validated identity-free endpoint policy.
+    pub fn as_raw(&self) -> &RawEndpointConfig {
+        &self.inner
+    }
+
+    /// Clone validated identity-free endpoint policy.
+    pub fn to_raw(&self) -> RawEndpointConfig {
+        self.inner.clone()
+    }
+
+    /// Effective streaming policy after descriptor normalization.
+    pub const fn streaming(&self) -> bool {
+        self.inner.streaming
+    }
+
+    /// Effective request content type after descriptor normalization.
+    pub const fn request_content_type(&self) -> Option<RequestContentType> {
+        self.inner.request_content_type
+    }
+}
+
+impl fmt::Debug for EffectiveEndpointConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("EffectiveEndpointConfig")
+            .field(&self.inner)
+            .finish()
     }
 }
 

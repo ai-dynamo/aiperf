@@ -20,17 +20,16 @@ mod flexible;
 
 use serde_json::{Map, Value, json};
 
-use crate::config::EndpointConfig;
-use crate::endpoints::{
-    Endpoint, merge_extra, parse_embeddings_response, require_turns, turn_texts,
-};
-use crate::metadata::{EndpointMetadata, EndpointType, metadata_for};
+use crate::config::{EndpointConfig, RawEndpointConfig};
+use crate::endpoints::{Endpoint, merge_extra, parse_embeddings_response, turn_texts};
+use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
 use crate::models::{
     EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
     ParsedResponse, RequestInfo, ResponseData, ServerResponse, VideoResponseData,
 };
+use crate::registry::{PreparedEndpointBehavior, PreparedRequest, format_legacy_payload};
 
-pub use flexible::{RawEndpoint, TemplateEndpoint};
+pub use flexible::{RawEndpoint, RawEndpointFactory, TemplateEndpoint, TemplateEndpointFactory};
 
 /// NVIDIA NIM multimodal embeddings endpoint.
 #[derive(Debug, Clone, Copy, Default)]
@@ -72,13 +71,211 @@ pub struct ImageRetrievalEndpoint;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SolidoRagEndpoint;
 
+const NIM_EMBEDDINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "nim_embeddings",
+    aliases: &[],
+    description: "NVIDIA NIM multimodal embeddings API",
+    endpoint_path: Some("/v1/embeddings"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text, Modality::Image],
+    output_modalities: &[Modality::Embeddings],
+    metrics_title: "NIM Embeddings Metrics",
+    service_kind: "embeddings",
+};
+
+const NIM_RANKINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "nim_rankings",
+    aliases: &[],
+    description: "NVIDIA NIM rankings API",
+    endpoint_path: Some("/v1/ranking"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Rankings],
+    metrics_title: "Rankings Metrics",
+    service_kind: "rankings",
+};
+
+const COHERE_RANKINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "cohere_rankings",
+    aliases: &[],
+    description: "Cohere rerank API",
+    endpoint_path: Some("/v2/rerank"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Rankings],
+    metrics_title: "Ranking Metrics",
+    service_kind: "rankings",
+};
+
+const HF_TEI_RANKINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "hf_tei_rankings",
+    aliases: &[],
+    description: "Hugging Face TEI rerank API",
+    endpoint_path: Some("/rerank"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Rankings],
+    metrics_title: "Ranking Metrics",
+    service_kind: "rankings",
+};
+
+const HUGGINGFACE_GENERATE_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "huggingface_generate",
+    aliases: &[],
+    description: "Hugging Face text-generation inference API",
+    endpoint_path: Some("/generate"),
+    streaming_path: Some("/generate_stream"),
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
+const IMAGE_GENERATION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "image_generation",
+    aliases: &[],
+    description: "OpenAI-compatible image generation API",
+    endpoint_path: Some("/v1/images/generations"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Image],
+    metrics_title: "Image Generation Metrics",
+    service_kind: "image_generation",
+};
+
+const IMAGE_EDIT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "image_edit",
+    aliases: &[],
+    description: "OpenAI-compatible image edit API",
+    endpoint_path: Some("/v1/images/edits"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: true,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text, Modality::Image],
+    output_modalities: &[Modality::Image],
+    metrics_title: "Image Edit Metrics",
+    service_kind: "image_edit",
+};
+
+const VIDEO_GENERATION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "video_generation",
+    aliases: &[],
+    description: "OpenAI-compatible asynchronous video generation API",
+    endpoint_path: Some("/v1/videos"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: true,
+    requires_polling: true,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Video],
+    metrics_title: "Video Generation Metrics",
+    service_kind: "video_generation",
+};
+
+const IMAGE_RETRIEVAL_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "image_retrieval",
+    aliases: &[],
+    description: "NVIDIA NIM image retrieval API",
+    endpoint_path: Some("/v1/infer"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: false,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: true,
+    input_modalities: &[Modality::Image],
+    output_modalities: &[Modality::Rankings],
+    metrics_title: "Image Retrieval Metrics",
+    service_kind: "image_retrieval",
+};
+
+const SOLIDO_RAG_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "solido_rag",
+    aliases: &[],
+    description: "SOLIDO retrieval-augmented generation API",
+    endpoint_path: Some("/rag/api/prompt"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "SOLIDO RAG Metrics",
+    service_kind: "llm",
+};
+
 impl Endpoint for NimEmbeddingsEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &NIM_EMBEDDINGS_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::NimEmbeddings)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turn = single_turn(request_info, "Embeddings endpoint only supports one turn")?;
+        format_legacy_payload(self, request_info)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_embeddings_response(response, true)
+    }
+}
+
+impl PreparedEndpointBehavior for NimEmbeddingsEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turn = prepared_single_turn(request, "Embeddings endpoint only supports one turn")?;
         let texts = turn_texts(turn);
         let images = turn
             .images
@@ -108,18 +305,14 @@ impl Endpoint for NimEmbeddingsEndpoint {
         let mut payload = Map::new();
         payload.insert(
             "model".into(),
-            Value::String(effective_model(request_info, turn)),
+            Value::String(prepared_effective_model(request, turn)),
         );
         payload.insert(
             "input".into(),
             Value::Array(inputs.into_iter().map(Value::String).collect()),
         );
-        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
         Ok(Value::Object(payload))
-    }
-
-    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        parse_embeddings_response(response, true)
     }
 }
 
@@ -130,8 +323,12 @@ enum RankingFlavor {
     HfTei,
 }
 
-fn format_rankings(flavor: RankingFlavor, request_info: &RequestInfo) -> EndpointResult<Value> {
-    let turn = single_turn(request_info, "Rankings endpoint only supports one turn")?;
+fn format_rankings(
+    flavor: RankingFlavor,
+    request: &PreparedRequest<'_>,
+    config: &RawEndpointConfig,
+) -> EndpointResult<Value> {
+    let turn = prepared_single_turn(request, "Rankings endpoint only supports one turn")?;
     let mut queries = Vec::new();
     let mut passages = Vec::new();
     for text in &turn.texts {
@@ -146,7 +343,7 @@ fn format_rankings(flavor: RankingFlavor, request_info: &RequestInfo) -> Endpoin
             "rankings request requires a text with name 'query' or 'queries'".into(),
         )
     })?;
-    let model = effective_model(request_info, turn);
+    let model = prepared_effective_model(request, turn);
     let mut payload = match flavor {
         RankingFlavor::Nim => json!({
             "model": model,
@@ -161,7 +358,7 @@ fn format_rankings(flavor: RankingFlavor, request_info: &RequestInfo) -> Endpoin
     .as_object()
     .expect("ranking payload is an object")
     .clone();
-    merge_endpoint_and_turn_extra(&mut payload, request_info);
+    merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
     Ok(Value::Object(payload))
 }
 
@@ -250,14 +447,18 @@ fn ranking_inputs(body: &Value, flavor: RankingFlavor) -> ExtractedPayload {
 }
 
 macro_rules! ranking_endpoint {
-    ($ty:ty, $endpoint_type:ident, $flavor:ident) => {
+    ($ty:ty, $endpoint_type:ident, $flavor:ident, $descriptor:ident) => {
         impl Endpoint for $ty {
+            fn descriptor(&self) -> &'static EndpointDescriptor {
+                &$descriptor
+            }
+
             fn metadata(&self) -> &'static EndpointMetadata {
                 metadata_for(EndpointType::$endpoint_type)
             }
 
             fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-                format_rankings(RankingFlavor::$flavor, request_info)
+                format_legacy_payload(self, request_info)
             }
 
             fn parse_response(
@@ -271,37 +472,49 @@ macro_rules! ranking_endpoint {
                 ranking_inputs(body, RankingFlavor::$flavor)
             }
         }
+
+        impl PreparedEndpointBehavior for $ty {
+            fn format_prepared_payload(
+                &self,
+                request: &PreparedRequest<'_>,
+                config: &RawEndpointConfig,
+            ) -> EndpointResult<Value> {
+                format_rankings(RankingFlavor::$flavor, request, config)
+            }
+        }
     };
 }
 
-ranking_endpoint!(NimRankingsEndpoint, NimRankings, Nim);
-ranking_endpoint!(CohereRankingsEndpoint, CohereRankings, Cohere);
-ranking_endpoint!(HfTeiRankingsEndpoint, HfTeiRankings, HfTei);
+ranking_endpoint!(
+    NimRankingsEndpoint,
+    NimRankings,
+    Nim,
+    NIM_RANKINGS_DESCRIPTOR
+);
+ranking_endpoint!(
+    CohereRankingsEndpoint,
+    CohereRankings,
+    Cohere,
+    COHERE_RANKINGS_DESCRIPTOR
+);
+ranking_endpoint!(
+    HfTeiRankingsEndpoint,
+    HfTeiRankings,
+    HfTei,
+    HF_TEI_RANKINGS_DESCRIPTOR
+);
 
 impl Endpoint for HuggingFaceGenerateEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &HUGGINGFACE_GENERATE_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::HuggingfaceGenerate)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turn = single_turn(
-            request_info,
-            "TGI endpoint supports a single turn per request",
-        )?;
-        let inputs = turn_texts(turn).join(" ");
-        let mut parameters = Map::new();
-        if let Some(max_tokens) = turn.max_tokens {
-            parameters.insert("max_new_tokens".into(), json!(max_tokens));
-        }
-        merge_extra(
-            &mut parameters,
-            request_info.model_endpoint.endpoint.extra.as_ref(),
-        );
-        let mut payload = Map::new();
-        payload.insert("inputs".into(), Value::String(inputs));
-        payload.insert("parameters".into(), Value::Object(parameters));
-        merge_extra(&mut payload, turn.extra_body.as_ref());
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -314,6 +527,28 @@ impl Endpoint for HuggingFaceGenerateEndpoint {
         config: &EndpointConfig,
     ) -> EndpointResult<Option<ParsedResponse>> {
         parse_tgi_response(response, Some(config.streaming))
+    }
+}
+
+impl PreparedEndpointBehavior for HuggingFaceGenerateEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turn =
+            prepared_single_turn(request, "TGI endpoint supports a single turn per request")?;
+        let inputs = turn_texts(turn).join(" ");
+        let mut parameters = Map::new();
+        if let Some(max_tokens) = turn.max_tokens {
+            parameters.insert("max_new_tokens".into(), json!(max_tokens));
+        }
+        merge_extra(&mut parameters, config.extra.as_ref());
+        let mut payload = Map::new();
+        payload.insert("inputs".into(), Value::String(inputs));
+        payload.insert("parameters".into(), Value::Object(parameters));
+        merge_extra(&mut payload, turn.extra_body.as_ref());
+        Ok(Value::Object(payload))
     }
 }
 
@@ -360,13 +595,31 @@ fn parse_tgi_response(
 }
 
 impl Endpoint for ImageGenerationEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &IMAGE_GENERATION_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::ImageGeneration)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(
-            request_info,
+        format_legacy_payload(self, request_info)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_image_response(response, true)
+    }
+}
+
+impl PreparedEndpointBehavior for ImageGenerationEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns = prepared_require_turns(
+            request,
             "Image generation endpoint requires at least one turn",
         )?;
         let turn = turns
@@ -377,35 +630,47 @@ impl Endpoint for ImageGenerationEndpoint {
         })?;
         let mut payload = json!({
             "prompt": prompt,
-            "model": effective_model(request_info, turn),
+            "model": prepared_effective_model(request, turn),
             "response_format": "b64_json",
             "n": 1
         })
         .as_object()
         .expect("image payload is an object")
         .clone();
-        if request_info.model_endpoint.endpoint.streaming {
+        if config.streaming {
             payload.insert("stream".into(), Value::Bool(true));
         }
-        merge_endpoint_and_turn_extra(&mut payload, request_info);
+        merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
         Ok(Value::Object(payload))
-    }
-
-    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        parse_image_response(response, true)
     }
 }
 
 impl Endpoint for ImageEditEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &IMAGE_EDIT_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::ImageEdit)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(
-            request_info,
-            "Image edit endpoint requires at least one turn",
-        )?;
+        format_legacy_payload(self, request_info)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        parse_image_response(response, false)
+    }
+}
+
+impl PreparedEndpointBehavior for ImageEditEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns =
+            prepared_require_turns(request, "Image edit endpoint requires at least one turn")?;
         let turn = turns
             .last()
             .expect("require_turns returned a non-empty slice");
@@ -428,7 +693,7 @@ impl Endpoint for ImageEditEndpoint {
         }
         let mut payload = json!({
             "prompt": prompt,
-            "model": effective_model(request_info, turn),
+            "model": prepared_effective_model(request, turn),
             "response_format": "b64_json",
             "n": 1
         })
@@ -442,16 +707,9 @@ impl Endpoint for ImageEditEndpoint {
         } else {
             payload.insert("image".into(), build_image_file_field(image)?);
         }
-        merge_image_edit_extra(
-            &mut payload,
-            request_info.model_endpoint.endpoint.extra.as_ref(),
-        );
+        merge_image_edit_extra(&mut payload, config.extra.as_ref());
         merge_image_edit_extra(&mut payload, turn.extra_body.as_ref());
         Ok(Value::Object(payload))
-    }
-
-    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        parse_image_response(response, false)
     }
 }
 
@@ -569,30 +827,16 @@ fn sniff_image_mime(b64: &str) -> Option<&'static str> {
 }
 
 impl Endpoint for VideoGenerationEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &VIDEO_GENERATION_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::VideoGeneration)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(
-            request_info,
-            "Video generation endpoint requires at least one turn",
-        )?;
-        let turn = turns
-            .last()
-            .expect("require_turns returned a non-empty slice");
-        let prompt = first_text(turn).ok_or_else(|| {
-            EndpointError::InvalidRequest("Video generation endpoint requires a text prompt".into())
-        })?;
-        let mut payload = json!({
-            "prompt": prompt,
-            "model": effective_model(request_info, turn)
-        })
-        .as_object()
-        .expect("video payload is an object")
-        .clone();
-        merge_endpoint_and_turn_extra(&mut payload, request_info);
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -645,37 +889,45 @@ impl Endpoint for VideoGenerationEndpoint {
     }
 }
 
+impl PreparedEndpointBehavior for VideoGenerationEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns = prepared_require_turns(
+            request,
+            "Video generation endpoint requires at least one turn",
+        )?;
+        let turn = turns
+            .last()
+            .expect("require_turns returned a non-empty slice");
+        let prompt = first_text(turn).ok_or_else(|| {
+            EndpointError::InvalidRequest("Video generation endpoint requires a text prompt".into())
+        })?;
+        let mut payload = json!({
+            "prompt": prompt,
+            "model": prepared_effective_model(request, turn)
+        })
+        .as_object()
+        .expect("video payload is an object")
+        .clone();
+        merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
+        Ok(Value::Object(payload))
+    }
+}
+
 impl Endpoint for ImageRetrievalEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &IMAGE_RETRIEVAL_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::ImageRetrieval)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turn = single_turn(
-            request_info,
-            "Image Retrieval endpoint only supports one turn",
-        )?;
-        if turn.images.is_empty() {
-            return Err(EndpointError::InvalidRequest(
-                "Image Retrieval request requires at least one image".into(),
-            ));
-        }
-        let input = turn
-            .images
-            .iter()
-            .flat_map(|image| image.contents.iter())
-            .filter(|content| !content.is_empty())
-            .map(|content| json!({"type":"image_url", "url":content}))
-            .collect::<Vec<_>>();
-        if input.is_empty() {
-            return Err(EndpointError::InvalidRequest(
-                "no valid image content found; all images have empty contents".into(),
-            ));
-        }
-        let mut payload = Map::new();
-        payload.insert("input".into(), Value::Array(input));
-        merge_endpoint_and_turn_extra(&mut payload, request_info);
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -714,26 +966,49 @@ impl Endpoint for ImageRetrievalEndpoint {
     }
 }
 
+impl PreparedEndpointBehavior for ImageRetrievalEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turn =
+            prepared_single_turn(request, "Image Retrieval endpoint only supports one turn")?;
+        if turn.images.is_empty() {
+            return Err(EndpointError::InvalidRequest(
+                "Image Retrieval request requires at least one image".into(),
+            ));
+        }
+        let input = turn
+            .images
+            .iter()
+            .flat_map(|image| image.contents.iter())
+            .filter(|content| !content.is_empty())
+            .map(|content| json!({"type":"image_url", "url":content}))
+            .collect::<Vec<_>>();
+        if input.is_empty() {
+            return Err(EndpointError::InvalidRequest(
+                "no valid image content found; all images have empty contents".into(),
+            ));
+        }
+        let mut payload = Map::new();
+        payload.insert("input".into(), Value::Array(input));
+        merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
+        Ok(Value::Object(payload))
+    }
+}
+
 impl Endpoint for SolidoRagEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &SOLIDO_RAG_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::SolidoRag)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(request_info, "SOLIDO endpoint requires at least one turn")?;
-        let turn = turns
-            .last()
-            .expect("require_turns returned a non-empty slice");
-        let mut payload = json!({
-            "query": turn_texts(turn),
-            "filters": {"family":"Solido", "tool":"SDE"},
-            "inference_model": effective_model(request_info, turn)
-        })
-        .as_object()
-        .expect("SOLIDO payload is an object")
-        .clone();
-        merge_endpoint_and_turn_extra(&mut payload, request_info);
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -767,21 +1042,55 @@ impl Endpoint for SolidoRagEndpoint {
     }
 }
 
-fn single_turn<'a>(
-    request_info: &'a RequestInfo,
+impl PreparedEndpointBehavior for SolidoRagEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns = prepared_require_turns(request, "SOLIDO endpoint requires at least one turn")?;
+        let turn = turns
+            .last()
+            .expect("require_turns returned a non-empty slice");
+        let mut payload = json!({
+            "query": turn_texts(turn),
+            "filters": {"family":"Solido", "tool":"SDE"},
+            "inference_model": prepared_effective_model(request, turn)
+        })
+        .as_object()
+        .expect("SOLIDO payload is an object")
+        .clone();
+        merge_prepared_endpoint_and_turn_extra(&mut payload, request, config);
+        Ok(Value::Object(payload))
+    }
+}
+
+fn prepared_single_turn<'a>(
+    request: &'a PreparedRequest<'_>,
     message: &str,
 ) -> EndpointResult<&'a crate::Turn> {
-    if request_info.turns.len() == 1 {
-        Ok(&request_info.turns[0])
+    if request.turns().len() == 1 {
+        Ok(&request.turns()[0])
     } else {
         Err(EndpointError::InvalidRequest(message.into()))
     }
 }
 
-fn effective_model(request_info: &RequestInfo, turn: &crate::Turn) -> String {
+fn prepared_require_turns<'a>(
+    request: &'a PreparedRequest<'_>,
+    message: &str,
+) -> EndpointResult<&'a [crate::Turn]> {
+    if request.turns().is_empty() {
+        Err(EndpointError::InvalidRequest(message.into()))
+    } else {
+        Ok(request.turns())
+    }
+}
+
+fn prepared_effective_model(request: &PreparedRequest<'_>, turn: &crate::Turn) -> String {
     turn.model
         .clone()
-        .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone())
+        .unwrap_or_else(|| request.primary_model_name().to_string())
 }
 
 fn first_text(turn: &crate::Turn) -> Option<&str> {
@@ -791,12 +1100,16 @@ fn first_text(turn: &crate::Turn) -> Option<&str> {
         .map(String::as_str)
 }
 
-fn merge_endpoint_and_turn_extra(payload: &mut Map<String, Value>, request_info: &RequestInfo) {
-    merge_extra(payload, request_info.model_endpoint.endpoint.extra.as_ref());
+fn merge_prepared_endpoint_and_turn_extra(
+    payload: &mut Map<String, Value>,
+    request: &PreparedRequest<'_>,
+    config: &RawEndpointConfig,
+) {
+    merge_extra(payload, config.extra.as_ref());
     merge_extra(
         payload,
-        request_info
-            .turns
+        request
+            .turns()
             .last()
             .and_then(|turn| turn.extra_body.as_ref()),
     );

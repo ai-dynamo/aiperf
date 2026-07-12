@@ -1132,3 +1132,29 @@ The following concerns were explicitly overruled and require no design reversal:
 The core runner-owned endpoint architecture is accepted. It becomes implementation-ready only with
 this addendum and the separate runner-only execution-surface companion. No backend/workload mode DTO
 is added to this endpoint spec.
+
+## Addendum — 2026-07-11 (open-registry foundation implementation)
+
+The first in-tree implementation slice is now built, without claiming the full completion criteria
+in section 13:
+
+- `aiperf-endpoints` owns validated open `EndpointId` syntax, adapter-local descriptors, explicit
+  aliases, deterministic `BTreeMap`-backed startup registration, and a frozen registry;
+- endpoint identity is separate from `RawEndpointConfig`, while the registry alone constructs the
+  private validated `EffectiveEndpointConfig`;
+- object-safe `EndpointFactory` and worker-local `PreparedEndpoint` values bind behavior and policy
+  before dispatch; `PreparedRequest` contains no endpoint configuration, and `EndpointKey` plus
+  `PreparedEndpointTable` provide the dense lookup seam;
+- raw/template factories compile the Minijinja template and JMESPath selector once per prepared
+  worker/profile binding;
+- readiness is an object-safe dialect-owned policy with an explicit unsupported result, so callers
+  cannot substitute a chat probe;
+- `aiperf-extensions` transactionally registers a test dialect whose ID and behavior have no
+  `EndpointType` variant; duplicate IDs and aliases fail atomically and catalogs remain sorted.
+
+Protocol-v1 `EndpointType`, `EndpointMetadata`, and the dataset-owned compatibility resolver remain
+temporarily present, and the production runner still publishes a handwritten endpoint list and
+constructs built-ins internally. Consequently, exact-binary registry authority, registry-derived
+capabilities, shared validate/execute preparation, and full runner injection are still pending.
+This addendum records implementation progress only; it does not narrow the original completion
+criteria or authorize a second permanent endpoint authority.

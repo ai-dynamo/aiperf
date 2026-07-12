@@ -15,15 +15,18 @@ use serde_json::{Map, Value, json};
 
 use crate::endpoints::{
     PartShape, build_messages, build_plain_assistant_turn, latest_turn_attr, merge_extra,
-    non_empty_field, require_turns,
+    non_empty_field, require_prepared_turns,
 };
 use crate::extraction::{PartTypes, extract_inputs};
-use crate::metadata::{EndpointMetadata, EndpointType, metadata_for};
+use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
 use crate::models::{
     EndpointResult, ExtractedPayload, ParsedResponse, RequestInfo, RequestRecord, ResponseData,
     ServerResponse, Turn,
 };
-use crate::{Endpoint, EndpointConfig};
+use crate::registry::{
+    PreparedEndpointBehavior, PreparedRequest, format_legacy_payload,
+};
+use crate::{Endpoint, EndpointConfig, RawEndpointConfig};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -51,7 +54,29 @@ const SIGNATURE_DELTA: &str = "signature_delta";
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MessagesEndpoint;
 
+const MESSAGES_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "messages",
+    aliases: &[],
+    description: "Anthropic Messages API",
+    endpoint_path: Some("/v1/messages"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text, Modality::Image],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
 impl Endpoint for MessagesEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &MESSAGES_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::Messages)
     }
@@ -70,58 +95,7 @@ impl Endpoint for MessagesEndpoint {
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(
-            request_info,
-            "Anthropic Messages endpoint requires at least one turn.",
-        )?;
-        let endpoint = &request_info.model_endpoint.endpoint;
-        let last = turns.last().expect("non-empty turns");
-
-        let mut messages = Vec::new();
-        if let Some(context) = request_info
-            .user_context_message
-            .as_ref()
-            .filter(|value| !value.is_empty())
-        {
-            messages.push(json!({"role":"user","content":context}));
-        }
-        messages.extend(build_messages(turns, PartShape::Messages)?);
-
-        let mut payload = Map::new();
-        payload.insert(
-            "model".into(),
-            Value::String(
-                last.model
-                    .clone()
-                    .filter(|model| !model.is_empty())
-                    .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone()),
-            ),
-        );
-        payload.insert("messages".into(), Value::Array(messages));
-        payload.insert(
-            "max_tokens".into(),
-            Value::from(last.max_tokens.unwrap_or(1_024)),
-        );
-        if endpoint.streaming {
-            payload.insert("stream".into(), Value::Bool(true));
-        }
-
-        if let Some(system) = latest_turn_attr(turns, |turn| turn.raw_system.as_ref()) {
-            payload.insert("system".into(), Value::Array(system.clone()));
-        } else if let Some(system) = request_info
-            .system_message
-            .as_ref()
-            .filter(|value| !value.is_empty())
-        {
-            payload.insert("system".into(), Value::String(system.clone()));
-        }
-        if let Some(tools) = latest_turn_attr(turns, |turn| turn.raw_tools.as_ref()) {
-            payload.insert("tools".into(), Value::Array(tools.clone()));
-        }
-
-        merge_extra(&mut payload, endpoint.extra.as_ref());
-        merge_extra(&mut payload, last.extra_body.as_ref());
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -229,6 +203,61 @@ impl Endpoint for MessagesEndpoint {
 
     fn captures_assistant_turn(&self) -> bool {
         true
+    }
+}
+
+impl PreparedEndpointBehavior for MessagesEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        endpoint: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns = require_prepared_turns(
+            request,
+            "Anthropic Messages endpoint requires at least one turn.",
+        )?;
+        let last = turns.last().expect("non-empty turns");
+
+        let mut messages = Vec::new();
+        if let Some(context) = request
+            .user_context_message()
+            .filter(|value| !value.is_empty())
+        {
+            messages.push(json!({"role":"user","content":context}));
+        }
+        messages.extend(build_messages(turns, PartShape::Messages)?);
+
+        let mut payload = Map::new();
+        payload.insert(
+            "model".into(),
+            Value::String(
+                last.model
+                    .clone()
+                    .filter(|model| !model.is_empty())
+                    .unwrap_or_else(|| request.primary_model_name().to_string()),
+            ),
+        );
+        payload.insert("messages".into(), Value::Array(messages));
+        payload.insert(
+            "max_tokens".into(),
+            Value::from(last.max_tokens.unwrap_or(1_024)),
+        );
+        if endpoint.streaming {
+            payload.insert("stream".into(), Value::Bool(true));
+        }
+
+        if let Some(system) = latest_turn_attr(turns, |turn| turn.raw_system.as_ref()) {
+            payload.insert("system".into(), Value::Array(system.clone()));
+        } else if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
+            payload.insert("system".into(), Value::String(system.to_string()));
+        }
+        if let Some(tools) = latest_turn_attr(turns, |turn| turn.raw_tools.as_ref()) {
+            payload.insert("tools".into(), Value::Array(tools.clone()));
+        }
+
+        merge_extra(&mut payload, endpoint.extra.as_ref());
+        merge_extra(&mut payload, last.extra_body.as_ref());
+        Ok(Value::Object(payload))
     }
 }
 

@@ -7,12 +7,15 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
-use crate::config::EndpointConfig;
+use crate::config::{EndpointConfig, RawEndpointConfig};
 use crate::extraction::{PartTypes, extract_inputs};
-use crate::metadata::{EndpointMetadata, EndpointType, metadata_for};
+use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
 use crate::models::{
     CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media, ParsedResponse,
     RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
+};
+use crate::registry::{
+    PreparedEndpointBehavior, PreparedRequest, ReadinessPolicy, format_legacy_payload,
 };
 
 /// Warmup prefix used by the completions endpoint.
@@ -21,7 +24,15 @@ pub const WARMUP_SYSTEM_MESSAGE_PREFIX: &str =
 
 /// Endpoint adapter contract.
 pub trait Endpoint: std::fmt::Debug + Send + Sync {
+    /// Return the canonical open-ID descriptor registered with the runner.
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        crate::registry::legacy_descriptor_for(self.metadata().endpoint_type)
+    }
     /// Return static capability metadata.
+    ///
+    /// This closed-enum view is retained only for protocol-v1 callers. New
+    /// endpoint implementations register an [`crate::EndpointFactory`] and do
+    /// not require an [`EndpointType`] variant.
     fn metadata(&self) -> &'static EndpointMetadata;
     /// Build a decoded JSON request body.
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value>;
@@ -36,6 +47,19 @@ pub trait Endpoint: std::fmt::Debug + Send + Sync {
             headers.insert("Authorization".into(), format!("Bearer {api_key}"));
         }
         headers
+    }
+    /// Build the dialect-owned readiness policy for one effective model.
+    ///
+    /// Dialects must either return an exact request or explicitly decline
+    /// readiness probing; orchestration must never substitute a chat payload.
+    fn readiness_policy(
+        &self,
+        _config: &EndpointConfig,
+        _model: &str,
+    ) -> EndpointResult<ReadinessPolicy> {
+        Ok(ReadinessPolicy::Unsupported {
+            reason: "this endpoint dialect has not declared a readiness request",
+        })
     }
     /// Parse a decoded server response.
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
@@ -107,51 +131,107 @@ pub struct EmbeddingsEndpoint;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ChatEmbeddingsEndpoint;
 
+const CHAT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "chat",
+    aliases: &["chat_completions"],
+    description: "OpenAI-compatible Chat Completions API",
+    endpoint_path: Some("/v1/chat/completions"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text, Modality::Image, Modality::Audio, Modality::Video],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
+const RESPONSES_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "responses",
+    aliases: &[],
+    description: "OpenAI Responses API",
+    endpoint_path: Some("/v1/responses"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text, Modality::Image, Modality::Audio],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
+const COMPLETIONS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "completions",
+    aliases: &[],
+    description: "OpenAI-compatible legacy Completions API",
+    endpoint_path: Some("/v1/completions"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
+const EMBEDDINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "embeddings",
+    aliases: &[],
+    description: "OpenAI-compatible Embeddings API",
+    endpoint_path: Some("/v1/embeddings"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text],
+    output_modalities: &[Modality::Embeddings],
+    metrics_title: "Embeddings Metrics",
+    service_kind: "embeddings",
+};
+
+const CHAT_EMBEDDINGS_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "chat_embeddings",
+    aliases: &[],
+    description: "Chat-shaped embeddings API",
+    endpoint_path: Some("/v1/embeddings"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: false,
+    input_modalities: &[Modality::Text, Modality::Image],
+    output_modalities: &[Modality::Embeddings],
+    metrics_title: "Embeddings Metrics",
+    service_kind: "embeddings",
+};
+
 impl Endpoint for ChatEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &CHAT_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::Chat)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(request_info, "Chat endpoint requires at least one turn")?;
-        let mut messages =
-            format_chat_messages(request_info, build_messages(turns, PartShape::Chat)?);
-        let last = turns.last().expect("non-empty turns");
-        let endpoint = &request_info.model_endpoint.endpoint;
-        let mut payload = Map::new();
-        payload.insert(
-            "messages".into(),
-            Value::Array(std::mem::take(&mut messages)),
-        );
-        payload.insert(
-            "model".into(),
-            Value::String(
-                last.model
-                    .clone()
-                    .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone()),
-            ),
-        );
-        payload.insert("stream".into(), Value::Bool(endpoint.streaming));
-        if let Some(tools) = latest_turn_attr(turns, |turn| turn.raw_tools.as_ref()) {
-            payload.insert("tools".into(), Value::Array(tools.clone()));
-        }
-        if let Some(max_tokens) = last.max_tokens {
-            payload.insert(
-                if endpoint.use_legacy_max_tokens {
-                    "max_tokens"
-                } else {
-                    "max_completion_tokens"
-                }
-                .into(),
-                json!(max_tokens),
-            );
-        }
-        merge_extra(&mut payload, endpoint.extra.as_ref());
-        merge_extra(&mut payload, last.extra_body.as_ref());
-        if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
-        }
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -222,50 +302,43 @@ impl Endpoint for ChatEndpoint {
     }
 }
 
-impl Endpoint for ResponsesEndpoint {
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Responses)
-    }
-
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        let turns = require_turns(
-            request_info,
-            "Responses endpoint requires at least one turn",
-        )?;
-        let endpoint = &request_info.model_endpoint.endpoint;
+impl PreparedEndpointBehavior for ChatEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        endpoint: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns = require_prepared_turns(request, "Chat endpoint requires at least one turn")?;
+        let mut messages =
+            format_chat_messages(request, build_messages(turns, PartShape::Chat)?);
         let last = turns.last().expect("non-empty turns");
-        let mut input = Vec::new();
-        if let Some(context) = request_info
-            .user_context_message
-            .as_ref()
-            .filter(|s| !s.is_empty())
-        {
-            input.push(json!({"type": "message", "role": "user", "content": context}));
-        }
-        input.extend(build_messages_responses(turns)?);
         let mut payload = Map::new();
-        payload.insert("input".into(), Value::Array(input));
+        payload.insert(
+            "messages".into(),
+            Value::Array(std::mem::take(&mut messages)),
+        );
         payload.insert(
             "model".into(),
             Value::String(
                 last.model
                     .clone()
-                    .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone()),
+                    .unwrap_or_else(|| request.primary_model_name().to_string()),
             ),
         );
         payload.insert("stream".into(), Value::Bool(endpoint.streaming));
-        if let Some(system) = request_info
-            .system_message
-            .as_ref()
-            .filter(|s| !s.is_empty())
-        {
-            payload.insert("instructions".into(), Value::String(system.clone()));
-        }
-        if let Some(max_tokens) = last.max_tokens {
-            payload.insert("max_output_tokens".into(), json!(max_tokens));
-        }
         if let Some(tools) = latest_turn_attr(turns, |turn| turn.raw_tools.as_ref()) {
             payload.insert("tools".into(), Value::Array(tools.clone()));
+        }
+        if let Some(max_tokens) = last.max_tokens {
+            payload.insert(
+                if endpoint.use_legacy_max_tokens {
+                    "max_tokens"
+                } else {
+                    "max_completion_tokens"
+                }
+                .into(),
+                json!(max_tokens),
+            );
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
@@ -273,6 +346,20 @@ impl Endpoint for ResponsesEndpoint {
             ensure_include_usage(&mut payload);
         }
         Ok(Value::Object(payload))
+    }
+}
+
+impl Endpoint for ResponsesEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &RESPONSES_DESCRIPTOR
+    }
+
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::Responses)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -371,49 +458,62 @@ impl Endpoint for ResponsesEndpoint {
     }
 }
 
+impl PreparedEndpointBehavior for ResponsesEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        endpoint: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        let turns = require_prepared_turns(
+            request,
+            "Responses endpoint requires at least one turn",
+        )?;
+        let last = turns.last().expect("non-empty turns");
+        let mut input = Vec::new();
+        if let Some(context) = request.user_context_message().filter(|value| !value.is_empty()) {
+            input.push(json!({"type": "message", "role": "user", "content": context}));
+        }
+        input.extend(build_messages_responses(turns)?);
+        let mut payload = Map::new();
+        payload.insert("input".into(), Value::Array(input));
+        payload.insert(
+            "model".into(),
+            Value::String(
+                last.model
+                    .clone()
+                    .unwrap_or_else(|| request.primary_model_name().to_string()),
+            ),
+        );
+        payload.insert("stream".into(), Value::Bool(endpoint.streaming));
+        if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
+            payload.insert("instructions".into(), Value::String(system.to_string()));
+        }
+        if let Some(max_tokens) = last.max_tokens {
+            payload.insert("max_output_tokens".into(), json!(max_tokens));
+        }
+        if let Some(tools) = latest_turn_attr(turns, |turn| turn.raw_tools.as_ref()) {
+            payload.insert("tools".into(), Value::Array(tools.clone()));
+        }
+        merge_extra(&mut payload, endpoint.extra.as_ref());
+        merge_extra(&mut payload, last.extra_body.as_ref());
+        if endpoint.streaming && endpoint.use_server_token_count {
+            ensure_include_usage(&mut payload);
+        }
+        Ok(Value::Object(payload))
+    }
+}
+
 impl Endpoint for CompletionsEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &COMPLETIONS_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::Completions)
     }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        if request_info.turns.len() != 1 {
-            return Err(EndpointError::InvalidRequest(
-                "Completions endpoint only supports one turn".into(),
-            ));
-        }
-        let turn = &request_info.turns[0];
-        let endpoint = &request_info.model_endpoint.endpoint;
-        let mut prompts = turn_texts(turn);
-        if request_info.credit_phase == CreditPhase::Warmup {
-            prompts = prompts
-                .into_iter()
-                .map(|prompt| format!("{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{prompt}"))
-                .collect();
-        }
-        let mut payload = Map::new();
-        payload.insert(
-            "prompt".into(),
-            Value::Array(prompts.into_iter().map(Value::String).collect()),
-        );
-        payload.insert(
-            "model".into(),
-            Value::String(
-                turn.model
-                    .clone()
-                    .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone()),
-            ),
-        );
-        payload.insert("stream".into(), Value::Bool(endpoint.streaming));
-        if let Some(max_tokens) = turn.max_tokens {
-            payload.insert("max_tokens".into(), json!(max_tokens));
-        }
-        merge_extra(&mut payload, endpoint.extra.as_ref());
-        merge_extra(&mut payload, turn.extra_body.as_ref());
-        if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
-        }
-        Ok(Value::Object(payload))
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -442,37 +542,62 @@ impl Endpoint for CompletionsEndpoint {
     }
 }
 
-impl Endpoint for EmbeddingsEndpoint {
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Embeddings)
-    }
-
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        if request_info.turns.len() != 1 {
+impl PreparedEndpointBehavior for CompletionsEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        endpoint: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        if request.turns().len() != 1 {
             return Err(EndpointError::InvalidRequest(
-                "Embeddings endpoint only supports one turn".into(),
+                "Completions endpoint only supports one turn".into(),
             ));
         }
-        let turn = &request_info.turns[0];
+        let turn = &request.turns()[0];
+        let mut prompts = turn_texts(turn);
+        if request.credit_phase() == CreditPhase::Warmup {
+            prompts = prompts
+                .into_iter()
+                .map(|prompt| format!("{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{prompt}"))
+                .collect();
+        }
         let mut payload = Map::new();
+        payload.insert(
+            "prompt".into(),
+            Value::Array(prompts.into_iter().map(Value::String).collect()),
+        );
         payload.insert(
             "model".into(),
             Value::String(
                 turn.model
                     .clone()
-                    .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone()),
+                    .unwrap_or_else(|| request.primary_model_name().to_string()),
             ),
         );
-        payload.insert(
-            "input".into(),
-            Value::Array(turn_texts(turn).into_iter().map(Value::String).collect()),
-        );
-        merge_extra(
-            &mut payload,
-            request_info.model_endpoint.endpoint.extra.as_ref(),
-        );
+        payload.insert("stream".into(), Value::Bool(endpoint.streaming));
+        if let Some(max_tokens) = turn.max_tokens {
+            payload.insert("max_tokens".into(), json!(max_tokens));
+        }
+        merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, turn.extra_body.as_ref());
+        if endpoint.streaming && endpoint.use_server_token_count {
+            ensure_include_usage(&mut payload);
+        }
         Ok(Value::Object(payload))
+    }
+}
+
+impl Endpoint for EmbeddingsEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &EMBEDDINGS_DESCRIPTOR
+    }
+
+    fn metadata(&self) -> &'static EndpointMetadata {
+        metadata_for(EndpointType::Embeddings)
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+        format_legacy_payload(self, request_info)
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
@@ -480,26 +605,71 @@ impl Endpoint for EmbeddingsEndpoint {
     }
 }
 
+impl PreparedEndpointBehavior for EmbeddingsEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        endpoint: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        if request.turns().len() != 1 {
+            return Err(EndpointError::InvalidRequest(
+                "Embeddings endpoint only supports one turn".into(),
+            ));
+        }
+        let turn = &request.turns()[0];
+        let mut payload = Map::new();
+        payload.insert(
+            "model".into(),
+            Value::String(
+                turn.model
+                    .clone()
+                    .unwrap_or_else(|| request.primary_model_name().to_string()),
+            ),
+        );
+        payload.insert(
+            "input".into(),
+            Value::Array(turn_texts(turn).into_iter().map(Value::String).collect()),
+        );
+        merge_extra(&mut payload, endpoint.extra.as_ref());
+        merge_extra(&mut payload, turn.extra_body.as_ref());
+        Ok(Value::Object(payload))
+    }
+}
+
 impl Endpoint for ChatEmbeddingsEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &CHAT_EMBEDDINGS_DESCRIPTOR
+    }
+
     fn metadata(&self) -> &'static EndpointMetadata {
         metadata_for(EndpointType::ChatEmbeddings)
     }
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
-        ChatEndpoint.format_payload(request_info)
+        format_legacy_payload(self, request_info)
     }
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         parse_embeddings_response(response, false)
     }
 }
 
-pub(crate) fn require_turns<'a>(
-    request_info: &'a RequestInfo,
+impl PreparedEndpointBehavior for ChatEmbeddingsEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<Value> {
+        ChatEndpoint.format_prepared_payload(request, config)
+    }
+}
+
+pub(crate) fn require_prepared_turns<'a>(
+    request: &'a PreparedRequest<'_>,
     message: &str,
 ) -> EndpointResult<&'a [Turn]> {
-    if request_info.turns.is_empty() {
+    if request.turns().is_empty() {
         Err(EndpointError::InvalidRequest(message.into()))
     } else {
-        Ok(&request_info.turns)
+        Ok(request.turns())
     }
 }
 
@@ -661,7 +831,7 @@ fn render_video_part(url: &str, shape: PartShape) -> EndpointResult<Value> {
     }
 }
 
-fn format_chat_messages(request_info: &RequestInfo, mut rendered: Vec<Value>) -> Vec<Value> {
+fn format_chat_messages(request: &PreparedRequest<'_>, mut rendered: Vec<Value>) -> Vec<Value> {
     let mut messages = Vec::new();
     let first_is_system = rendered
         .first()
@@ -669,21 +839,16 @@ fn format_chat_messages(request_info: &RequestInfo, mut rendered: Vec<Value>) ->
         .and_then(|obj| obj.get("role"))
         .and_then(Value::as_str)
         == Some("system");
-    if let Some(system) = request_info
-        .system_message
-        .as_ref()
-        .filter(|s| !s.is_empty())
-    {
-        if first_is_system && request_info.credit_phase == CreditPhase::Warmup {
+    if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
+        if first_is_system && request.credit_phase() == CreditPhase::Warmup {
             rendered = prepend_system_message(rendered, system);
         } else if !first_is_system {
             messages.push(json!({"role":"system","content":system}));
         }
     }
-    if let Some(context) = request_info
-        .user_context_message
-        .as_ref()
-        .filter(|s| !s.is_empty())
+    if let Some(context) = request
+        .user_context_message()
+        .filter(|value| !value.is_empty())
     {
         messages.push(json!({"role":"user","content":context}));
     }

@@ -5,6 +5,65 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Stable input/output modality advertised by an endpoint descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Modality {
+    /// Natural-language text.
+    Text,
+    /// Token-stream output.
+    Tokens,
+    /// Image input or output.
+    Image,
+    /// Audio input.
+    Audio,
+    /// Video input or output.
+    Video,
+    /// Dense vector output.
+    Embeddings,
+    /// Ranked result output.
+    Rankings,
+}
+
+/// Declarative endpoint facts published by the runner capability catalog.
+///
+/// Conditional validation and request/response behavior deliberately remain on
+/// [`crate::EndpointFactory`] and [`crate::PreparedEndpoint`]; this descriptor
+/// is not a metadata-driven behavior language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct EndpointDescriptor {
+    /// Canonical open endpoint identifier.
+    pub id: &'static str,
+    /// Accepted compatibility spellings, never advertised as separate entries.
+    pub aliases: &'static [&'static str],
+    /// Concise human-readable description.
+    pub description: &'static str,
+    /// Default endpoint path, if any.
+    pub endpoint_path: Option<&'static str>,
+    /// Streaming endpoint path override, if any.
+    pub streaming_path: Option<&'static str>,
+    /// Whether streaming is supported.
+    pub supports_streaming: bool,
+    /// Whether output tokens are produced.
+    pub produces_tokens: bool,
+    /// Whether input tokenization is enabled.
+    pub tokenizes_input: bool,
+    /// Whether multipart form data is required.
+    pub requires_form_data: bool,
+    /// Whether submit/poll lifecycle is required.
+    pub requires_polling: bool,
+    /// Whether media must be inlined before dispatch.
+    pub requires_inline_media: bool,
+    /// Supported input modalities.
+    pub input_modalities: &'static [Modality],
+    /// Produced output modalities.
+    pub output_modalities: &'static [Modality],
+    /// Metrics group title.
+    pub metrics_title: &'static str,
+    /// Presentation service kind.
+    pub service_kind: &'static str,
+}
+
 /// Registered endpoint types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +104,36 @@ pub enum EndpointType {
     Raw,
     /// Template passthrough.
     Template,
+}
+
+impl EndpointType {
+    /// Return the canonical open identifier used by the frozen registry.
+    ///
+    /// This mapping exists only for protocol-v1 compatibility. New endpoint
+    /// factories are identified solely by their descriptor and do not add an
+    /// enum variant here.
+    pub const fn canonical_id(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Completions => "completions",
+            Self::Responses => "responses",
+            Self::Messages => "messages",
+            Self::Embeddings => "embeddings",
+            Self::ChatEmbeddings => "chat_embeddings",
+            Self::NimEmbeddings => "nim_embeddings",
+            Self::CohereRankings => "cohere_rankings",
+            Self::HfTeiRankings => "hf_tei_rankings",
+            Self::NimRankings => "nim_rankings",
+            Self::HuggingfaceGenerate => "huggingface_generate",
+            Self::ImageGeneration => "image_generation",
+            Self::ImageEdit => "image_edit",
+            Self::VideoGeneration => "video_generation",
+            Self::ImageRetrieval => "image_retrieval",
+            Self::SolidoRag => "solido_rag",
+            Self::Raw => "raw",
+            Self::Template => "template",
+        }
+    }
 }
 
 /// Static endpoint capability metadata.

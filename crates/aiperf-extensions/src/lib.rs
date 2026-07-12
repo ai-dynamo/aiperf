@@ -15,7 +15,10 @@ use std::fmt::{self, Display};
 use std::sync::Arc;
 
 use aiperf_dataset::{
-    BuiltinEndpointResolver, DatasetError, EndpointResolver, LoaderRegistry, SamplerRegistry,
+    DatasetError, EndpointResolver as DatasetEndpointResolver, LoaderRegistry, SamplerRegistry,
+};
+use aiperf_endpoints::{
+    Endpoint, EndpointFactory, EndpointId, EndpointRegistry, EndpointRegistryError,
 };
 
 /// Error returned while constructing or extending an [`AiperfRegistry`].
@@ -23,6 +26,8 @@ use aiperf_dataset::{
 pub enum ExtensionError {
     /// A dataset-format, sampler, or endpoint registry rejected an entry.
     Dataset(DatasetError),
+    /// The frozen endpoint registry rejected a factory descriptor.
+    Endpoint(EndpointRegistryError),
     /// An extension supplied an empty stable name.
     EmptyExtensionName,
     /// An extension name was already applied to this aggregate.
@@ -49,6 +54,7 @@ impl Display for ExtensionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dataset(error) => Display::fmt(error, f),
+            Self::Endpoint(error) => Display::fmt(error, f),
             Self::EmptyExtensionName => f.write_str("extension name cannot be empty"),
             Self::DuplicateExtension(name) => {
                 write!(f, "duplicate AIPerf extension {name:?}")
@@ -65,6 +71,7 @@ impl Error for ExtensionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Dataset(error) => Some(error),
+            Self::Endpoint(error) => Some(error),
             Self::ExtensionRegistration { source, .. } => Some(source.as_ref()),
             Self::EmptyExtensionName | Self::DuplicateExtension(_) | Self::Rejected(_) => None,
         }
@@ -74,6 +81,12 @@ impl Error for ExtensionError {
 impl From<DatasetError> for ExtensionError {
     fn from(error: DatasetError) -> Self {
         Self::Dataset(error)
+    }
+}
+
+impl From<EndpointRegistryError> for ExtensionError {
+    fn from(error: EndpointRegistryError) -> Self {
+        Self::Endpoint(error)
     }
 }
 
@@ -119,7 +132,7 @@ impl AiperfRegistryFactory for BuiltinAiperfRegistryFactory {
 pub struct AiperfRegistry {
     dataset_formats: LoaderRegistry,
     samplers: SamplerRegistry,
-    endpoints: BuiltinEndpointResolver,
+    endpoints: EndpointRegistry,
     extension_names: BTreeSet<String>,
 }
 
@@ -129,7 +142,7 @@ impl AiperfRegistry {
         Ok(Self {
             dataset_formats: LoaderRegistry::with_builtin_formats()?,
             samplers: SamplerRegistry::with_builtin_strategies()?,
-            endpoints: BuiltinEndpointResolver::default(),
+            endpoints: EndpointRegistry::builtin()?,
             extension_names: BTreeSet::new(),
         })
     }
@@ -191,23 +204,66 @@ impl AiperfRegistry {
     }
 
     /// Registered endpoint dialect adapters.
-    pub fn endpoints(&self) -> &BuiltinEndpointResolver {
+    pub fn endpoints(&self) -> &EndpointRegistry {
         &self.endpoints
     }
 
-    /// Mutable endpoint registry for extension setup.
-    pub fn endpoints_mut(&mut self) -> &mut BuiltinEndpointResolver {
-        &mut self.endpoints
+    /// Register one statically linked endpoint factory during startup.
+    ///
+    /// A new frozen value replaces the old catalog only after the descriptor
+    /// and every alias pass atomic collision validation.
+    pub fn register_endpoint_factory<F>(&mut self, factory: F) -> Result<(), ExtensionError>
+    where
+        F: EndpointFactory + 'static,
+    {
+        let mut builder = self.endpoints.to_builder();
+        builder.register_factory(factory)?;
+        self.endpoints = builder.freeze();
+        Ok(())
     }
 
-    /// Clone the immutable endpoint catalog behind its runtime lookup trait.
-    pub fn endpoint_resolver(&self) -> Arc<dyn EndpointResolver> {
-        Arc::new(self.endpoints.clone())
+    /// Clone the authoritative catalog behind the protocol-v1 dataset lookup
+    /// trait. The adapter holds no names or implementations of its own.
+    pub fn endpoint_resolver(&self) -> Arc<dyn DatasetEndpointResolver> {
+        Arc::new(LegacyDatasetEndpointResolver {
+            endpoints: self.endpoints.clone(),
+            default: EndpointId::new("chat").expect("built-in default ID is valid"),
+        })
     }
 
     /// Names of successfully applied extensions in deterministic order.
     pub fn extension_names(&self) -> impl ExactSizeIterator<Item = &str> {
         self.extension_names.iter().map(String::as_str)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LegacyDatasetEndpointResolver {
+    endpoints: EndpointRegistry,
+    default: EndpointId,
+}
+
+impl DatasetEndpointResolver for LegacyDatasetEndpointResolver {
+    fn resolve(&self, name: Option<&str>) -> aiperf_dataset::Result<Arc<dyn Endpoint>> {
+        let id = match name {
+            Some(name) => EndpointId::new(name),
+            None => Ok(self.default.clone()),
+        }
+        .map_err(|error| DatasetError::Validation(error.to_string()))?;
+        self.endpoints
+            .legacy_endpoint(&id)
+            .map_err(|error| DatasetError::Validation(error.to_string()))
+    }
+
+    fn resolve_type(
+        &self,
+        endpoint_type: aiperf_endpoints::EndpointType,
+    ) -> aiperf_dataset::Result<Arc<dyn Endpoint>> {
+        let id = EndpointId::new(endpoint_type.canonical_id())
+            .expect("legacy endpoint canonical IDs are valid");
+        self.endpoints
+            .legacy_endpoint(&id)
+            .map_err(|error| DatasetError::Validation(error.to_string()))
     }
 }
 

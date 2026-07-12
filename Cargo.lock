@@ -165,6 +165,7 @@ dependencies = [
  "aiperf-dataset",
  "aiperf-endpoints",
  "aiperf-rng",
+ "serde_json",
 ]
 
 [[package]]
