@@ -38,6 +38,7 @@ GREEN/full verification commands and exact results:
 commit hash(es):
 - `6f40d5327`
 - `fa30ee23c`
+- `c5ad057fa`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
@@ -96,7 +97,7 @@ GREEN:
   - `npm test`: `12 passed test files, 110 passed tests`
 
 fix commit hash(es):
-- pending
+- `c5ad057fa`
 
 self-review:
 - every built graph node and edge now has at least one explicit, line-ranged, non-design source reference;
