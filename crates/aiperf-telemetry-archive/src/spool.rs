@@ -86,6 +86,38 @@ pub enum DurabilityEdge {
     PointerRenamed,
     /// Pointer parent directory was fsynced.
     PointerDirectorySynced,
+    /// Receipt batch temporary file has complete bytes.
+    ReceiptBatchTempWritten,
+    /// Receipt batch file has been fsynced.
+    ReceiptBatchFileSynced,
+    /// Receipt batch temporary file was create-only renamed.
+    ReceiptBatchRenamed,
+    /// Receipt batch parent directory was fsynced.
+    ReceiptBatchDirectorySynced,
+    /// Receipt index temporary file has complete bytes.
+    ReceiptIndexTempWritten,
+    /// Receipt index file has been fsynced.
+    ReceiptIndexFileSynced,
+    /// Receipt index temporary file was create-only renamed.
+    ReceiptIndexRenamed,
+    /// Receipt index parent directory was fsynced.
+    ReceiptIndexDirectorySynced,
+    /// Receipt head temporary file has complete bytes.
+    ReceiptHeadTempWritten,
+    /// Receipt head file has been fsynced.
+    ReceiptHeadFileSynced,
+    /// Receipt head temporary file was create-only renamed.
+    ReceiptHeadRenamed,
+    /// Receipt head parent directory was fsynced.
+    ReceiptHeadDirectorySynced,
+    /// Receipt pointer temporary file has complete bytes.
+    ReceiptPointerTempWritten,
+    /// Receipt pointer temporary file has been fsynced.
+    ReceiptPointerFileSynced,
+    /// Receipt pointer was atomically replaced.
+    ReceiptPointerRenamed,
+    /// Receipt pointer parent directory was fsynced.
+    ReceiptPointerDirectorySynced,
     /// Open WAL inode was created.
     WalFileCreated,
     /// WAL segment header has complete bytes.
@@ -231,6 +263,9 @@ impl QualifiedSpool {
             "manifests",
             "wal",
             "receipts",
+            "receipts/batches",
+            "receipts/index",
+            "receipts/heads",
             "raw",
             "partitions",
         ] {
@@ -281,13 +316,13 @@ impl QualifiedSpool {
         &self.qualification
     }
 
-    fn read_relative(&self, relative: &Path) -> Result<Vec<u8>, SpoolError> {
+    pub(crate) fn read_relative(&self, relative: &Path) -> Result<Vec<u8>, SpoolError> {
         validate_relative(relative)?;
         let path = self.root.join(relative);
         fs::read(&path).map_err(|error| io_error("read durable object", &path, error))
     }
 
-    fn write_immutable(
+    pub(crate) fn write_immutable(
         &self,
         relative: &Path,
         bytes: &[u8],
@@ -389,10 +424,11 @@ impl QualifiedSpool {
         Ok(())
     }
 
-    fn replace_pointer(
+    pub(crate) fn replace_pointer(
         &self,
         name: &str,
         bytes: &[u8],
+        class: PointerClass,
         faults: &dyn DurabilityFaultInjector,
     ) -> Result<(), SpoolError> {
         if name.contains('/') || name.is_empty() {
@@ -409,18 +445,18 @@ impl QualifiedSpool {
             .map_err(|error| io_error("create pointer temporary", &temporary_path, error))?;
         file.write_all(bytes)
             .map_err(|error| io_error("write pointer temporary", &temporary_path, error))?;
-        faults.after(DurabilityEdge::PointerTempWritten)?;
+        faults.after(class.written())?;
         file.flush()
             .map_err(|error| io_error("flush pointer temporary", &temporary_path, error))?;
         file.sync_all()
             .map_err(|error| io_error("fsync pointer temporary", &temporary_path, error))?;
-        faults.after(DurabilityEdge::PointerFileSynced)?;
+        faults.after(class.synced())?;
         drop(file);
         fs::rename(&temporary_path, &final_path)
             .map_err(|error| io_error("replace pointer", &final_path, error))?;
-        faults.after(DurabilityEdge::PointerRenamed)?;
+        faults.after(class.renamed())?;
         sync_directory(&self.root)?;
-        faults.after(DurabilityEdge::PointerDirectorySynced)?;
+        faults.after(class.directory_synced())?;
         Ok(())
     }
 }
@@ -502,7 +538,12 @@ impl LocalArchiveRepository {
             current: head.clone(),
             preceding: None,
         };
-        spool.replace_pointer(LOCAL_LATEST, &pointer.canonical_bytes(), faults)?;
+        spool.replace_pointer(
+            LOCAL_LATEST,
+            &pointer.canonical_bytes(),
+            PointerClass::Primary,
+            faults,
+        )?;
         Ok(Self {
             spool,
             head,
@@ -535,7 +576,12 @@ impl LocalArchiveRepository {
                             current: preceding.clone(),
                             preceding: None,
                         };
-                        spool.replace_pointer(LOCAL_LATEST, &repaired.canonical_bytes(), faults)?;
+                        spool.replace_pointer(
+                            LOCAL_LATEST,
+                            &repaired.canonical_bytes(),
+                            PointerClass::Primary,
+                            faults,
+                        )?;
                         (verified, true)
                     }
                     Err(preceding_error) => {
@@ -638,8 +684,12 @@ impl LocalArchiveRepository {
             current: next_head.clone(),
             preceding: Some(self.head.clone()),
         };
-        self.spool
-            .replace_pointer(LOCAL_LATEST, &pointer.canonical_bytes(), faults)?;
+        self.spool.replace_pointer(
+            LOCAL_LATEST,
+            &pointer.canonical_bytes(),
+            PointerClass::Primary,
+            faults,
+        )?;
         self.head = next_head;
         self.index = next_index;
         self.rolled_back_current = false;
@@ -985,9 +1035,12 @@ impl std::error::Error for SpoolError {
 }
 
 #[derive(Clone, Copy)]
-enum ImmutableClass {
+pub(crate) enum ImmutableClass {
     Index,
     Generation,
+    ReceiptBatch,
+    ReceiptIndex,
+    ReceiptHead,
 }
 
 impl ImmutableClass {
@@ -995,6 +1048,9 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexTempWritten,
             Self::Generation => DurabilityEdge::GenerationTempWritten,
+            Self::ReceiptBatch => DurabilityEdge::ReceiptBatchTempWritten,
+            Self::ReceiptIndex => DurabilityEdge::ReceiptIndexTempWritten,
+            Self::ReceiptHead => DurabilityEdge::ReceiptHeadTempWritten,
         }
     }
 
@@ -1002,6 +1058,9 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexFileSynced,
             Self::Generation => DurabilityEdge::GenerationFileSynced,
+            Self::ReceiptBatch => DurabilityEdge::ReceiptBatchFileSynced,
+            Self::ReceiptIndex => DurabilityEdge::ReceiptIndexFileSynced,
+            Self::ReceiptHead => DurabilityEdge::ReceiptHeadFileSynced,
         }
     }
 
@@ -1009,6 +1068,9 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexRenamed,
             Self::Generation => DurabilityEdge::GenerationRenamed,
+            Self::ReceiptBatch => DurabilityEdge::ReceiptBatchRenamed,
+            Self::ReceiptIndex => DurabilityEdge::ReceiptIndexRenamed,
+            Self::ReceiptHead => DurabilityEdge::ReceiptHeadRenamed,
         }
     }
 
@@ -1016,6 +1078,45 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexDirectorySynced,
             Self::Generation => DurabilityEdge::GenerationDirectorySynced,
+            Self::ReceiptBatch => DurabilityEdge::ReceiptBatchDirectorySynced,
+            Self::ReceiptIndex => DurabilityEdge::ReceiptIndexDirectorySynced,
+            Self::ReceiptHead => DurabilityEdge::ReceiptHeadDirectorySynced,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PointerClass {
+    Primary,
+    Receipt,
+}
+
+impl PointerClass {
+    const fn written(self) -> DurabilityEdge {
+        match self {
+            Self::Primary => DurabilityEdge::PointerTempWritten,
+            Self::Receipt => DurabilityEdge::ReceiptPointerTempWritten,
+        }
+    }
+
+    const fn synced(self) -> DurabilityEdge {
+        match self {
+            Self::Primary => DurabilityEdge::PointerFileSynced,
+            Self::Receipt => DurabilityEdge::ReceiptPointerFileSynced,
+        }
+    }
+
+    const fn renamed(self) -> DurabilityEdge {
+        match self {
+            Self::Primary => DurabilityEdge::PointerRenamed,
+            Self::Receipt => DurabilityEdge::ReceiptPointerRenamed,
+        }
+    }
+
+    const fn directory_synced(self) -> DurabilityEdge {
+        match self {
+            Self::Primary => DurabilityEdge::PointerDirectorySynced,
+            Self::Receipt => DurabilityEdge::ReceiptPointerDirectorySynced,
         }
     }
 }

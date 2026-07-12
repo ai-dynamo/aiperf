@@ -12,6 +12,7 @@
 pub mod attempt;
 pub mod boundary;
 pub mod canonical_json;
+pub mod decode;
 pub mod descriptor;
 pub mod digest;
 pub mod evidence;
@@ -20,7 +21,9 @@ pub mod index;
 pub mod key;
 pub mod manifest;
 pub mod projection;
+pub mod receipt;
 pub mod scheduling;
+pub mod schema;
 pub mod spool;
 pub mod time;
 pub mod wal;
@@ -33,6 +36,12 @@ pub use boundary::{
     BoundaryReferenceKey, BoundaryRole, SealedBoundaryCapturePlan, SourceBoundarySnapshotCommand,
 };
 pub use canonical_json::{CanonicalJsonError, CanonicalJsonValue};
+pub use decode::{
+    AttemptDecoder, AttemptFacts, CompatibilityFallback, DecodeConfigError, DecodeLimits,
+    DecodedAttempt, ExactEntityLease, FetchDisposition, FetchedAttempt, NativeDecodeOutcome,
+    NativeEntityDecoder, NoopNativeEntityDecoder, ParseOutcome, PrometheusAttemptDecoder,
+    StrictParseView,
+};
 pub use descriptor::{CanonicalDescriptor, DescriptorError};
 pub use digest::{Digest, DigestError, domain_digest};
 pub use evidence::{
@@ -63,9 +72,22 @@ pub use projection::{
     MetricFamilyRowV1, MetricPointRowV1, NoopEnricher, NoopSanitizer, SanitizationError,
     SanitizedSample, StaticLabelEnricher, TelemetryEnricher, project_exposition_v1,
 };
+pub use receipt::{
+    ExecutionId, ObjectVersionKind, ObservationKind, ReceiptBatchId, ReceiptBatchV1, ReceiptError,
+    ReceiptEventId, ReceiptEventV1, ReceiptIndexKeyV1, ReceiptJournal, ReceiptObserverEpochId,
+    ReceiptObserverEpochV1, ReceiptTargetId, ReceiptTargetKind, ReceiptTargetV1,
+    RemotePublicationTargetV1, StableObjectVersion, WalRangeTargetV1, WriterClaimState,
+    receipt_range_coverage,
+};
 pub use scheduling::{
     AbsoluteCallDeadline, CadenceAdvance, CadenceDeadline, FixedDeadlineCadence,
     IssuedSourceAttempt, MissedCadenceRange, SchedulingError, SourceAttemptGate, SourceAttemptKind,
+};
+pub use schema::{
+    ALL_ARROW_SCHEMA_DESCRIPTORS_V1, ATTEMPTS_ARROW_SCHEMA_V1, ArchiveSchemasV1,
+    ArchiveTableSchemaV1, FAMILIES_ARROW_SCHEMA_V1, LOSSES_ARROW_SCHEMA_V1,
+    MARKERS_ARROW_SCHEMA_V1, RAW_REFERENCES_ARROW_SCHEMA_V1, SAMPLES_ARROW_SCHEMA_V1, SchemaError,
+    arrow_schema_fingerprint, table_id, table_name,
 };
 pub use spool::{
     DurabilityEdge, DurabilityFaultInjector, FailAtDurabilityEdge, FilesystemKind,
