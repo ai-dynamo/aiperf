@@ -195,6 +195,7 @@ dependencies = [
  "aiperf-core",
  "aiperf-dataset",
  "aiperf-metrics",
+ "aiperf-rng",
  "aiperf-timing",
  "aiperf-transport",
  "anyhow",
@@ -272,6 +273,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

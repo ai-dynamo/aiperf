@@ -16,5 +16,5 @@ pub mod real_clock;
 pub mod sim_clock;
 
 pub use clock::Clock;
-pub use real_clock::RealClock;
+pub use real_clock::{RealClock, RealClockAnchor};
 pub use sim_clock::SimClock;

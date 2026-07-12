@@ -146,6 +146,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "python_accuracy_evaluator",
             "raw_records",
             "http_transport_policy",
+            "thread_per_core_execution",
             "network_latency",
             "server_metrics",
             "python_live_streaming",
@@ -155,6 +156,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
     }
     request = {
         "run": {
+            "workers": 2,
             "endpoint": {"type": "chat", "timeout_seconds": 10.0},
             "dataset": {"type": "synthetic"},
             "phases": [
@@ -191,6 +193,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("run_features", "gpu_telemetry"),
         ("run_features", "raw_records"),
         ("run_features", "http_transport_policy"),
+        ("run_features", "thread_per_core_execution"),
         ("run_features", "network_latency"),
         ("run_features", "server_metrics"),
         ("run_features", "python_live_streaming"),

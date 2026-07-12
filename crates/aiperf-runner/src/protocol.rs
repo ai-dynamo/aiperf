@@ -50,6 +50,7 @@ impl RunnerCapabilities {
                 "chat",
                 "completions",
                 "responses",
+                "messages",
                 "embeddings",
                 "chat_embeddings",
                 "nim_embeddings",
@@ -82,6 +83,7 @@ impl RunnerCapabilities {
                 "python_accuracy_evaluator",
                 "raw_records",
                 "http_transport_policy",
+                "thread_per_core_execution",
                 "network_latency",
                 "server_metrics",
             ],
@@ -120,6 +122,9 @@ pub struct RunSpec {
     /// Deterministic run seed; absent selects entropy-backed component streams.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// Number of Rust HTTP execution workers behind the single dispatcher.
+    #[serde(default = "default_worker_count")]
+    pub workers: usize,
     /// Sweep variation metadata retained by the outer orchestrator.
     #[serde(default)]
     pub variation: Option<VariationSpec>,
@@ -157,6 +162,10 @@ pub struct RunSpec {
     /// Optional live OTel/MLflow results extension supervised by Rust.
     #[serde(default)]
     pub live_streaming: Option<LiveStreamingSpec>,
+}
+
+fn default_worker_count() -> usize {
+    1
 }
 
 /// Canonical Python live-results extension configuration.
@@ -557,7 +566,8 @@ pub struct EndpointSpec {
     /// Headers merged into every materialized request.
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    /// Optional bearer token, carried only over the stdin pipe.
+    /// Optional endpoint API key, carried only over the stdin pipe. The
+    /// selected dialect chooses bearer versus vendor-specific authentication.
     #[serde(default)]
     pub api_key: Option<String>,
     /// Optional session-affinity header name.

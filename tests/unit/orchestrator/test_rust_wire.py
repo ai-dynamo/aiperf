@@ -55,6 +55,7 @@ def _run(
                         "concurrency": 4,
                     }
                 ],
+                "runtime": {"workers": 2},
                 "artifacts": {"dir": str(tmp_path)},
             }
         }
@@ -77,6 +78,7 @@ def test_projection_is_explicit_and_canonicalizes_nested_distributions(
     run = request["run"]
     assert run["benchmark_id"] == "wire-test"
     assert run["random_seed"] == 9
+    assert run["workers"] == 2
     assert run["phases"] == [
         {
             "type": "gamma",
@@ -117,6 +119,24 @@ def test_projection_is_explicit_and_canonicalizes_nested_distributions(
         "urls": ["http://127.0.0.1:8000/v1/chat/completions/metrics"],
         "formats": ["json", "csv"],
     }
+
+
+def test_auto_workers_preserve_legacy_cpu_and_concurrency_policy(
+    tmp_path, monkeypatch
+) -> None:
+    run = _run(tmp_path)
+    run.cfg.runtime.workers = None
+    monkeypatch.setattr(
+        "aiperf.orchestrator.rust_wire.multiprocessing.cpu_count", lambda: 64
+    )
+
+    # The automatic CPU policy would choose the configured cap, but an ordinary
+    # concurrency phase has no use for more execution workers than in-flight
+    # turns. Config v2 resolves that scalar before crossing into Rust.
+    assert build_run_request(run)["run"]["workers"] == 4
+
+    run.cfg.runtime.workers_min = 6
+    assert build_run_request(run)["run"]["workers"] == 6
 
 
 def test_projects_server_metrics_urls_formats_and_native_artifact_handoffs(

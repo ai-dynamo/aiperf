@@ -4,7 +4,7 @@
 //! Native construction and execution of one resolved benchmark run.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf::http::{TransportSink, TransportSinkConfig};
+use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConfig};
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
     ConversationSource, EndpointInputTokenCounter, InputTokenCounter, IssuedCredit,
@@ -44,7 +44,7 @@ use aiperf_accuracy::{
     WorkerProcessConfig,
 };
 use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
-use aiperf_clock::{Clock, RealClock};
+use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
@@ -57,8 +57,8 @@ use aiperf_dataset::{
 use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_metrics::{
-    CATALOG, ExportContext, MetricTag, MetricsAccumulator, MetricsConfig, NativeReport,
-    Phase as MetricsPhase, ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
+    CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
+    NativeReport, Phase as MetricsPhase, ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
 use aiperf_rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
@@ -97,6 +97,9 @@ use crate::records::{
     write_records_jsonl,
 };
 use crate::server_metrics::ServerMetricsRun;
+use crate::turn_execution::{
+    HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
+};
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
@@ -108,8 +111,21 @@ type PhaseRuntimeParts = (
     Option<Rc<dyn UserTarget>>,
 );
 
-/// Execute exactly one request on a fresh current-thread Tokio runtime.
+/// Execute exactly one request with the native local execution backend.
 pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
+    execute_run_with_backend_factory(request, &NativeHttpExecutionBackendFactory)
+}
+
+/// Execute one request with an injected HTTP execution-placement factory.
+///
+/// The benchmark scheduler and logical dispatcher are unchanged by this
+/// choice. Distributions that need a remote data plane can inject a ZMQ, RPC,
+/// or other backend here while retaining the Config-v2 wire, phases, admission,
+/// adaptive control, capture, and report pipeline.
+pub fn execute_run_with_backend_factory(
+    request: RunRequest,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+) -> Result<RunTerminal> {
     validate_request(&request)?;
     let benchmark_id = request.run.benchmark_id.clone();
     let artifact_dir = request.run.artifact_dir.clone();
@@ -120,7 +136,7 @@ pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
         .build()
         .context("creating native single-run Tokio runtime")?;
     let local = tokio::task::LocalSet::new();
-    let native = local.block_on(&runtime, execute_native(request))?;
+    let native = local.block_on(&runtime, execute_native(request, backend_factory))?;
     let report_path = artifact_dir.join("native-v2.json");
     write_native_report_json(&native, &report_path)?;
     Ok(RunTerminal::succeeded(benchmark_id, report_path))
@@ -143,6 +159,7 @@ fn validate_request(request: &RunRequest) -> Result<()> {
         !request.run.phases.is_empty(),
         "at least one phase is required"
     );
+    ensure!(request.run.workers > 0, "workers must be greater than zero");
     ensure!(
         request
             .run
@@ -254,7 +271,10 @@ struct PreparedAccuracy<'a> {
     processor: Rc<AccuracyRecordProcessor>,
 }
 
-async fn execute_native(request: RunRequest) -> Result<NativeReport> {
+async fn execute_native(
+    request: RunRequest,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+) -> Result<NativeReport> {
     let mut live_streaming = if request.run.live_streaming.is_some() {
         match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
             .await
@@ -269,7 +289,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         None
     };
     let live_sink = live_streaming.as_ref().map(PythonLiveStreamingRun::sink);
-    let result = execute_native_with_accuracy(request, live_sink).await;
+    let result = execute_native_with_accuracy(request, live_sink, backend_factory).await;
     if let Some(worker) = live_streaming.take()
         && let Err(error) = worker.shutdown().await
     {
@@ -281,9 +301,10 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
 async fn execute_native_with_accuracy(
     request: RunRequest,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
+    backend_factory: &dyn HttpExecutionBackendFactory,
 ) -> Result<NativeReport> {
     let Some(spec) = request.run.accuracy.clone() else {
-        return execute_native_inner(request, None, live_sink).await;
+        return execute_native_inner(request, None, live_sink, backend_factory).await;
     };
     ensure!(
         spec.python_executable.is_absolute(),
@@ -307,6 +328,7 @@ async fn execute_native_with_accuracy(
             spec,
         }),
         live_sink,
+        backend_factory,
     )
     .await;
     let shutdown = evaluator.shutdown().await;
@@ -324,6 +346,7 @@ async fn execute_native_inner(
     request: RunRequest,
     accuracy: Option<AccuracyWorkerRun<'_>>,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
+    backend_factory: &dyn HttpExecutionBackendFactory,
 ) -> Result<NativeReport> {
     let registry = AiperfRegistry::builtin()?;
     let rng_root = RngRoot::new(request.run.random_seed);
@@ -405,7 +428,8 @@ async fn execute_native_inner(
         }
     }
 
-    let clock: Rc<dyn Clock> = RealClock::new();
+    let real_clock_anchor = RealClockAnchor::now();
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
     let gpu_telemetry = if let Some(spec) = request.run.gpu_telemetry.as_ref() {
         Some(GpuTelemetryRun::new(spec, clock.clone()).await?)
     } else {
@@ -475,20 +499,14 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
-    let start_ns = clock.now_ns();
-    let capture = Rc::new(RunCapture::new(
-        clock.clone(),
-        start_ns,
-        metrics_config.clone(),
-        request.run.artifacts.raw_path.is_some(),
-    ));
     let request_timeout_ns = seconds_to_ns(request.run.endpoint.timeout_seconds)?;
-    let transport = TransportSink::new_multi_configured(
-        clock.clone(),
-        start_ns,
-        &request.run.endpoint.urls,
-        primary_model.clone(),
-        TransportSinkConfig {
+    let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
+        workers: request.run.workers,
+        coordinator_clock: clock.clone(),
+        real_clock_anchor,
+        base_urls: request.run.endpoint.urls.clone(),
+        model: primary_model.clone(),
+        transport: TransportSinkConfig {
             client: ClientConfig {
                 http_version: if request.run.endpoint.http2 {
                     HttpVersion::Http2PriorKnowledge
@@ -501,11 +519,18 @@ async fn execute_native_inner(
             connection_reuse: request.run.endpoint.connection_reuse,
             session_header: request.run.endpoint.session_header.clone(),
         },
-    )?;
+    })?;
+    let start_ns = clock.now_ns();
+    execution_backend.set_run_origin(start_ns)?;
+    let capture = Rc::new(RunCapture::new(
+        clock.clone(),
+        start_ns,
+        metrics_config.clone(),
+        request.run.artifacts.raw_path.is_some(),
+    ));
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
-        transport,
-        headers: request.run.endpoint.headers.clone(),
-        api_key: request.run.endpoint.api_key.clone(),
+        execution_backend: execution_backend.clone(),
+        model: primary_model.clone(),
         capture: capture.clone(),
     });
 
@@ -791,6 +816,7 @@ async fn execute_native_inner(
         Rc::new(NoopPhaseObserver)
     };
     let phased = run_scheduled_phases(plans, clock, dispatcher, observer).await?;
+    execution_backend.shutdown()?;
     phased
         .reports
         .iter()
@@ -1487,6 +1513,8 @@ fn endpoint_config(spec: &EndpointSpec) -> Result<EndpointConfig> {
         download_video_content: spec.download_video_content,
         use_legacy_max_tokens: spec.use_legacy_max_tokens,
         use_server_token_count: spec.use_server_token_count,
+        headers: spec.headers.clone(),
+        api_key: spec.api_key.clone(),
         extra: (!spec.extra.is_empty()).then(|| spec.extra.clone()),
         ..EndpointConfig::default()
     }
@@ -2261,39 +2289,33 @@ impl RequestObserver for DualObserver<'_> {
 }
 
 struct ConfiguredDispatcher {
-    transport: TransportSink,
-    headers: BTreeMap<String, String>,
-    api_key: Option<String>,
+    execution_backend: Rc<dyn HttpTurnExecutionBackend>,
+    model: String,
     capture: Rc<RunCapture>,
 }
 
 #[async_trait(?Send)]
 impl TurnDispatcher for ConfiguredDispatcher {
+    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
+        self.execution_backend.inference_dimensions(turn)
+    }
+
     async fn dispatch_turn(
         &self,
-        mut turn: TurnToSend,
+        turn: TurnToSend,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
-        for (name, value) in &self.headers {
-            turn.request_headers
-                .entry(name.clone())
-                .or_insert_with(|| value.clone());
-        }
-        if let Some(api_key) = &self.api_key {
-            turn.request_headers
-                .entry("Authorization".into())
-                .or_insert_with(|| format!("Bearer {api_key}"));
-        }
         let uuid = turn.uuid;
         self.capture.begin(&turn);
         let tee = DualObserver {
             runtime: observer,
             capture: self.capture.observer.as_ref(),
         };
+        let turn = PreparedHttpTurn::from_turn(turn, &self.model);
         let collected = self
-            .transport
-            .dispatch_turn_collect_record(turn, &tee, on_first_token)
+            .execution_backend
+            .execute_turn(turn, &tee, on_first_token)
             .await;
         match collected {
             Ok(collected) => {

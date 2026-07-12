@@ -15,6 +15,10 @@ mod network_latency;
 pub mod protocol;
 mod records;
 mod server_metrics;
+pub mod turn_execution;
 
-pub use execute::execute_run;
+pub use execute::{execute_run, execute_run_with_backend_factory};
 pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};
+pub use turn_execution::{
+    HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
+};

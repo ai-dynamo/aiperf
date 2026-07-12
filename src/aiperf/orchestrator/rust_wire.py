@@ -11,10 +11,12 @@ process boundary.
 
 from __future__ import annotations
 
+import multiprocessing
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.environment import Environment
 from aiperf.config.dataset import FileDataset, PublicDataset, SyntheticDataset
 from aiperf.config.phases import (
     ConcurrencyPhase,
@@ -85,6 +87,7 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
         "benchmark_id": run.benchmark_id,
         "label": run.label,
         "trial": run.trial,
+        "workers": _worker_count(cfg),
         "artifact_dir": str(run.artifact_dir),
         "models": {"strategy": str(cfg.models.strategy), "items": models},
         "endpoint": endpoint_wire,
@@ -177,6 +180,37 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     if live_streaming is not None:
         run_wire["live_streaming"] = live_streaming
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
+
+
+def _worker_count(cfg: Any) -> int:
+    """Resolve Config-v2 worker policy for the Rust execution data plane.
+
+    This preserves the established WorkerManager sizing rules while moving the
+    actual workers into Rust: explicit totals win; automatic sizing uses the
+    configured CPU fraction and cap; concurrency phases avoid idle excess
+    workers; and ``workers_min`` remains the final lower bound.
+    """
+    workers = cfg.runtime.workers
+    if workers is None:
+        workers = max(
+            1,
+            min(
+                int(
+                    multiprocessing.cpu_count()
+                    * Environment.WORKER.CPU_UTILIZATION_FACTOR
+                )
+                - 1,
+                Environment.WORKER.MAX_WORKERS_CAP,
+            ),
+        )
+    profiling_concurrency = [
+        phase.concurrency
+        for phase in cfg.get_profiling_phases()
+        if getattr(phase, "concurrency", None) is not None
+    ]
+    if profiling_concurrency:
+        workers = min(workers, max(profiling_concurrency))
+    return max(workers, cfg.runtime.workers_min or 1)
 
 
 def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:

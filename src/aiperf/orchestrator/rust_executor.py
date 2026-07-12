@@ -199,6 +199,14 @@ def _require_request_capabilities(
         raise ValueError("native run request must contain at least one phase")
     if not isinstance(artifacts, dict):
         raise ValueError("native run artifacts must be an object")
+    workers = run.get("workers")
+    if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
+        raise ValueError("native run workers must be a positive integer")
+    _require_capability(
+        capabilities,
+        "run_features",
+        "thread_per_core_execution",
+    )
 
     _require_capability(capabilities, "endpoint_types", endpoint["type"])
     if any(

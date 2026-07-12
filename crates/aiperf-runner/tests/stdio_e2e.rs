@@ -65,6 +65,12 @@ fn capabilities_are_a_single_versioned_json_line() {
         capabilities["run_features"]
             .as_array()
             .unwrap()
+            .contains(&serde_json::json!("thread_per_core_execution"))
+    );
+    assert!(
+        capabilities["run_features"]
+            .as_array()
+            .unwrap()
             .contains(&serde_json::json!("server_metrics"))
     );
     assert!(
@@ -159,6 +165,7 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             "label": "process proof",
             "trial": 0,
             "random_seed": 7,
+            "workers": 2,
             "artifact_dir": artifacts.path(),
             "models": {
                 "strategy": "round_robin",

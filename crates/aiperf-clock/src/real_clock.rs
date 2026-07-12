@@ -17,15 +17,41 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::time::Instant;
 
+/// Copyable monotonic origin shared by cooperating real-clock runtimes.
+///
+/// Thread-per-core and remote-executor adapters construct one [`RealClock`] per
+/// reactor. Giving every instance the same anchor keeps scheduler, transport,
+/// and observer timestamps on one nanosecond timeline without sharing a clock
+/// object or placing synchronization on the hot path.
+#[derive(Clone, Copy, Debug)]
+pub struct RealClockAnchor {
+    start: Instant,
+}
+
+impl RealClockAnchor {
+    /// Capture a fresh monotonic origin.
+    pub fn now() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+}
+
 /// Monotonic wall clock with ns-precision `timerfd` sleeps.
 pub struct RealClock {
     start: Instant,
 }
 
 impl RealClock {
+    /// Construct a real clock with a fresh monotonic origin.
     pub fn new() -> Rc<Self> {
+        Self::from_anchor(RealClockAnchor::now())
+    }
+
+    /// Construct a reactor-local clock on an existing shared timeline.
+    pub fn from_anchor(anchor: RealClockAnchor) -> Rc<Self> {
         Rc::new(RealClock {
-            start: Instant::now(),
+            start: anchor.start,
         })
     }
 }
@@ -160,5 +186,17 @@ mod tests {
         sleep_ns(0).await;
         sleep_ns(-1).await;
         assert!(start.elapsed() < std::time::Duration::from_millis(50));
+    }
+
+    #[test]
+    fn clocks_from_one_anchor_share_a_timeline() {
+        let anchor = RealClockAnchor::now();
+        let first = RealClock::from_anchor(anchor);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let second = RealClock::from_anchor(anchor);
+
+        assert!(first.now_ns() >= 1_000_000);
+        assert!(second.now_ns() >= 1_000_000);
+        assert!(first.now_ns().abs_diff(second.now_ns()) < 5_000_000);
     }
 }
