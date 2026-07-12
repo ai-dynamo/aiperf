@@ -109,13 +109,7 @@ async fn drain_provider_stderr<R: AsyncRead + Unpin>(
     loop {
         match stderr.read(&mut chunk).await {
             Ok(0) => break,
-            Ok(read) => {
-                eprintln!(
-                    "[temporary-provider-stderr] {}",
-                    String::from_utf8_lossy(&chunk[..read])
-                );
-                diagnostics.report_output();
-            }
+            Ok(_) => diagnostics.report_output(),
             Err(_) => {
                 diagnostics.report_failure();
                 break;
@@ -1721,6 +1715,49 @@ mod tests {
         drain.await.unwrap();
         let classifications = sink.classifications.lock().unwrap();
         assert_eq!(classifications.as_slice(), [STDERR_RESTRICTED_OUTPUT]);
+    }
+
+    const STDERR_CAPTURE_CHILD_ENV: &str = "AIPERF_TEST_CAPTURE_PROVIDER_STDERR";
+    const STDERR_SECRET_SENTINEL: &[u8] = b"provider-stderr-secret-sentinel";
+
+    #[test]
+    fn stderr_drain_subprocess_helper() {
+        if std::env::var_os(STDERR_CAPTURE_CHILD_ENV).is_none() {
+            return;
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(assert_stderr_payload_is_classified_once(
+                STDERR_SECRET_SENTINEL.to_vec(),
+            ));
+    }
+
+    #[test]
+    fn stderr_drain_never_emits_worker_payload_to_process_output() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("supervisor::tests::stderr_drain_subprocess_helper")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env(STDERR_CAPTURE_CHILD_ENV, "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "stderr drain subprocess failed");
+        assert!(
+            !output
+                .stdout
+                .windows(STDERR_SECRET_SENTINEL.len())
+                .any(|window| window == STDERR_SECRET_SENTINEL),
+            "worker stderr reached process stdout"
+        );
+        assert!(
+            !output
+                .stderr
+                .windows(STDERR_SECRET_SENTINEL.len())
+                .any(|window| window == STDERR_SECRET_SENTINEL),
+            "worker stderr reached process stderr"
+        );
     }
 
     #[tokio::test]
