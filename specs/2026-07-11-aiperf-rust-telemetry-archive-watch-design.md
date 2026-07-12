@@ -519,17 +519,15 @@ consumes the permit, and refunds unused capacity. Denial records a loss range wi
 parse or delaying native delivery. Primary watch may wait/fail before fetch according to its
 durable admission policy because the archive is its product.
 
-The projection CPU stage returns `ArchiveFrameDraft` without a global accepted sequence. Worker
-completion first returns to the source LocalSet, which stamps `projection_observed_ns` through its
-injected `Clock`, resolves the drain tracker, and forwards a `ReceiptDraft` containing the frame
-draft plus that observation to the archive owner. Worker wall time is never a timestamp authority.
-A crash after durable owner work but before a LocalSet receipt observation leaves the response time
-absent; recovery may later record a distinct recovery-verification time. A per-
-driver drain tracker owns every outstanding projection job/permit; finalization closes reservations
+The projection CPU stage returns `ArchiveFrameDraft` without a global accepted sequence to the
+source LocalSet. That loop resolves the drain tracker and forwards the unchanged draft to the
+archive owner; projection-worker wall time is not recorded. A per-driver drain tracker owns every
+outstanding projection job/permit; finalization closes reservations
 and waits until each becomes a draft or explicit loss before the frame fence. The single archive
 owner assigns the inclusive global `record_seq`, computes the final frame ID, and writes the
 `ArchiveWalFrame`. The frame is a versioned persisted sum of attempt/family/sample batch,
-lifecycle, receipt-range, raw-object descriptor, and coalesced loss-range payloads. It is a closed
+lifecycle, raw-object material/reference, and coalesced loss-range payloads. Receipt events use
+their separately indexed journal and are never self-attesting WAL payloads. The frame is a closed
 wire schema, not a source extension point. Every frame has stable source/control identity and CRC,
 and every successful `append_frame` has the same local-durable meaning.
 
@@ -569,7 +567,7 @@ The driver owns:
 
 - the prepared source;
 - cadence anchor and tick index;
-- source-record sequence (issued attempts and compact gap ranges share this namespace);
+- source-record sequence for issued source events, plus independent loss/tick sequences;
 - consecutive/total failure counters;
 - current source state (`active`, `degraded`, `disabled`, `stopped`);
 - a command channel with reserved capacity for boundary/shutdown commands.
@@ -627,7 +625,8 @@ boundary completion time.
 
 Every attempt becomes one `ArchiveScrapeRecord`. `outcome` describes transport/parse disposition;
 `body_unchanged` is an orthogonal success fact. V1 writes full family/MetricPoint rows for every successful
-unchanged scrape rather than requiring readers to chase a prior sample batch. Outcomes include:
+unchanged scrape rather than requiring readers to chase a prior sample batch. Issued-attempt
+outcomes include:
 
 - success with samples;
 - success with an empty exposition;
@@ -635,8 +634,10 @@ unchanged scrape rather than requiring readers to chase a prior sample batch. Ou
 - transport/timeout failure;
 - parse failure with line/category and a redacted bounded diagnostic;
 - source-incompatible terminal disable;
-- missed tick or admission skip;
 - source shutdown failure.
+
+Missed ticks and archive admission/projection skips become typed §8.8 loss ranges. They are not
+fabricated HTTP attempts.
 
 Successful rows may carry `body_unchanged=true` and `same_body_as_source_record_seq`; health counts those
 observations separately without classifying them as failures or empty scrapes.
@@ -723,8 +724,9 @@ digest(domain, fields...) =
 
 Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.frame.v1`, `.series-display.v1`,
 `.series-source.v1`, `.attribute-epoch.v1`, `.body-encoded.v1`, `.body-decoded.v1`,
-`.logical-row.v1`, `.projection-multiset.v1`, `.raw-object.v1`, `.receipt.v1`, `.partition.v1`,
-`.manifest.v1`, and `.index-node.v1`. Canonical maps sort by UTF-8 key bytes and reject duplicate
+`.logical-row.v1`, `.projection-multiset.v1`, `.projection-coverage.v1`, `.raw-object.v1`,
+`.receipt-target.v1`, `.receipt-event.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
+Canonical maps sort by UTF-8 key bytes and reject duplicate
 keys. The configuration digest covers the fully validated secret-free authored config, every
 selected factory ID plus normalized config, accepted-format/role-validity matrix, source
 descriptors, schema/index fingerprints, writer compatibility ID, and archive-key provider ID.
@@ -771,7 +773,7 @@ order, names, nullability, Arrow logical/physical type, dictionary index width, 
 schema metadata. Generated Arrow schemas are not the fingerprint authority. Each table stores:
 
 ```text
-aiperf.archive.table = <attempts|families|samples|markers>
+aiperf.archive.table = <attempts|families|samples|markers|losses|raw_references>
 aiperf.archive.schema_version = 1.0
 aiperf.archive.schema_fingerprint =
     BLAKE3("aiperf.archive.arrow-schema.v1\0" || exact_descriptor_bytes)
@@ -788,6 +790,7 @@ V1 uses these exact aliases:
 | `StringMap` | sorted `Map(entries: Struct<key: Utf8 non-null, value: Utf8 non-null>)` |
 | `ArchiveNumber` | non-null `Struct<kind: Enum8, source_lexeme: Utf8 nullable, finite_value: Float64 nullable, exact_u64: UInt64 nullable, f64_status: Enum8>` |
 | `SourceTimestamp` | non-null `Struct<lexeme: Utf8 nullable, normalized_unix_ns: EpochNs, status: Enum8>` |
+| `CreatedTimestamp` | non-null `Struct<lexeme: Utf8 nullable, normalized_unix_ns: EpochNs, status: Enum8>` |
 | `Exemplar` | nullable `Struct<labels: StringMap, value: ArchiveNumber, timestamp: SourceTimestamp>` |
 
 `ArchiveNumber.kind` is `finite`, `pos_inf`, `neg_inf`, `nan`, or `absent`. Source tokens always
@@ -795,8 +798,10 @@ retain their exact lexeme; only synthetic `absent` has a null lexeme. `finite_va
 analytical IEEE-754 projection when representable. `exact_u64` independently preserves any
 non-negative integer lexeme fitting UInt64, including values above 2⁵³; it does not require exact f64
 conversion. `f64_status` is `exact`, `rounded`, `unavailable`, or `not_applicable`. Every numeric
-leaf—including created time, sums, counts, bounds, buckets, quantiles, states, and exemplars—uses
-this representation. No raw non-finite Float64 is written.
+leaf—including sums, counts, bounds, buckets, quantiles, states, and exemplars—uses this
+representation. Semantic OpenMetrics Created values use `CreatedTimestamp`; an arbitrary classic
+sample merely named `_created` remains an `ArchiveNumber` unless the selected semantic parser
+assigned the Created role. No raw non-finite Float64 is written.
 
 `SourceTimestamp.status` is `absent`, `exact_ns`, `sub_ns_precision`, or `out_of_range` and never
 rounds silently. Prometheus 0.0.4 accepts its specified integer Unix milliseconds and checked-
@@ -804,6 +809,10 @@ multiplies by 1,000,000. OpenMetrics 1.0 parses decimal Unix seconds and normali
 integer nanoseconds fit `EpochNs`; otherwise the lexeme remains authoritative and normalized value
 is null. The attempt records declared media type and actual strict parser grammar/version, so a
 reader never infers timestamp units from a metric type.
+
+`CreatedTimestamp` has the same physical child types and status vocabulary but a distinct logical
+alias/schema field so readers cannot treat a creation epoch as a sample observation timestamp.
+Its grammar and units come from the selected exposition format's Created production.
 
 Maps are non-null (possibly empty); list elements and map keys are non-null. Parquet dictionary
 encoding is an implementation choice, but the logical Arrow dictionary index is always Int8 for
@@ -815,6 +824,34 @@ advertised. “Binary or hex,” alternate decimal encodings, and unspecified ex
 conforming v1 writers.
 
 ### 8.3 Manifest graph and heads
+
+#### 8.3.1 Canonical logical-row bytes
+
+Compaction and recovery equality use `aiperf.archive.logical-row-encoding.v1`; Arrow builders,
+Parquet encoders, dictionary choices, and JSON rendering are never digest authority. A canonical
+row begins with the fixed ASCII magic/version, table ID, 32-byte schema fingerprint, and schema
+field count, then encodes fields in descriptor order. Every nullable value begins with `0x00` for
+null or `0x01` for present. Present values use this exact schema-directed encoding:
+
+- booleans are one byte `0x00`/`0x01`; signed and unsigned integers are their fixed-width
+  big-endian representation;
+- finite `Float64` is the exact big-endian IEEE-754 bit pattern, preserving negative zero;
+  non-finite values exist only through the tagged `ArchiveNumber` struct;
+- `Decimal128(38,0)` is the signed two's-complement 16-byte big-endian integer;
+- UTF-8 and variable binary are `u64_be(byte_length) || exact_bytes`; fixed binary is exact bytes;
+- a dictionary/enum value is its logical UTF-8 string, never its Arrow dictionary index;
+- a struct encodes children in descriptor order, including each child's null/present tag; a list
+  encodes `u64_be(element_count)` followed by ordered elements; a map first rejects duplicate keys,
+  sorts by canonical encoded key bytes, and then encodes its count and ordered key/value pairs;
+- `ArchiveNumber`, timestamp, exemplar, payload, and wire-sample values are ordinary nested structs
+  under these same rules; no implementation-specific padding or validity bitmap enters the bytes.
+
+The row digest is `digest("aiperf.archive.logical-row.v1", schema_fingerprint, table_id,
+canonical_row_bytes)`. Independent Rust and Python verifier fixtures freeze every primitive,
+negative zero, maximum integer/decimal, null nesting, enum, list, map-order, semantic payload, and
+full row. Python is a conformance reader/verifier, not a second product writer.
+
+#### 8.3.2 Indexed object graph
 
 Directory enumeration is never dataset authority. The local discovery authority is a small,
 checksummed, atomically replaced and parent-directory-fsynced `LOCAL-LATEST` pointer. It contains
@@ -847,10 +884,10 @@ integers in minimal decimal, lowercase fixed-width hex digests, and no JSON floa
 stores magic/type/version, payload byte length, payload, and BLAKE3 checksum; its content key hashes
 those exact canonical bytes.
 
-The partition/raw-descriptor set is a persistent content-addressed B-tree. Its composite search key
+The partition/raw-object/coverage descriptor set is a persistent content-addressed B-tree. Its composite search key
 is `(object_kind_u8, table_id_u8, source_id_utf8, min_clock_ns_sortable_i64,
 logical_object_id_digest)` with lexicographic byte comparison. A leaf stores 1–256 sorted partition
-or raw-object descriptors. An internal page stores 2–256 ordered children, each with inclusive
+raw-object, or projection-coverage descriptors. An internal page stores 2–256 ordered children, each with inclusive
 min/max composite key, child key/hash/byte length, exact sorted source IDs, table/object-kind mask,
 and per-table min/max Clock time for pruning. Insert overflow at 257 entries deterministically
 splits 128 left/129 right; deletion does not merge during normal append. Pages are at most 1 MiB;
@@ -866,7 +903,20 @@ source IDs, schema fingerprint, and per-projection evidence:
 
 Each logical row has a domain-separated digest over the canonical schema-level value (not Arrow/
 Parquet bytes). A projection multiset digest sorts its row digests lexicographically and hashes the
-length-prefixed sequence. A commit touching K descriptors copy-on-writes O(K log₂₅₆ P) bounded
+length-prefixed sequence.
+
+Every frame declares its required table projections. Each required `(frame_id, table)` has a
+persistent `ProjectionCoverage` index entry containing frame ID, table, source ID, min/max Clock
+time, `row_count`, logical multiset digest, and ordered `fragment_ids`. V1 never splits one
+frame/table projection across physical partitions: a builder appends or rotates the entire
+projection atomically, so `fragment_ids` has zero or one element. Zero-row projections have
+`row_count=0`, the digest of the empty row-digest sequence, and an empty fragment list; they are
+still committed evidence rather than inferred from absence. Parser/cardinality limits and the
+validated maximum frame footprint must fit one hard partition bound. A configuration whose worst-
+case projection cannot fit is rejected before activation, and a runtime bounds violation becomes a
+loss frame rather than a partially accepted projection.
+
+A commit touching K descriptors copy-on-writes O(K log₂₅₆ P) bounded
 pages and one bounded generation transaction. The root hash defines the complete logical object
 set. Readers walk and prune this exact contract; they do not glob. Independent-reader goldens build,
 split, delete, verify, and range-scan trees and bound page reads for source/time predicates.
@@ -877,7 +927,8 @@ URLs, response bodies, raw labels, or unredacted diagnostics.
 
 ### 8.4 Scrape-attempt table
 
-One row exists per attempt or coalesced gap. Field order and nullability are normative:
+One row exists per issued scrape event; missed cadence and admission-loss ranges use §8.8 instead
+of impersonating requests. Field order and nullability are normative:
 
 | Field | Exact type | Null? |
 |---|---|:---:|
@@ -900,17 +951,14 @@ One row exists per attempt or coalesced gap. Field order and nullability are nor
 | `same_body_as_source_record_seq` | `UInt64` | yes |
 | `family_count`, `metric_point_count`, `wire_sample_count` | `UInt64` | no |
 | `error_kind`, `error_message` | `Utf8` | yes |
-| `gap_first_tick`, `gap_last_tick`, `gap_count` | `UInt64` | yes |
-| `gap_first_deadline_ns`, `gap_last_deadline_ns` | `Int64` | yes |
 
 `outcome` is one of `success`, `empty`, `http`, `transport`, `timeout`, `parse`,
-`unsupported_format`, `unsupported_feature`, `missed`, `dropped`, `disabled`, or `shutdown`.
+`unsupported_format`, `unsupported_feature`, `disabled`, or `shutdown`.
 `body_unchanged` is valid only for successful/empty HTTP+parse observations; successful unchanged
 attempts still have complete family/sample rows. `source_record_seq` advances once for an issued
-request or one coalesced gap range; `request_attempt_seq` advances only for an issued request and is
-null for gaps. `record_seq` is the archive-owner global frame sequence. Missed-range batch/frame
-identity covers tick/deadline bounds explicitly. Failed and empty scrapes are queryable rather than
-inferred from absence.
+source event; `request_attempt_seq` advances only when network IO is issued and may be null for a
+pre-IO timeout/disable. `record_seq` is the archive-owner global frame sequence. Failed and empty
+scrapes are queryable rather than inferred from absence.
 
 The keyed decoded-exposition digest drives unchanged detection and batch identity, so two different
 gzip encodings of identical decoded exposition are unchanged. Encoded-body digest is stored only
@@ -925,7 +973,10 @@ metrics/points:
 
 | Field | Exact type | Null? |
 |---|---|:---:|
-| archive/session/source/frame/batch/record identity | same exact types as attempt table | no |
+| `archive_id`, `session_id` | `Uuid` | no |
+| `source_id` | `Utf8` | no |
+| `frame_id`, `batch_id` | `Digest` | no |
+| `record_seq` | `UInt64` | no |
 | `family_seq` | `UInt64` | no |
 | `metric_family`, `source_type_token` | `Utf8` | no |
 | `semantic_type` | `Enum8` | no |
@@ -946,7 +997,10 @@ with multiple points therefore produce multiple rows:
 
 | Field | Exact type | Null? |
 |---|---|:---:|
-| archive/session/source/frame/batch/record identity | same exact types as attempt table | no |
+| `archive_id`, `session_id` | `Uuid` | no |
+| `source_id` | `Utf8` | no |
+| `frame_id`, `batch_id` | `Digest` | no |
+| `record_seq` | `UInt64` | no |
 | `family_seq`, `metric_point_seq` | `UInt64` | no |
 | `clock_ns`, `unix_epoch_ns` | `Int64`, `EpochNs` | no / yes |
 | `metric_family`, `source_type_token` | `Utf8` | no |
@@ -954,6 +1008,7 @@ with multiple points therefore produce multiple rows:
 | `source_series_key`, `series_key` | `Digest` | no |
 | `labels`, `attributes` | `StringMap` | no |
 | `attribute_epoch_id` | `Digest` | no |
+| `point_time_status` | `Enum8` | no |
 | `source_timestamp` | `SourceTimestamp` | no |
 | `payload` | structured value below | no |
 | `wire_samples` | ordered list of point-owned wire sample structs below | no |
@@ -964,23 +1019,31 @@ with multiple points therefore produce multiple rows:
 the branch selected by `semantic_type` (unknown/gauge use scalar, gauge-histogram uses histogram).
 Branches use only `ArchiveNumber`, `StringMap`, lists, and these exact child structs:
 
-- counter: `total`, `created`, and scalar exemplar;
+- counter: `total`, `created: CreatedTimestamp`, and scalar exemplar;
 - stateset: ordered list of `{state: Utf8, enabled: ArchiveNumber}`;
 - info: its point label map;
-- histogram/gauge-histogram: `sum`, `count`, `created`, and ordered buckets of
+- histogram/gauge-histogram: `sum`, `count`, `created: CreatedTimestamp`, and ordered buckets of
   `{upper_bound_lexeme: Utf8, upper_bound: ArchiveNumber, cumulative_count: ArchiveNumber,
   exemplar: Exemplar}`;
-- summary: `sum`, `count`, `created`, and ordered quantiles of
+- summary: `sum`, `count`, `created: CreatedTimestamp`, and ordered quantiles of
   `{quantile_lexeme: Utf8, quantile: ArchiveNumber, value: ArchiveNumber}`.
 
-Absent optional numeric components use `ArchiveNumber(kind="absent")`; the enclosing semantic
-branch itself is nullable only for branch selection. `wire_samples` preserves every emitted sample
+Absent optional numeric components use `ArchiveNumber(kind="absent")`; absent Created components
+use `CreatedTimestamp(status="absent")`. The enclosing semantic branch itself is nullable only for
+branch selection. `wire_samples` preserves every emitted sample
 as `{emitted_name: Utf8, role: Enum8, labels: StringMap, value: ArchiveNumber,
 source_timestamp: SourceTimestamp, exemplar: Exemplar?}`. Each wire sample belongs to exactly this
 MetricPoint; `metric_point_seq` is source order by the first contributing wire sample. This
 retains the source name/role association rather than reconstructing it from suffixes later.
 Histogram bounds sort numerically with `+Inf` last, but retain their lexemes; no lower bounds are
 synthesized. Counts remain cumulative as emitted. Phase deltas belong to accumulators/views.
+
+`point_time_status` is `all_absent`, `uniform_explicit`, `mixed_components`, or
+`partial_components`. `source_timestamp` carries the common value only for `uniform_explicit` and
+is `absent` for `all_absent`, `mixed_components`, and `partial_components`; every component's exact
+timestamp remains on its `wire_samples` entry. A classic histogram/summary assembled from unequal
+or partly present component timestamps remains a structured point, but readers may not interpret it
+as one source-time snapshot. `clock_ns` remains the authoritative capture timeline in all cases.
 
 ### 8.7 Lifecycle marker table
 
@@ -990,6 +1053,7 @@ Markers connect history to runner facts without pretending they are samples. The
 |---|---|:---:|
 | `archive_id`, `session_id` | `Uuid` | no |
 | `frame_id` | `Digest` | no |
+| `record_seq` | `UInt64` | no |
 | `marker_seq` | `UInt64` | no |
 | `kind` | `Enum8` | no |
 | `clock_ns`, `unix_epoch_ns` | `Int64`, `EpochNs` | no / yes |
@@ -1001,30 +1065,91 @@ Markers connect history to runner facts without pretending they are samples. The
 
 Kinds cover session/run lifecycle, exact phase `STARTED`/`SENDING_COMPLETE`/`COMPLETE`, source
 state, topology change, and archive degradation/recovery. A marker never claims successful
-durability/publication of the generation containing itself. Those later facts use §8.8 receipts and
+durability/publication of the generation containing itself. Those later facts use §8.9 receipts and
 head state. Phase fields are copied from one `PhaseObserver` snapshot; capture completion of a
 forced scrape is a separate attempt timestamp. A topology marker and the first point/family rows for
 its epoch share one frame, with marker logical row order first.
 
-### 8.8 Non-self-referential durability receipts
+### 8.8 Loss-range table
+
+Missed cadence and rejected already-issued work have different identities and never share attempt
+columns. The exact loss schema is:
+
+| Field | Exact type | Null? |
+|---|---|:---:|
+| `archive_id`, `session_id` | `Uuid` | no |
+| `source_id` | `Utf8` | yes |
+| `frame_id` | `Digest` | no |
+| `record_seq`, `loss_seq`, `count` | `UInt64` | no |
+| `loss_kind`, `reason` | `Enum8` | no |
+| `first_source_record_seq`, `last_source_record_seq` | `UInt64` | yes |
+| `first_request_attempt_seq`, `last_request_attempt_seq` | `UInt64` | yes |
+| `first_tick`, `last_tick` | `UInt64` | yes |
+| `first_deadline_ns`, `last_deadline_ns` | `Int64` | yes |
+| `boundary_ids` | `List<Utf8 non-null>` | no |
+| `boundary_overflow_count` | `UInt64` | no |
+| `boundary_overflow_digest` | `Digest` | yes |
+
+`loss_kind` distinguishes at least `missed_cadence` (nothing issued), `archive_rejected` (native
+work issued/delivered but archive projection denied), `projection_failed`, `writer_failed`, and
+`shutdown_abandoned`. The role-validity matrix fixes which range pairs are required or forbidden:
+missed cadence uses tick/deadline ranges and has no source/request range; issued-work loss uses its
+source sequence and optional request sequence. Ranges coalesce only when kind/reason/source and all
+present identities are contiguous. Boundary IDs are retained up to a validated bound; overflow is
+counted and digested, never silently truncated. The reserved control lane persists loss frames even
+when ordinary archive admission is exhausted.
+
+### 8.9 Non-self-referential durability receipts
 
 Attempt/family/sample rows never predict their own local durability or later remote reference.
 These observations live in a separate append-only receipt relation discovered through
-`LOCAL-RECEIPTS`. A receipt is canonical checksummed JSON containing receipt ID/sequence, target
-archive/session, target generation/head hash, covered frame-sequence range and projection digest,
-level (`local_durable` or `remote_referenced`), Clock-observed time, and for remote publication the
-verified CAS object version/head hash.
+`LOCAL-RECEIPTS`. Receipt targets are a closed discriminated union:
 
-Each receipt attests only an earlier frame range or sealed generation, never its own durability.
-The writer creates `receipts/<receipt-id>.json.tmp`, flushes/fsyncs, renames, directory-fsyncs, then
-atomically replaces and directory-fsyncs `LOCAL-RECEIPTS`. Loss of a receipt never makes covered
-data disappear; it means the observation time is unknown. If remote CAS succeeds but response/
-receipt is uncertain, sync-only rereads the exact head and idempotently reconstructs the same
-receipt. `remotely_finalized` requires this durable local receipt. Receipt objects may advance after
-the primary data generation is sealed and do not reopen frame admission. Query adapters expose them
-as a joinable `durability_receipts` relation.
+- `wal_range` targets archive/session, WAL segment ID, exact durable-prefix hash, inclusive first/
+  last global `record_seq`, and the digest of those frames' declared projection coverage;
+- `publication` targets the sealed generation hash, index-root hash, installed head hash, verified
+  CAS object version, resulting archive state, and resulting writer-claim state. A terminal
+  publication target requires `writer_claim_state=absent` because the same final head CAS clears
+  the active claim; there is no second claim-release CAS.
 
-### 8.9 Optional exact raw-body retention
+`receipt_target_id` is a domain-separated digest of that immutable semantic target and never
+contains an observation time. A separate immutable `ReceiptEvent` contains `receipt_seq`, target
+ID, observation kind (`response_observed` or `recovery_verified`), exactly one of
+`response_observed_ns`/`recovery_verified_ns`, and an `event_id` that hashes target, kind, and time.
+Both times come from the injected `Clock`. Recovery never invents or backfills a response-observed
+time; it may append a distinct recovery-verification event after independently proving the target.
+
+Owner/worker completion crosses a Clock bridge before becoming a receipt:
+
+1. the archive owner proves a WAL durable extent or verified publication and sends an immutable
+   completion token to the source/run LocalSet;
+2. that LocalSet observes the token, stamps `response_observed_ns = Clock::now_ns()`, and returns a
+   `ReceiptEventDraft` to the receipt owner;
+3. the receipt owner durably indexes the event, then resolves the caller's `AppendReceipt`.
+
+A crash between steps 1 and 2 leaves durable data but no response observation. Recovery verifies
+the target and may create `recovery_verified`; OS-worker completion time is never substituted.
+
+Receipts are stored in immutable canonical batches of at most 1,024 events and at most 1 MiB.
+Contiguous WAL targets from one session/segment may coalesce before batching when their record
+ranges and declared-coverage digests compose exactly. A separate content-addressed persistent
+B-tree uses the §8.3 page format and deterministic split rule, keyed by
+`(target_kind, session_id, first_record_seq_or_generation, receipt_seq, event_id)`. A checksummed
+`LOCAL-RECEIPTS` pointer contains current and preceding receipt-head descriptors; each head binds
+the receipt root hash, logical event count, and last receipt sequence. Batch, copied index pages,
+receipt head, pointer replacement, and parent directory are flushed/fsynced in the same order as
+the primary manifest protocol. Readers start at this pointer and never glob receipt files, so
+lookup and restart work remain bounded as the archive grows.
+
+Each receipt attests only an earlier WAL range or sealed generation, never its own durability.
+Loss of a receipt cannot remove covered data; it makes response observation unknown. If remote CAS
+succeeds but its response is uncertain, sync-only rereads and verifies the exact head/version/
+absent-claim state, then appends a `recovery_verified` publication event. `remotely_finalized`
+requires a durable local publication event. Receipt heads may advance after the primary generation
+is sealed and do not reopen frame admission. Query adapters expose targets/events as the bounded,
+joinable `durability_receipts` relation.
+
+### 8.10 Optional exact raw-body retention
 
 The default stores only the keyed decoded-exposition digest used for unchanged detection.
 `RawBodyRetentionPolicy` may retain the exact received encoded entity for all or failed scrapes.
@@ -1033,21 +1158,48 @@ because doing so would destroy exactness. They are a separately classified artif
 
 - configuration requires an explicit sensitive-data acknowledgment, restrictive local mode, and
   an `ArchiveRawKeyProvider` reference;
-- remote retention requires an AEAD envelope. The object ID uses the raw-object subkey over exact
+- every retained body uses an AEAD envelope. The equality ID uses the raw-object subkey over exact
   encoded bytes. Its public header contains envelope version, algorithm, key ID, and random nonce;
-  exact plaintext digest/length/content-encoding are inside encrypted plaintext metadata, not AAD.
-  The WAL/raw projection persists the complete ciphertext, nonce, and ciphertext digest before
-  upload, so every retry/resume reuses identical envelope bytes rather than re-encrypting;
+  exact plaintext digest/length/content-encoding are inside encrypted plaintext metadata, not AAD;
 - key material, plaintext digest, and bodies never appear in manifests/reports/logs;
 - raw-body bytes count against receive, spool, transaction-reserve, and retention quotas.
 
-When enabled, `raw_object` is a required projection of the source frame. Its manifest-index
-descriptor contains only frame/object ID, object key, ciphertext digest/bytes, envelope algorithm/
-key ID, and required local/remote coverage—never plaintext digest or key material. The attempt row
-references its opaque object ID. WAL retirement, requested finalization, and remote head CAS wait
-for the descriptor and applicable verified object. Compaction preserves descriptors unchanged; GC
-uses head reachability. Raw bodies are never embedded in Parquet rows. A report may state policy ID
-and retained-byte count, not a signed access URL.
+Because exact endpoint bytes can echo an otherwise known credential, this opt-in encrypted
+artifact is the explicit exception to structured known-credential absence. It never becomes a
+dimension, descriptor, diagnostic, report field, object key, or plaintext log; classification,
+encryption, restrictive access, retention, and secret-scanning policy govern the exact artifact.
+
+Randomized encryption is performed exactly once per equality ID, not once per referencing frame.
+The projection worker returns `RawObjectCandidate { raw_object_id, exact_entity_lease }`; it never
+chooses a nonce. The single archive owner serially consults its committed-plus-pending raw registry.
+For a new ID it consumes the lease, creates one random-nonce envelope, and writes the complete
+ciphertext/nonce/digest into the accepting WAL frame before acknowledging it. For an indexed or
+pending ID it reuses the exact existing physical descriptor and drops the redundant lease without
+decrypting/re-encrypting. Recovery rebuilds the registry from the verified index plus WAL before
+accepting drafts. Thus concurrent duplicates cannot create different ciphertext for the same
+content-addressed key, and every create-if-absent retry supplies byte-identical envelope bytes.
+Nonce derivation from plaintext or equality ID is forbidden.
+
+Every retained frame has one row in the `raw_references` table:
+
+| Field | Exact type | Null? |
+|---|---|:---:|
+| `archive_id`, `session_id` | `Uuid` | no |
+| `source_id` | `Utf8` | no |
+| `frame_id`, `batch_id`, `raw_object_id` | `Digest` | no |
+| `record_seq`, `source_record_seq` | `UInt64` | no |
+| `retention_reason` | `Enum8` | no |
+
+The frame declares `raw_references` as a required table projection with normal §8.3 coverage. The
+physical raw-object index descriptor is shared and contains only object ID/key, ciphertext digest/
+bytes, envelope algorithm/key ID, and required local/remote coverage—never a frame ID, plaintext
+digest, or key material. The attempt row repeats the opaque object ID for convenient joins. WAL
+retirement, requested finalization, and remote head CAS wait for every reference projection plus
+the one applicable verified physical object. Compaction preserves references and descriptors;
+head reachability drives GC. Crash tests cover first-object creation, duplicate frames before and
+after indexing, concurrent candidates, and every envelope/register boundary. Raw bodies are never
+embedded in other Parquet rows. A report may state policy ID and retained-byte count, not a signed
+access URL.
 
 ---
 
@@ -1071,14 +1223,20 @@ LocalSet native delivery + nonblocking ArchiveProjectionPermit
 bounded archive-projection CPU pool
               | ArchiveFrameDraft (unsequenced)
               v
-source LocalSet: Clock stamp + drain resolution
-              | ReceiptDraft
+source LocalSet: drain resolution
+              | ArchiveFrameDraft
               v
 single mutable archive-state owner
     +-- WAL and open-partition builders
     +-- immutable manifest/index pages and LOCAL-LATEST
     `-- bounded asynchronous immutable-object upload futures
-              `-- verified receipts return to the same owner
+              | fsync/CAS completion token
+              v
+LocalSet Clock bridge
+              | ReceiptEventDraft
+              `---------------------> same archive owner: receipt journal
+                                      | durable AppendReceipt
+                                      `----------------------> LocalSet caller
 ```
 
 Channels are per attempt/batch/control frame, never per token or individual metric. The archive
@@ -1126,8 +1284,9 @@ present. The archive owner stamps global `record_seq`; `frame_id` then includes 
 source/control identity, and that sequence. Marker and loss frames therefore share the same
 persistence identity discipline as attempt/sample batches.
 
-Retries of persistence retain `batch_id`/`frame_id`. Every issued request or compact gap range gets
-a new source-record sequence; a persistence retry never does. Partitions and recovery deduplicate exact
+Retries of persistence retain `batch_id`/`frame_id`. Every issued source event gets a new source-
+record sequence; compact loss ranges use their independent `loss_seq`. A persistence retry advances
+neither. Partitions and recovery deduplicate exact
 `(frame_id, table)` projections, not a frame globally before all tables are covered.
 
 ---
@@ -1167,7 +1326,10 @@ Acknowledgment vocabulary is exact:
    in memory;
 2. **local durable:** the complete frame and required segment/directory metadata passed the
    configured fsync policy;
-3. **receipt observed:** the producer received `AppendReceipt::LocalDurable`.
+3. **completion observed:** the LocalSet Clock bridge received the owner's immutable durability
+   token and stamped `response_observed_ns`;
+4. **receipt observed:** the corresponding event/index/head is durable and the producer received
+   `AppendReceipt::LocalDurable`.
 
 Every observed durable receipt is recovered exactly once. A crash after fsync but before response
 may recover an uncertain local-durable frame that the producer did not observe; retrying
@@ -1176,22 +1338,26 @@ uncertainty.
 
 ### 10.2 Immutable partition/index/head transaction
 
-Physical table builders rotate independently, but logical coverage is per projection evidence
-`(frame_id, table, logical_row_count, logical_multiset_digest)` plus optional `raw_object`.
-Each frame declares its required attempt/family/sample/marker/loss/raw projections. A partition
-footer and index carry the exact evidence; recovery never treats a frame as globally committed
-merely because one projection exists.
+Physical table builders rotate independently, but logical coverage uses the persistent §8.3
+`ProjectionCoverage` entry for every declared table. A scrape frame declares the applicable
+attempt/family/sample/marker/raw-reference projections; control frames declare marker or loss
+projections. A retained raw reference additionally requires its shared physical raw object.
+Partition footers, coverage entries, and the index carry the exact evidence; recovery never treats
+a frame as globally committed merely because one projection or raw object exists. Zero-row family/
+sample projections still require their explicit empty coverage entry.
 
 One local commit performs these ordered durability steps:
 
-1. choose completed projections from a WAL prefix; keep any not-yet-rotated table projection
-   pending;
+1. choose completed whole-frame/table projections from a WAL prefix; keep any not-yet-rotated
+   projection pending and never split one projection across partitions;
 2. write every due `part-<content-hash>.parquet.tmp`, finish footer, flush, file-fsync, rename to its
    content-addressed key, and directory-fsync;
-3. write every required raw AEAD envelope to its opaque keyed temporary object, flush/file-fsync,
-   rename to its final key, directory-fsync, and verify its ciphertext digest;
-4. copy-on-write the bounded manifest-index path adding partitions/raw descriptors and coverage; file-fsync,
-   rename, and directory-fsync every new content-addressed page;
+3. write each newly registered raw AEAD envelope once to its opaque keyed temporary object, flush/
+   file-fsync, rename to its final key, directory-fsync, and verify its ciphertext digest; a reused
+   raw ID must resolve to the byte-identical existing descriptor;
+4. copy-on-write the bounded manifest-index path adding partition descriptors, shared raw-object
+   descriptors, and every nonzero or zero-row `ProjectionCoverage`; file-fsync, rename, and
+   directory-fsync every new content-addressed page;
 5. write the immutable hash-linked generation transaction, file-fsync, rename, and
    directory-fsync;
 6. write a new `LOCAL-LATEST.tmp` containing current and preceding valid heads, file-fsync,
@@ -1216,8 +1382,8 @@ Data and reserved control channels do not define commit order by receive order. 
 4. closes persisted-frame admission entirely; the sole archive owner assigns the remaining
    sequences and captures inclusive `final_record_seq`;
 5. drains/locally-durably acknowledges every sequence through that fence;
-6. rotates every open builder until all required logical/raw projections through the fence are
-   covered;
+6. rotates every open builder until all declared table coverage entries and referenced shared raw
+   objects through the fence are covered;
 7. commits a `locally_finalized` generation, then a bounded retention-checkpoint generation with
    the same verified index root so the finalized generation is the preceding valid head; only then
    retires eligible whole WAL segments;
@@ -1238,8 +1404,10 @@ identity by directory globbing. It deterministically handles:
   independently verified bytes from remote/redundant storage or fail closed; checksum failure never
   proves non-durability;
 - complete durable frame with no observed receipt: recover it under its existing frame ID;
-- frame projection absent from the index: replay only that missing table projection;
-- repeated WAL frame whose subset of projections is indexed: skip only covered projections;
+- declared frame/table coverage absent from the index: replay only that missing projection,
+  including an explicit zero-row entry where declared;
+- repeated WAL frame whose subset of coverage entries is indexed: skip only those exact covered
+  projections; a raw reference never substitutes for its shared physical object or vice versa;
 - temporary Parquet/index/generation files: delete after verification or leave as orphans;
 - valid immutable unreferenced partition: adopt only when its exact coverage and content hash match
   pending WAL; otherwise leave for explicit GC;
@@ -1325,8 +1493,9 @@ Periodic sync drives bounded asynchronous uploads while the sole owner continues
 4. create-if-absent every hash-linked generation from the remote head's descendant path;
 5. verify the target generation and root reference only verified immutable objects;
 6. conditionally replace `LATEST` from its exact object version/head hash/active writer claim with
-   the new head;
-7. after CAS success, durably write the §8.8 local publication receipt before reporting remote
+   the new head. For terminal publication that single replacement also sets the archive state to
+   `remotely_finalized` and the writer claim to absent;
+7. after CAS success, durably write the §8.9 local publication receipt before reporting remote
    finalization.
 
 Remote generation identities equal local generation identities; one CAS may advance over several
@@ -1346,7 +1515,9 @@ requires that exact spool identity and its qualified open-descriptor lock; copyi
 head to a different spool cannot reopen collection. Before a remote-backed resumed session activates
 sources, it conditionally installs `WriterClaim { claim_epoch, writer_session_id,
 canonical_spool_id, session_started_generation_hash }` in `LATEST`. Every later head update is
-conditioned on that claim. A clean remote finalization releases it. A claim left by a crash has no
+conditioned on that claim. Clean remote finalization clears it atomically in the same terminal head
+CAS; a second release write is forbidden. The durable publication receipt binds the resulting
+object version, terminal head hash, and absent-claim state. A claim left by a crash has no
 wall-clock expiry: takeover requires the canonical spool/lock plus an explicitly authored prior-
 claim ID, or a separate operator-mediated fencing action. A different host/spool may run sync-only
 but cannot acknowledge new collection. Distributed merge is out of scope.
@@ -1443,7 +1614,7 @@ exists. `BaselineCredentialSanitizer` is non-disableable; an empty optional sani
 additional content policy, not raw passthrough of known credentials. AIPerf cannot identify every
 arbitrary secret an endpoint may place in a metric label, so all exact source content is classified
 potentially sensitive and operators must select storage access/sanitization accordingly. Exact raw-
-body retention follows §8.9 instead of this structured pipeline.
+body retention follows §8.10 instead of this structured pipeline.
 
 ### 12.3 Bounds
 
@@ -1916,13 +2087,15 @@ Partition paths cluster by archive/session/table/source/time bucket without plac
 object keys. Within each samples partition, rows sort by:
 
 ```text
-(metric_family, series_key, clock_ns, metric_point_seq)
+(metric_family, series_key, clock_ns, record_seq, metric_point_seq)
 ```
 
-Attempt partitions sort by `(source_id, source_record_seq)`. Parquet statistics and the manifest index's
-min/max/source metadata enable pruning. The query resolver starts from a verified head/root and
-walks the persistent index; it never globs. `metric_name_clean` is unnecessary because family
-identity has its own column.
+Other partitions use total orders: attempts `(source_id, source_record_seq, record_seq)`, families
+`(source_id, record_seq, family_seq)`, markers `(clock_ns, record_seq, marker_seq)`, losses
+`(source_id, record_seq, loss_seq)`, and raw references `(source_id, record_seq)`. Parquet statistics
+and the manifest index's min/max/source metadata enable pruning. The query resolver starts from a
+verified head/root and walks the persistent index; it never globs. `metric_name_clean` is
+unnecessary because family identity has its own column.
 
 The first documentation examples use DuckDB/Polars/Arrow to:
 
@@ -2066,8 +2239,8 @@ version or material schema/writer change invalidates the profile until rerun.
    progress source blocks quiescence deterministically;
 9. bounded worst-case decode cannot stall unrelated source/request LocalSet work at the qualified
    profile;
-10. failed/empty/unchanged/missed/dropped outcomes have exact counters/records and unchanged success
-   retains full family/MetricPoint rows;
+10. failed/empty/unchanged attempt outcomes and missed/rejected loss ranges have exact counters/
+   records, and unchanged success retains full family/MetricPoint rows;
 11. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
     owner-assigned record-sequence watermark before drain.
 
@@ -2098,7 +2271,9 @@ version or material schema/writer change invalidates the profile until rerun.
 ### 18.4 Security gates
 
 1. endpoint userinfo/AIPerf-authored auth headers/provider secrets/object-store credentials are
-   removed by the non-disableable baseline and absent from every durable/log/error surface;
+   removed by the non-disableable baseline and absent from every structured durable metadata,
+   dimension, report, log, diagnostic, and error surface; an opt-in encrypted exact raw object may
+   contain source-echoed bytes only under the explicit §8.10 exception;
 2. sanitization covers every structured durable surface; keyed pre-redaction identity prevents
    silent series merge and defeats low-entropy dictionary tests;
 3. compressed/decompressed body, label, exemplar, marker, attribute, diagnostic, series, and bucket
