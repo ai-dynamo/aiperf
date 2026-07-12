@@ -412,12 +412,6 @@ impl ArtifactSpecV2 {
                 paths.insert(path.clone()),
                 "duplicate artifact output path {path:?}"
             );
-            if file.format == UserFileFormatV2::Text {
-                ensure!(
-                    file.content.is_string(),
-                    "artifacts.user_files[{index}].content must be a string for text format"
-                );
-            }
         }
         Ok(())
     }
@@ -435,24 +429,24 @@ fn validate_relative_artifact_path(path: &std::path::Path, field: &str) -> Resul
 }
 
 /// One user-authored file to materialize under the run artifact target.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserFileSpecV2 {
     /// POSIX-style relative output path.
     pub path: String,
     /// Selected serialization format.
     pub format: UserFileFormatV2,
-    /// Authored structured or text content.
-    pub content: Value,
+    /// Exact Python-rendered and serialized UTF-8 content.
+    pub content: String,
 }
 
 /// Supported runner-side user-file encodings.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UserFileFormatV2 {
-    /// Pretty JSON.
+    /// Pretty JSON already serialized by Python.
     Json,
-    /// YAML rendered by the presentation worker.
+    /// YAML already serialized by Python.
     Yaml,
     /// UTF-8 text.
     Text,

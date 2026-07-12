@@ -213,6 +213,7 @@ pub(crate) struct NativeRunSpec {
     pub(crate) network_latency: Option<crate::protocol::NetworkLatencySpec>,
     pub(crate) server_metrics: Option<crate::protocol::ServerMetricsSpec>,
     pub(crate) live_streaming: Option<crate::protocol::LiveStreamingSpec>,
+    pub(crate) user_files: Vec<crate::protocol_v2::UserFileSpecV2>,
 }
 
 /// Endpoint preparation selected by the source protocol.
@@ -333,6 +334,7 @@ impl TryFrom<RunRequest> for NativeRunPlan {
                 network_latency: run.network_latency,
                 server_metrics: run.server_metrics,
                 live_streaming: run.live_streaming,
+                user_files: Vec::new(),
             },
         })
     }
@@ -472,6 +474,7 @@ pub(crate) fn execute_native_plan_with_factories(
     let artifact_dir = plan.run.artifact_dir.clone();
     std::fs::create_dir_all(&artifact_dir)
         .with_context(|| format!("creating run artifact directory {}", artifact_dir.display()))?;
+    materialize_user_files(&artifact_dir, &plan.run.user_files)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -490,6 +493,91 @@ pub(crate) fn execute_native_plan_with_factories(
     let report_path = artifact_dir.join("native-v2.json");
     write_native_report_json(&native, &report_path)?;
     Ok(report_path)
+}
+
+fn materialize_user_files(
+    artifact_dir: &Path,
+    files: &[crate::protocol_v2::UserFileSpecV2],
+) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let root = artifact_dir
+        .canonicalize()
+        .with_context(|| format!("canonicalizing artifact root {}", artifact_dir.display()))?;
+    for file in files {
+        let relative = Path::new(&file.path);
+        ensure!(
+            relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_))),
+            "user file path {:?} must contain only normal relative components",
+            file.path
+        );
+        let parent = relative.parent().unwrap_or_else(|| Path::new(""));
+        let mut safe_parent = root.clone();
+        for component in parent.components() {
+            let Component::Normal(component) = component else {
+                unreachable!("normal components validated above")
+            };
+            safe_parent.push(component);
+            match std::fs::symlink_metadata(&safe_parent) {
+                Ok(metadata) => ensure!(
+                    metadata.is_dir() && !metadata.file_type().is_symlink(),
+                    "user file path {:?} traverses non-directory or symlink {}",
+                    file.path,
+                    safe_parent.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::create_dir(&safe_parent).with_context(|| {
+                        format!(
+                            "creating parent {} for user file {:?}",
+                            safe_parent.display(),
+                            file.path
+                        )
+                    })?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "inspecting parent {} for user file {:?}",
+                            safe_parent.display(),
+                            file.path
+                        )
+                    });
+                }
+            }
+            let canonical = safe_parent.canonicalize().with_context(|| {
+                format!(
+                    "canonicalizing parent {} for user file {:?}",
+                    safe_parent.display(),
+                    file.path
+                )
+            })?;
+            ensure!(
+                canonical.starts_with(&root),
+                "user file path {:?} escapes artifact root {}",
+                file.path,
+                root.display()
+            );
+        }
+        let target = root.join(relative);
+        match std::fs::symlink_metadata(&target) {
+            Ok(metadata) => ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "user file target {:?} is not a regular file",
+                file.path
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspecting user file target {:?}", file.path));
+            }
+        }
+        std::fs::write(&target, file.content.as_bytes())
+            .with_context(|| format!("writing user file {:?}", file.path))?;
+    }
+    Ok(())
 }
 
 fn validate_plan(request: &NativeRunPlan) -> Result<()> {
@@ -3504,5 +3592,44 @@ mod tests {
         assert_eq!(turn.content[1].name, "passages");
         assert_eq!(turn.content[1].handles.len(), 2);
         assert_eq!(turn.input_tokens, 14);
+    }
+
+    #[test]
+    fn user_files_write_exact_pre_rendered_utf8_after_artifact_creation() {
+        let artifact_dir = tempfile::tempdir().unwrap();
+        let files = vec![crate::protocol_v2::UserFileSpecV2 {
+            path: "nested/run.json".into(),
+            format: crate::protocol_v2::UserFileFormatV2::Json,
+            content: "{\n  \"count\": 7\n}".into(),
+        }];
+
+        materialize_user_files(artifact_dir.path(), &files).unwrap();
+
+        assert_eq!(
+            std::fs::read(artifact_dir.path().join("nested/run.json")).unwrap(),
+            b"{\n  \"count\": 7\n}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn user_files_reject_symlinked_parent_escape() {
+        use std::os::unix::fs::symlink;
+
+        let artifact_dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), artifact_dir.path().join("escape")).unwrap();
+        let files = vec![crate::protocol_v2::UserFileSpecV2 {
+            path: "escape/owned.txt".into(),
+            format: crate::protocol_v2::UserFileFormatV2::Text,
+            content: "must-not-write".into(),
+        }];
+
+        let error = materialize_user_files(artifact_dir.path(), &files)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("symlink"), "{error}");
+        assert!(!outside.path().join("owned.txt").exists());
     }
 }

@@ -348,6 +348,40 @@ def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
     }
 
 
+def test_v2_user_files_are_rendered_and_serialized_once_without_writing(
+    tmp_path: Path,
+) -> None:
+    from aiperf.config.user_files import UserFile
+
+    target = tmp_path / "not-created"
+    run = _run(target)
+    run.variables = {"count": 7, "owner": "Ada"}
+    run.cfg.artifacts.user_files = [
+        UserFile(
+            path="meta/run.json",
+            format="json",
+            content={"count": "{{ count }}", "owner": "{{ owner }}"},
+        ),
+        UserFile(path="notes.txt", content="hello {{ owner }}\n"),
+    ]
+
+    files = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["artifacts"]["user_files"]
+
+    assert files == [
+        {
+            "path": "meta/run.json",
+            "format": "json",
+            "content": '{\n  "count": 7,\n  "owner": "Ada"\n}',
+        },
+        {"path": "notes.txt", "format": "text", "content": "hello Ada\n"},
+    ]
+    assert not target.exists()
+
+
 def test_v2_public_dataset_is_expanded_once_without_acquisition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

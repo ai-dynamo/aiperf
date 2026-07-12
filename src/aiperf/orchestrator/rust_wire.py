@@ -121,7 +121,7 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
         },
         "workload": _authored_workload(run, dataset),
         "metrics": _authored_metrics(cfg),
-        "artifacts": _authored_artifacts(cfg),
+        "artifacts": _authored_artifacts(run),
         "sidecars": sidecars,
     }
 
@@ -272,8 +272,20 @@ def _authored_metrics(cfg: Any) -> dict[str, Any]:
     return result
 
 
-def _authored_artifacts(cfg: Any) -> dict[str, Any]:
-    """Project output names relative to the selected, still-uncreated target."""
+def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
+    """Project output names and once-rendered user-file bytes.
+
+    Python remains the owner of Jinja, context injection, scalar coercion, and
+    JSON/YAML serialization. Rust receives exact UTF-8 content and owns only
+    path-safe materialization after complete run preparation.
+    """
+    from aiperf.config.user_files import (
+        build_user_file_context,
+        derive_run_meta,
+        render_user_files,
+    )
+
+    cfg = run.cfg
     root = cfg.artifacts.dir
     result: dict[str, Any] = {"trace": cfg.artifacts.trace}
     if cfg.artifacts.records is not False or cfg.artifacts.raw:
@@ -287,8 +299,19 @@ def _authored_artifacts(cfg: Any) -> dict[str, Any]:
             cfg.artifacts.profile_export_raw_jsonl_file.relative_to(root)
         )
     if cfg.artifacts.user_files:
+        context = build_user_file_context(
+            cfg,
+            derive_run_meta(run.artifact_dir),
+            run_dir=run.artifact_dir,
+            variables=run.variables,
+        )
         result["user_files"] = [
-            _authored_model_dump(user_file) for user_file in cfg.artifacts.user_files
+            {
+                "path": user_file.path,
+                "format": user_file.format,
+                "content": user_file.content,
+            }
+            for user_file in render_user_files(cfg.artifacts.user_files, context)
         ]
     return result
 

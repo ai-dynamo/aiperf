@@ -10,8 +10,6 @@ The chain is sync (no event loop at call site) and order-explicit.
 from __future__ import annotations
 
 import os
-import re
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -21,12 +19,6 @@ from aiperf.config.dataset.resolver import DatasetResolver
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.config.user_files import RunMeta
-
-# 9-11 digits covers epoch-seconds from 1973 (10^9) through 5138 (10^11),
-# which comfortably brackets any realistic AIPerfJob creation timestamp.
-# Inlined from aiperf.operator.results_layout to keep the config package
-# free of operator/kubernetes imports.
-_EPOCH_RE = re.compile(r"^\d{9,11}$")
 
 __all__ = [
     "ArtifactDirResolver",
@@ -209,42 +201,10 @@ def _describe_rate_phase(phase: object) -> str:
 
 
 def _derive_run_meta(artifact_dir: Path) -> RunMeta:
-    """Derive RunMeta (epoch, job_name, namespace) from the resolved artifact_dir.
+    """Compatibility wrapper for the canonical user-file identity helper."""
+    from aiperf.config.user_files import derive_run_meta
 
-    Operator-managed runs use the ``<base>/<ns>/<name>/<epoch>`` layout (see
-    ``aiperf.operator.results_layout.run_dir``). When the leaf matches
-    ``_EPOCH_RE`` we treat the parent as the AIPerfJob name and the leaf as
-    the run epoch. Otherwise (local-CLI runs, custom paths) the leaf IS the
-    run identifier and we substitute wall-clock seconds for the epoch.
-
-    Using ``_EPOCH_RE`` (not ``str.isdigit``) shrinks the false-positive
-    surface — e.g. ``/tmp/bench/42`` is correctly treated as a local layout
-    rather than a one-day-old operator run.
-
-    Namespace is sourced from ``AIPERF_NAMESPACE`` (injected by the operator
-    via the downward API). Empty string for local runs — the ``{{ namespace }}``
-    template var resolves to ``""`` outside Kubernetes.
-    """
-    # Lazy import to avoid cycles via aiperf.config.resolution.plan.
-    from aiperf.config.user_files import RunMeta
-
-    leaf = artifact_dir.name
-    namespace = os.environ.get("AIPERF_NAMESPACE", "")
-    # ``legacy`` is the sentinel run-dir name used by ``aiperf kube results``
-    # / ``results_operator.py`` for runs that predate the operator's
-    # epoch-stamped layout. Treat it the same as a numeric epoch so the run
-    # metadata reflects the historical sentinel, not wall-clock time.
-    if _EPOCH_RE.match(leaf) or leaf == "legacy":
-        return RunMeta(
-            epoch=leaf,
-            job_name=artifact_dir.parent.name,
-            namespace=namespace,
-        )
-    return RunMeta(
-        epoch=str(int(time.time())),
-        job_name=leaf,
-        namespace=namespace,
-    )
+    return derive_run_meta(artifact_dir)
 
 
 class TokenizerResolver:

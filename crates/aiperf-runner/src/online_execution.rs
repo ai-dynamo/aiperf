@@ -382,10 +382,6 @@ fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> R
         );
     }
     ensure!(
-        run.artifacts.user_files.is_empty(),
-        "protocol-v2 online execution does not yet materialize artifacts.user_files"
-    );
-    ensure!(
         run.sidecars.gpu_telemetry.is_none()
             && run.sidecars.network_latency.is_none()
             && run.sidecars.server_metrics.is_none()
@@ -962,6 +958,7 @@ fn build_common_plan(
             network_latency: None,
             server_metrics: None,
             live_streaming: None,
+            user_files: run.artifacts.user_files.clone(),
         },
     })
 }
