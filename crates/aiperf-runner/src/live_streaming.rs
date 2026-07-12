@@ -26,7 +26,7 @@ use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::execute::NativeRunSpec;
+use crate::execute::{NativeEndpointPlan, NativeRunSpec};
 use crate::protocol::RUNNER_PROTOCOL_VERSION;
 use crate::records::{CapturedRecord, record_json_value};
 
@@ -168,7 +168,7 @@ impl PythonLiveStreamingRun {
             .ok_or_else(|| anyhow!("live telemetry worker stdout was not piped"))?;
         let mut stdout = BufReader::new(stdout);
 
-        let endpoint = run.endpoint.legacy()?;
+        let endpoint = live_endpoint_config(&run.endpoint)?;
         let initialize = InitializeEvent {
             protocol_version: RUNNER_PROTOCOL_VERSION,
             event: "initialize",
@@ -180,8 +180,8 @@ impl PythonLiveStreamingRun {
                     .iter()
                     .map(|item| item.name.as_str())
                     .collect(),
-                endpoint_type: endpoint.endpoint_type,
-                endpoint_urls: &endpoint.urls,
+                endpoint_type: endpoint.endpoint_id,
+                endpoint_urls: endpoint.urls,
                 streaming: endpoint.streaming,
                 artifact_dir: &run.artifact_dir,
                 otel: &spec.otel,
@@ -279,6 +279,33 @@ impl PythonLiveStreamingRun {
             );
         }
         Ok(())
+    }
+}
+
+struct LiveEndpointConfig<'a> {
+    endpoint_id: &'a str,
+    urls: &'a [String],
+    streaming: bool,
+}
+
+fn live_endpoint_config(endpoint: &NativeEndpointPlan) -> Result<LiveEndpointConfig<'_>> {
+    match endpoint {
+        NativeEndpointPlan::Legacy(_) => {
+            let spec = endpoint.legacy()?;
+            Ok(LiveEndpointConfig {
+                endpoint_id: spec.endpoint_type.canonical_id(),
+                urls: &spec.urls,
+                streaming: spec.streaming,
+            })
+        }
+        NativeEndpointPlan::Prepared(plan) => {
+            let profile = plan.default_profile()?;
+            Ok(LiveEndpointConfig {
+                endpoint_id: profile.endpoint_id.as_str(),
+                urls: &profile.config.urls,
+                streaming: profile.config.streaming,
+            })
+        }
     }
 }
 
@@ -397,7 +424,7 @@ struct InitializeEvent<'a> {
 #[derive(Serialize)]
 struct WorkerConfig<'a> {
     models: Vec<&'a str>,
-    endpoint_type: aiperf_endpoints::EndpointType,
+    endpoint_type: &'a str,
     endpoint_urls: &'a [String],
     streaming: bool,
     artifact_dir: &'a Path,
@@ -458,6 +485,7 @@ struct WorkerTerminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execute::{NativePreparedEndpointPlan, NativePreparedEndpointProfile};
 
     #[test]
     fn bounded_queue_drops_oldest_event() {
@@ -484,5 +512,29 @@ mod tests {
             serde_json::from_slice::<Value>(&state.pending[0]).unwrap()["index"],
             2
         );
+    }
+
+    #[test]
+    fn prepared_endpoint_projects_open_identity_without_legacy_conversion() {
+        let endpoint = NativeEndpointPlan::Prepared(NativePreparedEndpointPlan {
+            default_profile_id: "default".into(),
+            profiles: vec![NativePreparedEndpointProfile {
+                profile_id: "default".into(),
+                endpoint_id: aiperf_endpoints::EndpointId::new("extension_chat").unwrap(),
+                config: aiperf_endpoints::RawEndpointConfig {
+                    urls: vec!["http://example.test/v1".into()],
+                    streaming: false,
+                    ..aiperf_endpoints::RawEndpointConfig::default()
+                },
+                connection_reuse: aiperf_transport_http::models::ConnectionReuseStrategy::default(),
+                http2: false,
+                session_header: None,
+            }],
+        });
+
+        let projected = live_endpoint_config(&endpoint).unwrap();
+        assert_eq!(projected.endpoint_id, "extension_chat");
+        assert_eq!(projected.urls, ["http://example.test/v1"]);
+        assert!(!projected.streaming);
     }
 }
