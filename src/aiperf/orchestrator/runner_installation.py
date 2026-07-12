@@ -4,7 +4,8 @@
 """Discovery and exact-binary capability checks for ``aiperf-runner``.
 
 Endpoint identity is owned by the selected native runner. This module is the
-only Python authority for locating that runner and reading its advertised
+only Python authority for locating that runner, verifying its advertised
+identity against the selected executable's complete bytes, and reading its
 catalog; it deliberately has no plugin-registry or endpoint-metadata fallback.
 """
 
@@ -14,10 +15,12 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from hmac import compare_digest
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import orjson
+from blake3 import blake3
 
 from aiperf.common.redact import redact_string
 from aiperf.orchestrator.rust_wire import (
@@ -32,6 +35,9 @@ if TYPE_CHECKING:
 
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
 _NATIVE_REPORT_SCHEMA_VERSION = "2.0"
+_DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
+_DISTRIBUTION_ID_PREFIX = "blake3:"
+_DISTRIBUTION_ID_HEX_LENGTH = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,11 +78,27 @@ class RunnerInstallation:
     def distribution_id(self) -> str | None:
         """Return the exact identity advertised by this binary, if available.
 
-        Protocol v1 runners do not publish an executable identity. Python does
-        not synthesize one from package versions, paths, or endpoint catalogs.
+        Capability negotiation verifies this value against the complete bytes
+        of the selected executable. Directly constructed test installations may
+        omit it, but discovered installations never do.
         """
         value = self.capabilities.get("distribution_id")
         return value if isinstance(value, str) and value else None
+
+    def verify_distribution_identity(self) -> None:
+        """Reject replacement of the negotiated runner image before launch."""
+        advertised = self.distribution_id
+        if advertised is None:
+            raise RuntimeError(
+                f"selected aiperf-runner {self.binary} omitted distribution_id; "
+                "install a runner that publishes executable-content identity"
+            )
+        actual = _runner_distribution_id(self.binary)
+        if not compare_digest(advertised, actual):
+            raise RuntimeError(
+                f"selected aiperf-runner {self.binary} no longer matches its "
+                "negotiated distribution_id; the executable was replaced"
+            )
 
     def project_authored_request(
         self,
@@ -122,6 +144,7 @@ class RunnerInstallation:
     def execute(self, request: dict[str, Any]) -> subprocess.CompletedProcess[bytes]:
         """Run one request with the same binary whose catalog was negotiated."""
         self.preflight_request(request)
+        self.verify_distribution_identity()
         return subprocess.run(
             [str(self.binary)],
             input=orjson.dumps(request),
@@ -151,6 +174,7 @@ def _resolve_runner_binary(explicit: Path | None) -> Path:
 
 
 def _load_capabilities(binary: Path) -> dict[str, Any]:
+    expected_distribution_id = _runner_distribution_id(binary)
     completed = subprocess.run(
         [str(binary), "--capabilities"],
         capture_output=True,
@@ -179,13 +203,16 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
     if capabilities.get("event") != "runner_capabilities":
         raise ValueError("aiperf-runner returned an unknown capability response")
     distribution_id = capabilities.get("distribution_id")
-    if distribution_id is not None and (
-        not isinstance(distribution_id, str)
-        or not distribution_id
-        or distribution_id != distribution_id.strip()
-    ):
+    if not _is_distribution_id(distribution_id):
         raise ValueError(
-            "aiperf-runner capability distribution_id must be a non-empty exact string"
+            "aiperf-runner capability distribution_id must be 'blake3:' followed "
+            "by exactly 64 lowercase hexadecimal characters"
+        )
+    if not compare_digest(distribution_id, expected_distribution_id):
+        raise RuntimeError(
+            f"aiperf-runner capability distribution_id does not match the exact "
+            f"selected executable bytes at {binary}; refusing a mixed runner "
+            "distribution"
         )
     versions = capabilities.get("protocol_versions")
     if not isinstance(versions, list) or RUNNER_PROTOCOL_VERSION not in versions:
@@ -223,6 +250,31 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
                 f"non-empty strings{detail}"
             )
     return capabilities
+
+
+def _runner_distribution_id(binary: Path) -> str:
+    """Hash one opened runner image with the native versioned BLAKE3 contract."""
+    digest = blake3()
+    digest.update(_DISTRIBUTION_ID_DOMAIN)
+    try:
+        with Path(binary).open("rb", buffering=0) as image:
+            while chunk := image.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot read selected aiperf-runner image {binary} for distribution "
+            f"identity: {error}"
+        ) from error
+    return f"{_DISTRIBUTION_ID_PREFIX}{digest.hexdigest()}"
+
+
+def _is_distribution_id(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith(_DISTRIBUTION_ID_PREFIX):
+        return False
+    hexadecimal = value[len(_DISTRIBUTION_ID_PREFIX) :]
+    return len(hexadecimal) == _DISTRIBUTION_ID_HEX_LENGTH and all(
+        character in "0123456789abcdef" for character in hexadecimal
+    )
 
 
 def _require_request_capabilities(

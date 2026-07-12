@@ -8,6 +8,7 @@
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
 
+pub mod distribution_identity;
 pub mod execute;
 mod gpu_telemetry;
 mod graph_execution;
@@ -18,6 +19,7 @@ mod records;
 mod server_metrics;
 pub mod turn_execution;
 
+pub use distribution_identity::current_distribution_id;
 pub use execute::{execute_run, execute_run_with_backend_factory};
 pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};
 pub use turn_execution::{

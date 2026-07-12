@@ -21,6 +21,8 @@ pub struct RunnerCapabilities {
     pub protocol_versions: &'static [u32],
     /// Native report schema written after a successful run.
     pub report_schema_version: &'static str,
+    /// BLAKE3 identity of the complete executable image serving this response.
+    pub distribution_id: String,
     /// Endpoint dialects accepted by the native formatter/parser registry.
     pub endpoint_types: &'static [&'static str],
     /// Dataset variants accepted by the current protocol.
@@ -41,11 +43,12 @@ pub struct RunnerCapabilities {
 
 impl RunnerCapabilities {
     /// Describe the exact process contract implemented by this binary.
-    pub const fn current() -> Self {
-        Self {
+    pub fn current() -> std::io::Result<Self> {
+        Ok(Self {
             event: "runner_capabilities",
             protocol_versions: &[RUNNER_PROTOCOL_VERSION],
             report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
+            distribution_id: crate::distribution_identity::current_distribution_id()?,
             endpoint_types: &[
                 "chat",
                 "completions",
@@ -90,7 +93,7 @@ impl RunnerCapabilities {
             telemetry_source_types: &["dcgm", "python"],
             server_metrics_formats: &["json", "csv", "jsonl", "parquet"],
             runner_version: env!("CARGO_PKG_VERSION"),
-        }
+        })
     }
 }
 

@@ -26,6 +26,7 @@ aiperf-timing = { path = "../aiperf-timing" }
 aiperf-transport.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+blake3.workspace = true
 bytes.workspace = true
 loadgen-core.workspace = true
 mimalloc = "0.1"

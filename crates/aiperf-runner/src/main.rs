@@ -15,7 +15,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn main() {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.len() == 1 && arguments[0] == "--capabilities" {
-        write_json_line(&RunnerCapabilities::current(), 0);
+        match RunnerCapabilities::current() {
+            Ok(capabilities) => write_json_line(&capabilities, 0),
+            Err(error) => {
+                eprintln!("failed to identify executing aiperf-runner image: {error}");
+                std::process::exit(2);
+            }
+        }
     }
     if !arguments.is_empty() {
         eprintln!("usage: aiperf-runner [--capabilities]");

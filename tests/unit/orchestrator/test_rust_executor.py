@@ -14,6 +14,8 @@ import pytest
 
 from aiperf.orchestrator import runner_installation, rust_executor
 
+_TEST_DISTRIBUTION_ID = "blake3:" + "a" * 64
+
 
 def _completed(payload: object, *, returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
@@ -29,6 +31,7 @@ def _capabilities(*endpoint_types: str) -> dict[str, object]:
         "event": "runner_capabilities",
         "protocol_versions": [1],
         "report_schema_version": "2.0",
+        "distribution_id": _TEST_DISTRIBUTION_ID,
         "endpoint_types": list(endpoint_types),
         "dataset_types": ["synthetic"],
         "phase_types": ["concurrency"],
@@ -45,6 +48,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
         "event": "runner_capabilities",
         "protocol_versions": [1],
         "report_schema_version": "2.0",
+        "distribution_id": _TEST_DISTRIBUTION_ID,
         "endpoint_types": ["chat"],
         "dataset_types": ["synthetic"],
         "phase_types": ["concurrency"],
@@ -54,6 +58,11 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
         "server_metrics_formats": [],
         "runner_version": "0.0.0",
     }
+    monkeypatch.setattr(
+        runner_installation,
+        "_runner_distribution_id",
+        lambda _binary: _TEST_DISTRIBUTION_ID,
+    )
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     assert runner_installation._load_capabilities(Path("runner")) == response
@@ -74,6 +83,7 @@ def test_capabilities_reject_incompatible_runner(
         "event": "runner_capabilities",
         "protocol_versions": [1],
         "report_schema_version": "2.0",
+        "distribution_id": _TEST_DISTRIBUTION_ID,
         "endpoint_types": [],
         "dataset_types": [],
         "phase_types": [],
@@ -83,6 +93,11 @@ def test_capabilities_reject_incompatible_runner(
         "server_metrics_formats": [],
     }
     response[field] = value
+    monkeypatch.setattr(
+        runner_installation,
+        "_runner_distribution_id",
+        lambda _binary: _TEST_DISTRIBUTION_ID,
+    )
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     with pytest.raises((RuntimeError, ValueError), match=match):
@@ -90,6 +105,11 @@ def test_capabilities_reject_incompatible_runner(
 
 
 def test_capabilities_surface_process_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runner_installation,
+        "_runner_distribution_id",
+        lambda _binary: _TEST_DISTRIBUTION_ID,
+    )
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -106,6 +126,56 @@ def test_capabilities_surface_process_failure(monkeypatch) -> None:
     assert "runner diagnostic" in str(raised.value)
     assert "runner-secret" not in str(raised.value)
     assert "<redacted>" in str(raised.value)
+
+
+def test_distribution_identity_algorithm_is_pinned(tmp_path: Path) -> None:
+    binary = tmp_path / "aiperf-runner"
+    binary.write_bytes(b"runner-image\0with-binary-bytes")
+
+    assert runner_installation._runner_distribution_id(binary) == (
+        "blake3:3cef527b3dd7185b4ab8590b425b730bd84d695f5c9e1a97302780b7056bf2e9"
+    )
+
+
+def test_capabilities_reject_distribution_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "aiperf-runner"
+    binary.write_bytes(b"selected-runner-image")
+    response = {
+        "event": "runner_capabilities",
+        "protocol_versions": [1],
+        "report_schema_version": "2.0",
+        "distribution_id": "blake3:" + "0" * 64,
+        "endpoint_types": [],
+        "dataset_types": [],
+        "phase_types": [],
+        "phase_features": [],
+        "run_features": [],
+        "telemetry_source_types": [],
+        "server_metrics_formats": [],
+    }
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
+
+    with pytest.raises(RuntimeError, match="does not match.*exact selected"):
+        runner_installation._load_capabilities(binary)
+
+
+def test_installation_rejects_binary_replacement_before_execution(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "aiperf-runner"
+    binary.write_bytes(b"negotiated-runner-image")
+    installation = runner_installation.RunnerInstallation(
+        binary=binary,
+        capabilities={
+            "distribution_id": runner_installation._runner_distribution_id(binary)
+        },
+    )
+    binary.write_bytes(b"replacement-runner-image")
+
+    with pytest.raises(RuntimeError, match="no longer matches|was replaced"):
+        installation.verify_distribution_identity()
 
 
 def test_runner_installation_accepts_runner_owned_endpoint_ids() -> None:
@@ -236,6 +306,7 @@ def test_capabilities_require_every_typed_feature_inventory(
         "event": "runner_capabilities",
         "protocol_versions": [1],
         "report_schema_version": "2.0",
+        "distribution_id": _TEST_DISTRIBUTION_ID,
         "endpoint_types": [],
         "dataset_types": [],
         "phase_types": [],
@@ -245,6 +316,11 @@ def test_capabilities_require_every_typed_feature_inventory(
         "server_metrics_formats": [],
     }
     response.pop(field)
+    monkeypatch.setattr(
+        runner_installation,
+        "_runner_distribution_id",
+        lambda _binary: _TEST_DISTRIBUTION_ID,
+    )
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     with pytest.raises(ValueError, match=field):

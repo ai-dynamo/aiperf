@@ -263,6 +263,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "blake3",
  "bytes",
  "loadgen-core",
  "mimalloc",
