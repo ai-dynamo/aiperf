@@ -64,16 +64,32 @@ _WORDLEVEL_CONFIG = """{
 class _ChatHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     bodies: list[dict[str, object]] = []
+    telemetry_scrapes = 0
+    telemetry_lock = threading.Lock()
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path != "/dataset/sharegpt.json":
+        if self.path == "/metrics":
+            with self.telemetry_lock:
+                type(self).telemetry_scrapes += 1
+                scrape = type(self).telemetry_scrapes
+            body = (
+                'DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-python-e2e",modelName="H100",Hostname="node"} 250\n'
+                'DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-python-e2e",modelName="H100",Hostname="node"} '
+                f"{scrape * 1_000_000_000}\n"
+            ).encode()
+        elif self.path == "/dataset/sharegpt.json":
+            body = _SHAREGPT
+        else:
             self.send_error(404)
             return
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(_SHAREGPT)))
+        self.send_header(
+            "Content-Type",
+            "text/plain" if self.path == "/metrics" else "application/json",
+        )
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(_SHAREGPT)
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
@@ -117,6 +133,93 @@ class _AdaptiveChatHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         pass
+
+
+def test_config_v2_joins_rust_gpu_telemetry_into_all_artifacts(tmp_path: Path) -> None:
+    _ChatHandler.bodies.clear()
+    _ChatHandler.telemetry_scrapes = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 4,
+                        "isl": 8,
+                        "osl": 1,
+                    },
+                    "profiling": {
+                        "type": "concurrency",
+                        "requests": 4,
+                        "concurrency": 2,
+                    },
+                    "artifacts": {"dir": str(tmp_path)},
+                    "gpu_telemetry": {
+                        "urls": [f"http://127.0.0.1:{port}/metrics"]
+                    },
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        run = BenchmarkRun(
+            benchmark_id="python-rust-gpu-e2e",
+            cfg=envelope.benchmark,
+            artifact_dir=tmp_path,
+            label="native-gpu",
+            random_seed=19,
+        )
+        default_binary = Path(__file__).parents[2] / "target/debug/aiperf-runner"
+        binary = Path(os.environ.get("AIPERF_RUNNER_BIN", default_binary))
+
+        result = RustSubprocessExecutor(tmp_path, binary=binary).execute_sync(run)
+
+        assert result.success, result.error
+        assert result.summary_metrics["request_count"].avg == 4.0
+        assert result.summary_metrics["total_gpu_power"].avg == 250.0
+        assert result.summary_metrics["total_gpu_energy"].avg > 0.0
+        assert _ChatHandler.telemetry_scrapes >= 2
+
+        native = orjson.loads((tmp_path / "native-v2.json").read_bytes())
+        gpu_series = native["metrics"]["gpu_power_usage"]["series"][0]
+        assert gpu_series["labels"]["gpu_uuid"] == "GPU-python-e2e"
+        assert gpu_series["stats"]["avg"] == 250.0
+
+        compatibility = orjson.loads(
+            (tmp_path / "profile_export_aiperf.json").read_bytes()
+        )
+        endpoint = compatibility["telemetry_data"]["endpoints"][
+            f"127.0.0.1:{port}"
+        ]
+        gpu = endpoint["gpus"]["gpu_0"]
+        assert gpu["gpu_uuid"] == "GPU-python-e2e"
+        assert gpu["metrics"]["gpu_power_usage"]["avg"] == 250.0
+
+        rows = [
+            orjson.loads(line)
+            for line in (tmp_path / "gpu_telemetry_export.jsonl")
+            .read_bytes()
+            .splitlines()
+        ]
+        assert len(rows) >= 2
+        assert all(row["telemetry_data"]["gpu_power_usage"] == 250.0 for row in rows)
+        csv = (tmp_path / "profile_export_aiperf.csv").read_text()
+        assert "GPU Power Usage (W)" in csv
+        assert "GPU-python-e2e" in csv
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
