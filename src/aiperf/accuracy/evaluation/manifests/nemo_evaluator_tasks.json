@@ -35,7 +35,7 @@
       ],
       "selection_count": 5,
       "public_projection": {
-        "metadata_schema_sha256": "635b6d8e9c8f374b5bf676da2ebb173c844d6c29b2322408fb7b4458246cf0c2",
+        "metadata_schema_sha256": "6f410c2015a7139126bfd76e892da26a7e08ce45a28379da72f9299472b0234b",
         "schema": "aiperf-public-evaluation-metadata-v1",
         "case_rules": [
           {
@@ -46,7 +46,7 @@
           }
         ],
         "numeric_metric_rules": [
-          {"provider_name": "reward", "public_name": "reward"}
+          {"provider_name": "reward", "public_name": "accuracy"}
         ],
         "safe_config_fields": [
           "environment",
@@ -66,17 +66,13 @@
           {
             "score_name": "reward",
             "primary": true,
-            "projection_id": "gsm8k_scalar_score_v1",
-            "schema_sha256": "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9",
+            "projection_id": "gsm8k_binary_score_v1",
+            "schema_sha256": "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5",
             "schema": {
               "$schema": "https://json-schema.org/draft/2020-12/schema",
               "additionalProperties": false,
               "properties": {
-                "value": {
-                  "maximum": 1.0,
-                  "minimum": 0.0,
-                  "type": "number"
-                }
+                "value": {"enum": [0, 1], "type": "number"}
               },
               "required": ["value"],
               "type": "object"

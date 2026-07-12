@@ -274,7 +274,7 @@ def source_tree_sha256(
     domain; its raw bytes and expanded launch closure are independently pinned
     by Rust, avoiding a self-referential digest.
     """
-    allowed = {".py", ".json", ".patch", ".toml", ".yaml", ".yml"}
+    allowed = {".py", ".json", ".toml", ".yaml", ".yml"}
     paths = sorted(
         (
             path
@@ -402,10 +402,8 @@ def _verify_source_attestation(component: SourceComponentLock) -> None:
             or value["version"] != component.version
             or value["base"] != expected_base
             or value["overlay_policy"] != "aiperf-unified-diff-overlay-v1"
-            or value["effective_source_tree_sha256"]
-            != component.source_tree_sha256
-            or value["effective_source_tree_digest_policy"]
-            != SOURCE_TREE_DIGEST_POLICY
+            or value["effective_source_tree_sha256"] != component.source_tree_sha256
+            or value["effective_source_tree_digest_policy"] != SOURCE_TREE_DIGEST_POLICY
         ):
             raise DistributionVerificationError(
                 f"evaluator package {component.distribution!r} source attestation drift"
@@ -453,9 +451,13 @@ def _verify_source_attestation(component: SourceComponentLock) -> None:
                     "base_content_sha256",
                     "effective_content_sha256",
                 }:
-                    raise DistributionVerificationError("source overlay target image drift")
+                    raise DistributionVerificationError(
+                        "source overlay target image drift"
+                    )
                 if relative in seen_targets or target["relative_path"] != relative:
-                    raise DistributionVerificationError("source overlay target order drift")
+                    raise DistributionVerificationError(
+                        "source overlay target order drift"
+                    )
                 seen_targets.add(relative)
                 base_digest = target["base_content_sha256"]
                 if base_digest is not None:
@@ -611,12 +613,12 @@ OPENBENCH_DISTRIBUTION = StockDistributionDescriptor(
             version="0.5.3",
             commit="3f190a835f7fee34ccd96e17242a36a29e0620a6",
             base_source_tree_sha256="bdfcc39c2423619696d359970e75611dd0aadee6c87a383961b78ab705acf1d5",
-            source_tree_sha256="068ef6bd16f51a706e11919ce5b9f00aba3549df1d6601f8a8eda52d4252998d",
+            source_tree_sha256="e859b2a55a3365525b8187f178870ac0b94aeec1f799c8449fbab3758f34b878",
             overlays=(
                 SourceOverlayLock(
                     overlay_id="openbench-explicit-runtime",
                     resource="openbench/001-explicit-runtime.patch",
-                    resource_sha256="1cfa19b62feedfd744f890ec8c44358917c6374a0513d467b055dda8e2edcff8",
+                    resource_sha256="6f583687b2ee339e35552233fae0534e8008ccfc653f1ea9c2a6092ae8e05b88",
                     targets=(
                         "__init__.py",
                         "model/_providers/aiperf_pipe.py",

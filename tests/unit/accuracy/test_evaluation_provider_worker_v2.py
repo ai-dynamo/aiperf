@@ -22,6 +22,7 @@ from aiperf.accuracy.evaluation.canonical import (
     CanonicalJsonError,
     canonical_dumps,
     canonical_loads,
+    canonical_sha256,
 )
 from aiperf.accuracy.evaluation.contracts import (
     CallContext,
@@ -36,6 +37,7 @@ from aiperf.accuracy.evaluation.distributions import (
     OPENBENCH_DISTRIBUTION,
     DistributionEvidence,
     executable_tasks,
+    task_manifest,
 )
 from aiperf.accuracy.evaluation.host import PipeEvaluationHost
 from aiperf.accuracy.evaluation.operation_schemas import (
@@ -44,6 +46,10 @@ from aiperf.accuracy.evaluation.operation_schemas import (
     OPERATION_DIRECTION_SCHEMA_SHA256,
     OPERATION_SCHEMA_SHA256,
 )
+from aiperf.accuracy.evaluation.providers.nemo_evaluator import (
+    _binary_public_reward,
+)
+from aiperf.accuracy.evaluation.providers.openbench import _binary_public_score
 from aiperf.accuracy.evaluation.worker import EvaluatorWorker, WorkerProtocolError
 from tools.generate_stock_evaluator_manifest import materialize
 
@@ -116,7 +122,7 @@ class _OpenAiUdsFixture:
                                 "index": 0,
                                 "message": {
                                     "role": "assistant",
-                                    "content": "Reasoning complete. Answer: 18. The answer is 18",
+                                    "content": "Reasoning complete. Answer: 18",
                                 },
                                 "finish_reason": "stop",
                             }
@@ -261,6 +267,60 @@ def test_model_operation_schema_confines_inline_images_to_strict_raster_data() -
         assert pattern.fullmatch(url) is None, url
 
 
+def test_python_operation_fingerprints_match_rust_stock_registry() -> None:
+    rust_source = (_ROOT / "crates/aiperf-accuracy/src/provider.rs").read_text(
+        encoding="utf-8"
+    )
+    rows = {
+        operation: {
+            "combined": combined,
+            "request": request,
+            "response": response,
+            "stream": stream,
+        }
+        for operation, combined, request, response, stream in re.findall(
+            r'StockEvaluationOperationSchema\s*\{\s*operation_id:\s*"([^"]+)",'
+            r'\s*combined_schema_sha256:\s*"([0-9a-f]{64})",'
+            r'\s*request_schema_sha256:\s*"([0-9a-f]{64})",'
+            r'\s*response_schema_sha256:\s*"([0-9a-f]{64})",'
+            r'\s*canonical_stream_schema_sha256:\s*"([0-9a-f]{64})",',
+            rust_source,
+        )
+    }
+    assert set(rows) == set(OPERATION_SCHEMA_SHA256)
+    for operation, combined in OPERATION_SCHEMA_SHA256.items():
+        assert rows[operation] == {
+            "combined": combined,
+            **dict(OPERATION_DIRECTION_SCHEMA_SHA256[operation]),
+        }
+
+
+def test_stock_provider_public_score_schema_is_exact_binary_object() -> None:
+    for validator in (_binary_public_reward, _binary_public_score):
+        assert validator(0) == {"value": 0.0}
+        assert validator(1.0) == {"value": 1.0}
+        for value in (0.5, -1, 2, True, "1", float("nan"), float("inf")):
+            with pytest.raises(RuntimeError, match="binary"):
+                validator(value)
+
+    for descriptor in (NEMO_EVALUATOR_DISTRIBUTION, OPENBENCH_DISTRIBUTION):
+        manifest = task_manifest(descriptor)
+        entries = manifest.get("environments", manifest.get("tasks"))
+        score = entries["gsm8k"]["public_projection"]["score_schemas"][0]
+        assert score["projection_id"] == "gsm8k_binary_score_v1"
+        assert score["schema_sha256"] == (
+            "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5"
+        )
+        assert canonical_sha256(score["schema"]) == score["schema_sha256"]
+        assert score["schema"] == {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": False,
+            "properties": {"value": {"enum": [0, 1], "type": "number"}},
+            "required": ["value"],
+            "type": "object",
+        }
+
+
 @pytest.mark.asyncio
 async def test_pipe_host_enforces_terminal_uniqueness() -> None:
     emitted: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -370,7 +430,9 @@ def test_stock_provider_over_dedicated_fds(
 ) -> None:
     """Run the real pinned provider lifecycle over inherited one-way pipes."""
     provider_root = (
-        _NEMO_PROVIDER_ROOT if provider == "nemo_evaluator" else _OPENBENCH_PROVIDER_ROOT
+        _NEMO_PROVIDER_ROOT
+        if provider == "nemo_evaluator"
+        else _OPENBENCH_PROVIDER_ROOT
     )
     if not _requirements_present(requirements, provider_root):
         _skip_optional_stock_proof(
@@ -427,7 +489,15 @@ def test_stock_provider_over_dedicated_fds(
         if not bubblewrap.is_file():
             _skip_optional_stock_proof("registered Bubblewrap is unavailable")
         preflight = subprocess.run(
-            [str(bubblewrap), "--unshare-all", "--ro-bind", "/", "/", "--", "/bin/true"],
+            [
+                str(bubblewrap),
+                "--unshare-all",
+                "--ro-bind",
+                "/",
+                "/",
+                "--",
+                "/bin/true",
+            ],
             check=False,
             capture_output=True,
         )
@@ -450,6 +520,10 @@ def test_stock_provider_over_dedicated_fds(
             "--bind",
             str(staging_root),
             "/staging",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
             "--tmpfs",
             "/run/aiperf",
             "--ro-bind",
@@ -598,6 +672,11 @@ def test_stock_provider_over_dedicated_fds(
                     "expires_after_ms": 60_000,
                 },
             }
+        response_content = (
+            "Reasoning complete.\nThe answer is 18"
+            if provider == "nemo_evaluator"
+            else "Reasoning complete. Answer: 18"
+        )
         call(
             "bind_assets",
             **bind_fields,
@@ -619,7 +698,7 @@ def test_stock_provider_over_dedicated_fds(
                         _terminal_event(
                             request["operation_id"],
                             request["context"]["semantic_attempt_id"],
-                            "Reasoning complete. Answer: 18. The answer is 18",
+                            response_content,
                         )
                     ],
                 )
@@ -629,7 +708,27 @@ def test_stock_provider_over_dedicated_fds(
         assert drained
         candidate = call("finalize_session")
         assert candidate["outcomes"][0]["outcome"]["kind"] == "completed"
+        score_name = (
+            "reward" if provider == "nemo_evaluator" else "grade_school_math_scorer"
+        )
+        assert candidate["outcomes"][0]["outcome"]["completed"]["scores"][score_name][
+            "public_projection"
+        ] == {"value": 1.0}
         assert candidate["aggregates"]
+        aggregates = {item["metric"]: item for item in candidate["aggregates"]}
+        if provider == "openbench":
+            assert set(aggregates) == {"accuracy", "stderr"}
+            assert aggregates["accuracy"]["definition"] == {
+                "metric_params": {},
+                "params": {},
+                "score_name": "grade_school_math_scorer",
+            }
+        else:
+            assert set(aggregates) == {"reward"}
+            assert aggregates["reward"]["definition"] == {
+                "exclude_cancelled": True,
+                "exclude_infrastructure": True,
+            }
         assert call("shutdown") == {"shutdown": True}
     finally:
         request_writer.close()

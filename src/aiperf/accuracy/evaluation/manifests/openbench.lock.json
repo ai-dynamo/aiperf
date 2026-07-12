@@ -707,10 +707,10 @@
     {
       "base_source_tree_sha256": "bdfcc39c2423619696d359970e75611dd0aadee6c87a383961b78ab705acf1d5",
       "commit": "3f190a835f7fee34ccd96e17242a36a29e0620a6",
-      "effective_source_tree_sha256": "068ef6bd16f51a706e11919ce5b9f00aba3549df1d6601f8a8eda52d4252998d",
+      "effective_source_tree_sha256": "e859b2a55a3365525b8187f178870ac0b94aeec1f799c8449fbab3758f34b878",
       "overlays": [
         {
-          "artifact_content_sha256": "1cfa19b62feedfd744f890ec8c44358917c6374a0513d467b055dda8e2edcff8",
+          "artifact_content_sha256": "6f583687b2ee339e35552233fae0534e8008ccfc653f1ea9c2a6092ae8e05b88",
           "overlay_id": "openbench-explicit-runtime",
           "resource": "openbench/001-explicit-runtime.patch",
           "targets": [

@@ -66,6 +66,19 @@ from aiperf.accuracy.evaluation.session import (
     infrastructure_outcome,
 )
 
+
+def _binary_public_score(value: object) -> dict[str, float]:
+    """Project one exact Inspect GSM8K score into the reviewed public object."""
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or float(value) not in (0.0, 1.0)
+    ):
+        raise RuntimeError("Inspect GSM8K score is not binary")
+    return {"value": float(value)}
+
+
 class OpenBenchAdapter:
     """Side-effect-free planner for pinned OpenBench plus Inspect AI."""
 
@@ -115,7 +128,7 @@ class OpenBenchAdapter:
             or not 1 <= epochs <= 8
         ):
             raise ValueError("OpenBench epochs must be an integer from 1 through 8")
-        limit = request.provider_config.get("limit", entry["selection_count"])
+        limit = request.provider_config.get("limit")
         if (
             not isinstance(limit, int)
             or isinstance(limit, bool)
@@ -191,7 +204,9 @@ class OpenBenchAdapter:
             or "primary" not in proxy.purposes
             or "model.generate" not in proxy.semantic_operation_ids
         ):
-            raise ValueError("OpenBench compatibility proxy grant omitted its exact route")
+            raise ValueError(
+                "OpenBench compatibility proxy grant omitted its exact route"
+            )
         asset_path, _ = bind_gsm8k_asset(assets)
         config = self._request.provider_config
         limit = config.get("limit", 5)
@@ -381,7 +396,9 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
                 for sample_id in range(1, self._limit + 1)
             }
             if set(samples) - expected:
-                raise RuntimeError("Inspect returned a sample/epoch outside the frozen batch")
+                raise RuntimeError(
+                    "Inspect returned a sample/epoch outside the frozen batch"
+                )
             outcomes: list[CaseOutcome] = []
             for epoch in range(1, self._epochs + 1):
                 for sample_id in range(1, self._limit + 1):
@@ -397,24 +414,11 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
                     if set(sample.scores) != {"grade_school_math_scorer"}:
                         raise RuntimeError("Inspect GSM8K score tree drifted")
                     native_score = sample.scores["grade_school_math_scorer"]
-                    if (
-                        not isinstance(native_score.value, int | float)
-                        or isinstance(native_score.value, bool)
-                        or not math.isfinite(float(native_score.value))
-                        or not 0.0 <= float(native_score.value) <= 1.0
-                    ):
-                        raise RuntimeError("Inspect GSM8K score is outside [0, 1]")
+                    public_score = _binary_public_score(native_score.value)
                     scores = {
                         name: ProviderScore(
                             value=score.model_dump(mode="json", exclude_none=True),
-                            public_projection=(
-                                {"value": float(score.value)}
-                                if isinstance(score.value, int | float)
-                                and not isinstance(score.value, bool)
-                                and math.isfinite(float(score.value))
-                                and 0.0 <= float(score.value) <= 1.0
-                                else None
-                            ),
+                            public_projection=public_score,
                         )
                         for name, score in sample.scores.items()
                     }
@@ -574,8 +578,8 @@ def build_aiperf_openai_model_api(
     its bearer value is a per-run local grant, never a model-server credential.
     """
     import httpx
-    from openai import AsyncOpenAI
     from inspect_ai.model import ModelAPI, ModelCallContext, modelapi
+    from openai import AsyncOpenAI
 
     prefix = "unix://"
     if not proxy.local_locator.startswith(prefix):

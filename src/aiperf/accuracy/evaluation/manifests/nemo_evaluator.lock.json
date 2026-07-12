@@ -294,6 +294,12 @@
       "version": "0.19.1"
     },
     {
+      "distribution": "scipy",
+      "omitted_paths": [],
+      "record_sha256": "bebd5a00dcf3d8fd96b1f5d18d985564b891d893de7584d65ccea6902888a7a8",
+      "version": "1.17.1"
+    },
+    {
       "distribution": "six",
       "omitted_paths": [],
       "record_sha256": "d16e50f347969b1e1919fb0c88bac4b9c644f5305bcfcfb00f72b646dbd4065d",
@@ -367,8 +373,8 @@
     }
   ],
   "resolution": {
-    "artifact_content_sha256": "1c2b48fddd286b13a29d44ab8ecdc913024e51464d02b0975d3028f4c3ef1ecb",
-    "environment_record_set_sha256": "efae94215275309ece73c2856456742fdfd0bf21cf1bf60b10b2505573288a51",
+    "artifact_content_sha256": "90f102adbbb308dd443d5c39ddb26bcbe06ac2afe6ec7dd6b46ec27650bacca2",
+    "environment_record_set_sha256": "7caf728dfaf26af462c4b53fa217be992e765007bb9d0ceb4116356821d15b00",
     "kind": "uv-lock-v1"
   },
   "sources": [

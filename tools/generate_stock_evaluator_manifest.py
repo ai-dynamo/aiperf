@@ -25,13 +25,11 @@ import re
 import shutil
 import stat
 import subprocess
-import sys
-import sysconfig
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 from packaging.markers import default_environment
 from packaging.requirements import Requirement
@@ -60,7 +58,11 @@ PYTHON_VERSION = "3.12.10"
 PYTHON_ABI = "cpython-312-x86_64-linux-gnu"
 PLATFORM = "linux-x86_64"
 RUNTIME_CLOSURE_ID = "cpython_3_12_10_linux_x86_64"
+NEMO_DEPLOYMENT_ROOT_ID = "nvidia_nemo_evaluator_0_4_locked"
+OPENBENCH_DEPLOYMENT_ROOT_ID = "groq_openbench_0_5_3_inspect_0_3_141_locked"
+SYSTEM_DEPLOYMENT_ROOT_ID = "system_linux_x86_64"
 SITE_PACKAGES_DESTINATION = "runtime/lib/python3.12/site-packages"
+SITE_PACKAGES_RELATIVE = "lib/python3.12/site-packages"
 PROGRAM_DESTINATION = "runtime/bin/python3.12"
 CURRENT_DIR = "work"
 STOCK_MANIFEST_RESOURCE = (
@@ -73,15 +75,20 @@ GSM8K_CANARY_DESTINATION = "assets/gsm8k_canary.jsonl"
 SOURCE_OVERLAY_DIR = ROOT / "src/aiperf/accuracy/evaluation/source_overlays"
 NEMO_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/nemo/uv.lock"
 OPENBENCH_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/openbench/uv.lock"
-GSM8K_SCORE_PROJECTION_ID = "gsm8k_scalar_score_v1"
+AUDITED_DIRECT_DEPENDENCIES = {
+    NEMO_EVALUATOR_DISTRIBUTION.distribution_id: ("orjson", "scipy"),
+    OPENBENCH_DISTRIBUTION.distribution_id: ("orjson",),
+}
+GSM8K_SCORE_PROJECTION_ID = "gsm8k_binary_score_v1"
 GSM8K_SCORE_SCHEMA_SHA256 = (
-    "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9"
+    "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5"
 )
 GSM8K_SCORE_SCHEMA_CANONICAL = (
     b'{"$schema":"https://json-schema.org/draft/2020-12/schema",'
-    b'"additionalProperties":false,"properties":{"value":{"maximum":1.0,'
-    b'"minimum":0,"type":"number"}},"required":["value"],"type":"object"}'
+    b'"additionalProperties":false,"properties":{"value":{"enum":[0,1],'
+    b'"type":"number"}},"required":["value"],"type":"object"}'
 )
+
 
 def _canonical_distribution_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
@@ -122,6 +129,26 @@ class ProviderEnvironment:
     runtime_root: Path
     distributions: Mapping[str, importlib.metadata.Distribution]
     resolution_lock: Path
+
+
+@dataclass(frozen=True)
+class DeploymentSourceFile:
+    """One verified regular source file staged under a deployment root."""
+
+    relative_path: str
+    source: Path
+    artifact_content_sha256: str
+    executable: bool
+
+
+@dataclass(frozen=True)
+class DeploymentSourceRoot:
+    """One immutable deployment-owned source root consumed by the runner."""
+
+    id: str
+    kind: Literal["python_runtime", "python_environment", "system"]
+    relative_path: str
+    files: tuple[DeploymentSourceFile, ...]
 
 
 def _provider_environment(prefix: Path, resolution_lock: Path) -> ProviderEnvironment:
@@ -359,7 +386,9 @@ def _record_closures(
                         _source_omissions(
                             component,
                             environment,
-                            projection["existing_overlay_targets"] if projection else (),
+                            projection["existing_overlay_targets"]
+                            if projection
+                            else (),
                         )
                     )
                     if component
@@ -410,7 +439,10 @@ def _dependency_closure(
                 )
             if applies:
                 dependency = _distribution(requirement.name, environment)
-                if requirement.specifier and dependency.version not in requirement.specifier:
+                if (
+                    requirement.specifier
+                    and dependency.version not in requirement.specifier
+                ):
                     raise ManifestGenerationError(
                         f"installed dependency {requirement.name!r} {dependency.version} violates {requirement.specifier}"
                     )
@@ -606,9 +638,7 @@ def _verify_component_sources(
             "restored_base_files": supplements,
             "overlays": entries,
             "effective_source_tree_sha256": effective,
-            "existing_overlay_targets": tuple(
-                sorted(existing_targets, key=str.encode)
-            ),
+            "existing_overlay_targets": tuple(sorted(existing_targets, key=str.encode)),
             "replacement_contents": replacement_contents,
         }
     return projections
@@ -755,7 +785,6 @@ def _worker_source_digest(resources: Sequence[tuple[Path, str, bytes]]) -> str:
         if path.suffix not in {
             ".py",
             ".json",
-            ".patch",
             ".toml",
             ".yaml",
             ".yml",
@@ -979,9 +1008,7 @@ def _system_files(
     environment: ProviderEnvironment,
 ) -> tuple[dict[str, Any], ...]:
     package_roots = {environment.site_packages}
-    queue = list(
-        _elf_inputs(runtime_root, runtime_files, record_closures, environment)
-    )
+    queue = list(_elf_inputs(runtime_root, runtime_files, record_closures, environment))
     system: dict[str, Path] = {}
     visited: set[Path] = set()
     while queue:
@@ -993,8 +1020,7 @@ def _system_files(
         for dependency in _ldd_dependencies(current):
             resolved = dependency.resolve(strict=True)
             if resolved.is_relative_to(runtime_root) or any(
-                resolved.is_relative_to(package_root)
-                for package_root in package_roots
+                resolved.is_relative_to(package_root) for package_root in package_roots
             ):
                 continue
             if not _is_allowed_system_source(resolved):
@@ -1191,9 +1217,7 @@ def _distribution_entry(
         raise ManifestGenerationError(
             "stock distribution must expose exactly one audited executable task"
         )
-    public_projection = next(iter(executable_entries.values())).get(
-        "public_projection"
-    )
+    public_projection = next(iter(executable_entries.values())).get("public_projection")
     if not isinstance(public_projection, dict):
         raise ManifestGenerationError("executable task omitted public projection")
     _validate_public_projection(public_projection)
@@ -1285,7 +1309,11 @@ def _distribution_entry(
             "environment": dict(descriptor.clean_environment),
             "current_dir": CURRENT_DIR,
             "record_closures": [
-                {key: value for key, value in closure.items() if not key.startswith("_")}
+                {
+                    key: value
+                    for key, value in closure.items()
+                    if not key.startswith("_")
+                }
                 for closure in record_closures
             ],
             "embedded_files": embedded_files,
@@ -1317,13 +1345,17 @@ def generate(
         environment = environments[descriptor.distribution_id]
         projection = _verify_component_sources(descriptor, environment)
         projections[descriptor.distribution_id] = projection
-        names = _dependency_closure(environment, (descriptor.package, "orjson"))
+        names = _dependency_closure(
+            environment,
+            (
+                descriptor.package,
+                *AUDITED_DIRECT_DEPENDENCIES[descriptor.distribution_id],
+            ),
+        )
         closures = _record_closures(names, environment, projection)
         record_sets[descriptor.distribution_id] = closures
         path = MANIFEST_DIR / descriptor.dependency_lock_resource
-        lock_bytes[path] = _json_bytes(
-            _lock_value(descriptor, closures, environment)
-        )
+        lock_bytes[path] = _json_bytes(_lock_value(descriptor, closures, environment))
     worker_resources = _worker_resource_contents(lock_bytes)
     shared_closures: dict[str, dict[str, Any]] = {
         RUNTIME_CLOSURE_ID: {
@@ -1378,10 +1410,251 @@ def generate(
     return lock_bytes, _json_bytes(value)
 
 
-def _write_or_check(write: bool, *, nemo_root: Path, openbench_root: Path) -> None:
-    lock_bytes, manifest = generate(
+def _verified_deployment_source_file(
+    *,
+    relative_path: str,
+    source: Path,
+    artifact_content_sha256: str,
+    executable: bool,
+) -> DeploymentSourceFile:
+    relative_path = _normalize_relative(relative_path)
+    try:
+        metadata = source.lstat()
+    except OSError as error:
+        raise ManifestGenerationError(
+            f"deployment source is unavailable: {source}"
+        ) from error
+    if not stat.S_ISREG(metadata.st_mode) or source.is_symlink():
+        raise ManifestGenerationError(
+            f"deployment source is not a regular non-symlink file: {source}"
+        )
+    source = source.resolve(strict=True)
+    content = source.read_bytes()
+    if _sha256(content) != artifact_content_sha256:
+        raise ManifestGenerationError(f"deployment source digest drifted: {source}")
+    if _is_executable(source) != executable:
+        raise ManifestGenerationError(
+            f"deployment source executable mode drifted: {source}"
+        )
+    return DeploymentSourceFile(
+        relative_path=relative_path,
+        source=source,
+        artifact_content_sha256=artifact_content_sha256,
+        executable=executable,
+    )
+
+
+def _upstream_record_source_files(
+    record_closures: Sequence[Mapping[str, Any]],
+    environment: ProviderEnvironment,
+) -> tuple[DeploymentSourceFile, ...]:
+    """Return every original RECORD row, including materialization omissions."""
+    files: dict[str, DeploymentSourceFile] = {}
+    for closure in record_closures:
+        distribution = _distribution(str(closure["distribution"]), environment)
+        if distribution.version != closure["version"]:
+            raise ManifestGenerationError(
+                f"version drift for {closure['distribution']!r}"
+            )
+        record_path = _record_path(distribution)
+        record = record_path.read_bytes()
+        if _sha256(record) != closure["record_sha256"]:
+            raise ManifestGenerationError(
+                f"RECORD drift for {closure['distribution']!r}"
+            )
+        rows = _record_rows(record)
+        row_paths = {row[0] for row in rows}
+        if len(row_paths) != len(rows):
+            raise ManifestGenerationError(
+                f"RECORD contains duplicate rows for {closure['distribution']!r}"
+            )
+        if not set(closure["omitted_paths"]).issubset(row_paths):
+            raise ManifestGenerationError(
+                f"RECORD omissions drifted for {closure['distribution']!r}"
+            )
+        for relative, encoded, size in rows:
+            source = Path(distribution.locate_file(PurePosixPath(relative)))
+            try:
+                resolved = source.resolve(strict=True)
+            except OSError as error:
+                raise ManifestGenerationError(
+                    f"RECORD file is absent: {source}"
+                ) from error
+            if not resolved.is_relative_to(environment.prefix):
+                raise ManifestGenerationError(
+                    f"RECORD source escaped its Python environment: {source}"
+                )
+            if encoded:
+                expected = _record_digest(encoded)
+            else:
+                if resolved != record_path.resolve(strict=True):
+                    raise ManifestGenerationError(
+                        "only a distribution RECORD may omit its own digest"
+                    )
+                expected = _sha256(record)
+            if size and resolved.stat().st_size != int(size):
+                raise ManifestGenerationError(f"RECORD size drift: {source}")
+            relative_path = _destination(SITE_PACKAGES_RELATIVE, relative)
+            item = _verified_deployment_source_file(
+                relative_path=relative_path,
+                source=source,
+                artifact_content_sha256=expected,
+                executable=_is_executable(source),
+            )
+            if relative_path in files:
+                raise ManifestGenerationError(
+                    f"duplicate provider-environment source path: {relative_path}"
+                )
+            files[relative_path] = item
+    return tuple(files[path] for path in sorted(files, key=str.encode))
+
+
+def _manifest_shared_source_files(
+    closure: Mapping[str, Any],
+    *,
+    runtime_root: Path,
+    root_prefix: str,
+) -> tuple[DeploymentSourceFile, ...]:
+    files = []
+    for item in closure["files"]:
+        relative = _normalize_relative(str(item["source_relative_path"]))
+        expected_destination = (
+            _destination(root_prefix, relative) if root_prefix else relative
+        )
+        if item["destination"] != expected_destination:
+            raise ManifestGenerationError(
+                f"shared closure destination drifted for {relative!r}"
+            )
+        files.append(
+            _verified_deployment_source_file(
+                relative_path=relative,
+                source=_source_for_shared(closure, runtime_root, item),
+                artifact_content_sha256=str(item["artifact_content_sha256"]),
+                executable=bool(item["executable"]),
+            )
+        )
+    if len({item.relative_path for item in files}) != len(files):
+        raise ManifestGenerationError("shared closure contains duplicate source paths")
+    return tuple(sorted(files, key=lambda item: item.relative_path.encode()))
+
+
+def deployment_source_roots(
+    *, nemo_root: Path, openbench_root: Path
+) -> tuple[DeploymentSourceRoot, ...]:
+    """Return the four exact source roots used to build a runner deployment.
+
+    Generation re-verifies the complete dependency closure, upstream RECORDs,
+    source overlays, and effective task/worker manifests. The committed lock
+    and aggregate manifest bytes must then match that fresh result before any
+    source path is released to deployment tooling.
+    """
+    lock_bytes, manifest_bytes = generate(
         nemo_root=nemo_root, openbench_root=openbench_root
     )
+    outputs = {**lock_bytes, OUTPUT: manifest_bytes}
+    mismatches = [
+        path.relative_to(ROOT).as_posix()
+        for path, content in outputs.items()
+        if not path.is_file() or path.read_bytes() != content
+    ]
+    if mismatches:
+        raise ManifestGenerationError(
+            "generated evaluator resources drifted: " + ", ".join(mismatches)
+        )
+
+    environments = {
+        NEMO_DEPLOYMENT_ROOT_ID: _provider_environment(
+            nemo_root, NEMO_ENVIRONMENT_LOCK
+        ),
+        OPENBENCH_DEPLOYMENT_ROOT_ID: _provider_environment(
+            openbench_root, OPENBENCH_ENVIRONMENT_LOCK
+        ),
+    }
+    runtime_root = _runtime_root(tuple(environments.values()))
+    manifest = json.loads(manifest_bytes)
+    shared = manifest["shared_closures"]
+    runtime_closure = shared.get(RUNTIME_CLOSURE_ID)
+    if (
+        not isinstance(runtime_closure, dict)
+        or runtime_closure.get("resolver", {}).get("kind") != "python_runtime_root"
+    ):
+        raise ManifestGenerationError("pinned deployment runtime closure is absent")
+    runtime_files = _manifest_shared_source_files(
+        runtime_closure,
+        runtime_root=runtime_root,
+        root_prefix="runtime",
+    )
+
+    entries = {entry["distribution_id"]: entry for entry in manifest["distributions"]}
+    if set(entries) != set(environments):
+        raise ManifestGenerationError("deployment provider distribution set drifted")
+    provider_files = {
+        distribution_id: _upstream_record_source_files(
+            entries[distribution_id]["launch"]["record_closures"], environment
+        )
+        for distribution_id, environment in environments.items()
+    }
+
+    system_files: dict[str, DeploymentSourceFile] = {}
+    system_closure_count = 0
+    for closure in shared.values():
+        if closure.get("resolver", {}).get("kind") != "system_root":
+            continue
+        system_closure_count += 1
+        for item in _manifest_shared_source_files(
+            closure,
+            runtime_root=runtime_root,
+            root_prefix="",
+        ):
+            prior = system_files.get(item.relative_path)
+            if prior is not None:
+                if (
+                    prior.artifact_content_sha256 != item.artifact_content_sha256
+                    or prior.executable != item.executable
+                ):
+                    raise ManifestGenerationError(
+                        f"merged system destination collision: {item.relative_path}"
+                    )
+                continue
+            system_files[item.relative_path] = item
+    if system_closure_count != len(environments) or not system_files:
+        raise ManifestGenerationError("deployment system closure set drifted")
+
+    roots = (
+        DeploymentSourceRoot(
+            id=RUNTIME_CLOSURE_ID,
+            kind="python_runtime",
+            relative_path="runtime",
+            files=runtime_files,
+        ),
+        DeploymentSourceRoot(
+            id=NEMO_DEPLOYMENT_ROOT_ID,
+            kind="python_environment",
+            relative_path="nemo",
+            files=provider_files[NEMO_DEPLOYMENT_ROOT_ID],
+        ),
+        DeploymentSourceRoot(
+            id=OPENBENCH_DEPLOYMENT_ROOT_ID,
+            kind="python_environment",
+            relative_path="openbench",
+            files=provider_files[OPENBENCH_DEPLOYMENT_ROOT_ID],
+        ),
+        DeploymentSourceRoot(
+            id=SYSTEM_DEPLOYMENT_ROOT_ID,
+            kind="system",
+            relative_path="system",
+            files=tuple(
+                system_files[path] for path in sorted(system_files, key=str.encode)
+            ),
+        ),
+    )
+    if any(not root.files for root in roots):
+        raise ManifestGenerationError("deployment source root was empty")
+    return roots
+
+
+def _write_or_check(write: bool, *, nemo_root: Path, openbench_root: Path) -> None:
+    lock_bytes, manifest = generate(nemo_root=nemo_root, openbench_root=openbench_root)
     outputs = {**lock_bytes, OUTPUT: manifest}
     mismatches = []
     for path, content in outputs.items():
@@ -1422,9 +1695,7 @@ def materialize(
             openbench_root, OPENBENCH_ENVIRONMENT_LOCK
         ),
     }
-    _, manifest_bytes = generate(
-        nemo_root=nemo_root, openbench_root=openbench_root
-    )
+    _, manifest_bytes = generate(nemo_root=nemo_root, openbench_root=openbench_root)
     manifest = json.loads(manifest_bytes)
     entry = next(
         (

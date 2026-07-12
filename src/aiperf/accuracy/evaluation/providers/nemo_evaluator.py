@@ -77,6 +77,18 @@ _CURRENT_CALL_ORDINAL: contextvars.ContextVar[int] = contextvars.ContextVar(
 )
 
 
+def _binary_public_reward(value: object) -> dict[str, float]:
+    """Project one exact GSM8K binary reward into the reviewed public object."""
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or float(value) not in (0.0, 1.0)
+    ):
+        raise RuntimeError("NeMo Evaluator GSM8K reward is not binary")
+    return {"value": float(value)}
+
+
 class NemoEvaluatorAdapter:
     """Side-effect-free planner for the pinned NeMo Evaluator distribution."""
 
@@ -379,14 +391,7 @@ class NemoGsm8kSession(BaseEvaluationSession):
                     seed.expected_answer,
                     **seed.metadata,
                 )
-            if (
-                not isinstance(verified.reward, int | float)
-                or isinstance(verified.reward, bool)
-                or not math.isfinite(float(verified.reward))
-                or not 0.0 <= float(verified.reward) <= 1.0
-            ):
-                raise RuntimeError("NeMo Evaluator GSM8K reward is outside [0, 1]")
-            public_reward = float(verified.reward)
+            public_reward = _binary_public_reward(verified.reward)
             native_score = {
                 "reward": verified.reward,
                 "extracted_answer": verified.extracted_answer,
@@ -407,10 +412,10 @@ class NemoGsm8kSession(BaseEvaluationSession):
                     scores={
                         "reward": ProviderScore(
                             value=native_score,
-                            public_projection={"value": public_reward},
+                            public_projection=public_reward,
                         )
                     },
-                    numeric_metrics={"reward": public_reward},
+                    numeric_metrics={"reward": public_reward["value"]},
                     primary_score="reward",
                 ),
             )
