@@ -156,6 +156,12 @@ class TestCliConvergenceStrategyWiring:
         with patch("os._exit") as mock:
             yield mock
 
+    @pytest.fixture(autouse=True)
+    def mock_native_runner(self):
+        """Keep strategy-wiring tests independent of runner installation."""
+        with patch("aiperf.orchestrator.rust_executor.RustSubprocessExecutor") as mock:
+            yield mock
+
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     @patch("aiperf.common.logging.setup_rich_logging")
     @patch("aiperf.config.resolution.resolvers.ArtifactDirResolver")
