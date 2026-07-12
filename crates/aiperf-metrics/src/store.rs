@@ -13,10 +13,10 @@ use crate::catalog::MetricTag;
 use crate::ingest::{HttpTrace, InferenceDimensions, RecordIngest, UsageMetrics};
 use crate::value::MetricValue;
 use crate::window::{ExportContext, Phase};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 use std::borrow::Borrow;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 
 /// A NaN-sparse numeric column aligned by absolute request index.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -308,14 +308,20 @@ impl ListMetricBackend for RaggedSeries {
 /// Dense, first-appearance categorical interner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CategoryInterner<T: Eq + Hash> {
-    by_value: FxHashMap<T, u32>,
+    codes_by_hash: FxHashMap<u64, HashCodes>,
     values: Vec<T>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HashCodes {
+    One(u32),
+    Collision(Vec<u32>),
 }
 
 impl<T: Eq + Hash> Default for CategoryInterner<T> {
     fn default() -> Self {
         Self {
-            by_value: FxHashMap::default(),
+            codes_by_hash: FxHashMap::default(),
             values: Vec::new(),
         }
     }
@@ -327,13 +333,20 @@ where
 {
     /// Returns the existing dense code or inserts the value at the next code.
     pub fn intern(&mut self, value: T) -> u32 {
-        if let Some(code) = self.by_value.get(&value) {
-            return *code;
+        let hash = category_hash(&value);
+        if let Some(code) = self.code_with_hash(hash, &value) {
+            return code;
         }
-        let code = u32::try_from(self.values.len()).expect("category cardinality exceeds u32");
-        self.values.push(value.clone());
-        self.by_value.insert(value, code);
-        code
+        self.insert_new(hash, value)
+    }
+
+    /// Returns the existing dense code, cloning only when the value is new.
+    pub fn intern_ref(&mut self, value: &T) -> u32 {
+        let hash = category_hash(value);
+        if let Some(code) = self.code_with_hash(hash, value) {
+            return code;
+        }
+        self.insert_new(hash, value.clone())
     }
 
     /// Looks up a previously interned value.
@@ -342,7 +355,7 @@ where
         T: Borrow<Q>,
         Q: Eq + Hash + ?Sized,
     {
-        self.by_value.get(value).copied()
+        self.code_with_hash(category_hash(value), value)
     }
 
     /// Returns the interned value for a dense code.
@@ -364,6 +377,42 @@ where
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
+
+    fn insert_new(&mut self, hash: u64, value: T) -> u32 {
+        let code = u32::try_from(self.values.len()).expect("category cardinality exceeds u32");
+        self.values.push(value);
+        match self.codes_by_hash.get_mut(&hash) {
+            Some(slot) => match slot {
+                HashCodes::One(existing) => {
+                    let existing = *existing;
+                    *slot = HashCodes::Collision(vec![existing, code]);
+                }
+                HashCodes::Collision(codes) => codes.push(code),
+            },
+            None => {
+                self.codes_by_hash.insert(hash, HashCodes::One(code));
+            }
+        }
+        code
+    }
+
+    fn code_with_hash<Q>(&self, hash: u64, value: &Q) -> Option<u32>
+    where
+        T: Borrow<Q>,
+        Q: Eq + ?Sized,
+    {
+        let matches = |code: u32| <T as Borrow<Q>>::borrow(&self.values[code as usize]) == value;
+        match self.codes_by_hash.get(&hash)? {
+            HashCodes::One(code) => matches(*code).then_some(*code),
+            HashCodes::Collision(codes) => codes.iter().copied().find(|code| matches(*code)),
+        }
+    }
+}
+
+fn category_hash<T: Hash + ?Sized>(value: &T) -> u64 {
+    let mut hasher = FxHasher::default();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Absolute-request-index-aligned metric and metadata columns.
@@ -891,18 +940,18 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.turn_indices[row] = record.turn_index;
         let phase = self.phases.intern(record.phase);
         self.phase_codes[row] = phase;
-        let correlation = self.correlations.intern(record.correlation_id.clone());
+        let correlation = self.correlations.intern_ref(&record.correlation_id);
         self.correlation_codes[row] = correlation;
-        let dimensions = self.dimensions.intern(record.dimensions.clone());
+        let dimensions = self.dimensions.intern_ref(&record.dimensions);
         self.dimension_codes[row] = dimensions;
         self.worker_codes[row] = record
             .worker_id
             .as_ref()
-            .map(|worker| self.workers.intern(worker.clone()));
+            .map(|worker| self.workers.intern_ref(worker));
         self.conversation_codes[row] = record
             .conversation_id
             .as_ref()
-            .map(|conversation| self.conversations.intern(conversation.clone()));
+            .map(|conversation| self.conversations.intern_ref(conversation));
         self.errored[row] = record.errored;
         self.canceled[row] = record.canceled;
     }
@@ -1194,6 +1243,61 @@ mod tests {
         assert_eq!(interner.intern("a".to_string()), 1);
         assert_eq!(interner.intern("b".to_string()), 0);
         assert_eq!(interner.values(), &["b".to_string(), "a".to_string()]);
+    }
+
+    #[test]
+    fn borrowed_interning_clones_new_values_once_and_existing_values_never() {
+        #[derive(Debug)]
+        struct CloneCounted {
+            identity: &'static str,
+            clones: std::rc::Rc<std::cell::Cell<usize>>,
+        }
+
+        impl Clone for CloneCounted {
+            fn clone(&self) -> Self {
+                self.clones.set(self.clones.get() + 1);
+                Self {
+                    identity: self.identity,
+                    clones: std::rc::Rc::clone(&self.clones),
+                }
+            }
+        }
+
+        impl PartialEq for CloneCounted {
+            fn eq(&self, other: &Self) -> bool {
+                self.identity == other.identity
+            }
+        }
+
+        impl Eq for CloneCounted {}
+
+        impl Hash for CloneCounted {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                0_u8.hash(state);
+            }
+        }
+
+        let existing_clones = std::rc::Rc::new(std::cell::Cell::new(0));
+        let existing = CloneCounted {
+            identity: "existing",
+            clones: std::rc::Rc::clone(&existing_clones),
+        };
+        let new_clones = std::rc::Rc::new(std::cell::Cell::new(0));
+        let new = CloneCounted {
+            identity: "new",
+            clones: std::rc::Rc::clone(&new_clones),
+        };
+        let mut interner = CategoryInterner::default();
+
+        assert_eq!(interner.intern_ref(&existing), 0);
+        assert_eq!(existing_clones.get(), 1);
+        assert_eq!(interner.intern_ref(&existing), 0);
+        assert_eq!(existing_clones.get(), 1);
+        assert_eq!(interner.intern_ref(&new), 1);
+        assert_eq!(new_clones.get(), 1);
+        assert_eq!(interner.intern_ref(&existing), 0);
+        assert_eq!(interner.intern_ref(&new), 1);
+        assert_eq!((existing_clones.get(), new_clones.get()), (1, 1));
     }
 
     #[test]
