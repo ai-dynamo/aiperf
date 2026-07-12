@@ -9,7 +9,6 @@ on:
       - "apps/architecture-atlas/**"
       - ".github/workflows/architecture-atlas.yml"
       - ".gitignore"
-      - "docs/aiperf-rust-architecture-atlas-design.md"
   push:
     branches:
       - main
@@ -17,7 +16,6 @@ on:
       - "apps/architecture-atlas/**"
       - ".github/workflows/architecture-atlas.yml"
       - ".gitignore"
-      - "docs/aiperf-rust-architecture-atlas-design.md"
 
 permissions:
   contents: read

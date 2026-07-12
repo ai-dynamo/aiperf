@@ -27,13 +27,14 @@ npm ci
 npm run dev
 ```
 
-`npm run check` is the complete local quality gate: content validation,
+`npm run check` is the complete non-browser gate: content validation,
 typechecking, linting, unit/accessibility tests, and the production build.
+`npm run check:all` adds the production-preview Playwright suite.
 
 ```bash
 npm run check
 npx playwright install chromium
-npm run e2e
+npm run check:all
 ```
 
 Other focused commands are `npm run validate:content`, `npm run typecheck`,
