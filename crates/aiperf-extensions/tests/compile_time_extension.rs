@@ -59,6 +59,7 @@ static EXTERNAL_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     supports_streaming: false,
     produces_tokens: true,
     tokenizes_input: true,
+    requires_raw_token_ids: false,
     requires_form_data: false,
     requires_polling: false,
     requires_inline_media: false,

@@ -525,7 +525,7 @@ index 8d731ab..ca91f07 100644
 +    except TimeoutError as exc:
 +        metrics.increment(\"{method}.timeout\")
 +        raise ServiceUnavailable(\"dependency timed out\") from exc
- 
+
  async def close():
      await client.close()
 "#

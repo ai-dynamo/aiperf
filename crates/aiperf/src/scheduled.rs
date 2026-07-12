@@ -113,6 +113,8 @@ pub struct ModelResponseMetadata {
     pub response_id: Option<String>,
     /// Endpoint-normalized finish reason, such as `stop` or `length`.
     pub finish_reason: Option<String>,
+    /// Exact generated token IDs from a token-native non-text response.
+    pub output_token_ids: Option<Vec<u32>>,
     /// Reassembled OpenAI-compatible assistant message, including tool calls.
     pub assistant_message: Option<Value>,
     /// Stable transport/provider failure category for non-completed requests.
