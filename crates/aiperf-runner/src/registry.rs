@@ -19,6 +19,7 @@ use std::sync::Arc;
 use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_graph::input::GraphInputAdapterResolver;
+use aiperf_metrics::{ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportRunProvenance};
 use aiperf_transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
@@ -816,6 +817,41 @@ impl RunnerRunContext {
         self.graph_inputs.clone()
     }
 
+    /// Build the coordinator-owned native-report identity from frozen values.
+    ///
+    /// This is the sole bridge from process composition into report
+    /// provenance. It never reopens authored JSON or asks a pair adapter to
+    /// repeat endpoint or extension discovery.
+    pub fn report_provenance(
+        &self,
+        distribution_id: impl Into<String>,
+        backend_id: impl Into<String>,
+        workload_id: impl Into<String>,
+    ) -> Result<ReportRunProvenance> {
+        let extensions = self
+            .product_registry
+            .extension_names()
+            .map(|name| ReportExtensionIdentity::new(name, None))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let endpoint_profiles = self
+            .endpoint_profiles
+            .iter()
+            .map(|profile| {
+                ReportEndpointProfileIdentity::new(
+                    profile.profile_id.clone(),
+                    profile.endpoint_id.to_string(),
+                )
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ReportRunProvenance::new(
+            distribution_id,
+            backend_id,
+            workload_id,
+            extensions,
+            endpoint_profiles,
+        )?)
+    }
+
     /// Resolve a run-local endpoint profile without reparsing authored JSON.
     pub fn endpoint_profile(&self, profile_id: &str) -> Result<&ValidatedEndpointProfileV2> {
         self.endpoint_profile_indexes
@@ -1407,6 +1443,17 @@ mod tests {
         assert_eq!(
             context.endpoint_profile("a-first").unwrap().profile_id,
             "a-first"
+        );
+        let provenance = context
+            .report_provenance(format!("blake3:{}", "a".repeat(64)), "online_http", "graph")
+            .unwrap();
+        assert_eq!(
+            provenance
+                .endpoint_profiles
+                .iter()
+                .map(|profile| profile.profile_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default", "z-last", "a-first"]
         );
     }
 
