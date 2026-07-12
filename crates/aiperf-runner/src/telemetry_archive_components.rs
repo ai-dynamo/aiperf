@@ -17,15 +17,20 @@ use std::sync::Arc;
 
 use aiperf_telemetry_archive::sync::WriterClaimId;
 use aiperf_telemetry_archive::{
-    ArchiveAdmissionMode, ArchiveAdmissionPolicy, ArchiveId, ArchiveKeyProvider,
-    ArchiveObjectStore, ArchiveRecoveryPolicy, ArchiveSampleView, ArchiveSanitizer,
+    AES_256_GCM_SIV_RANDOM96_V1_DESCRIPTOR, Aes256GcmSivRandom96V1, ArchiveAdmissionMode,
+    ArchiveAdmissionPolicy, ArchiveId, ArchiveKeyProvider, ArchiveObjectStore,
+    ArchiveRawKeyProvider, ArchiveRecoveryPolicy, ArchiveSampleView, ArchiveSanitizer,
     ArchiveSchemasV1, ArchiveSink, ArchiveStoreError, ArchiveWalFrameDecoder,
     AttachedBestEffortAdmissionPolicy, Blake3ArchiveKeyProvider, BoundedSegmentRotationPolicy,
-    CanonicalJsonValue, CreateNewRecoveryPolicy, Digest, DurabilityFaultInjector,
-    ExactResumeRecoveryPolicy, FileArchiveObjectStore, LocalArchiveRepository, NoopEnricher,
-    NoopSanitizer, OwnedLocalArchiveSinkFactory, OwnedReceiptJournalMode, ParquetRotationConfigV1,
-    PrimaryWatchAdmissionPolicy, SanitizationError, SanitizedSample, SegmentRotationPolicy,
-    SessionAnchorV1, StaticLabelEnricher, TelemetryEnricher, WalSegmentHeaderV1, domain_digest,
+    CanonicalJsonValue, CreateNewRecoveryPolicy, Digest, DurabilityFaultInjector, ExactEntityLease,
+    ExactResumeRecoveryPolicy, FileArchiveObjectStore, LocalArchiveRepository,
+    MemoryRawKeyProvider, NoopEnricher, NoopSanitizer, OsRawNonceSource,
+    OwnedLocalArchiveSinkFactory, OwnedReceiptJournalMode, ParquetRotationConfigV1,
+    PrimaryWatchAdmissionPolicy, RAW_ENVELOPE_MAX_OBJECTS_PER_KEY,
+    RAW_ENVELOPE_MAX_PLAINTEXT_BYTES, RawCoverageRequirementV1, RawEnvelopeDescriptor,
+    RawEnvelopeProfile, RawNonceSource, RawRegistryLimitsV1, SanitizationError, SanitizedSample,
+    SegmentRotationPolicy, SessionAnchorV1, SourceOutcome, StaticLabelEnricher, TelemetryEnricher,
+    WalSegmentHeaderV1, domain_digest,
 };
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -178,13 +183,28 @@ pub trait ArchiveObjectStoreProvider: Debug + Send + Sync {
     ) -> Result<Arc<dyn ArchiveObjectStore>, ArchiveComponentError>;
 }
 
-/// Injected bridge from a secret reference to process-local archive key material.
+/// Injected bridge to process-local identity and classified raw key material.
 pub trait ArchiveKeyProviderResolver: Debug + Send + Sync {
     /// Resolves one provider-held reference into the archive key seam.
     fn resolve(
         &self,
         secret_reference: &str,
     ) -> Result<Arc<dyn ArchiveKeyProvider>, ArchiveComponentError>;
+
+    /// Resolves a separately classified raw-envelope key provider.
+    ///
+    /// Deployments that do not support exact raw retention may keep this
+    /// default. The authored request supplies only public provider/key IDs;
+    /// secret bytes and filesystem paths never cross this seam.
+    fn resolve_raw_key_provider(
+        &self,
+        _secret_reference: &str,
+        _key_id: &str,
+    ) -> Result<Arc<dyn ArchiveRawKeyProvider>, ArchiveComponentError> {
+        Err(ArchiveComponentError::Prepare(
+            "exact raw-body retention requires an injected raw-key provider resolver".to_owned(),
+        ))
+    }
 }
 
 /// Stock local provider for `file://` archive targets.
@@ -222,7 +242,7 @@ impl ArchiveObjectStoreProvider for NativeArchiveObjectStoreProvider {
     }
 }
 
-/// Environment-backed provider-held archive key resolver for the base runner.
+/// Environment-backed provider-held archive and raw key resolver for the base runner.
 ///
 /// A reference such as `archive-identity` maps to
 /// `AIPERF_ARCHIVE_KEY_ARCHIVE_IDENTITY`. Values are exactly 32 bytes encoded
@@ -261,17 +281,23 @@ impl EnvironmentArchiveKeyProviderResolver {
     /// Returns the public environment variable derived from a provider reference.
     pub fn variable_name(&self, reference: &str) -> Result<String, ArchiveComponentError> {
         validate_secret_reference(reference)?;
-        let suffix = reference
-            .bytes()
-            .map(|byte| {
-                if byte.is_ascii_alphanumeric() {
-                    char::from(byte.to_ascii_uppercase())
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
+        let suffix = environment_key_suffix(reference);
         Ok(format!("{}{suffix}", self.prefix))
+    }
+
+    /// Returns the public environment variable for one raw-key provider/key ID.
+    pub fn raw_variable_name(
+        &self,
+        reference: &str,
+        key_id: &str,
+    ) -> Result<String, ArchiveComponentError> {
+        validate_named_secret_reference(reference, "raw_body key_provider")?;
+        validate_raw_key_id(key_id)?;
+        Ok(format!(
+            "AIPERF_ARCHIVE_RAW_KEY_{}_{}",
+            environment_key_suffix(reference),
+            environment_key_suffix(key_id)
+        ))
     }
 }
 
@@ -296,6 +322,31 @@ impl ArchiveKeyProviderResolver for EnvironmentArchiveKeyProviderResolver {
             .map_err(|error| {
                 ArchiveComponentError::Prepare(format!(
                     "archive key provider for reference {secret_reference:?} could not be prepared: {error}"
+                ))
+            })
+    }
+
+    fn resolve_raw_key_provider(
+        &self,
+        secret_reference: &str,
+        key_id: &str,
+    ) -> Result<Arc<dyn ArchiveRawKeyProvider>, ArchiveComponentError> {
+        let variable = self.raw_variable_name(secret_reference, key_id)?;
+        let value = env::var(&variable).map_err(|_| {
+            ArchiveComponentError::Prepare(format!(
+                "raw-body key environment variable {variable} is missing or is not UTF-8"
+            ))
+        })?;
+        let key = decode_archive_master_key(&value).ok_or_else(|| {
+            ArchiveComponentError::Prepare(format!(
+                "raw-body key environment variable {variable} must encode exactly 32 bytes as hex or base64"
+            ))
+        })?;
+        MemoryRawKeyProvider::new([(key_id.to_owned(), key)])
+            .map(|provider| Arc::new(provider) as Arc<dyn ArchiveRawKeyProvider>)
+            .map_err(|error| {
+                ArchiveComponentError::Prepare(format!(
+                    "raw-body key provider for reference {secret_reference:?} and key ID {key_id:?} could not be prepared: {error}"
                 ))
             })
     }
@@ -369,10 +420,221 @@ pub trait PreparedArchiveWriter: Debug + Send + Sync {
     ) -> Result<Box<dyn ArchiveSink>, ArchiveComponentError>;
 }
 
+/// Authored exact-body retention scope.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawBodyRetentionScopeV1 {
+    /// Retain every response entity that reached bounded entity decoding.
+    AllScrapes,
+    /// Retain only non-success source outcomes with an available entity.
+    FailedScrapes,
+}
+
+impl RawBodyRetentionScopeV1 {
+    /// Returns whether one immutable source outcome is selected.
+    #[must_use]
+    pub const fn retains(self, outcome: SourceOutcome) -> bool {
+        match self {
+            Self::AllScrapes => true,
+            Self::FailedScrapes => {
+                !matches!(outcome, SourceOutcome::Success | SourceOutcome::Empty)
+            }
+        }
+    }
+
+    const fn reason(self) -> RawBodyRetentionReasonV1 {
+        match self {
+            Self::AllScrapes => RawBodyRetentionReasonV1::AllScrapesPolicy,
+            Self::FailedScrapes => RawBodyRetentionReasonV1::FailedScrapesPolicy,
+        }
+    }
+}
+
+/// Explicit data classification required before exact bytes may be retained.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawBodyDataClassificationV1 {
+    /// Exact telemetry entities are sensitive because endpoints can echo secrets.
+    SensitiveExactTelemetryBody,
+}
+
+/// Restrictive local access contract for exact encrypted objects.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawBodyLocalAccessModeV1 {
+    /// Only the run/archive owner may read local encrypted-object storage.
+    OwnerOnly,
+}
+
+/// Stable reason stored with one selected raw-reference projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RawBodyRetentionReasonV1 {
+    /// The all-scrapes policy selected this entity.
+    AllScrapesPolicy,
+    /// The failed-scrapes policy selected this entity.
+    FailedScrapesPolicy,
+}
+
+impl RawBodyRetentionReasonV1 {
+    /// Returns the stable raw-reference enum spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AllScrapesPolicy => "all_scrapes_policy",
+            Self::FailedScrapesPolicy => "failed_scrapes_policy",
+        }
+    }
+}
+
+/// Opaque selected entity plus response-specific raw-reference interpretation.
+///
+/// Exact bytes remain inside `ExactEntityLease`; generic observers and debug
+/// formatting can inspect only byte counts. The archive owner consumes the
+/// lease at the raw-envelope boundary after it has assigned sequence identity.
+#[derive(Clone)]
+pub struct PreparedRawBodyCandidate {
+    exact_entity: ExactEntityLease,
+    retention_reason: RawBodyRetentionReasonV1,
+    content_encoding_present: bool,
+    content_encoding_chain: Vec<String>,
+}
+
+impl PreparedRawBodyCandidate {
+    /// Returns the protected encoded/decoded entity lease.
+    #[must_use]
+    pub const fn exact_entity(&self) -> &ExactEntityLease {
+        &self.exact_entity
+    }
+
+    /// Transfers the protected entity lease to archive/raw terminalization.
+    #[must_use]
+    pub fn into_exact_entity(self) -> ExactEntityLease {
+        self.exact_entity
+    }
+
+    /// Returns why the configured policy retained this entity.
+    #[must_use]
+    pub const fn retention_reason(&self) -> RawBodyRetentionReasonV1 {
+        self.retention_reason
+    }
+
+    /// Distinguishes an absent header from explicit `identity`.
+    #[must_use]
+    pub const fn content_encoding_present(&self) -> bool {
+        self.content_encoding_present
+    }
+
+    /// Returns lowercase codings in validated wire application order.
+    #[must_use]
+    pub fn content_encoding_chain(&self) -> &[String] {
+        &self.content_encoding_chain
+    }
+}
+
+impl Debug for PreparedRawBodyCandidate {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedRawBodyCandidate")
+            .field("retention_reason", &self.retention_reason)
+            .field("content_encoding_present", &self.content_encoding_present)
+            .field("content_encoding_chain", &self.content_encoding_chain)
+            .field("encoded_bytes", &self.exact_entity.encoded_len())
+            .field("decoded_bytes", &self.exact_entity.decoded_len())
+            .field("entity_bytes", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Prepared v1 encryption authorities consumed only by the archive owner.
+pub struct PreparedRawEnvelopeContext {
+    classification: RawBodyDataClassificationV1,
+    local_access: RawBodyLocalAccessModeV1,
+    key_id: String,
+    key_provider: Arc<dyn ArchiveRawKeyProvider>,
+    profile: Arc<dyn RawEnvelopeProfile>,
+    limits: RawRegistryLimitsV1,
+    coverage: RawCoverageRequirementV1,
+}
+
+impl PreparedRawEnvelopeContext {
+    /// Returns the explicit sensitive-data classification.
+    #[must_use]
+    pub const fn classification(&self) -> RawBodyDataClassificationV1 {
+        self.classification
+    }
+
+    /// Returns the required restrictive local access mode.
+    #[must_use]
+    pub const fn local_access(&self) -> RawBodyLocalAccessModeV1 {
+        self.local_access
+    }
+
+    /// Returns the public active rotation key ID.
+    #[must_use]
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    /// Returns the prepared provider-held key boundary.
+    #[must_use]
+    pub fn key_provider(&self) -> &dyn ArchiveRawKeyProvider {
+        self.key_provider.as_ref()
+    }
+
+    /// Returns the exact descriptor-selected envelope profile.
+    #[must_use]
+    pub fn profile(&self) -> &dyn RawEnvelopeProfile {
+        self.profile.as_ref()
+    }
+
+    /// Returns tightening-only plaintext/per-key registry limits.
+    #[must_use]
+    pub const fn limits(&self) -> RawRegistryLimitsV1 {
+        self.limits
+    }
+
+    /// Returns required local-plus-remote physical-object coverage.
+    #[must_use]
+    pub const fn coverage(&self) -> RawCoverageRequirementV1 {
+        self.coverage
+    }
+
+    /// Creates the product OS-CSPRNG source owned serially by one archive owner.
+    #[must_use]
+    pub fn nonce_source(&self) -> Box<dyn RawNonceSource> {
+        Box::new(OsRawNonceSource)
+    }
+}
+
+impl Debug for PreparedRawEnvelopeContext {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedRawEnvelopeContext")
+            .field("classification", &self.classification)
+            .field("local_access", &self.local_access)
+            .field("key_id", &self.key_id)
+            .field("key_provider", &self.key_provider)
+            .field("profile", &self.profile.descriptor().profile_id)
+            .field("limits", &self.limits)
+            .field("coverage", &self.coverage)
+            .finish()
+    }
+}
+
 /// Prepared raw-body policy selected independently from structured sanitization.
 pub trait PreparedRawBodyPolicy: Debug + Send + Sync {
     /// Whether exact encoded response bodies may enter archive projection.
     fn retains_exact_body(&self) -> bool;
+
+    /// Selects one entity and freezes its response-specific encoding reference.
+    fn select_candidate(
+        &self,
+        outcome: SourceOutcome,
+        exact_entity: ExactEntityLease,
+    ) -> Option<PreparedRawBodyCandidate>;
+
+    /// Returns encryption authorities only for an enabled exact policy.
+    fn envelope(&self) -> Option<&PreparedRawEnvelopeContext>;
 }
 
 /// Writer-owned strict validation result.
@@ -491,7 +753,10 @@ pub trait ValidatedRawBodyComponent: Debug + Send + Sync {
     fn identity(&self) -> &ValidatedArchiveComponentIdentity;
 
     /// Prepares one exact-body retention policy.
-    fn prepare(self: Box<Self>) -> Result<Box<dyn PreparedRawBodyPolicy>, ArchiveComponentError>;
+    fn prepare(
+        self: Box<Self>,
+        resolver: &dyn ArchiveKeyProviderResolver,
+    ) -> Result<Box<dyn PreparedRawBodyPolicy>, ArchiveComponentError>;
 }
 
 /// Strict writer component factory.
@@ -837,7 +1102,10 @@ impl TelemetryArchiveComponentRegistries {
                 Arc::new(NoopSanitizerFactory),
                 Arc::new(AllowDenySanitizerFactory),
             ],
-            raw_bodies: vec![Arc::new(NoRawBodyFactory)],
+            raw_bodies: vec![
+                Arc::new(NoRawBodyFactory),
+                Arc::new(EncryptedExactRawBodyFactory),
+            ],
         })
         .expect("stock telemetry archive component IDs are valid and unique")
     }
@@ -1078,7 +1346,7 @@ impl ValidatedTelemetryArchiveCollectComponents {
             archive_key,
             enrichers,
             sanitizer,
-            raw_body: self.raw_body.prepare()?,
+            raw_body: self.raw_body.prepare(context.key_resolver)?,
             persistent_component_identities,
             invocation_component_identities,
         })
@@ -1407,6 +1675,11 @@ static NO_RAW_BODY_DESCRIPTOR: ArchiveComponentDescriptor = ArchiveComponentDesc
     id: "none",
     description: "retain no exact response body",
 };
+static ENCRYPTED_EXACT_RAW_BODY_DESCRIPTOR: ArchiveComponentDescriptor =
+    ArchiveComponentDescriptor {
+        id: "encrypted_exact_v1",
+        description: "separately classified exact encoded bodies under the v1 authenticated envelope",
+    };
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -2354,7 +2627,10 @@ impl ValidatedRawBodyComponent for ValidatedNoRawBody {
         &self.identity
     }
 
-    fn prepare(self: Box<Self>) -> Result<Box<dyn PreparedRawBodyPolicy>, ArchiveComponentError> {
+    fn prepare(
+        self: Box<Self>,
+        _resolver: &dyn ArchiveKeyProviderResolver,
+    ) -> Result<Box<dyn PreparedRawBodyPolicy>, ArchiveComponentError> {
         Ok(Box::new(NoRawBodyPolicy))
     }
 }
@@ -2365,6 +2641,197 @@ struct NoRawBodyPolicy;
 impl PreparedRawBodyPolicy for NoRawBodyPolicy {
     fn retains_exact_body(&self) -> bool {
         false
+    }
+
+    fn select_candidate(
+        &self,
+        _outcome: SourceOutcome,
+        _exact_entity: ExactEntityLease,
+    ) -> Option<PreparedRawBodyCandidate> {
+        None
+    }
+
+    fn envelope(&self) -> Option<&PreparedRawEnvelopeContext> {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RawEnvelopeProfileSelectionV1 {
+    #[default]
+    #[serde(rename = "aead_aes_256_gcm_siv_random96_v1")]
+    AeadAes256GcmSivRandom96V1,
+}
+
+impl RawEnvelopeProfileSelectionV1 {
+    const fn descriptor(self) -> &'static RawEnvelopeDescriptor {
+        match self {
+            Self::AeadAes256GcmSivRandom96V1 => &AES_256_GCM_SIV_RANDOM96_V1_DESCRIPTOR,
+        }
+    }
+
+    fn prepare(self) -> Arc<dyn RawEnvelopeProfile> {
+        match self {
+            Self::AeadAes256GcmSivRandom96V1 => Arc::new(Aes256GcmSivRandom96V1),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EncryptedExactRawBodyConfig {
+    retention: RawBodyRetentionScopeV1,
+    classification: RawBodyDataClassificationV1,
+    acknowledge_sensitive_data: bool,
+    local_access: RawBodyLocalAccessModeV1,
+    key_provider: String,
+    key_id: String,
+    #[serde(default)]
+    envelope_profile: RawEnvelopeProfileSelectionV1,
+    #[serde(default = "default_raw_max_plaintext_bytes")]
+    max_plaintext_bytes: u64,
+    #[serde(default = "default_raw_max_successful_objects_per_key")]
+    max_successful_objects_per_key: u64,
+}
+
+const fn default_raw_max_plaintext_bytes() -> u64 {
+    RAW_ENVELOPE_MAX_PLAINTEXT_BYTES
+}
+
+const fn default_raw_max_successful_objects_per_key() -> u64 {
+    RAW_ENVELOPE_MAX_OBJECTS_PER_KEY
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct EncryptedExactRawBodyFactory;
+
+impl RawBodyComponentFactory for EncryptedExactRawBodyFactory {
+    fn descriptor(&self) -> &'static ArchiveComponentDescriptor {
+        &ENCRYPTED_EXACT_RAW_BODY_DESCRIPTOR
+    }
+
+    fn validate(
+        &self,
+        config: &RawValue,
+    ) -> Result<Box<dyn ValidatedRawBodyComponent>, ArchiveComponentError> {
+        let config: EncryptedExactRawBodyConfig =
+            decode_config(RAW_BODY_FAMILY, self.descriptor().id, config)?;
+        if !config.acknowledge_sensitive_data {
+            return Err(invalid_raw_body_config(
+                "acknowledge_sensitive_data must be explicitly true",
+            ));
+        }
+        validate_named_secret_reference(&config.key_provider, "raw_body key_provider")
+            .map_err(|error| invalid_raw_body_config(error.to_string()))?;
+        validate_raw_key_id(&config.key_id)?;
+        config
+            .envelope_profile
+            .descriptor()
+            .canonical
+            .validate()
+            .map_err(|error| invalid_raw_body_config(error.to_string()))?;
+        let limits = RawRegistryLimitsV1::new(
+            config.max_plaintext_bytes,
+            config.max_successful_objects_per_key,
+        )
+        .map_err(|error| invalid_raw_body_config(error.to_string()))?;
+        Ok(Box::new(ValidatedEncryptedExactRawBody {
+            identity: component_identity(RAW_BODY_FAMILY, self.descriptor().id, &config)?,
+            retention: config.retention,
+            classification: config.classification,
+            local_access: config.local_access,
+            key_provider_reference: config.key_provider,
+            key_id: config.key_id,
+            envelope_profile: config.envelope_profile,
+            limits,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct ValidatedEncryptedExactRawBody {
+    identity: ValidatedArchiveComponentIdentity,
+    retention: RawBodyRetentionScopeV1,
+    classification: RawBodyDataClassificationV1,
+    local_access: RawBodyLocalAccessModeV1,
+    key_provider_reference: String,
+    key_id: String,
+    envelope_profile: RawEnvelopeProfileSelectionV1,
+    limits: RawRegistryLimitsV1,
+}
+
+impl ValidatedRawBodyComponent for ValidatedEncryptedExactRawBody {
+    fn identity(&self) -> &ValidatedArchiveComponentIdentity {
+        &self.identity
+    }
+
+    fn prepare(
+        self: Box<Self>,
+        resolver: &dyn ArchiveKeyProviderResolver,
+    ) -> Result<Box<dyn PreparedRawBodyPolicy>, ArchiveComponentError> {
+        let key_provider =
+            resolver.resolve_raw_key_provider(&self.key_provider_reference, &self.key_id)?;
+        let resolved = key_provider.resolve_key(&self.key_id).map_err(|error| {
+            ArchiveComponentError::Prepare(format!(
+                "raw-body key provider could not resolve key ID {:?}: {error}",
+                self.key_id
+            ))
+        })?;
+        if resolved.key_id() != self.key_id {
+            return Err(ArchiveComponentError::Prepare(format!(
+                "raw-body key provider returned key ID {:?}; expected {:?}",
+                resolved.key_id(),
+                self.key_id
+            )));
+        }
+        drop(resolved);
+        Ok(Box::new(EncryptedExactRawBodyPolicy {
+            retention: self.retention,
+            envelope: PreparedRawEnvelopeContext {
+                classification: self.classification,
+                local_access: self.local_access,
+                key_id: self.key_id,
+                key_provider,
+                profile: self.envelope_profile.prepare(),
+                limits: self.limits,
+                coverage: RawCoverageRequirementV1::local_and_remote(),
+            },
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct EncryptedExactRawBodyPolicy {
+    retention: RawBodyRetentionScopeV1,
+    envelope: PreparedRawEnvelopeContext,
+}
+
+impl PreparedRawBodyPolicy for EncryptedExactRawBodyPolicy {
+    fn retains_exact_body(&self) -> bool {
+        true
+    }
+
+    fn select_candidate(
+        &self,
+        outcome: SourceOutcome,
+        exact_entity: ExactEntityLease,
+    ) -> Option<PreparedRawBodyCandidate> {
+        if !self.retention.retains(outcome) {
+            return None;
+        }
+        let content_encoding_present = exact_entity.content_encoding().header_present();
+        let content_encoding_chain = exact_entity.content_encoding().normalized_tokens();
+        Some(PreparedRawBodyCandidate {
+            exact_entity,
+            retention_reason: self.retention.reason(),
+            content_encoding_present,
+            content_encoding_chain,
+        })
+    }
+
+    fn envelope(&self) -> Option<&PreparedRawEnvelopeContext> {
+        Some(&self.envelope)
     }
 }
 
@@ -2478,22 +2945,56 @@ fn validate_external_reference(value: &str, field: &str) -> Result<(), ArchiveCo
 }
 
 fn validate_secret_reference(value: &str) -> Result<(), ArchiveComponentError> {
-    validate_external_reference(value, "archive_key secret-provider id")?;
+    validate_named_secret_reference(value, "archive_key secret-provider id")
+}
+
+fn validate_named_secret_reference(value: &str, field: &str) -> Result<(), ArchiveComponentError> {
+    validate_external_reference(value, field)?;
     let mut bytes = value.bytes();
     let Some(first) = bytes.next() else {
-        return Err(ArchiveComponentError::InvalidArchive(
-            "archive_key secret-provider id cannot be empty".to_owned(),
-        ));
+        return Err(ArchiveComponentError::InvalidArchive(format!(
+            "{field} cannot be empty"
+        )));
     };
     if !first.is_ascii_lowercase()
         || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     {
-        return Err(ArchiveComponentError::InvalidArchive(
-            "archive_key secret-provider id must start with a lowercase ASCII letter and contain only lowercase letters, digits, and hyphens"
-                .to_owned(),
-        ));
+        return Err(ArchiveComponentError::InvalidArchive(format!(
+            "{field} must start with a lowercase ASCII letter and contain only lowercase letters, digits, and hyphens"
+        )));
     }
     Ok(())
+}
+
+fn validate_raw_key_id(value: &str) -> Result<(), ArchiveComponentError> {
+    if value.len() > u8::MAX as usize {
+        return Err(invalid_raw_body_config(
+            "key_id must contain at most 255 bytes",
+        ));
+    }
+    validate_named_secret_reference(value, "raw_body key_id")
+        .map_err(|error| invalid_raw_body_config(error.to_string()))
+}
+
+fn invalid_raw_body_config(message: impl Into<String>) -> ArchiveComponentError {
+    ArchiveComponentError::InvalidConfig {
+        family: RAW_BODY_FAMILY,
+        id: ENCRYPTED_EXACT_RAW_BODY_DESCRIPTOR.id.to_owned(),
+        message: message.into(),
+    }
+}
+
+fn environment_key_suffix(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(byte.to_ascii_uppercase())
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn validate_store_spool_separation(
@@ -2739,9 +3240,13 @@ impl From<ArchiveStoreError> for ArchiveComponentError {
 
 #[cfg(test)]
 mod tests {
+    use aiperf_prometheus::StrictExpositionParser;
     use aiperf_telemetry_archive::{
-        Blake3ArchiveKeyProvider, MemoryArchiveObjectStore, NoDurabilityFaults,
+        AttemptDecoder, Blake3ArchiveKeyProvider, DecodeLimits, FetchDisposition, FetchedAttempt,
+        MemoryArchiveObjectStore, MemoryRawKeyProvider, NoDurabilityFaults,
+        NoopNativeEntityDecoder, PrometheusAttemptDecoder,
     };
+    use bytes::Bytes;
     use serde_json::json;
 
     use super::*;
@@ -2768,6 +3273,21 @@ mod tests {
         ) -> Result<Arc<dyn ArchiveKeyProvider>, ArchiveComponentError> {
             Blake3ArchiveKeyProvider::new("secret_provider", [7; 32])
                 .map(|provider| Arc::new(provider) as Arc<dyn ArchiveKeyProvider>)
+                .map_err(|error| ArchiveComponentError::Prepare(error.to_string()))
+        }
+
+        fn resolve_raw_key_provider(
+            &self,
+            secret_reference: &str,
+            key_id: &str,
+        ) -> Result<Arc<dyn ArchiveRawKeyProvider>, ArchiveComponentError> {
+            if secret_reference != "raw-telemetry" || key_id != "rotation-1" {
+                return Err(ArchiveComponentError::Prepare(
+                    "unexpected raw-key provider selector".to_owned(),
+                ));
+            }
+            MemoryRawKeyProvider::new([(key_id.to_owned(), [0x5a; 32])])
+                .map(|provider| Arc::new(provider) as Arc<dyn ArchiveRawKeyProvider>)
                 .map_err(|error| ArchiveComponentError::Prepare(error.to_string()))
         }
     }
@@ -2830,6 +3350,183 @@ mod tests {
         );
         assert!(!prepared.raw_body.retains_exact_body());
         assert_eq!(prepared.enrichers.len(), 1);
+    }
+
+    #[test]
+    fn encrypted_exact_policy_requires_explicit_security_gates_and_provider_key() {
+        let registries = TelemetryArchiveComponentRegistries::stock();
+        let mut value = collect_archive_for_value();
+        value["raw_body"] = encrypted_exact_raw_body_config();
+        let archive: TelemetryArchiveSpecV2 = serde_json::from_value(value).unwrap();
+        let validated = registries
+            .validate_collect(archive, ArchiveCollectionPlacement::StandalonePrimary)
+            .unwrap();
+        let identity = validated
+            .persistent_component_identities()
+            .into_iter()
+            .find(|identity| identity.family == RAW_BODY_FAMILY)
+            .unwrap();
+        assert_eq!(identity.factory_id, "encrypted_exact_v1");
+        let canonical = String::from_utf8(identity.canonical_config.to_bytes()).unwrap();
+        assert!(canonical.contains("\"acknowledge_sensitive_data\":true"));
+        assert!(canonical.contains("\"classification\":\"sensitive_exact_telemetry_body\""));
+        assert!(canonical.contains("\"local_access\":\"owner_only\""));
+        assert!(canonical.contains("\"envelope_profile\":\"aead_aes_256_gcm_siv_random96_v1\""));
+        assert!(!canonical.contains("5a5a5a5a"));
+
+        let prepared = validated
+            .prepare(ArchiveCollectComponentPrepareContext {
+                store_provider: &MemoryStoreProvider,
+                key_resolver: &MemoryKeyResolver,
+                durability_faults: Arc::new(NoDurabilityFaults),
+            })
+            .unwrap();
+        assert!(prepared.raw_body.retains_exact_body());
+        let envelope = prepared.raw_body.envelope().unwrap();
+        assert_eq!(
+            envelope.classification(),
+            RawBodyDataClassificationV1::SensitiveExactTelemetryBody
+        );
+        assert_eq!(envelope.local_access(), RawBodyLocalAccessModeV1::OwnerOnly);
+        assert_eq!(envelope.key_id(), "rotation-1");
+        assert_eq!(
+            envelope.profile().descriptor().profile_id,
+            "aead_aes_256_gcm_siv_random96_v1"
+        );
+        assert_eq!(envelope.limits().max_plaintext_bytes(), 1_048_576);
+        assert_eq!(envelope.limits().max_successful_objects_per_key(), 1_000);
+        assert!(envelope.coverage().required_local());
+        assert!(envelope.coverage().required_remote());
+        assert_eq!(
+            envelope
+                .key_provider()
+                .resolve_key("rotation-1")
+                .unwrap()
+                .key_id(),
+            "rotation-1"
+        );
+        let mut nonce_source = envelope.nonce_source();
+        let mut nonce = [0_u8; 12];
+        nonce_source.fill_nonce(&mut nonce).unwrap();
+    }
+
+    #[test]
+    fn encrypted_exact_policy_freezes_failed_scope_and_encoding_reference() {
+        let mut value = collect_archive_for_value();
+        value["raw_body"] = encrypted_exact_raw_body_config();
+        let archive: TelemetryArchiveSpecV2 = serde_json::from_value(value).unwrap();
+        let prepared = TelemetryArchiveComponentRegistries::stock()
+            .validate_collect(archive, ArchiveCollectionPlacement::StandalonePrimary)
+            .unwrap()
+            .prepare(ArchiveCollectComponentPrepareContext {
+                store_provider: &MemoryStoreProvider,
+                key_resolver: &MemoryKeyResolver,
+                durability_faults: Arc::new(NoDurabilityFaults),
+            })
+            .unwrap();
+
+        let success = decoded_exact_entity(200, Some("identity"));
+        assert_eq!(success.0, SourceOutcome::Success);
+        assert!(
+            prepared
+                .raw_body
+                .select_candidate(success.0, success.1)
+                .is_none()
+        );
+
+        let failed = decoded_exact_entity(500, Some("identity"));
+        assert_eq!(failed.0, SourceOutcome::Http);
+        let candidate = prepared
+            .raw_body
+            .select_candidate(failed.0, failed.1)
+            .unwrap();
+        assert_eq!(
+            candidate.retention_reason(),
+            RawBodyRetentionReasonV1::FailedScrapesPolicy
+        );
+        assert_eq!(
+            candidate.retention_reason().as_str(),
+            "failed_scrapes_policy"
+        );
+        assert!(candidate.content_encoding_present());
+        assert_eq!(candidate.content_encoding_chain(), ["identity"]);
+        assert_eq!(
+            candidate.exact_entity().encoded_len(),
+            EXACT_BODY_MARKER.len()
+        );
+        let debug = format!("{candidate:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("archive_exact_body_marker"));
+
+        let absent = decoded_exact_entity(500, None);
+        let absent = prepared
+            .raw_body
+            .select_candidate(absent.0, absent.1)
+            .unwrap();
+        assert!(!absent.content_encoding_present());
+        assert!(absent.content_encoding_chain().is_empty());
+        assert!(RawBodyRetentionScopeV1::AllScrapes.retains(SourceOutcome::Success));
+    }
+
+    #[test]
+    fn encrypted_exact_policy_rejects_implicit_or_weakened_security_config() {
+        let registries = TelemetryArchiveComponentRegistries::stock();
+        for (field, replacement) in [
+            ("acknowledge_sensitive_data", json!(false)),
+            ("classification", json!("public")),
+            ("local_access", json!("shared")),
+            ("envelope_profile", json!("aes_gcm")),
+            ("max_plaintext_bytes", json!(0)),
+            (
+                "max_successful_objects_per_key",
+                json!(RAW_ENVELOPE_MAX_OBJECTS_PER_KEY + 1),
+            ),
+            ("key_provider", json!("/tmp/authored-secret-key")),
+            ("key_id", json!("UPPERCASE")),
+        ] {
+            let mut value = collect_archive_for_value();
+            let mut raw = encrypted_exact_raw_body_config();
+            raw["config"][field] = replacement;
+            value["raw_body"] = raw;
+            let archive: TelemetryArchiveSpecV2 = serde_json::from_value(value).unwrap();
+            let error = registries
+                .validate_collect(archive, ArchiveCollectionPlacement::StandalonePrimary)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("raw_body"), "field {field}: {error}");
+        }
+
+        let mut value = collect_archive_for_value();
+        let mut raw = encrypted_exact_raw_body_config();
+        raw["config"]["secret_bytes"] = json!("never-authored");
+        value["raw_body"] = raw;
+        let archive: TelemetryArchiveSpecV2 = serde_json::from_value(value).unwrap();
+        let error = registries
+            .validate_collect(archive, ArchiveCollectionPlacement::StandalonePrimary)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown field"), "{error}");
+        assert!(!error.contains("never-authored"), "{error}");
+
+        for required in [
+            "retention",
+            "classification",
+            "acknowledge_sensitive_data",
+            "local_access",
+            "key_provider",
+            "key_id",
+        ] {
+            let mut value = collect_archive_for_value();
+            let mut raw = encrypted_exact_raw_body_config();
+            raw["config"].as_object_mut().unwrap().remove(required);
+            value["raw_body"] = raw;
+            let archive: TelemetryArchiveSpecV2 = serde_json::from_value(value).unwrap();
+            let error = registries
+                .validate_collect(archive, ArchiveCollectionPlacement::StandalonePrimary)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(required), "missing {required}: {error}");
+        }
     }
 
     #[test]
@@ -3015,6 +3712,12 @@ mod tests {
             resolver.variable_name("archive-identity").unwrap(),
             "AIPERF_ARCHIVE_KEY_ARCHIVE_IDENTITY"
         );
+        assert_eq!(
+            resolver
+                .raw_variable_name("raw-telemetry", "rotation-1")
+                .unwrap(),
+            "AIPERF_ARCHIVE_RAW_KEY_RAW_TELEMETRY_ROTATION_1"
+        );
         assert_eq!(decode_archive_master_key(&"07".repeat(32)), Some([7; 32]));
         assert_eq!(
             decode_archive_master_key(&format!(
@@ -3043,5 +3746,54 @@ mod tests {
             "sanitizers": [],
             "raw_body": {"type": "none", "config": {}}
         })
+    }
+
+    fn encrypted_exact_raw_body_config() -> serde_json::Value {
+        json!({
+            "type": "encrypted_exact_v1",
+            "config": {
+                "retention": "failed_scrapes",
+                "classification": "sensitive_exact_telemetry_body",
+                "acknowledge_sensitive_data": true,
+                "local_access": "owner_only",
+                "key_provider": "raw-telemetry",
+                "key_id": "rotation-1",
+                "max_plaintext_bytes": 1048576,
+                "max_successful_objects_per_key": 1000
+            }
+        })
+    }
+
+    const EXACT_BODY_MARKER: &[u8] = b"archive_exact_body_marker 1\n";
+
+    fn decoded_exact_entity(
+        status: u16,
+        content_encoding: Option<&str>,
+    ) -> (SourceOutcome, ExactEntityLease) {
+        let decoder = PrometheusAttemptDecoder::new(
+            Arc::new(StrictExpositionParser),
+            Arc::new(NoopNativeEntityDecoder),
+        );
+        let decoded = decoder.decode(
+            FetchedAttempt {
+                source_id: "source-a".to_owned(),
+                source_record_seq: 1,
+                request_attempt_seq: Some(1),
+                scheduled_ns: Some(10),
+                request_start_ns: Some(10),
+                first_byte_ns: Some(11),
+                capture_ns: Some(12),
+                latency_ns: Some(2),
+                disposition: FetchDisposition::Response {
+                    status,
+                    content_type: Some("text/plain; version=0.0.4; charset=utf-8".to_owned()),
+                    content_encoding: content_encoding.map(str::to_owned),
+                    encoded_body: Bytes::from_static(EXACT_BODY_MARKER),
+                    decoded_body: Bytes::from_static(EXACT_BODY_MARKER),
+                },
+            },
+            &DecodeLimits::default(),
+        );
+        (decoded.facts.outcome, decoded.exact_entity.unwrap())
     }
 }
