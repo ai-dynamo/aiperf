@@ -34,6 +34,14 @@ not assigned implementation work.
   wire projection. `aiperf watch` is absent.
 - The worktree contains unrelated concurrent changes. Every archive commit must
   use path-limited staging/commit and must not absorb or revert those changes.
+- Baseline `env -u RUSTC_WRAPPER cargo test --workspace` compiled the current
+  workspace and passed every completed suite shown before
+  `aiperf-runner/tests/stdio_e2e.rs`; it was interrupted after the existing
+  `stdio_child_replays_anthropic_thinking_signature_and_tool_blocks` test made
+  no progress for several minutes. An isolated run under a 120-second hard
+  timeout reproduced the hang and exited 143. This pre-change failure must be
+  resolved or authoritatively separated before final validation. Baseline also
+  emits one existing unused-variable warning in `online_execution.rs`.
 
 ## Dependency order and ownership
 
