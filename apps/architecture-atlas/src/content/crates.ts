@@ -148,7 +148,7 @@ export const crateCatalog: CrateReference[] = [
     maintenance: "EndpointId, factories, descriptors, aliases, PreparedEndpoint, and dialect implementations",
     key: ["src/lib.rs", "src/registry.rs", "src/endpoints.rs", "src/vllm_generate.rs"],
     contracts: ["EndpointFactory", "PreparedEndpoint"],
-    modes: ["online_http", "online_grpc", "online_mock"],
+    modes: ["online_http", "online_grpc", "dynamo_offline", "online_mock"],
     scars: ["Protocol-v1 enum adapters are compatibility-only"],
   }),
   crateReference({
@@ -262,7 +262,7 @@ export const crateCatalog: CrateReference[] = [
     dependencies: ["aiperf-clock", "aiperf-endpoints"],
     contracts: ["GrpcEndpointBinding", "RequestSink<GrpcRequest>"],
     modes: ["online_grpc"],
-    scars: ["No graph pair or generated-media sidecar"],
+    scars: ["Readiness retries, every sidecar, and the graph pair are rejected"],
   }),
   crateReference({
     name: "aiperf-graph",

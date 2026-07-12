@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ArchitectureRisk } from "../domain/architecture";
-import { copy, evidence } from "./helpers";
+import { copy, evidence, rangedEvidence } from "./helpers";
 
 export const parityLedger: ArchitectureRisk[] = [
   {
@@ -24,14 +24,17 @@ export const parityLedger: ArchitectureRisk[] = [
     kind: "risk",
     status: "unbuilt",
     severity: "medium",
-    title: copy("RPC feature boundary", "gRPC lifecycle limits", "No gRPC graph or SyntheticMediaPublisher sidecar pair"),
+    title: copy("RPC feature boundary", "gRPC lifecycle limits", "No readiness retries, sidecars, or graph pair"),
     summary: copy(
       "Native RPC covers scheduled inference but not all web-path features.",
-      "Readiness is dialect-owned and generated-content sidecars and graph workloads are rejected.",
-      "GrpcEndpointBinding optionally implements readiness; runner validation excludes content_server and online_grpc plus graph.",
+      "Readiness retries, every authored sidecar, and graph workloads are rejected.",
+      "online_grpc requires wait_for_model_timeout <= 0 and rejects content, GPU, network, server-metrics, and live-streaming sidecars before execution.",
     ),
     componentIds: ["component.grpc-transport", "component.content-server"],
-    evidence: [evidence("crates/aiperf-transport-grpc/src/binding.rs"), evidence("crates/aiperf-runner/src/grpc_execution.rs")],
+    evidence: [
+      evidence("crates/aiperf-transport-grpc/src/binding.rs"),
+      rangedEvidence("crates/aiperf-runner/src/grpc_execution.rs", 164, 195),
+    ],
   },
   {
     id: "risk.offline-semantic-limits",

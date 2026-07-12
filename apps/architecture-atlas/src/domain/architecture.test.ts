@@ -8,7 +8,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { architectureCatalog } from "../content";
 import {
   architectureCatalogSchema,
+  workloadSchema,
   type ArchitectureCatalog,
+  type ArchitectureRisk,
+  type LifecycleStage,
 } from "./architecture";
 import { validateArchitectureCatalog } from "./integrity";
 
@@ -70,6 +73,18 @@ function minimalCatalog(): ArchitectureCatalog {
 }
 
 describe("architecture catalog schema", () => {
+  it("models telemetry_watch as an executable workload", () => {
+    expect(workloadSchema.options).toContain("telemetry_watch");
+    expect(
+      architectureCatalog.pairSupport.some(
+        ({ mode, workload, status }) =>
+          mode === "online_http" &&
+          workload === "telemetry_watch" &&
+          status === "built",
+      ),
+    ).toBe(true);
+  });
+
   it("rejects missing audience copy", () => {
     const catalog = minimalCatalog();
     const component = {
@@ -110,6 +125,98 @@ describe("architecture catalog schema", () => {
     await expect(
       validateArchitectureCatalog(catalog, repositoryRoot),
     ).rejects.toThrow(/component\.runner/);
+  });
+
+  it.each([
+    {
+      collection: "risks" as const,
+      entity: {
+        id: "risk.missing",
+        kind: "risk" as const,
+        status: "unbuilt" as const,
+        severity: "medium" as const,
+        title: {
+          executive: "Missing ownership risk",
+          developer: "Missing component reference",
+          maintainer: "Dangling risk.componentIds value",
+        },
+        summary: {
+          executive: "Shows risk that cannot be connected to accountable ownership.",
+          developer: "References a component absent from the architecture catalog.",
+          maintainer: "Integrity validation must reject component.missing from risk.componentIds.",
+        },
+        componentIds: ["component.missing"],
+        evidence: [{ path: "AGENTS.md" }],
+      },
+    },
+    {
+      collection: "lifecycleStages" as const,
+      entity: {
+        id: "lifecycle.missing",
+        kind: "lifecycle" as const,
+        order: 1,
+        title: {
+          executive: "Missing lifecycle owner",
+          developer: "Missing lifecycle component",
+          maintainer: "Dangling lifecycleStage.componentIds value",
+        },
+        summary: {
+          executive: "Shows a run stage without an accountable system owner.",
+          developer: "References a component absent from the architecture catalog.",
+          maintainer:
+            "Integrity validation must reject component.missing from lifecycleStage.componentIds.",
+        },
+        componentIds: ["component.missing"],
+        evidence: [{ path: "AGENTS.md" }],
+      },
+    },
+  ])("rejects missing component references in $collection", async ({
+    collection,
+    entity,
+  }) => {
+    const catalog = minimalCatalog();
+    if (collection === "risks") {
+      catalog.risks.push(entity as ArchitectureRisk);
+    } else {
+      catalog.lifecycleStages.push(entity as LifecycleStage);
+    }
+
+    await expect(
+      validateArchitectureCatalog(catalog, repositoryRoot),
+    ).rejects.toThrow(/component\.missing/);
+  });
+
+  it("rejects duplicate architecture view routes", async () => {
+    const catalog = minimalCatalog();
+    catalog.views.push({
+      ...catalog.views[0],
+      id: "view.duplicate",
+    });
+
+    await expect(
+      validateArchitectureCatalog(catalog, repositoryRoot),
+    ).rejects.toThrow(/duplicate.*route.*\//i);
+  });
+
+  it("rejects duplicate mode and workload pairs", async () => {
+    const catalog = minimalCatalog();
+    const pair = {
+      id: "pair.first",
+      mode: "online_http" as const,
+      workload: "scheduled" as const,
+      status: "built" as const,
+      notes: {
+        executive: "Primary production request path.",
+        developer: "Scheduled requests execute over native HTTP.",
+        maintainer: "RunnerApplication registers online_http plus scheduled.",
+      },
+      evidence: [{ path: "AGENTS.md" }],
+    };
+    catalog.pairSupport.push(pair, { ...pair, id: "pair.second" });
+
+    await expect(
+      validateArchitectureCatalog(catalog, repositoryRoot),
+    ).rejects.toThrow(/duplicate.*online_http.*scheduled/i);
   });
 
   it.each([

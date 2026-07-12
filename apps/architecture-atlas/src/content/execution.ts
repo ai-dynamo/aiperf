@@ -6,7 +6,7 @@ import type {
   ArchitectureEdge,
   PairSupport,
 } from "../domain/architecture";
-import { copy, evidence } from "./helpers";
+import { copy, evidence, rangedEvidence } from "./helpers";
 
 export const executionComponents: ArchitectureComponent[] = [
   {
@@ -81,10 +81,13 @@ export const executionComponents: ArchitectureComponent[] = [
     title: copy("Native RPC inference path", "KServe and Riva gRPC transport", "Clock-injected Tonic raw RPC transport"),
     summary: copy(
       "Measures typed inference services without routing through Python plugins.",
-      "Supports KServe OIP and Riva unary or streaming calls with TLS, metadata, reuse, and cancellation.",
-      "GrpcEndpointBinding factories own codecs and optional readiness; gRPC rejects the generated-content sidecar and graph pair.",
+      "Supports KServe OIP and Riva unary or streaming calls with TLS, metadata, reuse, and cancellation, but rejects readiness retries and every sidecar.",
+      "GrpcEndpointBinding factories own codecs; runner validation requires wait_for_model_timeout <= 0, rejects every authored sidecar, and has no graph pair.",
     ),
-    evidence: [evidence("crates/aiperf-transport-grpc/src/lib.rs"), evidence("crates/aiperf-runner/src/grpc_execution.rs")],
+    evidence: [
+      evidence("crates/aiperf-transport-grpc/src/lib.rs"),
+      rangedEvidence("crates/aiperf-runner/src/grpc_execution.rs", 164, 195),
+    ],
     modes: ["online_grpc"],
     contracts: ["GrpcEndpointBinding", "Tonic status and trace mapping"],
     crateIds: ["crate.aiperf-transport-grpc"],
@@ -192,7 +195,9 @@ export const executionEdges: ArchitectureEdge[] = [
   },
 ];
 
-const pairEvidence = [evidence("crates/aiperf-runner/src/registry.rs")];
+const pairEvidence = [
+  rangedEvidence("crates/aiperf-runner/src/registry.rs", 2131, 2167),
+];
 
 export const executionPairSupport: PairSupport[] = [
   {
@@ -266,5 +271,21 @@ export const executionPairSupport: PairSupport[] = [
     status: "runtime-conditional",
     notes: copy("A tightly bounded neutral evaluation preview is available in attested deployments.", "The pair appears only when provider roots and isolation attest.", "Only NeMo 0.4.0 and OpenBench 0.5.3 five-record GSM8K canaries are registered."),
     evidence: [evidence("crates/aiperf-runner/src/stock_evaluation.rs")],
+  },
+  {
+    id: "pair.online-http-telemetry-watch",
+    mode: "online_http",
+    workload: "telemetry_watch",
+    status: "built",
+    notes: copy(
+      "Continuous telemetry capture runs without model traffic.",
+      "The source-only telemetry watch workload executes over the online HTTP backend.",
+      "BuiltinRunnerRegistryFactory registers telemetry_watch and the online_http pair with models, endpoints, metrics, and sidecars forbidden.",
+    ),
+    evidence: [
+      rangedEvidence("crates/aiperf-runner/src/registry.rs", 873, 883),
+      rangedEvidence("crates/aiperf-runner/src/registry.rs", 2131, 2167),
+      evidence("crates/aiperf-runner/src/telemetry_operation.rs"),
+    ],
   },
 ];

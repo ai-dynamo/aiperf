@@ -53,6 +53,19 @@ function assertUniqueIds(
   }
 }
 
+function assertUniqueValues(
+  values: readonly string[],
+  label: string,
+): void {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      throw new Error(`duplicate ${label}: ${value}`);
+    }
+    seen.add(value);
+  }
+}
+
 async function validateEvidence(
   evidence: EvidenceReference,
   repositoryRoot: URL,
@@ -120,6 +133,20 @@ export async function validateArchitectureCatalog(
       }
     }
   }
+  for (const risk of catalog.risks) {
+    for (const componentId of risk.componentIds) {
+      if (!componentIds.has(componentId)) {
+        throw new Error(`${risk.id} references missing component ${componentId}`);
+      }
+    }
+  }
+  for (const stage of catalog.lifecycleStages) {
+    for (const componentId of stage.componentIds) {
+      if (!componentIds.has(componentId)) {
+        throw new Error(`${stage.id} references missing component ${componentId}`);
+      }
+    }
+  }
   for (const component of catalog.components) {
     for (const crateId of component.crateIds) {
       if (!crateIds.has(crateId)) {
@@ -153,6 +180,14 @@ export async function validateArchitectureCatalog(
       }
     }
   }
+  assertUniqueValues(
+    catalog.views.map(({ route }) => route),
+    "architecture view route",
+  );
+  assertUniqueValues(
+    catalog.pairSupport.map(({ mode, workload }) => `${mode} + ${workload}`),
+    "mode/workload pair",
+  );
 
   for (const entity of [
     ...catalog.components,

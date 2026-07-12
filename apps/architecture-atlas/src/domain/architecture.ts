@@ -33,6 +33,7 @@ export const workloadSchema = z.enum([
   "static_accuracy",
   "agentic",
   "evaluation",
+  "telemetry_watch",
 ]);
 
 export const audienceCopySchema = z

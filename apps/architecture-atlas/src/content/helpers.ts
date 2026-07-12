@@ -20,3 +20,16 @@ export function evidence(
 ): EvidenceReference {
   return symbol ? { path, symbol } : { path };
 }
+
+export function rangedEvidence(
+  path: string,
+  start: number,
+  end: number,
+  symbol?: string,
+): EvidenceReference {
+  return {
+    path,
+    lines: { start, end },
+    ...(symbol ? { symbol } : {}),
+  };
+}
