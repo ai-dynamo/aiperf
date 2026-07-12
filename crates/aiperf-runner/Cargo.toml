@@ -32,6 +32,7 @@ aiperf.workspace = true
 aiperf-adaptive = { path = "../aiperf-adaptive" }
 aiperf-accuracy = { path = "../aiperf-accuracy" }
 aiperf-clock.workspace = true
+aiperf-content-server.workspace = true
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true
 aiperf-extensions.workspace = true
@@ -58,6 +59,7 @@ mimalloc = "0.1"
 regex.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

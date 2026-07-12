@@ -22,8 +22,8 @@ use serde_json::{Map, Value, value::RawValue};
 
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
 use crate::sidecar_input::{
-    AuthoredSidecarInput, GPU_TELEMETRY_SIDECAR_ID, LIVE_STREAMING_SIDECAR_ID,
-    NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
+    AuthoredSidecarInput, CONTENT_SERVER_SIDECAR_ID, GPU_TELEMETRY_SIDECAR_ID,
+    LIVE_STREAMING_SIDECAR_ID, NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
 };
 
 /// Authored runner protocol version.
@@ -585,6 +585,9 @@ pub enum UserFileFormatV2 {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SidecarSpecV2 {
+    /// Run-owned HTTP content-server factory config.
+    #[serde(default)]
+    pub content_server: Option<Box<RawValue>>,
     /// GPU telemetry factory-owned config.
     #[serde(default)]
     pub gpu_telemetry: Option<Box<RawValue>>,
@@ -607,6 +610,7 @@ impl SidecarSpecV2 {
     /// full decode.
     pub(crate) fn authored_inputs(&self) -> Vec<AuthoredSidecarInput<'_>> {
         [
+            (CONTENT_SERVER_SIDECAR_ID, self.content_server.as_deref()),
             (GPU_TELEMETRY_SIDECAR_ID, self.gpu_telemetry.as_deref()),
             (NETWORK_LATENCY_SIDECAR_ID, self.network_latency.as_deref()),
             (SERVER_METRICS_SIDECAR_ID, self.server_metrics.as_deref()),
@@ -619,6 +623,7 @@ impl SidecarSpecV2 {
 
     fn validate_outer(&self) -> Result<()> {
         for (field, raw) in [
+            ("sidecars.content_server", self.content_server.as_deref()),
             ("sidecars.gpu_telemetry", self.gpu_telemetry.as_deref()),
             ("sidecars.network_latency", self.network_latency.as_deref()),
             ("sidecars.server_metrics", self.server_metrics.as_deref()),
@@ -735,9 +740,27 @@ pub struct RunTerminalV2 {
     /// Typed failure diagnostics.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<RunnerDiagnosticV2>,
+    /// Non-authoritative diagnostic evidence emitted for failed executions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostic_artifacts: Vec<RunDiagnosticArtifactV2>,
     /// Additive backend/workload provenance returned before Python opens the report.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub provenance: BTreeMap<String, String>,
+}
+
+/// One non-authoritative diagnostic artifact returned by a failed execution.
+///
+/// The relative path is resolved below the run's authored artifact target. It
+/// must never name `native-v2.json`: failed executions do not expose a report.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunDiagnosticArtifactV2 {
+    /// Stable lowercase-snake-case artifact kind.
+    pub kind: String,
+    /// Relative path below the run artifact target.
+    pub relative_path: PathBuf,
+    /// Tagged cryptographic digest of the exact durable artifact bytes.
+    pub content_hash: String,
 }
 
 #[cfg(test)]

@@ -186,7 +186,8 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
         );
     }
     ensure!(
-        run.sidecars.gpu_telemetry.is_none()
+        run.sidecars.content_server.is_none()
+            && run.sidecars.gpu_telemetry.is_none()
             && run.sidecars.network_latency.is_none()
             && run.sidecars.server_metrics.is_none()
             && run.sidecars.live_streaming.is_none(),

@@ -23,12 +23,45 @@ use serde_json::value::RawValue;
 
 /// Stable built-in GPU telemetry sidecar ID.
 pub const GPU_TELEMETRY_SIDECAR_ID: &str = "gpu_telemetry";
+/// Stable built-in generated-content HTTP server sidecar ID.
+pub const CONTENT_SERVER_SIDECAR_ID: &str = "content_server";
 /// Stable built-in network-latency sidecar ID.
 pub const NETWORK_LATENCY_SIDECAR_ID: &str = "network_latency";
 /// Stable built-in server-metrics sidecar ID.
 pub const SERVER_METRICS_SIDECAR_ID: &str = "server_metrics";
 /// Stable built-in live-results sidecar ID.
 pub const LIVE_STREAMING_SIDECAR_ID: &str = "live_streaming";
+
+/// Run-owned HTTP content-server and synthetic-media publication policy.
+///
+/// This is the strict native projection of
+/// `src/aiperf/common/environment.py:53-96` on `ajc/content-server`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContentServerSpec {
+    /// Host/interface to bind and advertise in generated media URLs.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Existing directory to serve. Absence creates a temporary serving root
+    /// but deliberately leaves synthetic media inline, matching Python.
+    #[serde(default)]
+    pub content_dir: Option<PathBuf>,
+    /// Bounded recent-request record capacity.
+    pub max_tracked_records: usize,
+}
+
+impl ContentServerSpec {
+    /// HTTP base URL embedded in generated image/video values.
+    pub fn base_url(&self) -> String {
+        let host = if self.host.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        format!("http://{host}:{}", self.port)
+    }
+}
 
 /// Canonical Python live-results extension configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -353,6 +386,16 @@ impl PreparedSidecarInputs {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Return whether one exact adapter ID was authored.
+    pub fn contains(&self, id: &str) -> bool {
+        self.entries.contains_key(id)
+    }
+
+    /// Return whether every authored input is in the supplied allowlist.
+    pub fn contains_only(&self, allowed: &[&str]) -> bool {
+        self.entries.keys().all(|id| allowed.contains(&id.as_str()))
+    }
 }
 
 /// Deterministic built-in sidecar-input adapter composition.
@@ -378,7 +421,8 @@ impl Default for BuiltinRunnerSidecarInputAdapterResolver {
 impl BuiltinRunnerSidecarInputAdapterResolver {
     /// Compose the built-in adapters in stable ID order.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerSidecarInputAdapter>; 4] = [
+        let adapters: [Arc<dyn RunnerSidecarInputAdapter>; 5] = [
+            Arc::new(ContentServerInputAdapter),
             Arc::new(GpuTelemetryInputAdapter),
             Arc::new(LiveStreamingInputAdapter),
             Arc::new(NetworkLatencyInputAdapter),
@@ -423,6 +467,8 @@ impl RunnerSidecarInputAdapterResolver for BuiltinRunnerSidecarInputAdapterResol
 }
 
 #[derive(Debug)]
+struct ContentServerInputAdapter;
+#[derive(Debug)]
 struct GpuTelemetryInputAdapter;
 #[derive(Debug)]
 struct NetworkLatencyInputAdapter;
@@ -430,6 +476,43 @@ struct NetworkLatencyInputAdapter;
 struct ServerMetricsInputAdapter;
 #[derive(Debug)]
 struct LiveStreamingInputAdapter;
+
+impl RunnerSidecarInputAdapter for ContentServerInputAdapter {
+    fn input_id(&self) -> &'static str {
+        CONTENT_SERVER_SIDECAR_ID
+    }
+
+    fn validate(&self, raw: &RawValue) -> Result<Box<dyn ValidatedSidecarInput>> {
+        let spec = strict_decode::<ContentServerSpec>(raw, self.input_id())?;
+        ensure_nonempty(&spec.host, "host")?;
+        ensure!(
+            !(spec.host.starts_with('[') || spec.host.ends_with(']')),
+            "host must use a bare IPv6 literal rather than URL bracket syntax"
+        );
+        ensure!(spec.port > 0, "port must be between 1 and 65535");
+        ensure!(
+            (100..=1_000_000).contains(&spec.max_tracked_records),
+            "max_tracked_records must be between 100 and 1000000"
+        );
+        let base_url = spec.base_url();
+        let parsed = url::Url::parse(&base_url).context("parsing derived content-server URL")?;
+        ensure!(
+            parsed.host_str().is_some()
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && parsed.port_or_known_default() == Some(spec.port)
+                && parsed.path() == "/"
+                && parsed.query().is_none()
+                && parsed.fragment().is_none(),
+            "host does not produce a plain HTTP origin"
+        );
+        if let Some(path) = &spec.content_dir {
+            ensure!(!path.as_os_str().is_empty(), "content_dir cannot be empty");
+            ensure!(path.is_absolute(), "content_dir must be absolute");
+        }
+        Ok(Box::new(spec))
+    }
+}
 
 impl RunnerSidecarInputAdapter for GpuTelemetryInputAdapter {
     fn input_id(&self) -> &'static str {
@@ -617,6 +700,12 @@ mod tests {
 
     #[test]
     fn builtins_prepare_direct_typed_inputs_in_deterministic_order() {
+        let content = raw(serde_json::json!({
+            "host": "0.0.0.0",
+            "port": 8090,
+            "content_dir": "/tmp/aiperf-content",
+            "max_tracked_records": 10000
+        }));
         let gpu = raw(serde_json::json!({
             "collection_interval_ns": 333_000_000,
             "request_timeout_ns": 10_000_000_000_i64,
@@ -645,6 +734,10 @@ mod tests {
         }));
         let inputs = [
             AuthoredSidecarInput {
+                id: CONTENT_SERVER_SIDECAR_ID,
+                config: &content,
+            },
+            AuthoredSidecarInput {
                 id: SERVER_METRICS_SIDECAR_ID,
                 config: &server,
             },
@@ -669,11 +762,18 @@ mod tests {
         assert_eq!(
             prepared.ids().collect::<Vec<_>>(),
             vec![
+                CONTENT_SERVER_SIDECAR_ID,
                 GPU_TELEMETRY_SIDECAR_ID,
                 LIVE_STREAMING_SIDECAR_ID,
                 NETWORK_LATENCY_SIDECAR_ID,
                 SERVER_METRICS_SIDECAR_ID,
             ]
+        );
+        assert!(
+            prepared
+                .get::<ContentServerSpec>(CONTENT_SERVER_SIDECAR_ID)
+                .unwrap()
+                .is_some()
         );
         assert!(
             prepared
@@ -689,6 +789,99 @@ mod tests {
                 .mean_rtt_ns,
             Some(2_500_000.0)
         );
+    }
+
+    #[test]
+    fn content_server_validation_is_strict_and_side_effect_free() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("not-created");
+        let valid = raw(serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 8090,
+            "content_dir": missing,
+            "max_tracked_records": 100
+        }));
+        let prepared = BuiltinRunnerSidecarInputAdapterResolver::new()
+            .prepare(&[AuthoredSidecarInput {
+                id: CONTENT_SERVER_SIDECAR_ID,
+                config: &valid,
+            }])
+            .unwrap();
+        let spec = prepared
+            .get::<ContentServerSpec>(CONTENT_SERVER_SIDECAR_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(spec.base_url(), "http://127.0.0.1:8090");
+        assert!(!missing.exists());
+
+        let default_http_port = raw(serde_json::json!({
+            "host": "127.0.0.1",
+            "port": 80,
+            "max_tracked_records": 100
+        }));
+        BuiltinRunnerSidecarInputAdapterResolver::new()
+            .prepare(&[AuthoredSidecarInput {
+                id: CONTENT_SERVER_SIDECAR_ID,
+                config: &default_http_port,
+            }])
+            .unwrap();
+
+        let bare_ipv6 = raw(serde_json::json!({
+            "host": "::1",
+            "port": 8090,
+            "max_tracked_records": 100
+        }));
+        let prepared = BuiltinRunnerSidecarInputAdapterResolver::new()
+            .prepare(&[AuthoredSidecarInput {
+                id: CONTENT_SERVER_SIDECAR_ID,
+                config: &bare_ipv6,
+            }])
+            .unwrap();
+        assert_eq!(
+            prepared
+                .get::<ContentServerSpec>(CONTENT_SERVER_SIDECAR_ID)
+                .unwrap()
+                .unwrap()
+                .base_url(),
+            "http://[::1]:8090"
+        );
+
+        for (field, value) in [
+            ("port", serde_json::json!(0)),
+            ("max_tracked_records", serde_json::json!(99)),
+        ] {
+            let mut config = serde_json::json!({
+                "host": "127.0.0.1",
+                "port": 8090,
+                "max_tracked_records": 100
+            });
+            config[field] = value;
+            let raw_config = raw(config);
+            assert!(
+                BuiltinRunnerSidecarInputAdapterResolver::new()
+                    .prepare(&[AuthoredSidecarInput {
+                        id: CONTENT_SERVER_SIDECAR_ID,
+                        config: &raw_config,
+                    }])
+                    .is_err()
+            );
+        }
+
+        for host in ["user@127.0.0.1", "127.0.0.1/content", " 127.0.0.1", "[::1]"] {
+            let raw_config = raw(serde_json::json!({
+                "host": host,
+                "port": 8090,
+                "max_tracked_records": 100
+            }));
+            assert!(
+                BuiltinRunnerSidecarInputAdapterResolver::new()
+                    .prepare(&[AuthoredSidecarInput {
+                        id: CONTENT_SERVER_SIDECAR_ID,
+                        config: &raw_config,
+                    }])
+                    .is_err()
+            );
+        }
     }
 
     #[test]
