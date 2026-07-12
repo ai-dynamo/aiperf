@@ -68,6 +68,7 @@ impl FrameTableProjectionV1 {
         if self.batch.schema().as_ref() != table_schema.schema().as_ref() {
             return Err(ParquetProjectionError::SchemaMismatch(self.table));
         }
+        table_schema.validate_record_batch(&self.batch)?;
         if self.batch.num_rows() != self.logical_rows.len() {
             return Err(ParquetProjectionError::LogicalRowCount {
                 arrow: self.batch.num_rows(),

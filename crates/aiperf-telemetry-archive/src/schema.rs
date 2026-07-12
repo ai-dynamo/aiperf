@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::{self, Display, Formatter};
 use std::sync::Arc;
 
+use arrow_array::types::Int8Type;
+use arrow_array::{Array, DictionaryArray, ListArray, RecordBatch, StringArray, StructArray};
 use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
 use serde_json::Value;
 
@@ -83,6 +85,7 @@ pub struct ArchiveTableSchemaV1 {
     fingerprint: Digest,
     schema: SchemaRef,
     logical_schema: LogicalSchema,
+    enum_values: BTreeMap<Vec<String>, BTreeSet<String>>,
 }
 
 impl ArchiveTableSchemaV1 {
@@ -120,6 +123,23 @@ impl ArchiveTableSchemaV1 {
     #[must_use]
     pub const fn logical_schema(&self) -> &LogicalSchema {
         &self.logical_schema
+    }
+
+    /// Validates exact schema equality and every descriptor-defined Enum8 value.
+    pub fn validate_record_batch(&self, batch: &RecordBatch) -> Result<(), SchemaError> {
+        if batch.schema().as_ref() != self.schema.as_ref() {
+            return Err(SchemaError::RecordBatchSchemaMismatch(self.table));
+        }
+        for (path, allowed) in &self.enum_values {
+            let (top, nested) = path
+                .split_first()
+                .ok_or(SchemaError::InvalidDescriptor("enum path is empty"))?;
+            let array = batch
+                .column_by_name(top)
+                .ok_or_else(|| SchemaError::EnumArrayType(path.clone()))?;
+            validate_enum_array(array.as_ref(), nested, path, allowed)?;
+        }
+        Ok(())
     }
 }
 
@@ -275,6 +295,16 @@ fn load_table(
         ("aiperf.archive.table".to_string(), table_name.to_string()),
     ]);
     let schema = Arc::new(Schema::new_with_metadata(fields, metadata));
+    let mut enum_values = BTreeMap::new();
+    for field in authored_fields {
+        collect_field_enums(
+            field,
+            &aliases,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut enum_values,
+        )?;
+    }
     let logical_schema = LogicalSchema {
         table,
         fingerprint,
@@ -291,6 +321,7 @@ fn load_table(
         fingerprint,
         schema,
         logical_schema,
+        enum_values,
     })
 }
 
@@ -460,6 +491,131 @@ fn parse_type(
     ))
 }
 
+fn collect_field_enums(
+    value: &Value,
+    aliases: &serde_json::Map<String, Value>,
+    alias_stack: &mut Vec<String>,
+    path: &mut Vec<String>,
+    output: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+) -> Result<(), SchemaError> {
+    let items =
+        value
+            .as_array()
+            .filter(|items| items.len() == 3)
+            .ok_or(SchemaError::InvalidDescriptor(
+                "field must be [name, nullable, type]",
+            ))?;
+    let name = items[0].as_str().ok_or(SchemaError::InvalidDescriptor(
+        "field name must be a string",
+    ))?;
+    path.push(name.to_string());
+    let result = collect_type_enums(&items[2], aliases, alias_stack, path, output);
+    path.pop();
+    result
+}
+
+fn collect_type_enums(
+    value: &Value,
+    aliases: &serde_json::Map<String, Value>,
+    alias_stack: &mut Vec<String>,
+    path: &mut Vec<String>,
+    output: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+) -> Result<(), SchemaError> {
+    if let Some(name) = value.as_str() {
+        if let Some(definition) = aliases.get(name) {
+            if alias_stack.iter().any(|entry| entry == name) {
+                return Err(SchemaError::AliasCycle(name.to_string()));
+            }
+            alias_stack.push(name.to_string());
+            let result = collect_type_enums(definition, aliases, alias_stack, path, output);
+            alias_stack.pop();
+            return result;
+        }
+        return Ok(());
+    }
+    let object = value.as_object().filter(|object| object.len() == 1).ok_or(
+        SchemaError::InvalidDescriptor("complex type must have exactly one discriminator"),
+    )?;
+    if let Some(values) = object.get("enum8") {
+        let allowed = values
+            .as_array()
+            .ok_or(SchemaError::InvalidDescriptor("enum8 must be an array"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or(SchemaError::InvalidDescriptor(
+                        "enum8 values must be strings",
+                    ))
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if output.insert(path.clone(), allowed).is_some() {
+            return Err(SchemaError::DuplicateEnumPath(path.clone()));
+        }
+        return Ok(());
+    }
+    if let Some(element) = object.get("list") {
+        path.push("item".to_string());
+        let result = collect_type_enums(element, aliases, alias_stack, path, output);
+        path.pop();
+        return result;
+    }
+    if let Some(fields) = object.get("struct") {
+        for field in fields
+            .as_array()
+            .ok_or(SchemaError::InvalidDescriptor("struct must be an array"))?
+        {
+            collect_field_enums(field, aliases, alias_stack, path, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_enum_array(
+    array: &dyn Array,
+    nested_path: &[String],
+    full_path: &[String],
+    allowed: &BTreeSet<String>,
+) -> Result<(), SchemaError> {
+    let Some((next, remaining)) = nested_path.split_first() else {
+        let dictionary = array
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int8Type>>()
+            .ok_or_else(|| SchemaError::EnumArrayType(full_path.to_vec()))?;
+        let values = dictionary
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| SchemaError::EnumArrayType(full_path.to_vec()))?;
+        for index in 0..values.len() {
+            let value = values.value(index);
+            if !allowed.contains(value) {
+                return Err(SchemaError::InvalidEnumValue {
+                    path: full_path.to_vec(),
+                    value: value.to_string(),
+                });
+            }
+        }
+        return Ok(());
+    };
+    if next == "item" {
+        let list = array
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .ok_or_else(|| SchemaError::EnumArrayType(full_path.to_vec()))?;
+        return validate_enum_array(list.values().as_ref(), remaining, full_path, allowed);
+    }
+    let structure = array
+        .as_any()
+        .downcast_ref::<StructArray>()
+        .ok_or_else(|| SchemaError::EnumArrayType(full_path.to_vec()))?;
+    let child = structure
+        .column_by_name(next)
+        .ok_or_else(|| SchemaError::EnumArrayType(full_path.to_vec()))?;
+    validate_enum_array(child.as_ref(), remaining, full_path, allowed)
+}
+
 fn enum8_type() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8))
 }
@@ -534,6 +690,19 @@ pub enum SchemaError {
     DuplicateAlias(String),
     /// Table descriptor does not bind the exact shared alias descriptor.
     AliasFingerprintMismatch,
+    /// One descriptor path resolves to Enum8 more than once.
+    DuplicateEnumPath(Vec<String>),
+    /// RecordBatch does not use the exact generated table schema.
+    RecordBatchSchemaMismatch(TableId),
+    /// A descriptor Enum8 path did not resolve to Dictionary(Int8, Utf8).
+    EnumArrayType(Vec<String>),
+    /// A physical dictionary contains a string outside the descriptor vocabulary.
+    InvalidEnumValue {
+        /// Descriptor field path.
+        path: Vec<String>,
+        /// Unexpected logical string.
+        value: String,
+    },
     /// An enum repeats one logical string.
     DuplicateEnumValue(String),
     /// A type token is neither built in nor a declared alias.
@@ -565,6 +734,18 @@ impl Display for SchemaError {
             Self::DuplicateAlias(name) => write!(formatter, "duplicate schema alias {name:?}"),
             Self::AliasFingerprintMismatch => {
                 formatter.write_str("schema alias descriptor fingerprint mismatch")
+            }
+            Self::DuplicateEnumPath(path) => {
+                write!(formatter, "duplicate schema Enum8 path {path:?}")
+            }
+            Self::RecordBatchSchemaMismatch(table) => {
+                write!(formatter, "RecordBatch schema mismatch for {table:?}")
+            }
+            Self::EnumArrayType(path) => {
+                write!(formatter, "invalid Enum8 array at {path:?}")
+            }
+            Self::InvalidEnumValue { path, value } => {
+                write!(formatter, "invalid Enum8 value {value:?} at {path:?}")
             }
             Self::DuplicateEnumValue(value) => {
                 write!(formatter, "duplicate Enum8 value {value:?}")
@@ -689,5 +870,32 @@ mod tests {
             "b049116cbb050f0d1671c9825c6e26b76ee9397ea34b33983c08e5e45b86da98"
         );
         ArchiveSchemasV1::load().unwrap();
+    }
+
+    #[test]
+    fn enum_vocabularies_include_nested_aliases_and_reject_unknown_strings() {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let samples = schemas.table(TableId::Samples).unwrap();
+        assert!(samples.enum_values.contains_key(&vec![
+            "payload".to_string(),
+            "histogram".to_string(),
+            "count_origin".to_string(),
+        ]));
+        assert!(samples.enum_values.contains_key(&vec![
+            "wire_samples".to_string(),
+            "item".to_string(),
+            "value".to_string(),
+            "kind".to_string(),
+        ]));
+
+        let mut builder = arrow_array::builder::StringDictionaryBuilder::<Int8Type>::new();
+        builder.append("invented").unwrap();
+        let array = builder.finish();
+        let path = vec!["semantic_type".to_string()];
+        let allowed = BTreeSet::from(["gauge".to_string()]);
+        assert!(matches!(
+            validate_enum_array(&array, &[], &path, &allowed),
+            Err(SchemaError::InvalidEnumValue { value, .. }) if value == "invented"
+        ));
     }
 }
