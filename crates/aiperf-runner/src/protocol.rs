@@ -45,6 +45,13 @@ pub struct RunnerCapabilities {
     pub statically_compatible_pairs: Vec<[String; 2]>,
     /// Pairs with a registered executable protocol-v2 adapter.
     pub supported_pairs: Vec<[String; 2]>,
+    /// Evaluator providers whose registered launch distributions passed
+    /// factory attestation and mandatory isolation availability checks.
+    pub evaluation_providers: Vec<EvaluationProviderCapability>,
+    /// Host operations with linked executable Rust adapters.
+    pub evaluation_host_operations: Vec<EvaluationHostOperationCapability>,
+    /// Fully executable backend/workload/provider/distribution combinations.
+    pub supported_evaluation_combinations: Vec<SupportedEvaluationCombination>,
     /// Dataset variants accepted by the current protocol.
     pub dataset_types: &'static [&'static str],
     /// Phase variants accepted by the current protocol.
@@ -81,6 +88,21 @@ impl RunnerCapabilities {
         runner_registry: &RunnerRegistry,
         product_registry: &aiperf_extensions::AiperfRegistry,
     ) -> Self {
+        Self::from_registries_with_evaluation(
+            distribution_id,
+            runner_registry,
+            product_registry,
+            EvaluationCapabilityInventory::default(),
+        )
+    }
+
+    /// Build capabilities with an executable evaluator/provider inventory.
+    pub fn from_registries_with_evaluation(
+        distribution_id: String,
+        runner_registry: &RunnerRegistry,
+        product_registry: &aiperf_extensions::AiperfRegistry,
+        evaluation: EvaluationCapabilityInventory,
+    ) -> Self {
         let endpoints = product_registry
             .endpoints()
             .descriptors()
@@ -110,6 +132,9 @@ impl RunnerCapabilities {
                 .into_iter()
                 .map(|(backend, workload)| [backend.to_owned(), workload.to_owned()])
                 .collect(),
+            evaluation_providers: evaluation.providers,
+            evaluation_host_operations: evaluation.host_operations,
+            supported_evaluation_combinations: evaluation.supported_combinations,
             dataset_types: &["synthetic", "file", "public"],
             phase_types: &[
                 "concurrency",
@@ -136,6 +161,102 @@ impl RunnerCapabilities {
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
+}
+
+/// Safe exact identity for one factory-attested evaluator distribution.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct EvaluationDistributionCapability {
+    /// Immutable selectable deployment ID.
+    pub id: String,
+    /// Exact provider package name.
+    pub package: String,
+    /// Exact package version.
+    pub package_version: String,
+    /// Provider source/commit SHA-256.
+    pub provider_source_sha256: String,
+    /// Worker bootstrap source SHA-256.
+    pub worker_source_sha256: String,
+    /// Complete dependency-lock SHA-256.
+    pub dependency_lock_sha256: String,
+    /// Factory-attested executable closure SHA-256.
+    pub launch_closure_sha256: String,
+    /// Optional immutable OCI identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oci_digest: Option<String>,
+}
+
+/// Safe capability projection for one executable evaluator-provider factory.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct EvaluationProviderCapability {
+    /// Open provider factory ID.
+    pub id: String,
+    /// Safe human-facing label.
+    pub display_name: String,
+    /// Supported evaluator-worker protocol versions.
+    pub worker_protocol_versions: Vec<u32>,
+    /// Supported unit granularities.
+    pub execution_granularities: Vec<String>,
+    /// Supported occurrence scheduling modes.
+    pub scheduling_modes: Vec<String>,
+    /// Factory-owned authored-schema version.
+    pub config_schema_version: u32,
+    /// Factory-owned authored-schema SHA-256.
+    pub config_schema_sha256: String,
+    /// Enforceable runner isolation implementation identity.
+    pub isolation_profile_id: String,
+    /// Provider-declared semantic operations; executable combinations publish
+    /// only their intersection with linked host adapters.
+    pub declared_operations: Vec<String>,
+    /// Factory-attested immutable launch distributions.
+    pub distributions: Vec<EvaluationDistributionCapability>,
+}
+
+/// One linked Rust host-operation adapter in the executing image.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct EvaluationHostOperationCapability {
+    /// Open semantic operation ID.
+    pub id: String,
+    /// Executor family ID.
+    pub family: String,
+    /// Request-schema SHA-256.
+    pub request_schema_sha256: String,
+    /// Response/event-schema SHA-256.
+    pub response_schema_sha256: String,
+    /// Whether the adapter emits real incremental typed events.
+    pub true_streaming: bool,
+    /// Endpoint capabilities required for route compatibility.
+    pub endpoint_capabilities: Vec<String>,
+}
+
+/// One provider selection that the exact image can execute end to end.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SupportedEvaluationCombination {
+    /// Registered backend pair half.
+    pub backend: String,
+    /// Registered workload pair half; currently `evaluation`.
+    pub workload: String,
+    /// Exact provider factory ID.
+    pub provider: String,
+    /// Exact immutable launch distribution ID.
+    pub distribution: String,
+    /// Linked operations executable for this combination.
+    pub operations: Vec<String>,
+    /// Linked resource adapter IDs available to authored bindings.
+    pub resources: Vec<String>,
+    /// Enforceable process-tree isolation implementation.
+    pub isolation_profile_id: String,
+}
+
+/// Evaluator capability inputs composed from the same frozen registries used
+/// for strict validation and execution.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EvaluationCapabilityInventory {
+    /// Executable provider descriptors.
+    pub providers: Vec<EvaluationProviderCapability>,
+    /// Linked host-operation adapters.
+    pub host_operations: Vec<EvaluationHostOperationCapability>,
+    /// Exact executable combinations.
+    pub supported_combinations: Vec<SupportedEvaluationCombination>,
 }
 
 /// One complete single-run request read from stdin.
