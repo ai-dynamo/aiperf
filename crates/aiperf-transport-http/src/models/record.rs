@@ -33,7 +33,11 @@ pub struct RequestRecord {
     /// Response headers, normalized to lowercase names. Control-plane clients use
     /// this for explicit redirect and cache handling.
     pub response_headers: BTreeMap<String, String>,
-    /// Collected responses (SSE messages or a text body).
+    /// Collected responses (SSE messages or an exact text-body record).
+    ///
+    /// A completely read non-2xx body remains here even though [`Self::error`]
+    /// carries the typed HTTP failure, so control-plane callers can preserve
+    /// source evidence without treating metric-looking error bytes as success.
     pub responses: Vec<Response>,
     /// Failure detail, if any.
     pub error: Option<ErrorDetails>,

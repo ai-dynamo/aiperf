@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use http::Method;
 use http_body_util::BodyExt;
 use url::Url;
@@ -59,6 +59,76 @@ impl ChunkTiming {
 /// Map a response-body stream error into a transport [`ErrorDetails`].
 fn body_err(e: impl std::fmt::Display) -> ErrorDetails {
     ErrorDetails::other(format!("body: {e}"))
+}
+
+fn body_limit_err(limit: u64, observed: u64) -> ErrorDetails {
+    ErrorDetails::other(format!(
+        "response body exceeded configured {limit}-byte limit after receiving {observed} bytes"
+    ))
+}
+
+fn check_declared_body_length(
+    headers: &hyper::HeaderMap,
+    limit: Option<u64>,
+) -> Result<(), ErrorDetails> {
+    let Some(limit) = limit else {
+        return Ok(());
+    };
+    let Some(length) = headers
+        .get(hyper::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return Ok(());
+    };
+    if length > limit {
+        return Err(body_limit_err(limit, length));
+    }
+    Ok(())
+}
+
+fn observe_body_chunk(
+    observed: &mut u64,
+    chunk_bytes: usize,
+    limit: Option<u64>,
+) -> Result<(), ErrorDetails> {
+    let chunk_bytes = u64::try_from(chunk_bytes)
+        .map_err(|_| ErrorDetails::other("response body chunk length exceeds u64"))?;
+    *observed = observed
+        .checked_add(chunk_bytes)
+        .ok_or_else(|| ErrorDetails::other("response body byte count overflow"))?;
+    if let Some(limit) = limit
+        && *observed > limit
+    {
+        return Err(body_limit_err(limit, *observed));
+    }
+    Ok(())
+}
+
+async fn collect_body<S>(stream: S) -> Result<Bytes, ErrorDetails>
+where
+    S: Stream<Item = Result<Bytes, ErrorDetails>>,
+{
+    futures::pin_mut!(stream);
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        body.try_reserve(chunk.len())
+            .map_err(|error| body_err(format!("allocating response body: {error}")))?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(body))
+}
+
+async fn drain_body<S>(stream: S) -> Result<(), ErrorDetails>
+where
+    S: Stream<Item = Result<Bytes, ErrorDetails>>,
+{
+    futures::pin_mut!(stream);
+    while let Some(chunk) = stream.next().await {
+        drop(chunk?);
+    }
+    Ok(())
 }
 
 /// Backpressured significance/observation hook for decoded SSE messages.
@@ -576,40 +646,44 @@ impl HttpClient {
                 .map(|c| c.starts_with("text/event-stream"))
                 .unwrap_or(false);
 
+        check_declared_body_length(resp.headers(), self.cfg.max_response_body_bytes)?;
+
         let body_stream = resp.into_body().into_data_stream();
         let timing = Rc::new(RefCell::new(ChunkTiming::default()));
         let timing_map = timing.clone();
         let clock_map = self.clock.clone();
         let collect_chunks = self.cfg.collect_trace_chunks;
+        let max_response_body_bytes = self.cfg.max_response_body_bytes;
+        let mut observed_body_bytes = 0_u64;
         let timed = body_stream.map(move |item| match item {
             Ok(bytes) => {
                 let timestamp_ns = clock_map.now_ns();
                 timing_map
                     .borrow_mut()
                     .observe(timestamp_ns, bytes.len(), collect_chunks);
+                observe_body_chunk(
+                    &mut observed_body_bytes,
+                    bytes.len(),
+                    max_response_body_bytes,
+                )?;
                 Ok(bytes)
             }
             Err(error) => Err(body_err(error)),
         });
 
         if !status.is_success() {
-            let collected = timed
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<Bytes>, _>>();
+            let collected = collect_body(timed).await;
             timing.borrow().copy_to(trace);
-            let body = collected
-                .map(|chunks| {
-                    let total = chunks.iter().map(Bytes::len).sum();
-                    let mut raw = Vec::with_capacity(total);
-                    for chunk in chunks {
-                        raw.extend_from_slice(&chunk);
-                    }
-                    String::from_utf8_lossy(&raw).into_owned()
-                })
-                .unwrap_or_default();
-            return Err(ErrorDetails::http(status.as_u16(), body));
+            let body = collected?;
+            let ts = self.clock.now_ns();
+            let text = String::from_utf8_lossy(&body).into_owned();
+            record.responses.push(Response::Text(TextResponse {
+                perf_ns: ts,
+                text: text.clone(),
+                body,
+                content_type,
+            }));
+            return Err(ErrorDetails::http(status.as_u16(), text));
         }
 
         if is_sse {
@@ -640,20 +714,10 @@ impl HttpClient {
             timing.borrow().copy_to(trace);
             sse_result?;
         } else {
-            let collected = timed
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<Bytes>, _>>();
+            let collected = collect_body(timed).await;
             timing.borrow().copy_to(trace);
-            let collected = collected?;
+            let body = collected?;
             let ts = self.clock.now_ns();
-            let total: usize = collected.iter().map(|b| b.len()).sum();
-            let mut raw = Vec::with_capacity(total);
-            for b in &collected {
-                raw.extend_from_slice(b);
-            }
-            let body = Bytes::from(raw);
             let text = String::from_utf8_lossy(&body).into_owned();
             if trace.response_receive_start_ns.is_none() {
                 trace.response_receive_start_ns = Some(record.recv_start_ns.unwrap_or(ts));
@@ -694,15 +758,29 @@ impl HttpClient {
 
         let resp = sender.send(req).await?;
         let code = resp.status().as_u16();
-        if !resp.status().is_success() {
-            let _ = resp.into_body().collect().await;
+        let success = resp.status().is_success();
+        check_declared_body_length(resp.headers(), self.cfg.max_response_body_bytes)?;
+        let max_response_body_bytes = self.cfg.max_response_body_bytes;
+        let mut observed_body_bytes = 0_u64;
+        let body_stream = resp.into_body().into_data_stream();
+        let limited = body_stream.map(move |item| match item {
+            Ok(bytes) => {
+                observe_body_chunk(
+                    &mut observed_body_bytes,
+                    bytes.len(),
+                    max_response_body_bytes,
+                )?;
+                Ok(bytes)
+            }
+            Err(error) => Err(body_err(error)),
+        });
+        if !success {
+            drain_body(limited).await?;
             return Ok(code);
         }
 
-        let body_stream = resp.into_body().into_data_stream();
-        let timed = body_stream.map(|item| item.map_err(body_err));
         let mut first = false;
-        read_sse(timed, self.clock.clone(), |m: SseMessage| {
+        read_sse(limited, self.clock.clone(), |m: SseMessage| {
             if !first {
                 first = true;
                 on_first_token(m.perf_ns - start_ns);

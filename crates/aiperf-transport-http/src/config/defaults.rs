@@ -27,6 +27,11 @@ pub struct ClientConfig {
     pub request_timeout_ns: Option<i64>,
     /// One end-to-end request deadline including connection establishment.
     pub total_timeout_ns: Option<i64>,
+    /// Maximum response-body bytes accepted per request.
+    ///
+    /// The bound is enforced on every received chunk for streaming, ordinary,
+    /// and non-2xx bodies. `None` preserves the unbounded compatibility mode.
+    pub max_response_body_bytes: Option<u64>,
     /// Verify the server certificate and hostname for HTTPS connections.
     pub ssl_verify: bool,
     /// HTTP protocol selection and cleartext prior-knowledge policy.
@@ -58,6 +63,7 @@ impl Default for ClientConfig {
             connect_timeout_ns: None,
             request_timeout_ns: None,
             total_timeout_ns: None,
+            max_response_body_bytes: None,
             ssl_verify: true,
             http_version: HttpVersion::Auto,
             keepalive_ns: Some(300_000_000_000),
@@ -100,6 +106,7 @@ mod tests {
         assert_eq!(c.connect_timeout_ns, None);
         assert_eq!(c.request_timeout_ns, None);
         assert_eq!(c.total_timeout_ns, None);
+        assert_eq!(c.max_response_body_bytes, None);
         assert_eq!(c.keepalive_ns, Some(300_000_000_000));
         assert_eq!(c.max_connections_per_origin, 2_500);
         assert!(c.use_dns_cache);
