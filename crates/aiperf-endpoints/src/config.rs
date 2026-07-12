@@ -4,6 +4,7 @@
 //! Endpoint configuration validation and normalization.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -23,7 +24,7 @@ pub enum RequestContentType {
 }
 
 /// Endpoint configuration used by endpoint formatters and validators.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct EndpointConfig {
     /// Endpoint type.
     #[serde(rename = "type")]
@@ -68,6 +69,34 @@ pub struct EndpointConfig {
     pub api_key: Option<String>,
     /// Endpoint-level extra body fields.
     pub extra: Option<Map<String, Value>>,
+}
+
+impl fmt::Debug for EndpointConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EndpointConfig")
+            .field("endpoint_type", &self.endpoint_type)
+            .field("urls", &self.urls)
+            .field("path", &self.path)
+            .field("streaming", &self.streaming)
+            .field("request_content_type", &self.request_content_type)
+            .field("template", &self.template)
+            .field("response_field", &self.response_field)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("polling_interval_seconds", &self.polling_interval_seconds)
+            .field("download_video_content", &self.download_video_content)
+            .field("wait_for_model_timeout", &self.wait_for_model_timeout)
+            .field("wait_for_model_interval", &self.wait_for_model_interval)
+            .field("wait_for_model_mode", &self.wait_for_model_mode)
+            .field("wait_for_model_interval_set", &self.wait_for_model_interval_set)
+            .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
+            .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
+            .field("use_server_token_count", &self.use_server_token_count)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("has_api_key", &self.api_key.is_some())
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 impl Default for EndpointConfig {

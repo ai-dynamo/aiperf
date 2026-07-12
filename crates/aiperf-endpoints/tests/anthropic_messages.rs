@@ -122,6 +122,12 @@ fn streaming_and_headers_match_messages_wire_contract() {
     assert_eq!(headers["anthropic-version"], "custom-version");
     assert_eq!(headers["content-type"], "application/json");
     assert!(!headers.contains_key("Authorization"));
+    let debug = format!("{:?}", request.model_endpoint.endpoint);
+    assert!(!debug.contains("sk-ant-test"));
+    assert!(!debug.contains("thinking"));
+    let serialized = serde_json::to_string(&request.model_endpoint.endpoint).unwrap();
+    assert!(!serialized.contains("sk-ant-test"));
+    assert!(!serialized.contains("anthropic-beta"));
     let body = MessagesEndpoint.format_payload(&request).unwrap();
     assert_eq!(body["stream"], true);
 }
