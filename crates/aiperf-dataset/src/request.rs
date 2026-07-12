@@ -18,9 +18,9 @@ use aiperf_endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
     EmbeddingsEndpoint, Endpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
     ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, MessagesEndpoint,
-    ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, RawEndpoint, RequestInfo,
-    ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
-    VideoGenerationEndpoint,
+    ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, PreparedEndpoint, PreparedRequest,
+    RawEndpoint, RequestInfo, ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint,
+    Turn as EndpointTurn, VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
@@ -74,6 +74,18 @@ pub trait RequestMaterializer: Send + Sync {
         session: &ConversationSession,
         endpoint: &dyn Endpoint,
         model_endpoint: &ModelEndpoint,
+        phase: CreditPhase,
+        overrides: &Overrides,
+    ) -> Result<MaterializedRequest>;
+
+    /// Build the current turn directly through a worker-local prepared
+    /// endpoint binding. The endpoint owns all normalized configuration;
+    /// callers provide only the primary model and per-dispatch overrides.
+    fn materialize_prepared(
+        &self,
+        session: &ConversationSession,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
         phase: CreditPhase,
         overrides: &Overrides,
     ) -> Result<MaterializedRequest>;
@@ -284,13 +296,23 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             (
                 store.build_body(&[raw], overrides)?,
                 EffectiveRequest {
-                    model: effective_model(current, model_endpoint, overrides)?,
+                    model: effective_model(current, &model_endpoint.primary_model_name, overrides)?,
                     max_tokens: effective_max_tokens(current, overrides)?,
-                    streaming: effective_streaming(current, model_endpoint, endpoint, overrides)?,
+                    streaming: effective_streaming(
+                        current,
+                        model_endpoint.endpoint.streaming,
+                        endpoint.metadata().supports_streaming,
+                        overrides,
+                    )?,
                 },
             )
         } else {
-            let streaming = effective_streaming(current, model_endpoint, endpoint, overrides)?;
+            let streaming = effective_streaming(
+                current,
+                model_endpoint.endpoint.streaming,
+                endpoint.metadata().supports_streaming,
+                overrides,
+            )?;
             let mut effective_model_endpoint = model_endpoint.clone();
             effective_model_endpoint.endpoint.streaming = streaming;
             let turns = session.endpoint_turns(store)?;
@@ -309,8 +331,9 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             let effective = effective_from_structured_body(
                 &mut value,
                 current,
-                model_endpoint,
-                endpoint,
+                &model_endpoint.primary_model_name,
+                model_endpoint.endpoint.streaming,
+                endpoint.metadata().supports_streaming,
                 overrides,
             )?;
             (Bytes::from(serde_json::to_vec(&value)?), effective)
@@ -347,6 +370,92 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             is_final_turn: turn_index + 1 == conversation.turns.len(),
         })
     }
+
+    fn materialize_prepared(
+        &self,
+        session: &ConversationSession,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+        phase: CreditPhase,
+        overrides: &Overrides,
+    ) -> Result<MaterializedRequest> {
+        let (conversation, current, turn_index) = session.current()?;
+        let store = session.dataset.segments().as_ref();
+        let configured_streaming = endpoint.config().streaming();
+        let supports_streaming = endpoint.descriptor().supports_streaming;
+        let (body, effective) = if let Some(raw) = current.raw_payload {
+            (
+                store.build_body(&[raw], overrides)?,
+                EffectiveRequest {
+                    model: effective_model(current, primary_model_name, overrides)?,
+                    max_tokens: effective_max_tokens(current, overrides)?,
+                    streaming: effective_streaming(
+                        current,
+                        configured_streaming,
+                        supports_streaming,
+                        overrides,
+                    )?,
+                },
+            )
+        } else {
+            let turns = session.endpoint_turns(store)?;
+            let system_message = resolve_prompt(store, conversation.system)?;
+            let user_context_message = resolve_prompt(store, conversation.user_context)?;
+            let conversation_id = session.conversation_id().as_str().to_string();
+            let request = PreparedRequest::new(
+                primary_model_name,
+                &turns,
+                system_message.as_deref(),
+                user_context_message.as_deref(),
+                phase,
+                None,
+                None,
+                Some(&conversation_id),
+            );
+            let mut value = endpoint.format_payload(&request)?;
+            merge_overrides(&mut value, overrides)?;
+            let effective = effective_from_structured_body(
+                &mut value,
+                current,
+                primary_model_name,
+                configured_streaming,
+                supports_streaming,
+                overrides,
+            )?;
+            (Bytes::from(serde_json::to_vec(&value)?), effective)
+        };
+
+        let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {
+            if effective.streaming {
+                endpoint.descriptor().streaming_path
+            } else {
+                None
+            }
+            .or(endpoint.descriptor().endpoint_path)
+            .map(str::to_string)
+        });
+        let mut headers = endpoint.headers().clone();
+        headers.extend(raw_string_map(
+            store,
+            current.extra_headers,
+            "extra_headers",
+        )?);
+        Ok(MaterializedRequest {
+            body,
+            headers,
+            parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
+            endpoint: current.endpoint.clone(),
+            endpoint_path,
+            model: effective.model,
+            max_tokens: effective.max_tokens,
+            streaming: effective.streaming,
+            input_tokens: session.input_tokens(store)?,
+            audio_duration_seconds: current.audio_duration_seconds,
+            accuracy: conversation.accuracy.clone(),
+            turn_index,
+            is_final_turn: turn_index + 1 == conversation.turns.len(),
+        })
+    }
 }
 
 struct EffectiveRequest {
@@ -358,8 +467,9 @@ struct EffectiveRequest {
 fn effective_from_structured_body(
     value: &mut Value,
     turn: &Turn,
-    model_endpoint: &ModelEndpoint,
-    endpoint: &dyn Endpoint,
+    primary_model_name: &str,
+    configured_streaming: bool,
+    supports_streaming: bool,
     overrides: &Overrides,
 ) -> Result<EffectiveRequest> {
     let object = value.as_object_mut().ok_or_else(|| {
@@ -372,7 +482,7 @@ fn effective_from_structured_body(
                 "effective request model must be a string".into(),
             ));
         }
-        None => effective_model(turn, model_endpoint, overrides)?,
+        None => effective_model(turn, primary_model_name, overrides)?,
     };
     let mut max_tokens = effective_max_tokens(turn, overrides)?;
     for (field, value) in object.iter().filter(|(field, _)| {
@@ -390,9 +500,9 @@ fn effective_from_structured_body(
                 "effective request stream must be boolean".into(),
             ));
         }
-        None => effective_streaming(turn, model_endpoint, endpoint, overrides)?,
+        None => effective_streaming(turn, configured_streaming, supports_streaming, overrides)?,
     };
-    let streaming = requested_streaming && endpoint.metadata().supports_streaming;
+    let streaming = requested_streaming && supports_streaming;
     if requested_streaming != streaming {
         object.insert("stream".into(), Value::Bool(streaming));
     }
@@ -403,11 +513,7 @@ fn effective_from_structured_body(
     })
 }
 
-fn effective_model(
-    turn: &Turn,
-    model_endpoint: &ModelEndpoint,
-    overrides: &Overrides,
-) -> Result<String> {
+fn effective_model(turn: &Turn, primary_model_name: &str, overrides: &Overrides) -> Result<String> {
     match overrides.fields().get("model") {
         Some(Value::String(model)) => Ok(model.clone()),
         Some(_) => Err(DatasetError::Validation(
@@ -417,7 +523,7 @@ fn effective_model(
             .model
             .as_ref()
             .map(|model| model.as_str().to_string())
-            .unwrap_or_else(|| model_endpoint.primary_model_name.clone())),
+            .unwrap_or_else(|| primary_model_name.to_string())),
     }
 }
 
@@ -444,8 +550,8 @@ fn positive_u32(value: &Value, field: &str) -> Result<u32> {
 
 fn effective_streaming(
     turn: &Turn,
-    model_endpoint: &ModelEndpoint,
-    endpoint: &dyn Endpoint,
+    configured_streaming: bool,
+    supports_streaming: bool,
     overrides: &Overrides,
 ) -> Result<bool> {
     let requested = match overrides.fields().get("stream") {
@@ -455,9 +561,9 @@ fn effective_streaming(
                 "request override stream must be boolean".into(),
             ));
         }
-        None => turn.streaming.unwrap_or(model_endpoint.endpoint.streaming),
+        None => turn.streaming.unwrap_or(configured_streaming),
     };
-    Ok(requested && endpoint.metadata().supports_streaming)
+    Ok(requested && supports_streaming)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -592,6 +698,19 @@ impl ConversationSession {
         overrides: &Overrides,
     ) -> Result<MaterializedRequest> {
         materializer.materialize(self, endpoint, model_endpoint, phase, overrides)
+    }
+
+    /// Materialize the current request directly through a prepared open
+    /// endpoint binding without constructing a protocol-v1 endpoint value.
+    pub fn materialize_prepared(
+        &self,
+        materializer: &dyn RequestMaterializer,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+        phase: CreditPhase,
+        overrides: &Overrides,
+    ) -> Result<MaterializedRequest> {
+        materializer.materialize_prepared(self, endpoint, primary_model_name, phase, overrides)
     }
 
     fn current(&self) -> Result<(&Conversation, &Turn, usize)> {
@@ -916,7 +1035,9 @@ fn merge_overrides(value: &mut Value, overrides: &Overrides) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use aiperf_endpoints::{ChatEndpoint, EndpointConfig, EndpointType};
+    use aiperf_endpoints::{
+        ChatEndpoint, EndpointConfig, EndpointId, EndpointRegistry, EndpointType, RawEndpointConfig,
+    };
     use bytes::Bytes;
     use smallvec::smallvec;
 
@@ -1061,6 +1182,69 @@ mod tests {
         assert_eq!(
             spliced.body,
             b"{ \"messages\" : [ ], \"model\":\"authored\" ,\"stream\":true}\n"[..]
+        );
+    }
+
+    #[test]
+    fn prepared_materializer_uses_the_bound_open_endpoint_directly() {
+        let mut pool = SegmentPool::new();
+        let text = pool
+            .intern_text(
+                None,
+                Role::from("user"),
+                Bytes::from_static(b"hello"),
+                vec![1, 2],
+            )
+            .unwrap();
+        let data = dataset(
+            ConversationContextMode::DeltasWithResponses,
+            vec![Turn {
+                role: Some(Role::from("user")),
+                content: smallvec![ContentGroup {
+                    kind: MediaKind::Text,
+                    name: String::new(),
+                    handles: smallvec![text],
+                }],
+                input_tokens: 2,
+                max_tokens: Some(7),
+                ..Turn::default()
+            }],
+            pool,
+        );
+        let registry = EndpointRegistry::builtin().unwrap();
+        let endpoint = registry
+            .prepare(
+                &EndpointId::new("chat").unwrap(),
+                RawEndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    headers: BTreeMap::from([("x-profile".into(), "bound".into())]),
+                    ..RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let mut session = ConversationSession::new(data, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+
+        let request = session
+            .materialize_prepared(
+                &EndpointRequestMaterializer,
+                endpoint.as_ref(),
+                "direct-model",
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["model"], "direct-model");
+        assert_eq!(body["messages"][0]["content"], "hello");
+        assert_eq!(body["max_completion_tokens"], 7);
+        assert_eq!(body["stream"], true);
+        assert_eq!(request.headers["x-profile"], "bound");
+        assert_eq!(
+            request.endpoint_path.as_deref(),
+            Some("/v1/chat/completions")
         );
     }
 
