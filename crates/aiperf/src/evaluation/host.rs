@@ -14,12 +14,49 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::rc::Rc;
 
+use aiperf_accuracy::HostOperationUsage;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde_json::Value;
 
 use super::ledger::HostTerminalClass;
 use super::retry::OperationCancellation;
+use crate::scheduled::ScheduledRuntime;
+
+/// Per-run host executor context supplied after the scheduler is constructed.
+///
+/// Non-inference executors may ignore the scheduler. Inference factories call
+/// [`require_scheduled`](Self::require_scheduled) and therefore cannot be
+/// prepared as a descriptor-only capability.
+#[derive(Clone, Default)]
+pub struct HostExecutorRuntime {
+    scheduled: Option<Rc<ScheduledRuntime>>,
+}
+
+impl HostExecutorRuntime {
+    /// Build a live runtime context for an executing evaluation workload.
+    pub fn scheduled(runtime: Rc<ScheduledRuntime>) -> Self {
+        Self {
+            scheduled: Some(runtime),
+        }
+    }
+
+    /// Require the ordinary scheduled runtime for an inference executor.
+    pub fn require_scheduled(&self) -> Result<Rc<ScheduledRuntime>> {
+        self.scheduled
+            .clone()
+            .ok_or_else(|| anyhow!("host executor requires a live scheduled runtime"))
+    }
+}
+
+impl fmt::Debug for HostExecutorRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostExecutorRuntime")
+            .field("scheduled", &self.scheduled.is_some())
+            .finish()
+    }
+}
 
 /// Stable family label used for capability inventory and report grouping.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,6 +117,11 @@ pub struct HostOperationDescriptor {
     pub request_schema_fingerprint: String,
     /// Versioned response/event schema fingerprint.
     pub response_schema_fingerprint: String,
+    /// Versioned incremental-event schema fingerprint.
+    ///
+    /// This is present exactly when [`Self::true_streaming`] is true. A
+    /// terminal-only adapter must not advertise an unused stream schema.
+    pub stream_schema_fingerprint: Option<String>,
     /// Whether the executor emits real incremental typed deltas.
     pub true_streaming: bool,
     /// Maximum request payload bytes after canonical serialization.
@@ -111,6 +153,14 @@ impl HostOperationDescriptor {
             &self.response_schema_fingerprint,
             "response schema fingerprint",
         )?;
+        ensure!(
+            self.true_streaming == self.stream_schema_fingerprint.is_some(),
+            "operation {} streaming flag and stream schema must agree",
+            self.operation_id
+        );
+        if let Some(fingerprint) = &self.stream_schema_fingerprint {
+            validate_sha256(fingerprint, "stream schema fingerprint")?;
+        }
         for capability in &self.endpoint_capabilities {
             validate_open_id(capability, "endpoint capability")?;
         }
@@ -161,6 +211,10 @@ pub struct HostExecutionTerminal {
     pub class: HostTerminalClass,
     /// Schema-validated normalized terminal payload.
     pub payload: Value,
+    /// Rust-authoritative operation usage.
+    pub usage: HostOperationUsage,
+    /// Whether registered route policy may retry this terminal.
+    pub retryable: bool,
 }
 
 /// Typed streaming event sink supplied by the evaluation workload.
@@ -186,6 +240,8 @@ pub trait HostOperationExecutor {
 pub trait HostOperationSchemaValidator {
     /// Validate the provider request without performing a host effect.
     fn validate_request(&self, payload: &Value) -> Result<()>;
+    /// Validate one normalized incremental event.
+    fn validate_stream(&self, payload: &Value) -> Result<()>;
     /// Validate a normalized terminal/delta payload before it crosses the pipe.
     fn validate_response(&self, payload: &Value) -> Result<()>;
 }
@@ -197,7 +253,11 @@ pub trait HostOperationExecutorFactory {
     /// Side-effect-free schema validator.
     fn validator(&self) -> &dyn HostOperationSchemaValidator;
     /// Prepare one executor for one logical route.
-    fn prepare(&self, route: &EvaluationRoute) -> Result<Rc<dyn HostOperationExecutor>>;
+    fn prepare(
+        &self,
+        runtime: &HostExecutorRuntime,
+        route: &EvaluationRoute,
+    ) -> Result<Rc<dyn HostOperationExecutor>>;
 }
 
 /// Marker seam for inference operation executors.
@@ -350,6 +410,7 @@ impl HostExecutorRegistry {
         &self,
         operation: &HostOperationEnvelope,
         routes: &EvaluationRouteTable,
+        runtime: &HostExecutorRuntime,
     ) -> Result<Rc<dyn HostOperationExecutor>> {
         let factory = self.factory(&operation.semantic_operation_id)?;
         let descriptor = factory.descriptor();
@@ -380,13 +441,64 @@ impl HostExecutorRegistry {
             operation.semantic_operation_id,
             missing.join(", ")
         );
-        factory.prepare(route)
+        factory.prepare(runtime, route)
     }
 
     /// Deterministic executable capability inventory.
     pub fn descriptors(&self) -> impl ExactSizeIterator<Item = &HostOperationDescriptor> {
         self.factories.values().map(|factory| factory.descriptor())
     }
+
+    /// Validate and bound one normalized incremental event.
+    pub fn validate_stream(
+        &self,
+        operation_id: &RegisteredOperationId,
+        payload: &Value,
+    ) -> Result<()> {
+        let factory = self.factory(operation_id)?;
+        ensure!(
+            factory.descriptor().true_streaming,
+            "operation {operation_id} emitted a stream event from a terminal-only adapter"
+        );
+        validate_payload_bound(
+            operation_id,
+            payload,
+            factory.descriptor().max_response_bytes,
+            "stream event",
+        )?;
+        factory.validator().validate_stream(payload)
+    }
+
+    /// Validate and bound one completed normalized terminal result.
+    pub fn validate_response(
+        &self,
+        operation_id: &RegisteredOperationId,
+        payload: &Value,
+    ) -> Result<()> {
+        let factory = self.factory(operation_id)?;
+        validate_payload_bound(
+            operation_id,
+            payload,
+            factory.descriptor().max_response_bytes,
+            "terminal result",
+        )?;
+        factory.validator().validate_response(payload)
+    }
+}
+
+fn validate_payload_bound(
+    operation_id: &RegisteredOperationId,
+    payload: &Value,
+    maximum: usize,
+    kind: &str,
+) -> Result<()> {
+    let encoded = serde_json::to_vec(payload)
+        .with_context(|| format!("serializing evaluator {kind} for its size bound"))?;
+    ensure!(
+        encoded.len() <= maximum,
+        "operation {operation_id} {kind} exceeds its {maximum} byte bound"
+    );
+    Ok(())
 }
 
 fn validate_open_id(value: &str, field: &str) -> Result<()> {
@@ -447,6 +559,14 @@ mod tests {
             Ok(())
         }
 
+        fn validate_stream(&self, payload: &Value) -> Result<()> {
+            ensure!(
+                payload.is_object(),
+                "fixture stream event must be an object"
+            );
+            Ok(())
+        }
+
         fn validate_response(&self, payload: &Value) -> Result<()> {
             ensure!(payload.is_object(), "fixture response must be an object");
             Ok(())
@@ -466,6 +586,8 @@ mod tests {
             Ok(HostExecutionTerminal {
                 class: HostTerminalClass::Completed,
                 payload: serde_json::json!({"ok": true}),
+                usage: HostOperationUsage::default(),
+                retryable: false,
             })
         }
     }
@@ -484,7 +606,11 @@ mod tests {
             &ObjectValidator
         }
 
-        fn prepare(&self, _route: &EvaluationRoute) -> Result<Rc<dyn HostOperationExecutor>> {
+        fn prepare(
+            &self,
+            _runtime: &HostExecutorRuntime,
+            _route: &EvaluationRoute,
+        ) -> Result<Rc<dyn HostOperationExecutor>> {
             self.prepared.set(self.prepared.get() + 1);
             Ok(Rc::new(FixtureExecutor))
         }
@@ -497,6 +623,7 @@ mod tests {
                 family: HostOperationFamily::new("inference").unwrap(),
                 request_schema_fingerprint: "a".repeat(64),
                 response_schema_fingerprint: "b".repeat(64),
+                stream_schema_fingerprint: streaming.then(|| "d".repeat(64)),
                 true_streaming: streaming,
                 max_request_bytes: 1_024,
                 max_response_bytes: 1_024,
@@ -548,7 +675,11 @@ mod tests {
         builder.register(fixture.clone()).unwrap();
         let registry = builder.freeze().unwrap();
         registry
-            .prepare(&operation("model.generate"), &routes())
+            .prepare(
+                &operation("model.generate"),
+                &routes(),
+                &HostExecutorRuntime::default(),
+            )
             .unwrap();
         assert_eq!(fixture.prepared.get(), 1);
         let route = routes();
@@ -565,12 +696,20 @@ mod tests {
         let registry = builder.freeze().unwrap();
         assert!(
             registry
-                .prepare(&operation("model.embed"), &routes())
+                .prepare(
+                    &operation("model.embed"),
+                    &routes(),
+                    &HostExecutorRuntime::default(),
+                )
                 .is_err()
         );
         let mut streaming = operation("model.generate");
         streaming.stream = true;
-        assert!(registry.prepare(&streaming, &routes()).is_err());
+        assert!(
+            registry
+                .prepare(&streaming, &routes(), &HostExecutorRuntime::default(),)
+                .is_err()
+        );
 
         let incompatible = EvaluationRouteTable::new([EvaluationRoute {
             service_id: "primary".into(),
@@ -583,7 +722,11 @@ mod tests {
         .unwrap();
         assert!(
             registry
-                .prepare(&operation("model.generate"), &incompatible)
+                .prepare(
+                    &operation("model.generate"),
+                    &incompatible,
+                    &HostExecutorRuntime::default(),
+                )
                 .is_err()
         );
         assert_eq!(terminal.prepared.get(), 0);
