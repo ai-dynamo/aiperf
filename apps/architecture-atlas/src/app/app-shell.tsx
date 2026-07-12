@@ -24,10 +24,19 @@ const navigation = [
   { to: "/atlas", label: "Unified atlas" },
 ] as const;
 
+const routesWithFilters = new Set([
+  "/",
+  "/execution",
+  "/data-plane",
+  "/observability",
+  "/parity",
+]);
+
 interface AppShellProps {
   audience: Audience;
   children: ReactNode;
   presentation: boolean;
+  presentationAvailable: boolean;
   nextRoute?: PresentationRoute;
   previousRoute?: PresentationRoute;
   onExitPresentation(): void;
@@ -51,7 +60,11 @@ function NavigationLinks() {
       activeProps={{ "aria-current": "page" }}
       className="nav-link"
       key={to}
-      search={(previous) => previous}
+      search={(previous) => ({
+        audience: previous.audience,
+        modes: routesWithFilters.has(to) ? previous.modes : undefined,
+        statuses: routesWithFilters.has(to) ? previous.statuses : undefined,
+      })}
       to={to}
     >
       <span className="nav-marker" aria-hidden="true" />
@@ -64,6 +77,7 @@ export function AppShell({
   audience,
   children,
   presentation,
+  presentationAvailable,
   nextRoute,
   previousRoute,
   onExitPresentation,
@@ -72,13 +86,18 @@ export function AppShell({
   onAudienceChange,
 }: AppShellProps) {
   const presentationMain = useRef<HTMLElement>(null);
+  const presentationEntry = useRef<HTMLButtonElement>(null);
   const nextControl = useRef<HTMLButtonElement>(null);
   const previousControl = useRef<HTMLButtonElement>(null);
+  const wasPresenting = useRef(false);
 
   useEffect(() => {
     if (presentation) {
       presentationMain.current?.focus();
+    } else if (wasPresenting.current) {
+      presentationEntry.current?.focus();
     }
+    wasPresenting.current = presentation;
   }, [presentation]);
 
   useEffect(() => {
@@ -207,13 +226,16 @@ export function AppShell({
               <option value="maintainer">Maintainer</option>
             </select>
           </label>
-          <button
-            className="presentation-control"
-            onClick={onStartPresentation}
-            type="button"
-          >
-            Present this view
-          </button>
+          {presentationAvailable ? (
+            <button
+              className="presentation-control"
+              onClick={onStartPresentation}
+              ref={presentationEntry}
+              type="button"
+            >
+              Present this view
+            </button>
+          ) : null}
         </div>
       </header>
 

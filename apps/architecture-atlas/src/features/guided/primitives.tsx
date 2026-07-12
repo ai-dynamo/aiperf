@@ -16,6 +16,10 @@ import type {
   PairSupport,
   Workload,
 } from "../../domain/architecture";
+import {
+  REPOSITORY_SOURCE_BASE_URL,
+  repositorySource,
+} from "./source-url";
 
 export const modeLabels: Record<ExecutionMode, string> = {
   online_http: "Native HTTP",
@@ -60,17 +64,17 @@ interface EvidenceCitationProps {
 export function EvidenceCitation({ evidence }: EvidenceCitationProps) {
   return (
     <footer className="evidence-citations" aria-label="Source evidence">
-      {evidence.map(({ path, lines, symbol }) => {
-        const suffix = lines
-          ? `:${lines.start}-${lines.end}`
-          : symbol
-            ? `#${symbol}`
-            : "";
-        return (
-          <a href={`/${path}`} key={`${path}${suffix}`}>
-            {path}
-            {suffix}
+      {evidence.map((reference) => {
+        const source = repositorySource(
+          reference,
+          REPOSITORY_SOURCE_BASE_URL,
+        );
+        return source.href ? (
+          <a href={source.href} key={source.label}>
+            {source.label}
           </a>
+        ) : (
+          <span key={source.label}>{source.label}</span>
         );
       })}
     </footer>
@@ -80,13 +84,19 @@ export function EvidenceCitation({ evidence }: EvidenceCitationProps) {
 interface EntityBodyProps {
   audience: Audience;
   entity: ArchitectureComponent | ArchitectureRisk | LifecycleStage;
+  headingLevel: 2 | 3 | 4;
 }
 
-function EntityBody({ audience, entity }: EntityBodyProps) {
+function EntityBody({
+  audience,
+  entity,
+  headingLevel,
+}: EntityBodyProps) {
   const contracts = "contracts" in entity ? entity.contracts : [];
+  const Heading = `h${headingLevel}` as "h2" | "h3" | "h4";
   return (
     <>
-      <h3>{entity.title[audience]}</h3>
+      <Heading>{entity.title[audience]}</Heading>
       <p>{entity.summary[audience]}</p>
       {audience === "developer" && contracts.length > 0 ? (
         <ul className="contract-list" aria-label="Integration contracts">
@@ -146,7 +156,11 @@ export function StageRail({ audience, stages }: StageRailProps) {
             <span className="stage-index" aria-hidden="true">
               {String(stage.order + 1).padStart(2, "0")}
             </span>
-            <EntityBody audience={audience} entity={stage} />
+            <EntityBody
+              audience={audience}
+              entity={stage}
+              headingLevel={2}
+            />
           </li>
         ))}
     </ol>
@@ -177,15 +191,18 @@ export function OwnershipBands({
             aria-labelledby={`owner-${owner}`}
           >
             <header>
-              <p>{ownershipLabels[owner]}</p>
-              <span>{owned.length}</span>
+              <span>{owned.length} systems</span>
             </header>
-            <h2 id={`owner-${owner}`}>{ownershipLabels[owner]}</h2>
+            <h3 id={`owner-${owner}`}>{ownershipLabels[owner]}</h3>
             <div className="band-entities">
               {owned.map((component) => (
                 <article key={component.id}>
                   <StatusBadge status={component.status} />
-                  <EntityBody audience={audience} entity={component} />
+                  <EntityBody
+                    audience={audience}
+                    entity={component}
+                    headingLevel={4}
+                  />
                 </article>
               ))}
             </div>
@@ -213,7 +230,11 @@ export function SeamDiagram({
         {components.map((component) => (
           <article key={component.id} data-status={component.status}>
             <StatusBadge status={component.status} />
-            <EntityBody audience={audience} entity={component} />
+            <EntityBody
+              audience={audience}
+              entity={component}
+              headingLevel={2}
+            />
           </article>
         ))}
       </div>
@@ -257,7 +278,11 @@ export function FlowLane({
           </span>
           <article>
             <StatusBadge status={component.status} />
-            <EntityBody audience={audience} entity={component} />
+            <EntityBody
+              audience={audience}
+              entity={component}
+              headingLevel={2}
+            />
           </article>
         </li>
       ))}
@@ -344,7 +369,7 @@ function FilterSet<T extends string>({
 interface GuidedFiltersProps {
   modes: readonly ExecutionMode[];
   statuses: readonly ArchitectureStatus[];
-  resultCount: number;
+  resultSummary: string;
   onModesChange(values: ExecutionMode[]): void;
   onStatusesChange(values: ArchitectureStatus[]): void;
 }
@@ -352,7 +377,7 @@ interface GuidedFiltersProps {
 export function GuidedFilters({
   modes,
   statuses,
-  resultCount,
+  resultSummary,
   onModesChange,
   onStatusesChange,
 }: GuidedFiltersProps) {
@@ -378,7 +403,7 @@ export function GuidedFilters({
         className="result-count"
         role="status"
       >
-        {resultCount} results
+        {resultSummary}
       </p>
     </section>
   );

@@ -29,6 +29,35 @@ export type GuidedRoute =
   | "/observability"
   | "/parity";
 
+export const filterableGuidedRoutes = new Set<GuidedRoute>([
+  "/",
+  "/execution",
+  "/data-plane",
+  "/observability",
+  "/parity",
+]);
+
+const dataPlaneFlowIds = new Set([
+  "component.dataset-pipeline",
+  "component.segment-store",
+  "component.endpoint-registry",
+]);
+const dataPlaneBoundaryIds = new Set([
+  "component.graph-ir",
+  "component.content-server",
+  "component.exact-token-ids",
+]);
+const observabilityFlowIds = new Set([
+  "component.native-metrics",
+  "component.live-telemetry",
+  "component.telemetry-archive",
+]);
+const observabilityBoundaryIds = new Set([
+  "component.static-accuracy",
+  "component.agentic-evaluation",
+  "component.provider-evaluation",
+]);
+
 interface GuidedViewProps {
   audience: Audience;
   modes: readonly ExecutionMode[];
@@ -64,6 +93,13 @@ function matchesFilters(
   return matchesMode && matchesStatus;
 }
 
+function selectComponents(
+  components: readonly ArchitectureComponent[],
+  ids: ReadonlySet<string>,
+): ArchitectureComponent[] {
+  return components.filter((component) => ids.has(component.id));
+}
+
 function ViewHeader({
   audience,
   route,
@@ -90,12 +126,22 @@ function ViewHeader({
 function OwnershipView({
   audience,
   components,
-}: {
-  audience: Audience;
+  modes,
+  statuses,
+  onModesChange,
+  onStatusesChange,
+}: Omit<GuidedViewProps, "route"> & {
   components: readonly ArchitectureComponent[];
 }) {
   return (
     <>
+      <GuidedFilters
+        modes={modes}
+        onModesChange={onModesChange}
+        onStatusesChange={onStatusesChange}
+        resultSummary={`${components.length} components`}
+        statuses={statuses}
+      />
       <StageRail
         audience={audience}
         stages={architectureCatalog.lifecycleStages}
@@ -139,23 +185,33 @@ function ExecutionView({
       (modes.length === 0 || modes.includes(pair.mode)) &&
       (statuses.length === 0 || statuses.includes(pair.status)),
   );
+  const visibleComponentIds = new Set(components.map(({ id }) => id));
+  const edges = architectureCatalog.edges
+    .filter(
+      (edge) =>
+        edge.id.startsWith("edge.scheduling") ||
+        edge.id.startsWith("edge.clock") ||
+        edge.id.startsWith("edge.controls"),
+    )
+    .filter(
+      (edge) =>
+        visibleComponentIds.has(edge.from) &&
+        visibleComponentIds.has(edge.to) &&
+        (statuses.length === 0 || statuses.includes(edge.status)),
+    );
   return (
     <>
       <GuidedFilters
         modes={modes}
         onModesChange={onModesChange}
         onStatusesChange={onStatusesChange}
-        resultCount={components.length + pairs.length}
+        resultSummary={`${components.length} components, ${edges.length} connections, ${pairs.length} pairs`}
         statuses={statuses}
       />
       <SeamDiagram
         audience={audience}
         components={components}
-        edges={architectureCatalog.edges.filter((edge) =>
-          edge.id.startsWith("edge.scheduling") ||
-          edge.id.startsWith("edge.clock") ||
-          edge.id.startsWith("edge.controls"),
-        )}
+        edges={edges}
       />
       <GuidedSection title="Executable pair matrix">
         <ModeComparison audience={audience} pairs={pairs} />
@@ -167,19 +223,31 @@ function ExecutionView({
 function DataPlaneView({
   audience,
   components,
-}: {
-  audience: Audience;
+  modes,
+  statuses,
+  onModesChange,
+  onStatusesChange,
+}: Omit<GuidedViewProps, "route"> & {
   components: readonly ArchitectureComponent[];
 }) {
+  const flow = selectComponents(components, dataPlaneFlowIds);
+  const boundaries = selectComponents(components, dataPlaneBoundaryIds);
   return (
     <>
+      <GuidedFilters
+        modes={modes}
+        onModesChange={onModesChange}
+        onStatusesChange={onStatusesChange}
+        resultSummary={`${components.length} components`}
+        statuses={statuses}
+      />
       <FlowLane
         audience={audience}
-        components={components}
+        components={flow}
         label="Request shaping flow"
       />
       <GuidedSection title="Branch and representation boundaries">
-        <OwnershipBands audience={audience} components={components.slice(3)} />
+        <OwnershipBands audience={audience} components={boundaries} />
       </GuidedSection>
     </>
   );
@@ -188,19 +256,31 @@ function DataPlaneView({
 function ObservabilityView({
   audience,
   components,
-}: {
-  audience: Audience;
+  modes,
+  statuses,
+  onModesChange,
+  onStatusesChange,
+}: Omit<GuidedViewProps, "route"> & {
   components: readonly ArchitectureComponent[];
 }) {
+  const flow = selectComponents(components, observabilityFlowIds);
+  const boundaries = selectComponents(components, observabilityBoundaryIds);
   return (
     <>
+      <GuidedFilters
+        modes={modes}
+        onModesChange={onModesChange}
+        onStatusesChange={onStatusesChange}
+        resultSummary={`${components.length} components`}
+        statuses={statuses}
+      />
       <FlowLane
         audience={audience}
-        components={components}
+        components={flow}
         label="Measurement and evaluation flow"
       />
       <GuidedSection title="Native evidence and evaluator ownership">
-        <OwnershipBands audience={audience} components={components} />
+        <OwnershipBands audience={audience} components={boundaries} />
       </GuidedSection>
     </>
   );
@@ -231,7 +311,7 @@ function ParityView({
         modes={modes}
         onModesChange={onModesChange}
         onStatusesChange={onStatusesChange}
-        resultCount={records.length}
+        resultSummary={`${records.length} results`}
         statuses={statuses}
       />
       <ParityLedger audience={audience} records={records} />
@@ -261,7 +341,14 @@ export function GuidedView({
     >
       <ViewHeader audience={audience} route={route} />
       {route === "/" ? (
-        <OwnershipView audience={audience} components={components} />
+        <OwnershipView
+          audience={audience}
+          components={components}
+          modes={modes}
+          onModesChange={onModesChange}
+          onStatusesChange={onStatusesChange}
+          statuses={statuses}
+        />
       ) : null}
       {route === "/journey" ? <JourneyView audience={audience} /> : null}
       {route === "/execution" ? (
@@ -275,10 +362,24 @@ export function GuidedView({
         />
       ) : null}
       {route === "/data-plane" ? (
-        <DataPlaneView audience={audience} components={components} />
+        <DataPlaneView
+          audience={audience}
+          components={components}
+          modes={modes}
+          onModesChange={onModesChange}
+          onStatusesChange={onStatusesChange}
+          statuses={statuses}
+        />
       ) : null}
       {route === "/observability" ? (
-        <ObservabilityView audience={audience} components={components} />
+        <ObservabilityView
+          audience={audience}
+          components={components}
+          modes={modes}
+          onModesChange={onModesChange}
+          onStatusesChange={onStatusesChange}
+          statuses={statuses}
+        />
       ) : null}
       {route === "/parity" ? (
         <ParityView

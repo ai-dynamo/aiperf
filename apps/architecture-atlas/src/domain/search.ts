@@ -24,21 +24,36 @@ const csvSchema = <T extends string>(schema: z.ZodType<T>) =>
           .every((item) => schema.safeParse(item).success),
     );
 
+const presentSchema = z
+  .union([z.boolean(), z.literal("true"), z.literal("false")])
+  .transform((value) => value === true || value === "true")
+  .optional();
+const modesSchema = csvSchema(executionModeSchema);
+const statusesSchema = csvSchema(architectureStatusSchema);
+
 export const atlasSearchSchema = z.object({
   audience: audienceSchema.optional(),
-  modes: csvSchema(executionModeSchema),
-  statuses: csvSchema(architectureStatusSchema),
-  present: z
-    .union([z.boolean(), z.literal("true"), z.literal("false")])
-    .transform((value) => value === true || value === "true")
-    .optional(),
+  modes: modesSchema,
+  statuses: statusesSchema,
+  present: presentSchema,
 });
 
 export type AtlasSearch = z.infer<typeof atlasSearchSchema>;
 
 export function parseAtlasSearch(search: Record<string, unknown>): AtlasSearch {
-  const result = atlasSearchSchema.safeParse(search);
-  return result.success ? result.data : {};
+  const parsed: AtlasSearch = {};
+  const fields = {
+    audience: audienceSchema.optional().safeParse(search.audience),
+    modes: modesSchema.safeParse(search.modes),
+    statuses: statusesSchema.safeParse(search.statuses),
+    present: presentSchema.safeParse(search.present),
+  };
+  for (const [key, result] of Object.entries(fields)) {
+    if (result.success && result.data !== undefined) {
+      Object.assign(parsed, { [key]: result.data });
+    }
+  }
+  return parsed;
 }
 
 function parseSelection<T extends string>(

@@ -141,6 +141,142 @@ describe("guided architecture routes", () => {
     expect(
       screen.getByRole("navigation", { name: "Architecture views" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Present this view" }),
+    ).toHaveFocus();
+  });
+
+  it("supports direct presentation URLs only on guided routes", async () => {
+    renderAtlas("/parity?audience=developer&present=true");
+
+    expect(
+      await screen.findByRole("navigation", { name: "Presentation routes" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", { name: "Architecture views" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes unsupported presentation state and entry controls", async () => {
+    const router = renderAtlas("/atlas?audience=developer&present=true");
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Unified architecture atlas",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Present this view" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("navigation", { name: "Presentation routes" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(router.state.location.search.present).toBeUndefined();
+    });
+  });
+
+  it("clears hidden filters when navigating to the journey", async () => {
+    const user = userEvent.setup();
+    const router = renderAtlas(
+      "/execution?audience=developer&modes=online_grpc&statuses=built",
+    );
+    const navigation = await screen.findByRole("navigation", {
+      name: "Architecture views",
+    });
+
+    await user.click(
+      within(navigation).getByRole("link", { name: "One-run journey" }),
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/journey");
+      expect(router.state.location.search).toEqual({
+        audience: "developer",
+      });
+    });
+    expect(
+      screen.queryByRole("region", { name: "Architecture filters" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows filters and an accurate count wherever component filters apply", async () => {
+    renderAtlas("/?audience=developer&modes=online_grpc");
+
+    expect(
+      await screen.findByRole("region", { name: "Architecture filters" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Filtered result count" }),
+    ).toHaveTextContent("4 components");
+  });
+
+  it("filters execution edges with their endpoint components", async () => {
+    renderAtlas("/execution?audience=maintainer&modes=online_grpc");
+
+    const contracts = await screen.findByRole("list", {
+      name: "Execution seam contracts",
+    });
+    expect(within(contracts).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(contracts).getByText("Pace arrivals and deadlines")).toBeInTheDocument();
+    expect(within(contracts).getByText("Dispatch prepared gRPC work")).toBeInTheDocument();
+    expect(
+      within(contracts).queryByText("Dispatch prepared HTTP work"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Filtered result count" }),
+    ).toHaveTextContent("4 components, 2 connections, 2 pairs");
+  });
+
+  it("uses stable data-plane groups without duplicate entities", async () => {
+    renderAtlas("/data-plane?audience=developer&modes=online_http");
+
+    const flow = await screen.findByRole("list", {
+      name: "Request shaping flow",
+    });
+    const boundaries = screen.getByRole("region", {
+      name: "Branch and representation boundaries",
+    });
+    expect(
+      within(flow).getByRole("heading", { name: "Typed dataset pipeline" }),
+    ).toBeInTheDocument();
+    expect(
+      within(boundaries).getByRole("heading", {
+        name: "Graph-IR dataflow execution",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("heading", {
+        name: "Graph-IR dataflow execution",
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("separates observability flow from evaluator boundaries", async () => {
+    renderAtlas("/observability?audience=developer");
+
+    expect(
+      await screen.findAllByRole("heading", {
+        name: "Native metrics and reporting",
+      }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole("heading", {
+        name: "Static benchmark evaluation",
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("renders maintainer evidence as repository source URLs", async () => {
+    renderAtlas("/execution?audience=maintainer&modes=online_grpc");
+
+    const evidence = await screen.findByRole("link", {
+      name: /crates\/aiperf-runner\/src\/grpc_execution\.rs:164-195/u,
+    });
+    expect(evidence).toHaveAttribute(
+      "href",
+      "https://github.com/ai-dynamo/aiperf/blob/main/crates/aiperf-runner/src/grpc_execution.rs#L164-L195",
+    );
   });
 
   it("uses semantic landmarks and non-trapping controls on mobile-ready views", async () => {
@@ -159,5 +295,8 @@ describe("guided architecture routes", () => {
     expect(
       screen.getByRole("button", { name: "Present this view" }),
     ).toHaveAttribute("type", "button");
+    expect(
+      screen.getByRole("button", { name: "Present this view" }),
+    ).not.toHaveAttribute("aria-hidden");
   });
 });

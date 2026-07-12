@@ -430,11 +430,11 @@
     text-transform: uppercase;
   }
 
-  .stage-rail h3,
-  .flow-lane h3,
-  .ownership-band h3,
-  .seam-nodes h3,
-  .mode-comparison h3 {
+  .stage-rail :is(h2, h3, h4),
+  .flow-lane :is(h2, h3, h4),
+  .ownership-band :is(h2, h3, h4),
+  .seam-nodes :is(h2, h3, h4),
+  .mode-comparison :is(h2, h3, h4) {
     margin: var(--space-5) 0 var(--space-3);
     font-family: var(--font-interface);
     font-size: 1rem;
@@ -483,7 +483,7 @@
     grid-column: 1;
   }
 
-  .ownership-band > h2 {
+  .ownership-band > h3 {
     grid-column: 1;
     margin: var(--space-3) 0 0;
     font-family: var(--font-interface);
@@ -564,7 +564,8 @@
     margin-block-start: var(--space-4);
   }
 
-  .evidence-citations a {
+  .evidence-citations a,
+  .evidence-citations span {
     overflow-wrap: anywhere;
     color: var(--accent-flow);
     font-family: var(--font-data);
@@ -930,8 +931,7 @@
       gap: var(--space-2);
     }
 
-    .audience-control > span,
-    .presentation-control {
+    .audience-control > span {
       display: none;
     }
 

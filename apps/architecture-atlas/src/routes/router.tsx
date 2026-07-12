@@ -31,6 +31,7 @@ import {
 } from "../domain/search";
 import {
   GuidedView,
+  filterableGuidedRoutes,
   type GuidedRoute,
 } from "../features/guided/guided-view";
 import { RoutePlaceholder } from "./placeholders";
@@ -69,18 +70,39 @@ function RootRouteComponent() {
   const routeIndex = presentationRoutes.findIndex(
     (route) => route === pathname,
   );
-  const presentation = search.present === true && routeIndex >= 0;
+  const presentationAvailable = routeIndex >= 0;
+  const presentation = search.present === true && presentationAvailable;
+  const filtersAvailable = filterableGuidedRoutes.has(pathname as GuidedRoute);
 
   useEffect(() => {
     persistAudience(audience, storage);
-    if (search.audience !== audience) {
+    const normalizedSearch = {
+      audience,
+      modes: filtersAvailable ? search.modes : undefined,
+      statuses: filtersAvailable ? search.statuses : undefined,
+      present: presentationAvailable ? search.present : undefined,
+    };
+    if (
+      search.audience !== normalizedSearch.audience ||
+      search.modes !== normalizedSearch.modes ||
+      search.statuses !== normalizedSearch.statuses ||
+      search.present !== normalizedSearch.present
+    ) {
       void navigate({
         replace: true,
         to: pathname,
-        search: (previous) => ({ ...previous, audience }),
+        search: normalizedSearch,
       });
     }
-  }, [audience, navigate, search.audience, storage]);
+  }, [
+    audience,
+    filtersAvailable,
+    navigate,
+    pathname,
+    presentationAvailable,
+    search,
+    storage,
+  ]);
 
   const handleAudienceChange = (nextAudience: Audience) => {
     persistAudience(nextAudience, storage);
@@ -103,9 +125,12 @@ function RootRouteComponent() {
   };
 
   const navigatePresentation = (route: (typeof presentationRoutes)[number]) => {
+    const retainFilters = filterableGuidedRoutes.has(route);
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries({
-      ...search,
+      audience,
+      modes: retainFilters ? search.modes : undefined,
+      statuses: retainFilters ? search.statuses : undefined,
       present: true,
     })) {
       if (value !== undefined) {
@@ -124,6 +149,7 @@ function RootRouteComponent() {
       onStartPresentation={() => setPresentation(true)}
       onAudienceChange={handleAudienceChange}
       presentation={presentation}
+      presentationAvailable={presentationAvailable}
       previousRoute={presentationRoutes[routeIndex - 1]}
     >
       <AudienceProvider audience={audience}>
@@ -165,11 +191,17 @@ function GuidedRouteComponent({ route }: { route: GuidedRoute }) {
   return (
     <GuidedView
       audience={audience}
-      modes={parseModes(search.modes)}
+      modes={
+        filterableGuidedRoutes.has(route) ? parseModes(search.modes) : []
+      }
       onModesChange={updateModes}
       onStatusesChange={updateStatuses}
       route={route}
-      statuses={parseStatuses(search.statuses)}
+      statuses={
+        filterableGuidedRoutes.has(route)
+          ? parseStatuses(search.statuses)
+          : []
+      }
     />
   );
 }
