@@ -4978,6 +4978,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn graph_terminal_record_reaches_adaptive_sampler_before_trace_completion() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let progress = GraphPhaseProgress::new(sink.clone(), failures);
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "trace-adaptive".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        let mut record = graph_phase_record("trace-adaptive", false, false);
+        record.ingest.token_arrival_ns.push(5);
+        record.ingest.usage.completion_tokens = Some(1);
+        let sampler: SharedWindowSampler =
+            Rc::new(RefCell::new(Box::new(TumblingWindowSampler::new(0))));
+        let captured = Rc::new(RefCell::new(Vec::new()));
+
+        ingest_graph_execution_event(
+            &captured,
+            Some(&sampler),
+            &progress,
+            RunnerGraphExecutionEvent::Record(Box::new(record)),
+        );
+
+        let window = sampler.borrow_mut().take(10);
+        assert_eq!(window.completed(), 1);
+        assert_eq!(captured.borrow().len(), 1);
+        assert_eq!(
+            *sink.returned.borrow(),
+            vec![PhaseReturn {
+                completes_session: true,
+                releases_prefill: true,
+                ..PhaseReturn::default()
+            }]
+        );
+    }
+
     #[derive(Debug)]
     struct UnusedHttpPlacement;
 
