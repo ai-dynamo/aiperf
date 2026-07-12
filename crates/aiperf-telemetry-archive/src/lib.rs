@@ -15,6 +15,7 @@ pub mod digest;
 pub mod evidence;
 pub mod identity;
 pub mod index;
+pub mod manifest;
 pub mod time;
 pub mod wal;
 
@@ -34,6 +35,10 @@ pub use index::{
     CompositeIndexKeyV1, IndexEntry, IndexError, IndexKey, IndexMutationSetV1, IndexObjectKind,
     IndexPageSink, IndexPageSource, IndexRemoval, IndexRootV1, IndexSnapshot, MemoryIndexPageStore,
     MutationMode,
+};
+pub use manifest::{
+    ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
+    GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
 };
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
 pub use wal::{
