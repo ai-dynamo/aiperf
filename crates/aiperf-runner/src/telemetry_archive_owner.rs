@@ -1147,11 +1147,11 @@ async fn run_owner(
                 )
                 .await;
                 let response_result = match result {
-                    Ok((receipt, frame_id)) => {
+                    Ok((receipt, frame_id, actual)) => {
                         summary.durable_frames = checked_increment(summary.durable_frames)?;
                         summary.receipts = checked_increment(summary.receipts)?;
                         summary.last_frame_id = Some(frame_id);
-                        lease.commit();
+                        lease.commit(actual);
                         Ok(receipt)
                     }
                     Err(error) => Err(error),
@@ -1382,14 +1382,14 @@ async fn process_owner_attempt(
     )
     .await;
     match result {
-        Ok((receipt, frame_id)) => {
+        Ok((receipt, frame_id, actual)) => {
             if attached {
                 commit_processed_source(processed_source_next, &source_id, source_record_seq)?;
             }
             summary.durable_frames = checked_increment(summary.durable_frames)?;
             summary.receipts = checked_increment(summary.receipts)?;
             summary.last_frame_id = Some(frame_id);
-            lease.commit();
+            lease.commit(actual);
             if let Some(response) = receipt_response {
                 let _ = response.send(Ok(receipt));
             }
@@ -1658,7 +1658,7 @@ async fn flush_pending_losses(
                 .reserve(ArchiveBudgetClass::Control)
                 .map_err(TelemetryArchiveOwnerError::Admission)?,
         };
-        let (_, frame_id) = append_frame_with_receipt(
+        let (_, frame_id, actual) = append_frame_with_receipt(
             config.sink.as_mut(),
             config.clock.as_ref(),
             config.archive_id,
@@ -1672,7 +1672,7 @@ async fn flush_pending_losses(
         summary.durable_frames = checked_increment(summary.durable_frames)?;
         summary.receipts = checked_increment(summary.receipts)?;
         summary.last_frame_id = Some(frame_id);
-        lease.commit();
+        lease.commit(actual);
     }
     if prepaid_control_lease.is_some() {
         return Err(TelemetryArchiveOwnerError::Invariant(
@@ -1776,7 +1776,7 @@ async fn append_observed_attempt(
     epoch_pending: &mut Option<ReceiptObserverEpochV1>,
     receipt_seq: &mut u64,
     observation: ArchiveAttemptObservation,
-) -> Result<(AppendReceipt, FrameId), TelemetryArchiveOwnerError> {
+) -> Result<(AppendReceipt, FrameId, ArchiveProjectionFootprint), TelemetryArchiveOwnerError> {
     let sequenced = sequencer
         .project_attempt_with_context(
             observation.decoded,
@@ -1816,7 +1816,7 @@ async fn append_lifecycle(
     epoch_pending: &mut Option<ReceiptObserverEpochV1>,
     receipt_seq: &mut u64,
     observation: ArchiveLifecycleObservation,
-) -> Result<(AppendReceipt, FrameId), TelemetryArchiveOwnerError> {
+) -> Result<(AppendReceipt, FrameId, ArchiveProjectionFootprint), TelemetryArchiveOwnerError> {
     let record_seq = sequencer
         .assign_control_record_seq()
         .map_err(|error| TelemetryArchiveOwnerError::Sequencing(error.to_string()))?;
@@ -1859,6 +1859,12 @@ async fn append_lifecycle(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Fixed per-frame durable overhead beyond the WAL payload: the frame
+/// header/footer and the receipt record. Conservatively rounded up; it is only
+/// used to keep committed growth honest and is always clamped to the admitted
+/// reservation.
+const WAL_FRAME_ENVELOPE_BYTES: u64 = 512;
+
 async fn append_frame_with_receipt(
     sink: &mut dyn ArchiveSink,
     clock: &dyn Clock,
@@ -1868,8 +1874,22 @@ async fn append_frame_with_receipt(
     epoch_pending: &mut Option<ReceiptObserverEpochV1>,
     receipt_seq: &mut u64,
     frame: ArchiveWalFrame,
-) -> Result<(AppendReceipt, FrameId), TelemetryArchiveOwnerError> {
-    let frame_id = frame.wal_frame.header().frame_id;
+) -> Result<(AppendReceipt, FrameId, ArchiveProjectionFootprint), TelemetryArchiveOwnerError> {
+    // The real durable growth of one frame is its WAL payload plus a fixed
+    // envelope for the frame header/footer and receipt record. It never creates
+    // a new spool file (it appends to the open segment; segment/partition file
+    // creation is separately reserved), so its file footprint is zero. This is
+    // retained as growth on commit; the conservative admission reservation is
+    // refunded, so a stream of small frames cannot exhaust the class budget.
+    let header = frame.wal_frame.header();
+    let frame_id = header.frame_id;
+    let actual = ArchiveProjectionFootprint {
+        bytes: header
+            .payload_len
+            .saturating_add(WAL_FRAME_ENVELOPE_BYTES),
+        files: 0,
+        frames: 0,
+    };
     let completion = sink
         .append_frame(frame)
         .await
@@ -1894,7 +1914,7 @@ async fn append_frame_with_receipt(
     *receipt_seq = receipt_seq
         .checked_add(1)
         .ok_or(TelemetryArchiveOwnerError::SequenceOverflow)?;
-    Ok((receipt, frame_id))
+    Ok((receipt, frame_id, actual))
 }
 
 fn wal_receipt_target(

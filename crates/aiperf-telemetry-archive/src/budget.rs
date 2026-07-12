@@ -267,10 +267,15 @@ impl ArchiveProjectionLease {
         &self.permit
     }
 
-    /// Converts this live reservation into conservative durable growth.
-    pub fn commit(mut self) {
+    /// Converts this live reservation into durable growth of exactly the
+    /// projection's `actual` footprint, refunding the conservative
+    /// over-reservation and the frame slot. `actual` is clamped to the reserved
+    /// upper bound. Passing the reserved footprint retains the whole worst-case
+    /// hold (the legacy behavior); passing the real written size keeps the
+    /// budget from exhausting on conservative reservations alone.
+    pub fn commit(mut self, actual: ArchiveProjectionFootprint) {
         if let Some(authority) = self.authority.take() {
-            authority.settle_projection(self.class, self.permit.footprint, true);
+            authority.settle_projection(self.class, self.permit.footprint, actual, true);
         }
     }
 }
@@ -278,7 +283,9 @@ impl ArchiveProjectionLease {
 impl Drop for ArchiveProjectionLease {
     fn drop(&mut self) {
         if let Some(authority) = self.authority.take() {
-            authority.settle_projection(self.class, self.permit.footprint, false);
+            // A dropped (uncommitted) lease refunds its whole reservation; the
+            // `actual` argument is ignored for the uncommitted case.
+            authority.settle_projection(self.class, self.permit.footprint, self.permit.footprint, false);
         }
     }
 }
@@ -305,12 +312,17 @@ pub trait ArchiveSpoolBudgetAuthority: Debug + Send + Sync {
     /// Returns current accounting and high-water health.
     fn snapshot(&self) -> ArchiveSpoolBudgetSnapshot;
 
-    /// Settles an exact lease. Implementations must be idempotence-safe by ownership.
+    /// Settles an exact lease. Implementations must be idempotence-safe by
+    /// ownership. `reserved` is the admitted upper bound; on a committed lease
+    /// only `actual` (clamped to `reserved`) is retained as durable growth and
+    /// the rest is refunded, while an uncommitted settle refunds `reserved`
+    /// entirely and ignores `actual`.
     #[doc(hidden)]
     fn settle_projection(
         &self,
         class: ArchiveBudgetClass,
-        footprint: ArchiveProjectionFootprint,
+        reserved: ArchiveProjectionFootprint,
+        actual: ArchiveProjectionFootprint,
         committed: bool,
     );
 }
@@ -775,15 +787,28 @@ impl ArchiveSpoolBudgetAuthority for AtomicArchiveSpoolBudget {
     fn settle_projection(
         &self,
         class: ArchiveBudgetClass,
-        footprint: ArchiveProjectionFootprint,
+        reserved: ArchiveProjectionFootprint,
+        actual: ArchiveProjectionFootprint,
         committed: bool,
     ) {
         let (byte_counter, file_counter, frame_counter) = self.class_counters(class);
-        frame_counter.fetch_sub(footprint.frames, Ordering::AcqRel);
-        if !committed {
-            byte_counter.fetch_sub(footprint.bytes, Ordering::AcqRel);
-            file_counter.fetch_sub(footprint.files, Ordering::AcqRel);
-        }
+        // The frame slot is always released: a settled projection no longer
+        // occupies the bounded reorder/owner queue.
+        frame_counter.fetch_sub(reserved.frames, Ordering::AcqRel);
+        // A committed projection retains only its real durable footprint (never
+        // more than the admitted upper bound); the conservative over-reservation
+        // is refunded so a stream of small frames cannot exhaust the class byte
+        // or file budget. An uncommitted settle refunds the whole reservation.
+        let (retained_bytes, retained_files) = if committed {
+            (
+                actual.bytes.min(reserved.bytes),
+                actual.files.min(reserved.files),
+            )
+        } else {
+            (0, 0)
+        };
+        byte_counter.fetch_sub(reserved.bytes - retained_bytes, Ordering::AcqRel);
+        file_counter.fetch_sub(reserved.files - retained_files, Ordering::AcqRel);
         self.state.outstanding_leases.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -951,7 +976,7 @@ mod tests {
                 footprint,
             )
             .unwrap();
-        lease.commit();
+        lease.commit(footprint);
         let snapshot = authority.snapshot();
         assert_eq!(snapshot.ordinary_growth_bytes, 50);
         assert_eq!(snapshot.ordinary_growth_files, 5);
@@ -975,7 +1000,7 @@ mod tests {
                 ordinary,
             )
             .unwrap()
-            .commit();
+            .commit(ordinary);
         assert!(matches!(
             Arc::clone(&authority).try_reserve(
                 &AttachedBestEffortAdmissionPolicy,
@@ -999,7 +1024,11 @@ mod tests {
                 },
             )
             .unwrap()
-            .commit();
+            .commit(ArchiveProjectionFootprint {
+                bytes: 20,
+                files: 2,
+                frames: 1,
+            });
         assert_eq!(authority.snapshot().control_growth_bytes, 20);
         assert!(matches!(
             Arc::clone(&authority).try_reserve(
@@ -1134,7 +1163,11 @@ mod tests {
                     },
                 );
                 if let Ok(lease) = result {
-                    lease.commit();
+                    lease.commit(ArchiveProjectionFootprint {
+                        bytes: 10,
+                        files: 1,
+                        frames: 1,
+                    });
                     true
                 } else {
                     false
