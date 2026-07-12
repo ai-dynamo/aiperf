@@ -382,13 +382,10 @@ pub async fn run_paced_adaptive_with_metrics_and_ancillary(
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        false,
-    )?);
+    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, false)?
+            .with_wire_response_capture(false),
+    );
     run_paced_with_backend(
         clock,
         start_ns,
@@ -732,13 +729,10 @@ pub async fn run_scheduled_online(
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        http2,
-    )?);
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false),
+    );
     run_scheduled_workload_with_processors(
         workload,
         clock,
@@ -774,13 +768,10 @@ pub async fn run_fixed_schedule_online_with_ancillary(
         Rc::new(FixedScheduleWorkload::new(conversations, schedule_source)?);
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        http2,
-    )?);
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false),
+    );
     run_scheduled_workload_with_ancillary(
         workload,
         clock,
@@ -813,13 +804,10 @@ pub async fn run_request_rate_online_with_ancillary(
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        http2,
-    )?);
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false),
+    );
     run_request_rate_with_backend(
         clock,
         start_ns,
@@ -1005,13 +993,10 @@ pub async fn run_user_centric_online_with_ancillary(
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        http2,
-    )?);
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false),
+    );
     run_user_centric_with_backend(
         clock,
         start_ns,
@@ -1120,13 +1105,10 @@ pub async fn run_user_centric_adaptive_online_with_ancillary(
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
-    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        http2,
-    )?);
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(
+        TransportSink::new_multi(clock.clone(), start_ns, &base_urls, model, http2)?
+            .with_wire_response_capture(false),
+    );
     run_user_centric_adaptive_with_backend(
         clock,
         start_ns,
