@@ -28,7 +28,8 @@ purpose for each, so an agent knows which file to open for a given question.
 ONE front-end drives **three execution modes** over a single `{transport, clock}`
 seam: **ONLINE-real** (real HTTP, wall clock — built), **ONLINE-mock** (HTTP to
 `aiperf-mock-rs`, wall clock — built), **OFFLINE-mock** (in-process virtual-clock
-engine co-sim — designed, not wired). Time lives behind `Clock` (`RealClock` vs
+Dynamo engine co-sim — built behind the non-default `dynamo-offline` feature).
+Time lives behind `Clock` (`RealClock` vs
 integer-ns DES `SimClock`); dispatch lives behind `RequestSink<R>` +
 `RequestObserver` into a `TraceCollector`; token callbacks can carry
 `ObservedTokenKind::{Output,Reasoning}` and fall back to unclassified `on_token`,
@@ -39,6 +40,13 @@ while terminal `ObservedUsage` carries endpoint counts as optional fields.
 fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-core,
 `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
 
+The complete canonical DynoSim/Mocker surface is also exposed through the Python
+frontend: `aiperf dynosim {run,mocker,sweep,capabilities}`. `run` and `mocker`
+forward raw argv to Dynamo's owning parsers; `sweep` calls the canonical four
+`ReplayOptimizeSpec` search operations. The shipped capability manifest is
+drift-checked against both argparse schemas, engine/router fields, Rust replay
+exports, steppable methods, sweep models, and every Mocker Cargo feature.
+
 ## Crate topology (`crates/`)
 
 | Crate | Read for | Entry files |
@@ -48,25 +56,26 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 | `aiperf-timing` | Clock-native scheduling + phase policy: arrivals, debt-draining slots, stop bounds, user-centric math, ramps, cancellation, URL selection, and `PhaseLifecycle`/`PhaseObserver`/`PhaseRunner`/`PhaseOrchestrator` with grace/drain/force escalation, seamless overlap, cancellation, and progress snapshots | `src/intervals.rs`, `src/slots.rs`, `src/stop.rs`, `src/user_centric.rs`, `src/ramping.rs`, `src/cancellation.rs`, `src/url_selection.rs`, `src/phase/` |
 | `aiperf-adaptive` | transport-neutral adaptive-control leaf: live concurrency/prefill/rate/users actuators, tumbling windows joining arrival/admit/token/usage/terminal observations, authoritative completion-token OSL/ITL reconciliation, SLA evaluation, step policies, `ramp_until_fail` controller, Clock-paced runtime, schema-v2 artifacts | `src/actuator.rs`, `src/window.rs`, `src/sla.rs`, `src/step.rs`, `src/controller.rs`, `src/runtime.rs`, `src/artifacts.rs` |
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic `SamplingRng` / `DistributionSampler` / `SequenceSampler` seams, cached cumulative weighted distributions, fixed-seed profile canary | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
-| `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline with exact raw/message replay, media, context, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity, never ground truth | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
-| `aiperf-metrics` | IO-free performance/accuracy engine: validated catalog, columns/ragged replay, formulas, SLO/phase/window/timeslice logic, sweeps, accuracy analysis, typed native-v2 reporter including exact static-evaluator and stateful agentic provenance/result blocks | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
+| `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline: token-keyed prefix-dependent dense handles, exact raw/message replay, decoded HF + synthetic media, context reconstruction, sampler factories, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
+| `aiperf-metrics` | IO-free performance/accuracy engine: validated 119-row catalog, NaN-sparse columns + exact ragged replay, record/aggregate/derived formulas, SLO/phase/window/timeslice logic, deterministic worker merge, effective/active/ICL sweeps, accuracy analysis, typed native-v2 reporter with exact static-evaluator and stateful agentic provenance/result blocks | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
 | `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, lossless agent/tool messages, generic/provider capabilities, callback configuration, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. | `src/protocol.rs`, `src/worker.rs` |
-| `aiperf-extensions` | cycle-free compile-time composition for dataset-format, sampler, and endpoint registries; accuracy is a directly injected process seam, not a Rust plugin category | `src/lib.rs` |
+| `aiperf-extensions` | cycle-free compile-time composition: aggregate `AiperfRegistry`, transactional `AiperfExtension` application, and typed access to dataset-format, sampler, and endpoint registries; accuracy is a directly injected process seam, not a Rust plugin category | `src/lib.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
-| `aiperf-graph` | Graph-IR dataflow over the unified dataset store, firing-gate executor, DES drivers, transport benches, and worker-local native metrics merged once at join | `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/static-and-agentic-accuracy, ancillary policy, and graph mode. Scheduled entry points lower through `phase_runtime` as profiling phases; typed plans expose warmup/seamless multi-phase runs with shared resources and phase-owned ramps. Accuracy keeps inference in Rust and delegates canonical scoring through the worker. `--agentic-benchmark` routes primary agent plus callback environment/verifier calls through one `AgenticWorkload` → unified dataset → scheduled runtime → endpoint → transport path. `agentic_gateway` is an authenticated OpenAI ingress with no model client; native v2 separates primary/environment/verifier call and token accounting. Every `--json` path emits native v2. | `src/main.rs`, `src/agentic.rs`, `src/agentic_gateway.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
+| `aiperf-graph` | Backend-neutral Graph-IR dataflow over the unified dataset store, firing-gate executor, clock-only and external-source DES drivers, transport benches, and worker-local native metrics merged once at join | `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
+| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/static-and-agentic-accuracy, ancillary policy, and graph mode. `--agentic-benchmark` runs canonical Harbor or AgentLab/BrowserGym primary calls plus callback environment/verifier calls over one `AgenticWorkload` → unified dataset → scheduled runtime → endpoint → transport path. `agentic_gateway` is an authenticated OpenAI ingress with no model client; native v2 separates primary/environment/verifier call and token accounting. Optional `dynamo-offline` swaps in `SimClock` plus Dynamo's steppable engine for every topology/router, canonical trace formats, cancellation, ramps/adaptive controls, SLA/raw artifacts, and byte-exact common reports. | `src/main.rs`, `src/agentic.rs`, `src/agentic_gateway.rs`, `src/dynamo_offline.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/request_rate.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
 `aiperf-dataset`, `aiperf-extensions`, `aiperf-graph`, `aiperf-metrics`, `aiperf-timing`,
-`aiperf-transport`, `aiperf-clock`, `loadgen-core`}; `aiperf-extensions` →
+`aiperf-transport`, `aiperf-clock`, `loadgen-core`} plus optional
+`dynamo-mocker` only under `dynamo-offline`; `aiperf-extensions` →
 `aiperf-dataset`; `aiperf-accuracy` has no workspace-crate dependency;
-`aiperf-adaptive` → {`aiperf-clock`, `aiperf-metrics`, `aiperf-timing`,
-`loadgen-core`}; `aiperf-dataset` → {`aiperf-clock`, `aiperf-endpoints`,
-`aiperf-rng`, `aiperf-transport`}; `aiperf-graph` → {`aiperf-core`,
-`aiperf-dataset`, `aiperf-metrics`, `aiperf-timing`, `aiperf-transport`,
-`aiperf-clock`, `loadgen-core`}; `aiperf-timing` → {`aiperf-clock`,
-`aiperf-rng`}; `aiperf-core` → `loadgen-core`; `aiperf-transport` →
+`aiperf-adaptive` → {`aiperf-clock`, `aiperf-metrics`,
+`aiperf-timing`, `loadgen-core`}; `aiperf-dataset` → {`aiperf-clock`,
+`aiperf-endpoints`, `aiperf-rng`, `aiperf-transport`}; `aiperf-graph` → {`aiperf-core`, `aiperf-dataset`,
+`aiperf-metrics`, `aiperf-timing`, `aiperf-transport`, `aiperf-clock`,
+`loadgen-core`}; `aiperf-timing` → {`aiperf-clock`, `aiperf-rng`};
+`aiperf-core` → `loadgen-core`; `aiperf-transport` →
 `aiperf-clock`. `aiperf-metrics` stays IO-free and runtime-neutral.
 
 ## Run ancillary timing policy
@@ -79,15 +88,21 @@ cargo run --release -p aiperf -- http://host-a:8000,http://host-b:8000 [MODEL] \
   --request-cancellation-rate 5 --request-cancellation-delay 0.5
 ```
 
-The standard online issuer owns all three live ramp actuators. User-centric owns
-only its optional session-concurrency pool, while fixed schedule owns none;
-unsupported ramps fail validation rather than becoming inert. Both scheduled
-strategies support per-turn cancellation and turn-zero sticky endpoint routing.
+The online concurrency and request-rate issuers own all applicable live ramp
+actuators. User-centric owns only its optional session-concurrency pool, while
+fixed schedule owns none; unsupported ramps fail validation rather than becoming
+inert. Scheduled strategies support per-turn cancellation and turn-zero sticky
+endpoint routing.
 
 ## Run canonical accuracy
 
 ```bash
-AIPERF_ACCURACY_PYTHON=/path/to/python cargo run --release -p aiperf -- [BASE_URL] [MODEL] --accuracy-benchmark mmlu-pro --accuracy-max-problems 100 --json out.json
+# The selected Python environment must contain AIPerf plus the pinned accuracy lock.
+AIPERF_ACCURACY_PYTHON=/path/to/python \
+cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --accuracy-benchmark mmlu-pro --accuracy-tasks math \
+  --accuracy-max-problems 100 --accuracy-tokenizer builtin \
+  [--accuracy-csv accuracy.csv] [--json out.json]
 ```
 
 Rust sends every LLM request and parses every response through its normal
@@ -118,6 +133,10 @@ scheduled/transport runner. Native v2 records exact worker/lock/container,
 harness source/version, dataset revision, agent, environment, verifier, authored
 configuration, canonical rewards, episode records, and artifacts. Infrastructure
 and cancellation records are never converted into zero/incorrect scores.
+Harbor's canonical source forms are accepted unchanged: Hub
+`org/name@ref`, legacy `name@version` (for example `bfcl@1.0`), and an existing
+local task-directory path. Hub tags are reported as resolved content hashes;
+legacy versions are frozen before Harbor enumerates their tasks.
 
 Opt-in live registry, Docker, and packaged-verifier acceptance:
 
@@ -149,6 +168,15 @@ MINIWOB_URL=file:///path/to/miniwob/html/miniwob/ \
 ## Run the scheduled workloads
 
 ```bash
+# Request-rate paces turns, prioritizing ready continuations over new sessions.
+# Omit --input-file for a synthetic K-turn template.
+cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --request-rate 100 --arrival constant --turns 4 --sessions 20 \
+  --concurrency 16 --prefill-concurrency 8 --think-time-ms 50 \
+  [--input-file conversations.jsonl] [--input-format multi_turn] \
+  [--tokenizer builtin] [--dataset-option KEY=JSON] \
+  [--timing-json timing.json] [--json out.json]
+
 # User-centric per-user pacing and churn; omit --input-file for synthetic turns.
 cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
   --user-centric-rate 8 --num-users 4 --turns 4 --sessions 20 \
@@ -158,10 +186,6 @@ cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
   [--timing-json timing.json] [--json out.json]
 
 # Absolute trace replay; the first trace timestamp is the default schedule zero.
-Harbor's canonical source forms are accepted unchanged: Hub
-`org/name@ref`, legacy `name@version` (for example `bfcl@1.0`), and an existing
-local task-directory path. Hub tags are reported as resolved content hashes;
-legacy versions are frozen before Harbor enumerates their tasks.
 cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
   --fixed-schedule --input-file trace.jsonl \
   [--input-format mooncake_trace] [--tokenizer builtin] \
@@ -175,11 +199,54 @@ applies an inclusive loader-side window. `--timing-json` includes every turn's
 scheduled, issued, dispatch, first-token, TTFT, and terminal timing plus aggregate
 early-issue/lateness statistics.
 
+## Run the optional offline engine
+
+The workspace root expects `../../../dynamo-aiperf-native`. The feature
+alone compiles and exposes the Dynamo dependency and `--offline` CLI surface;
+`dynamo-full` enables every optional mocker family:
+
+```bash
+cargo run --release -p aiperf --features dynamo-offline -- --offline \
+  --engine-profile profile.json --offline-topology aggregated \
+  --offline-workers 4 --concurrency 16 --requests 100 --isl 128 --osl 128
+
+# The same flag also accepts request-rate, fixed/user-centric, and Graph-IR options.
+cargo run --release -p aiperf --features dynamo-offline -- --offline \
+  --mode graph --turns 4 --instances 1000 --concurrency 32 --osl 8
+
+# Canonical trace + Dynamo aggregate/JSONL + AIPerf native-v2 artifacts.
+cargo run --release -p aiperf --features dynamo-full -- --offline \
+  --trace-file trace.jsonl --trace-format mooncake --trace-block-size 64 \
+  --offline-topology disaggregated --offline-router kv \
+  --report-json replay.json --report-jsonl requests.jsonl --json native-v2.json
+```
+
+Single, aggregate, and disaggregate topologies, both routers, all five trace
+formats, cancellation, ramps, adaptive controls, SLA goodput, and raw/timed
+artifacts run on one `SimClock` with no inference server. Before any offline API
+returns, the complete common flat reports must serialize to identical compact
+JSON bytes: 74 base fields, plus three goodput fields when configured. Requested
+KV offload fails closed on initialization error. Canonical accuracy alone remains
+online because the timing engine does not generate semantic answer text.
+
+## Run the complete canonical DynoSim/Mocker frontend
+
+```bash
+aiperf dynosim run trace.jsonl --replay-mode offline --report-json replay.json
+aiperf dynosim mocker --model-path Qwen/Qwen3-0.6B --endpoint dynamo.Mocker
+aiperf dynosim sweep optimize.yaml --operation compare_topologies --output sweep.json
+aiperf dynosim capabilities
+```
+
+These commands require an ai-dynamo Python installation. `run` and `mocker`
+delegate to the canonical implementations, so their calculations and artifacts
+are the same implementation—not an AIPerf reimplementation.
+
 ## "Which file answers…" quick map
 
 - **How is virtual time deterministic?** `crates/aiperf-clock/src/sim_clock.rs`
   (min-heap, `(at_ns, seq_no)`, `advance_to`) + `aiperf-graph/src/runtime.rs`
-  (`drive_sim` idle-pump).
+  (`drive_sim` and `drive_sim_with_source` idle-pumps).
 - **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)
   → `aiperf/src/http.rs` (`TransportSink`) →
   `aiperf-core/src/observer.rs` (`CollectorObserver`).
@@ -207,7 +274,7 @@ early-issue/lateness statistics.
   timing/CLI coverage is in `aiperf/tests/scheduled_real_mock.rs`.
 - **How does adaptive scale work?** `aiperf-adaptive/src/{window,sla,step,controller,runtime}.rs`
   (pure control) → `aiperf/src/adaptive.rs` (live-actuator assembly) →
-  `aiperf/src/run.rs` (online issuer integration).
+  `aiperf/src/run.rs` (backend-neutral online/offline issuer integration).
 - **Where do ramps, request cancellation, and sticky endpoint selection live?**
   `aiperf-timing/src/{ramping,cancellation,url_selection}.rs` (policy traits) →
   `aiperf/src/{ancillary,run,scheduled,http}.rs` (issuer/session wiring) →
@@ -228,13 +295,25 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   online/offline parity is shared code path + report schema, not byte-identical values.
 - `specs/2026-07-10-shared-rust-architecture-northstar.md` — the target
   abstraction (aspirational vocabulary).
-- `specs/2026-07-10-steppable-clock-injected-engine-design.md` — the `{clock}`
-  seam + OFFLINE-mock steppable engine (the missing third mode); its `lib/aiperf`
-  / `lib/mocker` framing is historical lineage.
+- `specs/2026-07-10-steppable-clock-injected-engine-design.md` — **built behind
+  `dynamo-offline` + implementation addenda**: neutral two-source DES pump,
+  in-process sink/observer/completion/cancellation seam, all profiles/topologies/
+  routers/trace formats, paced/scheduled/graph consumers, SLA/raw/timed artifacts,
+  AIC/offload feature families, and byte-exact no-server conformance against the
+  sibling Dynamo mocker.
 - `specs/2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected
   hyper transport (→ `aiperf-transport`).
-- `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — **built end to end + addenda**: full shared dataset flow with opaque accuracy correlation/task ids; Rust no longer stores evaluator ground truth.
-- `specs/2026-07-11-aiperf-rust-compile-time-extension-registry-design.md` — **built + addendum**: compile-time dataset/sampler/endpoint composition; accuracy registry categories are deleted for direct `AccuracyEvaluator` injection.
+- `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — **built end to
+  end + addenda** as `aiperf-dataset`: full loader→compose→dense
+  store→sampler→materializer flow shared by native CLI/accuracy and Graph-IR,
+  including exact replay, decoded/synthetic media, context/dispatch fields,
+  opaque accuracy correlation/task ids, and DAG metadata; Rust no longer stores
+  evaluator ground truth.
+- `specs/2026-07-11-aiperf-rust-compile-time-extension-registry-design.md` —
+  **built + addendum** statically linked replacement for `plugins.yaml`:
+  aggregate transactional registration for dataset formats, samplers, and
+  endpoints. Accuracy benchmark/grader categories are deleted in favor of the
+  directly injected Python-worker evaluator seam.
 - `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
   every load mode reduces to one dispatch verb on the clock-scheduled graph
   executor; strategies become `Workload` schedule generators. Supersedes the
@@ -243,18 +322,19 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-10-aiperf-rust-scheduling-policy-sketch.md` — early `Scheduler`
   sketch for credit *policy*. **Superseded by the unified-graph-runtime design's**
   `Workload` / `SlotPool` / `RatePool` / `Gate` seams.
-- `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — source-grounded
-  realization of request-rate multi-turn: a single-loop credit issuer emitting one
-  turn per interval (continuation-priority, NOT conversation arrivals), session +
-  prefill `SlotPool`s, `StopChecker` bounds, segment-pool turn materialization,
-  `Clock::sleep` think-time; two-plane throughput framing (control-loop never the
-  bottleneck, HTTP fans across cores).
+- `specs/2026-07-11-aiperf-rust-request-rate-multiturn-design.md` — **built +
+  implementation addendum**: `RequestRateWorkload` is the source-grounded
+  single-loop issuer emitting one turn per interval (FIFO continuation-priority,
+  NOT conversation arrivals), with session + prefill `SlotPool`s, TTFT/terminal
+  release, `StopChecker` bounds, segment-pool materialization, and Clock-deferred
+  think time. Synthetic and dataset CLI paths share `ScheduledRuntime`; exact
+  `SimClock`, real-HTTP, and feature-gated Dynamo tests pin policy and reply splicing.
 - `specs/2026-07-11-aiperf-rust-user-centric-fixed-schedule-design.md` — **built +
   addendum**: shared Clock-backed `ScheduledRuntime`, conversation/scheduler/source/
   workload traits, user-centric steady-state seeding + churn + continuation pacing,
   and fixed absolute trace replay are wired through the CLI. Exact `SimClock` and real
-  `aiperf-mock-rs` library/CLI tests validate ordering, drain, timing, TTFT, and reply
-  splicing; offline engine dispatch still awaits the global co-sim sink.
+  `aiperf-mock-rs` plus feature-gated Dynamo library/CLI tests validate ordering,
+  drain, timing, TTFT, and reply splicing.
 - `specs/2026-07-11-aiperf-rust-phase-runner-orchestrator-design.md` — **built +
   implementation addendum**: validated lifecycle/config/progress, direct observers,
   Clock-driven timeout/grace/cancel/drain/force escalation, failure finalization,
@@ -266,8 +346,8 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   `aiperf-adaptive` implements the actuator/evaluator/step/window/controller traits,
   Python-grounded SLA math with authoritative completion-token OSL/ITL reconciliation,
   Clock-paced `ramp_until_fail`, and schema-v2 artifacts;
-  the online CLI wires concurrency, prefill, request rate, and users into live issuer
-  state. `SimClock` control is tested; offline E2E still awaits the engine sink.
+  online and feature-gated offline modes share the injected-backend futures for
+  paced concurrency/prefill, scheduled request rate, and user-centric target users.
 - `specs/2026-07-11-aiperf-rust-ancillary-timing-policy-design.md` — **built +
   addendum**: Clock-driven Linear/Exponential/Poisson ramps, seeded warmup-aware
   Bernoulli fixed-delay policy, full-body send-complete HTTP 499 cancellation,
@@ -337,11 +417,14 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 
 No cargo targets in the (Python-legacy) `Makefile` — use cargo directly:
 `cargo build --release`, `cargo test` (self-contained axum mock), `cargo clippy
---all-targets`, `cargo fmt`. Run: `cargo run --release -p aiperf -- [BASE_URL]
+--all-targets`, `cargo fmt`. Build the optional adapter with
+`cargo build -p aiperf --features dynamo-offline`. Run:
+`cargo run --release -p aiperf -- [BASE_URL]
 [MODEL] --concurrency N --requests N --isl N --osl N` (online) or add `--mode
 graph …` (Graph-IR throughput). Adaptive online runs add `--duration SECONDS
 --adaptive-scale --adaptive-scale-strategy-type ramp_until_fail
 --adaptive-control-variable concurrency
 --adaptive-control-min 1 --adaptive-control-max N
 --adaptive-assessment-period 30 --adaptive-sustain-duration SECONDS
---adaptive-scale-sla request_latency:p95:le:MILLISECONDS`.
+--adaptive-scale-sla request_latency:p95:le:MILLISECONDS`. Offline runs use
+`cargo run --release -p aiperf --features dynamo-offline -- --offline …`.

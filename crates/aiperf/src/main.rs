@@ -31,15 +31,25 @@ use aiperf::agentic_gateway::{
     AgenticInferenceGateway, HttpAgenticInferenceGateway, resolve_advertised_host,
 };
 use aiperf::ancillary::{AncillaryTimingConfig, parse_base_urls};
+#[cfg(feature = "dynamo-offline")]
+use aiperf::dynamo_offline::{
+    OfflineAicConfig, OfflineEngineConfig, OfflineKvEventVisibility, OfflineMetricParity,
+    OfflineRouterMode, OfflineTopology, OfflineTraceConfig, OfflineTraceFormat,
+    run_fixed_schedule_offline_with_ancillary, run_graph_offline, run_paced_offline,
+    run_request_rate_offline_with_adaptive_and_ancillary, run_trace_offline,
+    run_user_centric_offline_with_adaptive_and_ancillary, write_dynamo_per_request_jsonl,
+    write_dynamo_report_json, write_dynamo_worker_artifacts_json,
+};
 use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
 use aiperf::report::{
     print_accuracy_table, print_agentic_table, print_report_table, write_accuracy_summary_csv,
     write_native_report_json, write_scheduled_report_json,
 };
+use aiperf::request_rate::RequestRateConfig;
 use aiperf::run::{
     run_fixed_schedule_online_with_ancillary, run_paced_adaptive_with_metrics_and_ancillary,
-    run_scheduled_online, run_single_turn_dataset_online,
+    run_request_rate_online_with_ancillary, run_scheduled_online, run_single_turn_dataset_online,
     run_user_centric_adaptive_online_with_ancillary, run_user_centric_online_with_ancillary,
 };
 use aiperf::scheduled::{ScheduledRunReport, TurnRecordProcessor, Workload};
@@ -62,6 +72,10 @@ use aiperf_rng::{RngRoot, SamplingDistribution};
 use aiperf_timing::{ArrivalPattern, StopConfig};
 use anyhow::Context;
 use clap::Parser;
+#[cfg(feature = "dynamo-offline")]
+use dynamo_mocker::replay::{
+    SlaThresholds as DynamoSlaThresholds, TraceSimulationReport as DynamoSimulationReport,
+};
 
 // A high-churn benchmark allocator: the graph executor + streaming client
 // allocate heavily per request, and glibc malloc/free was the top profiled
@@ -93,6 +107,180 @@ struct Cli {
     base_url: Option<String>,
     /// Positional `[MODEL]` (default `model`).
     model: Option<String>,
+
+    // --- feature-gated in-process Dynamo backend ---
+    /// Run against the in-process Dynamo mock engine with virtual time.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long)]
+    offline: bool,
+    /// Dynamo `MockEngineArgs` JSON profile.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    engine_profile: Option<PathBuf>,
+    /// Inline Dynamo `MockEngineArgs` JSON (canonical replay spelling).
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline", conflicts_with = "engine_profile")]
+    extra_engine_args: Option<String>,
+    /// Inline Dynamo prefill-engine JSON for disaggregated replay.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    prefill_engine_args: Option<String>,
+    /// Inline Dynamo decode-engine JSON for disaggregated replay.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    decode_engine_args: Option<String>,
+    /// Complete inline Dynamo `KvRouterConfig` JSON.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    router_config: Option<String>,
+    /// Startup router policy-family YAML path; overrides the JSON field.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    router_policy_config: Option<PathBuf>,
+    /// AIC serving backend for native replay timing.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_backend: Option<String>,
+    /// AIC GPU system identifier.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_system: Option<String>,
+    /// AIC backend performance-database version.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_backend_version: Option<String>,
+    /// AIC tensor-parallel degree.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_tp_size: Option<usize>,
+    /// AIC Hugging Face model path.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_model_path: Option<String>,
+    /// AIC MoE tensor-parallel degree.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_moe_tp_size: Option<usize>,
+    /// AIC MoE expert-parallel degree.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_moe_ep_size: Option<usize>,
+    /// AIC attention data-parallel degree.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_attention_dp_size: Option<usize>,
+    /// AIC GEMM quantization override.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_gemm_dtype: Option<String>,
+    /// AIC MoE quantization override.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_moe_dtype: Option<String>,
+    /// AIC FMHA quantization override.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_fmha_dtype: Option<String>,
+    /// AIC KV-cache quantization override.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_kv_cache_dtype: Option<String>,
+    /// AIC communication quantization override.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_comm_dtype: Option<String>,
+    /// AIC speculative draft-token count.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_nextn: Option<usize>,
+    /// Comma-separated conditional AIC draft acceptance rates.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    aic_nextn_accept_rates: Option<String>,
+    /// Write Dynamo's canonical aggregate replay report.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    report_json: Option<PathBuf>,
+    /// Write one canonical Dynamo backend record per request.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    report_jsonl: Option<PathBuf>,
+    /// Goodput SLA: maximum time to first token in milliseconds.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    sla_ttft_ms: Option<f64>,
+    /// Goodput SLA: maximum mean inter-token latency in milliseconds.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    sla_itl_ms: Option<f64>,
+    /// Goodput SLA: maximum end-to-end latency in milliseconds.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    sla_e2e_ms: Option<f64>,
+    /// Canonical replay trace file; repeat only for `--trace-format dynamo`.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long = "trace-file", requires = "offline")]
+    trace_files: Vec<PathBuf>,
+    /// Trace parser: mooncake, mooncake-delta, agentic_mooncake,
+    /// applied_compute_agentic, or dynamo.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value = "mooncake", requires = "offline")]
+    trace_format: String,
+    /// Tokens represented by each trace hash; Dynamo request traces derive it
+    /// when omitted.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    trace_block_size: Option<usize>,
+    /// Depth-first active-session cap for trace replay.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    replay_concurrency: Option<usize>,
+    /// Divide authored trace timing by this positive factor.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value_t = 1.0, requires = "offline")]
+    arrival_speedup_ratio: f64,
+    /// Applied Compute agentic shared initial-prefix fraction.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value_t = 0.0, requires = "offline")]
+    trace_shared_prefix_ratio: f64,
+    /// Applied Compute agentic shared-prefix group count.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value_t = 0, requires = "offline")]
+    trace_num_prefix_groups: usize,
+    /// Stop native trace replay before the next event beyond this simulated
+    /// duration, leaving admitted in-flight requests incomplete.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    max_sim_time_seconds: Option<f64>,
+    /// Write exact timed worker requests, output signals, and KV events.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "offline")]
+    worker_artifacts_json: Option<PathBuf>,
+    /// Test/debug KV-event visibility override for worker artifacts:
+    /// pass-start or pass-end.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, requires = "worker_artifacts_json")]
+    kv_event_visibility: Option<String>,
+    /// Offline deployment topology: single, aggregated, or disaggregated.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value = "single", requires = "offline")]
+    offline_topology: String,
+    /// Aggregate engine-worker count.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value_t = 1, requires = "offline")]
+    offline_workers: usize,
+    /// Disaggregated prefill-worker count.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value_t = 1, requires = "offline")]
+    offline_prefill_workers: usize,
+    /// Disaggregated decode-worker count.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value_t = 1, requires = "offline")]
+    offline_decode_workers: usize,
+    /// Routed offline policy: round-robin or kv.
+    #[cfg(feature = "dynamo-offline")]
+    #[arg(long, default_value = "round-robin", requires = "offline")]
+    offline_router: String,
 
     // --- flags shared between modes (defaults differ, hence Option) ---
     /// Offered concurrency (online default 16, graph default 64).
@@ -143,7 +331,8 @@ struct Cli {
     #[arg(long)]
     sessions: Option<usize>,
     /// JSON/JSONL conversation dataset. Required by `--fixed-schedule`; optional
-    /// for user-centric mode, which otherwise uses a synthetic K-turn template.
+    /// for request-rate and user-centric modes, which otherwise use synthetic
+    /// K-turn templates.
     #[arg(long)]
     input_file: Option<PathBuf>,
     /// Explicit registered dataset format. Omit for structural detection.
@@ -346,6 +535,96 @@ struct Cli {
     http2: bool,
 }
 
+fn is_offline(cli: &Cli) -> bool {
+    #[cfg(feature = "dynamo-offline")]
+    {
+        cli.offline
+    }
+    #[cfg(not(feature = "dynamo-offline"))]
+    {
+        let _ = cli;
+        false
+    }
+}
+
+#[cfg(feature = "dynamo-offline")]
+fn offline_engine_config(cli: &Cli) -> anyhow::Result<OfflineEngineConfig> {
+    let topology = match cli.offline_topology.as_str() {
+        "single" => OfflineTopology::Single,
+        "aggregated" | "aggregate" | "agg" => OfflineTopology::Aggregated,
+        "disaggregated" | "disagg" => OfflineTopology::Disaggregated,
+        value => anyhow::bail!(
+            "unknown --offline-topology '{value}' (expected single|aggregated|disaggregated)"
+        ),
+    };
+    let router_mode = match cli.offline_router.as_str() {
+        "round-robin" | "round_robin" => OfflineRouterMode::RoundRobin,
+        "kv" | "kv-router" | "kv_router" => OfflineRouterMode::Kv,
+        value => anyhow::bail!("unknown --offline-router '{value}' (expected round-robin|kv)"),
+    };
+    anyhow::ensure!(
+        cli.offline_workers > 0,
+        "--offline-workers must be positive"
+    );
+    anyhow::ensure!(
+        cli.offline_prefill_workers > 0,
+        "--offline-prefill-workers must be positive"
+    );
+    anyhow::ensure!(
+        cli.offline_decode_workers > 0,
+        "--offline-decode-workers must be positive"
+    );
+    for (name, value) in [
+        ("--sla-ttft-ms", cli.sla_ttft_ms),
+        ("--sla-itl-ms", cli.sla_itl_ms),
+        ("--sla-e2e-ms", cli.sla_e2e_ms),
+    ] {
+        if let Some(value) = value {
+            anyhow::ensure!(
+                value.is_finite() && value >= 0.0,
+                "{name} must be a finite, non-negative value, got {value}"
+            );
+        }
+    }
+    Ok(OfflineEngineConfig {
+        profile: cli.engine_profile.clone(),
+        extra_engine_args: cli.extra_engine_args.clone(),
+        prefill_engine_args: cli.prefill_engine_args.clone(),
+        decode_engine_args: cli.decode_engine_args.clone(),
+        router_config: cli.router_config.clone(),
+        router_policy_config: cli.router_policy_config.clone(),
+        router_model_name: Some(cli.model.clone().unwrap_or_else(|| "model".to_string())),
+        aic: Some(OfflineAicConfig {
+            backend: cli.aic_backend.clone(),
+            system: cli.aic_system.clone(),
+            backend_version: cli.aic_backend_version.clone(),
+            tp_size: cli.aic_tp_size,
+            model_path: cli.aic_model_path.clone(),
+            moe_tp_size: cli.aic_moe_tp_size,
+            moe_ep_size: cli.aic_moe_ep_size,
+            attention_dp_size: cli.aic_attention_dp_size,
+            gemm_dtype: cli.aic_gemm_dtype.clone(),
+            moe_dtype: cli.aic_moe_dtype.clone(),
+            fmha_dtype: cli.aic_fmha_dtype.clone(),
+            kv_cache_dtype: cli.aic_kv_cache_dtype.clone(),
+            comm_dtype: cli.aic_comm_dtype.clone(),
+            nextn: cli.aic_nextn,
+            nextn_accept_rates: cli.aic_nextn_accept_rates.clone(),
+        }),
+        capture_per_request: cli.report_jsonl.is_some(),
+        sla: DynamoSlaThresholds {
+            ttft_ms: cli.sla_ttft_ms,
+            itl_ms: cli.sla_itl_ms,
+            e2e_ms: cli.sla_e2e_ms,
+        },
+        topology,
+        workers: cli.offline_workers,
+        prefill_workers: cli.offline_prefill_workers,
+        decode_workers: cli.offline_decode_workers,
+        router_mode,
+    })
+}
+
 fn main() -> anyhow::Result<()> {
     aiperf::logging::init();
     let cli = Cli::parse();
@@ -456,6 +735,10 @@ fn ensure_adaptive_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
 }
 
 fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !is_offline(cli),
+        "--accuracy-benchmark requires model-generated text and is unavailable with --offline"
+    );
     anyhow::ensure!(
         !cli.adaptive_scale,
         "--adaptive-scale is not supported with --accuracy-benchmark"
@@ -1035,6 +1318,105 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
             "--prefill-concurrency must be greater than zero"
         );
     }
+    #[cfg(feature = "dynamo-offline")]
+    if !cli.trace_files.is_empty() {
+        anyhow::ensure!(is_offline(cli), "--trace-file requires --offline");
+        anyhow::ensure!(
+            cli.input_file.is_none()
+                && !cli.fixed_schedule
+                && cli.user_centric_rate.is_none()
+                && cli.request_rate.is_none(),
+            "--trace-file conflicts with dataset, fixed-schedule, user-centric, and request-rate workloads"
+        );
+        anyhow::ensure!(
+            cli.requests.is_none()
+                && cli.duration.is_none()
+                && cli.sessions.is_none()
+                && cli.isl.is_none()
+                && cli.osl.is_none(),
+            "--trace-file owns request count, timing, ISL, and OSL from the trace"
+        );
+        anyhow::ensure!(
+            !cli.adaptive_scale && !has_ancillary_timing_flags(cli),
+            "--trace-file does not accept AIPerf adaptive/ramp/cancellation controls"
+        );
+        anyhow::ensure!(
+            cli.trace_shared_prefix_ratio.is_finite()
+                && (0.0..=1.0).contains(&cli.trace_shared_prefix_ratio),
+            "--trace-shared-prefix-ratio must be finite and in 0..=1"
+        );
+        if let Some(block_size) = cli.trace_block_size {
+            anyhow::ensure!(block_size > 0, "--trace-block-size must be positive");
+        }
+        let format = match cli.trace_format.as_str() {
+            "mooncake" => OfflineTraceFormat::Mooncake,
+            "mooncake-delta" => OfflineTraceFormat::MooncakeDelta,
+            "agentic_mooncake" => OfflineTraceFormat::AgenticMooncake,
+            "applied_compute_agentic" => OfflineTraceFormat::AppliedComputeAgentic,
+            "dynamo" => OfflineTraceFormat::Dynamo,
+            other => anyhow::bail!(
+                "unknown --trace-format {other:?} (expected mooncake|mooncake-delta|agentic_mooncake|applied_compute_agentic|dynamo)"
+            ),
+        };
+        let max_sim_time_ms = cli
+            .max_sim_time_seconds
+            .map(|seconds| {
+                anyhow::ensure!(
+                    seconds.is_finite() && seconds >= 0.0,
+                    "--max-sim-time-seconds must be finite and non-negative"
+                );
+                Ok(seconds * 1_000.0)
+            })
+            .transpose()?;
+        let engine_config = offline_engine_config(cli)?;
+        let trace_config = OfflineTraceConfig {
+            paths: cli.trace_files.clone(),
+            format,
+            trace_block_size: cli.trace_block_size,
+            replay_concurrency: cli.replay_concurrency,
+            arrival_speedup_ratio: cli.arrival_speedup_ratio,
+            shared_prefix_ratio: cli.trace_shared_prefix_ratio,
+            num_prefix_groups: cli.trace_num_prefix_groups,
+            max_sim_time_ms,
+        };
+        let report = run_trace_offline(engine_config.clone(), trace_config.clone())?;
+        if let Some(path) = &cli.worker_artifacts_json {
+            let visibility = match cli.kv_event_visibility.as_deref() {
+                Some("pass-start") | Some("pass_start") => {
+                    Some(OfflineKvEventVisibility::PassStart)
+                }
+                Some("pass-end") | Some("pass_end") => Some(OfflineKvEventVisibility::PassEnd),
+                None => None,
+                Some(other) => anyhow::bail!(
+                    "unknown --kv-event-visibility {other:?} (expected pass-start|pass-end)"
+                ),
+            };
+            write_dynamo_worker_artifacts_json(&engine_config, &trace_config, visibility, path)?;
+        }
+        emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+        log_offline_metric_parity(report.parity);
+        print_report_table(&report.aiperf.performance);
+        if let Some(path) = &cli.json {
+            let native_report = NativeReport::from_outcome(
+                &report.aiperf.metrics,
+                &RunOutcome {
+                    run: ReportRunInfo {
+                        mode: Some("offline:trace".to_string()),
+                        model: Some(model),
+                    },
+                    summary: ReportSummary {
+                        duration_s: Some(
+                            report.aiperf.performance.throughput.wall_time_ms / 1_000.0,
+                        ),
+                        ..ReportSummary::default()
+                    },
+                    ..RunOutcome::default()
+                },
+            );
+            write_native_report_json(&native_report, path)?;
+        }
+        return Ok(());
+    }
     anyhow::ensure!(
         cli.input_format.is_none() || cli.input_file.is_some(),
         "--input-format requires --input-file"
@@ -1044,8 +1426,11 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         "--dataset-option requires --input-file"
     );
     anyhow::ensure!(
-        cli.tokenizer.is_none() || cli.input_file.is_some() || cli.user_centric_rate.is_some(),
-        "--tokenizer requires --input-file or --user-centric-rate"
+        cli.tokenizer.is_none()
+            || cli.input_file.is_some()
+            || cli.user_centric_rate.is_some()
+            || cli.request_rate.is_some(),
+        "--tokenizer requires --input-file, --request-rate, or --user-centric-rate"
     );
     if cli.fixed_schedule {
         anyhow::ensure!(
@@ -1125,6 +1510,26 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
                 registries.samplers(),
                 registries.endpoint_resolver(),
             )?);
+        if is_offline(cli) {
+            #[cfg(feature = "dynamo-offline")]
+            {
+                let report = run_fixed_schedule_offline_with_ancillary(
+                    offline_engine_config(cli)?,
+                    model,
+                    source,
+                    FixedScheduleConfig {
+                        auto_offset_timestamps: cli.fixed_schedule_auto_offset,
+                        start_offset_ms: cli.fixed_schedule_start_offset_ms,
+                    },
+                    ancillary,
+                    cli.seed.unwrap_or(0),
+                )?;
+                emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+                log_offline_metric_parity(report.parity);
+                emit_scheduled_report(cli, &report.aiperf)?;
+                return Ok(());
+            }
+        }
         let report = local.block_on(
             &rt,
             run_fixed_schedule_online_with_ancillary(
@@ -1229,6 +1634,25 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
             request_rate: rate,
             concurrency: cli.concurrency,
         };
+        if is_offline(cli) {
+            #[cfg(feature = "dynamo-offline")]
+            {
+                let report = run_user_centric_offline_with_adaptive_and_ancillary(
+                    offline_engine_config(cli)?,
+                    model,
+                    source,
+                    user_config,
+                    stop,
+                    adaptive,
+                    ancillary,
+                    cli.seed.unwrap_or(0),
+                )?;
+                emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+                log_offline_metric_parity(report.parity);
+                emit_scheduled_report(cli, &report.aiperf)?;
+                return Ok(());
+            }
+        }
         let report = match adaptive {
             Some(adaptive) => local.block_on(
                 &rt,
@@ -1262,9 +1686,92 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         return Ok(());
     }
 
+    if let Some(rate) = cli.request_rate {
+        let pattern = match cli.arrival.as_deref() {
+            Some("constant") => ArrivalPattern::Constant,
+            Some("gamma") => ArrivalPattern::Gamma,
+            Some("poisson") | None => ArrivalPattern::Poisson,
+            Some(other) => {
+                anyhow::bail!("unknown --arrival '{other}' (expected constant|poisson|gamma)")
+            }
+        };
+        let turns = cli.turns.unwrap_or(1);
+        anyhow::ensure!(turns > 0, "--turns must be greater than zero");
+        let source: Box<dyn ConversationSource> = if cli.input_file.is_some() {
+            let dataset = load_native_file_dataset(cli, &dataset_build, osl)?;
+            Box::new(NativeDatasetConversationSource::preferred_with_registries(
+                dataset,
+                model.clone(),
+                osl,
+                RngRoot::new(cli.seed),
+                registries.samplers(),
+                registries.endpoint_resolver(),
+            )?)
+        } else {
+            let dataset = build_native_synthetic_dataset(cli, &dataset_build, isl, osl, turns)?;
+            Box::new(NativeDatasetConversationSource::preferred_with_registries(
+                dataset,
+                model.clone(),
+                osl,
+                RngRoot::new(cli.seed),
+                registries.samplers(),
+                registries.endpoint_resolver(),
+            )?)
+        };
+        let adaptive = build_adaptive_cli_config(cli, concurrency, pattern)?;
+        anyhow::ensure!(
+            !matches!(
+                adaptive.as_ref().map(|config| config.control_variable),
+                Some(AdaptiveControlVariable::Users)
+            ),
+            "adaptive users requires --user-centric-rate"
+        );
+        let rate_config = RequestRateConfig {
+            arrival_pattern: pattern,
+            request_rate: Some(rate),
+            arrival_smoothness: cli.smoothness,
+            session_concurrency: cli.concurrency,
+            prefill_concurrency: cli.prefill_concurrency,
+            seed: cli.seed.unwrap_or(0),
+        };
+        if is_offline(cli) {
+            #[cfg(feature = "dynamo-offline")]
+            {
+                let report = run_request_rate_offline_with_adaptive_and_ancillary(
+                    offline_engine_config(cli)?,
+                    model,
+                    source,
+                    rate_config,
+                    stop,
+                    adaptive,
+                    ancillary,
+                )?;
+                emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+                log_offline_metric_parity(report.parity);
+                emit_scheduled_report(cli, &report.aiperf)?;
+                return Ok(());
+            }
+        }
+        let report = local.block_on(
+            &rt,
+            run_request_rate_online_with_ancillary(
+                base_url,
+                model,
+                source,
+                rate_config,
+                stop,
+                cli.http2,
+                adaptive,
+                ancillary,
+            ),
+        )?;
+        emit_scheduled_report(cli, &report)?;
+        return Ok(());
+    }
+
     anyhow::ensure!(
         cli.timing_json.is_none(),
-        "--timing-json is only valid with --fixed-schedule or --user-centric-rate"
+        "--timing-json is only valid with --fixed-schedule, --request-rate, or --user-centric-rate"
     );
     anyhow::ensure!(
         cli.num_users.is_none(),
@@ -1272,7 +1779,7 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
     );
     anyhow::ensure!(
         cli.input_file.is_none(),
-        "--input-file is currently supported by --fixed-schedule and --user-centric-rate"
+        "--input-file is currently supported by --fixed-schedule, --request-rate, and --user-centric-rate"
     );
 
     let workload = SkeletonWorkload {
@@ -1283,27 +1790,11 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         think_time_ms: None,
     };
 
-    // `--request-rate` selects open-loop rate mode; absent = closed-loop concurrency
-    // (ConcurrencyBurst) which defaults to concurrency 16.
-    let (pattern, rate) = match cli.request_rate {
-        Some(r) => {
-            let p = match cli.arrival.as_deref() {
-                Some("constant") => ArrivalPattern::Constant,
-                Some("gamma") => ArrivalPattern::Gamma,
-                Some("poisson") | None => ArrivalPattern::Poisson,
-                Some(other) => {
-                    anyhow::bail!("unknown --arrival '{other}' (expected constant|poisson|gamma)")
-                }
-            };
-            (p, Some(r))
-        }
-        None => (ArrivalPattern::ConcurrencyBurst, None),
-    };
-    let concurrency_opt = if cli.request_rate.is_some() {
-        cli.concurrency // open-loop unless capped
-    } else {
-        Some(concurrency) // closed-loop concurrency
-    };
+    // Request-rate returned through the scheduled multi-turn path above. The
+    // remaining synthetic path is closed-loop concurrency only.
+    let pattern = ArrivalPattern::ConcurrencyBurst;
+    let rate = None;
+    let concurrency_opt = Some(concurrency);
 
     let adaptive = build_adaptive_cli_config(cli, concurrency, pattern)?;
     anyhow::ensure!(
@@ -1313,6 +1804,49 @@ fn run_online_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()>
         ),
         "adaptive users requires --user-centric-rate"
     );
+
+    if is_offline(cli) {
+        #[cfg(feature = "dynamo-offline")]
+        {
+            let report = run_paced_offline(
+                offline_engine_config(cli)?,
+                model.clone(),
+                workload,
+                pattern,
+                rate,
+                cli.smoothness,
+                concurrency_opt,
+                cli.prefill_concurrency,
+                stop,
+                cli.seed.unwrap_or(0),
+                adaptive,
+                ancillary,
+            )?;
+            emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+            log_offline_metric_parity(report.parity);
+            print_report_table(&report.aiperf.performance);
+            if let Some(path) = &cli.json {
+                let native_report = NativeReport::from_outcome(
+                    &report.aiperf.metrics,
+                    &RunOutcome {
+                        run: ReportRunInfo {
+                            mode: Some("offline".to_string()),
+                            model: Some(model),
+                        },
+                        summary: ReportSummary {
+                            duration_s: Some(
+                                report.aiperf.performance.throughput.wall_time_ms / 1_000.0,
+                            ),
+                            ..ReportSummary::default()
+                        },
+                        ..RunOutcome::default()
+                    },
+                );
+                write_native_report_json(&native_report, path)?;
+            }
+            return Ok(());
+        }
+    }
 
     let report_endpoints = parse_base_urls(&base_url)?;
     let report_model = model.clone();
@@ -1670,7 +2204,9 @@ fn parse_graph_config(cli: &Cli) -> GraphParams {
         .map(|n| n.get())
         .unwrap_or(8);
     let turns: usize = cli.turns.unwrap_or(4);
-    let workers: usize = cli.workers.unwrap_or(cores);
+    let workers: usize = cli
+        .workers
+        .unwrap_or(if is_offline(cli) { 1 } else { cores });
     let concurrency: usize = cli.concurrency.unwrap_or(64);
     let max_tokens: usize = cli.osl.unwrap_or(1);
     // A `--duration` bound governs the run; when the user did not also pin
@@ -1755,9 +2291,17 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
         conns,
     } = parse_graph_config(cli);
 
-    let backend = "aiperf-transport";
+    let backend = if is_offline(cli) {
+        "dynamo-offline"
+    } else {
+        "aiperf-transport"
+    };
     let report_model = cfg.model.clone();
-    let report_endpoints = cfg.base_urls.clone();
+    let report_endpoints = if is_offline(cli) {
+        Vec::new()
+    } else {
+        cfg.base_urls.clone()
+    };
 
     tracing::info!(
         backend,
@@ -1773,7 +2317,26 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
         "starting aiperf graph benchmark"
     );
 
-    let r = run_transport_bench(cfg, http2, conns);
+    let r = if is_offline(cli) {
+        #[cfg(feature = "dynamo-offline")]
+        {
+            let report = run_graph_offline(offline_engine_config(cli)?, cfg)?;
+            emit_offline_dynamo_artifacts(cli, &report.dynamo)?;
+            log_offline_metric_parity(report.parity);
+            tracing::info!(
+                dynamo_completed = report.dynamo.request_counts.completed_requests,
+                dynamo_prefix_reuse = report.dynamo.prefix_cache_reused_ratio,
+                "Dynamo offline graph simulation completed"
+            );
+            report.aiperf
+        }
+        #[cfg(not(feature = "dynamo-offline"))]
+        {
+            unreachable!("offline mode is unavailable without its compile feature")
+        }
+    } else {
+        run_transport_bench(cfg, http2, conns)
+    };
     let summary = GraphSummary {
         rps: r.rps(),
         p50: r.ttft_p50_ms,
@@ -1801,7 +2364,11 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
             &r.native_metrics,
             &RunOutcome {
                 run: ReportRunInfo {
-                    mode: Some("graph".to_string()),
+                    mode: Some(if is_offline(cli) {
+                        "offline:graph".to_string()
+                    } else {
+                        "graph".to_string()
+                    }),
                     model: Some(report_model),
                 },
                 summary: ReportSummary {
@@ -1816,4 +2383,26 @@ fn run_graph_mode(cli: &Cli) -> anyhow::Result<()> {
         write_native_report_json(&native_report, path)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "dynamo-offline")]
+fn emit_offline_dynamo_artifacts(cli: &Cli, report: &DynamoSimulationReport) -> anyhow::Result<()> {
+    if let Some(path) = &cli.report_json {
+        write_dynamo_report_json(report, path)?;
+    }
+    if let Some(path) = &cli.report_jsonl {
+        write_dynamo_per_request_jsonl(report, path)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "dynamo-offline")]
+fn log_offline_metric_parity(parity: OfflineMetricParity) {
+    tracing::info!(
+        shared_fields = parity.shared_fields,
+        independently_accumulated_fields = parity.independently_accumulated_fields,
+        backend_owned_fields = parity.backend_owned_fields,
+        serialized_bytes = parity.serialized_bytes,
+        "verified byte-exact AIPerf/Dynamo shared metrics"
+    );
 }

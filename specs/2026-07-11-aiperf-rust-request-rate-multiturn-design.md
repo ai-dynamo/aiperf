@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Date:** 2026-07-11
 **Author:** Anthony Casagrande (Tech Lead) + Claude
-**Status:** design (not built) — realizes the `request-rate | chain` row of the unified-graph-runtime spec
+**Status:** built + implementation addendum — realizes the `request-rate | chain` row of the unified-graph-runtime spec
 **Grounding:** end-to-end line-by-line read of the Python credit/timing subsystem —
 `src/aiperf/timing/strategies/request_rate.py`, `credit/issuer.py`, `credit/structs.py`,
 `timing/phase/stop_conditions.py`, `timing/concurrency.py`, `timing/conversation_source.py`,
@@ -146,14 +146,13 @@ no-policy max-throughput escape hatch only.
 | Absolute-schedule pacer + catch-up | arrival loop | `aiperf::run` (`run_paced`) | **built** (single-turn only) |
 | Pacing / think-time sleeps | `Clock::sleep` | `aiperf-clock` | **built** |
 | Turn prompt = prior replies spliced | `SegmentStore` + `materialize` | `aiperf-graph` | **built** |
-| Dispatch turn + record TTFT/ITL (TTFT releases prefill) | `RequestSink` + observer | `loadgen-core` / `aiperf-transport` | **built** (no TTFT-release hook yet) |
-| **Continuation queue + two-source issue loop** | `CreditIssuer` (new) | new / `aiperf-timing` | **designed** |
-| **Conversation source over the segment pool** | `ConversationSource` trait | new | **designed** |
-| **Prefill-release-on-TTFT wiring** | observer first-token → `SlotPool.release` | `aiperf-core` observer | **designed** |
+| Dispatch turn + record TTFT/ITL (TTFT releases prefill) | `TurnDispatcher` + scheduled lifecycle hooks | `aiperf` / `aiperf-transport` | **built** |
+| **Continuation queue + two-source issue loop** | `RequestRateWorkload` | `aiperf` | **built** |
+| **Conversation source over the segment pool** | `ConversationSource` trait | `aiperf` / `aiperf-dataset` | **built** |
+| **Prefill-release-on-TTFT wiring** | first-token lifecycle hook → `SlotGuard::drop` | `aiperf` | **built** |
 
-The bulk exists. The unbuilt core is the **continuation queue + priority issue loop**
-and a **conversation source** that yields segment-pool-materialized multi-turn
-sessions (today's `SkeletonWorkload` is single-turn synthetic).
+The implementation addendum below records the completed continuation queue,
+priority issue loop, TTFT release edge, and dataset/CLI wiring.
 
 ### 3.1 The new seams (every extension point a trait)
 
@@ -179,8 +178,8 @@ sessions (today's `SkeletonWorkload` is single-turn synthetic).
 
 Same `RateWorkload` + `CreditIssuer` + `SlotPool`s + `StopChecker` code on all three;
 only `{Clock, RequestSink}` are injected. ONLINE-real and ONLINE-mock differ by URL.
-OFFLINE swaps `RealClock`→`SimClock` and the HTTP sink for the in-process engine sink
-(the still-unwired third mode). **Parity is code-path + report-schema, not
+OFFLINE swaps `RealClock`→`SimClock` and the HTTP sink for the feature-gated in-process
+engine sink. **Parity is code-path + report-schema, not
 byte-identical metric values** — simulated vs real timings differ by construction
 (per the port-exact ledger addendum).
 
@@ -217,16 +216,14 @@ datasets and agentic branching.
 
 ---
 
-## 7. Risks / open questions
+## 7. Original risks / open questions (resolved below where noted)
 
-- **Session-slot release site.** Verified in `callback_handler.py` (root final turn +
-  phase-end cleanup); the Rust `RequestSink`/observer must expose a terminal hook that
-  distinguishes final-turn from mid-conversation so the issuer releases the session
-  slot at the right moment. The transport sink today emits `on_terminal` but not
-  turn-final semantics.
-- **Prefill TTFT hook.** The observer records first-token time but does not yet call
-  back into a slot pool; needs a release edge without adding `Arc`/lock on the hot
-  path (it is single-loop, so `Rc<RefCell>` suffices).
+- **Session-slot release site — resolved.** `IssuedCredit::is_final_turn` is
+  available to the scheduled terminal callback; request/duration truncation and
+  workload cleanup release non-final sessions explicitly.
+- **Prefill TTFT hook — resolved.** `ScheduledRuntime::issue_turn_with_hooks`
+  carries an `Rc`-local first-token callback plus terminal fallback, with no
+  `Arc` or lock on the hot path.
 - **Numbering vs work-steal.** This path is single-loop, so numbering is a plain
   counter. It must NOT be conflated with the work-steal atomic id (a different,
   no-policy deployment).
@@ -244,5 +241,51 @@ final) and a **prefill `SlotPool`** (every turn → TTFT), bounded by `StopCheck
 with turns materialized from the segment pool and think-time deferred via
 `Clock::sleep` — control-plane on one loop (never the bottleneck), HTTP fanned out as
 the data plane, and the whole thing deterministic under `SimClock`. Most primitives
-exist in `aiperf-timing`; the unbuilt core is the continuation queue + two-source
-issue loop + a conversation source over the segment pool.
+exist in `aiperf-timing`; `aiperf::request_rate::RequestRateWorkload` composes them
+through the shared scheduled runtime.
+
+---
+
+## 9. Implementation addendum (2026-07-11)
+
+The linear request-rate chain is built in
+`crates/aiperf/src/request_rate.rs` as `RequestRateWorkload`, a normal
+`scheduled::Workload`. It owns the single issuer loop, FIFO continuation queue,
+cached next sampler draw, session guards, and per-turn prefill guards. The loop
+draws the next interval before admission, re-anchors rather than catching up,
+issues at most one turn per tick, blocks only continuation prefill acquisition,
+and schedules think-time as delayed queue insertion through
+`ClockTaskScheduler`.
+
+`ScheduledRuntime::issue_turn_with_hooks` exposes the policy-neutral first-token
+and terminal lifecycle edges. Request-rate drops the prefill guard on the first
+meaningful token and idempotently drops it again at terminal for error,
+cancellation, empty, and non-streaming no-token fallbacks. Session guards are
+held from an admitted turn zero through the final return, or released during
+request/duration truncation and failure cleanup. Interval generators and slot
+pools are exposed to the existing ramp and adaptive actuators; cancellation and
+turn-zero endpoint selection use the same scheduled ancillary pipeline as other
+workloads.
+
+The online CLI now lowers both `--input-file` datasets and synthetic `--turns`
+templates into `NativeDatasetConversationSource` and runs `--request-rate`
+through this workload. `--timing-json` is supported, loader-preferred sampling is
+preserved, and every continuation is materialized through the unified segment
+store with the real prior assistant reply.
+
+Executable evidence:
+
+- `crates/aiperf/tests/request_rate_sim.rs` proves continuation priority, exact
+  turn pacing, cached-sample retry, session and prefill limits, TTFT release,
+  terminal fallback, think time, request/session/duration stops, drain behavior,
+  and reply-spliced materialization under `SimClock`.
+- `crates/aiperf/tests/request_rate_cli.rs` proves dataset-backed multi-turn CLI
+  dispatch and reply splicing over real HTTP.
+- Existing scheduled, ancillary, adaptive, and workspace suites cover the shared
+  runtime and actuator regressions.
+
+DAG fan-out remains owned by `aiperf-graph`. The separately designed engine sink
+is now built behind `aiperf/dynamo-offline`: `tests/dynamo_offline_cli.rs` drives
+this unchanged continuation-priority workload against Dynamo on one `SimClock`,
+without HTTP. Adaptive request-rate composition is still unavailable in that
+optional backend; the base linear request-rate workload is end-to-end.

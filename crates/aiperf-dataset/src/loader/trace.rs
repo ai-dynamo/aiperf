@@ -168,11 +168,10 @@ impl DatasetLoader for MooncakeTraceDatasetLoader {
                 DatasetError::Validation(format!("{}: invalid mooncake row: {error}", row.origin))
             })?;
             parsed.validate(&row.origin)?;
-            if config.max_input_tokens.is_some_and(|cap| {
-                parsed
-                    .input_length
-                    .is_some_and(|length| length > cap)
-            }) {
+            if config
+                .max_input_tokens
+                .is_some_and(|cap| parsed.input_length.is_some_and(|length| length > cap))
+            {
                 continue;
             }
             retained.push(row);

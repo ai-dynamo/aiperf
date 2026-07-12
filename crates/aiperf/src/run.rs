@@ -42,11 +42,12 @@ use crate::ancillary::{AncillaryTimingConfig, parse_base_urls, url_selector};
 use crate::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use crate::http::TransportSink;
+use crate::http::{HttpRequestDispatcher, TransportSink};
 use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
 use crate::multiturn::ConversationSource;
+use crate::request_rate::{RequestRateConfig, RequestRateWorkload};
 use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime,
     SingleTurnDatasetWorkload, TurnDispatcher, TurnRecordProcessor, Workload,
@@ -64,7 +65,7 @@ pub struct OnlineRunReport {
     pub metrics: AccumulatorSummary,
 }
 
-fn validate_ramp_actuators(
+pub(crate) fn validate_ramp_actuators(
     ancillary: &AncillaryTimingConfig,
     pattern: ArrivalPattern,
     rate: Option<f64>,
@@ -100,7 +101,7 @@ fn validate_ramp_actuators(
     Ok(())
 }
 
-fn validate_adaptive_ramp_ownership(
+pub(crate) fn validate_adaptive_ramp_ownership(
     ancillary: &AncillaryTimingConfig,
     adaptive: Option<&AdaptiveRunConfig>,
 ) -> anyhow::Result<()> {
@@ -123,7 +124,7 @@ fn validate_adaptive_ramp_ownership(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn start_ramps(
+pub(crate) fn start_ramps(
     ancillary: &AncillaryTimingConfig,
     clock: Rc<dyn Clock>,
     intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
@@ -178,7 +179,7 @@ fn start_ramps(
     Ok(handles)
 }
 
-async fn stop_ramps(handles: Vec<RampHandle>) -> anyhow::Result<()> {
+pub(crate) async fn stop_ramps(handles: Vec<RampHandle>) -> anyhow::Result<()> {
     for handle in handles {
         if handle.is_running() {
             handle.stop();
@@ -204,7 +205,7 @@ fn scheduled_policies(
     })
 }
 
-fn validate_user_centric_ramps(
+pub(crate) fn validate_user_centric_ramps(
     ancillary: &AncillaryTimingConfig,
     config: UserCentricConfig,
 ) -> anyhow::Result<()> {
@@ -378,12 +379,59 @@ pub async fn run_paced_adaptive_with_metrics_and_ancillary(
     adaptive: Option<AdaptiveRunConfig>,
     ancillary: AncillaryTimingConfig,
 ) -> anyhow::Result<OnlineRunReport> {
-    ancillary.validate()?;
-    validate_ramp_actuators(&ancillary, pattern, rate, concurrency, prefill_concurrency)?;
-    validate_adaptive_ramp_ownership(&ancillary, adaptive.as_ref())?;
     let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
+    let sink: Rc<dyn HttpRequestDispatcher> = Rc::new(TransportSink::new_multi(
+        clock.clone(),
+        start_ns,
+        &base_urls,
+        model,
+        false,
+    )?);
+    run_paced_with_backend(
+        clock,
+        start_ns,
+        sink,
+        base_urls,
+        workload,
+        pattern,
+        rate,
+        smoothness,
+        concurrency,
+        prefill_concurrency,
+        stop,
+        seed,
+        adaptive,
+        ancillary,
+    )
+    .await
+}
+
+/// Backend-neutral paced issuer shared by real HTTP and the optional in-process
+/// Dynamo engine. The caller supplies one clock, one dispatcher, and diagnostic
+/// endpoint names; all scheduling, admission, adaptive control, observations,
+/// and report construction below are identical across backends.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_paced_with_backend(
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    sink: Rc<dyn HttpRequestDispatcher>,
+    base_urls: Vec<String>,
+    workload: SkeletonWorkload,
+    pattern: ArrivalPattern,
+    rate: Option<f64>,
+    smoothness: Option<f64>,
+    concurrency: Option<usize>,
+    prefill_concurrency: Option<usize>,
+    stop: StopConfig,
+    seed: u64,
+    adaptive: Option<AdaptiveRunConfig>,
+    ancillary: AncillaryTimingConfig,
+) -> anyhow::Result<OnlineRunReport> {
+    ancillary.validate()?;
+    validate_ramp_actuators(&ancillary, pattern, rate, concurrency, prefill_concurrency)?;
+    validate_adaptive_ramp_ownership(&ancillary, adaptive.as_ref())?;
     let ms = |ns: i64| (ns - start_ns) as f64 / 1_000_000.0;
 
     let collector = Rc::new(CollectorObserver::new(false));
@@ -394,13 +442,6 @@ pub async fn run_paced_adaptive_with_metrics_and_ancillary(
     ));
     let delegates: Vec<Rc<dyn RequestObserver>> = vec![collector.clone(), native_metrics.clone()];
     let base_observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
-    let sink = Rc::new(TransportSink::new_multi(
-        clock.clone(),
-        start_ns,
-        &base_urls,
-        model,
-        false,
-    )?);
     let adaptive_integer_minimum = match adaptive.as_ref() {
         Some(config)
             if matches!(
@@ -575,10 +616,11 @@ pub async fn run_paced_adaptive_with_metrics_and_ancillary(
             let prefill_guard = Rc::new(RefCell::new(prefill_guard));
             let prefill_for_first_token = prefill_guard.clone();
             let uuid = req.uuid;
+            let release_prefill = move |_ttft_ns| {
+                prefill_for_first_token.borrow_mut().take();
+            };
             match sink2
-                .dispatch_collect_with_hooks(req, obs2.as_ref(), move |_ttft_ns| {
-                    prefill_for_first_token.borrow_mut().take();
-                })
+                .dispatch_collect(req, obs2.as_ref(), &release_prefill)
                 .await
             {
                 Ok(response) => native_metrics2.record_response(
@@ -749,6 +791,180 @@ pub async fn run_fixed_schedule_online_with_ancillary(
     .await
 }
 
+/// Run continuation-priority request-rate scheduling over real HTTP.
+///
+/// One interval tick issues either the oldest ready continuation or the cached
+/// first turn of a new sampled session. The supplied conversation source may be
+/// synthetic or dataset-backed; both travel through the same materialization,
+/// observer, slot, stop, ancillary, and adaptive paths.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_request_rate_online_with_ancillary(
+    base_url: String,
+    model: String,
+    conversations: Box<dyn ConversationSource>,
+    config: RequestRateConfig,
+    stop: StopConfig,
+    http2: bool,
+    adaptive: Option<AdaptiveRunConfig>,
+    ancillary: AncillaryTimingConfig,
+) -> anyhow::Result<ScheduledRunReport> {
+    let base_urls = parse_base_urls(&base_url)?;
+    let clock: Rc<dyn Clock> = RealClock::new();
+    let start_ns = clock.now_ns();
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
+        clock.clone(),
+        start_ns,
+        &base_urls,
+        model,
+        http2,
+    )?);
+    run_request_rate_with_backend(
+        clock,
+        start_ns,
+        dispatcher,
+        base_urls,
+        conversations,
+        config,
+        stop,
+        adaptive,
+        ancillary,
+    )
+    .await
+}
+
+/// Backend-neutral request-rate runtime used by both real HTTP and the
+/// in-process Dynamo engine. All scheduling, ramping, cancellation, adaptive
+/// control, observer, and metric code executes above the injected dispatcher.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_request_rate_with_backend(
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    endpoint_names: Vec<String>,
+    conversations: Box<dyn ConversationSource>,
+    mut config: RequestRateConfig,
+    stop: StopConfig,
+    adaptive: Option<AdaptiveRunConfig>,
+    ancillary: AncillaryTimingConfig,
+) -> anyhow::Result<ScheduledRunReport> {
+    ancillary.validate()?;
+    validate_ramp_actuators(
+        &ancillary,
+        config.arrival_pattern,
+        config.request_rate,
+        config.session_concurrency,
+        config.prefill_concurrency,
+    )?;
+    validate_adaptive_ramp_ownership(&ancillary, adaptive.as_ref())?;
+    anyhow::ensure!(
+        stop.total_expected_requests.is_some()
+            || stop.expected_num_sessions.is_some()
+            || stop.expected_duration_ns.is_some(),
+        "request-rate workload requires a request, session, or duration stop bound"
+    );
+
+    // An adaptive integer actuator owns a live pool even when the corresponding
+    // steady-state CLI cap was omitted. Its controller constructor immediately
+    // applies the minimum before workload execution begins.
+    if let Some(adaptive) = &adaptive {
+        match adaptive.control_variable {
+            AdaptiveControlVariable::Concurrency if config.session_concurrency.is_none() => {
+                config.session_concurrency = Some(adaptive.minimum as usize);
+            }
+            AdaptiveControlVariable::PrefillConcurrency if config.prefill_concurrency.is_none() => {
+                config.prefill_concurrency = Some(adaptive.minimum as usize);
+            }
+            _ => {}
+        }
+    }
+
+    let workload = Rc::new(RequestRateWorkload::new(config, conversations)?);
+    let intervals = workload.intervals();
+    let session_slots = workload.session_slots();
+    let prefill_slots = workload.prefill_slots();
+    let ramp_handles = start_ramps(
+        &ancillary,
+        clock.clone(),
+        intervals.clone(),
+        session_slots.clone(),
+        prefill_slots.clone(),
+        config.request_rate,
+        config.session_concurrency,
+        config.prefill_concurrency,
+    )?;
+    let policies = scheduled_policies(&ancillary, &endpoint_names, config.seed)?;
+
+    let Some(adaptive) = adaptive else {
+        let workload: Rc<dyn Workload> = workload;
+        let result = run_scheduled_workload_with_ancillary(
+            workload, clock, start_ns, dispatcher, stop, true, policies,
+        )
+        .await;
+        stop_ramps(ramp_handles).await?;
+        return result;
+    };
+
+    let collector = Rc::new(CollectorObserver::new(true));
+    let native_metrics = Rc::new(NativeMetricsObserver::new(
+        clock.clone(),
+        start_ns,
+        MetricsConfig::default(),
+    ));
+    let delegates: Vec<Rc<dyn RequestObserver>> = vec![collector.clone(), native_metrics.clone()];
+    let base_observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
+    let built = build_adaptive(
+        adaptive,
+        clock.clone(),
+        start_ns,
+        base_observer,
+        intervals,
+        session_slots,
+        prefill_slots,
+        None,
+    )?;
+    built.scale.start()?;
+    let gate: Rc<dyn IssuanceGate> = built.scale.clone();
+    let runtime = ScheduledRuntime::new_with_observer(
+        clock,
+        start_ns,
+        dispatcher,
+        stop,
+        true,
+        collector,
+        native_metrics,
+        built.observer,
+        Some(gate),
+    );
+    runtime.configure_ancillary(
+        policies.cancellation_policy,
+        policies.url_selector,
+        policies.phase,
+    );
+
+    let assessment_scale = built.scale.clone();
+    let assessment = assessment_scale.assessment_loop();
+    let execution = workload.execute(runtime.clone());
+    tokio::pin!(assessment);
+    tokio::pin!(execution);
+    let execution_result = tokio::select! {
+        result = &mut execution => {
+            built.scale.deactivate();
+            built.scale.complete_phase()?;
+            result
+        }
+        _ = &mut assessment => Ok(()),
+    };
+    runtime.scheduler().cancel_pending();
+    runtime.scheduler().wait_idle().await;
+    stop_ramps(ramp_handles).await?;
+    execution_result?;
+    built.scale.complete_phase()?;
+    if let Some(error) = built.scale.last_error() {
+        anyhow::bail!("adaptive assessment failed: {error}");
+    }
+    Ok(runtime.finish(workload.name(), None))
+}
+
 /// Run the full user-centric virtual-history/churn workload over real HTTP.
 pub async fn run_user_centric_online(
     base_url: String,
@@ -784,10 +1000,7 @@ pub async fn run_user_centric_online_with_ancillary(
     ancillary: AncillaryTimingConfig,
     seed: u64,
 ) -> anyhow::Result<ScheduledRunReport> {
-    ancillary.validate()?;
-    validate_user_centric_ramps(&ancillary, config)?;
     let base_urls = parse_base_urls(&base_url)?;
-    let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
@@ -797,6 +1010,37 @@ pub async fn run_user_centric_online_with_ancillary(
         model,
         http2,
     )?);
+    run_user_centric_with_backend(
+        clock,
+        start_ns,
+        dispatcher,
+        base_urls,
+        conversations,
+        config,
+        stop,
+        ancillary,
+        seed,
+    )
+    .await
+}
+
+/// Backend-neutral user-centric runtime with Clock-native ramps,
+/// cancellation, and endpoint selection.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_user_centric_with_backend(
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    endpoint_names: Vec<String>,
+    conversations: Box<dyn ConversationSource>,
+    config: UserCentricConfig,
+    stop: StopConfig,
+    ancillary: AncillaryTimingConfig,
+    seed: u64,
+) -> anyhow::Result<ScheduledRunReport> {
+    ancillary.validate()?;
+    validate_user_centric_ramps(&ancillary, config)?;
+    let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
     let intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>> = Rc::new(RefCell::new(
         make_interval_generator(ArrivalPattern::ConcurrencyBurst, None, None, seed),
     ));
@@ -817,7 +1061,7 @@ pub async fn run_user_centric_online_with_ancillary(
         dispatcher,
         stop,
         true,
-        scheduled_policies(&ancillary, &base_urls, seed)?,
+        scheduled_policies(&ancillary, &endpoint_names, seed)?,
     )
     .await;
     stop_ramps(ramp_handles).await?;
@@ -871,15 +1115,7 @@ pub async fn run_user_centric_adaptive_online_with_ancillary(
     ancillary: AncillaryTimingConfig,
     seed: u64,
 ) -> anyhow::Result<ScheduledRunReport> {
-    ancillary.validate()?;
-    validate_user_centric_ramps(&ancillary, config)?;
     let base_urls = parse_base_urls(&base_url)?;
-    anyhow::ensure!(
-        adaptive.control_variable == AdaptiveControlVariable::Users,
-        "user-centric adaptive scale currently requires control_variable=users"
-    );
-    let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
-    let user_target: Rc<dyn aiperf_adaptive::UserTarget> = Rc::new(workload.control());
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
@@ -889,6 +1125,45 @@ pub async fn run_user_centric_adaptive_online_with_ancillary(
         model,
         http2,
     )?);
+    run_user_centric_adaptive_with_backend(
+        clock,
+        start_ns,
+        dispatcher,
+        base_urls,
+        conversations,
+        config,
+        stop,
+        adaptive,
+        ancillary,
+        seed,
+    )
+    .await
+}
+
+/// Backend-neutral adaptive user-centric runtime. The injected clock and
+/// dispatcher are the only online/offline differences.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_user_centric_adaptive_with_backend(
+    clock: Rc<dyn Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    endpoint_names: Vec<String>,
+    conversations: Box<dyn ConversationSource>,
+    config: UserCentricConfig,
+    stop: StopConfig,
+    adaptive: AdaptiveRunConfig,
+    ancillary: AncillaryTimingConfig,
+    seed: u64,
+) -> anyhow::Result<ScheduledRunReport> {
+    ancillary.validate()?;
+    validate_user_centric_ramps(&ancillary, config)?;
+    validate_adaptive_ramp_ownership(&ancillary, Some(&adaptive))?;
+    anyhow::ensure!(
+        adaptive.control_variable == AdaptiveControlVariable::Users,
+        "user-centric adaptive scale currently requires control_variable=users"
+    );
+    let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
+    let user_target: Rc<dyn aiperf_adaptive::UserTarget> = Rc::new(workload.control());
     let collector = Rc::new(CollectorObserver::new(true));
     let native_metrics = Rc::new(NativeMetricsObserver::new(
         clock.clone(),
@@ -933,7 +1208,7 @@ pub async fn run_user_centric_adaptive_online_with_ancillary(
         built.observer,
         Some(gate),
     );
-    let policies = scheduled_policies(&ancillary, &base_urls, seed)?;
+    let policies = scheduled_policies(&ancillary, &endpoint_names, seed)?;
     runtime.configure_ancillary(
         policies.cancellation_policy,
         policies.url_selector,

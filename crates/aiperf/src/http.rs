@@ -154,6 +154,23 @@ pub struct TransportSinkConfig {
     pub session_header: Option<String>,
 }
 
+/// Response-capturing request-dispatch seam used by the shared paced issuer.
+///
+/// The online implementation is [`TransportSink`]; the optional in-process
+/// simulator implements the same contract, so pacing, admission, adaptive
+/// control, observers, and report construction do not branch on a backend.
+#[async_trait(?Send)]
+pub trait HttpRequestDispatcher: RequestSink<HttpRequest> {
+    /// Dispatch one request, retain its terminal response facts, and invoke
+    /// `on_first_token` exactly once with TTFT in nanoseconds.
+    async fn dispatch_collect(
+        &self,
+        req: HttpRequest,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpDispatchResult>;
+}
+
 impl Dispatchable for HttpRequest {
     fn uuid(&self) -> Uuid {
         self.uuid
@@ -288,7 +305,7 @@ impl TransportSink {
     }
 
     /// Dispatch and retain generated text plus authoritative usage for consumers
-    /// such as accuracy graders. Measurement events are identical to
+    /// such as the external accuracy response collector. Measurement events are identical to
     /// [`dispatch_with_hooks`](Self::dispatch_with_hooks).
     pub async fn dispatch_collect_with_hooks(
         &self,
@@ -692,6 +709,19 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
 impl RequestSink<HttpRequest> for TransportSink {
     async fn dispatch(&self, req: HttpRequest, obs: &dyn RequestObserver) -> Result<()> {
         self.dispatch_with_hooks(req, obs, |_ttft_ns| {}).await
+    }
+}
+
+#[async_trait(?Send)]
+impl HttpRequestDispatcher for TransportSink {
+    async fn dispatch_collect(
+        &self,
+        req: HttpRequest,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpDispatchResult> {
+        self.dispatch_collect_with_hooks(req, observer, on_first_token)
+            .await
     }
 }
 

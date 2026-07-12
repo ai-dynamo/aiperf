@@ -346,15 +346,131 @@ supplies the simulated hardware/model when offline.
 ## Addendum — 2026-07-11
 
 The `lib/aiperf` + dynamo `lib/mocker` framing above describes the historical
-engine-boundary design lineage, not the current standalone native-Rust workspace.
-Current AIPerf lives under `crates/` and has no direct dynamo dependency. The realized
+engine-boundary design lineage. Current AIPerf lives under `crates/`; its realized
 seams are `aiperf-clock::Clock` and `loadgen-core::{RequestSink<R>, RequestObserver,
-Dispatchable}`; the OFFLINE-mock steppable engine remains a design target, but it must
-be wired through those current seams rather than through the `lib/aiperf` /
-`lib/mocker` module names used here.
+Dispatchable}`. The PR2.5-era split HTTP clock was already removed: the CLI and graph
+benchmark both use the Clock-injected `aiperf-transport` hyper client.
 
-The PR2.5-era gap about the online path using a separate reqwest/`Instant` stack is
-closed in the current workspace: both the CLI online path and graph benchmark use the
-Clock-injected `aiperf-transport` hyper client. Any future implementation work from
-this spec should translate the concepts to the standalone crate topology before
-changing code.
+The third mode is now built as an explicitly optional application composition:
+
+- Cargo feature `aiperf/dynamo-offline` is off by default and alone exposes the
+  `--offline`, `--engine-profile`, topology, worker-pool, and router CLI options. It
+  uses the sibling `dynamo-aiperf-native/lib/mocker` checkout; default AIPerf builds
+  do not compile or expose the Dynamo adapter.
+- `aiperf_graph::runtime::SimEventSource` plus `drive_sim_with_source` is the
+  backend-neutral two-queue DES pump. Clock tasks win equal-time ties, so authored
+  arrivals enter the batch before an engine pass, and a source step that crosses a
+  parked Clock deadline is rejected.
+- `aiperf::dynamo_offline` owns the `Rc`/`RefCell` engine host, completion mailboxes,
+  OpenAI request encoder, and the `RequestSink<HttpRequest>` / `TurnDispatcher` /
+  `GraphSink` adapters. Concurrency, continuation-priority request rate, fixed trace,
+  user-centric, and Graph-IR workloads all run without HTTP on one `SimClock` and
+  emit the normal AIPerf native-v2 report.
+- Dynamo's passive `SteppableReplay` contract now has deadline-bounded `step_until`
+  for aggregate and disaggregate runtimes plus read-only admission/token/latency
+  facts. The direct single-worker wrapper cannot interrupt a pass, so AIPerf's
+  `single` topology deliberately uses the eventized one-worker aggregate runtime.
+  Dynamo's normal router runtime and ZMQ event-publisher features remain defaults;
+  the external AIPerf dependency disables them to avoid pulling application runtime
+  services or socket transports into the pure co-sim library.
+- Offline request cancellation remains unavailable because `SteppableReplay` has no
+  cancellation operation. Canonical accuracy remains online because a timing model
+  does not produce model-semantic answer text. These are explicit validation errors,
+  not silent fallbacks.
+- Every offline return path now serializes the complete flat metric schema from
+  AIPerf's observer collector and Dynamo's native replay collector and requires the
+  raw compact JSON bytes to match. This covers 74 unique shared fields (69 request/
+  event fields accumulated independently plus five engine-owned worker/GPU fields
+  imported from the backend that owns those facts); it applies no tolerance,
+  rounding, projection, or selected-field allowlist. Field-level diagnostics abort
+  the run on any mismatch. The gate exposed and fixed timestamp round-tripping,
+  graph authored-vs-encoded ISL drift, and a disaggregated hidden-prefill token that
+  had been incorrectly surfaced as client output.
+
+Executable gates cover equal-time ordering, overshoot rejection, deadline-bounded
+measurement identity, every Dynamo topology, all five workload families, engine
+profile loading, rejected requests, no-server CLI execution, whole shared-report
+cross-tool byte parity, and byte-stable native-v2 output. The sibling
+`dynamo-mocker` suite and its single/aggregate/disaggregate co-sim tests continue to
+pin the scheduler/handoff `perf_ns` sequences byte for byte; a dedicated
+disaggregated steppable test also pins emitted-token count to the native collector.
+
+## Addendum — 2026-07-12: complete DynoSim/Mocker exposure
+
+This addendum supersedes the 2026-07-11 cancellation limitation and completes
+the product-surface audit. “Supported through AIPerf” now has two explicit,
+executable meanings:
+
+1. The Rust `aiperf --offline` frontend composes AIPerf workloads, observers,
+   controls, and reports directly with Dynamo's steppable engine.
+2. Python `aiperf dynosim {run,mocker,sweep}` invokes the canonical Dynamo
+   implementation for surfaces that are application services or search/planner
+   workflows rather than an in-process request sink. It does not reimplement
+   their parser or calculations.
+
+### Native in-process surface
+
+`SteppableReplay` now exposes terminal classification, exact emitted token IDs,
+dynamic `cancel`, per-request capture, SLA thresholds, deadline-bounded stepping,
+admission facts, authoritative output length, and native report extraction.
+Single, aggregate, and disaggregate AIPerf modes all use the eventized runtime;
+single is a one-worker aggregate so external deadlines can interleave without
+changing batch composition.
+
+The native frontend accepts all five canonical trace formats (`mooncake`,
+`mooncake-delta`, `agentic_mooncake`, `applied_compute_agentic`, and `dynamo`),
+both routers, every topology, separate prefill/decode profiles, complete engine
+and router JSON, replay concurrency/speedup/shared-prefix controls, and an exact
+driver-side simulation cutoff. It also exposes aggregate Dynamo JSON,
+per-request JSONL, AIPerf native-v2 JSON, SLA goodput, and timed request/output/KV
+worker artifacts with both pass-start and pass-end KV visibility.
+
+Paced concurrency, continuation-priority request rate, fixed schedules,
+user-centric sessions, and Graph-IR share the same injected dispatcher and clock
+as their online forms. Post-admission cancellation is a real engine terminal
+operation in every topology. Linear/exponential/Poisson ramps and adaptive
+session concurrency, prefill concurrency, request rate, and target users execute
+above the backend-neutral runtime rather than in offline-only loops.
+
+The optional Cargo features map one-to-one to every Mocker family:
+`dynamo-profile`, `dynamo-aic-forward-pass`, `dynamo-router-runtime`,
+`dynamo-zmq-events`, and `dynamo-kvbm-offload`; `dynamo-full` enables all of
+them. The consumer workspace carries Dynamo's required `tokio_unstable` compile
+contract. Native AIC startup calls the pinned AIConfigurator API directly,
+applies canonical backend-version defaults and rank-local capacity semantics,
+and avoids a hidden dependency on Dynamo's private Python binding module.
+Requested G2/G3/G4 offload is feature-gated and initialization errors propagate
+to AIPerf; a successful run can no longer mean that offload silently disabled
+itself.
+
+### Canonical facade and drift gate
+
+`aiperf dynosim run` and `aiperf dynosim mocker` forward the raw argv vector to
+the owning Dynamo parsers. This covers planner-in-loop replay, offline/online
+canonical replay, live discovery, request/event planes, bootstrap/ZMQ behavior,
+and new canonical flags without a duplicated AIPerf schema. `aiperf dynosim
+sweep` validates `ReplayOptimizeSpec` and exposes aggregate search,
+disaggregate search, aggregate-vs-disaggregate comparison, and AIC-vs-replay
+comparison. `aiperf dynosim capabilities` emits the shipped support manifest.
+
+The manifest's drift tests compare against both complete argparse schemas,
+every `MockEngineArgsSerde` and `KvRouterConfigSerde` field, every public replay
+entry point, every `SteppableReplay` method, all sweep model fields and
+operations, every trace/mode domain, and every Mocker Cargo feature. A new
+upstream field or feature therefore fails the AIPerf suite until it has an
+explicit support mapping.
+
+### Numeric parity claim
+
+This does not claim that real wall-clock HTTP and virtual simulation produce
+identical latency values. It does prove that, for the same offline run, AIPerf's
+independent compatibility observer and Dynamo's collector emit identical values
+for the entire common report. The compact JSON bytes must match before any API
+returns: 74 base fields (69 independently accumulated request/event fields plus
+five backend-owned capacity fields), and three additional backend-owned goodput
+fields when SLA thresholds are configured. No tolerance, rounding, or selected
+field allowlist is used.
+
+Canonical accuracy remains an intentional online-only AIPerf capability because
+the mocker models timing/KV behavior and emits token IDs, not semantic model text;
+it is not a DynoSim/Mocker feature gap.

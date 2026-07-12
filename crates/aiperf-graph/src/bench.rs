@@ -56,9 +56,7 @@ fn est_tokens(s: &str) -> usize {
 /// Build the segment pool + chain graph for a `turns`-turn conversation, and the
 /// per-node ISL map. The static prefix (system + user turns) is content-addressed
 /// and shared across every trace instance.
-pub(crate) fn build_workload(
-    turns: usize,
-) -> (InMemorySegmentStore, GraphRecord, HashMap<String, usize>) {
+pub fn build_workload(turns: usize) -> (InMemorySegmentStore, GraphRecord, HashMap<String, usize>) {
     let tokenizer = TiktokenTokenizer::builtin();
     let mut pool = SegmentPool::new();
     let sys_text = "You are a helpful, concise assistant answering benchmark turns.";

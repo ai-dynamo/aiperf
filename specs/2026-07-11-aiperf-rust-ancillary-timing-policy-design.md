@@ -465,3 +465,23 @@ freeze-on-stop behavior, live actuator wiring under `SimClock`, warmup RNG
 non-consumption, Bernoulli reproducibility, round-robin wraparound, turn-zero
 session pinning, real endpoint resolution, positive and zero post-send delays,
 complete-body delivery, cancellation classification, and CLI validation.
+
+## Addendum — 2026-07-12: offline runtime consumption
+
+The shared policies are now consumed by the in-process Dynamo backend as well
+as HTTP. Backend-neutral run functions receive `{Clock, HttpRequestDispatcher}`;
+offline composition supplies `SimClock + DynamoOfflineSink` and merges ramp,
+cancellation, issuer, and engine deadlines in the same DES pump.
+
+- paced offline workloads support session- and prefill-concurrency ramps;
+- continuation-priority request-rate workloads support all three Clock-native
+  rate curves;
+- user-centric workloads support their session-concurrency ramp;
+- cancellation calls the steppable engine's real terminal operation in single,
+  aggregate, and disaggregate topologies, including terminal cleanup and report
+  classification.
+
+Fixed authored schedules still reject ramps because their timestamps are the
+workload, and Graph-IR still owns no arrival/slot actuator. Multi-URL selection
+is intentionally invalid for the one in-process endpoint; that is a topology
+constraint, not an offline no-op.

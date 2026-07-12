@@ -332,6 +332,9 @@ struct TraceRequestStats {
     /// single-shot request lists.
     session_id: Option<String>,
     turn_index: Option<usize>,
+    /// Terminal classification is retained even when per-request export is
+    /// disabled so canceled/failed partial streams never become completions.
+    terminal_status: Option<ReplayTerminalStatus>,
     detail: Option<Box<PerRequestDetail>>,
 }
 
@@ -592,6 +595,7 @@ impl TraceCollector {
                 session_id: None,
                 turn_index: None,
                 first_admission_reused_input_tokens: 0,
+                terminal_status: None,
                 detail: self
                     .capture_per_request
                     .then(|| Box::new(PerRequestDetail::default())),
@@ -718,8 +722,11 @@ impl TraceCollector {
     }
 
     pub fn on_terminal(&mut self, uuid: Uuid, status: ReplayTerminalStatus) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.terminal_status.get_or_insert(status);
+        if let Some(stats) = self.requests.get_mut(&uuid) {
+            stats.terminal_status.get_or_insert(status);
+            if let Some(detail) = stats.detail.as_deref_mut() {
+                detail.terminal_status.get_or_insert(status);
+            }
         }
     }
 
@@ -731,7 +738,9 @@ impl TraceCollector {
     }
 
     pub fn on_token(&mut self, uuid: Uuid, token_time_ms: f64) {
-        if let Some(stats) = self.requests.get_mut(&uuid) {
+        if let Some(stats) = self.requests.get_mut(&uuid)
+            && stats.terminal_status.is_none()
+        {
             stats.token_times_ms.push(token_time_ms);
         }
     }
@@ -838,7 +847,7 @@ impl TraceCollector {
             let Some(detail) = stats.detail.as_deref() else {
                 continue;
             };
-            let Some(terminal_status) = detail.terminal_status else {
+            let Some(terminal_status) = stats.terminal_status else {
                 continue;
             };
             let first_token_ms = stats.first_token_ms();
@@ -938,6 +947,9 @@ fn accumulate_requests(
     let mut goodput_output_tokens = 0usize;
 
     for stats in requests.values() {
+        if stats.terminal_status != Some(ReplayTerminalStatus::Completed) {
+            continue;
+        }
         if stats.first_admit_ms.is_none() {
             continue;
         }
@@ -1273,6 +1285,7 @@ mod tests {
         collector.on_decode_assigned(uuid, 0);
         collector.on_token(uuid, 50.0);
         collector.on_token(uuid, 60.0);
+        collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
 
         assert!(collector.requests[&uuid].detail.is_none());
 
@@ -1298,6 +1311,7 @@ mod tests {
         for &t in token_times_ms {
             collector.on_token(uuid, t);
         }
+        collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
     }
 
     /// Goodput classifies a request "good" using aiperf's average ITL,
@@ -1501,6 +1515,30 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_freezes_tokens_and_excludes_partial_stream_from_completion() {
+        let uuid = Uuid::from_u128(91);
+        let mut collector = TraceCollector::default();
+        collector.set_capture_per_request(true);
+        collector.on_arrival(uuid, 0.0, 64, 4);
+        collector.on_admit(uuid, 1.0, 0);
+        collector.on_token(uuid, 10.0);
+        collector.on_terminal(uuid, ReplayTerminalStatus::Canceled);
+        collector.on_token(uuid, 20.0);
+
+        let report = collector.finish();
+
+        assert_eq!(report.request_counts.num_requests, 1);
+        assert_eq!(report.request_counts.completed_requests, 0);
+        assert_eq!(report.request_counts.total_output_tokens, 0);
+        assert_eq!(report.per_request.len(), 1);
+        assert_eq!(
+            report.per_request[0].terminal_status,
+            ReplayTerminalStatus::Canceled
+        );
+        assert_eq!(report.per_request[0].output_length, 1);
+    }
+
+    #[test]
     fn first_admission_reuse_ignores_later_readmission_self_reuse() {
         let uuid = Uuid::from_u128(1);
         let mut collector = TraceCollector::default();
@@ -1508,6 +1546,7 @@ mod tests {
         collector.on_admit(uuid, 1.0, 0);
         collector.on_admit(uuid, 2.0, 80);
         collector.on_token(uuid, 3.0);
+        collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
 
         let report = collector.finish();
 

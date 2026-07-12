@@ -1,18 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Graph-IR async-dataflow workload driver — online (live HTTP) mode.
+//! Graph-IR async-dataflow workload driver.
 //!
 //! Runs a DAG of chat requests with fan-out/fan-in dependencies and firing-gate
 //! timing: nodes fire when their input channels are ready, dispatch through the
-//! extensible [`sink::GraphSink`] (HTTP → an OpenAI-compatible endpoint), and
+//! extensible [`sink::GraphSink`] (for example, HTTP or an in-process engine), and
 //! measurement flows to `loadgen_core`'s shared `TraceCollector`. Prompts are
 //! materialized from a content-addressed [`segment::SegmentStore`] plus dynamic
 //! predecessor replies.
 //!
-//! Depends on `aiperf` (HTTP transport + collector observer), `loadgen-core`
-//! (the measurement seam), and `aiperf-clock` (wall/virtual `Clock`). The
-//! offline virtual-clock co-simulation path is intentionally **not** here.
+//! This crate stays independent of application backends. Its
+//! [`runtime::drive_sim_with_source`] pump merges the [`aiperf_clock::SimClock`]
+//! sleeper heap with any injected [`runtime::SimEventSource`]. The optional
+//! Dynamo adapter lives in the `aiperf` application crate, so neither this
+//! graph engine nor its clock/measurement leaves acquire a mocker dependency.
 
 pub mod bench;
 pub mod channel_store;

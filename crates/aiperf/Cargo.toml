@@ -6,7 +6,28 @@ name = "aiperf"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Rust-native AIPerf load-generation CLI — real-HTTP online + Graph-IR benchmarking over the aiperf-transport client."
+description = "Rust-native AIPerf load-generation CLI with real-HTTP and feature-gated in-process Dynamo backends."
+
+[features]
+default = []
+# Requires the sibling `dynamo-aiperf-native/lib/mocker` checkout. Its runtime
+# integration stays out of default builds, including its CLI surface.
+dynamo-offline = ["dep:dynamo-mocker"]
+# Forward every optional Dynamo Mocker capability independently so embedders can
+# pay only for the runtime surface they exercise. `dynamo-full` is the explicit
+# build gate used by the complete DynoSim/Mocker capability suite.
+dynamo-router-runtime = ["dynamo-offline", "dynamo-mocker/router-runtime"]
+dynamo-zmq-events = ["dynamo-offline", "dynamo-mocker/zmq-events"]
+dynamo-kvbm-offload = ["dynamo-offline", "dynamo-mocker/kvbm-offload"]
+dynamo-aic-forward-pass = ["dynamo-offline", "dynamo-mocker/aic-forward-pass"]
+dynamo-profile = ["dynamo-offline", "dynamo-mocker/profile"]
+dynamo-full = [
+    "dynamo-router-runtime",
+    "dynamo-zmq-events",
+    "dynamo-kvbm-offload",
+    "dynamo-aic-forward-pass",
+    "dynamo-profile",
+]
 
 [lib]
 name = "aiperf"
@@ -46,3 +67,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 url.workspace = true
+dynamo-mocker = { path = "../../../../../dynamo-aiperf-native/lib/mocker", optional = true, default-features = false }

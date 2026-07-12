@@ -322,7 +322,7 @@ That said, nothing in the loop needs a wall clock:
 - **OFFLINE** (`SimClock`): adaptive-scale **runs unchanged and deterministically**,
   *provided* window timing and the assessment sleep go through `Clock` (not
   `tokio::time`). Under `drive_sim`, the assessment `sleep` is a heap event; the window
-  `elapsed_sec` is virtual-ns elapsed; the returns are produced by the (still-unwired)
+  `elapsed_sec` is virtual-ns elapsed; the returns are produced by the feature-gated
   in-process engine sink. Because throughput/goodput denominators are `elapsed_sec`
   (§2.2), they are well-defined on the virtual timeline. The ramp is then a fully
   reproducible DES: same seed ⇒ same boundary discovered.
@@ -436,11 +436,12 @@ This design is now implemented. The authoritative code is the new
   `(last−first)/(osl−1)` ITL denominator; missing usage leaves both values
   absent. Percentiles reuse `aiperf-metrics::linear_distribution`.
 - `AdaptiveScale` paces assessments exclusively through `Clock`; its
-  `SimClock` tests drive the same controller deterministically. This does not
-  claim that the repository's OFFLINE-mock mode is complete: the in-process
-  steppable-engine sink remains unwired, so offline end-to-end completions
-  cannot yet feed the sampler. A local waker-backed stop future interrupts a
-  long issuer arrival sleep as soon as the controller becomes terminal.
+  `SimClock` tests drive the same controller deterministically. The feature-gated
+  in-process Dynamo sink now feeds real engine completion events through the same
+  paced issuer, `AdaptiveObserver`, and sampler for offline concurrency control.
+  Adaptive request-rate and user-target modes use separately scheduled workloads
+  and are not yet composed with this backend. A local waker-backed stop future
+  interrupts a long issuer arrival sleep as soon as the controller becomes terminal.
 - `AdaptiveObserver` tees returned-request events into the sampler and the
   ordinary collector on the one-thread `LocalSet`. To make that hot path
   lock-free, `RequestObserver` is now a local-loop trait without `Send`/`Sync`
@@ -466,3 +467,23 @@ reset, all four live actuators, `SimClock` pacing, schema-v2 artifacts, early
 online stop, and CLI acceptance. The original "designed" status and the
 increment plan above are historical; this addendum is authoritative where they
 conflict.
+
+## Addendum — 2026-07-12: all adaptive controls share the offline backend
+
+The preceding addendum's statement that offline request-rate and user-target
+composition remained unavailable is superseded. `aiperf::run` now has
+backend-neutral paced, request-rate, user-centric, and adaptive composition
+functions. Online wrappers inject `RealClock + TransportSink`; offline wrappers
+inject `SimClock + DynamoOfflineSink` and run the same futures, observers,
+actuators, issuance gates, and artifact sinks.
+
+The resulting support matrix is complete for the four control variables in
+their owning workloads:
+
+- paced concurrency: `concurrency` and `prefill_concurrency`;
+- continuation-priority request rate: `request_rate`;
+- user-centric scheduling: `users`.
+
+Executable CLI tests drive terminal adaptive windows and schema-v2
+failure/summary artifacts for offline concurrency, request rate, and users;
+the shared paced backend path also owns prefill concurrency exactly as online.

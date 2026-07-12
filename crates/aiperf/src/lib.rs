@@ -13,12 +13,17 @@
 //! ([`report`]), and logging setup ([`logging`]). Named
 //! compile-time extension composition lives in `aiperf_extensions` so extension
 //! crates never need a dependency cycle through this application crate.
+//! With the `dynamo-offline` Cargo feature, [`dynamo_offline`] composes the
+//! same workloads and observers with `SimClock` plus Dynamo's passive mock
+//! engine for deterministic, socket-free co-simulation.
 
 pub mod accuracy;
 pub mod adaptive;
 pub mod agentic;
 pub mod agentic_gateway;
 pub mod ancillary;
+#[cfg(feature = "dynamo-offline")]
+pub mod dynamo_offline;
 pub mod fixed_schedule;
 pub mod http;
 pub mod logging;
@@ -26,6 +31,7 @@ pub mod metrics;
 pub mod multiturn;
 pub mod phase_runtime;
 pub mod report;
+pub mod request_rate;
 pub mod run;
 pub mod scheduled;
 pub mod scheduler;

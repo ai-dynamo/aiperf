@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared runtime for user-centric and fixed-schedule workloads.
+//! Shared runtime for request-rate, user-centric, and fixed-schedule workloads.
 //!
 //! The runtime is the small policy-neutral bridge from a [`Workload`] schedule
 //! generator to a pluggable [`TurnDispatcher`]. It owns the clock-backed task
@@ -46,6 +46,14 @@ pub type CompletionTask = Pin<Box<dyn Future<Output = ()> + 'static>>;
 /// Completion callback installed for one issued turn.
 pub type CompletionHandler =
     Box<dyn FnOnce(IssuedCredit, TurnDispatchOutcome) -> CompletionTask + 'static>;
+
+/// First-token callback installed for one issued turn.
+///
+/// Admission policies use this edge to release prefill capacity while the
+/// request continues decoding. The terminal callback remains responsible for
+/// the no-token fallback, matching
+/// `src/aiperf/credit/callback_handler.py:454-485`.
+pub type FirstTokenHandler = Box<dyn Fn(i64) + 'static>;
 
 /// Optional external admission gate layered above ordinary stop conditions.
 /// Adaptive-scale implements this seam so a terminal controller immediately
@@ -107,8 +115,8 @@ pub struct TurnDispatchOutcome {
 ///
 /// The current online implementation adapts `TransportSink`, which remains a
 /// normal `RequestSink<HttpRequest>`. An offline engine or another endpoint
-/// dialect implements this trait once; user-centric and fixed-schedule policy
-/// stays unchanged.
+/// dialect implements this trait once; request-rate, user-centric, and
+/// fixed-schedule policy stays unchanged.
 #[async_trait(?Send)]
 pub trait TurnDispatcher {
     /// Dispatch one fully materialized turn. `on_first_token` receives the
@@ -561,9 +569,35 @@ impl ScheduledRuntime {
     /// callback runs exactly once after terminal dispatch, including failures.
     pub fn issue_turn(
         self: &Rc<Self>,
+        turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        on_complete: CompletionHandler,
+    ) -> bool {
+        self.issue_turn_with_hooks(
+            turn,
+            scheduled_ns,
+            user_id,
+            Box::new(|_ttft_ns| {}),
+            on_complete,
+        )
+    }
+
+    /// Issue `turn` with both first-token and terminal lifecycle callbacks.
+    ///
+    /// `on_first_token` runs synchronously on the local dispatch task when the
+    /// backend reports its first meaningful token. `on_complete` still runs
+    /// exactly once for every admitted turn, including dispatch failures. This
+    /// split lets a workload release a per-request prefill guard at TTFT and
+    /// retain terminal as the no-token cleanup path without coupling the
+    /// policy-neutral runtime to a concrete slot implementation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_turn_with_hooks(
+        self: &Rc<Self>,
         mut turn: TurnToSend,
         scheduled_ns: i64,
         user_id: Option<u64>,
+        on_first_token: FirstTokenHandler,
         on_complete: CompletionHandler,
     ) -> bool {
         let new_session = turn.turn_index == 0;
@@ -640,8 +674,7 @@ impl ScheduledRuntime {
             turn.input_length,
             turn.max_output_tokens,
         );
-        let credit =
-            IssuedCredit::from_issued_turn(credit_id, issued_ns, &turn, issued_url_index);
+        let credit = IssuedCredit::from_issued_turn(credit_id, issued_ns, &turn, issued_url_index);
 
         let runtime = self.clone();
         self.scheduler.execute_async(Box::pin(async move {
@@ -655,6 +688,7 @@ impl ScheduledRuntime {
                 if let Some(observer) = &turn_lifecycle_observer {
                     observer.on_first_token(turn.uuid);
                 }
+                on_first_token(ttft_ns);
             };
 
             let outcome = match runtime
