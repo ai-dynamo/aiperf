@@ -285,18 +285,6 @@ impl NativeSidecarPlan {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        match self {
-            Self::Legacy(inputs) => {
-                inputs.gpu_telemetry.is_none()
-                    && inputs.network_latency.is_none()
-                    && inputs.server_metrics.is_none()
-                    && inputs.live_streaming.is_none()
-            }
-            Self::Prepared(inputs) => inputs.is_empty(),
-        }
-    }
-
     fn contains_only_content_server(&self) -> bool {
         match self {
             Self::Legacy(inputs) => {
