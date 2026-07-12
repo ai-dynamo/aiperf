@@ -6,7 +6,8 @@
 //! The metrics crate stays transport-neutral: this adapter owns the request-event
 //! join because the runtime knows UUIDs, terminal state, usage, and the injected
 //! [`aiperf_clock::Clock`] timeline. It is single-loop `Rc`/`RefCell` state and
-//! performs one append-only accumulator pass after all request tasks drain.
+//! performs one absolute-request-index-addressed accumulator pass after all
+//! request tasks drain.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -26,6 +27,8 @@ use uuid::Uuid;
 /// Optional workload dimensions registered before request arrival.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RequestMetricMetadata {
+    /// Absolute zero-based request slot assigned before dispatch.
+    pub request_index: Option<usize>,
     /// Authoritative phase for summary masking.
     pub phase: Phase,
     /// Session sequence number, when the workload assigns one.
@@ -50,6 +53,7 @@ pub struct RequestMetricMetadata {
 impl Default for RequestMetricMetadata {
     fn default() -> Self {
         Self {
+            request_index: None,
             phase: Phase::Profiling,
             session_num: None,
             turn_index: 0,
@@ -124,6 +128,17 @@ pub struct NativeMetricsCollection {
     pub records: Vec<RecordIngest>,
 }
 
+/// Owned post-drain native-metrics reduction.
+///
+/// The value contains no clock, `Rc`, observer, or runtime handle, so an
+/// offline runtime may move it to a worker after all deterministic callbacks
+/// have completed.
+pub struct NativeMetricsFinalizer {
+    finish_ns: i64,
+    state: ObserverState,
+    accumulator: MetricsAccumulator,
+}
+
 impl NativeMetricsObserver {
     /// Creates an observer with explicit accumulator configuration.
     pub fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig) -> Self {
@@ -136,9 +151,10 @@ impl NativeMetricsObserver {
     }
 
     /// Registers workload dimensions before or after the arrival callback.
-    pub fn register_metadata(&self, uuid: Uuid, metadata: RequestMetricMetadata) {
+    pub fn register_metadata(&self, uuid: Uuid, mut metadata: RequestMetricMetadata) {
         let mut state = self.state.borrow_mut();
         if let Some(request) = state.requests.get_mut(&uuid) {
+            metadata.request_index = metadata.request_index.or(request.metadata.request_index);
             request.metadata = metadata;
         } else {
             state.metadata.insert(uuid, metadata);
@@ -179,9 +195,31 @@ impl NativeMetricsObserver {
 
     /// Finalizes every retained request and returns the full native summary.
     ///
-    /// Request rows are appended in arrival order, independent of hash-map order.
+    /// Requests are visited in arrival order, but every metric column is written
+    /// to the absolute slot carried by [`RequestMetricMetadata::request_index`].
     pub fn finish(&self) -> AccumulatorSummary {
-        self.finish_with_records().summary
+        self.finish_at(self.clock.now_ns())
+    }
+
+    /// Finalizes every retained request at an already captured absolute clock
+    /// timestamp.
+    ///
+    /// Offline runtimes use this after their deterministic event loop has
+    /// drained. Capturing the boundary before leaving the loop lets expensive
+    /// aggregate reduction run later without extending incomplete records or
+    /// changing any simulated timestamp.
+    pub fn finish_at(&self, finish_ns: i64) -> AccumulatorSummary {
+        self.take_finalizer_at(finish_ns).finish()
+    }
+
+    /// Drain observer state into a runtime-neutral owned finalizer.
+    pub fn take_finalizer_at(&self, finish_ns: i64) -> NativeMetricsFinalizer {
+        let (finish_ns, state, accumulator) = self.take_finalization_state(finish_ns);
+        NativeMetricsFinalizer {
+            finish_ns,
+            state,
+            accumulator,
+        }
     }
 
     /// Finalizes every retained request while preserving its ingestion facts.
@@ -190,22 +228,16 @@ impl NativeMetricsObserver {
     /// method consumes the observer state just like [`Self::finish`]; calling
     /// either finalizer again returns an empty collection.
     pub fn finish_with_records(&self) -> NativeMetricsCollection {
-        let finish_ns = self.relative_now_ns();
-        let mut state = std::mem::take(&mut *self.state.borrow_mut());
-        let mut accumulator = std::mem::take(&mut *self.accumulator.borrow_mut());
-        let mut records = Vec::with_capacity(state.order.len());
-        for (ordinal, uuid) in state.order.into_iter().enumerate() {
-            let Some(request) = state.requests.remove(&uuid) else {
-                continue;
-            };
-            let record = request.into_record(uuid, ordinal as u64, finish_ns);
-            accumulator.process_record(&record);
-            records.push(record);
-        }
-        NativeMetricsCollection {
-            summary: accumulator.summarize(),
-            records,
-        }
+        self.take_finalizer_at(self.clock.now_ns())
+            .finish_with_records()
+    }
+
+    fn take_finalization_state(&self, finish_ns: i64) -> (i64, ObserverState, MetricsAccumulator) {
+        (
+            finish_ns.saturating_sub(self.origin_ns),
+            std::mem::take(&mut *self.state.borrow_mut()),
+            std::mem::take(&mut *self.accumulator.borrow_mut()),
+        )
     }
 
     fn relative_now_ns(&self) -> i64 {
@@ -221,6 +253,43 @@ impl NativeMetricsObserver {
 
     fn relative_absolute_ns(&self, timestamp_ns: i64) -> i64 {
         timestamp_ns.saturating_sub(self.origin_ns)
+    }
+}
+
+impl NativeMetricsFinalizer {
+    /// Reduce retained request facts into the native aggregate.
+    pub fn finish(self) -> AccumulatorSummary {
+        let finish_ns = self.finish_ns;
+        let mut accumulator = self.accumulator;
+        let mut state = self.state;
+        for (ordinal, uuid) in state.order.into_iter().enumerate() {
+            let Some(request) = state.requests.remove(&uuid) else {
+                continue;
+            };
+            let record = request.into_record(uuid, ordinal as u64, finish_ns);
+            accumulator.process_record(&record);
+        }
+        accumulator.summarize()
+    }
+
+    /// Reduce retained request facts while preserving their ingestion records.
+    pub fn finish_with_records(self) -> NativeMetricsCollection {
+        let finish_ns = self.finish_ns;
+        let mut accumulator = self.accumulator;
+        let mut state = self.state;
+        let mut records = Vec::with_capacity(state.order.len());
+        for (ordinal, uuid) in state.order.into_iter().enumerate() {
+            let Some(request) = state.requests.remove(&uuid) else {
+                continue;
+            };
+            let record = request.into_record(uuid, ordinal as u64, finish_ns);
+            accumulator.process_record(&record);
+            records.push(record);
+        }
+        NativeMetricsCollection {
+            summary: accumulator.summarize(),
+            records,
+        }
     }
 }
 
@@ -247,6 +316,7 @@ impl PendingRequest {
             .prompt_tokens
             .or_else(|| self.observed_usage.prompt_tokens.map(|value| value as u64));
         RecordIngest {
+            request_index: self.metadata.request_index.or(Some(ordinal as usize)),
             correlation_id: self
                 .metadata
                 .correlation_id
@@ -327,10 +397,11 @@ impl RequestObserver for NativeMetricsObserver {
         requested_output_length: usize,
     ) {
         let mut state = self.state.borrow_mut();
-        let metadata = state.metadata.remove(&uuid).unwrap_or_default();
+        let mut metadata = state.metadata.remove(&uuid).unwrap_or_default();
         if state.requests.contains_key(&uuid) {
             return;
         }
+        metadata.request_index.get_or_insert(state.order.len());
         state.order.push(uuid);
         state.requests.insert(
             uuid,
@@ -591,6 +662,7 @@ mod tests {
         observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
 
         let snapshot = observer.snapshot_record(uuid, 12).unwrap();
+        assert_eq!(snapshot.request_index, Some(0));
         assert_eq!(snapshot.session_num, 12);
         assert_eq!(snapshot.start_ns, 2_000_000);
         assert_eq!(snapshot.end_ns, 9_000_000);

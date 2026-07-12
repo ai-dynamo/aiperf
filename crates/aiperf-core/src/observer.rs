@@ -34,8 +34,15 @@ impl CollectorObserver {
     /// Produce the report, draining the accumulated collector. `wall_ms` is the
     /// total run duration in milliseconds on the shared timeline.
     pub fn finish(&self, wall_ms: f64) -> TraceSimulationReport {
-        let collector = std::mem::take(&mut *self.inner.borrow_mut());
-        collector.finish().with_wall_time_ms(wall_ms)
+        self.take().finish().with_wall_time_ms(wall_ms)
+    }
+
+    /// Drain the owned collector without reducing it.
+    ///
+    /// Post-drain runtimes can move this plain data value to a reduction worker;
+    /// no observer callback or clock access remains after this boundary.
+    pub fn take(&self) -> TraceCollector {
+        std::mem::take(&mut *self.inner.borrow_mut())
     }
 }
 

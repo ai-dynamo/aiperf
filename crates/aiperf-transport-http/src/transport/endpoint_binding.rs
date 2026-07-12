@@ -317,6 +317,7 @@ pub struct MetadataHttpEndpointBinding<'a, C: HttpEndpointConfigView + ?Sized = 
     descriptor: &'static EndpointDescriptor,
     config: &'a C,
     default_base_urls: &'a [String],
+    model_name: &'a str,
 }
 
 impl<'a> MetadataHttpEndpointBinding<'a, EndpointConfig> {
@@ -325,11 +326,13 @@ impl<'a> MetadataHttpEndpointBinding<'a, EndpointConfig> {
         endpoint: &dyn Endpoint,
         config: &'a EndpointConfig,
         default_base_urls: &'a [String],
+        model_name: &'a str,
     ) -> Self {
         Self {
             descriptor: endpoint.descriptor(),
             config,
             default_base_urls,
+            model_name,
         }
     }
 }
@@ -340,11 +343,13 @@ impl<'a> MetadataHttpEndpointBinding<'a, RawEndpointConfig> {
     pub fn from_prepared(
         endpoint: &'a dyn PreparedEndpoint,
         default_base_urls: &'a [String],
+        model_name: &'a str,
     ) -> Self {
         Self {
             descriptor: endpoint.descriptor(),
             config: endpoint.config().as_raw(),
             default_base_urls,
+            model_name,
         }
     }
 }
@@ -376,7 +381,12 @@ impl<C: HttpEndpointConfigView + ?Sized> MetadataHttpEndpointBinding<'_, C> {
                     .flatten()
             })
             .or(self.descriptor.endpoint_path);
-        match target {
+        // Python PR 664 parity: `aiohttp_transport.py:172-208` expands this
+        // transport-owned placeholder in both custom and metadata paths before
+        // applying URL-prefix de-duplication. Keep expansion at the binding
+        // boundary so endpoint dialects remain transport agnostic.
+        let target = target.map(|target| target.replace("{model_name}", self.model_name));
+        match target.as_deref() {
             None => Ok(base_url.trim_end_matches('/').to_string()),
             Some(path) if path.starts_with('/') => build_url(base_url, path, &BTreeMap::new())
                 .map_err(|error| {
@@ -547,7 +557,8 @@ mod tests {
     fn endpoint_path_join_collapses_v1_and_full_suffix_overlap() {
         let config = EndpointConfig::default();
         let v1_base = vec!["http://host/v1".to_string()];
-        let binding = MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &v1_base);
+        let binding =
+            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &v1_base, "fixture-model");
         assert_eq!(
             binding
                 .endpoint_url(Some("/v1/embeddings"), false, None)
@@ -556,12 +567,37 @@ mod tests {
         );
 
         let full_base = vec!["http://host/v1/images/generations".to_string()];
-        let binding = MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &full_base);
+        let binding =
+            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &full_base, "fixture-model");
         assert_eq!(
             binding
                 .endpoint_url(Some("/v1/images/generations"), false, None)
                 .unwrap(),
             "http://host/v1/images/generations"
+        );
+    }
+
+    #[test]
+    fn endpoint_path_templates_expand_model_name_before_url_joining() {
+        let config = EndpointConfig::default();
+        let base_urls = vec!["http://host/v1".to_string()];
+        let binding =
+            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &base_urls, "sklearn-iris");
+        assert_eq!(
+            binding
+                .endpoint_url(Some("/v1/models/{model_name}:predict"), false, None)
+                .unwrap(),
+            "http://host/v1/models/sklearn-iris:predict"
+        );
+        assert_eq!(
+            binding
+                .endpoint_url(
+                    Some("http://other/v2/models/{model_name}/infer"),
+                    false,
+                    None,
+                )
+                .unwrap(),
+            "http://other/v2/models/sklearn-iris/infer"
         );
     }
 
@@ -571,7 +607,8 @@ mod tests {
         let transport = HttpTransport::new(clock, crate::config::ClientConfig::default());
         let config = EndpointConfig::default();
         let base_urls = vec!["http://host/v1".to_string()];
-        let binding = MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &base_urls);
+        let binding =
+            MetadataHttpEndpointBinding::new(&ChatEndpoint, &config, &base_urls, "fixture-model");
         let body = Bytes::from_static(br#"{"model":"m","messages":[]}"#);
         let prepared = prepare_request(&binding, &transport, endpoint_request(body.clone()))
             .await
@@ -583,7 +620,12 @@ mod tests {
             "http://host/v1/chat/completions"
         );
 
-        let binding = MetadataHttpEndpointBinding::new(&ImageEditEndpoint, &config, &base_urls);
+        let binding = MetadataHttpEndpointBinding::new(
+            &ImageEditEndpoint,
+            &config,
+            &base_urls,
+            "fixture-model",
+        );
         let body = Bytes::from_static(
             br#"{"prompt":"edit","image":{"b64_data":"aGVsbG8=","filename":"in.txt","content_type":"text/plain"}}"#,
         );

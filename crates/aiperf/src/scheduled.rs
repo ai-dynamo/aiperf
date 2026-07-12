@@ -413,6 +413,7 @@ pub struct ScheduledRuntime {
     turn_lifecycle_observer: RefCell<Option<Rc<dyn TurnLifecycleObserver>>>,
     record_processor_tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
     record_processor_errors: RefCell<Vec<String>>,
+    parallel_report_reduction: Cell<bool>,
 }
 
 impl ScheduledRuntime {
@@ -425,12 +426,31 @@ impl ScheduledRuntime {
         stop: StopConfig,
         enforce_stop: bool,
     ) -> Rc<Self> {
-        let collector = Rc::new(CollectorObserver::new(true));
-        let native_metrics = Rc::new(NativeMetricsObserver::new(
-            clock.clone(),
+        Self::new_with_metrics_config(
+            clock,
             start_ns,
+            dispatcher,
+            stop,
+            enforce_stop,
             MetricsConfig::default(),
-        ));
+        )
+    }
+
+    /// Build a runtime with an explicit native metrics policy.
+    ///
+    /// Workload adapters use this constructor when run-level timeslices or
+    /// per-request SLOs were prepared by their owning protocol adapter. The
+    /// scheduling and observer topology stays identical to [`Self::new`].
+    pub fn new_with_metrics_config(
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        dispatcher: Rc<dyn TurnDispatcher>,
+        stop: StopConfig,
+        enforce_stop: bool,
+        metrics: MetricsConfig,
+    ) -> Rc<Self> {
+        let collector = Rc::new(CollectorObserver::new(true));
+        let native_metrics = Rc::new(NativeMetricsObserver::new(clock.clone(), start_ns, metrics));
         let delegates: Vec<Rc<dyn RequestObserver>> =
             vec![collector.clone(), native_metrics.clone()];
         let observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
@@ -487,7 +507,13 @@ impl ScheduledRuntime {
             turn_lifecycle_observer: RefCell::new(None),
             record_processor_tasks: RefCell::new(Vec::new()),
             record_processor_errors: RefCell::new(Vec::new()),
+            parallel_report_reduction: Cell::new(false),
         })
+    }
+
+    /// Configure post-drain parallel reduction of independent report planes.
+    pub fn set_parallel_report_reduction(&self, enabled: bool) {
+        self.parallel_report_reduction.set(enabled);
     }
 
     /// Attach a terminal record processor before workload execution begins.
@@ -1040,10 +1066,23 @@ impl ScheduledRuntime {
     ) -> ScheduledRunReport {
         let wall_ms = end_ns.saturating_sub(self.start_ns) as f64 / 1_000_000.0;
         let turns = std::mem::take(&mut self.recorder.borrow_mut().records);
+        let collector = self.collector.take();
+        let native_metrics = self.native_metrics.take_finalizer_at(end_ns);
+        let (performance, native_metrics) = if self.parallel_report_reduction.get() {
+            rayon::join(
+                || collector.finish().with_wall_time_ms(wall_ms),
+                || native_metrics.finish(),
+            )
+        } else {
+            (
+                collector.finish().with_wall_time_ms(wall_ms),
+                native_metrics.finish(),
+            )
+        };
         ScheduledRunReport {
             strategy: strategy.into(),
-            performance: self.collector.finish(wall_ms),
-            native_metrics: self.native_metrics.finish_at(end_ns),
+            performance,
+            native_metrics,
             schedule_timing: ScheduleTimingAnalysis::from_records(&turns),
             turns,
             user_control,
