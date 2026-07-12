@@ -1251,42 +1251,97 @@ availability without post-hoc inference.
 
 ### 14.1 Strict workload DTO
 
-The wire uses factory-owned raw configs under the runner-v2 workload registry. An illustrative
-authored projection is:
+This design normatively amends the preimplementation runner-v2 authored model. Required common
+fields remain `identity`, `artifact_target`, `backend`, and `workload`. Inference-scoped fields move
+under a strict resource block:
+
+```rust
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRunSpecV2 {
+    pub identity: RunIdentitySpecV2,
+    pub artifact_target: PathBuf,
+    pub backend: NamedRunnerComponentSpecV2,
+    pub workload: NamedRunnerComponentSpecV2,
+    #[serde(default)]
+    pub resources: AuthoredRunResourcesV2,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRunResourcesV2 {
+    pub models: Option<ModelsSpec>,
+    pub endpoints: Option<EndpointProfilesSpecV2>,
+    pub metrics: Option<MetricsSpec>,
+    pub artifacts: Option<ArtifactSpecV2>,
+    pub sidecars: Option<SidecarSpecV2>,
+}
+```
+
+Every `RunnerWorkloadFactory` returns `ResourceRequirementsV2`, classifying each field as
+`required`, `optional`, or `forbidden`. Outer validation first checks common structure, the workload
+factory strictly validates its raw config and requirements, then resource validation rejects absent
+required and present forbidden blocks before backend validation. Scheduled/graph retain required
+models/endpoints; standalone watch forbids models/endpoints/metrics/sidecars and allows optional
+generic artifact policy. An empty resource block is therefore intentional, not permissive.
+
+The complete authored projection below is deserializable by that revised DTO; omitted resource
+fields are forbidden/unused rather than filled with dummy inference values:
 
 ```jsonc
 {
-  "backend": {
-    "type": "online_http",
-    "config": {"client": {"connect_timeout_ns": 10000000000}}
-  },
-  "workload": {
-    "type": "telemetry_watch",
-    "config": {
-      "duration_ns": null,
-      "sources": [
-        {
-          "id": "node-a",
-          "type": "prometheus_http",
-          "interval_ns": 1000000000,
-          "request_timeout_ns": 5000000000,
-          "config": {"url": "http://node-a:9100/metrics"},
-          "attributes": {"role": "node", "cluster": "lab-a"}
+  "protocol_version": 2,
+  "operation": "execute",
+  "expected_distribution_id": "blake3:<exact-runner>",
+  "run": {
+    "identity": {"benchmark_id": "watch-20260711-a"},
+    "artifact_target": "/var/lib/aiperf/runs/watch-20260711-a",
+    "backend": {
+      "type": "online_http",
+      "config": {"client": {"connect_timeout_ns": 10000000000}}
+    },
+    "workload": {
+      "type": "telemetry_watch",
+      "config": {
+        "duration_ns": null,
+        "shutdown_timeout_ns": 30000000000,
+        "sources": [
+          {
+            "id": "node-a",
+            "type": "prometheus_http",
+            "interval_ns": 1000000000,
+            "request_timeout_ns": 5000000000,
+            "config": {
+              "url": "https://node-a:9100/metrics",
+              "credential_provider": "node-metrics",
+              "tls": {"trust_provider": "cluster-ca", "mtls_provider": null},
+              "redirects": "disabled",
+              "proxy": "disabled",
+              "accepted_formats": ["prometheus_text_0_0_4", "openmetrics_text_1_0_0"],
+              "max_compressed_bytes": 8388608,
+              "max_decompressed_bytes": 33554432
+            },
+            "attributes": {"role": "node", "cluster": "lab-a"}
+          }
+        ],
+        "archive": {
+          "target": "s3://benchmarks/watch/archive-id/",
+          "local_spool": "/var/tmp/aiperf/archive-id",
+          "spool_quota_bytes": 107374182400,
+          "spool_quota_files": 100000,
+          "required": true,
+          "sink": {"type": "parquet_object_store", "config": {}},
+          "rotation": {"type": "rows_bytes_age", "config": {}},
+          "admission": {"type": "primary_durable", "config": {}},
+          "recovery": {"type": "create_new", "config": {}},
+          "identity_key": {"type": "secret_provider", "config": {"id": "archive-identity"}},
+          "enrichers": [],
+          "sanitizers": [],
+          "raw_body": {"type": "none", "config": {}}
         }
-      ],
-      "archive": {
-        "target": "s3://benchmarks/watch/archive-id/",
-        "local_spool": "/var/tmp/aiperf/archive-id",
-        "required": true,
-        "sink": {"type": "parquet_object_store", "config": {}},
-        "rotation": {"type": "rows_bytes_age", "config": {}},
-        "admission": {"type": "primary_durable", "config": {}},
-        "recovery": {"type": "create_new", "config": {}},
-        "enrichers": [],
-        "redactors": [],
-        "raw_body": {"type": "none", "config": {}}
       }
-    }
+    },
+    "resources": {}
   }
 }
 ```
@@ -1299,18 +1354,21 @@ local paths, and normalized target URIs. Unknown fields and unknown factory IDs 
 Static validation covers:
 
 - exact runner distribution/capabilities;
+- workload resource requirements and typed `ControlPlaneHttp` backend capability;
 - unique/valid source IDs and registered source types;
-- positive intervals/timeouts and bounded counts/sizes;
+- positive intervals/absolute timeout budgets and bounded counts/sizes;
+- credential/TLS/proxy/redirect/content-negotiation/compression policy without resolving secrets;
 - target scheme/sink compatibility;
-- local spool path safety and quota policy;
+- local spool path safety, quota/transaction reserve, and artifact-target non-aliasing;
 - policy IDs/configs and raw-retention acknowledgment;
 - watch/backend compatibility;
 - no benchmark-only fields/models/datasets/phases that would be inert.
 
 Execution preparation then checks source-specific configuration, local target/spool state, remote
-reachability where configured, exact-resume manifest identity, and credentials without creating an
-authoritative archive. Only after complete preparation does it create/lock the archive session,
-start the IO worker, and activate sources.
+store capabilities/reachability where configured, exact-resume ancestry/identity, filesystem
+reserve, and credential-provider availability without creating an authoritative archive. Only
+after complete preparation does it acquire the archive lock, durably commit/verify genesis and
+`LOCAL-LATEST`, start the IO/decode workers and Clock maintenance task, and activate sources.
 
 ### 14.3 Signals and stdout
 
@@ -1318,13 +1376,17 @@ Runner stdout retains exactly one terminal JSON line. Progress is structured std
 optional local status artifact. Python forwards SIGINT/SIGTERM as a graceful stop request:
 
 ```text
-PREPARED -> RUNNING -> STOP_REQUESTED -> DRAINING -> FINALIZED
-                                          `-------> FAILED
+PREPARED -> GENESIS_DURABLE -> RUNNING -> STOP_REQUESTED -> DRAINING
+                                                       -> LOCALLY_FINALIZED
+                                                       -> REMOTELY_FINALIZED
+                                        any stage ----> FAILED
 ```
 
 A second signal or expired shutdown budget may force termination; recovery must make the next
-resume deterministic. The terminal response includes archive ID, local/remote manifest URIs,
-completeness, health counts, and failure stage.
+resume deterministic. The terminal response includes archive ID, local/remote head and immutable
+generation locations/hashes, completeness, health counts, and failure stage. A sync-only resume
+uses the same validate/execute envelope with recovery policy `finalize_remote`; it activates no
+source.
 
 ---
 
@@ -1332,17 +1394,30 @@ completeness, health counts, and failure stage.
 
 ### 15.1 Native-v2
 
-Every successful watch execution still writes a minimal native-v2 outcome with common runner
-provenance and a typed `telemetry_archive` block. It contains no fabricated request metrics or
-benchmark duration. Attached runs add the same block to their normal report:
+Every successful watch execution writes a minimal native-v2 outcome with common runner provenance,
+empty request-metric maps, and a typed optional `ReportTelemetryArchive` block. It contains no
+fabricated request distribution or benchmark duration. Attached runs add the same block to their
+normal report:
 
 ```jsonc
 {
   "telemetry_archive": {
     "schema_version": "1.0",
     "archive_id": "uuid",
-    "manifest_uri": ".../archive-manifest.json",
-    "local_manifest_path": "...",
+    "session_id": "uuid",
+    "state": "remotely_finalized",
+    "local_head": {
+      "head_uri": "file:///.../LOCAL-LATEST",
+      "generation_uri": "file:///.../manifests/generation-7-blake3-....json",
+      "generation_hash": "blake3:...",
+      "index_root_hash": "blake3:..."
+    },
+    "remote_head": {
+      "head_uri": "s3://.../LATEST",
+      "generation_uri": "s3://.../manifests/generation-7-blake3-....json",
+      "generation_hash": "blake3:...",
+      "index_root_hash": "blake3:..."
+    },
     "finalized_local": true,
     "finalized_remote": true,
     "lossy": false,
@@ -1351,8 +1426,18 @@ benchmark duration. Attached runs add the same block to their normal report:
 }
 ```
 
-Credentials, raw labels, signed URLs, and arbitrary diagnostics are excluded. Python presentation
-may link the archive and summarize source health but cannot reinterpret it as native metrics.
+The block is an additive mode-specific extension expressly permitted by native-v2; its addition
+does not change top-level schema version `2.0`. Implementation adds a typed DTO plus old-reader,
+new-reader, absent-block, watch, and attached goldens. Credentials, raw labels, signed URLs, and
+arbitrary diagnostics are excluded. Python presentation may link the archive and summarize source
+health but cannot reinterpret it as native metrics.
+
+If `archive.required=true` fails during the reporting/finalization stage, `RunTerminalV2` returns
+`success=false`, `stage="reporting"`, and no authoritative `report_path`. Runner-v2 gains an
+optional typed `diagnostic_artifacts` list with kind, relative path, and content hash. It may point
+to an `archive_failure_diagnostic` and locally finalized immutable head, but that artifact is not a
+`NativeReport`; Python outer-loop metric consumers must never load it as a result. This preserves
+evidence without creating a partial authoritative report.
 
 ### 15.2 Query layout
 
@@ -1363,9 +1448,10 @@ object keys. Within each samples partition, rows sort by:
 (metric_family, series_key, clock_ns, attempt_seq)
 ```
 
-Scrape partitions sort by `(source_id, attempt_seq)`. Parquet statistics and manifest min/max/source
-metadata enable pruning. `metric_name_clean` is unnecessary because family identity has its own
-column.
+Scrape partitions sort by `(source_id, attempt_seq)`. Parquet statistics and the manifest index's
+min/max/source metadata enable pruning. The query resolver starts from a verified head/root and
+walks the persistent index; it never globs. `metric_name_clean` is unnecessary because family
+identity has its own column.
 
 The first documentation examples use DuckDB/Polars/Arrow to:
 
@@ -1378,10 +1464,12 @@ The first documentation examples use DuckDB/Polars/Arrow to:
 
 ### 15.3 Schema evolution
 
-Readers select the manifest schema version before scanning partitions. A minor version may add
-nullable columns/value variants. It may not reinterpret existing fields. A major writer change
-uses a new table/schema path and manifest major. Compaction preserves original batch IDs and source
-values and declares its input/output schema versions.
+Readers select the manifest/schema fingerprint before scanning partitions. A minor version may add
+nullable columns or enum values only when v1 readers have defined unknown-value pass-through; it may
+not change field order/type/nullability or reinterpret existing values. Every new fingerprint has
+cross-reader goldens. An incompatible writer uses a new table/schema path and manifest major.
+Compaction preserves original frame/batch IDs, source values, and declared input/output
+fingerprints.
 
 ---
 
@@ -1398,9 +1486,13 @@ policy explicitly declares all sources required.
 - WAL/local partition failure in primary watch: stop source issuance, attempt bounded finalization,
   return failed terminal.
 - remote failure with healthy local spool: continue within quota, mark remote lag, retry; terminal
-  may be local-only or fail if remote durability is required.
-- attached archive failure: native benchmark continues; report marks archive degraded/lossy unless
-  explicitly required.
+  may be locally finalized/remote-incomplete or fail if remote durability is required; sync-only
+  resume can finish publication without reopening collection.
+- attached best-effort archive failure: native benchmark continues; its successful report marks the
+  archive degraded/lossy and includes persisted/coalesced loss ranges.
+- attached required archive failure: benchmark execution may finish, but the runner returns a
+  reporting-stage failure with no authoritative report path and only the §15.1 diagnostic-artifact
+  surface.
 - manifest identity/hash failure: fail closed; never guess or glob a replacement dataset.
 
 ### 16.3 Parse failure
@@ -1411,33 +1503,52 @@ the outcome explicitly records partiality and exact rejected-line counts; the de
 
 ### 16.4 Process crash
 
-The latest valid manifest plus WAL defines recovery. Unreferenced remote objects are harmless
-orphans. A crash never makes directory enumeration the logical dataset and never causes an old
-checkpoint to be concatenated with its committed replacement.
+The latest valid local head, its verified immutable generation/index root, and sealed/open WAL
+segments define recovery. Unreferenced remote objects are harmless orphans. A crash never makes
+directory enumeration the logical dataset and never causes an old checkpoint to be concatenated
+with its committed replacement.
 
 ---
 
 ## 17. Performance and capacity budgets
 
-The archive is control-plane work, but attached mode must prove no data-plane regression.
+The archive is control-plane work, but attached mode must prove bounded data-plane impact. No scale
+number is a product claim until a versioned `AcceptanceProfileV1` result is checked into the release
+artifacts. The feature is currently unbuilt, so no supported profile is asserted by this document.
 
-Required budgets:
+Each profile records exact runner distribution, commit/Cargo.lock, OS/kernel, CPU topology, RAM,
+filesystem/object store, Arrow/Parquet/compression settings, query-reader versions, source count,
+intervals, compressed/decompressed body sizes, points/buckets/labels/cardinality, duration,
+request workload, remote fault schedule, and these measured outputs:
 
-- no per-request or per-token archive work;
-- one allocation-owned batch per scrape after decode;
-- bounded source-to-writer bytes and source cardinality;
-- one IO owner and no global writer mutex;
-- Parquet compression/flush outside request `LocalSet`;
-- configurable row/byte/Clock-age partition rotation;
-- bounded shutdown/checkpoint duration;
-- no full-history rewrite during periodic sync;
-- manifest memory proportional to partitions, with later hierarchical manifests if scale demands;
-- stable memory under a 24-hour high-cardinality watch soak.
+- samples and entity bytes per second plus unique series;
+- archive CPU-core seconds, peak RSS, post-warmup RSS slope, queue/decode/writer lag;
+- WAL/Parquet/manifest-index/spool growth and object-store throughput/requests;
+- missed deadlines and source launch-lag percentiles;
+- checkpoint, signal-to-admission-close, local-finalize, remote-finalize, and forced-recovery time;
+- paired request throughput and p50/p95/p99 latency deltas with archival off/on.
 
-Benchmark acceptance requires statistically indistinguishable request throughput/latency with
-attached archival disabled versus enabled at supported telemetry rates. Standalone watch must
-publish measured maximum samples/sec, sources, series cardinality, spool growth, and object-store
-bandwidth for its supported profile; no unmeasured throughput claim enters documentation.
+At least seven randomized paired off/on trials run after an identical warmup. The gate reports the
+median delta and a paired bootstrap 95% confidence interval. Attached archival passes only when:
+
+- the confidence interval's lower bound for request-throughput delta is at least `-1.0%`;
+- the upper bound for each p50/p95/p99 latency delta is at most `+2.0%` (and the absolute p99
+  increase is at most 1 ms);
+- no archive work appears in per-token callbacks and no request LocalSet queue grows unbounded;
+- p99 source launch lag is at most `max(5 ms, 1% of interval)` for non-faulted sources;
+- steady-state RSS slope after hour one is at most 1 MiB/hour and peak RSS stays below the profile's
+  predeclared numeric budget;
+- archive CPU, queue/writer lag, spool growth, and object-store request rates stay below the
+  profile's predeclared numeric budgets;
+- default graceful local finalization completes within 30 seconds after admission closes, unless
+  the profile deliberately configures a larger bounded shutdown budget;
+- a 24-hour accelerated/real soak has no missed acknowledged frames, no duplicate frame/table
+  projections, no flat-history metadata rewrite, and no unbounded head/index-chain growth.
+
+Before `telemetry_watch` or attached archival is advertised, the release must check in at least one
+standalone and one attached profile with all numeric inputs/budgets/results populated and passing.
+Documentation may state only the measured envelope of those profiles. A new dependency/runtime
+version or material schema/writer change invalidates the profile until rerun.
 
 ---
 
@@ -1445,14 +1556,23 @@ bandwidth for its supported profile; no unmeasured throughput claim enters docum
 
 ### 18.1 Parser/schema gates
 
-1. classic and strict OpenMetrics escaped labels, UTF-8, commas, quotes, backslashes, HELP/TYPE/UNIT;
-2. multiple histogram label sets remain isolated and structured;
-3. summaries and supported exemplars survive archive projection while benchmark projection keeps
-   its intentional exclusions;
-4. `100000001` and representative large counters survive Float64 Parquet round-trip;
-5. NaN/±Inf map to tagged value kinds and never serialize as invalid JSON/non-finite Parquet values;
-6. deterministic labels, series hashes, schema fingerprint, and exact manifest golden;
-7. property-based parse/encode/decode round trips and malformed-input atomic failure.
+1. exact content negotiation and golden corpora for Prometheus text 0.0.4 and OpenMetrics text
+   1.0.0; unsupported format/version is typed, never retried under another grammar;
+2. escaped labels, UTF-8, commas, quotes, backslashes, HELP/TYPE/UNIT, info, stateset, unknown/
+   untyped, gauge histogram, summary, histogram, counter-created, source timestamps, and scalar/
+   bucket exemplars retain emitted names/roles;
+3. multiple histogram/gauge-histogram base label sets remain isolated and structured while native
+   benchmark projection retains all intentional exclusions;
+4. `100000001`, representative large counters, and exact UInt64 annotations survive every pinned
+   Arrow/Parquet reader;
+5. NaN/±Inf at every scalar/sum/count/bucket/quantile/exemplar leaf map to `ArchiveNumber` and no
+   raw non-finite boundary value exists;
+6. deterministic keyed pre-redaction identity, post-redaction identity, map order, digest domains,
+   topology epochs, schema descriptors/fingerprints, manifest/index, and report goldens;
+7. exact field/type/nullability/dictionary/metadata compatibility through pinned Arrow, Parquet,
+   DuckDB, Polars, and pyarrow versions;
+8. streaming size/cardinality limits, property parse/encode/decode round trips, and malformed-input
+   atomic failure.
 
 ### 18.2 Scheduling gates
 
@@ -1460,48 +1580,84 @@ bandwidth for its supported profile; no unmeasured throughput claim enters docum
 2. overrun skips debt without drift or catch-up bursts;
 3. slow source A cannot shift source B deadlines;
 4. one source never has two scrapes in flight;
-5. boundary command priority and rejoin to the original cadence;
-6. failed/empty/duplicate/missed outcomes have exact counters/records;
-7. graceful signal stops issuance before writer drain.
+5. absolute Clock timeout cancels/reclaims transport and yields one timeout attempt;
+6. coincident seamless-phase boundaries coalesce while exact phase markers remain distinct;
+7. bounded worst-case decode cannot stall unrelated source/request LocalSet work at the qualified
+   profile;
+8. failed/empty/unchanged/missed/dropped outcomes have exact counters/records and unchanged success
+   retains full sample rows;
+9. graceful signal closes admission and fixes the final accepted-sequence watermark before drain.
 
 ### 18.3 Durability/recovery gates
 
-1. crash injection after every WAL/partition/manifest commit step;
-2. acknowledged batch set equals recovered referenced batch set exactly once;
-3. stale/repeated WAL frames cannot duplicate rows;
-4. corrupt/truncated files are rejected without deleting the last good generation;
-5. remote upload retries and conditional-manifest CAS are idempotent;
-6. remote outage preserves local durability and respects spool policy;
-7. exact-resume mismatch fails before source activation;
-8. compaction failure leaves the old manifest authoritative;
-9. 24-hour accelerated soak produces immutable incremental partitions, not quadratic rewrites.
+1. crash before/after genesis and every WAL append/fsync/seal, partition/index/generation write,
+   file/directory fsync, head replacement, WAL unlink, watermark, and finalization edge;
+2. receipt-observed durable projections are recovered exactly once; a complete fsynced but
+   unobserved frame is recovered as an uncertain operation under the same ID;
+3. independently rotated multi-table projections cannot make global dedup omit a table, and stale/
+   repeated WAL frames cannot duplicate a frame/table pair;
+4. finalize on the reserved control lane cannot overtake accepted data or loss-ledger frames;
+5. corrupt/truncated files fall back through the preceding fixed head without deleting the last
+   good generation or guessing from a directory;
+6. transaction-reserve exhaustion and real ENOSPC/inode exhaustion fail before destroying the only
+   durable copy;
+7. create-if-absent retries, exact-byte verification, named-object visibility horizon, and
+   conditional `LATEST` CAS are idempotent under competing writers;
+8. every equal/ancestor/divergent local/remote reconciliation cell and sync-only finalization path;
+9. exact-resume identity/writer mismatch fails before session/source activation;
+10. exact-parent compaction failure leaves the old head authoritative and cannot expose duplicate
+    replacement coverage;
+11. the 24-hour profile produces immutable partitions and O(log₂₅₆ P) manifest-index update
+    work rather than flat full-history rewrites.
 
 ### 18.4 Security gates
 
-1. endpoint userinfo/auth headers/object-store credentials absent from every artifact/log/error;
-2. redaction precedes series hashing and persists through resume;
-3. label/body/diagnostic bounds reject adversarial cardinality/size;
-4. raw-body retention is off by default and requires explicit config acknowledgment;
-5. path traversal and unsafe local spool/target aliasing fail validation;
-6. manifest/partition hashes detect tampering/corruption.
+1. endpoint userinfo/auth headers/provider secrets/object-store credentials absent from every
+   descriptor, sample, exemplar, marker, manifest, report, diagnostic artifact, log, and error;
+2. sanitization covers every structured durable surface; keyed pre-redaction identity prevents
+   silent series merge and defeats low-entropy dictionary tests;
+3. compressed/decompressed body, label, exemplar, marker, attribute, diagnostic, series, and bucket
+   bounds reject adversarial input during receive/parse rather than after unbounded allocation;
+4. redirects/proxies/content negotiation/TLS/mTLS/credential forwarding obey strict defaults and
+   a non-2xx metric-looking body never parses;
+5. raw-body retention is off by default; opt-in requires classification, key provider, restrictive
+   permissions, authenticated encryption for remote, and artifact-wide secret scanning;
+6. path traversal and unsafe artifact/spool/target aliasing fail validation;
+7. partition/index/generation/head hashes detect tampering/corruption.
 
 ### 18.5 Product subprocess gates
 
-1. Python `aiperf watch` -> exact packaged runner -> in-process HTTP Prometheus mock -> local
-   manifest/Parquet -> terminal response;
-2. multiple endpoint cadences including one slow/failing source;
-3. HTTP 500 with metric-looking body remains an HTTP failure record, not a sample;
-4. SIGINT/SIGTERM graceful finalization and forced-crash exact resume;
-5. local object-store emulator periodic sync/restart/finalization;
-6. ordinary scheduled benchmark with attached server/GPU archive proves one scrape feeds report and
-   archive, phase markers align exactly, and native metrics are unchanged;
-7. online-only runner capability advertises watch; unsupported distribution/pair fails before IO.
+1. the complete §14.1 envelope with empty resources validates/deserializes, while missing required
+   scheduled resources and present forbidden watch resources fail before preparation;
+2. Python `aiperf watch` -> exact packaged runner -> in-process HTTP Prometheus mock -> durable
+   genesis/WAL/Parquet/index/head -> terminal response;
+3. multiple endpoint cadences including one slow/failing/oversized source and distinct per-call
+   deadlines over the shared native transport;
+4. HTTP 500 with metric-looking body remains an HTTP failure record, not a sample;
+5. SIGINT/SIGTERM graceful finalization, forced-crash exact resume, and local-final/sync-only remote
+   completion;
+6. object-store emulator visibility lag, outage, conflicting CAS, restart, and finalization;
+7. ordinary scheduled benchmark with attached server/GPU archive proves one physical run-owned
+   driver/source feeds report and archive across seamless phases, `PhaseObserver` markers align
+   exactly, and native metrics are unchanged;
+8. required attached archive failure yields failed reporting terminal, no `report_path`, and only a
+   typed diagnostic artifact; best-effort yields a successful typed archive block;
+9. online-only runner capability advertises watch only after qualified profiles; unsupported
+   distribution/backend capability fails before IO.
 
 ### 18.6 Query compatibility gates
 
-Golden archives are read by pinned Arrow, DuckDB, and Polars versions. Queries prove structured
-label filtering, histogram reconstruction, phase joins, failure-gap discovery, and partition
-pruning. The manifest, not an implementation-specific directory glob, supplies file lists.
+Golden archives are read by pinned Arrow, DuckDB, Polars, and pyarrow versions. Queries begin at
+local/remote heads, verify immutable generation/root hashes, walk the persistent index, and prove
+structured label filtering, every semantic payload, phase joins, failure/loss-range discovery,
+unchanged-success continuity, and partition pruning. No directory glob supplies file lists.
+
+### 18.7 Performance/capacity gates
+
+The versioned §17 harness validates schema completeness and all required numeric profile fields,
+runs the paired bootstrap method, enforces every threshold, records dependency/hardware identities,
+and rejects stale profiles after relevant lock/schema/writer changes. Capability generation checks
+for passing standalone and attached profile artifacts rather than trusting documentation text.
 
 ---
 
@@ -1509,45 +1665,51 @@ pruning. The manifest, not an implementation-specific directory glob, supplies f
 
 ### Increment 1 — exposition and archive schema
 
-1. extract the standards-correct `aiperf-prometheus` lexical/model seam;
+1. implement the bounded Prometheus 0.0.4/OpenMetrics 1.0.0 `aiperf-prometheus` model/parser seam;
 2. preserve current server/DCGM projection semantics with parity tests;
-3. define archive DTOs, schema fingerprint, series/batch identity, and golden Parquet/manifest;
+3. check in canonical Arrow descriptors; implement every semantic/numeric/exemplar/source-time
+   payload, digest/identity rule, sanitizer surface, and golden Parquet/index/manifest/report;
 4. add the five Tachometer regression fixtures as mandatory tests.
 
 ### Increment 2 — local writer and recovery
 
-1. implement the single-owner IO worker and bounded ingress/control channels;
-2. add framed WAL, rotation policy, immutable Parquet, local manifest generations, and fsync order;
-3. add crash-point/property recovery matrix and spool quotas;
+1. implement bounded ordered decode/projection, fixed-memory loss ledger, Clock maintenance driver,
+   and single mutable archive owner;
+2. add durable genesis, sealed framed WAL segments, independent table projection coverage,
+   immutable Parquet, persistent manifest index, generation objects, and durable local head;
+3. add every-step crash/property recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
 
 ### Increment 3 — source runtime and watch product path
 
-1. implement factory-backed source registry and per-source fixed-deadline drivers;
-2. register `telemetry_watch` with runner-v2 and advertise the computed backend/workload pair;
-3. add strict Python Config-v2 projection and `aiperf watch` command;
+1. revise runner-v2 resources/requirements and implement the prepared `ControlPlaneHttp` capability;
+2. implement strict secured source factories and one run-owned fixed-deadline driver per physical
+   source;
+3. register `telemetry_watch`, add strict Python Config-v2 projection and `aiperf watch` command;
 4. add local archive, signal, failure, and query subprocess gates.
 
 ### Increment 4 — benchmark attachment
 
-1. add batch-observer tees to existing server/GPU/network sidecars;
-2. emit exact lifecycle/phase markers;
-3. add archive provenance/health to native-v2;
+1. replace phase-owned cadence loops with run-owned source subscriptions and pre-projection
+   all-outcome attempt tees;
+2. emit exact lifecycle markers through a `PhaseObserver` tee;
+3. add typed archive provenance/health and failure diagnostic-artifact protocol;
 4. prove no extra scrapes, no metric drift, and no request-path backpressure.
 
 ### Increment 5 — object-store durability and resume
 
-1. implement object-store target factory, immutable uploads, conditional generations, and retry;
-2. implement create-new/exact-resume policies and remote/local reconciliation;
-3. add emulator failure matrix, local-only terminal states, and long soak;
+1. implement capability-gated archive-store adapters, bounded immutable uploads, strong
+   verification, and conditional heads;
+2. implement create-new/exact/sync-only policies and hash-ancestry reconciliation;
+3. add visibility/CAS/outage emulator matrix, finalization lifecycle, and §17 profiles;
 4. document operational recovery and orphan/GC procedures.
 
 ### Increment 6 — optional compaction and ecosystem docs
 
 1. add manifest-transactional compaction without in-place history mutation;
 2. publish Arrow/DuckDB/Polars examples and schema compatibility policy;
-3. measure supported scale profiles;
-4. consider hierarchical manifests only after observed partition-count evidence.
+3. qualify and publish numeric standalone/attached scale profiles;
+4. document sync-only recovery, key rotation constraints, orphan inspection, and external GC.
 
 Each increment lands behind capabilities and tests. A library implementation is not product support
 until the exact Python-to-runner subprocess gate passes.
@@ -1594,7 +1756,15 @@ manifest generations provide explicit commit identity.
 ### Rewrite all history on every sync
 
 Rejected. It is quadratic over a long watch and makes remote durability depend on increasingly
-large transactions. Upload immutable new partitions once.
+large transactions. Upload immutable new partitions once and copy-on-write only a bounded path in
+the persistent manifest index.
+
+### Use one overwritten flat manifest or a monolithic front-truncated WAL
+
+Rejected. An overwritten manifest cannot supply a preceding valid generation, a flat full
+partition array is quadratic for an always-on writer, and prefix mutation can destroy a pending WAL
+suffix. Use immutable generation/index objects, a directory-durable head, and sealed whole-segment
+retirement.
 
 ### Fire overlapping scrape tasks to maintain frequency
 
@@ -1603,8 +1773,15 @@ Use one in-flight scrape per source and explicit missed ticks.
 
 ### Use wall clock for each sample
 
-Rejected. Wall-clock steps destroy monotonic ordering. Capture one injected epoch anchor and derive
-cross-process time from `Clock` deltas.
+Rejected. Wall-clock steps destroy monotonic ordering. Bracket one injected epoch anchor, report its
+capture uncertainty, and derive approximate cross-process placement from `Clock` deltas without
+later remapping.
+
+### Archive existing `ServerMetricsRecord`/`GpuScrape` values
+
+Rejected. Those domain records intentionally discard unsupported families and failures. Archive an
+all-outcome pre-projection envelope; feed native and archive projections from the same decoded
+entity.
 
 ### Dynamic wide columns for arbitrary metadata
 
@@ -1618,25 +1795,34 @@ structured attributes with stable core columns.
 This design is complete only when:
 
 - Python exposes `aiperf watch` and no second Rust executable exists;
-- the exact runner advertises and validates `online_http + telemetry_watch` from frozen factories;
-- every source uses the injected Clock/native transport and independent fixed-deadline driver;
-- generic Prometheus parsing is standards-correct, structured, Float64, and shared without changing
-  existing benchmark projection semantics;
-- the archive schema and manifest are versioned, deterministic, and readable by the pinned query
-  ecosystem;
-- local WAL/immutable partitions recover every acknowledged batch exactly once across all injected
-  crash points;
-- remote sync uploads immutable partitions and advances conditional manifest generations without
-  full-history rewrites;
-- exact resume fails closed on identity/config/schema mismatch and concurrent writers;
-- failures, gaps, duplicates, misses, drops, local durability, and remote lag are observable;
-- enrichment is additive, redaction precedes hashing, and secrets never enter artifacts;
-- attached mode reuses existing scrapes, emits exact phase markers, leaves native results unchanged,
-  and shows no supported-profile request-path regression;
+- the revised workload-scoped runner-v2 DTO deserializes the complete watch envelope and rejects
+  required/forbidden resource violations;
+- the exact runner derives and validates `online_http + telemetry_watch` from frozen factories and
+  the typed `ControlPlaneHttp` capability;
+- every physical source uses the injected Clock/native transport, one run-owned fixed-deadline
+  driver, absolute deadline, and bounded ordered decode path;
+- Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves every advertised semantic role,
+  source timestamp, exemplar, metadata, and numeric leaf without changing native benchmark
+  projection semantics;
+- canonical Arrow descriptors, keyed/pre-post redaction identities, tagged numbers, manifest index,
+  and native-v2 DTO are deterministic and readable by the pinned query ecosystem;
+- durable genesis, sealed WAL, independent table coverage, immutable partitions/generations/index,
+  and local head recover every complete durable frame/table pair exactly once across all injected
+  crash points, including uncertain receipts and finalization races;
+- remote sync verifies create-only immutable objects and advances a linearizable conditional head
+  without flat history rewrites; exact/sync-only resume reconciles ancestry fail-closed;
+- exact resume fails closed on identity/config/schema/key/writer mismatch and concurrent writers;
+- failures, gaps, unchanged bodies, misses, drops/loss ranges, local durability, visibility lag, and
+  remote publication are observable;
+- enrichment is API-limited to attributes, sanitization covers every structured surface, source
+  identity survives redaction, and raw retention is separately protected;
+- attached mode reuses one source attempt across active phases, emits exact `PhaseObserver` markers,
+  leaves native results unchanged, and passes the numeric §17 regression profile;
 - primary watch and attached modes have real Python-to-runner subprocess proofs;
 - the five reproduced Tachometer defects are permanent regression tests;
-- native-v2 identifies archive provenance/completeness without treating archived samples as native
-  benchmark metrics.
+- native-v2 2.0 additively identifies archive provenance/completeness without treating archived
+  samples as native metrics, while required reporting failure emits no authoritative report path;
+- checked-in passing standalone and attached acceptance profiles gate capability advertisement.
 
 Until these gates pass, the existing phase-bounded native telemetry pipeline remains code truth and
 no `watch` capability should be advertised.
