@@ -11,10 +11,14 @@ description = "Durable telemetry archive identities, WAL, manifests, recovery, a
 [dependencies]
 aiperf-clock.workspace = true
 aiperf-prometheus = { path = "../aiperf-prometheus" }
+arrow-array = "58.3"
+arrow-schema = "58.3"
+arrow-select = "58.3"
 async-trait.workspace = true
 blake3.workspace = true
 bytes.workspace = true
 libc.workspace = true
+parquet = { workspace = true, features = ["arrow"] }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
