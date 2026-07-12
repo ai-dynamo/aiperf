@@ -74,7 +74,7 @@ impl RunnerCapabilities {
             ],
             phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
             run_features: &["gpu_telemetry", "outputs_json", "python_accuracy_evaluator"],
-            telemetry_source_types: &["dcgm"],
+            telemetry_source_types: &["dcgm", "python"],
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -238,6 +238,9 @@ pub struct GpuTelemetrySpec {
     pub records_path: PathBuf,
     /// Ordered source list after Config-v2 default expansion and deduplication.
     pub sources: Vec<GpuTelemetrySourceSpec>,
+    /// Config-v2 custom DCGM fields registered for native sidecar reporting.
+    #[serde(default)]
+    pub custom_metrics: Vec<GpuTelemetryMetricSpec>,
 }
 
 /// One injected GPU telemetry source.
@@ -249,6 +252,67 @@ pub enum GpuTelemetrySourceSpec {
         /// Metrics endpoint; `/metrics` is appended when absent.
         url: String,
     },
+    /// Canonical Python collector or user extension supervised by Rust.
+    Python {
+        /// Registered Config-v2 collector name.
+        collector: String,
+        /// Optional remote endpoint used by the DCGM collector.
+        #[serde(default)]
+        url: Option<String>,
+        /// Optional custom DCGM metrics definition.
+        #[serde(default)]
+        metrics_file: Option<PathBuf>,
+        /// Absolute interpreter selected by the Python orchestrator.
+        python_executable: PathBuf,
+        /// Importable strict-stdio worker module.
+        worker_module: String,
+    },
+}
+
+/// One Config-v2 custom GPU signal exposed in native-v2 output.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuTelemetryMetricSpec {
+    /// Stable normalized field name emitted by the Python collector.
+    pub name: String,
+    /// Human-readable metric label.
+    pub header: String,
+    /// Native report unit.
+    pub unit: GpuTelemetryUnitSpec,
+}
+
+/// Config-v2 GPU unit vocabulary accepted by the native report engine.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuTelemetryUnitSpec {
+    /// Unitless count.
+    Count,
+    /// Kibibytes.
+    Kilobyte,
+    /// Mebibytes.
+    Megabyte,
+    /// Gibibytes.
+    Gigabyte,
+    /// Microseconds.
+    Microsecond,
+    /// Milliseconds.
+    Millisecond,
+    /// Seconds.
+    Second,
+    /// Percentage.
+    Percent,
+    /// Watts.
+    Watt,
+    /// Joules.
+    Joule,
+    /// Megajoules.
+    Megajoule,
+    /// Megahertz.
+    Megahertz,
+    /// Gigahertz.
+    Gigahertz,
+    /// Celsius.
+    Celsius,
 }
 
 /// Outer-loop variation coordinates carried through process results.

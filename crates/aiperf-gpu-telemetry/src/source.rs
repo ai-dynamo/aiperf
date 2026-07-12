@@ -40,6 +40,8 @@ pub enum GpuTelemetryError {
     HttpStatus(u16),
     /// Successful response did not carry a text body.
     MissingBody,
+    /// Supervised Python source violated its process or wire contract.
+    Worker(String),
     /// Prometheus exposition was malformed.
     Parse {
         /// One-based source line.
@@ -68,6 +70,7 @@ impl Display for GpuTelemetryError {
             Self::MissingBody => {
                 formatter.write_str("GPU telemetry endpoint returned no text body")
             }
+            Self::Worker(message) => write!(formatter, "GPU telemetry worker failed: {message}"),
             Self::Parse { line, message } => {
                 write!(formatter, "invalid DCGM metrics at line {line}: {message}")
             }
@@ -89,6 +92,11 @@ pub trait GpuTelemetrySource {
 
     /// Collects one scrape, returning `None` only for a duplicate cadence body.
     async fn scrape(&self, mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError>;
+
+    /// Releases source-owned process or device resources.
+    async fn shutdown(&self) -> Result<(), GpuTelemetryError> {
+        Ok(())
+    }
 }
 
 /// DCGM Prometheus source backed by the shared Clock-injected HTTP transport.

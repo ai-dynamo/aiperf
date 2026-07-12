@@ -133,7 +133,7 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     if cfg.accuracy is not None and cfg.accuracy.enabled:
         accuracy: dict[str, Any] = {
             "benchmark": str(cfg.accuracy.benchmark),
-            "python_executable": str(Path(sys.executable).resolve()),
+            "python_executable": _python_executable(),
             "worker_module": "aiperf.accuracy.worker",
         }
         _set_optional(accuracy, "tasks", cfg.accuracy.tasks)
@@ -153,25 +153,48 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
 
 
 def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
-    """Lower the fault-tolerant DCGM collector into phase-bounded Rust IO."""
+    """Lower GPU sources while retaining canonical Python-only collectors."""
     config = run.cfg.gpu_telemetry
     if not config.enabled:
         return None
-    if str(config.collector) != "dcgm":
-        raise RustWireError(
-            f"native runner protocol v1 does not accept GPU telemetry collector "
-            f"{config.collector!s}"
-        )
-    if config.metrics_file is not None:
-        raise RustWireError(
-            "native runner protocol v1 does not yet accept custom DCGM metric files"
-        )
 
     from aiperf.common.environment import Environment
 
-    authored = [*Environment.GPU.DEFAULT_DCGM_ENDPOINTS, *config.urls]
-    urls = list(dict.fromkeys(_normalize_dcgm_url(url) for url in authored))
-    return {
+    collector = str(config.collector)
+    metrics_file = (
+        str(config.metrics_file.expanduser().resolve())
+        if config.metrics_file is not None
+        else None
+    )
+    sources: list[dict[str, Any]] = []
+    if collector == "dcgm":
+        authored = [*Environment.GPU.DEFAULT_DCGM_ENDPOINTS, *config.urls]
+        urls = list(dict.fromkeys(_normalize_dcgm_url(url) for url in authored))
+        for url in urls:
+            if metrics_file is None:
+                sources.append({"type": "dcgm", "url": url})
+            else:
+                sources.append(
+                    {
+                        "type": "python",
+                        "collector": collector,
+                        "url": url,
+                        "metrics_file": metrics_file,
+                        "python_executable": _python_executable(),
+                        "worker_module": "aiperf.gpu_telemetry.worker",
+                    }
+                )
+    else:
+        source: dict[str, Any] = {
+            "type": "python",
+            "collector": collector,
+            "python_executable": _python_executable(),
+            "worker_module": "aiperf.gpu_telemetry.worker",
+        }
+        _set_optional(source, "metrics_file", metrics_file)
+        sources.append(source)
+
+    result: dict[str, Any] = {
         "collection_interval_ns": _positive_seconds_to_ns(
             Environment.GPU.COLLECTION_INTERVAL,
             "GPU collection interval",
@@ -184,8 +207,19 @@ def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
             run.artifact_dir,
             run.cfg.artifacts.profile_export_gpu_telemetry_jsonl_file,
         ),
-        "sources": [{"type": "dcgm", "url": url} for url in urls],
+        "sources": sources,
     }
+    custom_metrics = run.resolved.gpu_custom_metrics or []
+    if custom_metrics:
+        result["custom_metrics"] = [
+            {
+                "header": header,
+                "name": name,
+                "unit": _native_gpu_unit(unit),
+            }
+            for header, name, unit in custom_metrics
+        ]
+    return result
 
 
 def _normalize_dcgm_url(url: str) -> str:
@@ -200,6 +234,40 @@ def _positive_seconds_to_ns(value: float, label: str) -> int:
     if nanoseconds <= 0 or nanoseconds > 2**63 - 1:
         raise RustWireError(f"{label} is outside the native nanosecond range")
     return nanoseconds
+
+
+def _python_executable() -> str:
+    """Return an absolute interpreter path without dereferencing virtualenv links."""
+    executable = Path(sys.executable).expanduser()
+    if not executable.is_absolute():
+        executable = Path.cwd() / executable
+    return str(executable.absolute())
+
+
+_GPU_UNIT_NAMES = {
+    "COUNT": "count",
+    "KILOBYTES": "kilobyte",
+    "MEGABYTES": "megabyte",
+    "GIGABYTES": "gigabyte",
+    "MICROSECONDS": "microsecond",
+    "MILLISECONDS": "millisecond",
+    "SECONDS": "second",
+    "PERCENT": "percent",
+    "WATT": "watt",
+    "JOULE": "joule",
+    "MEGAJOULE": "megajoule",
+    "MEGAHERTZ": "megahertz",
+    "GIGAHERTZ": "gigahertz",
+    "CELSIUS": "celsius",
+}
+
+
+def _native_gpu_unit(unit: Any) -> str:
+    name = getattr(unit, "name", None)
+    try:
+        return _GPU_UNIT_NAMES[name]
+    except (KeyError, TypeError) as error:
+        raise RustWireError(f"unsupported custom GPU metric unit {unit!s}") from error
 
 
 def _dataset(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:

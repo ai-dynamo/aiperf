@@ -55,6 +55,12 @@ fn capabilities_are_a_single_versioned_json_line() {
             .unwrap()
             .contains(&serde_json::json!("dcgm"))
     );
+    assert!(
+        capabilities["telemetry_source_types"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("python"))
+    );
 }
 
 async fn chat_handler() -> impl IntoResponse {
@@ -103,7 +109,8 @@ async fn dcgm_handler(State(probe): State<Arc<DcgmProbe>>) -> impl IntoResponse 
         concat!(
             "DCGM_FI_DEV_POWER_USAGE{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} 250\n",
             "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} {energy_millijoules}\n",
-            "DCGM_FI_DEV_GPU_UTIL{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} 80\n"
+            "DCGM_FI_DEV_GPU_UTIL{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} 80\n",
+            "DCGM_FI_DEV_SM_CLOCK{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} 1500\n"
         ),
         energy_millijoules = energy_millijoules,
     )
@@ -378,6 +385,135 @@ async fn stdio_child_bounds_dcgm_to_profiling_and_joins_native_results() {
         row["gpu_uuid"] == "GPU-e2e"
             && row["dcgm_url"] == format!("http://{dcgm_address}/metrics")
             && row["telemetry_data"]["gpu_power_usage"] == 250.0
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_child_supervises_canonical_python_custom_dcgm_source() {
+    let inference_probe = Arc::new(ConcurrencyProbe::default());
+    let inference_app = Router::new()
+        .route("/v1/chat/completions", post(delayed_chat_handler))
+        .with_state(inference_probe);
+    let inference_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let inference_address = inference_listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(inference_listener, inference_app)
+            .await
+            .unwrap()
+    });
+
+    let dcgm_probe = Arc::new(DcgmProbe {
+        inference: Arc::new(ConcurrencyProbe::default()),
+        scrapes: AtomicUsize::new(0),
+        inference_count_at_first_scrape: AtomicUsize::new(usize::MAX),
+    });
+    let dcgm_app = Router::new()
+        .route("/metrics", get(dcgm_handler))
+        .with_state(dcgm_probe.clone());
+    let dcgm_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dcgm_address = dcgm_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(dcgm_listener, dcgm_app).await.unwrap() });
+
+    let artifacts = tempfile::tempdir().unwrap();
+    let metrics_file = artifacts.path().join("dcgm-custom.csv");
+    std::fs::write(
+        &metrics_file,
+        "DCGM_FI_DEV_SM_CLOCK,gauge,SM Clock Frequency (in MHz)\n",
+    )
+    .unwrap();
+    let python = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/python");
+    assert!(python.is_file());
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "python-gpu-telemetry-stdio-e2e",
+            "artifact_dir": artifacts.path(),
+            "models": {"items": [{"name": "mock-model"}]},
+            "endpoint": {
+                "urls": [format!("http://{inference_address}/v1/chat/completions")],
+                "type": "chat",
+                "streaming": true,
+                "use_server_token_count": true
+            },
+            "dataset": {
+                "type": "synthetic",
+                "entries": 4,
+                "prompts": {
+                    "isl": {"value": 8.0},
+                    "osl": {"value": 1.0}
+                }
+            },
+            "phases": [{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": 4,
+                "concurrency": 2
+            }],
+            "gpu_telemetry": {
+                "collection_interval_ns": 10_000_000,
+                "request_timeout_ns": 1_000_000_000,
+                "records_path": "gpu_telemetry_export.jsonl",
+                "custom_metrics": [{
+                    "name": "sm_clock",
+                    "header": "SM Clock Frequency",
+                    "unit": "megahertz"
+                }],
+                "sources": [{
+                    "type": "python",
+                    "collector": "dcgm",
+                    "url": format!("http://{dcgm_address}"),
+                    "metrics_file": metrics_file,
+                    "python_executable": python,
+                    "worker_module": "aiperf.gpu_telemetry.worker"
+                }]
+            }
+        }
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        output.status.success(),
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let scrape_count = dcgm_probe.scrapes.load(Ordering::SeqCst);
+    assert!(
+        scrape_count >= 2,
+        "expected forced start/end scrapes, got {scrape_count}; runner stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(artifacts.path().join("native-v2.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["metrics"]["sm_clock"]["unit"], "MHz");
+    assert_eq!(
+        report["metrics"]["sm_clock"]["series"][0]["stats"]["avg"],
+        1500.0
+    );
+    assert_eq!(
+        report["metrics"]["sm_clock"]["series"][0]["labels"]["gpu_uuid"],
+        "GPU-e2e"
+    );
+    let telemetry =
+        std::fs::read_to_string(artifacts.path().join("gpu_telemetry_export.jsonl")).unwrap();
+    assert!(telemetry.lines().all(|line| {
+        serde_json::from_str::<serde_json::Value>(line).unwrap()["telemetry_data"]["sm_clock"]
+            == 1500.0
     }));
 }
 

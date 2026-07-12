@@ -36,6 +36,34 @@ pub struct GpuMetricSpec {
     pub kind: GpuMetricKind,
 }
 
+/// Owned metric description supplied by a runtime or Python extension worker.
+///
+/// Static DCGM/AMDSMI fields and Config-v2 custom metric files converge on
+/// this representation before accumulation, so report construction never
+/// branches on the source implementation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeGpuMetricSpec {
+    /// Stable normalized telemetry field name.
+    pub name: String,
+    /// Human-readable report header.
+    pub header: String,
+    /// Unit after source-side scaling.
+    pub unit: Unit,
+    /// Gauge/counter accumulation policy.
+    pub kind: GpuMetricKind,
+}
+
+impl From<&GpuMetricSpec> for RuntimeGpuMetricSpec {
+    fn from(spec: &GpuMetricSpec) -> Self {
+        Self {
+            name: spec.name.to_string(),
+            header: spec.header.to_string(),
+            unit: spec.unit,
+            kind: spec.kind,
+        }
+    }
+}
+
 /// DCGM Prometheus field table.
 pub const DCGM_METRICS: &[GpuMetricSpec] = &[
     GpuMetricSpec {

@@ -19,7 +19,7 @@ use aiperf_metrics::{
     SidecarMetric, SidecarSeries, SidecarStats, boundary_counter_delta, linear_distribution,
 };
 
-use crate::fields::{AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec};
+use crate::fields::{AMD_METRICS, DCGM_METRICS, GpuMetricKind, RuntimeGpuMetricSpec};
 use crate::model::{GpuBoundarySnapshot, GpuMetadata, GpuSeriesKey, GpuTelemetryRecord};
 use crate::source::GpuTelemetryError;
 
@@ -77,6 +77,28 @@ pub enum GpuMergeError {
     /// Workers carried different phase-boundary snapshots.
     BoundaryConflict,
 }
+
+/// Invalid runtime metric registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuMetricRegistrationError {
+    /// A custom field did not provide a stable name.
+    EmptyName,
+    /// A custom field collided with a built-in or earlier custom field.
+    DuplicateName(String),
+}
+
+impl Display for GpuMetricRegistrationError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::EmptyName => formatter.write_str("GPU telemetry metric name cannot be empty"),
+            Self::DuplicateName(name) => {
+                write!(formatter, "duplicate GPU telemetry metric {name:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GpuMetricRegistrationError {}
 
 impl Display for GpuMergeError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
@@ -150,17 +172,54 @@ impl GpuTelemetrySummary {
 }
 
 /// Append-only, lock-free GPU telemetry accumulator.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GpuTelemetryAccumulator {
     timestamps_ns: Vec<i64>,
     series: BTreeMap<GpuSeriesKey, GpuSeriesState>,
     phase_boundary: Option<GpuPhaseBoundary>,
+    metric_specs: BTreeMap<String, RuntimeGpuMetricSpec>,
+}
+
+impl Default for GpuTelemetryAccumulator {
+    fn default() -> Self {
+        let metric_specs = DCGM_METRICS
+            .iter()
+            .chain(AMD_METRICS)
+            .map(|spec| {
+                let runtime = RuntimeGpuMetricSpec::from(spec);
+                (runtime.name.clone(), runtime)
+            })
+            .collect();
+        Self {
+            timestamps_ns: Vec::new(),
+            series: BTreeMap::new(),
+            phase_boundary: None,
+            metric_specs,
+        }
+    }
 }
 
 impl GpuTelemetryAccumulator {
     /// Builds an empty accumulator.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Adds Config-v2 or extension-owned signals without replacing built-ins.
+    pub fn with_additional_metric_specs(
+        mut self,
+        specs: impl IntoIterator<Item = RuntimeGpuMetricSpec>,
+    ) -> Result<Self, GpuMetricRegistrationError> {
+        for spec in specs {
+            if spec.name.trim().is_empty() {
+                return Err(GpuMetricRegistrationError::EmptyName);
+            }
+            if self.metric_specs.contains_key(&spec.name) {
+                return Err(GpuMetricRegistrationError::DuplicateName(spec.name));
+            }
+            self.metric_specs.insert(spec.name.clone(), spec);
+        }
+        Ok(self)
     }
 
     /// Number of ingested per-GPU records.
@@ -237,7 +296,7 @@ impl GpuTelemetryAccumulator {
         concurrency: Option<u64>,
     ) -> GpuTelemetrySummary {
         let mut summary = GpuTelemetrySummary::default();
-        for spec in DCGM_METRICS.iter().chain(AMD_METRICS) {
+        for spec in self.metric_specs.values() {
             let mut output_series = Vec::new();
             for (key, state) in &self.series {
                 let stats = match spec.kind {
@@ -298,7 +357,7 @@ impl GpuTelemetryAccumulator {
         &self,
         _key: &GpuSeriesKey,
         state: &GpuSeriesState,
-        spec: &GpuMetricSpec,
+        spec: &RuntimeGpuMetricSpec,
         boundary: &GpuPhaseBoundary,
     ) -> Option<SidecarStats> {
         let values = state
@@ -308,22 +367,22 @@ impl GpuTelemetryAccumulator {
                 sample.timestamp_ns >= boundary.start.timestamp_ns
                     && sample.timestamp_ns <= boundary.end.timestamp_ns
             })
-            .filter_map(|sample| sample.metrics.get(spec.name).copied())
+            .filter_map(|sample| sample.metrics.get(&spec.name).copied())
             .filter(|value| value.is_finite())
             .collect::<Vec<_>>();
         let sum = values.iter().sum();
-        linear_distribution(spec.name, values, sum, 1).map(SidecarStats::Gauge)
+        linear_distribution(&spec.name, values, sum, 1).map(SidecarStats::Gauge)
     }
 
     fn counter_stats(
         &self,
         key: &GpuSeriesKey,
-        spec: &GpuMetricSpec,
+        spec: &RuntimeGpuMetricSpec,
         boundary: &GpuPhaseBoundary,
     ) -> Option<SidecarStats> {
         let delta = boundary_counter_delta(
-            boundary.start.counter(key, spec.name),
-            boundary.end.counter(key, spec.name),
+            boundary.start.counter(key, &spec.name),
+            boundary.end.counter(key, &spec.name),
         )?;
         let rate = boundary
             .duration_seconds()
@@ -341,7 +400,7 @@ impl GpuTelemetryAccumulator {
                 ["gpu_power_usage", "amd_power"]
                     .into_iter()
                     .find_map(|name| {
-                        let spec = crate::fields::metric_spec(name)?;
+                        let spec = self.metric_specs.get(name)?;
                         match self.gauge_stats(key, state, spec, boundary)? {
                             SidecarStats::Gauge(stats) => stats.avg.as_f64(),
                             SidecarStats::Counter { .. } | SidecarStats::Histogram { .. } => None,

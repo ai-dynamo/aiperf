@@ -18,9 +18,11 @@ use std::rc::Rc;
 use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use aiperf_clock::Clock;
 use aiperf_gpu_telemetry::{
-    DcgmTelemetrySource, GpuBoundarySnapshot, GpuPhaseBoundary, GpuTelemetryAccumulator,
-    GpuTelemetryCollector, GpuTelemetryRecord, GpuTelemetrySummary,
+    DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind, GpuPhaseBoundary,
+    GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord, GpuTelemetrySummary,
+    PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
 };
+use aiperf_metrics::Unit;
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
@@ -28,7 +30,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use crate::protocol::{GpuTelemetrySourceSpec, GpuTelemetrySpec};
+use crate::protocol::{GpuTelemetrySourceSpec, GpuTelemetrySpec, GpuTelemetryUnitSpec};
 
 /// Run-owned GPU telemetry state and its profiling-phase sidecar.
 pub(crate) struct GpuTelemetryRun {
@@ -37,7 +39,7 @@ pub(crate) struct GpuTelemetryRun {
 
 impl GpuTelemetryRun {
     /// Builds all configured sources over one Clock-injected control transport.
-    pub(crate) fn new(spec: &GpuTelemetrySpec, clock: Rc<dyn Clock>) -> Result<Self> {
+    pub(crate) async fn new(spec: &GpuTelemetrySpec, clock: Rc<dyn Clock>) -> Result<Self> {
         ensure!(
             spec.collection_interval_ns > 0,
             "GPU telemetry collection_interval_ns must be positive"
@@ -59,10 +61,9 @@ impl GpuTelemetryRun {
                 ..ClientConfig::default()
             },
         ));
-        let collectors = spec
-            .sources
-            .iter()
-            .map(|source| match source {
+        let mut collectors = Vec::with_capacity(spec.sources.len());
+        for source in &spec.sources {
+            match source {
                 GpuTelemetrySourceSpec::Dcgm { url } => {
                     ensure!(!url.trim().is_empty(), "DCGM telemetry URL cannot be empty");
                     let source = Rc::new(DcgmTelemetrySource::new(
@@ -70,15 +71,50 @@ impl GpuTelemetryRun {
                         transport.clone(),
                         url.clone(),
                     ));
-                    Ok(Rc::new(GpuTelemetryCollector::new(source)))
+                    collectors.push(Rc::new(GpuTelemetryCollector::new(source)));
                 }
-            })
-            .collect::<Result<Vec<_>>>()?;
+                GpuTelemetrySourceSpec::Python {
+                    collector,
+                    url,
+                    metrics_file,
+                    python_executable,
+                    worker_module,
+                } => {
+                    let config = PythonGpuTelemetryConfig {
+                        python_executable: python_executable.clone(),
+                        worker_module: worker_module.clone(),
+                        collector: collector.clone(),
+                        url: url.clone(),
+                        metrics_file: metrics_file.clone(),
+                        request_timeout_seconds: spec.request_timeout_ns as f64 / 1_000_000_000.0,
+                    };
+                    match PythonGpuTelemetrySource::spawn(clock.clone(), config).await {
+                        Ok(source) => {
+                            collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
+                        }
+                        Err(error) => {
+                            eprintln!("GPU telemetry skipped unavailable Python source: {error}")
+                        }
+                    }
+                }
+            }
+        }
+        let accumulator = GpuTelemetryAccumulator::new().with_additional_metric_specs(
+            spec.custom_metrics
+                .iter()
+                .map(|metric| RuntimeGpuMetricSpec {
+                    name: metric.name.clone(),
+                    header: metric.header.clone(),
+                    unit: native_unit(metric.unit),
+                    kind: GpuMetricKind::Gauge,
+                }),
+        )?;
         Ok(Self {
             sidecar: Rc::new(GpuTelemetrySidecar::new(
                 clock,
                 spec.collection_interval_ns,
                 collectors,
+                accumulator,
             )),
         })
     }
@@ -126,6 +162,7 @@ impl GpuTelemetrySidecar {
         clock: Rc<dyn Clock>,
         collection_interval_ns: i64,
         candidates: Vec<Rc<GpuTelemetryCollector>>,
+        accumulator: GpuTelemetryAccumulator,
     ) -> Self {
         Self {
             state: Rc::new(GpuTelemetryState {
@@ -133,7 +170,7 @@ impl GpuTelemetrySidecar {
                 collection_interval_ns,
                 candidates,
                 active: RefCell::new(Vec::new()),
-                accumulator: Rc::new(RefCell::new(GpuTelemetryAccumulator::new())),
+                accumulator: Rc::new(RefCell::new(accumulator)),
                 start_snapshots: RefCell::new(Vec::new()),
                 boundary: RefCell::new(None),
                 stop: Rc::new(Notify::new()),
@@ -293,6 +330,15 @@ impl GpuTelemetryState {
             }
         }
 
+        for collector in &self.candidates {
+            if let Err(error) = collector.shutdown().await {
+                eprintln!(
+                    "GPU telemetry source shutdown failed for {}: {error}",
+                    collector.endpoint_url()
+                );
+            }
+        }
+
         let start_snapshots = self.start_snapshots.borrow();
         if let (Some(start), Some(end)) = (
             combine_snapshots(&start_snapshots, BoundarySide::Start),
@@ -305,6 +351,25 @@ impl GpuTelemetryState {
             *self.boundary.borrow_mut() = Some(boundary);
         }
         Ok(())
+    }
+}
+
+fn native_unit(unit: GpuTelemetryUnitSpec) -> Unit {
+    match unit {
+        GpuTelemetryUnitSpec::Count => Unit::Count,
+        GpuTelemetryUnitSpec::Kilobyte => Unit::Kilobyte,
+        GpuTelemetryUnitSpec::Megabyte => Unit::Megabyte,
+        GpuTelemetryUnitSpec::Gigabyte => Unit::Gigabyte,
+        GpuTelemetryUnitSpec::Microsecond => Unit::Microsecond,
+        GpuTelemetryUnitSpec::Millisecond => Unit::Millisecond,
+        GpuTelemetryUnitSpec::Second => Unit::Second,
+        GpuTelemetryUnitSpec::Percent => Unit::Percent,
+        GpuTelemetryUnitSpec::Watt => Unit::Watt,
+        GpuTelemetryUnitSpec::Joule => Unit::Joule,
+        GpuTelemetryUnitSpec::Megajoule => Unit::Megajoule,
+        GpuTelemetryUnitSpec::Megahertz => Unit::Megahertz,
+        GpuTelemetryUnitSpec::Gigahertz => Unit::Gigahertz,
+        GpuTelemetryUnitSpec::Celsius => Unit::Celsius,
     }
 }
 

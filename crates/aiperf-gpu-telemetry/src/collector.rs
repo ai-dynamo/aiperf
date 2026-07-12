@@ -58,6 +58,11 @@ impl GpuTelemetryCollector {
         }
     }
 
+    /// Releases process, device, or transport resources owned by the source.
+    pub async fn shutdown(&self) -> Result<(), GpuTelemetryError> {
+        self.source.shutdown().await
+    }
+
     /// Performs one cadence scrape and ingests it unless its body is unchanged.
     pub async fn scrape_continuous(
         &self,

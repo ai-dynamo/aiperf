@@ -305,12 +305,11 @@ async fn execute_native_inner(
     }
 
     let clock: Rc<dyn Clock> = RealClock::new();
-    let gpu_telemetry = request
-        .run
-        .gpu_telemetry
-        .as_ref()
-        .map(|spec| GpuTelemetryRun::new(spec, clock.clone()))
-        .transpose()?;
+    let gpu_telemetry = if let Some(spec) = request.run.gpu_telemetry.as_ref() {
+        Some(GpuTelemetryRun::new(spec, clock.clone()).await?)
+    } else {
+        None
+    };
     let gpu_records_path = request
         .run
         .gpu_telemetry

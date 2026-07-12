@@ -125,6 +125,38 @@ def test_projects_gpu_telemetry_defaults_custom_urls_and_disable(tmp_path) -> No
     assert "gpu_telemetry" not in build_run_request(run)["run"]
 
 
+def test_projects_custom_dcgm_through_the_canonical_python_source(tmp_path) -> None:
+    from aiperf.config.resolution.resolvers import GpuMetricsResolver
+
+    metrics_file = tmp_path / "custom-metrics.csv"
+    metrics_file.write_text(
+        "DCGM_FI_DEV_SM_CLOCK,gauge,SM Clock Frequency (in MHz)\n"
+    )
+    run = _run(tmp_path)
+    run.cfg.gpu_telemetry.metrics_file = metrics_file
+    run.cfg.gpu_telemetry.urls = ["http://gpu-node:9400"]
+    GpuMetricsResolver().resolve(run)
+
+    telemetry = build_run_request(run)["run"]["gpu_telemetry"]
+
+    assert telemetry["custom_metrics"] == [
+        {
+            "header": "SM Clock Frequency",
+            "name": "sm_clock",
+            "unit": "megahertz",
+        }
+    ]
+    assert all(source["type"] == "python" for source in telemetry["sources"])
+    assert telemetry["sources"][-1] == {
+        "type": "python",
+        "collector": "dcgm",
+        "url": "http://gpu-node:9400/metrics",
+        "metrics_file": str(metrics_file.resolve()),
+        "python_executable": str(Path(sys.executable).absolute()),
+        "worker_module": "aiperf.gpu_telemetry.worker",
+    }
+
+
 def test_projects_slos_timeslices_and_custom_record_path(tmp_path) -> None:
     run = _run(tmp_path)
     run.cfg.slos = {"request_latency": 500.0, "time_to_first_token": 100.0}
@@ -260,7 +292,7 @@ def test_projects_accuracy_to_the_canonical_python_worker(tmp_path) -> None:
         "enable_cot": False,
         "grader": "exact_match",
         "system_prompt": "Answer with one letter.",
-        "python_executable": str(Path(sys.executable).resolve()),
+        "python_executable": str(Path(sys.executable).absolute()),
         "worker_module": "aiperf.accuracy.worker",
     }
 

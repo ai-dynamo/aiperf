@@ -14,18 +14,23 @@ pub mod collector;
 pub mod fields;
 pub mod model;
 pub mod parser;
+pub mod python_source;
 pub mod source;
 
 pub use accumulator::{
-    GpuMergeError, GpuPhaseBoundary, GpuTelemetryAccumulator, GpuTelemetrySummary,
+    GpuMergeError, GpuMetricRegistrationError, GpuPhaseBoundary, GpuTelemetryAccumulator,
+    GpuTelemetrySummary,
 };
 pub use collector::GpuTelemetryCollector;
 pub use fields::{
-    AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec, amd_metric_spec, dcgm_metric_spec,
-    metric_spec,
+    AMD_METRICS, DCGM_METRICS, GpuMetricKind, GpuMetricSpec, RuntimeGpuMetricSpec, amd_metric_spec,
+    dcgm_metric_spec, metric_spec,
 };
 pub use model::{GpuBoundarySnapshot, GpuMetadata, GpuScrape, GpuSeriesKey, GpuTelemetryRecord};
 pub use parser::{DcgmPrometheusDecoder, GpuTelemetryDecoder};
+pub use python_source::{
+    PYTHON_GPU_TELEMETRY_PROTOCOL_VERSION, PythonGpuTelemetryConfig, PythonGpuTelemetrySource,
+};
 pub use source::{DcgmTelemetrySource, GpuScrapeMode, GpuTelemetryError, GpuTelemetrySource};
 
 /// Default GPU telemetry collection cadence: 333 milliseconds.
