@@ -25,6 +25,7 @@ pub mod protocol_v2;
 mod records;
 pub mod redaction;
 pub mod registry;
+pub mod sidecar_input;
 mod server_metrics;
 pub mod turn_execution;
 
