@@ -122,6 +122,12 @@ impl RunnerV2Coordinator {
         )
     }
 
+    /// Borrow the single authored graph-input resolver shared by protocol-v2
+    /// preparation and protocol-v1 compatibility execution.
+    pub fn graph_inputs(&self) -> &dyn RunnerGraphInputAdapterResolver {
+        self.graph_inputs.as_ref()
+    }
+
     /// Validate or execute one strict authored envelope through the frozen registries.
     pub fn handle(&self, envelope: RunnerEnvelopeV2) -> RunnerProcessResultV2 {
         let operation = envelope.operation;

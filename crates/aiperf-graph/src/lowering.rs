@@ -831,7 +831,7 @@ mod tests {
 
     use super::*;
     use crate::executor::{ExecutorFlags, TraceExecutor};
-    use crate::input::{DagJsonlGraphInputAdapter, GraphInputAdapter, GraphInputConfig};
+    use crate::input::{GraphInputConfig, compile_dag_jsonl_input};
     use crate::materialize::{PromptMaterializer, SegmentItemsMaterializer};
     use crate::runtime::{Handle as RuntimeHandle, drive_sim};
     use crate::sink::{GraphReply, GraphSink};
@@ -839,16 +839,15 @@ mod tests {
     use aiperf_clock::sim_clock::SimClock;
 
     async fn lowered(value: Value) -> LoweredGraphInput {
-        let bundle = DagJsonlGraphInputAdapter
-            .load(
-                GraphInputConfig {
-                    load: LoadConfig::new(DatasetSource::Inline(value)),
-                    root_limit: None,
-                },
-                &TiktokenTokenizer::builtin(),
-            )
-            .await
-            .unwrap();
+        let bundle = compile_dag_jsonl_input(
+            GraphInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(value)),
+                root_limit: None,
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        .unwrap();
         let mut parsed = ParsedGraph::default();
         for plan in bundle.plans {
             let graph_name = format!("dag:{}", plan.trace.id);

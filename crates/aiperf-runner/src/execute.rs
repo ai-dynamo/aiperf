@@ -60,9 +60,7 @@ use aiperf_endpoints::{
     EndpointConfig, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
 };
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
-use aiperf_graph::input::{
-    GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle, GraphInputConfig,
-};
+use aiperf_graph::input::GraphInputBundle;
 use aiperf_metrics::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
     NativeReport, Phase as MetricsPhase, ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
@@ -95,6 +93,10 @@ use crate::graph_execution::{
     PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
+};
+use crate::graph_input::{
+    BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver,
+    RunnerGraphInputContext,
 };
 use crate::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
@@ -503,10 +505,7 @@ pub(crate) struct NativeGraphDatasetPlan {
 
 /// Deprecated protocol-v1 graph source kept outside the prepared run shape.
 pub(crate) struct AuthoredGraphDatasetPlan {
-    adapter_name: String,
-    input: GraphInputConfig,
-    random_seed: Option<u64>,
-    default_output_tokens: usize,
+    dataset: Option<DatasetSpec>,
 }
 
 impl TryFrom<RunRequest> for NativeRunPlan {
@@ -567,51 +566,24 @@ fn lower_v1_static_accuracy(spec: AccuracySpec) -> NativeStaticAccuracyPlan {
 }
 
 fn lower_v1_dataset(dataset: DatasetSpec) -> Result<NativeDatasetPlan> {
-    let adapter_name = match &dataset {
-        DatasetSpec::File(spec) if spec.format == "dag_jsonl" => Some(spec.format.clone()),
-        DatasetSpec::Public(spec) if spec.format == "dag_jsonl" => Some(spec.format.clone()),
-        DatasetSpec::Synthetic(_) | DatasetSpec::File(_) | DatasetSpec::Public(_) => None,
+    let is_graph = match &dataset {
+        DatasetSpec::File(spec) => spec.format == "dag_jsonl",
+        DatasetSpec::Public(spec) => spec.format == "dag_jsonl",
+        DatasetSpec::Synthetic(_) => false,
     };
-    let Some(adapter_name) = adapter_name else {
+    if !is_graph {
         return Ok(NativeDatasetPlan::Linear(dataset));
-    };
-    let (sampling, entries, synthesis) = match &dataset {
-        DatasetSpec::File(spec) => (
-            spec.sampling.as_str(),
-            spec.entries,
-            spec.synthesis.as_ref(),
-        ),
-        DatasetSpec::Public(spec) => (spec.sampling.as_str(), spec.entries, None),
-        DatasetSpec::Synthetic(_) => unreachable!("synthetic datasets have no graph adapter"),
-    };
-    ensure!(
-        sampling.trim().eq_ignore_ascii_case("sequential"),
-        "authored Graph-IR runs currently require sequential dataset sampling; {sampling:?} would need an explicit GraphTraceSource implementation"
-    );
-    ensure!(
-        entries != Some(0),
-        "graph dataset entries must be positive when configured"
-    );
-    ensure!(
-        synthesis.is_none(),
-        "trace synthesis is not supported for authored Graph-IR datasets"
-    );
-    let random_seed = dataset_random_seed(&dataset);
-    let default_output_tokens = default_output_tokens(&dataset)?;
-    let input = graph_input_config(&dataset)?;
+    }
     Ok(NativeDatasetPlan::AuthoredGraph(Box::new(
         AuthoredGraphDatasetPlan {
-            adapter_name,
-            input,
-            random_seed,
-            default_output_tokens,
+            dataset: Some(dataset),
         },
     )))
 }
 
 /// Execute exactly one request with the native local execution backend.
 pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
-    let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+    let graph_inputs = BuiltinRunnerGraphInputAdapterResolver::new();
     execute_run_with_all_factories(
         request,
         &NativeHttpExecutionBackendFactory,
@@ -631,7 +603,7 @@ pub fn execute_run_with_backend_factory(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
 ) -> Result<RunTerminal> {
-    let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+    let graph_inputs = BuiltinRunnerGraphInputAdapterResolver::new();
     execute_run_with_all_factories(
         request,
         backend_factory,
@@ -645,7 +617,7 @@ pub fn execute_run_with_backend_factory(
 pub fn execute_run_with_factories(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
 ) -> Result<RunTerminal> {
     execute_run_with_all_factories(
         request,
@@ -665,7 +637,7 @@ pub fn execute_run_with_factories(
 pub fn execute_run_with_all_factories(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry_factory: &dyn AiperfRegistryFactory,
 ) -> Result<RunTerminal> {
@@ -692,7 +664,7 @@ pub fn execute_run_with_all_factories(
 pub(crate) fn execute_native_plan_with_factories(
     plan: NativeRunPlan,
     backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<PathBuf> {
@@ -718,7 +690,7 @@ pub(crate) fn execute_native_plan_with_factories(
 pub(crate) fn execute_native_plan_uncommitted_with_factories(
     plan: NativeRunPlan,
     backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -839,42 +811,29 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
 
 async fn prepare_protocol_v1_graph(
     mut plan: NativeRunPlan,
-    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
 ) -> Result<NativeRunPlan> {
-    let NativeDatasetPlan::AuthoredGraph(source) = &plan.run.dataset else {
+    let NativeDatasetPlan::AuthoredGraph(source) = &mut plan.run.dataset else {
         return Ok(plan);
     };
-    let adapter_name = source.adapter_name.clone();
-    let input = GraphInputConfig {
-        load: source.input.load.clone(),
-        root_limit: source.input.root_limit,
-    };
-    let random_seed = source.random_seed;
-    let default_output_tokens = source.default_output_tokens;
-    let adapter = graph_inputs
-        .find(&adapter_name)
-        .ok_or_else(|| anyhow!("no Graph-IR input adapter is registered for {adapter_name:?}"))?;
+    let dataset = source
+        .dataset
+        .take()
+        .ok_or_else(|| anyhow!("protocol-v1 graph source was already consumed"))?;
     let tokenizer = load_tokenizer(Some(&plan.run.tokenizer.name))?;
-    let input = Arc::new(
-        adapter
-            .load(input, tokenizer.as_ref())
-            .await
-            .context("loading direct protocol-v1 Graph-IR input")?,
-    );
-    ensure!(
-        !input.plans.is_empty(),
-        "authored Graph-IR input contains no root traces after root limiting"
-    );
-    ensure!(
-        input.metadata.format == adapter_name,
-        "Graph-IR adapter {:?} returned bundle format {:?}",
-        adapter_name,
-        input.metadata.format
-    );
+    let prepared = graph_inputs
+        .load_protocol_v1(
+            dataset,
+            &RunnerGraphInputContext {
+                tokenizer: tokenizer.as_ref(),
+            },
+        )
+        .await
+        .context("loading protocol-v1 graph source through the direct authored adapter")?;
     plan.run.dataset = NativeDatasetPlan::Graph(Box::new(NativeGraphDatasetPlan {
-        input,
-        random_seed,
-        default_output_tokens,
+        input: Arc::new(prepared.bundle),
+        random_seed: prepared.random_seed,
+        default_output_tokens: prepared.default_output_tokens,
     }));
     Ok(plan)
 }
@@ -1374,73 +1333,6 @@ fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
         "graph execution requires a direct graph input plan"
     );
     validate_graph_phases(&request.run.phases)
-}
-
-fn graph_input_config(dataset: &DatasetSpec) -> Result<GraphInputConfig> {
-    match dataset {
-        DatasetSpec::File(spec) => {
-            ensure!(
-                spec.path.is_some() ^ spec.records.is_some(),
-                "file dataset requires exactly one of path or records"
-            );
-            let source = match (&spec.path, &spec.records) {
-                (Some(path), None) => DatasetSource::Path(path.clone()),
-                (None, Some(records)) => DatasetSource::Inline(records.clone()),
-                _ => unreachable!("file graph source exclusivity validated above"),
-            };
-            let mut load = LoadConfig::new(source);
-            load.options = spec.options.clone();
-            Ok(GraphInputConfig {
-                load,
-                root_limit: spec.entries,
-            })
-        }
-        DatasetSpec::Public(spec) => {
-            ensure!(
-                !spec.name.trim().is_empty(),
-                "public dataset name cannot be empty"
-            );
-            let option_limit = match spec.options.get("max_conversations") {
-                None => None,
-                Some(value) => Some(
-                    value
-                        .as_u64()
-                        .and_then(|value| usize::try_from(value).ok())
-                        .filter(|value| *value > 0)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "public graph option max_conversations must be a positive usize"
-                            )
-                        })?,
-                ),
-            };
-            let root_limit = spec.entries.or(option_limit);
-            let source = match &spec.source {
-                PublicDatasetSourceSpec::Url { url } => {
-                    ensure!(!url.trim().is_empty(), "public dataset URL cannot be empty");
-                    DatasetSource::Url(url.clone())
-                }
-                PublicDatasetSourceSpec::HuggingFace {
-                    dataset,
-                    subset,
-                    split,
-                    revision,
-                } => DatasetSource::HuggingFace {
-                    dataset: dataset.clone(),
-                    config: subset.clone(),
-                    split: split.clone(),
-                    // DAG vertices must be acquired as one complete program.
-                    max_rows: None,
-                    revision: revision.clone(),
-                },
-            };
-            let mut load = LoadConfig::new(source);
-            load.options = spec.options.clone();
-            load.options.remove("max_conversations");
-            Ok(GraphInputConfig { load, root_limit })
-        }
-        DatasetSpec::Synthetic(_) => bail!("synthetic datasets do not author Graph-IR"),
-    }
 }
 
 struct OnlineGraphPhaseBackendFactory<'a> {
@@ -4239,7 +4131,7 @@ mod tests {
             traces: traces.clone(),
             prefill_updates,
         };
-        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+        let graph_inputs = BuiltinRunnerGraphInputAdapterResolver::new();
 
         let terminal = execute_run_with_all_factories(
             request,
@@ -4376,7 +4268,7 @@ mod tests {
         let terminal = execute_run_with_all_factories(
             request,
             &UnusedHttpPlacement,
-            &GraphInputAdapterRegistry::with_builtin_adapters(),
+            &BuiltinRunnerGraphInputAdapterResolver::new(),
             &placement,
             &BuiltinAiperfRegistryFactory,
         )
@@ -4443,7 +4335,7 @@ mod tests {
             traces: traces.clone(),
             prefill_updates: prefill_updates.clone(),
         };
-        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+        let graph_inputs = BuiltinRunnerGraphInputAdapterResolver::new();
 
         let terminal = execute_run_with_all_factories(
             request,
@@ -4527,7 +4419,7 @@ mod tests {
         let terminal = execute_run_with_all_factories(
             request,
             &UnusedHttpPlacement,
-            &GraphInputAdapterRegistry::with_builtin_adapters(),
+            &BuiltinRunnerGraphInputAdapterResolver::new(),
             &placement,
             &BuiltinAiperfRegistryFactory,
         )

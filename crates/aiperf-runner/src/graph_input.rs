@@ -11,8 +11,9 @@
 //! [`aiperf_dataset::Dataset`],
 //! conversation, or second graph-source representation exists in this path.
 //!
-//! A future graph format registers another [`RunnerGraphInputAdapter`]. Its
-//! private authored fields remain invisible to the resolver and coordinator.
+//! A future linked distribution injects another [`RunnerGraphInputAdapter`]
+//! through the resolver. Its private authored fields remain invisible to the
+//! coordinator.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -20,16 +21,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aiperf_dataset::{DatasetSource, LoadConfig, TextTokenizer};
-use aiperf_graph::input::{
-    DagJsonlGraphInputAdapter, GraphInputAdapter, GraphInputBundle, GraphInputConfig,
-};
+use aiperf_graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::execute::distribution;
-use crate::protocol::DistributionSpec;
+use crate::protocol::{
+    DatasetSpec, DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
+    TraceSynthesisSpec,
+};
 
 /// Canonical result retained after one selected graph-input adapter load.
 pub struct PreparedRunnerGraphInput {
@@ -59,6 +61,22 @@ pub trait RunnerGraphInputAdapter: fmt::Debug + Send + Sync {
         raw: &RawValue,
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
+
+    /// Load one already-strict-decoded protocol-v1 compatibility source.
+    ///
+    /// This cold compatibility hook keeps protocol v1 isolated without
+    /// creating a second resolver or lowerer. Product protocol v2 always uses
+    /// [`Self::load`] and remains the sole authored-wire contract.
+    async fn load_protocol_v1(
+        &self,
+        _dataset: DatasetSpec,
+        _context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        Err(anyhow!(
+            "direct Graph-IR input adapter {:?} does not support protocol-v1 compatibility",
+            self.format()
+        ))
+    }
 }
 
 /// Injected open resolver for direct graph-input adapters.
@@ -74,6 +92,14 @@ pub trait RunnerGraphInputAdapterResolver: fmt::Debug + Send + Sync {
     async fn load(
         &self,
         raw: &RawValue,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput>;
+
+    /// Route one protocol-v1 compatibility source through the same selected
+    /// adapter and canonical compiler used by protocol v2.
+    async fn load_protocol_v1(
+        &self,
+        dataset: DatasetSpec,
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
 }
@@ -101,9 +127,8 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 1] = [Arc::new(
-            DagJsonlRunnerGraphInputAdapter::new(Arc::new(DagJsonlGraphInputAdapter)),
-        )];
+        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 1] =
+            [Arc::new(DagJsonlRunnerGraphInputAdapter)];
         Self {
             adapters: adapters
                 .into_iter()
@@ -117,15 +142,29 @@ impl BuiltinRunnerGraphInputAdapterResolver {
         // adapter below remains the sole owner of the full authored object.
         let identity: GraphInputIdentity = serde_json::from_str(raw.get())
             .context("decoding graph-input adapter discriminator")?;
-        self.adapters
-            .get(identity.format.as_str())
-            .map(Arc::as_ref)
-            .ok_or_else(|| {
-                anyhow!(
-                    "no direct Graph-IR input adapter is registered for format {:?}",
-                    identity.format
-                )
-            })
+        self.selected_format(&identity.format)
+    }
+
+    fn selected_protocol_v1(&self, dataset: &DatasetSpec) -> Result<&dyn RunnerGraphInputAdapter> {
+        let format = match dataset {
+            DatasetSpec::File(spec) => spec.format.as_str(),
+            DatasetSpec::Public(spec) => spec.format.as_str(),
+            DatasetSpec::Synthetic(_) => {
+                return Err(anyhow!(
+                    "protocol-v1 synthetic datasets cannot author Graph-IR"
+                ));
+            }
+        };
+        self.selected_format(format)
+    }
+
+    fn selected_format(&self, format: &str) -> Result<&dyn RunnerGraphInputAdapter> {
+        self.adapters.get(format).map(Arc::as_ref).ok_or_else(|| {
+            anyhow!(
+                "no direct Graph-IR input adapter is registered for format {:?}",
+                format
+            )
+        })
     }
 }
 
@@ -142,6 +181,16 @@ impl RunnerGraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver 
     ) -> Result<PreparedRunnerGraphInput> {
         self.selected(raw)?.load(raw, context).await
     }
+
+    async fn load_protocol_v1(
+        &self,
+        dataset: DatasetSpec,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        self.selected_protocol_v1(&dataset)?
+            .load_protocol_v1(dataset, context)
+            .await
+    }
 }
 
 #[derive(Deserialize)]
@@ -151,26 +200,9 @@ struct GraphInputIdentity {
     format: String,
 }
 
-/// Built-in `dag_jsonl` authored wrapper plus canonical lowering adapter.
-pub struct DagJsonlRunnerGraphInputAdapter {
-    lowerer: Arc<dyn GraphInputAdapter>,
-}
-
-impl fmt::Debug for DagJsonlRunnerGraphInputAdapter {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DagJsonlRunnerGraphInputAdapter")
-            .field("lowerer", &self.lowerer.name())
-            .finish_non_exhaustive()
-    }
-}
-
-impl DagJsonlRunnerGraphInputAdapter {
-    /// Bind the process-wire adapter to one canonical Graph-IR lowerer.
-    pub fn new(lowerer: Arc<dyn GraphInputAdapter>) -> Self {
-        Self { lowerer }
-    }
-}
+/// Built-in `dag_jsonl` authored adapter and sole product format boundary.
+#[derive(Debug)]
+pub struct DagJsonlRunnerGraphInputAdapter;
 
 #[async_trait(?Send)]
 impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
@@ -183,15 +215,48 @@ impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
         raw: &RawValue,
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
-        let DagJsonlDatasetInput::File(spec) =
+        let input: DagJsonlDatasetInput =
             serde_json::from_str(raw.get()).context("decoding direct dag_jsonl graph input")?;
-        spec.validate(self.format())?;
-        let default_output_tokens = spec.default_output_tokens()?;
-        let random_seed = spec.random_seed;
-        let input = spec.into_graph_input_config();
-        let bundle = self
-            .lowerer
-            .load(input, context.tokenizer)
+        self.load_decoded(input, context).await
+    }
+
+    async fn load_protocol_v1(
+        &self,
+        dataset: DatasetSpec,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let input = match dataset {
+            DatasetSpec::File(spec) => {
+                let mut spec = DagJsonlFileInput::from(*spec);
+                spec.sampling = spec.sampling.trim().to_owned();
+                DagJsonlDatasetInput::File(spec)
+            }
+            DatasetSpec::Public(spec) => {
+                let mut spec = *spec;
+                spec.sampling = spec.sampling.trim().to_owned();
+                DagJsonlDatasetInput::Public(spec)
+            }
+            DatasetSpec::Synthetic(_) => {
+                return Err(anyhow!(
+                    "protocol-v1 synthetic datasets cannot author Graph-IR"
+                ));
+            }
+        };
+        self.load_decoded(input, context).await
+    }
+}
+
+impl DagJsonlRunnerGraphInputAdapter {
+    async fn load_decoded(
+        &self,
+        input: DagJsonlDatasetInput,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let prepared = match input {
+            DagJsonlDatasetInput::File(spec) => spec.prepare(self.format())?,
+            DagJsonlDatasetInput::Public(spec) => prepare_public(spec, self.format())?,
+        };
+        let bundle = compile_dag_jsonl_input(prepared.input, context.tokenizer)
             .await
             .map_err(|error| anyhow!(error.to_string()))
             .context("loading and lowering direct authored dag_jsonl Graph-IR input")?;
@@ -207,8 +272,8 @@ impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
         );
         Ok(PreparedRunnerGraphInput {
             bundle,
-            random_seed,
-            default_output_tokens,
+            random_seed: prepared.random_seed,
+            default_output_tokens: prepared.default_output_tokens,
         })
     }
 }
@@ -217,6 +282,7 @@ impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum DagJsonlDatasetInput {
     File(DagJsonlFileInput),
+    Public(PublicDatasetSpec),
 }
 
 #[derive(Deserialize)]
@@ -232,7 +298,7 @@ struct DagJsonlFileInput {
     #[serde(default = "default_sequential")]
     sampling: String,
     #[serde(default)]
-    synthesis: Option<Value>,
+    synthesis: Option<TraceSynthesisSpec>,
     #[serde(default)]
     entries: Option<usize>,
     #[serde(default)]
@@ -241,6 +307,29 @@ struct DagJsonlFileInput {
     osl: Option<DistributionSpec>,
     #[serde(default)]
     options: Map<String, Value>,
+}
+
+impl From<FileDatasetSpec> for DagJsonlFileInput {
+    fn from(spec: FileDatasetSpec) -> Self {
+        Self {
+            name: None,
+            path: spec.path,
+            records: spec.records,
+            format: spec.format,
+            sampling: spec.sampling,
+            synthesis: spec.synthesis,
+            entries: spec.entries,
+            random_seed: spec.random_seed,
+            osl: spec.osl,
+            options: spec.options,
+        }
+    }
+}
+
+struct PreparedDagJsonlInput {
+    input: GraphInputConfig,
+    random_seed: Option<u64>,
+    default_output_tokens: usize,
 }
 
 impl DagJsonlFileInput {
@@ -304,7 +393,10 @@ impl DagJsonlFileInput {
         Ok(expected as usize)
     }
 
-    fn into_graph_input_config(self) -> GraphInputConfig {
+    fn prepare(self, expected_format: &str) -> Result<PreparedDagJsonlInput> {
+        self.validate(expected_format)?;
+        let default_output_tokens = self.default_output_tokens()?;
+        let random_seed = self.random_seed;
         let source = match (self.path, self.records) {
             (Some(path), None) => DatasetSource::Path(path),
             (None, Some(records)) => DatasetSource::Inline(records),
@@ -312,11 +404,75 @@ impl DagJsonlFileInput {
         };
         let mut load = LoadConfig::new(source);
         load.options = self.options;
-        GraphInputConfig {
-            load,
-            root_limit: self.entries,
-        }
+        Ok(PreparedDagJsonlInput {
+            input: GraphInputConfig {
+                load,
+                root_limit: self.entries,
+            },
+            random_seed,
+            default_output_tokens,
+        })
     }
+}
+
+fn prepare_public(spec: PublicDatasetSpec, expected_format: &str) -> Result<PreparedDagJsonlInput> {
+    ensure!(
+        !spec.name.trim().is_empty(),
+        "public graph dataset name cannot be empty"
+    );
+    ensure!(
+        spec.format == expected_format,
+        "direct graph adapter {expected_format:?} received dataset.format={:?}",
+        spec.format
+    );
+    ensure!(
+        spec.sampling.eq_ignore_ascii_case("sequential"),
+        "direct Graph-IR input currently requires sequential root selection"
+    );
+    ensure!(
+        spec.entries != Some(0),
+        "direct graph root limit must be positive when configured"
+    );
+    let option_limit = match spec.options.get("max_conversations") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    anyhow!("public graph option max_conversations must be a positive usize")
+                })?,
+        ),
+    };
+    let source = match spec.source {
+        PublicDatasetSourceSpec::Url { url } => {
+            ensure!(!url.trim().is_empty(), "public dataset URL cannot be empty");
+            DatasetSource::Url(url)
+        }
+        PublicDatasetSourceSpec::HuggingFace {
+            dataset,
+            subset,
+            split,
+            revision,
+        } => DatasetSource::HuggingFace {
+            dataset,
+            config: subset,
+            split,
+            // DAG vertices must be acquired as one complete program.
+            max_rows: None,
+            revision,
+        },
+    };
+    let root_limit = spec.entries.or(option_limit);
+    let mut load = LoadConfig::new(source);
+    load.options = spec.options;
+    load.options.remove("max_conversations");
+    Ok(PreparedDagJsonlInput {
+        input: GraphInputConfig { load, root_limit },
+        random_seed: spec.random_seed,
+        default_output_tokens: 1,
+    })
 }
 
 fn default_sequential() -> String {
@@ -404,5 +560,36 @@ mod tests {
             .err()
             .expect("unknown adapter fields must fail");
         assert!(format!("{error:#}").contains("future_adapter_field"));
+    }
+
+    #[tokio::test]
+    async fn protocol_v1_compatibility_uses_the_same_direct_adapter() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let dataset: DatasetSpec = serde_json::from_value(json!({
+            "type": "file",
+            "format": "dag_jsonl",
+            "sampling": " sequential ",
+            "records": [{
+                "session_id": "root",
+                "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
+            }],
+            "random_seed": 91,
+            "osl": {"value": 4.0}
+        }))
+        .unwrap();
+        let prepared = resolver
+            .load_protocol_v1(
+                dataset,
+                &RunnerGraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(prepared.bundle.metadata.format, "dag_jsonl");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.random_seed, Some(91));
+        assert_eq!(prepared.default_output_tokens, 4);
     }
 }

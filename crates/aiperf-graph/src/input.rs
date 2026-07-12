@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Direct authored-workload adapters for Graph-IR.
+//! Canonical direct authored-workload compilation for Graph-IR.
 //!
-//! These adapters are selected before the ordinary linear dataset pipeline.
-//! A `dag_jsonl` source is parsed, validated, interned, and lowered directly to
-//! complete trace commands; it never becomes `Dataset`, `Conversation`, or
-//! `DagMetadata`, and therefore cannot accidentally reach a linear scheduler.
+//! The runner-owned authored-input adapter is the sole identity-dispatched
+//! extension point. Once selected, its `dag_jsonl` implementation calls this
+//! module's format-specific compiler directly. The source is parsed, validated,
+//! interned, and lowered to complete trace commands without becoming `Dataset`,
+//! `Conversation`, or `DagMetadata`, and therefore cannot accidentally reach a
+//! linear scheduler or a second adapter registry.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
@@ -18,7 +20,6 @@ use aiperf_dataset::{
     PrerequisiteKind, SegmentPool, SegmentStore, TextTokenizer, dag_jsonl_turn_token_counts,
     load_dag_jsonl_program,
 };
-use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::lowering::{
@@ -27,7 +28,7 @@ use crate::lowering::{
 };
 use crate::model::GraphTracePlan;
 
-/// Inputs supplied to one authored Graph-IR adapter.
+/// Inputs supplied to one format-specific Graph-IR compiler.
 pub struct GraphInputConfig {
     /// Resolved source, row bounds, fetcher, and format options.
     pub load: LoadConfig,
@@ -38,7 +39,7 @@ pub struct GraphInputConfig {
 /// Static facts produced beside the executable trace plans.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphInputMetadata {
-    /// Stable adapter/format name.
+    /// Stable authored format name.
     pub format: String,
     /// Authored root trace count.
     pub root_count: usize,
@@ -56,160 +57,74 @@ pub struct GraphInputBundle {
     pub metadata: GraphInputMetadata,
 }
 
-/// Object-safe source-to-Graph-IR extension point.
-#[async_trait]
-pub trait GraphInputAdapter: Send + Sync {
-    /// Stable authored format name selected before generic dataset loading.
-    fn name(&self) -> &str;
-
-    /// Parse, validate, intern, and lower one complete source.
-    async fn load(
-        &self,
-        config: GraphInputConfig,
-        tokenizer: &dyn TextTokenizer,
-    ) -> Result<GraphInputBundle, GraphInputError>;
-}
-
-/// Object-safe authored-format resolver injected into composition roots.
-pub trait GraphInputAdapterResolver: Send + Sync {
-    /// Find one explicit authored format without fallback or auto-detection.
-    fn find(&self, name: &str) -> Option<Arc<dyn GraphInputAdapter>>;
-}
-
-/// Built-in direct adapter for `dag_jsonl`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DagJsonlGraphInputAdapter;
-
-#[async_trait]
-impl GraphInputAdapter for DagJsonlGraphInputAdapter {
-    fn name(&self) -> &str {
-        "dag_jsonl"
-    }
-
-    async fn load(
-        &self,
-        config: GraphInputConfig,
-        tokenizer: &dyn TextTokenizer,
-    ) -> Result<GraphInputBundle, GraphInputError> {
-        for name in config.load.options.keys() {
-            if name != "inter_turn_delay_cap_seconds" {
-                return Err(GraphInputError(format!(
-                    "dag_jsonl Graph-IR input does not support loader option {name:?}"
-                )));
-            }
-        }
-        let delay_cap_ms = config
-            .load
-            .options
-            .get("inter_turn_delay_cap_seconds")
-            .map(|value| {
-                value
-                    .as_f64()
-                    .filter(|value| value.is_finite() && *value >= 0.0)
-                    .map(|seconds| seconds * 1000.0)
-                    .ok_or_else(|| {
-                        GraphInputError(
-                            "inter_turn_delay_cap_seconds must be finite and non-negative".into(),
-                        )
-                    })
-            })
-            .transpose()?;
-        let program = load_dag_jsonl_program(&config.load)
-            .await
-            .map_err(|error| GraphInputError(error.to_string()))?;
-        let mut catalog = catalog_from_program(program, delay_cap_ms, tokenizer)?;
-        if config.root_limit == Some(0) {
-            return Err(GraphInputError(
-                "graph root_limit must be positive when configured".into(),
-            ));
-        }
-        if let Some(limit) = config.root_limit {
-            // Keep the complete child catalog but avoid compiling GraphRecords
-            // for authored roots that cannot be selected by this run.
-            catalog.roots.truncate(limit);
-        }
-        let lowered =
-            lower_catalog(&catalog).map_err(|error| GraphInputError(error.to_string()))?;
-        let plans = lowered
-            .parsed
-            .traces
-            .iter()
-            .map(|trace| GraphTracePlan {
-                graph: lowered.parsed.resolve_trace_graph(trace).clone(),
-                trace: trace.clone(),
-                arrival_offset_ns: None,
-            })
-            .collect::<Vec<_>>();
-        let metadata = GraphInputMetadata {
-            format: self.name().to_string(),
-            root_count: plans.len(),
-            node_count: plans.iter().map(|plan| plan.graph.nodes.len()).sum(),
-        };
-        Ok(GraphInputBundle {
-            plans,
-            segments: lowered.segments,
-            metadata,
-        })
-    }
-}
-
-/// Frozen name-to-adapter composition registry.
-#[derive(Clone, Default)]
-pub struct GraphInputAdapterRegistry {
-    adapters: BTreeMap<String, Arc<dyn GraphInputAdapter>>,
-}
-
-impl GraphInputAdapterRegistry {
-    /// Construct the built-in graph-input universe.
-    pub fn with_builtin_adapters() -> Self {
-        let mut registry = Self::default();
-        registry
-            .register(Arc::new(DagJsonlGraphInputAdapter))
-            .expect("built-in graph input adapter names are unique");
-        registry
-    }
-
-    /// Register one adapter, rejecting duplicate normalized names.
-    pub fn register(&mut self, adapter: Arc<dyn GraphInputAdapter>) -> Result<(), GraphInputError> {
-        let name = normalize_name(adapter.name());
-        if name.is_empty() {
-            return Err(GraphInputError(
-                "graph input adapter name cannot be empty".into(),
-            ));
-        }
-        if self.adapters.contains_key(&name) {
+/// Parse, validate, intern, and lower one complete `dag_jsonl` source.
+///
+/// This is deliberately a format-specific compiler, not an adapter or
+/// registry. Identity dispatch and strict authored-wire decoding live in the
+/// runner's object-safe `RunnerGraphInputAdapter` seam, so a product run can
+/// never traverse two format registries or two source representations.
+pub async fn compile_dag_jsonl_input(
+    config: GraphInputConfig,
+    tokenizer: &dyn TextTokenizer,
+) -> Result<GraphInputBundle, GraphInputError> {
+    for name in config.load.options.keys() {
+        if name != "inter_turn_delay_cap_seconds" {
             return Err(GraphInputError(format!(
-                "duplicate graph input adapter {name:?}"
+                "dag_jsonl Graph-IR input does not support loader option {name:?}"
             )));
         }
-        self.adapters.insert(name, adapter);
-        Ok(())
     }
-
-    /// Resolve one explicit authored format.
-    pub fn get(&self, name: &str) -> Result<Arc<dyn GraphInputAdapter>, GraphInputError> {
-        let normalized = normalize_name(name);
-        self.adapters.get(&normalized).cloned().ok_or_else(|| {
-            GraphInputError(format!(
-                "no Graph-IR input adapter is registered for {name:?}"
-            ))
+    let delay_cap_ms = config
+        .load
+        .options
+        .get("inter_turn_delay_cap_seconds")
+        .map(|value| {
+            value
+                .as_f64()
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .map(|seconds| seconds * 1000.0)
+                .ok_or_else(|| {
+                    GraphInputError(
+                        "inter_turn_delay_cap_seconds must be finite and non-negative".into(),
+                    )
+                })
         })
+        .transpose()?;
+    let program = load_dag_jsonl_program(&config.load)
+        .await
+        .map_err(|error| GraphInputError(error.to_string()))?;
+    let mut catalog = catalog_from_program(program, delay_cap_ms, tokenizer)?;
+    if config.root_limit == Some(0) {
+        return Err(GraphInputError(
+            "graph root_limit must be positive when configured".into(),
+        ));
     }
-
-    /// Registered normalized names in deterministic capability order.
-    pub fn names(&self) -> impl ExactSizeIterator<Item = &str> {
-        self.adapters.keys().map(String::as_str)
+    if let Some(limit) = config.root_limit {
+        // Keep the complete child catalog but avoid compiling GraphRecords
+        // for authored roots that cannot be selected by this run.
+        catalog.roots.truncate(limit);
     }
-}
-
-impl GraphInputAdapterResolver for GraphInputAdapterRegistry {
-    fn find(&self, name: &str) -> Option<Arc<dyn GraphInputAdapter>> {
-        self.get(name).ok()
-    }
-}
-
-fn normalize_name(name: &str) -> String {
-    name.trim().to_ascii_lowercase().replace('-', "_")
+    let lowered = lower_catalog(&catalog).map_err(|error| GraphInputError(error.to_string()))?;
+    let plans = lowered
+        .parsed
+        .traces
+        .iter()
+        .map(|trace| GraphTracePlan {
+            graph: lowered.parsed.resolve_trace_graph(trace).clone(),
+            trace: trace.clone(),
+            arrival_offset_ns: None,
+        })
+        .collect::<Vec<_>>();
+    let metadata = GraphInputMetadata {
+        format: "dag_jsonl".to_string(),
+        root_count: plans.len(),
+        node_count: plans.iter().map(|plan| plan.graph.nodes.len()).sum(),
+    };
+    Ok(GraphInputBundle {
+        plans,
+        segments: lowered.segments,
+        metadata,
+    })
 }
 
 fn catalog_from_program(
@@ -538,19 +453,18 @@ mod tests {
     use super::*;
 
     async fn load(value: serde_json::Value) -> Result<GraphInputBundle, GraphInputError> {
-        DagJsonlGraphInputAdapter
-            .load(
-                GraphInputConfig {
-                    load: LoadConfig::new(DatasetSource::Inline(value)),
-                    root_limit: None,
-                },
-                &TiktokenTokenizer::builtin(),
-            )
-            .await
+        compile_dag_jsonl_input(
+            GraphInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(value)),
+                root_limit: None,
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
     }
 
     #[tokio::test]
-    async fn direct_adapter_builds_fork_spawn_and_join_without_dataset_composition() {
+    async fn direct_compiler_builds_fork_spawn_and_join_without_dataset_composition() {
         let bundle = load(json!([
             {"session_id":"root","turns":[
                 {"messages":[{"role":"user","content":"root"}],
@@ -629,7 +543,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn topology_errors_fail_inside_the_direct_adapter() {
+    async fn topology_errors_fail_inside_the_direct_compiler() {
         assert!(
             load(json!([{
                 "session_id":"root",
@@ -650,82 +564,26 @@ mod tests {
 
     #[tokio::test]
     async fn root_limit_is_applied_only_after_complete_program_validation() {
-        let bundle = DagJsonlGraphInputAdapter
-            .load(
-                GraphInputConfig {
-                    load: LoadConfig::new(DatasetSource::Inline(json!([
-                        {"session_id":"root","turns":[
-                            {"messages":[{"role":"user","content":"root"}],"spawns":["child"]}
-                        ]},
-                        {"session_id":"child","turns":[
-                            {"messages":[{"role":"user","content":"child"}]}
-                        ]},
-                        {"session_id":"other","turns":[
-                            {"messages":[{"role":"user","content":"other"}]}
-                        ]}
-                    ]))),
-                    root_limit: Some(1),
-                },
-                &TiktokenTokenizer::builtin(),
-            )
-            .await
-            .unwrap();
+        let bundle = compile_dag_jsonl_input(
+            GraphInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(json!([
+                    {"session_id":"root","turns":[
+                        {"messages":[{"role":"user","content":"root"}],"spawns":["child"]}
+                    ]},
+                    {"session_id":"child","turns":[
+                        {"messages":[{"role":"user","content":"child"}]}
+                    ]},
+                    {"session_id":"other","turns":[
+                        {"messages":[{"role":"user","content":"other"}]}
+                    ]}
+                ]))),
+                root_limit: Some(1),
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        .unwrap();
         assert_eq!(bundle.metadata.root_count, 1);
         assert_eq!(bundle.metadata.node_count, 2);
-    }
-
-    #[test]
-    fn resolver_is_trait_substitutable_and_explicit() {
-        struct Named(&'static str);
-
-        #[async_trait]
-        impl GraphInputAdapter for Named {
-            fn name(&self) -> &str {
-                self.0
-            }
-
-            async fn load(
-                &self,
-                _config: GraphInputConfig,
-                _tokenizer: &dyn TextTokenizer,
-            ) -> Result<GraphInputBundle, GraphInputError> {
-                unreachable!("capability-order adapters are never loaded")
-            }
-        }
-
-        let mut registry = GraphInputAdapterRegistry::with_builtin_adapters();
-        registry.register(Arc::new(Named("zeta"))).unwrap();
-        registry.register(Arc::new(Named("Alpha"))).unwrap();
-        let resolver: &dyn GraphInputAdapterResolver = &registry;
-        assert_eq!(resolver.find("dag-jsonl").unwrap().name(), "dag_jsonl");
-        assert!(resolver.find("unknown").is_none());
-        assert_eq!(
-            registry.names().collect::<Vec<_>>(),
-            vec!["alpha", "dag_jsonl", "zeta"]
-        );
-    }
-
-    #[test]
-    fn registry_rejects_normalized_duplicate_without_replacing_original() {
-        struct Alias;
-
-        #[async_trait]
-        impl GraphInputAdapter for Alias {
-            fn name(&self) -> &str {
-                "dag-jsonl"
-            }
-
-            async fn load(
-                &self,
-                _config: GraphInputConfig,
-                _tokenizer: &dyn TextTokenizer,
-            ) -> Result<GraphInputBundle, GraphInputError> {
-                unreachable!("duplicate adapter is never installed")
-            }
-        }
-
-        let mut registry = GraphInputAdapterRegistry::with_builtin_adapters();
-        assert!(registry.register(Arc::new(Alias)).is_err());
-        assert_eq!(registry.get("dag_jsonl").unwrap().name(), "dag_jsonl");
     }
 }

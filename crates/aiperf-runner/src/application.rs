@@ -14,7 +14,6 @@ use std::sync::Arc;
 use aiperf_extensions::{
     AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory, ExtensionError,
 };
-use aiperf_graph::input::{GraphInputAdapterRegistry, GraphInputAdapterResolver};
 use anyhow::Result;
 
 use crate::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
@@ -40,7 +39,6 @@ pub struct RunnerApplication {
     distribution_id: String,
     coordinator: RunnerV2Coordinator,
     execution_factories: RunnerExecutionFactories,
-    legacy_graph_inputs: Arc<dyn GraphInputAdapterResolver>,
 }
 
 impl RunnerApplication {
@@ -51,7 +49,6 @@ impl RunnerApplication {
         runner_registry_factory: &dyn RunnerRegistryFactory,
         product_registry_factory: &dyn AiperfRegistryFactory,
         execution_factories: RunnerExecutionFactories,
-        legacy_graph_inputs: Arc<dyn GraphInputAdapterResolver>,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
         sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
@@ -70,7 +67,6 @@ impl RunnerApplication {
             distribution_id,
             coordinator,
             execution_factories,
-            legacy_graph_inputs,
         })
     }
 
@@ -81,7 +77,6 @@ impl RunnerApplication {
             &BuiltinRunnerRegistryFactory,
             &BuiltinAiperfRegistryFactory,
             native_execution_factories(),
-            Arc::new(GraphInputAdapterRegistry::with_builtin_adapters()),
             Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),
             Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new()),
             Arc::new(BuiltinRunnerSidecarInputAdapterResolver::new()),
@@ -108,7 +103,7 @@ impl RunnerApplication {
         execute_run_with_all_factories(
             request,
             self.execution_factories.http(),
-            self.legacy_graph_inputs.as_ref(),
+            self.coordinator.graph_inputs(),
             self.execution_factories.graph(),
             &frozen_registry,
         )

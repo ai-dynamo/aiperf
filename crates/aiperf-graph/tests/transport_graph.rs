@@ -16,7 +16,7 @@ use aiperf_clock::real_clock::RealClock;
 use aiperf_dataset::TiktokenTokenizer;
 use aiperf_dataset::loader::{DatasetSource, LoadConfig};
 use aiperf_graph::execution::LocalGraphTraceExecutionBackend;
-use aiperf_graph::input::{DagJsonlGraphInputAdapter, GraphInputAdapter, GraphInputConfig};
+use aiperf_graph::input::{GraphInputConfig, compile_dag_jsonl_input};
 use aiperf_graph::materialize::SegmentItemsMaterializer;
 use aiperf_graph::model::{GraphRecord, TraceRecord};
 use aiperf_graph::policy::{
@@ -323,24 +323,23 @@ fn lowered_dataset_dag_dispatches_fanout_join_over_real_http() {
         .build()
         .unwrap();
     let bundle = runtime.block_on(async {
-        DagJsonlGraphInputAdapter
-            .load(
-                GraphInputConfig {
-                    load: LoadConfig::new(DatasetSource::Inline(json!([
-                        {"session_id":"root","turns":[
-                            {"messages":[{"role":"user","content":"root-0"}],"spawns":["child"]},
-                            {"messages":[{"role":"user","content":"root-1"}]}
-                        ]},
-                        {"session_id":"child","turns":[
-                            {"messages":[{"role":"user","content":"child-0"}]}
-                        ]}
-                    ]))),
-                    root_limit: None,
-                },
-                &TiktokenTokenizer::builtin(),
-            )
-            .await
-            .unwrap()
+        compile_dag_jsonl_input(
+            GraphInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(json!([
+                    {"session_id":"root","turns":[
+                        {"messages":[{"role":"user","content":"root-0"}],"spawns":["child"]},
+                        {"messages":[{"role":"user","content":"root-1"}]}
+                    ]},
+                    {"session_id":"child","turns":[
+                        {"messages":[{"role":"user","content":"child-0"}]}
+                    ]}
+                ]))),
+                root_limit: None,
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        .unwrap()
     });
     drop(runtime);
     let plan = bundle.plans.into_iter().next().unwrap();

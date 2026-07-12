@@ -18,7 +18,6 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_graph::input::GraphInputAdapterRegistry;
 use aiperf_runner::RunnerApplication;
 use aiperf_runner::coordinator::RunnerResponseV2;
 use aiperf_runner::dataset_input::{
@@ -205,7 +204,6 @@ fn statically_linked_extension_child() {
         &BuiltinRunnerRegistryFactory,
         &StaticTestRegistryFactory,
         native_execution_factories(),
-        Arc::new(GraphInputAdapterRegistry::with_builtin_adapters()),
         Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),
         Arc::new(CountingDatasetInputs {
             inner: BuiltinRunnerDatasetInputAdapterResolver::new(),

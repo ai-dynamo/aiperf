@@ -7,8 +7,8 @@
 //! [`NativeRunPlan`] consumed by the same coordinator as protocol v1. The
 //! adapter never constructs or serializes a protocol-v1 `RunRequest`. Direct
 //! `dag_jsonl` input remains an authored graph program: the common coordinator
-//! passes it once to the selected [`aiperf_graph::input::GraphInputAdapter`],
-//! which returns `GraphTracePlan`s and one frozen segment store.
+//! passes it once to the selected runner-owned authored-input adapter, which
+//! returns `GraphTracePlan`s and one frozen segment store.
 
 use std::collections::BTreeMap;
 use std::fmt;
