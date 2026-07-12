@@ -9,7 +9,16 @@ on:
       - Cargo.lock
       - Cargo.toml
       - crates/**
+      - src/aiperf/entrypoint.py
+      - src/aiperf/cli_commands/dynosim.py
+      - src/aiperf/dynosim_capabilities.json
+      - src/aiperf/accuracy/evaluation/**
+      - tests/unit/accuracy/test_evaluation_provider_worker_v2.py
+      - tests/unit/test_dynamo_online_parity_gate.py
+      - tools/dynamo_online_parity_gate.py
+      - tools/generate_stock_evaluator_manifest.py
       - tools/runner_release_input.py
+      - tools/test_openai_proxy_fidelity.sh
       - packaging/aiperf-runner/**
       - .github/workflows/native-runner.yml
   push:
@@ -80,6 +89,7 @@ jobs:
       - name: Run default workspace and online process tests
         run: |
           set -euo pipefail
+          env -u RUSTC_WRAPPER cargo build --locked -p aiperf-mock-rs
           env -u RUSTC_WRAPPER cargo test --locked --workspace
           env -u RUSTC_WRAPPER cargo test --locked -p aiperf-runner \
             --test stdio_e2e \
@@ -96,6 +106,48 @@ jobs:
             --features dynamo-offline \
             --test offline_stdio \
             --test offline_scheduled_stdio
+
+      - name: Prove pinned OpenBench compatibility path
+        if: matrix.arch == 'amd64'
+        run: bash tools/test_openai_proxy_fidelity.sh
+
+      - name: Gate DynoSim against official online replay
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          DYNAMO_ROOT=$(realpath -m crates/aiperf/../../../../../dynamo-aiperf-native)
+          PARITY_DYNAMO_ROOT="${RUNNER_TEMP}/dynamo-online-parity-source"
+          PARITY_VENV="${RUNNER_TEMP}/aiperf-online-parity-venv"
+          PARITY_OUTPUT="${RUNNER_TEMP}/aiperf-online-parity"
+          TOOLCHAIN_BIN=$(dirname "$(rustup which rustc)")
+
+          mkdir -p "${PARITY_DYNAMO_ROOT}"
+          git -C "${DYNAMO_ROOT}" archive --format=tar HEAD \
+            | tar -xf - -C "${PARITY_DYNAMO_ROOT}"
+          uv venv --python 3.12 "${PARITY_VENV}"
+          uv pip install --python "${PARITY_VENV}/bin/python" \
+            'maturin[patchelf]' \
+            pytest \
+            -e "${PARITY_DYNAMO_ROOT}[mocker]"
+          (
+            cd "${PARITY_DYNAMO_ROOT}/lib/bindings/python"
+            env \
+              RUSTC="${TOOLCHAIN_BIN}/rustc" \
+              VIRTUAL_ENV="${PARITY_VENV}" \
+              PATH="${TOOLCHAIN_BIN}:${PARITY_VENV}/bin:${PATH}" \
+              "${PARITY_VENV}/bin/maturin" develop --uv --release --locked \
+                --features aic-forward-pass
+          )
+          "${PARITY_VENV}/bin/python" -m pytest -q \
+            tests/unit/test_dynamo_online_parity_gate.py
+          "${PARITY_VENV}/bin/python" tools/dynamo_online_parity_gate.py \
+            --python "${PARITY_VENV}/bin/python" \
+            --official-pythonpath "${PARITY_DYNAMO_ROOT}/components/src" \
+            --aiperf-source src \
+            --dynamo-source "${PARITY_DYNAMO_ROOT}" \
+            --output-dir "${PARITY_OUTPUT}" \
+            --samples 9 \
+            --warmups 1
 
       - name: Build and bind exact release images
         env:

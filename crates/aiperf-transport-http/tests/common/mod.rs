@@ -1,7 +1,8 @@
 // crates/aiperf-transport-http/tests/common/mod.rs
-//! Spawns the external `aiperf-mock-rs` binary for integration tests.
+//! Spawns the workspace `aiperf-mock-rs` binary for integration tests.
 #![allow(dead_code)]
 
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use tokio::net::TcpStream;
@@ -18,8 +19,30 @@ fn free_port() -> u16 {
     l.local_addr().unwrap().port()
 }
 
-fn binary() -> String {
-    std::env::var("AIPERF_MOCK_RS_BIN").unwrap_or_else(|_| "aiperf-mock-rs".to_string())
+fn binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("AIPERF_MOCK_RS_BIN") {
+        return PathBuf::from(path);
+    }
+
+    let binary_name = format!("aiperf-mock-rs{}", std::env::consts::EXE_SUFFIX);
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(profile_dir) = current_exe.parent().and_then(|deps_dir| deps_dir.parent())
+    {
+        let candidate = profile_dir.join(&binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    let target_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    for profile in ["debug", "release"] {
+        let candidate = target_dir.join(profile).join(&binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from(binary_name)
 }
 
 impl MockServer {
@@ -42,7 +65,10 @@ impl MockServer {
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("SKIP: cannot launch {bin}: {e} (set AIPERF_MOCK_RS_BIN)");
+                eprintln!(
+                    "SKIP: cannot launch {}: {e} (set AIPERF_MOCK_RS_BIN)",
+                    bin.display()
+                );
                 return None;
             }
         };

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Wall-clock timing proof against the external `aiperf-mock-rs` process.
+//! Wall-clock timing proof against the workspace `aiperf-mock-rs` process.
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -82,13 +82,26 @@ fn mock_binary() -> PathBuf {
     if let Some(path) = std::env::var_os("AIPERF_MOCK_RS_BIN") {
         return PathBuf::from(path);
     }
-    let sibling = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../aiperf-rs/rust/target/release/aiperf-mock-rs");
-    if sibling.is_file() {
-        sibling
-    } else {
-        PathBuf::from("aiperf-mock-rs")
+
+    let binary_name = format!("aiperf-mock-rs{}", std::env::consts::EXE_SUFFIX);
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(profile_dir) = current_exe.parent().and_then(|deps_dir| deps_dir.parent())
+    {
+        let candidate = profile_dir.join(&binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
     }
+
+    let target_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    for profile in ["debug", "release"] {
+        let candidate = target_dir.join(profile).join(&binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from(binary_name)
 }
 
 fn run_local<F: std::future::Future>(future: F) -> F::Output {

@@ -42,7 +42,7 @@ abstraction — never `Instant::now()`, `SystemTime::now()`, or raw
 - Idiomatic Rust data models (enums, duration accessors, typed errors, builders).
 - **Every timestamp and timer sourced from `Clock`**, enabling deterministic
   `SimClock` tests.
-- Validation against the external `aiperf-mock-rs` binary.
+- Validation against the workspace-owned standalone `aiperf-mock-rs` binary.
 
 ### Non-Goals (YAGNI)
 - The `timing/` scheduling subsystem: interval generators (Poisson/Gamma/
@@ -274,15 +274,16 @@ net + io-util), `hyper` (features `client`, `http1`, `http2`), `hyper-util`
 
 ## 9. Validation — integrate against `aiperf-mock-rs`
 
-`aiperf-mock-rs` (at `…/ajc/aiperf-rs/rust/crates/aiperf-mock-rs`) is an
+`aiperf-mock-rs` (at `crates/aiperf-mock-rs`) is an
 OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 `/v1/completions`, `/v1/models`, `/health`, with `--fast`, `--ttft`/`--itl`,
 `--error-rate`, `--host`/`--port`, and h1+h2 (h2c prior-knowledge) support.
 
 - **Fixture** (`tests/mock_fixture.rs`): spawn the binary as a child on a
   test-chosen free `127.0.0.1` port, poll `GET /health` until ready, kill on
-  drop. Binary via `AIPERF_MOCK_RS_BIN` env (fallback: `PATH`); absent → skip
-  with a clear message. These live tests run on **`RealClock`**.
+  drop. Binary via `AIPERF_MOCK_RS_BIN` env (fallback: the current workspace
+  target directory, then `PATH`); absent → skip with a clear message. These
+  live tests run on **`RealClock`**.
 - **Scenarios (RealClock):**
   - `--fast` streaming happy path: `responses` populated, `usage` counts
     captured, TTFT = first-SSE `perf_ns` − `start_ns`, token count == content-

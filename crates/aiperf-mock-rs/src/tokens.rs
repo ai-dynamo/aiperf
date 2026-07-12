@@ -89,26 +89,22 @@ pub fn load_corpus() {
 }
 
 fn find_corpus_path() -> Option<PathBuf> {
-    let candidates = [
-        "src/aiperf/dataset/generator/assets/shakespeare.txt",
-        "../src/aiperf/dataset/generator/assets/shakespeare.txt",
-        "../../src/aiperf/dataset/generator/assets/shakespeare.txt",
-        "../../../src/aiperf/dataset/generator/assets/shakespeare.txt",
-        "/home/anthony/nvidia/projects/aiperf/ajc/aiperf-rs/src/aiperf/dataset/generator/assets/shakespeare.txt",
-    ];
     if let Ok(override_path) = std::env::var("AIPERF_MOCK_CORPUS_PATH") {
         let p = PathBuf::from(override_path);
         if p.exists() {
             return Some(p);
         }
     }
-    for c in candidates {
-        let p = PathBuf::from(c);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    None
+
+    let candidates = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/aiperf/dataset/generator/assets/shakespeare.txt"),
+        PathBuf::from("src/aiperf/dataset/generator/assets/shakespeare.txt"),
+        PathBuf::from("../src/aiperf/dataset/generator/assets/shakespeare.txt"),
+        PathBuf::from("../../src/aiperf/dataset/generator/assets/shakespeare.txt"),
+        PathBuf::from("../../../src/aiperf/dataset/generator/assets/shakespeare.txt"),
+    ];
+    candidates.into_iter().find(|path| path.exists())
 }
 
 /// Character-based tokenizer: ~4 chars/token, breaking at whitespace when possible.

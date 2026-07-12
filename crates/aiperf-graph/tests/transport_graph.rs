@@ -3,9 +3,10 @@
 
 //! End-to-end proof that the graph executor dispatches real OpenAI chat
 //! completions over HTTP via `TransportChatSink` (backed by `aiperf-transport-http`)
-//! against the REAL `aiperf-mock-rs` binary — not an in-process stub.
+//! against the workspace `aiperf-mock-rs` binary — not an in-process stub.
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -49,8 +50,7 @@ impl RealMock {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             l.local_addr().unwrap().port()
         };
-        let bin =
-            std::env::var("AIPERF_MOCK_RS_BIN").unwrap_or_else(|_| "aiperf-mock-rs".to_string());
+        let bin = mock_binary();
         let child = match Command::new(&bin)
             .arg("--host")
             .arg("127.0.0.1")
@@ -63,7 +63,10 @@ impl RealMock {
         {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("SKIP: cannot launch {bin}: {e} (set AIPERF_MOCK_RS_BIN)");
+                eprintln!(
+                    "SKIP: cannot launch {}: {e} (set AIPERF_MOCK_RS_BIN)",
+                    bin.display()
+                );
                 return None;
             }
         };
@@ -85,6 +88,32 @@ impl RealMock {
         let _ = m.child.kill();
         None
     }
+}
+
+fn mock_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("AIPERF_MOCK_RS_BIN") {
+        return PathBuf::from(path);
+    }
+
+    let binary_name = format!("aiperf-mock-rs{}", std::env::consts::EXE_SUFFIX);
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(profile_dir) = current_exe.parent().and_then(|deps_dir| deps_dir.parent())
+    {
+        let candidate = profile_dir.join(&binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    let target_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    for profile in ["debug", "release"] {
+        let candidate = target_dir.join(profile).join(&binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from(binary_name)
 }
 
 impl Drop for RealMock {
