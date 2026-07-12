@@ -75,7 +75,7 @@ pub struct NativeResponseMetadata {
     pub http: HttpTrace,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PendingRequest {
     credit_issued_ns: i64,
     dispatch_start_ns: Option<i64>,
@@ -156,6 +156,21 @@ impl NativeMetricsObserver {
                 .or(request.response.completion_tokens);
             request.response = response;
         }
+    }
+
+    /// Snapshot one terminal request without consuming collector state.
+    ///
+    /// Live exporters use this after terminal metadata and transport facts are
+    /// complete. The normal finalizer still owns aggregate construction, so a
+    /// best-effort side channel cannot alter the authoritative report.
+    pub fn snapshot_record(&self, uuid: Uuid, ordinal: u64) -> Option<RecordIngest> {
+        let finish_ns = self.relative_now_ns();
+        self.state
+            .borrow()
+            .requests
+            .get(&uuid)
+            .cloned()
+            .map(|request| request.into_record(uuid, ordinal, finish_ns))
     }
 
     /// Finalizes every retained request and returns the full native summary.
@@ -519,5 +534,31 @@ mod tests {
                 .avg,
             MetricValue::Finite(1.0)
         );
+    }
+
+    #[test]
+    fn terminal_snapshot_does_not_consume_authoritative_record() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(7);
+        observer.register_metadata(
+            uuid,
+            RequestMetricMetadata {
+                session_num: Some(12),
+                ..RequestMetricMetadata::default()
+            },
+        );
+        observer.on_arrival(uuid, 1.0, 4, 2);
+        observer.on_admit(uuid, 2.0, 0);
+        clock.advance_to(9_000_000);
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        let snapshot = observer.snapshot_record(uuid, 12).unwrap();
+        assert_eq!(snapshot.session_num, 12);
+        assert_eq!(snapshot.start_ns, 2_000_000);
+        assert_eq!(snapshot.end_ns, 9_000_000);
+
+        let collection = observer.finish_with_records();
+        assert_eq!(collection.records, vec![snapshot]);
     }
 }

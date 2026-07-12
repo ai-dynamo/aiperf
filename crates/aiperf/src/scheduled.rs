@@ -637,7 +637,8 @@ impl ScheduledRuntime {
             turn.input_length,
             turn.max_output_tokens,
         );
-        let credit = IssuedCredit::from_issued_turn(credit_id, &turn, issued_url_index);
+        let credit =
+            IssuedCredit::from_issued_turn(credit_id, issued_ns, &turn, issued_url_index);
 
         let runtime = self.clone();
         self.scheduler.execute_async(Box::pin(async move {

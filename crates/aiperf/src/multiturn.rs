@@ -786,6 +786,8 @@ impl TurnToSend {
 pub struct IssuedCredit {
     /// Monotonic credit id assigned before dispatch.
     pub id: u64,
+    /// Clock timestamp at the issuer boundary before backend dispatch.
+    pub issued_ns: i64,
     /// The issued turn, including materialized prompt history.
     pub turn: TurnToSend,
     /// Per-request cancellation scalar selected at issuance.
@@ -797,15 +799,21 @@ pub struct IssuedCredit {
 
 impl IssuedCredit {
     /// Build issued-credit metadata from a turn and assigned id.
-    pub fn from_turn(id: u64, turn: &TurnToSend) -> Self {
-        Self::from_issued_turn(id, turn, turn.url_index)
+    pub fn from_turn(id: u64, issued_ns: i64, turn: &TurnToSend) -> Self {
+        Self::from_issued_turn(id, issued_ns, turn, turn.url_index)
     }
 
     /// Build issued metadata while keeping the selector's turn-0 output
     /// distinct from the effective endpoint pin on `turn`.
-    pub fn from_issued_turn(id: u64, turn: &TurnToSend, url_index: Option<u32>) -> Self {
+    pub fn from_issued_turn(
+        id: u64,
+        issued_ns: i64,
+        turn: &TurnToSend,
+        url_index: Option<u32>,
+    ) -> Self {
         Self {
             id,
+            issued_ns,
             turn: turn.clone(),
             cancel_after_ns: turn.cancel_after_ns,
             url_index,
@@ -1574,7 +1582,7 @@ mod tests {
     fn continuation_splices_real_reply_and_carries_timing() {
         let mut source = SyntheticConversationSource::new(workload(3)).unwrap();
         let first = source.next(None).unwrap().build_first_turn(None).unwrap();
-        let credit = IssuedCredit::from_turn(0, &first);
+        let credit = IssuedCredit::from_turn(0, 0, &first);
         let next = source
             .next_turn(
                 &credit,
@@ -1665,7 +1673,7 @@ mod tests {
         assert!(!final0);
         let next = source
             .next_turn(
-                &IssuedCredit::from_turn(id0, &first),
+                &IssuedCredit::from_turn(id0, 0, &first),
                 TurnResponse {
                     text: String::new(),
                     completion_tokens: None,
@@ -1681,7 +1689,7 @@ mod tests {
         assert!(!final2, "second session still has a continuation");
         let second_next = source
             .next_turn(
-                &IssuedCredit::from_turn(2, &second),
+                &IssuedCredit::from_turn(2, 0, &second),
                 TurnResponse {
                     text: String::new(),
                     completion_tokens: None,
@@ -1728,7 +1736,7 @@ mod tests {
         assert_eq!(first_body["messages"][0]["content"], "first question");
         let next = source
             .next_turn(
-                &IssuedCredit::from_turn(0, &first),
+                &IssuedCredit::from_turn(0, 0, &first),
                 TurnResponse {
                     text: "live answer".into(),
                     completion_tokens: Some(2),

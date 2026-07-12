@@ -47,6 +47,8 @@ pub struct PhaseStats {
     pub completed_sessions: u64,
     /// Current sessions cancelled.
     pub cancelled_sessions: u64,
+    /// Planned turns across every admitted root session.
+    pub total_session_turns: u64,
     /// Current in-flight requests.
     pub in_flight_requests: u64,
     /// Current in-flight sessions.
@@ -114,6 +116,7 @@ impl PhaseStats {
             sent_sessions: counters.sent_sessions,
             completed_sessions: counters.completed_sessions,
             cancelled_sessions: counters.cancelled_sessions,
+            total_session_turns: counters.total_session_turns,
             in_flight_requests: counters.in_flight_requests(),
             in_flight_sessions: counters.in_flight_sessions(),
             in_flight_prefills: counters.in_flight_prefills(),
