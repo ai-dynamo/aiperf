@@ -455,6 +455,71 @@ def test_v2_public_dataset_is_expanded_once_without_acquisition(
     assert not run.artifact_dir.exists()
 
 
+def test_v2_sidecars_are_direct_protocol_neutral_native_inputs(tmp_path: Path) -> None:
+    run = _run(tmp_path / "not-created")
+    run.cfg.gpu_telemetry.enabled = True
+    run.cfg.gpu_telemetry.urls = ["http://gpu-node:9400"]
+    run.cfg.network_latency.enabled = True
+    run.cfg.network_latency.mean_ms = 2.5
+    run.cfg.server_metrics.enabled = True
+    run.cfg.server_metrics.urls = ["metrics-node:9000"]
+    run.cfg.server_metrics.formats = ["jsonl", "parquet"]
+    run.cfg.otel.metrics_url = "http://otel:4318"
+    run.cfg.mlflow.tracking_uri = "http://mlflow:5000"
+
+    sidecars = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["sidecars"]
+    compatibility_run = build_run_request(run)["run"]
+
+    assert sidecars == {
+        name: compatibility_run[name]
+        for name in (
+            "gpu_telemetry",
+            "network_latency",
+            "server_metrics",
+            "live_streaming",
+        )
+    }
+    assert sidecars["gpu_telemetry"]["sources"][-1] == {
+        "type": "dcgm",
+        "url": "http://gpu-node:9400/metrics",
+    }
+    assert sidecars["network_latency"] == {"mean_rtt_ns": 2_500_000}
+    assert sidecars["server_metrics"]["formats"] == ["jsonl", "parquet"]
+    assert sidecars["live_streaming"]["otel"]["metrics_url"] == (
+        "http://otel:4318/v1/metrics"
+    )
+    assert not run.artifact_dir.exists()
+
+
+def test_v2_custom_gpu_source_never_reads_resolved_state(tmp_path: Path) -> None:
+    run = _run(tmp_path / "not-created")
+    metrics_file = tmp_path / "not-read.csv"
+    run.cfg.gpu_telemetry.enabled = True
+    run.cfg.gpu_telemetry.urls = ["http://gpu-node:9400"]
+    run.cfg.gpu_telemetry.metrics_file = metrics_file
+
+    class _ResolvedAccessIsABug:
+        def __getattribute__(self, name: str):
+            raise AssertionError(f"v2 sidecar projection read BenchmarkRun.resolved.{name}")
+
+    run.__dict__["resolved"] = _ResolvedAccessIsABug()
+    sidecar = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["sidecars"]["gpu_telemetry"]
+
+    assert "custom_metrics" not in sidecar
+    assert all(source["type"] == "python" for source in sidecar["sources"])
+    assert sidecar["sources"][-1]["metrics_file"] == str(metrics_file.absolute())
+    assert not metrics_file.exists()
+    assert not run.artifact_dir.exists()
+
+
 def test_component_ids_are_open_strings_not_enums() -> None:
     backend = RunnerBackendConfig(type="future_backend", config={"a": 1})
     workload = RunnerWorkloadConfig(type="future_workload", config={"b": 2})

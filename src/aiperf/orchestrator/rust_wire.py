@@ -102,7 +102,7 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
             "values": copy.deepcopy(run.variation.values),
         }
 
-    sidecars = _authored_sidecars(cfg)
+    sidecars = _authored_sidecars(run)
     return {
         "identity": identity,
         "artifact_target": str(run.artifact_dir),
@@ -342,21 +342,26 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
     return result
 
 
-def _authored_sidecars(cfg: Any) -> dict[str, Any]:
-    """Project sidecar intent without discovery, probing, or worker startup."""
+def _authored_sidecars(run: BenchmarkRun) -> dict[str, Any]:
+    """Project direct native sidecar inputs without starting their resources.
+
+    Protocol v1 and v2 share these protocol-neutral source policies, but v2
+    never constructs a v1 run request or enters the resolver chain. Runtime
+    acquisition, reachability, cadence, and worker startup remain owned by the
+    selected Rust sidecar adapters during pair preparation.
+    """
     result: dict[str, Any] = {}
-    if cfg.gpu_telemetry.enabled:
-        result["gpu_telemetry"] = _authored_model_dump(cfg.gpu_telemetry)
-    if cfg.network_latency.enabled:
-        result["network_latency"] = _authored_model_dump(cfg.network_latency)
-    if cfg.server_metrics.enabled:
-        result["server_metrics"] = _authored_model_dump(cfg.server_metrics)
-    if cfg.otel.collector_enabled or cfg.mlflow.enabled:
-        live_streaming: dict[str, Any] = {}
-        if cfg.otel.collector_enabled:
-            live_streaming["otel"] = _authored_model_dump(cfg.otel)
-        if cfg.mlflow.enabled:
-            live_streaming["mlflow"] = _authored_model_dump(cfg.mlflow)
+    gpu_telemetry = _gpu_telemetry(run, include_resolved_custom_metrics=False)
+    if gpu_telemetry is not None:
+        result["gpu_telemetry"] = gpu_telemetry
+    network_latency = _network_latency(run)
+    if network_latency is not None:
+        result["network_latency"] = network_latency
+    server_metrics = _server_metrics(run)
+    if server_metrics is not None:
+        result["server_metrics"] = server_metrics
+    live_streaming = _live_streaming(run)
+    if live_streaming is not None:
         result["live_streaming"] = live_streaming
     return result
 
@@ -525,7 +530,11 @@ def _worker_count(cfg: Any) -> int:
     return max(workers, cfg.runtime.workers_min or 1)
 
 
-def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
+def _gpu_telemetry(
+    run: BenchmarkRun,
+    *,
+    include_resolved_custom_metrics: bool = True,
+) -> dict[str, Any] | None:
     """Lower GPU sources while retaining canonical Python-only collectors."""
     config = run.cfg.gpu_telemetry
     if not config.enabled:
@@ -582,7 +591,11 @@ def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
         ),
         "sources": sources,
     }
-    custom_metrics = run.resolved.gpu_custom_metrics or []
+    custom_metrics = (
+        run.resolved.gpu_custom_metrics or []
+        if include_resolved_custom_metrics
+        else []
+    )
     if custom_metrics:
         result["custom_metrics"] = [
             {
