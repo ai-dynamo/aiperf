@@ -129,6 +129,7 @@ def test_evaluation_projection_is_first_class_multi_route_and_provider_opaque(
     )
 
     authored = request["run"]
+    assert "sidecars" not in authored["resources"]
     assert authored["workload"] == {
         "type": "evaluation",
         "config": _workload_config(),
