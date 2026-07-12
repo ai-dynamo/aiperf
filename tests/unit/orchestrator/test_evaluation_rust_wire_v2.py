@@ -23,9 +23,7 @@ from aiperf.orchestrator.runner_installation import (
     _validate_v2_capabilities,
 )
 from aiperf.orchestrator.rust_wire import (
-    RustWireError,
     build_authored_run_request,
-    build_run_request,
 )
 
 _DISTRIBUTION_ID = "blake3:" + "a" * 64
@@ -201,15 +199,6 @@ def test_route_references_fail_before_runner_without_resolving_endpoints(
     missing_model["routes"]["judge"]["model"] = "undeclared-model"
     with pytest.raises(ValidationError, match="not present in benchmark.models"):
         _config(tmp_path, missing_model)
-
-
-def test_evaluation_and_named_profiles_never_fall_back_to_protocol_v1(
-    tmp_path: Path,
-) -> None:
-    run = _run(tmp_path, _workload_config())
-
-    with pytest.raises(RustWireError, match="explicit workload selection"):
-        build_run_request(run)
 
 
 def test_config_schema_documents_the_first_class_evaluation_shape() -> None:

@@ -21,7 +21,18 @@ from aiperf.config import (
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.orchestrator.runner_installation import RunnerInstallation
-from aiperf.orchestrator.rust_wire import build_run_request
+from aiperf.orchestrator.rust_wire import build_authored_run_request
+
+_DISTRIBUTION_ID = "blake3:" + "a" * 64
+
+
+def _authored_run(config: AIPerfConfig, tmp_path: Path) -> dict:
+    """Project one config through the strict protocol-v2 authored builder."""
+    return build_authored_run_request(
+        _run_from_config(config, tmp_path),
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_ID,
+    )
 
 
 def _run_from_config(config: AIPerfConfig, tmp_path: Path) -> BenchmarkRun:
@@ -84,7 +95,9 @@ def test_messages_yaml_reaches_native_wire_and_artifacts_redact_secrets(
     assert "sk-ant-header-secret" not in exported
     assert exported.count("<redacted>") >= 2
 
-    endpoint = build_run_request(_run_from_config(config, tmp_path))["run"]["endpoint"]
+    endpoint = _authored_run(config, tmp_path)["run"]["resources"]["endpoints"][
+        "profiles"
+    ][0]
     assert endpoint["type"] == "messages"
     assert endpoint["path"] == "/v1/messages"
     assert endpoint["streaming"] is True
@@ -113,8 +126,10 @@ def test_custom_cli_endpoint_id_passes_through_without_python_registration(
     )
 
     assert config.benchmark.endpoint.type == "acme_chat"
-    request = build_run_request(_run_from_config(config, tmp_path))
-    assert request["run"]["endpoint"]["type"] == "acme_chat"
+    request = _authored_run(config, tmp_path)
+    assert (
+        request["run"]["resources"]["endpoints"]["profiles"][0]["type"] == "acme_chat"
+    )
 
 
 def test_custom_endpoint_id_with_template_is_preserved_structurally() -> None:
@@ -197,7 +212,7 @@ def test_dag_jsonl_format_and_rows_pass_to_runner_without_linearization(
         }
     )
 
-    dataset = build_run_request(_run_from_config(config, tmp_path))["run"]["dataset"]
+    dataset = _authored_run(config, tmp_path)["run"]["workload"]["config"]["dataset"]
 
     assert dataset["format"] == "dag_jsonl"
     assert dataset["records"] == authored_rows

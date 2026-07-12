@@ -339,6 +339,7 @@ def test_missing_terminal_surfaces_exit_and_redacted_stderr() -> None:
         rust_executor._parse_terminal(
             b"",
             SimpleNamespace(benchmark_id="run"),
+            protocol_version=2,
             returncode=-6,
             stderr=b"Authorization: Bearer runner-secret\nstack overflow",
         )
@@ -396,79 +397,6 @@ def test_capabilities_require_every_typed_feature_inventory(
 
     with pytest.raises(ValueError, match=field):
         runner_installation._load_capabilities(Path("runner"))
-
-
-def test_request_capabilities_cover_every_nested_native_variant() -> None:
-    capabilities = {
-        "endpoint_types": ["chat"],
-        "dataset_types": ["synthetic"],
-        "phase_types": ["concurrency"],
-        "phase_features": ["adaptive_scale", "ramps", "request_cancellation"],
-        "run_features": [
-            "gpu_telemetry",
-            "outputs_json",
-            "python_accuracy_evaluator",
-            "raw_records",
-            "http_transport_policy",
-            "thread_per_core_execution",
-            "network_latency",
-            "server_metrics",
-            "python_live_streaming",
-        ],
-        "telemetry_source_types": ["dcgm"],
-        "server_metrics_formats": ["json", "csv", "jsonl", "parquet"],
-    }
-    request = {
-        "run": {
-            "workers": 2,
-            "endpoint": {"type": "chat", "timeout_seconds": 10.0},
-            "dataset": {"type": "synthetic"},
-            "phases": [
-                {
-                    "type": "concurrency",
-                    "adaptive_scale": {},
-                    "concurrency_ramp": {},
-                    "cancellation": {},
-                }
-            ],
-            "artifacts": {
-                "outputs_path": "outputs.json",
-                "raw_path": "profile_export_raw.jsonl",
-            },
-            "accuracy": {},
-            "gpu_telemetry": {"sources": [{"type": "dcgm"}]},
-            "network_latency": {"mean_rtt_ns": 2_500_000},
-            "server_metrics": {"formats": ["json", "parquet"]},
-            "live_streaming": {},
-        }
-    }
-
-    runner_installation._require_request_capabilities(capabilities, request)
-
-    for field, value in (
-        ("endpoint_types", "chat"),
-        ("dataset_types", "synthetic"),
-        ("phase_types", "concurrency"),
-        ("phase_features", "adaptive_scale"),
-        ("phase_features", "ramps"),
-        ("phase_features", "request_cancellation"),
-        ("run_features", "outputs_json"),
-        ("run_features", "python_accuracy_evaluator"),
-        ("run_features", "gpu_telemetry"),
-        ("run_features", "raw_records"),
-        ("run_features", "http_transport_policy"),
-        ("run_features", "thread_per_core_execution"),
-        ("run_features", "network_latency"),
-        ("run_features", "server_metrics"),
-        ("run_features", "python_live_streaming"),
-        ("telemetry_source_types", "dcgm"),
-        ("server_metrics_formats", "json"),
-        ("server_metrics_formats", "parquet"),
-    ):
-        narrowed = {name: list(values) for name, values in capabilities.items()}
-        narrowed[field].remove(value)
-        with pytest.raises(RuntimeError, match=rf"{field}\.{value}"):
-            runner_installation._require_request_capabilities(narrowed, request)
 
 
 def test_v2_request_capabilities_read_endpoint_profiles_from_resources() -> None:

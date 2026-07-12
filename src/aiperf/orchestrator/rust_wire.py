@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Versioned projection from Config v2 into the native single-run contract.
+"""Projection from Config v2 into the strict protocol-v2 single-run contract.
 
-Config v2 remains the user-facing and orchestration schema. Protocol v1 keeps
-its resolved compatibility projection while protocol v2 has a separate,
+Config v2 remains the user-facing and orchestration schema; protocol v2 has a
 side-effect-free authored projection. Raw Pydantic dumps are deliberately not
-the outer process boundary in either version.
+the outer process boundary.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
-RUNNER_PROTOCOL_VERSION = 1
 RUNNER_PROTOCOL_V2 = 2
 SERVER_METRICS_PARQUET_WIRE_PATH = Path(".aiperf-server-metrics-parquet-wire.jsonl")
 RunnerOperationV2 = Literal["validate", "execute"]
@@ -438,144 +436,6 @@ def _content_server() -> dict[str, Any] | None:
     return result
 
 
-def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
-    """Build the complete protocol-v1 request for one native benchmark.
-
-    Every accepted field is written explicitly.  That makes additions to
-    Config v2 fail closed until this projection and the Rust DTO are updated in
-    the same change.
-    """
-    cfg = run.cfg
-    dataset = cfg.get_default_dataset()
-    validate_v1_selection(cfg)
-
-    variation = run.variation
-    run_wire: dict[str, Any] = {
-        "benchmark_id": run.benchmark_id,
-        "label": run.label,
-        "trial": run.trial,
-        "workers": _worker_count(cfg),
-        "artifact_dir": str(run.artifact_dir),
-        "models": _authored_models(cfg),
-        "endpoint": _authored_endpoint(cfg.endpoint),
-        "dataset": _dataset(run, dataset),
-        "tokenizer": {
-            "name": _tokenizer_source(run),
-            **(
-                {"apply_chat_template": True}
-                if cfg.tokenizer is not None and cfg.tokenizer.apply_chat_template
-                else {}
-            ),
-        },
-        "phases": [_phase(phase) for phase in cfg.phases],
-        "metrics": {
-            "slos": dict(cfg.slos or {}),
-            **(
-                {"slice_duration_seconds": cfg.artifacts.slice_duration}
-                if cfg.artifacts.slice_duration is not None
-                else {}
-            ),
-        },
-        "artifacts": {
-            **(
-                {
-                    "records_path": _artifact_relative_path(
-                        run.artifact_dir,
-                        cfg.artifacts.profile_export_jsonl_file,
-                    )
-                }
-                if cfg.artifacts.records is not False or cfg.artifacts.raw
-                else {}
-            ),
-            **(
-                {
-                    "outputs_path": _artifact_relative_path(
-                        run.artifact_dir,
-                        cfg.artifacts.outputs_json_file,
-                    )
-                }
-                if cfg.artifacts.export_outputs_json
-                else {}
-            ),
-            **(
-                {
-                    "raw_path": _artifact_relative_path(
-                        run.artifact_dir,
-                        cfg.artifacts.profile_export_raw_jsonl_file,
-                    )
-                }
-                if cfg.artifacts.raw
-                else {}
-            ),
-            "trace": cfg.artifacts.trace,
-        },
-    }
-    _set_optional(run_wire, "sweep_id", run.sweep_id)
-    _set_optional(run_wire, "random_seed", run.random_seed)
-    if variation is not None:
-        run_wire["variation"] = {
-            "index": variation.index,
-            "label": variation.label,
-            "values": dict(variation.values),
-        }
-    if cfg.accuracy is not None and cfg.accuracy.enabled:
-        accuracy: dict[str, Any] = {
-            "benchmark": str(cfg.accuracy.benchmark),
-            "python_executable": _python_executable(),
-            "worker_module": "aiperf.accuracy.worker",
-        }
-        _set_optional(accuracy, "tasks", cfg.accuracy.tasks)
-        _set_optional(accuracy, "n_shots", cfg.accuracy.n_shots)
-        _set_optional(accuracy, "enable_cot", cfg.accuracy.enable_cot)
-        _set_optional(
-            accuracy,
-            "grader",
-            str(cfg.accuracy.grader) if cfg.accuracy.grader is not None else None,
-        )
-        _set_optional(accuracy, "system_prompt", cfg.accuracy.system_prompt)
-        run_wire["accuracy"] = accuracy
-    gpu_telemetry = _gpu_telemetry(run)
-    if gpu_telemetry is not None:
-        run_wire["gpu_telemetry"] = gpu_telemetry
-    network_latency = _network_latency(run)
-    if network_latency is not None:
-        run_wire["network_latency"] = network_latency
-    server_metrics = _server_metrics(run)
-    if server_metrics is not None:
-        run_wire["server_metrics"] = server_metrics
-    live_streaming = _live_streaming(run)
-    if live_streaming is not None:
-        run_wire["live_streaming"] = live_streaming
-    return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
-
-
-def validate_v1_selection(cfg: Any) -> None:
-    """Fail before v1 resolution when Config v2 selected a v2-only surface."""
-    if str(cfg.backend.type) != "online_http" or cfg.backend.config:
-        raise RustWireError(
-            "native runner protocol v1 supports only backend type 'online_http' "
-            "with an empty config; authored backend selections require protocol v2"
-        )
-    if cfg.workload is not None:
-        raise RustWireError(
-            "native runner protocol v1 does not represent an explicit workload "
-            "selection; remove benchmark.workload or use protocol v2 once its strict "
-            "execution DTO is available"
-        )
-    if cfg.endpoint_profiles:
-        raise RustWireError(
-            "native runner protocol v1 represents only benchmark.endpoint; named "
-            "endpoint_profiles require protocol v2"
-        )
-    if cfg.endpoint.wait_for_model_timeout > 0:
-        raise RustWireError(
-            "native runner protocol v1 cannot honor endpoint.wait_for_model_timeout; "
-            "readiness must be implemented by the selected runner before this run can "
-            "execute. Disable readiness or use a protocol-v2-capable runner once its "
-            "strict execution DTO is available."
-        )
-
-
 def _worker_count(cfg: Any) -> int:
     """Resolve Config-v2 worker policy for the Rust execution data plane.
 
@@ -855,136 +715,6 @@ def _native_gpu_unit(unit: Any) -> str:
         raise RustWireError(f"unsupported custom GPU metric unit {unit!s}") from error
 
 
-def _dataset(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
-    if isinstance(dataset, SyntheticDataset):
-        return _synthetic_dataset(dataset)
-    if isinstance(dataset, FileDataset):
-        return _file_dataset(run, dataset)
-    if isinstance(dataset, PublicDataset):
-        return _public_dataset(run, dataset)
-    raise RustWireError(
-        f"native runner protocol v1 does not accept dataset type {dataset.type!s}"
-    )
-
-
-def _synthetic_dataset(dataset: SyntheticDataset) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "type": "synthetic",
-        "entries": dataset.entries,
-        "sampling": str(dataset.sampling),
-        "turns": _distribution(dataset.turns or 1),
-        "turn_delay_ms": _distribution(dataset.turn_delay or 0),
-        "turn_delay_ratio": dataset.turn_delay_ratio,
-    }
-    _set_optional(result, "random_seed", dataset.random_seed)
-    if dataset.prompts is not None:
-        prompts: dict[str, Any] = {"batch_size": dataset.prompts.batch_size}
-        if dataset.prompts.isl is not None:
-            prompts["isl"] = _distribution(dataset.prompts.isl)
-        if dataset.prompts.osl is not None:
-            prompts["osl"] = _distribution(dataset.prompts.osl)
-        _set_optional(prompts, "block_size", dataset.prompts.block_size)
-        if dataset.prompts.sequence_distribution is not None:
-            prompts["sequence_distribution"] = [
-                {
-                    "isl": _distribution(entry.isl),
-                    "osl": _distribution(entry.osl),
-                    "probability": entry.probability,
-                }
-                for entry in dataset.prompts.sequence_distribution
-            ]
-        result["prompts"] = prompts
-    if dataset.prefix_prompts is not None:
-        result["prefix_prompts"] = dataset.prefix_prompts.model_dump(
-            mode="json", exclude_none=True
-        )
-    if dataset.images is not None:
-        source = dataset.images.source
-        source_value = (
-            str(source.expanduser().resolve())
-            if isinstance(source, Path)
-            else str(source)
-        )
-        result["images"] = {
-            "batch_size": dataset.images.batch_size,
-            "width": _distribution(dataset.images.width),
-            "height": _distribution(dataset.images.height),
-            "format": str(dataset.images.format),
-            "source": source_value,
-            "source_sampling": str(dataset.images.source_sampling),
-        }
-    if dataset.audio is not None:
-        result["audio"] = {
-            "batch_size": dataset.audio.batch_size,
-            "length": _distribution(dataset.audio.length),
-            "format": str(dataset.audio.format),
-            "sample_rates": list(dataset.audio.sample_rates),
-            "depths": list(dataset.audio.depths),
-            "channels": dataset.audio.channels,
-        }
-    if dataset.video is not None:
-        video: dict[str, Any] = {
-            "batch_size": dataset.video.batch_size,
-            "duration": dataset.video.duration,
-            "fps": dataset.video.fps,
-            "format": str(dataset.video.format),
-            "codec": dataset.video.codec,
-            "synth_type": str(dataset.video.synth_type),
-            "audio": {
-                "sample_rate": dataset.video.audio.sample_rate,
-                "channels": dataset.video.audio.channels,
-                "depth": dataset.video.audio.depth,
-            },
-        }
-        _set_optional(video, "width", dataset.video.width)
-        _set_optional(video, "height", dataset.video.height)
-        _set_optional(video["audio"], "codec", dataset.video.audio.codec)
-        result["video"] = video
-    if dataset.rankings is not None:
-        result["rankings"] = {
-            "passages": _distribution(dataset.rankings.passages),
-            "passage_tokens": _distribution(dataset.rankings.passage_tokens),
-            "query_tokens": _distribution(dataset.rankings.query_tokens),
-        }
-    return result
-
-
-def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
-    resolved_types = run.resolved.dataset_types or {}
-    resolved_sampling = run.resolved.dataset_sampling_strategies or {}
-    format_name = str(resolved_types.get(dataset.name, dataset.format))
-    native_format, format_options = _native_file_format(format_name)
-    if native_format == "mooncake_trace":
-        format_options.setdefault("block_size", 512)
-    elif native_format == "bailian_trace":
-        format_options.setdefault("block_size", 16)
-    if dataset.inter_turn_delay_cap_seconds is not None:
-        format_options["inter_turn_delay_cap_seconds"] = (
-            dataset.inter_turn_delay_cap_seconds
-        )
-    result: dict[str, Any] = {
-        "type": "file",
-        "format": native_format,
-        "sampling": str(resolved_sampling.get(dataset.name, dataset.sampling)),
-        "options": format_options,
-    }
-    _set_optional(result, "entries", dataset.entries)
-    _set_optional(result, "random_seed", dataset.random_seed)
-    if dataset.osl is not None:
-        result["osl"] = _distribution(dataset.osl)
-    if dataset.synthesis is not None:
-        synthesis = dataset.synthesis.model_dump(mode="json", exclude_none=True)
-        synthesis["idle_gap_cap_seconds"] = dataset.synthesis.idle_gap_cap_seconds
-        result["synthesis"] = synthesis
-    if dataset.path is not None:
-        resolved_paths = run.resolved.dataset_file_paths or {}
-        path = Path(resolved_paths.get(dataset.name, dataset.path)).resolve()
-        result["path"] = str(path)
-    else:
-        result["records"] = dataset.records
-    return result
-
-
 _PUBLIC_NATIVE_FORMATS = {
     "aiperf.dataset.loader.recorded_graph:WekaTraceNativeLoader": "weka_trace",
     "aiperf.dataset.loader.exgentic:ExgenticDatasetLoader": "exgentic",
@@ -1132,48 +862,6 @@ def _native_file_format(format_name: str) -> tuple[str, dict[str, Any]]:
             category = candidate
             break
     return "speed_bench", ({"category": category} if category else {})
-
-
-def _tokenizer_source(run: BenchmarkRun) -> str:
-    cfg = run.cfg.tokenizer
-    primary_model = run.cfg.models.items[0].name
-    resolved = run.resolved.tokenizer_names or {}
-    name = resolved.get(primary_model) or (cfg.name if cfg is not None else None)
-    if name is None:
-        from aiperf.common.tokenizer_fake_names import is_fake_model_name
-
-        name = "builtin" if is_fake_model_name(primary_model) else primary_model
-    normalized = name.lower().replace("-", "_")
-    if normalized in {
-        "builtin",
-        "o200k_base",
-        "o200k_harmony",
-        "cl100k_base",
-        "p50k_base",
-        "p50k_edit",
-        "r50k_base",
-    }:
-        return normalized
-    path = Path(name).expanduser()
-    if path.exists():
-        return str(path.resolve())
-    try:
-        from huggingface_hub import try_to_load_from_cache
-
-        tokenizer_file = try_to_load_from_cache(
-            name,
-            "tokenizer.json",
-            revision=cfg.revision if cfg is not None else "main",
-        )
-    except (ImportError, OSError, ValueError) as error:
-        raise RustWireError(
-            f"cannot resolve native tokenizer.json for {name!r}: {error}"
-        ) from error
-    if not isinstance(tokenizer_file, str):
-        raise RustWireError(
-            f"Python resolved tokenizer {name!r}, but its tokenizer.json is not cached"
-        )
-    return str(Path(tokenizer_file).resolve().parent)
 
 
 def _phase(phase: Any) -> dict[str, Any]:

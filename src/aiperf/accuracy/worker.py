@@ -708,12 +708,7 @@ class AccuracyWorker:
                         else problem.prompt
                     ),
                     messages=messages,
-                    generation={
-                        "max_tokens": generation_size,
-                        "temperature": 0.0,
-                        "top_p": 1.0,
-                        "stop": list(stop),
-                    },
+                    generation=_generation_params(generation_size, list(stop)),
                     ground_truth=problem.ground_truth,
                 )
             )
@@ -802,14 +797,10 @@ class AccuracyWorker:
                     task=task_name,
                     prompt=prompt,
                     messages=messages,
-                    generation={
-                        "max_tokens": max_tokens_override
-                        or doc.generation_size
-                        or 32768,
-                        "temperature": 0.0,
-                        "top_p": 1.0,
-                        "stop": list(doc.stop_sequences or []),
-                    },
+                    generation=_generation_params(
+                        max_tokens_override or doc.generation_size or 32768,
+                        list(doc.stop_sequences or []),
+                    ),
                     lighteval_doc=doc,
                 )
             )
@@ -1042,6 +1033,22 @@ def _optional_positive_int(config: dict[str, Any], field: str) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError(f"{field} must be a positive integer")
     return value
+
+
+def _generation_params(max_tokens: int, stop: list[str]) -> dict[str, Any]:
+    # Emit ``stop`` only when non-empty: OpenAI treats an empty ``stop`` array as
+    # equivalent to no stop, but Dynamo's frontend rejects it with HTTP 400
+    # ("Stop sequences array cannot be empty"). Benchmarks without a stop
+    # sequence (math_500, aime, gpqa_diamond, mmlu_pro) must omit the field so
+    # they reach a real inference server instead of failing pre-generation.
+    generation: dict[str, Any] = {
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+        "top_p": 1.0,
+    }
+    if stop:
+        generation["stop"] = list(stop)
+    return generation
 
 
 def _import_symbol(spec: str) -> Any:

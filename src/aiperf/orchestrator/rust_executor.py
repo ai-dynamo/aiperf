@@ -23,7 +23,7 @@ from aiperf.orchestrator.native_report import (
     project_native_summary,
 )
 from aiperf.orchestrator.runner_installation import RunnerInstallation
-from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_V2, RUNNER_PROTOCOL_VERSION
+from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_V2
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
@@ -112,7 +112,7 @@ def _parse_terminal(
     stdout: bytes,
     run: BenchmarkRun,
     *,
-    protocol_version: int = RUNNER_PROTOCOL_VERSION,
+    protocol_version: int,
     distribution_id: str | None = None,
     returncode: int | None = None,
     stderr: bytes = b"",

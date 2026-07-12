@@ -11,10 +11,13 @@ catalog; it deliberately has no plugin-registry or endpoint-metadata fallback.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import shutil
+import stat
 import subprocess
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hmac import compare_digest
@@ -28,7 +31,6 @@ from blake3 import blake3
 from aiperf.common.redact import redact_string
 from aiperf.orchestrator.rust_wire import (
     RUNNER_PROTOCOL_V2,
-    RUNNER_PROTOCOL_VERSION,
     RunnerOperationV2,
     build_authored_run_request,
 )
@@ -40,6 +42,27 @@ _RUNNER_ENV = "AIPERF_RUNNER_BIN"
 _RUNNER_COMPANION_DISTRIBUTION = "aiperf-runner"
 _RUNNER_COMMAND = "aiperf-runner"
 _PROVIDER_ROOTS_ENV = "AIPERF_EVALUATOR_PROVIDER_ROOTS"
+_PROVIDER_ROOTS_SCHEMA = "aiperf-stock-evaluator-roots-v1"
+_PROVIDER_ROOTS_REGISTRY = "evaluator-roots-v1.json"
+_PROVIDER_ROOTS_WHEEL_PREFIX = "_aiperf_runner/evaluator-roots"
+_PROVIDER_ROOTS_SIDECAR_SUFFIX = ".evaluator-roots"
+_PROVIDER_ROOT_SPECS = (
+    ("cpython_3_12_10_linux_x86_64", "python_runtime", "runtime"),
+    ("nvidia_nemo_evaluator_0_4_locked", "python_environment", "nemo"),
+    (
+        "groq_openbench_0_5_3_inspect_0_3_141_locked",
+        "python_environment",
+        "openbench",
+    ),
+    ("system_linux_x86_64", "system", "system"),
+)
+_EVALUATION_UNAVAILABLE_REASON_CODES = frozenset(
+    {
+        "provider_roots_unavailable",
+        "unsupported_platform",
+        "isolation_unavailable",
+    }
+)
 _NATIVE_REPORT_SCHEMA_VERSION = "2.0"
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _DISTRIBUTION_ID_PREFIX = "blake3:"
@@ -63,17 +86,20 @@ class RunnerInstallation:
     ) -> RunnerInstallation:
         """Discover one runner and negotiate its capability contract once.
 
-        ``provider_roots`` is an explicit Python-owned deployment selection for
-        mutually independent evaluator environments.  When omitted, a regular
-        monolithic installation uses the active AIPerf Python prefix.  Ambient
-        child environment variables never broaden either selection.
+        ``provider_roots`` is an explicit test/deployment injection for
+        mutually independent evaluator environments.  Product discovery does
+        not inspect the active Python prefix or ambient root variables: an
+        installed companion uses only its own wheel RECORD, while an explicit,
+        environment-selected, or PATH runner uses only its generated adjacent
+        sidecar.  Ambient child variables never broaden either selection.
         """
-        resolved = _resolve_runner_binary(binary)
-        selected_provider_roots = (
-            _deployment_provider_roots()
-            if provider_roots is None
-            else _normalize_provider_roots(provider_roots)
-        )
+        if provider_roots is None:
+            deployment = _resolve_runner_deployment(binary)
+            resolved = deployment.binary
+            selected_provider_roots = _deployment_provider_roots(deployment)
+        else:
+            resolved = _resolve_runner_binary(binary)
+            selected_provider_roots = _normalize_provider_roots(provider_roots)
         return cls(
             binary=resolved,
             capabilities=_load_capabilities(resolved, selected_provider_roots),
@@ -177,16 +203,12 @@ class RunnerInstallation:
     def preflight_request(self, request: dict[str, Any]) -> None:
         """Validate a projected request against this installation's inventory."""
         protocol_version = request.get("protocol_version")
-        if protocol_version == RUNNER_PROTOCOL_VERSION:
-            _require_request_capabilities(self.capabilities, request)
-            return
-        if protocol_version == RUNNER_PROTOCOL_V2:
-            _require_v2_request_capabilities(self.capabilities, request)
-            return
-        raise ValueError(
-            f"native request protocol_version must be {RUNNER_PROTOCOL_VERSION} or "
-            f"{RUNNER_PROTOCOL_V2}, got {protocol_version!r}"
-        )
+        if protocol_version != RUNNER_PROTOCOL_V2:
+            raise ValueError(
+                f"native request protocol_version must be {RUNNER_PROTOCOL_V2}, "
+                f"got {protocol_version!r}"
+            )
+        _require_v2_request_capabilities(self.capabilities, request)
 
     def execute(self, request: dict[str, Any]) -> subprocess.CompletedProcess[bytes]:
         """Run one request with the same binary whose catalog was negotiated."""
@@ -258,27 +280,46 @@ class RunnerInstallation:
         )
 
 
-def _resolve_runner_binary(explicit: Path | None) -> Path:
+@dataclass(frozen=True, slots=True)
+class _RunnerDeployment:
+    """One selected executable and its sole deployment-metadata authority."""
+
+    binary: Path
+    companion_distribution: metadata.Distribution | None = None
+
+
+def _resolve_runner_deployment(explicit: Path | None) -> _RunnerDeployment:
+    """Resolve one precedence tier while retaining its exact metadata owner."""
     if explicit is not None:
-        return _require_runner_binary(Path(explicit), "explicit --runner-bin")
+        return _RunnerDeployment(
+            _require_runner_binary(Path(explicit), "explicit --runner-bin")
+        )
 
     configured = os.environ.get(_RUNNER_ENV)
     if configured:
-        return _require_runner_binary(Path(configured), _RUNNER_ENV)
+        return _RunnerDeployment(_require_runner_binary(Path(configured), _RUNNER_ENV))
 
-    companion = _installed_companion_binary()
-    if companion is not None:
-        return companion
+    distribution = _installed_companion_distribution()
+    if distribution is not None:
+        return _RunnerDeployment(
+            _companion_binary_from_distribution(distribution),
+            companion_distribution=distribution,
+        )
 
     discovered = shutil.which(_RUNNER_COMMAND)
     if discovered:
-        return _require_runner_binary(Path(discovered), "PATH")
+        return _RunnerDeployment(_require_runner_binary(Path(discovered), "PATH"))
 
     raise FileNotFoundError(
         "aiperf-runner executable was not found; install the platform companion "
         f"package {_RUNNER_COMPANION_DISTRIBUTION!r}, pass --runner-bin, set "
         f"{_RUNNER_ENV}, or place {_RUNNER_COMMAND} on PATH for development"
     )
+
+
+def _resolve_runner_binary(explicit: Path | None) -> Path:
+    """Compatibility helper returning only the selected executable path."""
+    return _resolve_runner_deployment(explicit).binary
 
 
 def _installed_companion_binary() -> Path | None:
@@ -288,10 +329,25 @@ def _installed_companion_binary() -> Path | None:
     reads its installed RECORD through ``importlib.metadata``; it never imports
     a Python shim and does not use PATH for this precedence tier.
     """
+    distribution = _installed_companion_distribution()
+    if distribution is None:
+        return None
+
+    return _companion_binary_from_distribution(distribution)
+
+
+def _installed_companion_distribution() -> metadata.Distribution | None:
+    """Return the selected companion distribution without importing from it."""
     try:
-        distribution = metadata.distribution(_RUNNER_COMPANION_DISTRIBUTION)
+        return metadata.distribution(_RUNNER_COMPANION_DISTRIBUTION)
     except metadata.PackageNotFoundError:
         return None
+
+
+def _companion_binary_from_distribution(
+    distribution: metadata.Distribution,
+) -> Path:
+    """Resolve the sole native script recorded by one companion distribution."""
 
     files = distribution.files
     if files is None:
@@ -301,7 +357,14 @@ def _installed_companion_binary() -> Path | None:
         )
     filenames = {_RUNNER_COMMAND, f"{_RUNNER_COMMAND}.exe"}
     entries = sorted(
-        (entry for entry in files if Path(str(entry)).name in filenames),
+        (
+            entry
+            for entry in files
+            if not str(entry)
+            .replace("\\", "/")
+            .startswith(f"{_PROVIDER_ROOTS_WHEEL_PREFIX}/")
+            and str(entry).replace("\\", "/").rsplit("/", 1)[-1] in filenames
+        ),
         key=str,
     )
     if len(entries) != 1:
@@ -328,17 +391,244 @@ def _require_runner_binary(candidate: Path, source: str) -> Path:
     )
 
 
-def _deployment_provider_roots() -> tuple[Path, ...]:
-    """Return the exact Python installation root selected by the product CLI."""
-    root = Path(sys.prefix).resolve(strict=True)
-    if not root.is_dir():
-        raise RuntimeError(f"active AIPerf Python installation root is invalid: {root}")
-    return (root,)
+def _deployment_provider_roots(
+    deployment: _RunnerDeployment,
+) -> tuple[Path, ...]:
+    """Discover roots owned by the selected runner deployment only.
+
+    An implicit installed-companion selection consumes only that same wheel's
+    RECORD-owned payload. Explicit, ``AIPERF_RUNNER_BIN``, and PATH selections
+    consume only a generated directory adjacent to the selected executable.
+    Missing or invalid deployment metadata intentionally produces no roots so
+    the runner can publish its stable evaluation-unavailable capability.
+    """
+    if deployment.companion_distribution is not None:
+        return _installed_companion_provider_roots(deployment.companion_distribution)
+    binary = deployment.binary
+    sidecar = binary.with_name(f"{binary.name}{_PROVIDER_ROOTS_SIDECAR_SUFFIX}")
+    return _provider_roots_from_registry(sidecar)
+
+
+def _installed_companion_provider_roots(
+    distribution: metadata.Distribution,
+) -> tuple[Path, ...]:
+    """Validate exact payload membership in the selected wheel RECORD."""
+    files = distribution.files
+    if files is None:
+        return ()
+    prefix = f"{_PROVIDER_ROOTS_WHEEL_PREFIX}/"
+    registry_relative = f"{prefix}{_PROVIDER_ROOTS_REGISTRY}"
+    entries: dict[str, metadata.PackagePath] = {}
+    for entry in files:
+        normalized = str(entry).replace("\\", "/")
+        if not normalized.startswith(prefix):
+            continue
+        if normalized in entries:
+            return ()
+        entries[normalized] = entry
+    registry_entry = entries.get(registry_relative)
+    if registry_entry is None:
+        return ()
+    try:
+        located_registry = Path(distribution.locate_file(registry_entry))
+        if located_registry.is_symlink() or located_registry.parent.is_symlink():
+            raise ValueError("evaluator payload RECORD root cannot be a symlink")
+        registry_path = located_registry.resolve(strict=True)
+        base = registry_path.parent
+        recorded: dict[str, tuple[str, int]] = {}
+        for relative, entry in entries.items():
+            logical = relative.removeprefix(prefix)
+            if not logical or logical in recorded:
+                raise ValueError("duplicate or empty evaluator payload RECORD path")
+            file_hash = entry.hash
+            if file_hash is None or file_hash.mode != "sha256":
+                raise ValueError("evaluator payload RECORD requires SHA-256")
+            if entry.size is None or entry.size < 0:
+                raise ValueError("evaluator payload RECORD requires a byte length")
+            digest = base64.b64decode(
+                file_hash.value + "=" * (-len(file_hash.value) % 4),
+                altchars=b"-_",
+                validate=True,
+            ).hex()
+            if len(digest) != 64:
+                raise ValueError("evaluator payload RECORD SHA-256 is malformed")
+            located = Path(distribution.locate_file(entry)).resolve(strict=True)
+            if not located.is_relative_to(base):
+                raise ValueError("evaluator payload RECORD escaped its owned root")
+            recorded[logical] = (digest, entry.size)
+        return _provider_roots_from_registry(base, recorded=recorded)
+    except (OSError, TypeError, ValueError):
+        return ()
+
+
+def _provider_roots_from_registry(
+    base: Path,
+    *,
+    recorded: dict[str, tuple[str, int]] | None = None,
+) -> tuple[Path, ...]:
+    """Validate one canonical provider-root registry and its complete payload."""
+    try:
+        if base.is_symlink():
+            return ()
+        base = base.resolve(strict=True)
+        if not base.is_dir():
+            return ()
+        registry_path = base / _PROVIDER_ROOTS_REGISTRY
+        registry_bytes = registry_path.read_bytes()
+        value = json.loads(registry_bytes)
+        if _canonical_provider_registry(value) != registry_bytes:
+            return ()
+        roots = _validate_provider_registry(value)
+        physical = _physical_provider_payload(base)
+        if recorded is not None:
+            if set(recorded) != set(physical):
+                return ()
+            if any(
+                path.stat().st_size != recorded[relative][1]
+                for relative, path in physical.items()
+            ):
+                return ()
+        actual_digests = {
+            relative: _file_sha256(path) for relative, path in physical.items()
+        }
+        if recorded is not None:
+            for relative in physical:
+                expected_digest, _ = recorded[relative]
+                if actual_digests[relative] != expected_digest:
+                    return ()
+            registry_digest, _ = recorded[_PROVIDER_ROOTS_REGISTRY]
+            if hashlib.sha256(registry_bytes).hexdigest() != registry_digest:
+                return ()
+        selected = []
+        for root in roots:
+            prefix = f"{root['path']}/"
+            members = {
+                relative.removeprefix(prefix): actual_digests[relative]
+                for relative in physical
+                if relative.startswith(prefix)
+            }
+            if len(members) != root["file_count"]:
+                return ()
+            if _provider_tree_sha256(members) != root["tree_sha256"]:
+                return ()
+            selected.append((base / root["path"]).resolve(strict=True))
+        return _normalize_provider_roots(selected)
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return ()
+
+
+def _canonical_provider_registry(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        + "\n"
+    ).encode()
+
+
+def _validate_provider_registry(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, dict) or set(value) != {
+        "platform",
+        "roots",
+        "schema_version",
+    }:
+        raise ValueError("invalid evaluator root registry object")
+    if value["schema_version"] != _PROVIDER_ROOTS_SCHEMA:
+        raise ValueError("unsupported evaluator root registry schema")
+    if value["platform"] != "linux-x86_64":
+        raise ValueError("unsupported evaluator root platform")
+    roots = value["roots"]
+    if not isinstance(roots, list) or len(roots) != len(_PROVIDER_ROOT_SPECS):
+        raise ValueError("incomplete evaluator root registry")
+    result: list[dict[str, Any]] = []
+    for entry, (expected_id, expected_kind, expected_path) in zip(
+        roots, _PROVIDER_ROOT_SPECS, strict=True
+    ):
+        if not isinstance(entry, dict) or set(entry) != {
+            "file_count",
+            "id",
+            "kind",
+            "path",
+            "tree_sha256",
+        }:
+            raise ValueError("invalid evaluator root entry")
+        if (
+            entry["id"] != expected_id
+            or entry["kind"] != expected_kind
+            or entry["path"] != expected_path
+            or not isinstance(entry["file_count"], int)
+            or isinstance(entry["file_count"], bool)
+            or entry["file_count"] <= 0
+            or not _is_sha256(entry["tree_sha256"])
+        ):
+            raise ValueError("evaluator root entry drifted")
+        result.append(entry)
+    return result
+
+
+def _physical_provider_payload(base: Path) -> dict[str, Path]:
+    files: dict[str, Path] = {}
+    for path in base.rglob("*"):
+        metadata_value = path.lstat()
+        if stat.S_ISDIR(metadata_value.st_mode):
+            if path.is_symlink():
+                raise ValueError("evaluator payload contains a symlink directory")
+            continue
+        if not stat.S_ISREG(metadata_value.st_mode) or path.is_symlink():
+            raise ValueError("evaluator payload contains a special file")
+        relative = path.relative_to(base).as_posix()
+        if relative in files:
+            raise ValueError("duplicate evaluator payload path")
+        files[relative] = path
+    expected_top_level = {
+        _PROVIDER_ROOTS_REGISTRY,
+        *(path for _, _, path in _PROVIDER_ROOT_SPECS),
+    }
+    actual_top_level = {relative.split("/", 1)[0] for relative in files}
+    if actual_top_level != expected_top_level:
+        raise ValueError("evaluator payload has an incomplete root set")
+    return files
+
+
+def _provider_tree_sha256(files: dict[str, str]) -> str:
+    digest = hashlib.sha256()
+    for relative, content_sha256 in sorted(files.items()):
+        encoded = relative.encode()
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(bytes.fromhex(content_sha256))
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _file_sha256(path: Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    digest = hashlib.sha256()
+    try:
+        metadata_value = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata_value.st_mode):
+            raise ValueError("evaluator payload file is not regular")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+    finally:
+        os.close(descriptor)
+    return digest.hexdigest()
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith("sha256:")
+        and len(value) == 71
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
 
 
 def _normalize_provider_roots(provider_roots: Sequence[Path]) -> tuple[Path, ...]:
     """Freeze one explicit deployment-owned evaluator-root selection."""
-    normalized = tuple(Path(root).resolve(strict=True) for root in provider_roots)
+    authored = tuple(Path(root) for root in provider_roots)
+    if any(root.is_symlink() for root in authored):
+        raise RuntimeError("runner evaluator provider roots cannot be symlinks")
+    normalized = tuple(root.resolve(strict=True) for root in authored)
     if len(set(normalized)) != len(normalized) or not all(
         root.is_dir() for root in normalized
     ):
@@ -491,6 +781,7 @@ def _validate_evaluation_capabilities(capabilities: dict[str, Any]) -> None:
         "evaluation_providers",
         "evaluation_host_operations",
         "supported_evaluation_combinations",
+        "evaluation_unavailable",
     )
     if not evaluation_registered and not any(field in capabilities for field in fields):
         # Additive compatibility for protocol-v2 runners predating the
@@ -562,6 +853,8 @@ def _validate_evaluation_capabilities(capabilities: dict[str, Any]) -> None:
                 "evaluation host operation endpoint_capabilities must be strings"
             )
 
+    supported_combinations: set[tuple[str, str, str, str]] = set()
+    supported_selections: set[tuple[str, str]] = set()
     for combination in capabilities["supported_evaluation_combinations"]:
         if not isinstance(combination, dict):
             raise ValueError("supported evaluation combinations must be objects")
@@ -583,6 +876,58 @@ def _validate_evaluation_capabilities(capabilities: dict[str, Any]) -> None:
                 raise ValueError(
                     f"supported evaluation combination {field} must be strings"
                 )
+        combination_key = (
+            combination["backend"],
+            combination["workload"],
+            combination["provider"],
+            combination["distribution"],
+        )
+        if combination_key in supported_combinations:
+            raise ValueError(
+                "supported evaluation combinations contain a duplicate selection"
+            )
+        supported_combinations.add(combination_key)
+        supported_selections.add((combination["provider"], combination["distribution"]))
+
+    unavailable_selections: set[tuple[str, str]] = set()
+    unavailable_order: list[tuple[str, str]] = []
+    for unavailable in capabilities["evaluation_unavailable"]:
+        if not isinstance(unavailable, dict) or set(unavailable) != {
+            "provider",
+            "distribution",
+            "reason_code",
+        }:
+            raise ValueError(
+                "evaluation_unavailable entries require exactly provider, "
+                "distribution, and reason_code"
+            )
+        _require_nonempty_strings(
+            unavailable,
+            ("provider", "distribution", "reason_code"),
+            "unavailable evaluation selection",
+        )
+        if unavailable["reason_code"] not in _EVALUATION_UNAVAILABLE_REASON_CODES:
+            choices = ", ".join(sorted(_EVALUATION_UNAVAILABLE_REASON_CODES))
+            raise ValueError(
+                f"unavailable evaluation selection reason_code must be one of {choices}"
+            )
+        selection = (unavailable["provider"], unavailable["distribution"])
+        if selection in unavailable_selections:
+            raise ValueError(
+                "evaluation_unavailable contains a duplicate provider/distribution "
+                "selection"
+            )
+        if selection in supported_selections:
+            raise ValueError(
+                "an evaluation provider/distribution cannot be both supported and "
+                "unavailable"
+            )
+        unavailable_selections.add(selection)
+        unavailable_order.append(selection)
+    if unavailable_order != sorted(unavailable_order):
+        raise ValueError(
+            "evaluation_unavailable must be ordered by provider and distribution"
+        )
 
 
 def _require_nonempty_strings(
@@ -706,17 +1051,17 @@ def _require_v2_request_capabilities(
         raise ValueError("protocol-v2 request omitted run.backend.type")
     if not isinstance(workload, dict) or not isinstance(workload.get("type"), str):
         raise ValueError("protocol-v2 request omitted run.workload.type")
+    if workload["type"] == "evaluation":
+        _require_evaluation_selection_capability(
+            capabilities, backend["type"], workload
+        )
+
     pair = [backend["type"], workload["type"]]
     supported = capabilities.get("supported_pairs")
     if not isinstance(supported, list) or pair not in supported:
         raise RuntimeError(
             "selected aiperf-runner does not contain executable protocol-v2 pair "
             f"({pair[0]!r}, {pair[1]!r}); advertised {supported!r}"
-        )
-
-    if workload["type"] == "evaluation":
-        _require_evaluation_selection_capability(
-            capabilities, backend["type"], workload
         )
 
     resources = run.get("resources")
@@ -768,6 +1113,29 @@ def _require_evaluation_selection_capability(
         None,
     )
     if selected is None:
+        unavailable = capabilities.get("evaluation_unavailable")
+        unavailable_selection = (
+            next(
+                (
+                    item
+                    for item in unavailable
+                    if isinstance(item, dict)
+                    and item.get("provider") == provider_id
+                    and item.get("distribution") == distribution_id
+                ),
+                None,
+            )
+            if isinstance(unavailable, list)
+            else None
+        )
+        if unavailable_selection is not None:
+            reason_code = unavailable_selection.get("reason_code")
+            if reason_code in _EVALUATION_UNAVAILABLE_REASON_CODES:
+                raise RuntimeError(
+                    "selected aiperf-runner evaluation provider/distribution "
+                    f"({provider_id!r}, {distribution_id!r}) is unavailable: "
+                    f"{reason_code}"
+                )
         raise RuntimeError(
             "selected aiperf-runner does not contain executable evaluation "
             f"provider/distribution ({provider_id!r}, {distribution_id!r}); no "
@@ -785,160 +1153,6 @@ def _require_evaluation_selection_capability(
                 f"evaluation resource adapter {resource['type']!r} is not executable "
                 f"for provider/distribution ({provider_id!r}, {distribution_id!r})"
             )
-
-
-def _require_request_capabilities(
-    capabilities: dict[str, Any], request: dict[str, Any]
-) -> None:
-    """Fail before launch when a resolved run exceeds the child contract."""
-    run, endpoint, dataset, phases, artifacts = _request_components(request)
-    _require_capability(capabilities, "run_features", "thread_per_core_execution")
-    _require_endpoint_capabilities(capabilities, endpoint)
-    _require_capability(capabilities, "dataset_types", dataset["type"])
-    _require_phase_capabilities(capabilities, phases)
-    _require_output_capabilities(capabilities, run, artifacts)
-    _require_gpu_capabilities(capabilities, run.get("gpu_telemetry"))
-    _require_network_capabilities(capabilities, run.get("network_latency"))
-    _require_server_metrics_capabilities(capabilities, run.get("server_metrics"))
-    _require_live_streaming_capabilities(capabilities, run.get("live_streaming"))
-
-
-def _request_components(
-    request: dict[str, Any],
-) -> tuple[
-    dict[str, Any],
-    dict[str, Any],
-    dict[str, Any],
-    list[Any],
-    dict[str, Any],
-]:
-    """Extract and structurally validate the native request components."""
-    run = request.get("run")
-    if not isinstance(run, dict):
-        raise ValueError("native run request omitted its run object")
-    endpoint = run.get("endpoint")
-    dataset = run.get("dataset")
-    phases = run.get("phases")
-    artifacts = run.get("artifacts", {})
-    if not isinstance(endpoint, dict) or not isinstance(endpoint.get("type"), str):
-        raise ValueError("native run request omitted endpoint.type")
-    if not isinstance(dataset, dict) or not isinstance(dataset.get("type"), str):
-        raise ValueError("native run request omitted dataset.type")
-    if not isinstance(phases, list) or not phases:
-        raise ValueError("native run request must contain at least one phase")
-    if not isinstance(artifacts, dict):
-        raise ValueError("native run artifacts must be an object")
-    workers = run.get("workers")
-    if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
-        raise ValueError("native run workers must be a positive integer")
-    return run, endpoint, dataset, phases, artifacts
-
-
-def _require_endpoint_capabilities(
-    capabilities: dict[str, Any], endpoint: dict[str, Any]
-) -> None:
-    """Validate endpoint identity and optional transport policy inventory."""
-    _require_capability(capabilities, "endpoint_types", endpoint["type"])
-    if any(
-        field in endpoint
-        for field in (
-            "timeout_seconds",
-            "connection_reuse",
-            "request_content_type",
-            "download_video_content",
-            "session_header",
-        )
-    ):
-        _require_capability(capabilities, "run_features", "http_transport_policy")
-
-
-def _require_phase_capabilities(
-    capabilities: dict[str, Any], phases: list[Any]
-) -> None:
-    """Validate each phase kind and its optional native control features."""
-    for index, phase in enumerate(phases):
-        if not isinstance(phase, dict) or not isinstance(phase.get("type"), str):
-            raise ValueError(f"native run phase {index} omitted type")
-        _require_capability(capabilities, "phase_types", phase["type"])
-        if "adaptive_scale" in phase:
-            _require_capability(capabilities, "phase_features", "adaptive_scale")
-        if any(
-            field in phase
-            for field in ("concurrency_ramp", "prefill_ramp", "rate_ramp")
-        ):
-            _require_capability(capabilities, "phase_features", "ramps")
-        if "cancellation" in phase:
-            _require_capability(capabilities, "phase_features", "request_cancellation")
-
-
-def _require_output_capabilities(
-    capabilities: dict[str, Any],
-    run: dict[str, Any],
-    artifacts: dict[str, Any],
-) -> None:
-    """Validate accuracy and artifact features selected by the run."""
-    if "accuracy" in run:
-        _require_capability(capabilities, "run_features", "python_accuracy_evaluator")
-    if "outputs_path" in artifacts:
-        _require_capability(capabilities, "run_features", "outputs_json")
-    if "raw_path" in artifacts:
-        _require_capability(capabilities, "run_features", "raw_records")
-
-
-def _require_gpu_capabilities(capabilities: dict[str, Any], gpu_telemetry: Any) -> None:
-    """Validate optional GPU telemetry sources."""
-    if gpu_telemetry is None:
-        return
-    _require_capability(capabilities, "run_features", "gpu_telemetry")
-    if not isinstance(gpu_telemetry, dict):
-        raise ValueError("native run gpu_telemetry must be an object")
-    sources = gpu_telemetry.get("sources")
-    if not isinstance(sources, list) or not sources:
-        raise ValueError("native run GPU telemetry requires at least one source")
-    for index, source in enumerate(sources):
-        if not isinstance(source, dict) or not isinstance(source.get("type"), str):
-            raise ValueError(f"native GPU telemetry source {index} omitted type")
-        _require_capability(capabilities, "telemetry_source_types", source["type"])
-
-
-def _require_network_capabilities(
-    capabilities: dict[str, Any], network_latency: Any
-) -> None:
-    """Validate optional network-latency policy."""
-    if network_latency is None:
-        return
-    if not isinstance(network_latency, dict):
-        raise ValueError("native run network_latency must be an object")
-    _require_capability(capabilities, "run_features", "network_latency")
-
-
-def _require_server_metrics_capabilities(
-    capabilities: dict[str, Any], server_metrics: Any
-) -> None:
-    """Validate optional server-metrics formats."""
-    if server_metrics is None:
-        return
-    _require_capability(capabilities, "run_features", "server_metrics")
-    if not isinstance(server_metrics, dict):
-        raise ValueError("native run server_metrics must be an object")
-    formats = server_metrics.get("formats")
-    if not isinstance(formats, list) or not formats:
-        raise ValueError("native run server_metrics requires at least one format")
-    for format_name in formats:
-        if not isinstance(format_name, str):
-            raise ValueError("native server metrics formats must be strings")
-        _require_capability(capabilities, "server_metrics_formats", format_name)
-
-
-def _require_live_streaming_capabilities(
-    capabilities: dict[str, Any], live_streaming: Any
-) -> None:
-    """Validate the optional supervised Python streaming extension."""
-    if live_streaming is None:
-        return
-    if not isinstance(live_streaming, dict):
-        raise ValueError("native run live_streaming must be an object")
-    _require_capability(capabilities, "run_features", "python_live_streaming")
 
 
 def _require_capability(

@@ -25,7 +25,6 @@ from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_wire import (
     RustWireError,
     build_authored_run_request,
-    build_run_request,
 )
 
 _DISTRIBUTION_A = "blake3:" + "a" * 64
@@ -219,8 +218,6 @@ def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
     assert request["run"]["resources"]["endpoints"]["profiles"][0]["urls"] == [
         "grpc://127.0.0.1:8001"
     ]
-    with pytest.raises(RustWireError, match="protocol v1 supports only backend"):
-        build_run_request(run)
 
 
 @pytest.mark.parametrize(
@@ -632,16 +629,12 @@ def test_v2_sidecars_are_direct_protocol_neutral_native_inputs(tmp_path: Path) -
         operation="execute",
         expected_distribution_id=_DISTRIBUTION_A,
     )["run"]["resources"]["sidecars"]
-    compatibility_run = build_run_request(run)["run"]
 
-    assert sidecars == {
-        name: compatibility_run[name]
-        for name in (
-            "gpu_telemetry",
-            "network_latency",
-            "server_metrics",
-            "live_streaming",
-        )
+    assert set(sidecars) == {
+        "gpu_telemetry",
+        "network_latency",
+        "server_metrics",
+        "live_streaming",
     }
     assert sidecars["gpu_telemetry"]["sources"][-1] == {
         "type": "dcgm",
@@ -868,30 +861,6 @@ def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
         )
 
 
-def test_v1_wire_projection_remains_an_isolated_compatibility_utility(
-    tmp_path: Path,
-) -> None:
-    request = build_run_request(_run(tmp_path))
-
-    assert request["protocol_version"] == 1
-    assert "operation" not in request
-    assert request["run"]["endpoint"]["type"] == "future_endpoint"
-
-
-@pytest.mark.parametrize(
-    "selection",
-    [
-        {"backend": {"type": "future_backend", "config": {}}},
-        {"workload": {"type": "future_workload", "config": {}}},
-    ],
-)
-def test_v1_fails_closed_for_v2_only_selections(
-    tmp_path: Path, selection: dict
-) -> None:
-    with pytest.raises(RustWireError, match="protocol v1"):
-        build_run_request(_run(tmp_path, **selection))
-
-
 def test_executor_never_reinterprets_an_unsupported_pair_as_v1(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "not-created",
@@ -934,8 +903,6 @@ def test_readiness_is_authored_in_v2_and_rejected_by_v1(tmp_path: Path) -> None:
     assert endpoint["wait_for_model_timeout"] == 90.0
     assert endpoint["wait_for_model_interval"] == 1.25
     assert endpoint["wait_for_model_mode"] == "both"
-    with pytest.raises(RustWireError, match="protocol v1 cannot honor.*readiness"):
-        build_run_request(run)
 
 
 @pytest.mark.parametrize(
