@@ -15,6 +15,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
 use aiperf_clock::Clock;
+use aiperf_prometheus::ExpositionFormat;
 use aiperf_transport_http::models::{RequestConfig, Response};
 use aiperf_transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
@@ -22,9 +23,6 @@ use url::Url;
 
 use crate::model::ServerMetricsRecord;
 use crate::parser::{MetricsParseError, MetricsTextParser, PrometheusTextParser};
-
-const JSON_CONTENT_TYPE_PREFIX: &str = "application/json";
-const OPENMETRICS_CONTENT_TYPE_PREFIX: &str = "application/openmetrics-text";
 
 /// Whether one scrape is cadence-driven or a mandatory phase barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,26 +179,25 @@ impl PrometheusHttpSource {
             .transport
             .get(&RequestConfig::new(endpoint_url.to_string()))
             .await;
+        if let Some(status) = record.status
+            && !(200..300).contains(&status)
+        {
+            return Err(ServerMetricsError::HttpStatus(status));
+        }
         if let Some(error) = record.error {
             return Err(ServerMetricsError::Transport(error.message));
         }
         let status = record.status.ok_or(ServerMetricsError::MissingBody)?;
-        if !(200..300).contains(&status) {
-            return Err(ServerMetricsError::HttpStatus(status));
-        }
+        debug_assert!((200..300).contains(&status));
         let content_type = record
             .response_headers
             .get("content-type")
-            .map(|value| value.to_ascii_lowercase());
-        if content_type
-            .as_deref()
-            .is_some_and(|value| value.starts_with(JSON_CONTENT_TYPE_PREFIX))
-        {
-            return Err(ServerMetricsError::Incompatible(format!(
-                "endpoint {display_url:?} returned non-Prometheus content-type {:?}; expected text/plain",
-                content_type.as_deref().unwrap_or_default()
-            )));
-        }
+            .map(String::as_str);
+        let declared_format = declared_exposition_format(content_type).map_err(|error| {
+            ServerMetricsError::Incompatible(format!(
+                "endpoint {display_url:?} returned an unsupported metrics Content-Type ({error})"
+            ))
+        })?;
         let body = record
             .responses
             .into_iter()
@@ -212,22 +209,14 @@ impl PrometheusHttpSource {
         if body.trim().is_empty() {
             return Ok((None, body));
         }
-        let metrics = if content_type
-            .as_deref()
-            .is_some_and(|value| value.starts_with(OPENMETRICS_CONTENT_TYPE_PREFIX))
-        {
-            self.parser
-                .parse_openmetrics(&body)
-                .or_else(|_| self.parser.parse_classic(&body))
-        } else {
-            self.parser.parse_classic(&body)
-        }
-        .map_err(|error| {
+        let metrics = self
+            .parse_native_metrics(declared_format, body.as_bytes())
+            .map_err(|error| {
             let preview = body.chars().take(200).collect::<String>();
             ServerMetricsError::Incompatible(format!(
                 "endpoint did not return valid Prometheus exposition format ({error}); body sample: {preview:?}"
             ))
-        })?;
+            })?;
         if metrics.is_empty() {
             return Ok((None, body));
         }
@@ -248,6 +237,30 @@ impl PrometheusHttpSource {
             }),
             body,
         ))
+    }
+
+    fn parse_native_metrics(
+        &self,
+        declared_format: ExpositionFormat,
+        exact_body: &[u8],
+    ) -> Result<std::collections::BTreeMap<String, crate::model::MetricFamily>, MetricsParseError>
+    {
+        match self.parser.parse_exposition(declared_format, exact_body) {
+            Ok(exposition) => self.parser.project_native(&exposition),
+            Err(strict_error) if declared_format == ExpositionFormat::OpenMetricsText100 => {
+                let compatibility = self
+                    .parser
+                    .parse_exposition(ExpositionFormat::PrometheusText004, exact_body)
+                    .and_then(|exposition| self.parser.project_native(&exposition));
+                compatibility.map_err(|fallback_error| MetricsParseError {
+                    line: strict_error.line,
+                    message: format!(
+                        "declared OpenMetrics strict parse failed ({strict_error}); named classic native-compatibility fallback also failed ({fallback_error})"
+                    ),
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn should_try_fallback(state: &SourceState) -> bool {
@@ -367,10 +380,21 @@ fn redact_url(endpoint_url: &str) -> String {
     parsed.to_string()
 }
 
+fn declared_exposition_format(
+    content_type: Option<&str>,
+) -> Result<ExpositionFormat, aiperf_prometheus::ContentTypeError> {
+    content_type.map_or(Ok(ExpositionFormat::PrometheusText004), |value| {
+        ExpositionFormat::from_content_type(value)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
     use aiperf_clock::RealClock;
+    use aiperf_prometheus::Exposition;
     use aiperf_transport_http::config::ClientConfig;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -421,6 +445,29 @@ mod tests {
         let clock: Rc<dyn Clock> = RealClock::new();
         let transport = Rc::new(HttpTransport::new(clock.clone(), ClientConfig::default()));
         PrometheusHttpSource::new(clock, transport, format!("{base_url}/metrics"))
+    }
+
+    struct CountingParser {
+        calls: Rc<Cell<usize>>,
+    }
+
+    impl MetricsTextParser for CountingParser {
+        fn parse_exposition(
+            &self,
+            format: ExpositionFormat,
+            exact_body: &[u8],
+        ) -> Result<Exposition, MetricsParseError> {
+            self.calls.set(self.calls.get() + 1);
+            PrometheusTextParser.parse_exposition(format, exact_body)
+        }
+
+        fn project_native(
+            &self,
+            exposition: &Exposition,
+        ) -> Result<std::collections::BTreeMap<String, crate::model::MetricFamily>, MetricsParseError>
+        {
+            PrometheusTextParser.project_native(exposition)
+        }
     }
 
     #[test]
@@ -496,7 +543,7 @@ mod tests {
                     FixtureResponse {
                         path: "/prometheus/metrics",
                         status: "200 OK",
-                        content_type: "application/openmetrics-text; version=1.0.0",
+                        content_type: "application/openmetrics-text; version=1.0.0; charset=utf-8",
                         body: openmetrics,
                     },
                 ])
@@ -555,6 +602,114 @@ mod tests {
                         .unwrap(),
                     ServerMetricsScrapeOutcome::Disabled
                 );
+                server.await.unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn declared_openmetrics_uses_a_named_classic_native_fallback() {
+        LocalSet::new()
+            .run_until(async {
+                let classic = "# TYPE requests_total counter\nrequests_total 2\n";
+                let (base_url, server) = spawn_fixture_server(vec![FixtureResponse {
+                    path: "/metrics",
+                    status: "200 OK",
+                    content_type: "application/openmetrics-text; version=1.0.0; charset=utf-8",
+                    body: classic,
+                }])
+                .await;
+                let source = source_for(&base_url);
+
+                let outcome = source
+                    .scrape(ServerMetricsScrapeMode::Continuous)
+                    .await
+                    .unwrap();
+                let ServerMetricsScrapeOutcome::Record(record) = outcome else {
+                    panic!("compatibility record")
+                };
+                assert_eq!(
+                    record.metrics["requests"].metric_type,
+                    crate::model::PrometheusMetricType::Counter
+                );
+                server.await.unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn metric_looking_non_success_body_is_never_parsed() {
+        LocalSet::new()
+            .run_until(async {
+                let (base_url, server) = spawn_fixture_server(vec![FixtureResponse {
+                    path: "/metrics",
+                    status: "500 Internal Server Error",
+                    content_type: "text/plain; version=0.0.4; charset=utf-8",
+                    body: "# TYPE should_not_parse gauge\nshould_not_parse 42\n",
+                }])
+                .await;
+                let calls = Rc::new(Cell::new(0));
+                let clock: Rc<dyn Clock> = RealClock::new();
+                let transport = Rc::new(HttpTransport::new(clock.clone(), ClientConfig::default()));
+                let source = PrometheusHttpSource::with_parser(
+                    clock,
+                    transport,
+                    format!("{base_url}/metrics"),
+                    Rc::new(CountingParser {
+                        calls: calls.clone(),
+                    }),
+                );
+
+                assert_eq!(
+                    source.scrape(ServerMetricsScrapeMode::Continuous).await,
+                    Err(ServerMetricsError::HttpStatus(500))
+                );
+                assert_eq!(calls.get(), 0);
+                server.await.unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unchanged_bodies_mark_duplicates_without_inventing_unique_updates() {
+        LocalSet::new()
+            .run_until(async {
+                let body = "# TYPE queue gauge\nqueue 3\n";
+                let responses = (0..2)
+                    .map(|_| FixtureResponse {
+                        path: "/metrics",
+                        status: "200 OK",
+                        content_type: "text/plain; version=0.0.4; charset=utf-8",
+                        body,
+                    })
+                    .collect();
+                let (base_url, server) = spawn_fixture_server(responses).await;
+                let source = source_for(&base_url);
+
+                let first = source
+                    .scrape(ServerMetricsScrapeMode::Continuous)
+                    .await
+                    .unwrap();
+                let second = source
+                    .scrape(ServerMetricsScrapeMode::Continuous)
+                    .await
+                    .unwrap();
+                let ServerMetricsScrapeOutcome::Record(first) = first else {
+                    panic!("first record")
+                };
+                let ServerMetricsScrapeOutcome::Record(second) = second else {
+                    panic!("second record")
+                };
+                assert!(!first.is_duplicate);
+                assert!(second.is_duplicate);
+
+                let endpoint = first.endpoint_url.clone();
+                let mut accumulator = crate::accumulator::ServerMetricsAccumulator::new();
+                accumulator.ingest_record(first);
+                accumulator.ingest_record(second);
+                let info = &accumulator.endpoint_info()[&endpoint];
+                assert_eq!(info.total_fetches, 2);
+                assert_eq!(info.unique_updates, 1);
                 server.await.unwrap();
             })
             .await;

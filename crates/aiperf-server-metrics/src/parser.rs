@@ -1,25 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Classic Prometheus and strict OpenMetrics text parsing.
+//! Strict exposition parsing and explicit native server-metrics projection.
 //!
-//! Family routing, metadata/summary skips, label de-duplication, sample-level
-//! `_created` filtering, and histogram assembly port
-//! `src/aiperf/server_metrics/data_collector.py:246-361,401-524`. Unlike the
-//! inherited ZMQ path, one non-finite histogram field is dropped without
-//! tainting the remaining label series, as required by the native design.
+//! The lossless grammar and semantic model live in `aiperf-prometheus`.
+//! This module owns only the intentionally narrower compatibility projection
+//! consumed by the existing server-metrics accumulator: finite scalars,
+//! counters, and cumulative histograms. Its family filters and normalized
+//! counter names port `src/aiperf/server_metrics/data_collector.py:246-361`
+//! and `src/aiperf/server_metrics/data_collector.py:401-524`.
 
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
+use aiperf_prometheus::{
+    CompatibilityProjectionError, Exposition, ExpositionFormat, ExpositionParser, MetricPoint,
+    MetricValue, NativeCompatibilityProjection, ParseError, ParseLimits, SemanticType,
+    StrictExpositionParser, WireSampleRole,
+};
+
 use crate::model::{HistogramValue, MetricFamily, MetricSample, PrometheusMetricType};
 
-/// Malformed exposition input with a one-based line location.
+/// Malformed exposition or failed native projection with a one-based line location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetricsParseError {
-    /// One-based line number, or zero for a body-level OpenMetrics error.
+    /// One-based line number, or zero for a body-level error.
     pub line: usize,
-    /// Human-readable parser detail.
+    /// Human-readable parser or projection detail.
     pub message: String,
 }
 
@@ -35,257 +42,181 @@ impl Display for MetricsParseError {
 
 impl std::error::Error for MetricsParseError {}
 
-/// Object-safe parser seam for exposition dialects.
+impl From<ParseError> for MetricsParseError {
+    fn from(error: ParseError) -> Self {
+        let message = if error.column == 0 {
+            error.message
+        } else {
+            format!("column {}: {}", error.column, error.message)
+        };
+        Self {
+            line: error.line,
+            message,
+        }
+    }
+}
+
+impl From<CompatibilityProjectionError> for MetricsParseError {
+    fn from(error: CompatibilityProjectionError) -> Self {
+        Self {
+            line: 0,
+            message: error.message,
+        }
+    }
+}
+
+/// Object-safe seam separating exact grammar selection from native projection.
 pub trait MetricsTextParser {
-    /// Parses classic Prometheus text exposition.
+    /// Parses one complete body under exactly the selected grammar.
+    ///
+    /// Implementations must not retry another grammar internally. A caller
+    /// that needs a compatibility retry performs a second named call.
+    fn parse_exposition(
+        &self,
+        format: ExpositionFormat,
+        exact_body: &[u8],
+    ) -> Result<Exposition, MetricsParseError>;
+
+    /// Projects one successful lossless exposition into the existing native model.
+    fn project_native(
+        &self,
+        exposition: &Exposition,
+    ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError>;
+
+    /// Parses and projects classic Prometheus text exposition.
     fn parse_classic(
         &self,
         body: &str,
-    ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError>;
+    ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError> {
+        let exposition =
+            self.parse_exposition(ExpositionFormat::PrometheusText004, body.as_bytes())?;
+        self.project_native(&exposition)
+    }
 
-    /// Parses strict OpenMetrics text exposition.
+    /// Parses and projects strict OpenMetrics text exposition without fallback.
     fn parse_openmetrics(
         &self,
         body: &str,
-    ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError>;
+    ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError> {
+        let exposition =
+            self.parse_exposition(ExpositionFormat::OpenMetricsText100, body.as_bytes())?;
+        self.project_native(&exposition)
+    }
 }
 
-/// Small parser tailored to AIPerf's server-metrics semantics.
-#[derive(Debug, Default)]
+/// Strict bounded parser paired with the native compatibility projection.
+#[derive(Debug, Default, Clone, Copy)]
 pub struct PrometheusTextParser;
 
 impl MetricsTextParser for PrometheusTextParser {
-    fn parse_classic(
+    fn parse_exposition(
         &self,
-        body: &str,
-    ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError> {
-        parse_body(body, false)
+        format: ExpositionFormat,
+        exact_body: &[u8],
+    ) -> Result<Exposition, MetricsParseError> {
+        StrictExpositionParser
+            .parse(format, exact_body, &ParseLimits::default())
+            .map_err(Into::into)
     }
 
-    fn parse_openmetrics(
+    fn project_native(
         &self,
-        body: &str,
+        exposition: &Exposition,
     ) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError> {
-        parse_body(body, true)
+        NativeServerMetricsProjection
+            .project(exposition)
+            .map(|projection| projection.unwrap_or_default())
+            .map_err(Into::into)
     }
 }
 
-#[derive(Debug, Clone)]
-struct Metadata {
-    family_name: String,
-    metric_type: PrometheusMetricType,
-    description: String,
-}
+/// Compatibility projection from lossless points to accumulator-shaped families.
+///
+/// Summary, Info, StateSet, creation-time, uptime, non-finite, and values
+/// without a finite binary64 projection remain absent because the native
+/// accumulator has no representation for them. This policy never changes the
+/// success or failure of the strict parse that produced the exposition.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NativeServerMetricsProjection;
 
-#[derive(Debug, Default)]
-struct HistogramBuilder {
-    labels: BTreeMap<String, String>,
-    buckets: BTreeMap<String, f64>,
-    sum: Option<f64>,
-    count: Option<f64>,
+impl NativeCompatibilityProjection for NativeServerMetricsProjection {
+    type Output = BTreeMap<String, MetricFamily>;
+
+    fn project(
+        &self,
+        exposition: &Exposition,
+    ) -> Result<Option<Self::Output>, CompatibilityProjectionError> {
+        Ok(Some(project_exposition(exposition)))
+    }
 }
 
 type LabelKey = Vec<(String, String)>;
-type ScalarSamples = BTreeMap<LabelKey, (BTreeMap<String, String>, f64)>;
-type HistogramSamples = BTreeMap<LabelKey, HistogramBuilder>;
 
-#[derive(Debug)]
-enum FamilyBuilderData {
-    Scalar(ScalarSamples),
-    Histogram(HistogramSamples),
-}
-
-#[derive(Debug)]
-struct FamilyBuilder {
-    metric_type: PrometheusMetricType,
-    description: String,
-    data: FamilyBuilderData,
-}
-
-impl FamilyBuilder {
-    fn new(metric_type: PrometheusMetricType, description: String) -> Self {
-        let data = if metric_type == PrometheusMetricType::Histogram {
-            FamilyBuilderData::Histogram(BTreeMap::new())
-        } else {
-            FamilyBuilderData::Scalar(BTreeMap::new())
+fn project_exposition(exposition: &Exposition) -> BTreeMap<String, MetricFamily> {
+    let mut projected = BTreeMap::<String, MetricFamily>::new();
+    for family in &exposition.families {
+        let Some(metric_type) = native_metric_type(family.semantic_type) else {
+            continue;
         };
-        Self {
+        let normalized_name = normalize_family_name(&family.name, metric_type);
+        if should_skip_family(&normalized_name) {
+            continue;
+        }
+        let mut samples = BTreeMap::<LabelKey, MetricSample>::new();
+        for metric in &family.metrics {
+            for point in &metric.points {
+                let Some(sample) = project_point(point, metric_type) else {
+                    continue;
+                };
+                let key = sample
+                    .labels()
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect();
+                samples.insert(key, sample);
+            }
+        }
+        if samples.is_empty() {
+            continue;
+        }
+        let candidate = MetricFamily {
             metric_type,
-            description,
-            data,
-        }
-    }
-
-    fn finish(self) -> Option<MetricFamily> {
-        let samples = match self.data {
-            FamilyBuilderData::Scalar(samples) => samples
-                .into_values()
-                .map(|(labels, value)| MetricSample::Scalar { labels, value })
-                .collect::<Vec<_>>(),
-            FamilyBuilderData::Histogram(samples) => samples
-                .into_values()
-                .filter(|sample| {
-                    !sample.buckets.is_empty() || sample.sum.is_some() || sample.count.is_some()
-                })
-                .map(|sample| MetricSample::Histogram {
-                    labels: sample.labels,
-                    value: HistogramValue {
-                        buckets: sample.buckets,
-                        sum: sample.sum,
-                        count: sample.count,
-                    },
-                })
-                .collect::<Vec<_>>(),
+            description: family
+                .help
+                .as_ref()
+                .map(|help| help.value.clone())
+                .unwrap_or_default(),
+            samples: samples.into_values().collect(),
         };
-        (!samples.is_empty()).then_some(MetricFamily {
-            metric_type: self.metric_type,
-            description: self.description,
-            samples,
-        })
-    }
-}
-
-fn parse_body(
-    body: &str,
-    strict_openmetrics: bool,
-) -> Result<BTreeMap<String, MetricFamily>, MetricsParseError> {
-    if strict_openmetrics {
-        let last = body.lines().rev().find(|line| !line.trim().is_empty());
-        if last.map(str::trim) != Some("# EOF") {
-            return Err(MetricsParseError {
-                line: 0,
-                message: "OpenMetrics body must terminate with '# EOF'".to_string(),
-            });
-        }
-    }
-
-    let mut declared_types = BTreeMap::<String, PrometheusMetricType>::new();
-    let mut descriptions = BTreeMap::<String, String>::new();
-    for (offset, raw_line) in body.lines().enumerate() {
-        let line = raw_line.trim();
-        if let Some(rest) = line.strip_prefix("# TYPE ") {
-            let mut fields = rest.split_whitespace();
-            let name = fields
-                .next()
-                .ok_or_else(|| parse_error(offset, "TYPE has no name"))?;
-            let kind = fields
-                .next()
-                .ok_or_else(|| parse_error(offset, "TYPE has no metric type"))?;
-            let metric_type = parse_metric_type(kind)
-                .ok_or_else(|| parse_error(offset, format!("unsupported TYPE {kind:?}")))?;
-            declared_types.insert(name.to_string(), metric_type);
-        } else if let Some(rest) = line.strip_prefix("# HELP ") {
-            let split = rest
-                .find(char::is_whitespace)
-                .ok_or_else(|| parse_error(offset, "HELP has no description"))?;
-            descriptions.insert(
-                rest[..split].to_string(),
-                unescape_help(rest[split..].trim_start()),
-            );
-        }
-    }
-
-    let metadata = build_metadata(&declared_types, &descriptions);
-    let mut builders = BTreeMap::<(String, PrometheusMetricType), FamilyBuilder>::new();
-    for (offset, raw_line) in body.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parsed = parse_sample(line).map_err(|message| parse_error(offset, message))?;
-        if parsed.name.ends_with("_created") {
-            continue;
-        }
-        let (family_name, metric_type, description) = resolve_family(&parsed.name, &metadata);
-        if should_skip_family(&family_name) || metric_type == PrometheusMetricType::Summary {
-            continue;
-        }
-        let builder = builders
-            .entry((family_name.clone(), metric_type))
-            .or_insert_with(|| FamilyBuilder::new(metric_type, description));
-        if !parsed.value.is_finite() {
-            continue;
-        }
-
-        match &mut builder.data {
-            FamilyBuilderData::Scalar(samples) => {
-                let key = parsed
-                    .labels
-                    .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
-                    .collect();
-                samples.insert(key, (parsed.labels, parsed.value));
-            }
-            FamilyBuilderData::Histogram(samples) => {
-                let mut labels = parsed.labels;
-                let le = labels.remove("le");
-                let key = labels
-                    .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
-                    .collect();
-                let histogram = samples.entry(key).or_insert_with(|| HistogramBuilder {
-                    labels,
-                    ..HistogramBuilder::default()
-                });
-                if parsed.name.ends_with("_bucket") {
-                    histogram
-                        .buckets
-                        .insert(le.unwrap_or_else(|| "+Inf".to_string()), parsed.value);
-                } else if parsed.name.ends_with("_sum") {
-                    histogram.sum = Some(parsed.value);
-                } else if parsed.name.ends_with("_count") {
-                    histogram.count = Some(parsed.value);
-                }
-            }
-        }
-    }
-
-    let mut families = BTreeMap::<String, MetricFamily>::new();
-    for ((name, _), builder) in builders {
-        let Some(family) = builder.finish() else {
-            continue;
-        };
-        match families.entry(name) {
+        match projected.entry(normalized_name) {
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(family);
+                entry.insert(candidate);
             }
             std::collections::btree_map::Entry::Occupied(mut entry)
-                if family_priority(family.metric_type)
+                if family_priority(candidate.metric_type)
                     > family_priority(entry.get().metric_type) =>
             {
-                entry.insert(family);
+                entry.insert(candidate);
             }
             std::collections::btree_map::Entry::Occupied(_) => {}
         }
     }
-    Ok(families)
+    projected
 }
 
-fn build_metadata(
-    declared_types: &BTreeMap<String, PrometheusMetricType>,
-    descriptions: &BTreeMap<String, String>,
-) -> BTreeMap<String, Metadata> {
-    let mut metadata = BTreeMap::new();
-    for (raw_name, metric_type) in declared_types {
-        let normalized = normalize_declared_name(raw_name, *metric_type);
-        let description = descriptions
-            .get(raw_name)
-            .or_else(|| descriptions.get(&normalized))
-            .cloned()
-            .unwrap_or_default();
-        metadata.insert(
-            raw_name.clone(),
-            Metadata {
-                family_name: normalized,
-                metric_type: *metric_type,
-                description,
-            },
-        );
+fn native_metric_type(semantic_type: SemanticType) -> Option<PrometheusMetricType> {
+    match semantic_type {
+        SemanticType::Unknown => Some(PrometheusMetricType::Unknown),
+        SemanticType::Gauge => Some(PrometheusMetricType::Gauge),
+        SemanticType::Counter => Some(PrometheusMetricType::Counter),
+        SemanticType::Histogram | SemanticType::GaugeHistogram => {
+            Some(PrometheusMetricType::Histogram)
+        }
+        SemanticType::Summary | SemanticType::StateSet | SemanticType::Info => None,
     }
-    metadata
 }
 
-fn normalize_declared_name(name: &str, metric_type: PrometheusMetricType) -> String {
+fn normalize_family_name(name: &str, metric_type: PrometheusMetricType) -> String {
     if metric_type == PrometheusMetricType::Counter {
         name.strip_suffix("_total").unwrap_or(name).to_string()
     } else {
@@ -293,58 +224,67 @@ fn normalize_declared_name(name: &str, metric_type: PrometheusMetricType) -> Str
     }
 }
 
-fn resolve_family(
-    sample_name: &str,
-    metadata: &BTreeMap<String, Metadata>,
-) -> (String, PrometheusMetricType, String) {
-    for suffix in ["_bucket", "_sum", "_count"] {
-        if let Some(base) = sample_name.strip_suffix(suffix)
-            && metadata
-                .get(base)
-                .is_some_and(|meta| meta.metric_type == PrometheusMetricType::Histogram)
-        {
-            let meta = &metadata[base];
-            return (
-                meta.family_name.clone(),
-                PrometheusMetricType::Histogram,
-                meta.description.clone(),
-            );
+fn project_point(point: &MetricPoint, metric_type: PrometheusMetricType) -> Option<MetricSample> {
+    match &point.value {
+        MetricValue::Scalar { value, .. } => Some(MetricSample::Scalar {
+            labels: point.labels.clone(),
+            value: finite_value(value)?,
+        }),
+        MetricValue::Counter(value) => Some(MetricSample::Scalar {
+            labels: point.labels.clone(),
+            value: finite_value(&value.total)?,
+        }),
+        MetricValue::Histogram(value) if metric_type == PrometheusMetricType::Histogram => {
+            let buckets = value
+                .buckets
+                .iter()
+                .filter_map(|bucket| {
+                    finite_value(&bucket.cumulative_count)
+                        .map(|value| (bucket.upper_bound_lexeme.clone(), value))
+                })
+                .collect::<BTreeMap<_, _>>();
+            let sum = point
+                .wire_samples
+                .iter()
+                .any(|wire| {
+                    matches!(
+                        wire.role,
+                        WireSampleRole::HistogramSum | WireSampleRole::GaugeHistogramSum
+                    )
+                })
+                .then(|| finite_value(&value.sum))
+                .flatten();
+            let count = point
+                .wire_samples
+                .iter()
+                .any(|wire| {
+                    matches!(
+                        wire.role,
+                        WireSampleRole::HistogramCount | WireSampleRole::GaugeHistogramCount
+                    )
+                })
+                .then(|| finite_value(&value.count))
+                .flatten();
+            (!buckets.is_empty() || sum.is_some() || count.is_some()).then(|| {
+                MetricSample::Histogram {
+                    labels: point.labels.clone(),
+                    value: HistogramValue {
+                        buckets,
+                        sum,
+                        count,
+                    },
+                }
+            })
         }
+        MetricValue::Histogram(_)
+        | MetricValue::Summary(_)
+        | MetricValue::StateSet(_)
+        | MetricValue::Info(_) => None,
     }
-    if let Some(meta) = metadata.get(sample_name) {
-        return (
-            meta.family_name.clone(),
-            meta.metric_type,
-            meta.description.clone(),
-        );
-    }
-    if let Some(base) = sample_name.strip_suffix("_total")
-        && metadata
-            .get(base)
-            .is_some_and(|meta| meta.metric_type == PrometheusMetricType::Counter)
-    {
-        let meta = &metadata[base];
-        return (
-            meta.family_name.clone(),
-            PrometheusMetricType::Counter,
-            meta.description.clone(),
-        );
-    }
-    if let Some(meta) = metadata
-        .values()
-        .find(|meta| meta.family_name == sample_name)
-    {
-        return (
-            meta.family_name.clone(),
-            meta.metric_type,
-            meta.description.clone(),
-        );
-    }
-    (
-        sample_name.to_string(),
-        PrometheusMetricType::Unknown,
-        String::new(),
-    )
+}
+
+fn finite_value(value: &aiperf_prometheus::ExactNumber) -> Option<f64> {
+    value.finite_value.filter(|value| value.is_finite())
 }
 
 fn family_priority(metric_type: PrometheusMetricType) -> u8 {
@@ -361,210 +301,29 @@ fn should_skip_family(name: &str) -> bool {
     name.ends_with("_created") || name.ends_with("_uptime") || name.contains("_uptime_")
 }
 
-fn parse_metric_type(value: &str) -> Option<PrometheusMetricType> {
-    match value.to_ascii_lowercase().as_str() {
-        "counter" => Some(PrometheusMetricType::Counter),
-        "gauge" => Some(PrometheusMetricType::Gauge),
-        "histogram" | "gaugehistogram" => Some(PrometheusMetricType::Histogram),
-        "summary" => Some(PrometheusMetricType::Summary),
-        "untyped" | "unknown" => Some(PrometheusMetricType::Unknown),
-        _ => None,
-    }
-}
-
-struct ParsedSample {
-    name: String,
-    labels: BTreeMap<String, String>,
-    value: f64,
-}
-
-fn parse_sample(line: &str) -> Result<ParsedSample, String> {
-    let split = sample_value_split(line).ok_or_else(|| "sample has no value".to_string())?;
-    let metric = line[..split].trim();
-    let value_text = line[split..]
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| "sample has no value".to_string())?;
-    let value = parse_prometheus_float(value_text)?;
-    let (name, labels) = parse_metric_and_labels(metric)?;
-    validate_metric_name(&name)?;
-    Ok(ParsedSample {
-        name,
-        labels,
-        value,
-    })
-}
-
-fn parse_prometheus_float(value: &str) -> Result<f64, String> {
-    match value {
-        "+Inf" | "Inf" => Ok(f64::INFINITY),
-        "-Inf" => Ok(f64::NEG_INFINITY),
-        "NaN" => Ok(f64::NAN),
-        _ => value
-            .parse::<f64>()
-            .map_err(|error| format!("invalid sample value {value:?}: {error}")),
-    }
-}
-
-fn validate_metric_name(name: &str) -> Result<(), String> {
-    let mut bytes = name.bytes();
-    let Some(first) = bytes.next() else {
-        return Err("metric name is empty".to_string());
-    };
-    if !(first.is_ascii_alphabetic() || matches!(first, b'_' | b':'))
-        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b':'))
-    {
-        return Err(format!("invalid metric name {name:?}"));
-    }
-    Ok(())
-}
-
-fn sample_value_split(line: &str) -> Option<usize> {
-    let mut in_quotes = false;
-    let mut escaped = false;
-    let mut brace_depth = 0_u32;
-    for (index, byte) in line.bytes().enumerate() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match byte {
-            b'\\' if in_quotes => escaped = true,
-            b'"' => in_quotes = !in_quotes,
-            b'{' if !in_quotes => brace_depth += 1,
-            b'}' if !in_quotes => brace_depth = brace_depth.saturating_sub(1),
-            b' ' | b'\t' if !in_quotes && brace_depth == 0 => return Some(index),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn parse_metric_and_labels(metric: &str) -> Result<(String, BTreeMap<String, String>), String> {
-    let Some(open) = metric.find('{') else {
-        return Ok((metric.to_string(), BTreeMap::new()));
-    };
-    if !metric.ends_with('}') {
-        return Err("unterminated label set".to_string());
-    }
-    Ok((
-        metric[..open].to_string(),
-        parse_labels(&metric[open + 1..metric.len() - 1])?,
-    ))
-}
-
-fn parse_labels(mut input: &str) -> Result<BTreeMap<String, String>, String> {
-    let mut labels = BTreeMap::new();
-    while !input.trim_start().is_empty() {
-        input = input.trim_start();
-        let equals = input
-            .find('=')
-            .ok_or_else(|| "label has no '='".to_string())?;
-        let name = input[..equals].trim();
-        validate_label_name(name)?;
-        input = input[equals + 1..].trim_start();
-        let rest = input
-            .strip_prefix('"')
-            .ok_or_else(|| format!("label {name:?} has an unquoted value"))?;
-        let (value, consumed) = parse_quoted_label(rest)?;
-        labels.insert(name.to_string(), value);
-        input = rest[consumed..].trim_start();
-        if input.is_empty() {
-            break;
-        }
-        input = input
-            .strip_prefix(',')
-            .ok_or_else(|| "labels must be comma-separated".to_string())?;
-    }
-    Ok(labels)
-}
-
-fn validate_label_name(name: &str) -> Result<(), String> {
-    let mut bytes = name.bytes();
-    let Some(first) = bytes.next() else {
-        return Err("label name is empty".to_string());
-    };
-    if !(first.is_ascii_alphabetic() || first == b'_')
-        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
-        return Err(format!("invalid label name {name:?}"));
-    }
-    Ok(())
-}
-
-fn parse_quoted_label(input: &str) -> Result<(String, usize), String> {
-    let mut output = String::new();
-    let mut escaped = false;
-    for (index, character) in input.char_indices() {
-        if escaped {
-            output.push(match character {
-                'n' => '\n',
-                '\\' => '\\',
-                '"' => '"',
-                other => other,
-            });
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' => escaped = true,
-            '"' => return Ok((output, index + character.len_utf8())),
-            other => output.push(other),
-        }
-    }
-    Err("unterminated quoted label".to_string())
-}
-
-fn unescape_help(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut escaped = false;
-    for character in input.chars() {
-        if escaped {
-            output.push(if character == 'n' { '\n' } else { character });
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else {
-            output.push(character);
-        }
-    }
-    if escaped {
-        output.push('\\');
-    }
-    output
-}
-
-fn parse_error(offset: usize, message: impl Into<String>) -> MetricsParseError {
-    MetricsParseError {
-        line: offset + 1,
-        message: message.into(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn classic_parser_normalizes_deduplicates_and_structures_histograms() {
-        let body = r#"
-# HELP vllm:prompt_tokens_total Prompt tokens.
-# TYPE vllm:prompt_tokens_total counter
-vllm:prompt_tokens_total{model="a"} 10
-vllm:prompt_tokens_total{model="a"} 12
-vllm:prompt_tokens_created{model="a"} 123
-# HELP vllm:request_latency_seconds Request latency in seconds.
-# TYPE vllm:request_latency_seconds histogram
-vllm:request_latency_seconds_bucket{model="a",le="0.1"} 4
-vllm:request_latency_seconds_bucket{model="a",le="1.0"} NaN
-vllm:request_latency_seconds_bucket{model="a",le="+Inf"} 5
-vllm:request_latency_seconds_sum{model="a"} 0.9
-vllm:request_latency_seconds_count{model="a"} 5
-# TYPE lifetime summary
-lifetime{quantile="0.5"} 1
-# TYPE process_uptime_seconds gauge
-process_uptime_seconds 10
-"#;
+        let body = concat!(
+            "# HELP vllm:prompt_tokens_total Prompt tokens.\n",
+            "# TYPE vllm:prompt_tokens_total counter\n",
+            "vllm:prompt_tokens_total{model=\"a\"} 10\n",
+            "vllm:prompt_tokens_total{model=\"a\"} 12\n",
+            "vllm:prompt_tokens_created{model=\"a\"} 123\n",
+            "# HELP vllm:request_latency_seconds Request latency in seconds.\n",
+            "# TYPE vllm:request_latency_seconds histogram\n",
+            "vllm:request_latency_seconds_bucket{model=\"a\",le=\"0.1\"} 4\n",
+            "vllm:request_latency_seconds_bucket{model=\"a\",le=\"+Inf\"} 5\n",
+            "vllm:request_latency_seconds_sum{model=\"a\"} 0.9\n",
+            "vllm:request_latency_seconds_count{model=\"a\"} 5\n",
+            "# TYPE lifetime summary\n",
+            "lifetime{quantile=\"0.5\"} 1\n",
+            "# TYPE process_uptime_seconds gauge\n",
+            "process_uptime_seconds 10\n",
+        );
         let metrics = PrometheusTextParser.parse_classic(body).unwrap();
         assert_eq!(metrics.len(), 2);
         let counter = &metrics["vllm:prompt_tokens"];
@@ -585,10 +344,13 @@ process_uptime_seconds 10
     }
 
     #[test]
-    fn strict_openmetrics_can_fall_back_to_classic_at_the_caller() {
+    fn strict_openmetrics_never_falls_back_inside_the_parser() {
         let body = "# TYPE requests_total counter\nrequests_total 2\n";
         assert!(PrometheusTextParser.parse_openmetrics(body).is_err());
-        assert!(PrometheusTextParser.parse_classic(body).is_ok());
+        assert_eq!(
+            PrometheusTextParser.parse_classic(body).unwrap()["requests"].metric_type,
+            PrometheusMetricType::Counter
+        );
 
         let strict = "# TYPE requests counter\nrequests_total 2\n# EOF\n";
         assert_eq!(
@@ -598,15 +360,15 @@ process_uptime_seconds 10
     }
 
     #[test]
-    fn json_and_malformed_labels_are_rejected() {
+    fn json_and_malformed_labels_are_rejected_atomically() {
         assert!(
             PrometheusTextParser
-                .parse_classic("[{\"stats\": 1}]")
+                .parse_classic("[{\"stats\": 1}]\n")
                 .is_err()
         );
         assert!(
             PrometheusTextParser
-                .parse_classic("metric{bad=unquoted} 1")
+                .parse_classic("metric{bad=unquoted} 1\n")
                 .is_err()
         );
     }
@@ -624,12 +386,12 @@ process_uptime_seconds 10
 
     #[test]
     fn normalized_counter_wins_a_same_name_gauge_collision() {
-        let body = r#"
-# TYPE sglang:num_retracted_reqs_total counter
-sglang:num_retracted_reqs_total 7
-# TYPE sglang:num_retracted_reqs gauge
-sglang:num_retracted_reqs 99
-"#;
+        let body = concat!(
+            "# TYPE sglang:num_retracted_reqs_total counter\n",
+            "sglang:num_retracted_reqs_total 7\n",
+            "# TYPE sglang:num_retracted_reqs gauge\n",
+            "sglang:num_retracted_reqs 99\n",
+        );
 
         let metrics = PrometheusTextParser.parse_classic(body).unwrap();
         let family = &metrics["sglang:num_retracted_reqs"];
@@ -638,6 +400,64 @@ sglang:num_retracted_reqs 99
         assert!(matches!(
             family.samples[0],
             MetricSample::Scalar { value: 7.0, .. }
+        ));
+    }
+
+    #[test]
+    fn tachometer_histogram_label_sets_never_cross_contaminate() {
+        let body = concat!(
+            "# TYPE vllm_request_queue_time_seconds histogram\n",
+            "vllm_request_queue_time_seconds_bucket{model_name=\"model-a\",le=\"1\"} 2\n",
+            "vllm_request_queue_time_seconds_bucket{model_name=\"model-b\",le=\"1\"} 7\n",
+            "vllm_request_queue_time_seconds_bucket{model_name=\"model-a\",le=\"+Inf\"} 3\n",
+            "vllm_request_queue_time_seconds_bucket{model_name=\"model-b\",le=\"+Inf\"} 11\n",
+            "vllm_request_queue_time_seconds_count{model_name=\"model-a\"} 3\n",
+            "vllm_request_queue_time_seconds_count{model_name=\"model-b\"} 11\n",
+        );
+        let metrics = PrometheusTextParser.parse_classic(body).unwrap();
+        let samples = &metrics["vllm_request_queue_time_seconds"].samples;
+        assert_eq!(samples.len(), 2);
+        for sample in samples {
+            let MetricSample::Histogram { labels, value } = sample else {
+                panic!("expected histogram")
+            };
+            match labels["model_name"].as_str() {
+                "model-a" => {
+                    assert_eq!(value.buckets["1"], 2.0);
+                    assert_eq!(value.count, Some(3.0));
+                }
+                "model-b" => {
+                    assert_eq!(value.buckets["1"], 7.0);
+                    assert_eq!(value.count, Some(11.0));
+                }
+                other => panic!("unexpected model {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn tachometer_quoted_commas_and_float64_precision_survive_projection() {
+        let body = "vllm:num_requests_running{model_name=\"meta-llama/Llama-3.1-8B, revision=\\\"prod\\\", path=C:\\\\models\"} 100000001\n";
+        let metrics = PrometheusTextParser.parse_classic(body).unwrap();
+        let MetricSample::Scalar { labels, value } =
+            &metrics["vllm:num_requests_running"].samples[0]
+        else {
+            panic!("expected scalar")
+        };
+        assert_eq!(
+            labels["model_name"],
+            "meta-llama/Llama-3.1-8B, revision=\"prod\", path=C:\\models"
+        );
+        assert_eq!(*value, 100_000_001.0_f64);
+    }
+
+    #[test]
+    fn non_finite_values_remain_outside_native_projection() {
+        let body = "value NaN\nvalue 4\nvalue +Inf\n";
+        let metrics = PrometheusTextParser.parse_classic(body).unwrap();
+        assert!(matches!(
+            metrics["value"].samples[0],
+            MetricSample::Scalar { value: 4.0, .. }
         ));
     }
 }
