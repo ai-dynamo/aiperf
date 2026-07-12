@@ -90,13 +90,38 @@ impl ArchiveFrameSequencerV1 {
         archive_key: Arc<dyn ArchiveKeyProvider>,
         source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
     ) -> Result<Self, FrameSequencingError> {
-        Self::with_sanitizer(
+        Self::with_sanitizer_at_record_seq(
             archive_id,
             session_id,
             epoch_anchor,
             archive_key,
             source_policies,
             Arc::new(NoopSanitizer),
+            0,
+        )
+    }
+
+    /// Freeze a new session whose global sequence continues an existing archive.
+    ///
+    /// Source-local sequences and unchanged-body continuity deliberately start
+    /// fresh for the new session; only the archive-global terminal record
+    /// sequence crosses session boundaries.
+    pub fn at_record_seq(
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        epoch_anchor: Option<EpochAnchor>,
+        archive_key: Arc<dyn ArchiveKeyProvider>,
+        source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
+        first_record_seq: u64,
+    ) -> Result<Self, FrameSequencingError> {
+        Self::with_sanitizer_at_record_seq(
+            archive_id,
+            session_id,
+            epoch_anchor,
+            archive_key,
+            source_policies,
+            Arc::new(NoopSanitizer),
+            first_record_seq,
         )
     }
 
@@ -108,6 +133,27 @@ impl ArchiveFrameSequencerV1 {
         archive_key: Arc<dyn ArchiveKeyProvider>,
         source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
         sanitizer: Arc<dyn ArchiveSanitizer>,
+    ) -> Result<Self, FrameSequencingError> {
+        Self::with_sanitizer_at_record_seq(
+            archive_id,
+            session_id,
+            epoch_anchor,
+            archive_key,
+            source_policies,
+            sanitizer,
+            0,
+        )
+    }
+
+    /// Freeze explicit sanitizer policy and an archive-global starting sequence.
+    pub fn with_sanitizer_at_record_seq(
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        epoch_anchor: Option<EpochAnchor>,
+        archive_key: Arc<dyn ArchiveKeyProvider>,
+        source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
+        sanitizer: Arc<dyn ArchiveSanitizer>,
+        first_record_seq: u64,
     ) -> Result<Self, FrameSequencingError> {
         if source_policies.is_empty() {
             return Err(FrameSequencingError::NoSources);
@@ -135,7 +181,7 @@ impl ArchiveFrameSequencerV1 {
             archive_key,
             sanitizer,
             sources,
-            next_record_seq: 0,
+            next_record_seq: first_record_seq,
         })
     }
 
@@ -584,6 +630,43 @@ mod tests {
         assert_eq!(second.frame.attempt.same_body_as_source_record_seq, Some(0));
         assert_ne!(first.frame.attempt.frame_id, second.frame.attempt.frame_id);
         assert_eq!(sequencer.next_record_seq(), 2);
+    }
+
+    #[test]
+    fn resumed_session_continues_only_the_archive_global_sequence() {
+        let (archive, session) = ids();
+        let mut sequencer = ArchiveFrameSequencerV1::at_record_seq(
+            archive,
+            session,
+            Some(EpochAnchor {
+                clock_ns: 0,
+                unix_epoch_ns: 1_000,
+                capture_uncertainty_ns: 0,
+            }),
+            Arc::new(Blake3ArchiveKeyProvider::new("fixture_key", [7; 32]).unwrap()),
+            BTreeMap::from([(
+                "source-a".to_owned(),
+                SourceProjectionPolicyV1 {
+                    attributes: BTreeMap::new(),
+                },
+            )]),
+            41,
+        )
+        .unwrap();
+
+        let resumed = sequencer
+            .project_attempt(
+                decode(0, b"metric 1\n"),
+                ArchiveFrameTimingV1 {
+                    parse_done_ns: 2,
+                    archive_enqueue_ns: 3,
+                },
+            )
+            .unwrap();
+        assert_eq!(resumed.frame.attempt.record_seq, 41);
+        assert_eq!(resumed.frame.attempt.source_record_seq, 0);
+        assert!(!resumed.frame.attempt.body_unchanged);
+        assert_eq!(sequencer.next_record_seq(), 42);
     }
 
     #[test]

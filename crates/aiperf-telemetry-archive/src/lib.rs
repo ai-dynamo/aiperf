@@ -17,6 +17,7 @@ pub mod descriptor;
 pub mod digest;
 pub mod driver;
 pub mod evidence;
+pub mod filesystem_store;
 pub mod frame_codec;
 pub mod identity;
 pub mod index;
@@ -64,6 +65,7 @@ pub use evidence::{
     CanonicalLogicalRow, LogicalField, LogicalRowError, LogicalSchema, LogicalType, LogicalValue,
     ProjectionEvidence, RequiredProjection, TableId,
 };
+pub use filesystem_store::FileArchiveObjectStore;
 pub use frame_codec::{SourceFrameCodecError, SourceFrameCodecV1};
 pub use identity::{
     ArchiveId, BatchId, ExactLossBatchInput, FrameId, FrameIdentityError, FrameIdentityV1,
