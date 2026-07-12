@@ -15,6 +15,7 @@ from aiperf import entrypoint
 def test_dynosim_run_forwards_raw_arguments_without_loading_general_cli(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delitem(sys.modules, "aiperf.cli", raising=False)
     authored = ["trace with spaces.jsonl", "--replay-mode=online", "--x", "a,b"]
     observed: list[list[str]] = []
 
