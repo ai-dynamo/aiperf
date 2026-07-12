@@ -293,6 +293,81 @@ def test_config_v2_executes_a_real_native_child(tmp_path: Path) -> None:
         assert public_result.success, public_result.error
         assert public_result.summary_metrics["request_count"].avg == 1.0
         assert b"one two three four five" in orjson.dumps(_ChatHandler.bodies[-1])
+
+        synthesis_artifacts = tmp_path / "synthesis-run"
+        synthesis_envelope = AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": [f"http://127.0.0.1:{port}/v1/chat/completions"],
+                        "streaming": True,
+                        "use_server_token_count": True,
+                    },
+                    "dataset": {
+                        "type": "file",
+                        "format": "mooncake_trace",
+                        "records": [
+                            {
+                                "session_id": "trace-a",
+                                "timestamp": 100,
+                                "input_length": 1025,
+                                "output_length": 2,
+                                "hash_ids": [1, 2],
+                            },
+                            {
+                                "session_id": "trace-b",
+                                "timestamp": 202,
+                                "input_length": 1025,
+                                "output_length": 3,
+                                "hash_ids": [1, 3],
+                            },
+                        ],
+                        "synthesis": {
+                            "speedup_ratio": 2,
+                            "prefix_len_multiplier": 2,
+                            "prompt_len_multiplier": 1,
+                            "output_len_multiplier": 1.5,
+                        },
+                    },
+                    "profiling": {
+                        "type": "fixed_schedule",
+                        "requests": 2,
+                    },
+                    "artifacts": {"dir": str(synthesis_artifacts)},
+                    "gpu_telemetry": {"enabled": False},
+                    "server_metrics": {"enabled": False},
+                    "runtime": {"ui": "none"},
+                }
+            }
+        )
+        synthesis_run = BenchmarkRun(
+            benchmark_id="python-rust-synthesis-e2e",
+            cfg=synthesis_envelope.benchmark,
+            artifact_dir=synthesis_artifacts,
+            label="native-synthesis",
+            random_seed=31,
+        )
+        body_start = len(_ChatHandler.bodies)
+        synthesis_result = RustSubprocessExecutor(
+            synthesis_artifacts, binary=binary
+        ).execute_sync(synthesis_run)
+
+        assert synthesis_result.success, synthesis_result.error
+        assert synthesis_result.summary_metrics["request_count"].avg == 2.0
+        synthesis_bodies = _ChatHandler.bodies[body_start:]
+        assert [body["max_completion_tokens"] for body in synthesis_bodies] == [3, 4]
+        synthesis_rows = [
+            orjson.loads(line)
+            for line in (synthesis_artifacts / "profile_export.jsonl")
+            .read_bytes()
+            .splitlines()
+        ]
+        start_delta_ns = (
+            synthesis_rows[1]["metadata"]["request_start_ns"]
+            - synthesis_rows[0]["metadata"]["request_start_ns"]
+        )
+        assert 35_000_000 <= start_delta_ns <= 250_000_000
     finally:
         server.shutdown()
         server.server_close()

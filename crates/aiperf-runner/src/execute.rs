@@ -36,7 +36,7 @@ use aiperf_dataset::{
     SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
     SyntheticImageSource, SyntheticPrefixConfig, SyntheticPromptConfig, SyntheticRankingsConfig,
     SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern,
-    TextTokenizer, TiktokenEncoding, TiktokenTokenizer,
+    TextTokenizer, TiktokenEncoding, TiktokenTokenizer, TraceSynthesisConfig,
 };
 use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_extensions::AiperfRegistry;
@@ -546,6 +546,41 @@ async fn build_file_dataset(
     let mut compose = compose_config(models, rng_root)?;
     compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
     compose.format_options = spec.options.clone();
+    if let Some(synthesis) = &spec.synthesis {
+        ensure!(
+            matches!(
+                spec.format.as_str(),
+                "mooncake_trace" | "bailian_trace" | "burst_gpt"
+            ),
+            "trace synthesis is not supported by file format {:?}",
+            spec.format
+        );
+        let block_size = spec
+            .options
+            .get("block_size")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or_else(|| {
+                if spec.format == "bailian_trace" {
+                    16
+                } else {
+                    512
+                }
+            });
+        let native_synthesis = TraceSynthesisConfig {
+            speedup_ratio: synthesis.speedup_ratio,
+            prefix_len_multiplier: synthesis.prefix_len_multiplier,
+            prefix_root_multiplier: synthesis.prefix_root_multiplier,
+            prompt_len_multiplier: synthesis.prompt_len_multiplier,
+            output_len_multiplier: synthesis.output_len_multiplier,
+            max_isl: synthesis.max_isl,
+            max_osl: synthesis.max_osl,
+            block_size,
+        };
+        native_synthesis.validate()?;
+        compose.max_output_tokens = synthesis.max_osl;
+        compose.trace_synthesis = Some(native_synthesis);
+    }
     let source = match (&spec.path, &spec.records) {
         (Some(path), None) => DatasetSource::Path(path.clone()),
         (None, Some(records)) => DatasetSource::Inline(records.clone()),
@@ -554,6 +589,10 @@ async fn build_file_dataset(
     let mut load = LoadConfig::new(source);
     load.max_rows = spec.entries;
     load.sampling_strategy = Some(spec.sampling.clone());
+    if let Some(synthesis) = &spec.synthesis {
+        load.max_input_tokens = synthesis.max_isl;
+        load.max_output_tokens = synthesis.max_osl;
+    }
     registry
         .dataset_formats()
         .build_dataset(Some(&spec.format), &load, &compose, tokenizer)

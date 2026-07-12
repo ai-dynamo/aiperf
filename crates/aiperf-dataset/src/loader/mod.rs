@@ -109,7 +109,7 @@ pub struct LoadConfig {
     /// Trace end timestamp, inclusive, in milliseconds.
     pub end_offset_ms: Option<f64>,
     /// Maximum retained input length.
-    pub max_input_tokens: Option<u32>,
+    pub max_input_tokens: Option<u64>,
     /// Maximum output length, applied as a cap.
     pub max_output_tokens: Option<u32>,
     /// Maximum number of parsed rows retained before composition.

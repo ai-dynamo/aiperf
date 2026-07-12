@@ -26,6 +26,7 @@ pub mod prompt;
 pub mod request;
 pub mod sampler;
 pub mod segment;
+pub mod synthesis;
 pub mod tokenizer;
 
 pub use dataset::{Dataset, DatasetMetadata};
@@ -68,6 +69,9 @@ pub use sampler::{
 };
 pub use segment::{
     Handle, InMemorySegmentStore, Payload, Role, Segment, SegmentId, SegmentPool, SegmentStore,
+};
+pub use synthesis::{
+    PrefixTraceSynthesizer, TraceSynthesisConfig, TraceSynthesisRecord, TraceSynthesizer,
 };
 pub use tokenizer::{HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer};
 pub mod loader;

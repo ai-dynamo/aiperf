@@ -332,9 +332,35 @@ pub struct FileDatasetSpec {
     /// Output-length fallback for rows without an authored limit.
     #[serde(default)]
     pub osl: Option<DistributionSpec>,
+    /// Optional native trace transformation and caps.
+    #[serde(default)]
+    pub synthesis: Option<TraceSynthesisSpec>,
     /// Loader/composer-specific options after Config-v2 validation.
     #[serde(default)]
     pub options: Map<String, Value>,
+}
+
+/// Trace synthesis configuration from
+/// `src/aiperf/config/dataset/trace.py:20-117`.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceSynthesisSpec {
+    /// Timestamp divisor.
+    pub speedup_ratio: f64,
+    /// Shared-prefix length multiplier.
+    pub prefix_len_multiplier: f64,
+    /// Independent prefix-root count.
+    pub prefix_root_multiplier: u64,
+    /// Unique-prompt length multiplier.
+    pub prompt_len_multiplier: f64,
+    /// Output-length multiplier.
+    pub output_len_multiplier: f64,
+    /// Original-row filter and transformed-length cap.
+    #[serde(default)]
+    pub max_isl: Option<u64>,
+    /// Final output-length cap.
+    #[serde(default)]
+    pub max_osl: Option<u32>,
 }
 
 fn default_sampling_strategy() -> String {

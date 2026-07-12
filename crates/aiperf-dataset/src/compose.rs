@@ -25,6 +25,7 @@ use crate::media::{InlineMediaResolver, MediaResolver};
 use crate::model::{Conversation, ConversationContextMode, ModelId, SessionId, Turn};
 use crate::prompt::{CorpusPromptGeneratorFactory, PromptGeneratorFactory};
 use crate::segment::{Handle, SegmentPool, SegmentStore};
+use crate::synthesis::TraceSynthesisConfig;
 use crate::tokenizer::TextTokenizer;
 
 /// Stateful model-name selection policy.
@@ -119,6 +120,8 @@ pub struct ComposeConfig {
     /// Full synthetic dataset shape for the `synthetic` and
     /// `synthetic_rankings` composers.
     pub synthetic_config: Option<SyntheticDatasetConfig>,
+    /// Optional format-neutral trace synthesis applied by trace composers.
+    pub trace_synthesis: Option<TraceSynthesisConfig>,
     /// Injectable image/audio/video generator factory.
     pub media_generator_factory: Arc<dyn SyntheticMediaGeneratorFactory>,
     /// Shared system prompt interned once and referenced by every conversation.
@@ -146,6 +149,7 @@ impl ComposeConfig {
             max_output_tokens: None,
             sequence_length_distribution: None,
             synthetic_config: None,
+            trace_synthesis: None,
             media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory),
             shared_system_prompt: None,
             user_context_prompts: Vec::new(),

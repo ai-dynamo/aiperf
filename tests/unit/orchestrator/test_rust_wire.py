@@ -362,3 +362,52 @@ def test_projects_exgentic_filters_fixed_schedule_and_pinned_revision(tmp_path) 
         "fixed_schedule": True,
         "max_conversations": 4,
     }
+
+
+def test_projects_trace_synthesis_as_typed_native_policy(tmp_path) -> None:
+    request = build_run_request(
+        _run(
+            tmp_path,
+            dataset={
+                "type": "file",
+                "format": "mooncake_trace",
+                "records": [
+                    {
+                        "session_id": "a",
+                        "timestamp": 100,
+                        "input_length": 10,
+                        "output_length": 2,
+                        "hash_ids": [1, 2],
+                    },
+                    {
+                        "session_id": "b",
+                        "timestamp": 200,
+                        "input_length": 10,
+                        "output_length": 3,
+                        "hash_ids": [1, 3],
+                    },
+                ],
+                "synthesis": {
+                    "speedup_ratio": 2,
+                    "prefix_len_multiplier": 2,
+                    "prefix_root_multiplier": 1,
+                    "prompt_len_multiplier": 1.5,
+                    "output_len_multiplier": 1.5,
+                    "max_isl": 64,
+                    "max_osl": 8,
+                },
+            },
+        )
+    )["run"]["dataset"]
+
+    assert request["format"] == "mooncake_trace"
+    assert request["options"] == {"block_size": 512}
+    assert request["synthesis"] == {
+        "speedup_ratio": 2.0,
+        "prefix_len_multiplier": 2.0,
+        "prefix_root_multiplier": 1,
+        "prompt_len_multiplier": 1.5,
+        "output_len_multiplier": 1.5,
+        "max_isl": 64,
+        "max_osl": 8,
+    }

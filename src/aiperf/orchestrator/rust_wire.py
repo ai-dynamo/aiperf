@@ -212,13 +212,13 @@ def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
     resolved_sampling = run.resolved.dataset_sampling_strategies or {}
     format_name = str(resolved_types.get(dataset.name, dataset.format))
     native_format, format_options = _native_file_format(format_name)
+    if native_format == "mooncake_trace":
+        format_options.setdefault("block_size", 512)
+    elif native_format == "bailian_trace":
+        format_options.setdefault("block_size", 16)
     if dataset.inter_turn_delay_cap_seconds is not None:
         format_options["inter_turn_delay_cap_seconds"] = (
             dataset.inter_turn_delay_cap_seconds
-        )
-    if dataset.synthesis is not None:
-        format_options.update(
-            dataset.synthesis.model_dump(mode="json", exclude_none=True)
         )
     result: dict[str, Any] = {
         "type": "file",
@@ -230,6 +230,10 @@ def _file_dataset(run: BenchmarkRun, dataset: FileDataset) -> dict[str, Any]:
     _set_optional(result, "random_seed", dataset.random_seed)
     if dataset.osl is not None:
         result["osl"] = _distribution(dataset.osl)
+    if dataset.synthesis is not None:
+        result["synthesis"] = dataset.synthesis.model_dump(
+            mode="json", exclude_none=True
+        )
     if dataset.path is not None:
         resolved_paths = run.resolved.dataset_file_paths or {}
         path = Path(resolved_paths.get(dataset.name, dataset.path)).resolve()
@@ -359,6 +363,8 @@ def _public_max_conversations(
 
 
 def _native_file_format(format_name: str) -> tuple[str, dict[str, Any]]:
+    if format_name == "burst_gpt_trace":
+        return "burst_gpt", {}
     if not format_name.startswith("speed_bench_"):
         return format_name, {}
     suffix = format_name.removeprefix("speed_bench_")

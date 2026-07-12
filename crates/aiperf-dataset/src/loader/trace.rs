@@ -31,6 +31,7 @@ use crate::loader::{
 };
 use crate::model::{Conversation, ConversationContextMode, SessionId, Turn};
 use crate::segment::{Handle, Role, SegmentPool};
+use crate::synthesis::{PrefixTraceSynthesizer, TraceSynthesisRecord, TraceSynthesizer};
 use crate::tokenizer::TextTokenizer;
 
 /// Mooncake JSONL loader.
@@ -170,7 +171,7 @@ impl DatasetLoader for MooncakeTraceDatasetLoader {
             if config.max_input_tokens.is_some_and(|cap| {
                 parsed
                     .input_length
-                    .is_some_and(|length| length > u64::from(cap))
+                    .is_some_and(|length| length > cap)
             }) {
                 continue;
             }
@@ -219,7 +220,8 @@ impl Composer for MooncakeTraceComposer {
         tokenizer: &dyn TextTokenizer,
         segments: &mut SegmentPool,
     ) -> Result<Vec<Conversation>> {
-        let block_size = format_usize(config, "block_size", 16)?;
+        let rows = synthesize_mooncake_rows(rows, config)?;
+        let block_size = format_usize(config, "block_size", 512)?;
         let mut prompt_generator = config.prompt_generator.create(tokenizer, config.rng_root)?;
         let mut finalizer = config.finalizer()?;
         let mut session_ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
@@ -408,7 +410,7 @@ impl DatasetLoader for BailianTraceDatasetLoader {
             if !in_window(timestamp_ms, config)
                 || config
                     .max_input_tokens
-                    .is_some_and(|cap| parsed.input_length > u64::from(cap))
+                    .is_some_and(|cap| parsed.input_length > cap)
             {
                 continue;
             }
@@ -451,6 +453,7 @@ impl Composer for BailianTraceComposer {
         for (_, rows) in &mut groups {
             rows.sort_by_key(|row| row.turn);
         }
+        synthesize_bailian_groups(&mut groups, config)?;
         let block_size = format_usize(config, "block_size", 16)?;
         let mut generator = config.prompt_generator.create(tokenizer, config.rng_root)?;
         let mut finalizer = config.finalizer()?;
@@ -592,7 +595,7 @@ impl DatasetLoader for BurstGptTraceDatasetLoader {
                 || !in_window(timestamp_ms, config)
                 || config
                     .max_input_tokens
-                    .is_some_and(|cap| parsed.input_length > u64::from(cap))
+                    .is_some_and(|cap| parsed.input_length > cap)
             {
                 continue;
             }
@@ -626,12 +629,16 @@ impl Composer for BurstGptTraceComposer {
         tokenizer: &dyn TextTokenizer,
         segments: &mut SegmentPool,
     ) -> Result<Vec<Conversation>> {
+        let mut parsed = rows
+            .into_iter()
+            .map(|row| serde_json::from_value::<BurstRow>(row.value).map_err(Into::into))
+            .collect::<Result<Vec<_>>>()?;
+        synthesize_burst_rows(&mut parsed, config)?;
         let mut generator = config.prompt_generator.create(tokenizer, config.rng_root)?;
         let mut finalizer = config.finalizer()?;
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
-        let mut conversations = Vec::with_capacity(rows.len());
-        for row in rows {
-            let row: BurstRow = serde_json::from_value(row.value)?;
+        let mut conversations = Vec::with_capacity(parsed.len());
+        for row in parsed {
             let prompt = generator.generate(row.input_length as usize, &[], 1)?;
             let handle = segments.intern_text(
                 None,
@@ -657,6 +664,198 @@ impl Composer for BurstGptTraceComposer {
         }
         Ok(conversations)
     }
+}
+
+fn synthesize_mooncake_rows(rows: Vec<RawRow>, config: &ComposeConfig) -> Result<Vec<RawRow>> {
+    let Some(synthesis) = config
+        .trace_synthesis
+        .as_ref()
+        .filter(|synthesis| synthesis.has_structural_transform())
+    else {
+        return Ok(rows);
+    };
+    let mut positions = HashMap::<String, usize>::new();
+    let mut groups = Vec::<Vec<usize>>::new();
+    for (index, row) in rows.iter().enumerate() {
+        let key = row
+            .value
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map_or_else(
+                || format!("__aiperf_row_{index}"),
+                |value| format!("session:{value}"),
+            );
+        let position = *positions.entry(key).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[position].push(index);
+    }
+    let order = groups.into_iter().flatten().collect::<Vec<_>>();
+    let mut records = order
+        .iter()
+        .map(|index| synthesis_record(&rows[*index].value))
+        .collect::<Result<Vec<_>>>()?;
+    PrefixTraceSynthesizer::new(synthesis.clone(), config.rng_root)?.synthesize(&mut records)?;
+
+    let mut slots = rows.into_iter().map(Some).collect::<Vec<_>>();
+    order
+        .into_iter()
+        .zip(records)
+        .map(|(index, synthesized)| {
+            let mut row = slots[index]
+                .take()
+                .expect("grouped Mooncake indices are unique");
+            apply_synthesis_record(&mut row.value, &synthesized)?;
+            row.wire = Some(Bytes::from(serde_json::to_vec(&row.value)?));
+            Ok(row)
+        })
+        .collect()
+}
+
+fn synthesize_bailian_groups(
+    groups: &mut [(i64, Vec<BailianRow>)],
+    config: &ComposeConfig,
+) -> Result<()> {
+    let Some(synthesis) = config
+        .trace_synthesis
+        .as_ref()
+        .filter(|synthesis| synthesis.has_structural_transform())
+    else {
+        return Ok(());
+    };
+    let positions = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(group, (_, rows))| (0..rows.len()).map(move |row| (group, row)))
+        .collect::<Vec<_>>();
+    let mut records = positions
+        .iter()
+        .map(|(group, row)| {
+            let row = &groups[*group].1[*row];
+            TraceSynthesisRecord {
+                hash_ids: row.hash_ids.clone(),
+                input_length: row.input_length,
+                timestamp_ms: Some(row.timestamp * 1_000.0),
+                output_length: Some(row.output_length),
+            }
+        })
+        .collect::<Vec<_>>();
+    PrefixTraceSynthesizer::new(synthesis.clone(), config.rng_root)?.synthesize(&mut records)?;
+    for ((group, row), synthesized) in positions.into_iter().zip(records) {
+        let row = &mut groups[group].1[row];
+        row.hash_ids = synthesized.hash_ids;
+        row.input_length = synthesized.input_length;
+        row.timestamp = synthesized
+            .timestamp_ms
+            .expect("Bailian synthesis retains timestamps")
+            / 1_000.0;
+        row.output_length = synthesized
+            .output_length
+            .expect("Bailian synthesis retains output lengths");
+    }
+    Ok(())
+}
+
+fn synthesize_burst_rows(rows: &mut [BurstRow], config: &ComposeConfig) -> Result<()> {
+    let Some(synthesis) = config
+        .trace_synthesis
+        .as_ref()
+        .filter(|synthesis| synthesis.has_structural_transform())
+    else {
+        return Ok(());
+    };
+    let mut records = rows
+        .iter()
+        .map(|row| TraceSynthesisRecord {
+            hash_ids: Vec::new(),
+            input_length: row.input_length,
+            timestamp_ms: Some(row.timestamp * 1_000.0),
+            output_length: Some(row.output_length),
+        })
+        .collect::<Vec<_>>();
+    PrefixTraceSynthesizer::new(synthesis.clone(), config.rng_root)?.synthesize(&mut records)?;
+    for (row, synthesized) in rows.iter_mut().zip(records) {
+        row.input_length = synthesized.input_length;
+        row.timestamp = synthesized
+            .timestamp_ms
+            .expect("BurstGPT synthesis retains timestamps")
+            / 1_000.0;
+        row.output_length = synthesized
+            .output_length
+            .expect("BurstGPT synthesis retains output lengths");
+    }
+    Ok(())
+}
+
+fn synthesis_record(value: &Value) -> Result<TraceSynthesisRecord> {
+    let object = value.as_object().ok_or_else(|| {
+        DatasetError::Validation("Mooncake synthesis row must be an object".into())
+    })?;
+    let hash_ids = object
+        .get("hash_ids")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| {
+                    value.as_i64().ok_or_else(|| {
+                        DatasetError::Validation(
+                            "Mooncake synthesis hash_ids must contain i64 values".into(),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(TraceSynthesisRecord {
+        hash_ids,
+        input_length: object
+            .get("input_length")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        timestamp_ms: object.get("timestamp").and_then(Value::as_f64),
+        output_length: object
+            .get("output_length")
+            .and_then(Value::as_u64)
+            .map(|value| {
+                u32::try_from(value).map_err(|_| {
+                    DatasetError::Validation("Mooncake synthesis output_length exceeds u32".into())
+                })
+            })
+            .transpose()?,
+    })
+}
+
+fn apply_synthesis_record(value: &mut Value, record: &TraceSynthesisRecord) -> Result<()> {
+    let object = value.as_object_mut().ok_or_else(|| {
+        DatasetError::Validation("Mooncake synthesis row must be an object".into())
+    })?;
+    if object.contains_key("input_length") {
+        object.insert("input_length".into(), Value::from(record.input_length));
+    }
+    if record.hash_ids.is_empty() {
+        object.remove("hash_ids");
+    } else {
+        object.insert(
+            "hash_ids".into(),
+            Value::Array(record.hash_ids.iter().copied().map(Value::from).collect()),
+        );
+    }
+    if object.contains_key("timestamp") {
+        object.insert(
+            "timestamp".into(),
+            record.timestamp_ms.map_or(Value::Null, Value::from),
+        );
+    }
+    if object.contains_key("output_length") {
+        object.insert(
+            "output_length".into(),
+            record.output_length.map_or(Value::Null, Value::from),
+        );
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -717,7 +916,7 @@ impl DatasetLoader for SageMakerDataCaptureDatasetLoader {
                     row.value
                         .get("input_length")
                         .and_then(Value::as_u64)
-                        .is_some_and(|length| length > u64::from(cap))
+                        .is_some_and(|length| length > cap)
                 })
         });
         decoded.sort_by(|left, right| left.0.total_cmp(&right.0));
@@ -1147,8 +1346,8 @@ mod tests {
             Arc::new(MooncakeTraceDatasetLoader),
             Arc::new(MooncakeTraceComposer),
             DatasetSource::Inline(json!([
-                {"session_id":"a","input_length":31,"hash_ids":[1,2],"output_length":2},
-                {"session_id":"b","input_length":32,"hash_ids":[1,3],"output_length":2}
+                {"session_id":"a","input_length":1023,"hash_ids":[1,2],"output_length":2},
+                {"session_id":"b","input_length":1024,"hash_ids":[1,3],"output_length":2}
             ])),
         )
         .await;
@@ -1158,7 +1357,54 @@ mod tests {
             synthetic.segments().id(first).unwrap(),
             synthetic.segments().id(second).unwrap()
         );
-        assert_eq!(synthetic.conversations()[0].turns[0].input_tokens, 31);
+        assert_eq!(synthetic.conversations()[0].turns[0].input_tokens, 1023);
+    }
+
+    #[tokio::test]
+    async fn mooncake_applies_native_prefix_time_and_length_synthesis() {
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(MooncakeTraceDatasetLoader),
+                Arc::new(MooncakeTraceComposer),
+            ))
+            .unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!([
+            {"session_id":"a","timestamp":100.0,"input_length":10,"hash_ids":[1,2],"output_length":2},
+            {"session_id":"b","timestamp":201.0,"input_length":10,"hash_ids":[1,3],"output_length":3}
+        ])));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(7)));
+        compose
+            .format_options
+            .insert("block_size".into(), Value::from(4));
+        compose.trace_synthesis = Some(crate::TraceSynthesisConfig {
+            speedup_ratio: 2.0,
+            prefix_len_multiplier: 2.0,
+            prompt_len_multiplier: 1.5,
+            output_len_multiplier: 1.5,
+            block_size: 4,
+            ..crate::TraceSynthesisConfig::default()
+        });
+
+        let dataset = registry
+            .build_dataset(
+                Some("mooncake_trace"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(dataset.conversations().len(), 2);
+        let first = &dataset.conversations()[0].turns[0];
+        let second = &dataset.conversations()[1].turns[0];
+        assert_eq!(first.input_tokens, 17);
+        assert_eq!(second.input_tokens, 17);
+        assert_eq!(first.timestamp_ms, Some(50.0));
+        assert_eq!(second.timestamp_ms, Some(100.0));
+        assert_eq!(first.max_tokens, Some(3));
+        assert_eq!(second.max_tokens, Some(4));
     }
 
     #[tokio::test]
