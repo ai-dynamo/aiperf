@@ -248,7 +248,7 @@ The computed capability matrix adds:
 | Backend | `telemetry_watch` |
 |---|:---:|
 | `online_http` | yes |
-| `dynamo_offline` | no |
+| `dynosim` | no |
 
 Replay/fault-injection tests may drive the library runtime with `SimClock`, but the product pair is
 real-clock only. Virtual tests use a deterministic inline decoder plus `MemoryArchiveSink`, then
@@ -2560,7 +2560,7 @@ prepared physical telemetry source in the same run. An omitted source is still a
 native accumulator but is not archived. Unknown IDs, duplicate IDs, source configuration repeated
 inside the attachment, `primary_durable` admission on an attached archive, or an attachment without
 at least one prepared source fail validation. V1 allows attachment only to `online_http +
-scheduled`; `graph` and `dynamo_offline` reject it before backend/source preparation until their
+scheduled`; `graph` and `dynosim` reject it before backend/source preparation until their
 deferred lifecycle integrations are built.
 
 This normalized envelope is a complete attached-run example; no field below is an illustrative

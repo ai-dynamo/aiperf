@@ -12,15 +12,15 @@ description = "Rust-native AIPerf load-generation runtime used by the subprocess
 default = []
 # Requires the sibling `dynamo-aiperf-native/lib/mocker` checkout. Its runtime
 # integration stays out of default builds.
-dynamo-offline = ["dep:dynamo-mocker"]
+dynosim = ["dep:dynamo-mocker"]
 # Forward every optional Dynamo Mocker capability independently so embedders can
 # pay only for the runtime surface they exercise. `dynamo-full` is the explicit
 # build gate used by the complete DynoSim/Mocker capability suite.
-dynamo-router-runtime = ["dynamo-offline", "dynamo-mocker/router-runtime"]
-dynamo-zmq-events = ["dynamo-offline", "dynamo-mocker/zmq-events"]
-dynamo-kvbm-offload = ["dynamo-offline", "dynamo-mocker/kvbm-offload"]
-dynamo-aic-forward-pass = ["dynamo-offline", "dynamo-mocker/aic-forward-pass"]
-dynamo-profile = ["dynamo-offline", "dynamo-mocker/profile"]
+dynamo-router-runtime = ["dynosim", "dynamo-mocker/router-runtime"]
+dynamo-zmq-events = ["dynosim", "dynamo-mocker/zmq-events"]
+dynamo-kvbm-offload = ["dynosim", "dynamo-mocker/kvbm-offload"]
+dynamo-aic-forward-pass = ["dynosim", "dynamo-mocker/aic-forward-pass"]
+dynamo-profile = ["dynosim", "dynamo-mocker/profile"]
 dynamo-full = [
     "dynamo-router-runtime",
     "dynamo-zmq-events",

@@ -11,9 +11,7 @@ use aiperf_runner::protocol_v2::{
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use aiperf_runner::redaction::redact_diagnostic;
-use aiperf_runner::{
-    RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerApplication, current_distribution_id,
-};
+use aiperf_runner::{RunnerApplication, current_distribution_id};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 
@@ -59,29 +57,12 @@ fn main() {
         eprintln!("failed to read runner request from stdin: {error}");
         std::process::exit(2);
     }
-    configure_dynamo_offline_process_defaults(&input);
+    configure_dynosim_process_defaults(&input);
     let application = compose_stock_application();
-    let probe = match serde_json::from_slice::<ProtocolVersionProbe>(&input) {
-        Ok(probe) => probe,
-        Err(error) => write_json_line(
-            &RunTerminal::failed(None, "protocol", format!("invalid run request: {error}")),
-            2,
-        ),
-    };
-    match probe.protocol_version {
-        RUNNER_PROTOCOL_VERSION => run_v1(&input, &application),
-        RUNNER_PROTOCOL_V2 => run_v2(&input, &application),
-        version => write_json_line(
-            &RunTerminal::failed(
-                None,
-                "protocol",
-                format!(
-                    "runner protocol {version} is unsupported; expected one of [{RUNNER_PROTOCOL_VERSION}, {RUNNER_PROTOCOL_V2}]"
-                ),
-            ),
-            2,
-        ),
-    }
+    // The runner speaks only protocol v2. run_v2 rejects a non-v2 or malformed
+    // request as a v2 failure envelope (a v1 request fails EnvelopeBootstrapV2
+    // parsing and is reported as an invalid protocol-v2 request).
+    run_v2(&input, &application);
 }
 
 fn compose_stock_application() -> RunnerApplication {
@@ -101,14 +82,14 @@ fn compose_stock_application() -> RunnerApplication {
     }
 }
 
-fn configure_dynamo_offline_process_defaults(input: &[u8]) {
+fn configure_dynosim_process_defaults(input: &[u8]) {
     let Ok(envelope) = serde_json::from_slice::<Value>(input) else {
         return;
     };
     if envelope
         .pointer("/run/backend/type")
         .and_then(Value::as_str)
-        != Some("dynamo_offline")
+        != Some("dynosim")
     {
         return;
     }
@@ -157,40 +138,11 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
 }
 
 #[derive(Deserialize)]
-struct ProtocolVersionProbe {
-    protocol_version: u32,
-}
-
-#[derive(Deserialize)]
 struct EnvelopeBootstrapV2 {
     protocol_version: u32,
     operation: RunnerOperationV2,
     expected_distribution_id: String,
     run: Box<RawValue>,
-}
-
-fn run_v1(input: &[u8], application: &RunnerApplication) -> ! {
-    let terminal = match serde_json::from_slice::<RunRequest>(input) {
-        Ok(request) if request.protocol_version == RUNNER_PROTOCOL_VERSION => {
-            let run_id = request.run.benchmark_id.clone();
-            match application.execute_v1(request) {
-                Ok(result) => result,
-                Err(error) => RunTerminal::failed(Some(run_id), "execution", format!("{error:#}")),
-            }
-        }
-        Ok(request) => RunTerminal::failed(
-            Some(request.run.benchmark_id),
-            "protocol",
-            format!(
-                "runner protocol {} is unsupported; expected {}",
-                request.protocol_version, RUNNER_PROTOCOL_VERSION
-            ),
-        ),
-        Err(error) => {
-            RunTerminal::failed(None, "protocol", format!("invalid run request: {error}"))
-        }
-    };
-    write_json_line(&terminal, if terminal.success { 0 } else { 1 });
 }
 
 fn run_v2(input: &[u8], application: &RunnerApplication) -> ! {
@@ -318,6 +270,7 @@ fn write_v2_terminal_failure(
             report_path: None,
             stage: Some(stage),
             errors: vec![diagnostic(code, message)],
+            diagnostic_artifacts: Vec::new(),
             provenance: BTreeMap::new(),
         },
         exit_code,

@@ -3,7 +3,7 @@
 
 //! Process proofs for the protocol-v2 Dynamo scheduled adapter.
 
-#![cfg(feature = "dynamo-offline")]
+#![cfg(feature = "dynosim")]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ fn distribution_id() -> String {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["dynamo_offline", "scheduled"]))
+            .contains(&json!(["dynosim", "scheduled"]))
     );
     capabilities["distribution_id"].as_str().unwrap().to_owned()
 }
@@ -129,7 +129,7 @@ fn envelope(
             },
             "artifact_target": artifact_target,
             "backend": {
-                "type": "dynamo_offline",
+                "type": "dynosim",
                 "config": {
                     "sla": {"e2e_ms": 1000.0},
                     "artifacts": {
@@ -191,7 +191,7 @@ fn assert_success(
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "dynamo_offline");
+    assert_eq!(terminal["provenance"]["backend"], "dynosim");
     assert_eq!(terminal["provenance"]["workload"], workload);
     assert_eq!(terminal["provenance"]["parity_shared_fields"], "77");
     assert_eq!(
@@ -202,7 +202,7 @@ fn assert_success(
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
     assert_eq!(native["run"]["distribution_id"], distribution_id);
-    assert_eq!(native["run"]["backend"], "dynamo_offline");
+    assert_eq!(native["run"]["backend"], "dynosim");
     assert_eq!(native["run"]["workload"], workload);
     assert_eq!(native["run"]["extensions"], json!([]));
     assert_eq!(

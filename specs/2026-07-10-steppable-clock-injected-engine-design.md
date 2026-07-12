@@ -353,7 +353,7 @@ benchmark both use the Clock-injected `aiperf-transport-http` hyper client.
 
 The third mode is now built as an explicitly optional application composition:
 
-- Cargo feature `aiperf/dynamo-offline` is off by default and alone exposes the
+- Cargo feature `aiperf/dynosim` is off by default and alone exposes the
   `--offline`, `--engine-profile`, topology, worker-pool, and router CLI options. It
   uses the sibling `dynamo-aiperf-native/lib/mocker` checkout; default AIPerf builds
   do not compile or expose the Dynamo adapter.
@@ -361,7 +361,7 @@ The third mode is now built as an explicitly optional application composition:
   backend-neutral two-queue DES pump. Clock tasks win equal-time ties, so authored
   arrivals enter the batch before an engine pass, and a source step that crosses a
   parked Clock deadline is rejected.
-- `aiperf::dynamo_offline` owns the `Rc`/`RefCell` engine host, completion mailboxes,
+- `aiperf::dynosim` owns the `Rc`/`RefCell` engine host, completion mailboxes,
   OpenAI request encoder, and the `RequestSink<HttpRequest>` / `TurnDispatcher` /
   `GraphSink` adapters. Concurrency, continuation-priority request rate, fixed trace,
   user-centric, and Graph-IR workloads all run without HTTP on one `SimClock` and
@@ -479,7 +479,7 @@ it is not a DynoSim/Mocker feature gap.
 
 The steppable engine adapter, virtual-clock pump, topology/router/trace support,
 parity checks, and artifact APIs remain implemented behind the `aiperf`
-library's `dynamo-offline` feature. The native `aiperf --offline` executable and
+library's `dynosim` feature. The native `aiperf --offline` executable and
 its CLI test matrix are deleted with the native CLI. Runner protocol v1 does
 not yet carry an offline backend request, so this implementation is currently
 library-only and must not be presented as an AIPerf end-user execution mode.
@@ -494,7 +494,7 @@ subprocess coverage for the full fail-closed capability/parity matrix.
 
 `2026-07-11-aiperf-runner-only-execution-surface-design.md` is authoritative
 for the missing product projection identified above. It defines the
-feature-gated `dynamo_offline` runner backend, feature forwarding, authored
+feature-gated `dynosim` runner backend, feature forwarding, authored
 engine/router/topology configuration, scheduled and Graph workload pairing,
 capability advertisement, preparation order, native-v2 provenance, and the
 subprocess parity/fail-closed matrix.
@@ -509,7 +509,7 @@ Dynamo-owned product and is never used as an AIPerf execution fallback.
 
 The existing source-trace handle bypass now also accepts the dataset seam's exact
 `Turn::raw_token_ids` handle. Offline preparation skips endpoint JSON formatting
-and request-body serialization for such a turn. `DynamoOfflineSink` resolves the
+and request-body serialization for such a turn. `DynosimSink` resolves the
 validated segment and submits those IDs directly through `dispatch_tokens` before
 considering trace-hash synthesis or the ordinary request encoder.
 
@@ -524,7 +524,7 @@ descriptor used online and verifies exact prompt/completion usage in native-v2.
 **Wall-clock in-process online replay (`replay_mode=online`) is built and runner-reachable.**
 Supersedes the implicit assumption that the steppable engine is driven only by the
 `SimClock` DES pump. The same passive `SteppableReplay` engine, `EngineHost`,
-`DynamoOfflineSink`, materializer, observer, native accumulator, and report are now
+`DynosimSink`, materializer, observer, native accumulator, and report are now
 also driven under the **real wall clock** by `aiperf_graph::runtime::drive_real_with_source`
 — the equivalent of Dynamo's `--replay-mode online`. The real-time driver steps the
 engine at each event's own sim time (`set_time_ns(at_ns); step(at_ns)`) but sleeps to
@@ -540,13 +540,13 @@ and `run_graph_workload_online[_deferred]`, plus `EngineHost::new_real`. AIPerf 
 trace through its **own** scheduled/graph flow; the mocker's own trace driver is never used
 online.
 
-The runner exposes it through the `dynamo_offline` backend's `replay_mode` field
-(`offline` default | `online`), threaded through `ValidatedDynamoOfflineBackend` /
-`DynamoOfflineExecutor`; online branches select the wall-clock entrypoints, verify a relaxed
+The runner exposes it through the `dynosim` backend's `replay_mode` field
+(`offline` default | `online`), threaded through `ValidatedDynosimBackend` /
+`DynosimExecutor`; online branches select the wall-clock entrypoints, verify a relaxed
 online parity (counts exact, no byte bail), and report `clock=real` / `mode=online:*`.
 `aiperf-metrics` now accepts `ReportClockKind::Real` for the Dynamo report block. Python
-requires no change: the `dynamo_offline` backend `config` is a free-form dict that forwards
-`replay_mode` verbatim. An apples-to-apples gate (`aiperf::dynamo_offline` tests) drives
+requires no change: the `dynosim` backend `config` is a free-form dict that forwards
+`replay_mode` verbatim. An apples-to-apples gate (`aiperf::dynosim` tests) drives
 byte-identical native-format hash-block tokens (`TurnTrace::synthesize_tokens`) through both
 AIPerf online and Dynamo's native `simulate_concurrency_live_requests` real-clock driver and
 asserts counts exact, every latency stat within 3% (measured ttft 1.4% / e2e 1.0% / itl 0.7%),

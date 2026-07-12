@@ -470,7 +470,7 @@ complete-body delivery, cancellation classification, and CLI validation.
 
 The shared policies are now consumed by the in-process Dynamo backend as well
 as HTTP. Backend-neutral run functions receive `{Clock, HttpRequestDispatcher}`;
-offline composition supplies `SimClock + DynamoOfflineSink` and merges ramp,
+offline composition supplies `SimClock + DynosimSink` and merges ramp,
 cancellation, issuer, and engine deadlines in the same DES pump.
 
 - paced offline workloads support session- and prefill-concurrency ramps;

@@ -14,7 +14,7 @@
 //! seams. Named compile-time extension composition lives in `aiperf_extensions`
 //! and is owned by the runner, so extension crates never need a dependency cycle
 //! through this runtime crate.
-//! With the `dynamo-offline` Cargo feature, [`dynamo_offline`] composes the
+//! With the `dynosim` Cargo feature, [`dynosim`] composes the
 //! same workloads and observers with `SimClock` plus Dynamo's passive mock
 //! engine for deterministic, socket-free co-simulation.
 
@@ -23,8 +23,8 @@ pub mod adaptive;
 pub mod agentic;
 pub mod agentic_gateway;
 pub mod ancillary;
-#[cfg(feature = "dynamo-offline")]
-pub mod dynamo_offline;
+#[cfg(feature = "dynosim")]
+pub mod dynosim;
 pub mod evaluation;
 pub mod fixed_schedule;
 pub mod grpc;

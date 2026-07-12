@@ -3,7 +3,7 @@
 
 //! Process-level reachability proofs for the feature-bearing offline runner.
 
-#![cfg(feature = "dynamo-offline")]
+#![cfg(feature = "dynosim")]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -40,7 +40,7 @@ fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Va
             },
             "artifact_target": artifact_target,
             "backend": {
-                "type": "dynamo_offline",
+                "type": "dynosim",
                 "config": {
                     "artifacts": {
                         "report_json": "dynamo/report.json",
@@ -173,19 +173,19 @@ fn capabilities_advertise_both_executable_offline_pairs() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|backend| backend["id"] == "dynamo_offline")
+            .any(|backend| backend["id"] == "dynosim")
     );
     assert!(
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["dynamo_offline", "graph"]))
+            .contains(&json!(["dynosim", "graph"]))
     );
     assert!(
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["dynamo_offline", "scheduled"]))
+            .contains(&json!(["dynosim", "scheduled"]))
     );
 }
 
@@ -212,7 +212,7 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     );
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "dynamo_offline");
+    assert_eq!(terminal["provenance"]["backend"], "dynosim");
     assert_eq!(terminal["provenance"]["workload"], "graph");
     assert_eq!(terminal["provenance"]["phase_count"], "2");
     assert_eq!(terminal["provenance"]["parity_shared_fields"], "74");
@@ -223,7 +223,7 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     let native: Value = serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
     assert_eq!(native["run"]["distribution_id"], distribution_id);
-    assert_eq!(native["run"]["backend"], "dynamo_offline");
+    assert_eq!(native["run"]["backend"], "dynosim");
     assert_eq!(native["run"]["workload"], "graph");
     assert_eq!(native["run"]["extensions"], json!([]));
     assert_eq!(

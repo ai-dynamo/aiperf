@@ -5,7 +5,7 @@
 //!
 //! This module owns only the authored runner boundary. The virtual clock,
 //! steppable engine host, scheduling loops, cancellation, observers, and exact
-//! AIPerf/Dynamo parity proof remain in [`aiperf::dynamo_offline`]. A registered
+//! AIPerf/Dynamo parity proof remain in [`aiperf::dynosim`]. A registered
 //! backend/workload pair supplies one of the typed execution plans below; no
 //! string branch or alternate executable is introduced here.
 //!
@@ -22,7 +22,7 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::dynamo_offline::{
+use aiperf::dynosim::{
     CanonicalSharedMetrics, DeferredOfflineGraphFuture, DeferredOfflineGraphRunFactory,
     DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
     IncrementalOfflineEventDelivery, OfflineAicConfig, OfflineDirectGraphReport,
@@ -95,10 +95,10 @@ use crate::registry::{
 };
 
 /// Stable runner-registry ID for the in-process Dynamo backend.
-pub const DYNAMO_OFFLINE_BACKEND_ID: &str = "dynamo_offline";
+pub const DYNOSIM_BACKEND_ID: &str = "dynosim";
 
-static DYNAMO_OFFLINE_BACKEND_DESCRIPTOR: RunnerBackendDescriptor = RunnerBackendDescriptor {
-    id: DYNAMO_OFFLINE_BACKEND_ID,
+static DYNOSIM_BACKEND_DESCRIPTOR: RunnerBackendDescriptor = RunnerBackendDescriptor {
+    id: DYNOSIM_BACKEND_ID,
     description: "Dynamo passive-engine co-simulation on one deterministic SimClock",
     clock: RunnerClockKind::Sim,
     semantic_responses: false,
@@ -178,7 +178,7 @@ impl DynamoBuildFeature {
 /// Authored offline deployment topology.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum DynamoOfflineTopologySpec {
+pub enum DynosimTopologySpec {
     /// One eventized aggregate worker without a routing choice.
     #[default]
     Single,
@@ -188,7 +188,7 @@ pub enum DynamoOfflineTopologySpec {
     Disaggregated,
 }
 
-impl DynamoOfflineTopologySpec {
+impl DynosimTopologySpec {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Single => "single",
@@ -206,12 +206,12 @@ impl DynamoOfflineTopologySpec {
     }
 }
 
-impl From<DynamoOfflineTopologySpec> for OfflineTopology {
-    fn from(value: DynamoOfflineTopologySpec) -> Self {
+impl From<DynosimTopologySpec> for OfflineTopology {
+    fn from(value: DynosimTopologySpec) -> Self {
         match value {
-            DynamoOfflineTopologySpec::Single => Self::Single,
-            DynamoOfflineTopologySpec::Aggregated => Self::Aggregated,
-            DynamoOfflineTopologySpec::Disaggregated => Self::Disaggregated,
+            DynosimTopologySpec::Single => Self::Single,
+            DynosimTopologySpec::Aggregated => Self::Aggregated,
+            DynosimTopologySpec::Disaggregated => Self::Disaggregated,
         }
     }
 }
@@ -251,7 +251,7 @@ impl DynamoReplayModeSpec {
 /// Authored router policy for routed offline topologies.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum DynamoOfflineRouterSpec {
+pub enum DynosimRouterSpec {
     /// Stable deterministic worker rotation.
     #[default]
     RoundRobin,
@@ -259,7 +259,7 @@ pub enum DynamoOfflineRouterSpec {
     Kv,
 }
 
-impl DynamoOfflineRouterSpec {
+impl DynosimRouterSpec {
     const fn as_str(self) -> &'static str {
         match self {
             Self::RoundRobin => "round_robin",
@@ -275,11 +275,11 @@ impl DynamoOfflineRouterSpec {
     }
 }
 
-impl From<DynamoOfflineRouterSpec> for OfflineRouterMode {
-    fn from(value: DynamoOfflineRouterSpec) -> Self {
+impl From<DynosimRouterSpec> for OfflineRouterMode {
+    fn from(value: DynosimRouterSpec) -> Self {
         match value {
-            DynamoOfflineRouterSpec::RoundRobin => Self::RoundRobin,
-            DynamoOfflineRouterSpec::Kv => Self::Kv,
+            DynosimRouterSpec::RoundRobin => Self::RoundRobin,
+            DynosimRouterSpec::Kv => Self::Kv,
         }
     }
 }
@@ -287,7 +287,7 @@ impl From<DynamoOfflineRouterSpec> for OfflineRouterMode {
 /// Strict structured AIConfigurator overrides for offline timing.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DynamoOfflineAicSpec {
+pub struct DynosimAicSpec {
     /// Serving backend identity.
     #[serde(default)]
     pub backend: Option<String>,
@@ -335,7 +335,7 @@ pub struct DynamoOfflineAicSpec {
     pub nextn_accept_rates: Option<String>,
 }
 
-impl DynamoOfflineAicSpec {
+impl DynosimAicSpec {
     fn requested(&self) -> bool {
         self.backend.is_some()
             || self.system.is_some()
@@ -401,7 +401,7 @@ impl DynamoOfflineAicSpec {
 /// Canonical goodput thresholds owned by Dynamo's collector.
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DynamoOfflineSlaSpec {
+pub struct DynosimSlaSpec {
     /// Maximum time to first token in milliseconds.
     #[serde(default)]
     pub ttft_ms: Option<f64>,
@@ -413,7 +413,7 @@ pub struct DynamoOfflineSlaSpec {
     pub e2e_ms: Option<f64>,
 }
 
-impl DynamoOfflineSlaSpec {
+impl DynosimSlaSpec {
     fn validate(&self) -> Result<()> {
         for (name, value) in [
             ("sla.ttft_ms", self.ttft_ms),
@@ -470,7 +470,7 @@ impl From<DynamoKvEventVisibilitySpec> for OfflineKvEventVisibility {
 /// Backend-specific artifacts written after a successful offline run.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DynamoOfflineArtifactSpec {
+pub struct DynosimArtifactSpec {
     /// Canonical aggregate Dynamo JSON relative to the run artifact target.
     #[serde(default)]
     pub report_json: Option<PathBuf>,
@@ -485,7 +485,7 @@ pub struct DynamoOfflineArtifactSpec {
     pub kv_event_visibility: Option<DynamoKvEventVisibilitySpec>,
 }
 
-impl DynamoOfflineArtifactSpec {
+impl DynosimArtifactSpec {
     fn validate(&self) -> Result<()> {
         ensure!(
             self.kv_event_visibility.is_none() || self.worker_artifacts_json.is_some(),
@@ -516,10 +516,10 @@ impl DynamoOfflineArtifactSpec {
     }
 }
 
-/// Strict authored configuration owned by the `dynamo_offline` backend.
+/// Strict authored configuration owned by the `dynosim` backend.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DynamoOfflineBackendSpec {
+pub struct DynosimBackendSpec {
     /// Optional JSON profile consumed by Dynamo's canonical engine parser.
     #[serde(default)]
     pub engine_profile: Option<PathBuf>,
@@ -543,16 +543,16 @@ pub struct DynamoOfflineBackendSpec {
     pub router_model_name: Option<String>,
     /// Optional structured AIConfigurator overrides.
     #[serde(default)]
-    pub aic: Option<DynamoOfflineAicSpec>,
+    pub aic: Option<DynosimAicSpec>,
     /// Capture backend per-request records even without a JSONL artifact.
     #[serde(default)]
     pub capture_per_request: bool,
     /// Canonical backend-owned goodput thresholds.
     #[serde(default)]
-    pub sla: DynamoOfflineSlaSpec,
+    pub sla: DynosimSlaSpec,
     /// Deployment topology.
     #[serde(default)]
-    pub topology: DynamoOfflineTopologySpec,
+    pub topology: DynosimTopologySpec,
     /// Aggregate worker count.
     #[serde(default = "one")]
     pub workers: usize,
@@ -564,7 +564,7 @@ pub struct DynamoOfflineBackendSpec {
     pub decode_workers: usize,
     /// Router policy for routed topologies.
     #[serde(default)]
-    pub router_mode: DynamoOfflineRouterSpec,
+    pub router_mode: DynosimRouterSpec,
     /// Clock axis: deterministic virtual replay (default) or wall-clock
     /// in-process replay for live-throughput measurement.
     #[serde(default)]
@@ -574,15 +574,15 @@ pub struct DynamoOfflineBackendSpec {
     pub required_features: BTreeSet<DynamoBuildFeature>,
     /// Backend-owned output artifacts.
     #[serde(default)]
-    pub artifacts: DynamoOfflineArtifactSpec,
+    pub artifacts: DynosimArtifactSpec,
 }
 
 const fn one() -> usize {
     1
 }
 
-impl DynamoOfflineBackendSpec {
-    fn validate(self) -> Result<ValidatedDynamoOfflineBackend> {
+impl DynosimBackendSpec {
+    fn validate(self) -> Result<ValidatedDynosimBackend> {
         ensure!(
             self.engine_profile.is_none() || self.engine.is_none(),
             "engine_profile conflicts with inline engine"
@@ -602,7 +602,7 @@ impl DynamoOfflineBackendSpec {
             self.prefill_engine.is_some() == self.decode_engine.is_some(),
             "prefill_engine and decode_engine must be authored together"
         );
-        if self.topology != DynamoOfflineTopologySpec::Disaggregated {
+        if self.topology != DynosimTopologySpec::Disaggregated {
             ensure!(
                 self.prefill_engine.is_none(),
                 "prefill_engine/decode_engine require topology=disaggregated"
@@ -618,7 +618,7 @@ impl DynamoOfflineBackendSpec {
         if self
             .aic
             .as_ref()
-            .is_some_and(DynamoOfflineAicSpec::requested)
+            .is_some_and(DynosimAicSpec::requested)
             || [&self.engine, &self.prefill_engine, &self.decode_engine]
                 .into_iter()
                 .flatten()
@@ -646,8 +646,8 @@ impl DynamoOfflineBackendSpec {
         let artifacts = self.artifacts;
         let aic = self
             .aic
-            .filter(DynamoOfflineAicSpec::requested)
-            .map(DynamoOfflineAicSpec::into_runtime);
+            .filter(DynosimAicSpec::requested)
+            .map(DynosimAicSpec::into_runtime);
         let capture_per_request = self.capture_per_request || artifacts.per_request_jsonl.is_some();
         let mut engine = OfflineEngineConfig {
             profile: self.engine_profile,
@@ -667,7 +667,7 @@ impl DynamoOfflineBackendSpec {
             ..OfflineEngineConfig::default()
         };
         engine = engine.with_sla_thresholds(self.sla.ttft_ms, self.sla.itl_ms, self.sla.e2e_ms)?;
-        Ok(ValidatedDynamoOfflineBackend {
+        Ok(ValidatedDynosimBackend {
             engine,
             artifacts,
             sla: self.sla,
@@ -735,17 +735,17 @@ fn validate_relative_artifact_path(name: &str, path: &Path) -> Result<()> {
 
 /// Strictly validated runner backend state retained until pair preparation.
 #[derive(Clone, Debug)]
-pub struct ValidatedDynamoOfflineBackend {
+pub struct ValidatedDynosimBackend {
     engine: OfflineEngineConfig,
-    artifacts: DynamoOfflineArtifactSpec,
-    sla: DynamoOfflineSlaSpec,
-    topology: DynamoOfflineTopologySpec,
-    router_mode: DynamoOfflineRouterSpec,
+    artifacts: DynosimArtifactSpec,
+    sla: DynosimSlaSpec,
+    topology: DynosimTopologySpec,
+    router_mode: DynosimRouterSpec,
     replay_mode: DynamoReplayModeSpec,
     required_features: BTreeSet<DynamoBuildFeature>,
 }
 
-impl ValidatedDynamoOfflineBackend {
+impl ValidatedDynosimBackend {
     /// Report/provenance prefix for the selected clock axis.
     ///
     /// `"offline"` for deterministic virtual-clock replay, `"online"` for
@@ -763,7 +763,7 @@ impl ValidatedDynamoOfflineBackend {
         &self,
         model: impl Into<String>,
         artifact_target: impl Into<PathBuf>,
-    ) -> Result<DynamoOfflineExecutor> {
+    ) -> Result<DynosimExecutor> {
         let model = model.into();
         ensure!(!model.trim().is_empty(), "offline model cannot be empty");
         let artifact_target = artifact_target.into();
@@ -775,7 +775,7 @@ impl ValidatedDynamoOfflineBackend {
         if engine.router_model_name.is_none() {
             engine.router_model_name = Some(model.clone());
         }
-        Ok(DynamoOfflineExecutor {
+        Ok(DynosimExecutor {
             engine,
             artifacts: self.artifacts.clone(),
             topology: self.topology,
@@ -789,7 +789,7 @@ impl ValidatedDynamoOfflineBackend {
 }
 
 fn dynamo_report_facts(
-    backend: &ValidatedDynamoOfflineBackend,
+    backend: &ValidatedDynosimBackend,
     parity: OfflineMetricParity,
     performance: &loadgen_core::collector::TraceSimulationReport,
 ) -> Result<ReportDynamoRunInfo> {
@@ -830,11 +830,11 @@ fn dynamo_report_facts(
 
 /// Registered strict decoder for the feature-bearing offline backend.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DynamoOfflineBackendFactory;
+pub struct DynosimBackendFactory;
 
-impl RunnerBackendFactory for DynamoOfflineBackendFactory {
+impl RunnerBackendFactory for DynosimBackendFactory {
     fn descriptor(&self) -> &'static RunnerBackendDescriptor {
-        &DYNAMO_OFFLINE_BACKEND_DESCRIPTOR
+        &DYNOSIM_BACKEND_DESCRIPTOR
     }
 
     fn validate(
@@ -842,8 +842,8 @@ impl RunnerBackendFactory for DynamoOfflineBackendFactory {
         authored: &RawValue,
         _requirements: &WorkloadRequirements,
     ) -> Result<Box<dyn ValidatedBackendConfig>> {
-        let spec = serde_json::from_str::<DynamoOfflineBackendSpec>(authored.get())
-            .map_err(|error| anyhow!("invalid dynamo_offline backend config: {error}"))?;
+        let spec = serde_json::from_str::<DynosimBackendSpec>(authored.get())
+            .map_err(|error| anyhow!("invalid dynosim backend config: {error}"))?;
         Ok(Box::new(spec.validate()?))
     }
 }
@@ -854,28 +854,28 @@ impl RunnerBackendFactory for DynamoOfflineBackendFactory {
 /// Direct graph preparation resolves its authored-input adapter from the
 /// coordinator-owned [`RunnerRunContext`], so the pair never constructs or
 /// retains a private adapter universe.
-pub fn register_dynamo_offline_backend(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_backend(Arc::new(DynamoOfflineBackendFactory))?;
-    builder.register_pair(Arc::new(DynamoOfflineGraphPairFactory::default()))?;
-    builder.register_pair(Arc::new(DynamoOfflineScheduledPairFactory::default()))
+pub fn register_dynosim_backend(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+    builder.register_backend(Arc::new(DynosimBackendFactory))?;
+    builder.register_pair(Arc::new(DynosimGraphPairFactory::default()))?;
+    builder.register_pair(Arc::new(DynosimScheduledPairFactory::default()))
 }
 
 /// Downcast one pair-factory backend value with an actionable invariant error.
-pub fn validated_dynamo_offline_backend(
+pub fn validated_dynosim_backend(
     config: &dyn ValidatedBackendConfig,
-) -> Result<&ValidatedDynamoOfflineBackend> {
+) -> Result<&ValidatedDynosimBackend> {
     config
         .as_any()
-        .downcast_ref::<ValidatedDynamoOfflineBackend>()
-        .ok_or_else(|| anyhow!("dynamo_offline pair received a different backend config type"))
+        .downcast_ref::<ValidatedDynosimBackend>()
+        .ok_or_else(|| anyhow!("dynosim pair received a different backend config type"))
 }
 
 #[derive(Clone)]
-struct DynamoOfflineScheduledPairFactory {
+struct DynosimScheduledPairFactory {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl Default for DynamoOfflineScheduledPairFactory {
+impl Default for DynosimScheduledPairFactory {
     fn default() -> Self {
         Self {
             tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
@@ -883,15 +883,15 @@ impl Default for DynamoOfflineScheduledPairFactory {
     }
 }
 
-impl fmt::Debug for DynamoOfflineScheduledPairFactory {
+impl fmt::Debug for DynosimScheduledPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("DynamoOfflineScheduledPairFactory")
+        formatter.write_str("DynosimScheduledPairFactory")
     }
 }
 
-impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
+impl RunnerPairFactory for DynosimScheduledPairFactory {
     fn backend_id(&self) -> &'static str {
-        DYNAMO_OFFLINE_BACKEND_ID
+        DYNOSIM_BACKEND_ID
     }
 
     fn workload_id(&self) -> &'static str {
@@ -903,11 +903,11 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         backend: &dyn ValidatedBackendConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        let _ = validated_dynamo_offline_backend(backend)?;
+        let _ = validated_dynosim_backend(backend)?;
         let workload = validated_scheduled_workload(workload)?;
         ensure!(
             workload.worker_count == 1,
-            "dynamo_offline scheduled execution owns one LocalSet around one globally contended engine; worker_count must be 1"
+            "dynosim scheduled execution owns one LocalSet around one globally contended engine; worker_count must be 1"
         );
         validate_offline_scheduled_phases(&workload.phases)
     }
@@ -922,7 +922,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         self.validate_pair(backend, workload)?;
         ensure!(
             context.sidecar_inputs().is_empty(),
-            "dynamo_offline scheduled execution does not support online sidecars"
+            "dynosim scheduled execution does not support online sidecars"
         );
         ensure!(
             run.artifacts.records_path.is_none()
@@ -930,7 +930,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
                 && run.artifacts.outputs_path.is_none()
                 && !run.artifacts.trace
                 && run.artifacts.user_files.is_empty(),
-            "dynamo_offline scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
+            "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
         );
         ensure!(
             !run.artifact_target.exists(),
@@ -946,7 +946,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         Err(anyhow!(
-            "dynamo_offline + scheduled preparation requires the coordinator-owned RunnerRunContext"
+            "dynosim + scheduled preparation requires the coordinator-owned RunnerRunContext"
         ))
     }
 
@@ -957,7 +957,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         backend: Box<dyn ValidatedBackendConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        let backend = validated_dynamo_offline_backend(backend.as_ref())?.clone();
+        let backend = validated_dynosim_backend(backend.as_ref())?.clone();
         let workload = validated_scheduled_workload(workload.as_ref())?;
         validate_offline_scheduled_phases(&workload.phases)?;
 
@@ -1020,7 +1020,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             .items
             .first()
             .map(|item| item.name.clone())
-            .ok_or_else(|| anyhow!("dynamo_offline scheduled execution requires a model"))?;
+            .ok_or_else(|| anyhow!("dynosim scheduled execution requires a model"))?;
 
         let adaptive_paths = [
             Path::new("adaptive_scale_events.jsonl"),
@@ -1045,10 +1045,10 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             );
         }
 
-        Ok(Box::new(PreparedDynamoOfflineScheduledOperation {
+        Ok(Box::new(PreparedDynosimScheduledOperation {
             backend,
             dataset: prepared_dataset,
-            source_factory: DynamoOfflinePreparedConversationSourceFactory {
+            source_factory: DynosimPreparedConversationSourceFactory {
                 endpoint_resolver,
                 samplers: context.product_registry().samplers().clone(),
             },
@@ -1070,7 +1070,7 @@ fn validated_scheduled_workload(
     config
         .as_any()
         .downcast_ref::<ScheduledWorkloadConfigV2>()
-        .ok_or_else(|| anyhow!("dynamo_offline scheduled pair received a different workload type"))
+        .ok_or_else(|| anyhow!("dynosim scheduled pair received a different workload type"))
 }
 
 fn validate_offline_scheduled_phases(phases: &[PhaseSpec]) -> Result<()> {
@@ -1162,12 +1162,12 @@ fn validate_offline_scheduled_phases(phases: &[PhaseSpec]) -> Result<()> {
     Ok(())
 }
 
-struct DynamoOfflinePreparedConversationSourceFactory {
+struct DynosimPreparedConversationSourceFactory {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     samplers: SamplerRegistry,
 }
 
-impl NativeConversationSourceFactory for DynamoOfflinePreparedConversationSourceFactory {
+impl NativeConversationSourceFactory for DynosimPreparedConversationSourceFactory {
     fn build(
         &self,
         dataset: aiperf_dataset::Dataset,
@@ -1204,10 +1204,10 @@ impl NativeConversationSourceFactory for DynamoOfflinePreparedConversationSource
     }
 }
 
-struct PreparedDynamoOfflineScheduledOperation {
-    backend: ValidatedDynamoOfflineBackend,
+struct PreparedDynosimScheduledOperation {
+    backend: ValidatedDynosimBackend,
     dataset: PreparedDatasetInput,
-    source_factory: DynamoOfflinePreparedConversationSourceFactory,
+    source_factory: DynosimPreparedConversationSourceFactory,
     tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
     phases: Vec<PhaseSpec>,
@@ -1218,10 +1218,10 @@ struct PreparedDynamoOfflineScheduledOperation {
     benchmark_id: String,
 }
 
-impl fmt::Debug for PreparedDynamoOfflineScheduledOperation {
+impl fmt::Debug for PreparedDynosimScheduledOperation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PreparedDynamoOfflineScheduledOperation")
+            .debug_struct("PreparedDynosimScheduledOperation")
             .field("phase_count", &self.phases.len())
             .field("model", &self.model)
             .field("artifact_target", &self.artifact_target)
@@ -1229,7 +1229,7 @@ impl fmt::Debug for PreparedDynamoOfflineScheduledOperation {
     }
 }
 
-impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
+impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
         let Self {
             backend,
@@ -1282,7 +1282,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                             start_ns,
                             &benchmark_for_factory,
                             &artifact_for_factory,
-                            &["dynamo-offline".to_owned()],
+                            &["dynosim".to_owned()],
                             &shared,
                         )?
                         .with_metrics_config(metrics.clone())
@@ -1417,11 +1417,11 @@ fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
 }
 
 #[derive(Clone)]
-struct DynamoOfflineGraphPairFactory {
+struct DynosimGraphPairFactory {
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl Default for DynamoOfflineGraphPairFactory {
+impl Default for DynosimGraphPairFactory {
     fn default() -> Self {
         Self {
             tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
@@ -1429,17 +1429,17 @@ impl Default for DynamoOfflineGraphPairFactory {
     }
 }
 
-impl fmt::Debug for DynamoOfflineGraphPairFactory {
+impl fmt::Debug for DynosimGraphPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("DynamoOfflineGraphPairFactory")
+            .debug_struct("DynosimGraphPairFactory")
             .finish_non_exhaustive()
     }
 }
 
-impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
+impl RunnerPairFactory for DynosimGraphPairFactory {
     fn backend_id(&self) -> &'static str {
-        DYNAMO_OFFLINE_BACKEND_ID
+        DYNOSIM_BACKEND_ID
     }
 
     fn workload_id(&self) -> &'static str {
@@ -1451,11 +1451,11 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
         backend: &dyn ValidatedBackendConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        let _ = validated_dynamo_offline_backend(backend)?;
+        let _ = validated_dynosim_backend(backend)?;
         let workload = validated_graph_workload(workload)?;
         ensure!(
             workload.worker_count == 1,
-            "dynamo_offline direct graph uses one LocalSet around one globally contended engine; worker_count must be 1"
+            "dynosim direct graph uses one LocalSet around one globally contended engine; worker_count must be 1"
         );
         validate_authored_tokenizer(&workload.tokenizer)?;
         validate_graph_phases(&workload.phases)
@@ -1475,7 +1475,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             .validate_identity(&workload.dataset)?;
         ensure!(
             context.sidecar_inputs().is_empty(),
-            "dynamo_offline graph execution does not support online sidecars"
+            "dynosim graph execution does not support online sidecars"
         );
         for (profile_id, profile) in context.endpoint_profiles() {
             let descriptor = context
@@ -1502,7 +1502,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         Err(anyhow!(
-            "dynamo_offline + graph preparation requires the coordinator-owned RunnerRunContext"
+            "dynosim + graph preparation requires the coordinator-owned RunnerRunContext"
         ))
     }
 
@@ -1513,13 +1513,13 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
         backend: Box<dyn ValidatedBackendConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        let backend = validated_dynamo_offline_backend(backend.as_ref())?.clone();
+        let backend = validated_dynosim_backend(backend.as_ref())?.clone();
         let workload = validated_graph_workload(workload.as_ref())?;
         let phases = workload.phases.clone();
         ensure!(
             run.models.items.len() == 1
                 && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
-            "dynamo_offline direct graph requires exactly one round_robin model"
+            "dynosim direct graph requires exactly one round_robin model"
         );
         ensure!(
             run.artifacts.records_path.is_none()
@@ -1527,7 +1527,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
                 && run.artifacts.outputs_path.is_none()
                 && !run.artifacts.trace
                 && run.artifacts.user_files.is_empty(),
-            "dynamo_offline direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
+            "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
         );
         ensure!(
             !run.artifact_target.exists(),
@@ -1554,7 +1554,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
         let default_max_tokens = prepared.default_output_tokens;
         let allow_dataset_wrap = prepared.allow_dataset_wrap;
         let random_seed = prepared.random_seed.or(run.identity.random_seed);
-        Ok(Box::new(PreparedDynamoOfflineGraphOperation {
+        Ok(Box::new(PreparedDynosimGraphOperation {
             backend,
             input: prepared.bundle,
             phases,
@@ -1577,7 +1577,7 @@ fn validated_graph_workload(
     config
         .as_any()
         .downcast_ref::<GraphWorkloadConfigV2>()
-        .ok_or_else(|| anyhow!("dynamo_offline graph pair received a different workload type"))
+        .ok_or_else(|| anyhow!("dynosim graph pair received a different workload type"))
 }
 
 struct OfflineGraphRunnerEventSink {
@@ -1609,11 +1609,11 @@ impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
     }
 }
 
-struct DynamoOfflineGraphPhaseBackendFactory {
+struct DynosimGraphPhaseBackendFactory {
     backends: Rc<dyn OfflineGraphBackendFactory>,
 }
 
-impl RunnerGraphPhaseBackendFactory for DynamoOfflineGraphPhaseBackendFactory {
+impl RunnerGraphPhaseBackendFactory for DynosimGraphPhaseBackendFactory {
     fn prepare_backend(
         &self,
         config: GraphPhaseBackendConfig,
@@ -1651,8 +1651,8 @@ impl RunnerGraphPhaseBackendFactory for DynamoOfflineGraphPhaseBackendFactory {
     }
 }
 
-struct PreparedDynamoOfflineGraphOperation {
-    backend: ValidatedDynamoOfflineBackend,
+struct PreparedDynosimGraphOperation {
+    backend: ValidatedDynosimBackend,
     input: GraphInputBundle,
     phases: Vec<PhaseSpec>,
     metrics: MetricsConfig,
@@ -1666,10 +1666,10 @@ struct PreparedDynamoOfflineGraphOperation {
     phase_count: usize,
 }
 
-impl fmt::Debug for PreparedDynamoOfflineGraphOperation {
+impl fmt::Debug for PreparedDynosimGraphOperation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PreparedDynamoOfflineGraphOperation")
+            .debug_struct("PreparedDynosimGraphOperation")
             .field("roots", &self.input.plans.len())
             .field("model", &self.model)
             .field("artifact_target", &self.artifact_target)
@@ -1677,7 +1677,7 @@ impl fmt::Debug for PreparedDynamoOfflineGraphOperation {
     }
 }
 
-impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
+impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
         let Self {
             backend,
@@ -1707,7 +1707,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
         let artifact_dir = artifact_target.clone();
         let factory: Box<dyn DeferredOfflineGraphRunFactory> = Box::new(
             move |clock: Rc<dyn Clock>, backends: Rc<dyn OfflineGraphBackendFactory>| {
-                let backends = DynamoOfflineGraphPhaseBackendFactory { backends };
+                let backends = DynosimGraphPhaseBackendFactory { backends };
                 Ok(Box::pin(async move {
                     let phased = run_graph_phases(
                         &phases,
@@ -1827,7 +1827,7 @@ fn offline_metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
 
 /// Resolved backend artifact paths committed after successful execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DynamoOfflineArtifactOutputs {
+pub struct DynosimArtifactOutputs {
     /// Canonical aggregate Dynamo report, when requested.
     pub report_json: Option<PathBuf>,
     /// Canonical per-request Dynamo records, when requested.
@@ -1842,24 +1842,24 @@ pub struct DynamoOfflineArtifactOutputs {
 /// initializes exactly one library-owned engine/clock composition, waits for
 /// its exact parity proof, and only then writes optional backend artifacts.
 #[derive(Clone, Debug)]
-pub struct DynamoOfflineExecutor {
+pub struct DynosimExecutor {
     engine: OfflineEngineConfig,
-    artifacts: DynamoOfflineArtifactSpec,
-    topology: DynamoOfflineTopologySpec,
-    router_mode: DynamoOfflineRouterSpec,
+    artifacts: DynosimArtifactSpec,
+    topology: DynosimTopologySpec,
+    router_mode: DynosimRouterSpec,
     replay_mode: DynamoReplayModeSpec,
     required_features: BTreeSet<DynamoBuildFeature>,
     model: String,
     artifact_target: PathBuf,
 }
 
-impl DynamoOfflineExecutor {
+impl DynosimExecutor {
     /// Run any registered scheduled workload over the shared virtual clock and
-    /// dispatcher supplied by `aiperf::dynamo_offline`.
+    /// dispatcher supplied by `aiperf::dynosim`.
     pub fn execute_scheduled(
         self,
         workload: Box<dyn OfflineScheduledRunFactory>,
-    ) -> Result<DynamoOfflineScheduledOutcome> {
+    ) -> Result<DynosimScheduledOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
@@ -1880,7 +1880,7 @@ impl DynamoOfflineExecutor {
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
         )?;
         let provenance = self.provenance(report.parity);
-        Ok(DynamoOfflineScheduledOutcome {
+        Ok(DynosimScheduledOutcome {
             report,
             artifacts,
             provenance,
@@ -1892,7 +1892,7 @@ impl DynamoOfflineExecutor {
     pub fn execute_scheduled_deferred(
         self,
         workload: Box<dyn DeferredOfflineScheduledRunFactory>,
-    ) -> Result<DynamoOfflineScheduledOutcome> {
+    ) -> Result<DynosimScheduledOutcome> {
         self.execute_scheduled_deferred_with_delivery(
             workload,
             Rc::new(IncrementalOfflineEventDelivery),
@@ -1904,7 +1904,7 @@ impl DynamoOfflineExecutor {
         self,
         workload: Box<dyn DeferredOfflineScheduledRunFactory>,
         event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
-    ) -> Result<DynamoOfflineScheduledOutcome> {
+    ) -> Result<DynosimScheduledOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
@@ -1935,7 +1935,7 @@ impl DynamoOfflineExecutor {
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
         )?;
         let provenance = self.provenance(report.parity);
-        Ok(DynamoOfflineScheduledOutcome {
+        Ok(DynosimScheduledOutcome {
             report,
             artifacts,
             provenance,
@@ -1947,7 +1947,7 @@ impl DynamoOfflineExecutor {
     /// Direct authored Graph-IR pair factories should use the direct-plan API
     /// when it is supplied by the graph workload module; this method preserves
     /// the existing library benchmark consumer and its DES/parity gates.
-    pub fn execute_graph_bench(self, mut config: BenchConfig) -> Result<DynamoOfflineGraphOutcome> {
+    pub fn execute_graph_bench(self, mut config: BenchConfig) -> Result<DynosimGraphOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
@@ -1960,7 +1960,7 @@ impl DynamoOfflineExecutor {
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
         )?;
         let provenance = self.provenance(report.parity);
-        Ok(DynamoOfflineGraphOutcome {
+        Ok(DynosimGraphOutcome {
             report,
             artifacts,
             provenance,
@@ -1979,7 +1979,7 @@ impl DynamoOfflineExecutor {
         node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
         node_failure: Rc<dyn NodeFailurePolicy>,
         workload: Box<dyn OfflineGraphRunFactory>,
-    ) -> Result<DynamoOfflineDirectGraphOutcome> {
+    ) -> Result<DynosimDirectGraphOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
@@ -2036,7 +2036,7 @@ impl DynamoOfflineExecutor {
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
         )?;
         let provenance = self.provenance(report.parity);
-        Ok(DynamoOfflineDirectGraphOutcome {
+        Ok(DynosimDirectGraphOutcome {
             report,
             artifacts,
             provenance,
@@ -2051,7 +2051,7 @@ impl DynamoOfflineExecutor {
         default_max_tokens: usize,
         metrics: MetricsConfig,
         workload: Box<dyn DeferredOfflineGraphRunFactory>,
-    ) -> Result<DynamoOfflineDirectGraphOutcome> {
+    ) -> Result<DynosimDirectGraphOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
@@ -2104,7 +2104,7 @@ impl DynamoOfflineExecutor {
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
         )?;
         let provenance = self.provenance(report.parity);
-        Ok(DynamoOfflineDirectGraphOutcome {
+        Ok(DynosimDirectGraphOutcome {
             report,
             artifacts,
             provenance,
@@ -2113,7 +2113,7 @@ impl DynamoOfflineExecutor {
 
     /// Run one canonical Dynamo trace workload through AIPerf's observer and
     /// native metrics stack, retaining the complete byte-exact parity proof.
-    pub fn execute_trace(self, trace: OfflineTraceConfig) -> Result<DynamoOfflineTraceOutcome> {
+    pub fn execute_trace(self, trace: OfflineTraceConfig) -> Result<DynosimTraceOutcome> {
         ensure!(
             !self.replay_mode.is_online(),
             "replay_mode=online drives the trace through AIPerf's own graph flow; \
@@ -2142,7 +2142,7 @@ impl DynamoOfflineExecutor {
             artifacts.worker_artifacts_json = Some(path);
         }
         let provenance = self.provenance(report.parity);
-        Ok(DynamoOfflineTraceOutcome {
+        Ok(DynosimTraceOutcome {
             report,
             artifacts,
             provenance,
@@ -2153,7 +2153,7 @@ impl DynamoOfflineExecutor {
         &self,
         write_report: impl FnOnce(&Path) -> Result<()>,
         write_records: impl FnOnce(&Path) -> Result<()>,
-    ) -> Result<DynamoOfflineArtifactOutputs> {
+    ) -> Result<DynosimArtifactOutputs> {
         let report_json = self
             .artifacts
             .report_json
@@ -2181,7 +2181,7 @@ impl DynamoOfflineExecutor {
         if let Some(path) = &per_request_jsonl {
             write_records(path)?;
         }
-        Ok(DynamoOfflineArtifactOutputs {
+        Ok(DynosimArtifactOutputs {
             report_json,
             per_request_jsonl,
             worker_artifacts_json: None,
@@ -2194,7 +2194,7 @@ impl DynamoOfflineExecutor {
 
     fn provenance(&self, parity: OfflineMetricParity) -> BTreeMap<String, String> {
         BTreeMap::from([
-            ("backend".into(), DYNAMO_OFFLINE_BACKEND_ID.into()),
+            ("backend".into(), DYNOSIM_BACKEND_ID.into()),
             (
                 "clock".into(),
                 if self.replay_mode.is_online() {
@@ -2320,41 +2320,41 @@ fn verify_parity_online(
 }
 
 /// Successful scheduled offline execution and backend-owned outputs.
-pub struct DynamoOfflineScheduledOutcome {
+pub struct DynosimScheduledOutcome {
     /// AIPerf scheduled metrics plus Dynamo's co-observed report.
     pub report: OfflineScheduledReport,
     /// Optional backend-specific artifact paths.
-    pub artifacts: DynamoOfflineArtifactOutputs,
+    pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal/native-report provenance.
     pub provenance: BTreeMap<String, String>,
 }
 
 /// Successful generated Graph-IR offline execution and outputs.
-pub struct DynamoOfflineGraphOutcome {
+pub struct DynosimGraphOutcome {
     /// Graph metrics plus Dynamo's co-observed report.
     pub report: OfflineGraphReport,
     /// Optional backend-specific artifact paths.
-    pub artifacts: DynamoOfflineArtifactOutputs,
+    pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal/native-report provenance.
     pub provenance: BTreeMap<String, String>,
 }
 
 /// Successful direct authored Graph-IR offline execution and outputs.
-pub struct DynamoOfflineDirectGraphOutcome {
+pub struct DynosimDirectGraphOutcome {
     /// Root/trace outcomes, request metrics, and Dynamo parity report.
     pub report: OfflineDirectGraphReport,
     /// Optional backend-specific artifact paths.
-    pub artifacts: DynamoOfflineArtifactOutputs,
+    pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal/native-report provenance.
     pub provenance: BTreeMap<String, String>,
 }
 
 /// Successful canonical trace execution and outputs.
-pub struct DynamoOfflineTraceOutcome {
+pub struct DynosimTraceOutcome {
     /// AIPerf metrics plus Dynamo's co-observed report.
     pub report: OfflineRunReport,
     /// Optional backend-specific artifact paths.
-    pub artifacts: DynamoOfflineArtifactOutputs,
+    pub artifacts: DynosimArtifactOutputs,
     /// Additive terminal/native-report provenance.
     pub provenance: BTreeMap<String, String>,
 }
@@ -2371,7 +2371,7 @@ mod tests {
     }
 
     fn validate(value: Value) -> Result<Box<dyn ValidatedBackendConfig>> {
-        DynamoOfflineBackendFactory.validate(&raw(value), &WorkloadRequirements::default())
+        DynosimBackendFactory.validate(&raw(value), &WorkloadRequirements::default())
     }
 
     #[test]
@@ -2441,18 +2441,18 @@ mod tests {
         let descriptor = registry
             .backend_descriptors()
             .into_iter()
-            .find(|descriptor| descriptor.id == DYNAMO_OFFLINE_BACKEND_ID)
+            .find(|descriptor| descriptor.id == DYNOSIM_BACKEND_ID)
             .unwrap();
         assert!(descriptor.features.contains(&"exact_metric_parity"));
         assert!(
             registry
                 .supported_pairs()
-                .contains(&(DYNAMO_OFFLINE_BACKEND_ID, "graph"))
+                .contains(&(DYNOSIM_BACKEND_ID, "graph"))
         );
         assert!(
             registry
                 .supported_pairs()
-                .contains(&(DYNAMO_OFFLINE_BACKEND_ID, "scheduled"))
+                .contains(&(DYNOSIM_BACKEND_ID, "scheduled"))
         );
     }
 
@@ -2471,7 +2471,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let backend = validated_dynamo_offline_backend(validated.as_ref()).unwrap();
+        let backend = validated_dynosim_backend(validated.as_ref()).unwrap();
         let outcome = backend
             .executor("model", &root)
             .unwrap()
@@ -2489,7 +2489,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(outcome.report.aiperf.completed, 4);
-        assert_eq!(outcome.provenance["backend"], DYNAMO_OFFLINE_BACKEND_ID);
+        assert_eq!(outcome.provenance["backend"], DYNOSIM_BACKEND_ID);
         let report_path = outcome.artifacts.report_json.unwrap();
         let records_path = outcome.artifacts.per_request_jsonl.unwrap();
         assert!(report_path.is_file());
@@ -2523,7 +2523,7 @@ mod tests {
             ))
         });
         let validated = validate(serde_json::json!({})).unwrap();
-        let backend = validated_dynamo_offline_backend(validated.as_ref()).unwrap();
+        let backend = validated_dynosim_backend(validated.as_ref()).unwrap();
         let outcome = backend
             .executor("model", "/tmp/aiperf-direct-graph-unused")
             .unwrap()

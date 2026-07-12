@@ -314,7 +314,7 @@ FIFO executor or a detached Cargo workspace.
 The Graph-IR library/runtime behavior above remains authoritative, while
 `2026-07-11-aiperf-runner-only-execution-surface-design.md` owns its sole product
 entry point. It defines a strict `graph` workload that pairs with `online_http`
-through `drive_real` and feature-gated `dynamo_offline` through
+through `drive_real` and feature-gated `dynosim` through
 `drive_sim_with_source`, using the same runner registries, endpoint bindings,
 worker-local metrics, native-v2 report, and capability handshake as scheduled
 workloads.
@@ -323,3 +323,43 @@ Library tests and transport benches remain algorithm/performance evidence. Graph
 is product-reachable only after real `aiperf-runner` subprocess proofs exist for
 the advertised backend/workload pair; no standalone graph binary or Python graph
 executor is an accepted substitute.
+
+## Addendum — 2026-07-12 (native WEKA and Dynamo recorded traces)
+
+The original parse/build-plane non-goal is superseded for the two recorded graph
+formats. `aiperf-graph::recorded` now owns strict native compilers for recursive
+WEKA trace objects and `dynamo.request.trace.v1` request/tool captures. WEKA accepts
+single JSON files, sorted JSON directories, inline rows, and runner-resolved remote
+rows. Dynamo accepts plain or concatenated-gzip JSONL, numerically ordered segment
+directories, and Dynamo writer prefixes. Its compiler unwraps sink envelopes,
+skips uploader markers, deduplicates repeated records, resolves the first non-self
+parent authority, guards the session forest, selects whole root trees, validates a
+capture-wide block size, and synthesizes virtual negative hashes only when recorded
+replay hashes are absent.
+
+Both formats normalize into the same recorded-request trait boundary and then run
+one LCP-trie implementation for content-parent selection, active-union idle-gap
+warping, interval-order/fan-in edges, causal dispatch/first-token anchors, frozen
+message roles, covered-count reconstruction, theoretical cache counts, and dense
+segment interning. Dynamo session identity remains header-borne and is uniquified
+with the complete graph-instance nonce at dispatch. Explicit
+`synthesis.allow_dataset_wrap` reaches online and offline graph admission; without
+it, an over-concurrent phase cannot silently clone a smaller recorded corpus.
+
+Content synthesis uses the existing `aiperf-rng` contract only:
+`RngRoot`/canonical namespaces, BLAKE3 seed derivation, and the crate's PCG64
+`RandomGenerator`. This deliberately follows the later RNG design ruling and does
+not add a Python SHA-256/Mersenne-Twister duplicate. Consequently, structural,
+timing, token-count, message-boundary, and request-wire parity are source-grounded;
+default synthesized text is reproducible within the native BLAKE3 stream, not
+claimed byte-identical to the superseded Python random stream. The native WEKA and
+Dynamo routes do produce identical prompt/response segment bytes and exact HTTP
+request bodies for equivalent logical traces under that one canonical stream.
+
+Python retains only Config-v2/plugin identity, public-source coordinates, and
+authored projection. It never parses or lowers these formats on the product path.
+The runner's existing object-safe graph-input resolver now selects `dag_jsonl`,
+`weka_trace`, or `dynamo_trace`, strictly decodes the selected authored object once,
+and hands one `GraphInputBundle` to the same online-real, online-mock, or
+feature-gated offline execution path. Native unit, cross-adapter segment parity,
+and strict runner subprocess tests are the conformance gates.

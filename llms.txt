@@ -41,7 +41,7 @@ roots and the Linux isolation closure conditionally add `online_http +
 evaluation` for only the stock NeMo/OpenBench GSM8K canaries; without those
 roots the provider combinations and pair are absent. **OFFLINE-mock** is product-
 reachable through the same Python Config-v2 path when the runner is built with
-the non-default `dynamo-offline` feature; that image adds scheduled and graph
+the non-default `dynosim` feature; that image adds scheduled and graph
 pairs. Unregistered pairs fail closed.
 The open `vllm_generate` endpoint is token-native end to end: its descriptor
 requires validated raw IDs, `aiperf-dataset` stores them as content-addressed
@@ -106,13 +106,13 @@ native segments and HTTP bodies under that canonical stream.
 | `aiperf-transport-http` | the Clock-injected hyper transport plus object-safe endpoint binding (canonical JSON ↔ HTTP URL/body/lifecycle and HTTP/SSE response decoding); h1/h2c/UDS, rustls, trace timing, send-complete cancellation, and reuse strategies | `src/transport/endpoint_binding.rs`, `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-transport-grpc` | Clock-injected raw Tonic transport with an open endpoint-binding registry, exact checked-in KServe DTOs and reference-grounded Riva Prost DTOs, OIP typed/raw tensor conversion, Riva ASR/TTS/NLP codecs, grpc/grpcs TLS, unary/server/bidirectional streaming, optional readiness, native status/trace facts, pooled/never/sticky channels, and post-send cancellation | `src/binding.rs`, `src/codec.rs`, `src/riva_binding.rs`, `src/riva_codec.rs`, `src/riva_proto.rs`, `src/transport.rs`, `src/models.rs`, `src/proto.rs`, `src/raw_codec.rs` |
 | `aiperf-graph` | Backend-neutral Graph-IR dataflow over the unified segment store, canonical DAG plus WEKA/Dynamo recorded-trace compilation/lowering, trait-backed root/arrival/admission/placement/failure policy, shared phase-lifecycle adaptation, ramps/adaptive controls, placement-wide cancellation/prefill updates, DES drivers, and worker-local native metrics merged once at join | `src/input.rs`, `src/lowering.rs`, `src/recorded/`, `src/workload.rs`, `src/placement.rs`, `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; protocol v1 is an isolated Rust compatibility decoder. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; v2 and v1 graph paths share that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic and native gRPC scheduled; attested deployment-owned evaluator roots conditionally add the stock `online_http + evaluation` pair for only the NeMo/OpenBench GSM8K canaries; `dynamo-offline` adds scheduled/graph | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/evaluation_execution.rs`, `src/stock_evaluation.rs`, `src/offline_execution.rs`, `src/agentic_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs` |
-| `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive/static-accuracy paths, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/Clock retry/scoped proxy/report join, legacy stateful agentic seams, and the feature-gated offline implementation | `src/evaluation.rs`, `src/evaluation/`, `src/grpc.rs`, `src/http.rs`, `src/agentic.rs`, `src/dynamo_offline.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/scheduled.rs`, `src/report.rs` |
+| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; protocol v1 is an isolated Rust compatibility decoder. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; v2 and v1 graph paths share that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic and native gRPC scheduled; attested deployment-owned evaluator roots conditionally add the stock `online_http + evaluation` pair for only the NeMo/OpenBench GSM8K canaries; `dynosim` adds scheduled/graph | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/evaluation_execution.rs`, `src/stock_evaluation.rs`, `src/offline_execution.rs`, `src/agentic_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs` |
+| `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive/static-accuracy paths, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/Clock retry/scoped proxy/report join, legacy stateful agentic seams, and the feature-gated offline implementation | `src/evaluation.rs`, `src/evaluation/`, `src/grpc.rs`, `src/http.rs`, `src/agentic.rs`, `src/dynosim.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/scheduled.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
 `aiperf-dataset`, `aiperf-graph`, `aiperf-metrics`, `aiperf-timing`,
 `aiperf-transport-http`, `aiperf-transport-grpc`, `aiperf-clock`, `loadgen-core`} plus optional
-`dynamo-mocker` only under `dynamo-offline`; `aiperf-extensions` →
+`dynamo-mocker` only under `dynosim`; `aiperf-extensions` →
 {`aiperf-dataset`, `aiperf-endpoints`}; `aiperf-accuracy` has no workspace-crate dependency;
 `aiperf-adaptive` → {`aiperf-clock`, `aiperf-metrics`,
 `aiperf-timing`, `loadgen-core`}; `aiperf-dataset` → {`aiperf-clock`,
@@ -171,7 +171,7 @@ Recorded formats accept `synthesis.max_osl`, `max_context_length`,
 `idle_gap_cap_seconds`, `corpus`, and `allow_dataset_wrap` where applicable;
 Python forwards those authored values without parsing trace payloads. Native gRPC requires
 `backend.type: online_grpc` with `grpc://` or `grpcs://` URLs; offline requires
-`backend.type: dynamo_offline` and a feature-bearing runner.
+`backend.type: dynosim` and a feature-bearing runner.
 
 Provider-neutral evaluation additionally requires the selected runner
 deployment's wheel-`RECORD`-verified companion roots or generated adjacent
@@ -263,13 +263,13 @@ The workspace root expects `../../../dynamo-aiperf-native`. Library developers
 can compile the adapter; `dynamo-full` enables every optional mocker family:
 
 ```bash
-cargo build -p aiperf --features dynamo-offline
-cargo test -p aiperf --features dynamo-offline --lib
-cargo build -p aiperf-runner --features dynamo-offline
+cargo build -p aiperf --features dynosim
+cargo test -p aiperf --features dynosim --lib
+cargo build -p aiperf-runner --features dynosim
 ```
 
-There is no native `--offline` CLI. A runner built with `dynamo-offline`
-registers `dynamo_offline + scheduled` and `dynamo_offline + graph`; Python
+There is no native `--offline` CLI. A runner built with `dynosim`
+registers `dynosim + scheduled` and `dynosim + graph`; Python
 authors the same Config-v2 request and exact-image preflight rejects a base
 runner that does not advertise those pairs.
 
@@ -375,7 +375,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   use by AIPerf and AI-Dynamo Mocker. The directory migration, independent
   shared-crate versioning, Dynamo consumption, and metadata guard remain unbuilt.
 - `specs/2026-07-10-steppable-clock-injected-engine-design.md` — **built and
-  runner-reachable behind `dynamo-offline`**: neutral two-source DES pump,
+  runner-reachable behind `dynosim`**: neutral two-source DES pump,
   in-process sink/observer/completion/cancellation seam, all profiles/topologies/
   routers/trace formats, paced/scheduled/graph consumers, SLA/raw/timed artifacts,
   direct raw-token/trace-hash body and encoder bypass, AIC/offload feature
@@ -385,7 +385,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   clock (`drive_real_with_source`, `replay_mode=online`) through AIPerf's own
   flow — apples-to-apples with Dynamo's native `simulate_*_live_*` driver (counts
   exact, latency within 3%, throughput >= native); the runner selects it via the
-  `dynamo_offline` backend's `replay_mode` config (clock=real).
+  `dynosim` backend's `replay_mode` config (clock=real).
 - `specs/2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected
   hyper transport (→ `aiperf-transport-http`).
 - `specs/2026-07-12-aiperf-native-grpc-kserve-v2-design.md` — **built +
@@ -428,7 +428,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **decided /
   canonical pair matrix built; authoritative for native product reachability**: one strict image-bound v2
   runner envelope composes registered `online_http` or feature-gated
-  `dynamo_offline` backends with scheduled, Graph-IR, static-accuracy, or
+  `dynosim` backends with scheduled, Graph-IR, static-accuracy, or
   stateful-agentic workloads. The decoder, typed terminals, factory-owned strict config decode,
   registry-derived static compatibility, and executable-only `supported_pairs` are built. HTTP
   agentic/graph/scheduled and gRPC scheduled adapters have execution and subprocess proofs;
@@ -566,6 +566,6 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 
 Use `cargo build --release`, `cargo test`, `cargo clippy --all-targets`, and
 `cargo fmt` for Rust development. Build the feature-bearing product runner with
-`cargo build -p aiperf-runner --features dynamo-offline`. End users run
+`cargo build -p aiperf-runner --features dynosim`. End users run
 `aiperf profile --config benchmark.yaml`; Python launches `aiperf-runner`.
 `cargo run -p aiperf` and native `--offline`/mode flags do not exist.

@@ -474,7 +474,7 @@ The preceding addendum's statement that offline request-rate and user-target
 composition remained unavailable is superseded. `aiperf::run` now has
 backend-neutral paced, request-rate, user-centric, and adaptive composition
 functions. Online wrappers inject `RealClock + TransportSink`; offline wrappers
-inject `SimClock + DynamoOfflineSink` and run the same futures, observers,
+inject `SimClock + DynosimSink` and run the same futures, observers,
 actuators, issuance gates, and artifact sinks.
 
 The resulting support matrix is complete for the four control variables in

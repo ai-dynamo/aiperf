@@ -64,7 +64,7 @@ aiperf-runner
 
 ONLINE-real and ONLINE-mock are the same `online_http` backend. They differ only in configured
 target URL; a mock HTTP server is not another runner mode. OFFLINE-mock is the feature-gated
-`dynamo_offline` backend using `SimClock` and the in-process steppable engine.
+`dynosim` backend using `SimClock` and the in-process steppable engine.
 
 Backend and workload are orthogonal selections. A new backend does not acquire its own CLI or
 duplicate every workload DTO, and a new workload does not acquire its own transport. Factories
@@ -96,8 +96,8 @@ The following remain implemented but lack an end-user request in runner protocol
 | Capability | Current Rust home | Missing runner surface |
 |---|---|---|
 | Online Graph-IR | `aiperf-graph`, `aiperf_graph::runtime::drive_real` | graph workload DTO, runner composition, subprocess proof |
-| Dynamo scheduled offline | `aiperf::dynamo_offline` behind `dynamo-offline` | backend DTO, feature forwarding, capabilities, report/terminal projection |
-| Dynamo Graph-IR offline | `aiperf::dynamo_offline::run_graph_offline` and graph DES | backend/workload pair, feature forwarding, subprocess proof |
+| Dynamo scheduled offline | `aiperf::dynosim` behind `dynosim` | backend DTO, feature forwarding, capabilities, report/terminal projection |
+| Dynamo Graph-IR offline | `aiperf::dynosim::run_graph_offline` and graph DES | backend/workload pair, feature forwarding, subprocess proof |
 | Stateful agentic accuracy | `aiperf::agentic`, `agentic_gateway`, canonical Python providers | agentic workload DTO, callback/gateway lifecycle, runner subprocess canaries |
 
 The removed native `aiperf` CLI is not an alternate route. Focused library tests prove the
@@ -107,7 +107,7 @@ algorithms but do not make them product-reachable.
 
 Runner v1 deserializes one fixed `RunRequest` and then executes it. It has no operation tag,
 backend selection, Graph-IR workload, stateful agentic workload, or offline feature inventory.
-`aiperf-runner` depends on the `aiperf` library but does not forward its `dynamo-offline` /
+`aiperf-runner` depends on the `aiperf` library but does not forward its `dynosim` /
 `dynamo-full` features.
 
 Capabilities are handwritten static arrays rather than a description of the exact composed
@@ -334,7 +334,7 @@ The default backend owns:
 ONLINE-real versus ONLINE-mock is not represented in the protocol. The configured URL determines
 the target, and reports may classify loopback/mock provenance only when explicitly authored.
 
-### 5.3 `dynamo_offline`
+### 5.3 `dynosim`
 
 The feature-gated backend owns:
 
@@ -349,12 +349,12 @@ The feature-gated backend owns:
 
 ```toml
 [features]
-dynamo-offline = ["aiperf/dynamo-offline"]
-dynamo-router-runtime = ["dynamo-offline", "aiperf/dynamo-router-runtime"]
-dynamo-zmq-events = ["dynamo-offline", "aiperf/dynamo-zmq-events"]
-dynamo-kvbm-offload = ["dynamo-offline", "aiperf/dynamo-kvbm-offload"]
-dynamo-aic-forward-pass = ["dynamo-offline", "aiperf/dynamo-aic-forward-pass"]
-dynamo-profile = ["dynamo-offline", "aiperf/dynamo-profile"]
+dynosim = ["aiperf/dynosim"]
+dynamo-router-runtime = ["dynosim", "aiperf/dynamo-router-runtime"]
+dynamo-zmq-events = ["dynosim", "aiperf/dynamo-zmq-events"]
+dynamo-kvbm-offload = ["dynosim", "aiperf/dynamo-kvbm-offload"]
+dynamo-aic-forward-pass = ["dynosim", "aiperf/dynamo-aic-forward-pass"]
+dynamo-profile = ["dynosim", "aiperf/dynamo-profile"]
 dynamo-full = [
     "dynamo-router-runtime",
     "dynamo-zmq-events",
@@ -426,7 +426,7 @@ This workload generalizes runner v1. Its strict config owns:
 - ramps, cancellation, adaptive control, stop bounds, slots, and samplers;
 - endpoint profile materialization and per-turn prepared `EndpointKey`s.
 
-It supports `online_http` and `dynamo_offline`. The same phase/workload policy is injected with the
+It supports `online_http` and `dynosim`. The same phase/workload policy is injected with the
 selected clock/dispatcher. Fixed schedule and dataset timing validation occur after dataset load
 and before artifact creation or scheduling.
 
@@ -442,7 +442,7 @@ The strict Graph-IR workload config owns:
 - graph endpoint materialization and response/metric configuration;
 - optional offline trace/event-source inputs required by the Dynamo backend.
 
-It supports `online_http` through `drive_real` and `dynamo_offline` through
+It supports `online_http` through `drive_real` and `dynosim` through
 `drive_sim_with_source`. Each graph worker owns its metric accumulator, endpoint binding table, and
 prepared sink; workers merge once in deterministic order.
 
@@ -487,7 +487,7 @@ The built-in target matrix is:
 | Backend | `scheduled` | `graph` | `static_accuracy` | `agentic` |
 |---|:---:|:---:|:---:|:---:|
 | `online_http` | yes | yes | yes | yes |
-| `dynamo_offline` | yes | yes | no | no |
+| `dynosim` | yes | yes | no | no |
 
 The matrix is derived from workload requirements and backend descriptors at registry freeze; it is
 not a handwritten runtime switch. Capabilities serialize the computed supported pairs. A linked
@@ -517,7 +517,7 @@ fixture responses; that is still the `online_http` backend, not Dynamo offline.
       "features": ["h1", "h2c", "uds", "tls"]
     },
     {
-      "id": "dynamo_offline",
+      "id": "dynosim",
       "clock": "sim",
       "features": ["aggregate", "disaggregate", "kv_routing"]
     }
@@ -533,8 +533,8 @@ fixture responses; that is still the `online_http` backend, not Dynamo offline.
     ["online_http", "graph"],
     ["online_http", "static_accuracy"],
     ["online_http", "agentic"],
-    ["dynamo_offline", "scheduled"],
-    ["dynamo_offline", "graph"]
+    ["dynosim", "scheduled"],
+    ["dynosim", "graph"]
   ],
   "endpoints": [],
   "extensions": []
@@ -684,7 +684,7 @@ Protocol/capability/report compatibilityâ€”not Python package-version equalityâ€
 ### Increment 4 â€” Dynamo offline
 
 1. Forward every Dynamo feature through `aiperf-runner`.
-2. Register `dynamo_offline` only in feature-bearing builds.
+2. Register `dynosim` only in feature-bearing builds.
 3. Add strict engine/router/topology/trace/feature config owned by that factory.
 4. Compose scheduled and graph workloads through the existing `SimClock`/steppable paths.
 5. Restore the complete parity/fail-closed matrix as runner subprocess tests.
@@ -724,9 +724,9 @@ Protocol/capability/report compatibilityâ€”not Python package-version equalityâ€
 2. `online_http + graph`: real Graph-IR transport subprocess and deterministic worker merge.
 3. `online_http + static_accuracy`: real supervised static evaluator subprocess.
 4. `online_http + agentic`: real Harbor, BrowserGym, and MCPMark provider subprocess canaries.
-5. `dynamo_offline + scheduled`: all applicable scheduled workloads, ramps, cancellation,
+5. `dynosim + scheduled`: all applicable scheduled workloads, ramps, cancellation,
    adaptive controls, trace formats, topologies, routers, artifacts, and exact parity.
-6. `dynamo_offline + graph`: Graph-IR DES with engine/cancellation/sleeper events and exact parity.
+6. `dynosim + graph`: Graph-IR DES with engine/cancellation/sleeper events and exact parity.
 7. Invalid accuracy/agentic plus offline combinations fail static validation.
 
 ### Side effects and failure
@@ -852,7 +852,7 @@ The executable pair matrix is now:
 | Runner distribution | Executable protocol-v2 pairs |
 |---|---|
 | Base | `online_http + scheduled`, `online_http + graph`, `online_http + static_accuracy`, `online_http + agentic`, `online_grpc + scheduled` |
-| `dynamo-offline` feature | every base pair plus `dynamo_offline + scheduled` and `dynamo_offline + graph` |
+| `dynosim` feature | every base pair plus `dynosim + scheduled` and `dynosim + graph` |
 
 `supported_pairs` is still derived from registered executable adapters, so a
 base image never claims the optional offline pairs. The scheduled offline

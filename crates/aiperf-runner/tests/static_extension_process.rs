@@ -11,7 +11,7 @@
 //! runner core has no matching branch, and this test never reconstructs a
 //! private registry or protocol-v1 endpoint value.
 
-#![cfg(feature = "dynamo-offline")]
+#![cfg(feature = "dynosim")]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -72,7 +72,7 @@ fn envelope(artifact_dir: &Path) -> RunnerEnvelopeV2 {
             },
             "artifact_target": artifact_dir,
             "backend": {
-                "type": "dynamo_offline",
+                "type": "dynosim",
                 "config": {}
             },
             "workload": {
@@ -173,10 +173,10 @@ fn statically_linked_extension_is_selected_in_a_fresh_runner_process() {
         serde_json::json!([EXTENSION_NAME])
     );
     assert_eq!(proof["distribution_id"], DISTRIBUTION_ID);
-    assert_eq!(proof["backend"], "dynamo_offline");
+    assert_eq!(proof["backend"], "dynosim");
     assert_eq!(proof["workload"], "scheduled");
     assert_eq!(proof["report_distribution_id"], DISTRIBUTION_ID);
-    assert_eq!(proof["report_backend"], "dynamo_offline");
+    assert_eq!(proof["report_backend"], "dynosim");
     assert_eq!(proof["report_workload"], "scheduled");
     assert_eq!(
         proof["report_extensions"],
@@ -221,7 +221,7 @@ fn statically_linked_extension_child() {
     assert!(
         capabilities
             .supported_pairs
-            .contains(&["dynamo_offline".to_owned(), "scheduled".to_owned()])
+            .contains(&["dynosim".to_owned(), "scheduled".to_owned()])
     );
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(
@@ -241,7 +241,7 @@ fn statically_linked_extension_child() {
         terminal.errors
     );
     assert!(terminal.success, "terminal errors: {:?}", terminal.errors);
-    assert_eq!(terminal.provenance["backend"], "dynamo_offline");
+    assert_eq!(terminal.provenance["backend"], "dynosim");
     assert_eq!(terminal.provenance["workload"], "scheduled");
     assert_eq!(terminal.provenance["phase_count"], "2");
     assert_eq!(dataset_loads.load(Ordering::SeqCst), 1);
@@ -256,7 +256,7 @@ fn statically_linked_extension_child() {
         serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
     assert_eq!(report["run"]["distribution_id"], DISTRIBUTION_ID);
-    assert_eq!(report["run"]["backend"], "dynamo_offline");
+    assert_eq!(report["run"]["backend"], "dynosim");
     assert_eq!(report["run"]["workload"], "scheduled");
     assert_eq!(
         report["run"]["extensions"],

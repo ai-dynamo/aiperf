@@ -14,13 +14,13 @@
 //! through the real runner product path and compares its native-v2 report to
 //! Dynamo's own wall-clock online driver within 3%.
 
-#![cfg(feature = "dynamo-offline")]
+#![cfg(feature = "dynosim")]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use aiperf::dynamo_offline::{NativeBaselineRequest, native_live_concurrency_baseline};
+use aiperf::dynosim::{NativeBaselineRequest, native_live_concurrency_baseline};
 use serde_json::{Value, json};
 
 fn binary() -> &'static str {
@@ -96,7 +96,7 @@ fn scheduled_envelope(
             },
             "artifact_target": artifact_target,
             "backend": {
-                "type": "dynamo_offline",
+                "type": "dynosim",
                 "config": {
                     "replay_mode": replay_mode,
                     "sla": {"e2e_ms": 1000.0},
@@ -177,7 +177,7 @@ fn online_scheduled_runs_in_process_under_real_clock_with_exact_counts() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "dynamo_offline");
+    assert_eq!(terminal["provenance"]["backend"], "dynosim");
     assert_eq!(terminal["provenance"]["replay_mode"], "online");
     assert_eq!(terminal["provenance"]["clock"], "real");
 
@@ -252,7 +252,7 @@ fn offline_and_online_agree_on_served_counts_and_differ_only_on_clock() {
 }
 
 /// Apples-to-apples gate through the **real runner product path**: a hash-block
-/// trace is replayed by the runner's `dynamo_offline` + `replay_mode=online`
+/// trace is replayed by the runner's `dynosim` + `replay_mode=online`
 /// scheduled pair (AIPerf's own flow, native-format `synthesize_tokens` tokens
 /// via the trace-hash encoder — no injected test encoder), and its native-v2
 /// report is compared to Dynamo's own wall-clock online driver
@@ -298,7 +298,7 @@ fn online_product_path_matches_native_live_replay_within_3pct() {
             "identity": {"benchmark_id": "online-product-apples", "random_seed": 41},
             "artifact_target": target,
             "backend": {
-                "type": "dynamo_offline",
+                "type": "dynosim",
                 "config": {
                     "replay_mode": "online",
                     "engine": {"block_size": BLOCK_SIZE},
@@ -455,7 +455,7 @@ fn python_bin() -> Option<&'static str> {
 /// End-to-end **subprocess vs subprocess** apples-to-apples gate: the SAME
 /// mooncake hash-block trace file is replayed under the real clock by
 ///   (1) the AIPerf product path — the `aiperf-runner` binary with
-///       `dynamo_offline` + `replay_mode=online` (AIPerf's own flow), and
+///       `dynosim` + `replay_mode=online` (AIPerf's own flow), and
 ///   (2) Dynamo's own native CLI — `python -m dynamo.replay --replay-mode online`.
 /// Both drive the same passive engine and measure real wall-clock latency; the
 /// gate asserts input/output tokens exact, every latency mean within 3%, and the
@@ -528,7 +528,7 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
             "identity": {"benchmark_id": "online-apples-subproc", "random_seed": 41},
             "artifact_target": target,
             "backend": {
-                "type": "dynamo_offline",
+                "type": "dynosim",
                 "config": {
                     "replay_mode": "online",
                     "engine": {"block_size": BLOCK_SIZE},

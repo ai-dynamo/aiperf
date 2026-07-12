@@ -285,7 +285,7 @@ Executable evidence:
   runtime and actuator regressions.
 
 DAG fan-out remains owned by `aiperf-graph`. The separately designed engine sink
-is now built behind `aiperf/dynamo-offline`: `tests/dynamo_offline_cli.rs` drives
+is now built behind `aiperf/dynosim`: `tests/dynosim_cli.rs` drives
 this unchanged continuation-priority workload against Dynamo on one `SimClock`,
 without HTTP. Adaptive request-rate composition is still unavailable in that
 optional backend; the base linear request-rate workload is end-to-end.

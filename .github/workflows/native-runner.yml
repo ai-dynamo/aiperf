@@ -103,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           env -u RUSTC_WRAPPER cargo test --locked -p aiperf-runner \
-            --features dynamo-offline \
+            --features dynosim \
             --test offline_stdio \
             --test offline_scheduled_stdio
 
@@ -171,14 +171,14 @@ jobs:
 
           env -u RUSTC_WRAPPER CARGO_TARGET_DIR=target/release-offline \
             cargo build --locked --release -p aiperf-runner \
-            --features dynamo-offline
+            --features dynosim
           install -m 755 target/release-offline/release/aiperf-runner \
             "${RELEASE_ROOT}/offline/aiperf-runner"
           uv run --no-project --with blake3 python tools/runner_release_input.py create \
             --binary "${RELEASE_ROOT}/offline/aiperf-runner" \
             --cargo-lock Cargo.lock \
             --source-revision "${AIPERF_REVISION}" \
-            --feature dynamo-offline \
+            --feature dynosim \
             --dependency-revision "dynamo-aiperf-native=${DYNAMO_REVISION}" \
             --output "${RELEASE_ROOT}/offline/runner-build.json"
 

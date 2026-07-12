@@ -86,7 +86,7 @@ adapters decide whether it is executable:
 | `online_http + static_accuracy` | Resource lifecycle is accepted, though evaluator-authored inputs are not rewritten. |
 | `online_http + agentic/evaluation` | Rejected; those separately owned evaluator/gateway lifecycles do not consume the dataset publication or native sidecar-resource seam. |
 | `online_grpc + scheduled` | Rejected with the other unsupported sidecars. |
-| `dynamo_offline + scheduled/graph` | Rejected as an online sidecar. |
+| `dynosim + scheduled/graph` | Rejected as an online sidecar. |
 
 ## Dataset publication seam
 

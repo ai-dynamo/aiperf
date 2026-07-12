@@ -2645,7 +2645,7 @@ mod tests {
     fn coordinator_finalization_flattens_common_and_pair_facts_into_run() {
         let provenance = ReportRunProvenance::new(
             format!("blake3:{}", "a".repeat(64)),
-            "dynamo_offline",
+            "dynosim",
             "graph",
             vec![
                 ReportExtensionIdentity::new("zeta", Some("2.0.0".into())).unwrap(),
@@ -2700,7 +2700,7 @@ mod tests {
         let value = serde_json::to_value(&report).unwrap();
         let run = &value["run"];
         assert_eq!(run["distribution_id"], format!("blake3:{}", "a".repeat(64)));
-        assert_eq!(run["backend"], "dynamo_offline");
+        assert_eq!(run["backend"], "dynosim");
         assert_eq!(run["workload"], "graph");
         assert_eq!(run["extensions"][0]["name"], "alpha");
         assert!(run["extensions"][0].get("version").is_none());

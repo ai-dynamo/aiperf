@@ -267,7 +267,7 @@ This is required for the harness-owned agentic lifecycle.
 
 The base runner advertises direct protocol-v2 execution for online HTTP
 scheduled, graph, static-accuracy, and agentic workloads plus native gRPC
-scheduled execution. A runner built with `dynamo-offline` additionally
+scheduled execution. A runner built with `dynosim` additionally
 advertises scheduled and graph execution over the in-process simulator. Python
 Config-v2 subprocess proofs cover every one of those canonical mode families,
 including exact unsupported-pair rejection with no legacy resolution.

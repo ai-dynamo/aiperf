@@ -909,8 +909,8 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
         )?;
     }
     crate::grpc_execution::register_online_grpc_pairs(builder)?;
-    #[cfg(feature = "dynamo-offline")]
-    crate::offline_execution::register_dynamo_offline_backend(builder)?;
+    #[cfg(feature = "dynosim")]
+    crate::offline_execution::register_dynosim_backend(builder)?;
     Ok(())
 }
 
@@ -2126,9 +2126,9 @@ mod tests {
             .evaluation_capabilities()
             .supported_combinations
             .is_empty();
-        #[cfg(feature = "dynamo-offline")]
-        let expected_backends = vec!["dynamo_offline", "online_grpc", "online_http"];
-        #[cfg(not(feature = "dynamo-offline"))]
+        #[cfg(feature = "dynosim")]
+        let expected_backends = vec!["dynosim", "online_grpc", "online_http"];
+        #[cfg(not(feature = "dynosim"))]
         let expected_backends = vec!["online_grpc", "online_http"];
         assert_eq!(
             registry
@@ -2156,10 +2156,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_workloads
         );
-        #[cfg(feature = "dynamo-offline")]
+        #[cfg(feature = "dynosim")]
         let mut expected_supported = vec![
-            ("dynamo_offline", "graph"),
-            ("dynamo_offline", "scheduled"),
+            ("dynosim", "graph"),
+            ("dynosim", "scheduled"),
             ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
             ("online_http", "graph"),
@@ -2167,7 +2167,7 @@ mod tests {
             ("online_http", "static_accuracy"),
             ("online_http", "telemetry_watch"),
         ];
-        #[cfg(not(feature = "dynamo-offline"))]
+        #[cfg(not(feature = "dynosim"))]
         let mut expected_supported = vec![
             ("online_grpc", "scheduled"),
             ("online_http", "agentic"),
@@ -2183,10 +2183,10 @@ mod tests {
                 .unwrap();
             expected_supported.insert(index, ("online_http", "evaluation"));
         }
-        #[cfg(feature = "dynamo-offline")]
+        #[cfg(feature = "dynosim")]
         let mut expected_static = vec![
-            ("dynamo_offline", "graph"),
-            ("dynamo_offline", "scheduled"),
+            ("dynosim", "graph"),
+            ("dynosim", "scheduled"),
             ("online_grpc", "graph"),
             ("online_grpc", "scheduled"),
             ("online_grpc", "telemetry_watch"),
@@ -2196,7 +2196,7 @@ mod tests {
             ("online_http", "static_accuracy"),
             ("online_http", "telemetry_watch"),
         ];
-        #[cfg(not(feature = "dynamo-offline"))]
+        #[cfg(not(feature = "dynosim"))]
         let mut expected_static = vec![
             ("online_grpc", "graph"),
             ("online_grpc", "scheduled"),

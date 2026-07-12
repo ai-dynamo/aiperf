@@ -25,7 +25,7 @@ pub mod grpc_execution;
 pub mod grpc_turn_execution;
 mod live_streaming;
 mod network_latency;
-#[cfg(feature = "dynamo-offline")]
+#[cfg(feature = "dynosim")]
 pub mod offline_execution;
 pub mod online_execution;
 pub mod protocol;

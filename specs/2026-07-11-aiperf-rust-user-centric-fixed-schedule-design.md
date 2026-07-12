@@ -552,8 +552,8 @@ and required-input validation lives in `tests/scheduled_cli_validation.rs`.
 
 The strategy code is Clock- and dispatcher-neutral and is exercised deterministically
 under `SimClock`. Full OFFLINE-mock inference is now built behind
-`aiperf/dynamo-offline`: the same `ScheduledRuntime` dispatches user-centric and fixed
+`aiperf/dynosim`: the same `ScheduledRuntime` dispatches user-centric and fixed
 turns through the in-process Dynamo `TurnDispatcher`, and
-`tests/dynamo_offline_cli.rs` covers both policies without an HTTP server. Authored
+`tests/dynosim_cli.rs` covers both policies without an HTTP server. Authored
 ramps, request cancellation, and adaptive user-target control remain explicit
 unsupported combinations in that optional composition.

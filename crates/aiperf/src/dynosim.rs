@@ -9,7 +9,7 @@
 //! scheduler/performance-model state behind [`SteppableReplay`]. There are no
 //! sockets, subprocesses, shared-memory rings, or secondary clocks.
 //!
-//! The dependency is intentionally compiled only with `dynamo-offline`. The
+//! The dependency is intentionally compiled only with `dynosim`. The
 //! normal HTTP binary and every library crate below this application layer stay
 //! independent of Dynamo.
 
@@ -1956,7 +1956,7 @@ impl OfflineGraphRequestEncoder for OpenAiRequestEncoder {
 type CachedTracePrompt = (Handle, usize, Box<[u32]>);
 
 /// `RequestSink<HttpRequest>` and scheduled-turn adapter over one [`EngineHost`].
-struct DynamoOfflineSink {
+struct DynosimSink {
     host: Rc<EngineHost>,
     clock: Rc<dyn Clock>,
     start_ns: i64,
@@ -1967,7 +1967,7 @@ struct DynamoOfflineSink {
     last_trace_prompt: RefCell<Option<CachedTracePrompt>>,
 }
 
-impl DynamoOfflineSink {
+impl DynosimSink {
     fn new(host: Rc<EngineHost>, clock: Rc<dyn Clock>, model: String) -> Rc<Self> {
         let encoder = Rc::new(OpenAiRequestEncoder::default());
         Self::new_with_encoders(host, clock, model, encoder.clone(), encoder)
@@ -2175,14 +2175,14 @@ fn synthetic_reply(uuid: Uuid, output_tokens: usize) -> String {
 }
 
 #[async_trait(?Send)]
-impl RequestSink<HttpRequest> for DynamoOfflineSink {
+impl RequestSink<HttpRequest> for DynosimSink {
     async fn dispatch(&self, request: HttpRequest, observer: &dyn RequestObserver) -> Result<()> {
         self.dispatch_collect(&request, observer, &|_| {}).await?;
         Ok(())
     }
 }
 
-impl DynamoOfflineSink {
+impl DynosimSink {
     async fn dispatch_collect(
         &self,
         request: &HttpRequest,
@@ -2203,7 +2203,7 @@ impl DynamoOfflineSink {
 }
 
 #[async_trait(?Send)]
-impl HttpRequestDispatcher for DynamoOfflineSink {
+impl HttpRequestDispatcher for DynosimSink {
     fn inference_dimensions(&self, _request: &HttpRequest) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: Some("dynamo://offline".to_string()),
@@ -2223,7 +2223,7 @@ impl HttpRequestDispatcher for DynamoOfflineSink {
 }
 
 #[async_trait(?Send)]
-impl TurnDispatcher for DynamoOfflineSink {
+impl TurnDispatcher for DynosimSink {
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: Some("dynamo://offline".to_string()),
@@ -2334,7 +2334,7 @@ pub fn run_paced_offline(
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new(clock.clone(), &engine_config)?;
     let sink: Rc<dyn HttpRequestDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let result = Rc::new(RefCell::new(None));
     let result_for_body = result.clone();
     let clock_for_body: Rc<dyn Clock> = clock.clone();
@@ -2345,7 +2345,7 @@ pub fn run_paced_offline(
             clock_for_body,
             start_ns,
             sink,
-            vec!["dynamo-offline".to_string()],
+            vec!["dynosim".to_string()],
             workload,
             pattern,
             rate,
@@ -2410,7 +2410,7 @@ pub fn run_paced_online(
         Rc::new(IncrementalOfflineEventDelivery),
     )?;
     let sink: Rc<dyn HttpRequestDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let result = Rc::new(RefCell::new(None));
     let result_for_body = result.clone();
     let clock_for_body: Rc<dyn Clock> = clock.clone();
@@ -2422,7 +2422,7 @@ pub fn run_paced_online(
             clock_for_body,
             start_ns,
             sink,
-            vec!["dynamo-offline".to_string()],
+            vec!["dynosim".to_string()],
             workload,
             pattern,
             rate,
@@ -3057,7 +3057,7 @@ pub fn run_trace_offline(
 }
 
 struct DynamoGraphSink {
-    backend: Rc<DynamoOfflineSink>,
+    backend: Rc<DynosimSink>,
     observer: Rc<dyn RequestObserver>,
     native_metrics: Rc<NativeMetricsObserver>,
     phase: MetricsPhase,
@@ -3256,7 +3256,7 @@ pub fn run_graph_offline(
     let clock_trait: Rc<dyn Clock> = clock.clone();
     let start_ns = clock.now_ns();
     let host = EngineHost::new(clock.clone(), &engine_config)?;
-    let backend = DynamoOfflineSink::new(host.clone(), clock.clone(), config.model.clone());
+    let backend = DynosimSink::new(host.clone(), clock.clone(), config.model.clone());
     let native_metrics = Rc::new(NativeMetricsObserver::new(
         clock_trait,
         start_ns,
@@ -3377,7 +3377,7 @@ pub fn run_graph_offline(
 }
 
 struct DynamoDirectGraphBackend {
-    backend: Rc<DynamoOfflineSink>,
+    backend: Rc<DynosimSink>,
     observer: Rc<dyn RequestObserver>,
     native_metrics: Rc<NativeMetricsObserver>,
     phase: MetricsPhase,
@@ -3482,8 +3482,8 @@ impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
     }
 }
 
-struct DynamoOfflineGraphBackendFactory {
-    backend: Rc<DynamoOfflineSink>,
+struct DynosimGraphBackendFactory {
+    backend: Rc<DynosimSink>,
     observer: Rc<dyn RequestObserver>,
     native_metrics: Rc<NativeMetricsObserver>,
     materializer: Rc<SegmentItemsMaterializer>,
@@ -3491,7 +3491,7 @@ struct DynamoOfflineGraphBackendFactory {
     next_uuid: Rc<Cell<u128>>,
 }
 
-impl OfflineGraphBackendFactory for DynamoOfflineGraphBackendFactory {
+impl OfflineGraphBackendFactory for DynosimGraphBackendFactory {
     fn create_backend(
         &self,
         config: OfflineGraphBackendConfig,
@@ -3638,7 +3638,7 @@ pub fn run_graph_workload_offline_deferred(
     let clock_trait: Rc<dyn Clock> = clock.clone();
     let start_ns = clock.now_ns();
     let host = EngineHost::new(clock.clone(), &engine_config)?;
-    let sink = DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let sink = DynosimSink::new(host.clone(), clock.clone(), model);
     let native_metrics = Rc::new(NativeMetricsObserver::new(
         clock_trait.clone(),
         start_ns,
@@ -3649,7 +3649,7 @@ pub fn run_graph_workload_offline_deferred(
         collector.clone(),
         native_metrics.clone(),
     ]));
-    let backends: Rc<dyn OfflineGraphBackendFactory> = Rc::new(DynamoOfflineGraphBackendFactory {
+    let backends: Rc<dyn OfflineGraphBackendFactory> = Rc::new(DynosimGraphBackendFactory {
         backend: sink,
         observer,
         native_metrics: native_metrics.clone(),
@@ -3704,7 +3704,7 @@ pub fn run_graph_workload_offline_deferred(
 /// the **wall clock** — the real-time in-process online mode (Dynamo's
 /// `--replay-mode online`) driven entirely by aiperf's *own* recorded-trace
 /// graph flow. The trace is compiled by `aiperf-graph` into a [`GraphWorkload`]
-/// and dispatched through the same [`DynamoOfflineSink`], materializer, observer,
+/// and dispatched through the same [`DynosimSink`], materializer, observer,
 /// and native accumulator as [`run_graph_workload_offline`]; the mocker's own
 /// trace driver is never involved. Only the clock/driver axis differs
 /// ([`drive_real_with_source`] vs [`drive_sim_with_source`]).
@@ -3759,7 +3759,7 @@ pub fn run_graph_workload_online(
 
 /// Deferred multi-phase online twin of [`run_graph_workload_offline_deferred`].
 ///
-/// Identical composition (aiperf's [`GraphWorkload`] + [`DynamoOfflineSink`] +
+/// Identical composition (aiperf's [`GraphWorkload`] + [`DynosimSink`] +
 /// shared observer/accumulator), swapping only the DES pump for the wall-clock
 /// [`drive_real_with_source`] driver and relaxing byte-exact enforcement.
 pub fn run_graph_workload_online_deferred(
@@ -3782,7 +3782,7 @@ pub fn run_graph_workload_online_deferred(
     let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
     let start_ns = clock.now_ns();
     let host = EngineHost::new_real(clock.clone(), &engine_config)?;
-    let sink = DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let sink = DynosimSink::new(host.clone(), clock.clone(), model);
     let native_metrics = Rc::new(NativeMetricsObserver::new(
         clock.clone(),
         start_ns,
@@ -3793,7 +3793,7 @@ pub fn run_graph_workload_online_deferred(
         collector.clone(),
         native_metrics.clone(),
     ]));
-    let backends: Rc<dyn OfflineGraphBackendFactory> = Rc::new(DynamoOfflineGraphBackendFactory {
+    let backends: Rc<dyn OfflineGraphBackendFactory> = Rc::new(DynosimGraphBackendFactory {
         backend: sink,
         observer,
         native_metrics: native_metrics.clone(),
@@ -3951,7 +3951,7 @@ fn run_scheduled_offline(
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new(clock.clone(), &engine_config)?;
     let dispatcher: Rc<dyn TurnDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let result = Rc::new(RefCell::new(None));
     let result_for_body = result.clone();
     let clock_for_body: Rc<dyn Clock> = clock.clone();
@@ -4087,7 +4087,7 @@ pub fn run_scheduled_backend_offline(
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new(clock.clone(), &engine_config)?;
     let dispatcher: Rc<dyn TurnDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4111,7 +4111,7 @@ pub fn run_scheduled_backend_offline(
 /// **wall clock** — the real-time in-process mode (Dynamo's `--replay-mode
 /// online`): no sockets, no HTTP, no frontend, but the engine is stepped in real
 /// time rather than fast-forwarded. It reuses the exact same `EngineHost`,
-/// `DynamoOfflineSink`, materializer, observer, and report as
+/// `DynosimSink`, materializer, observer, and report as
 /// [`run_scheduled_backend_offline`]; only the driver differs
 /// ([`drive_real_with_source`] vs [`drive_sim_with_source`]) — the
 /// `{transport, clock}` seam varying its clock axis.
@@ -4134,7 +4134,7 @@ pub fn run_scheduled_backend_online(
         Rc::new(IncrementalOfflineEventDelivery),
     )?;
     let dispatcher: Rc<dyn TurnDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4185,7 +4185,7 @@ pub fn run_scheduled_backend_offline_deferred_with_delivery(
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new_with_delivery(clock.clone(), &engine_config, event_delivery)?;
     let dispatcher: Rc<dyn TurnDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4229,7 +4229,7 @@ pub fn run_scheduled_backend_online_deferred_with_delivery(
         event_delivery,
     )?;
     let dispatcher: Rc<dyn TurnDispatcher> =
-        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+        DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4440,7 +4440,7 @@ pub fn run_user_centric_offline_with_adaptive_and_ancillary(
                             clock,
                             start_ns,
                             dispatcher,
-                            vec!["dynamo-offline".to_string()],
+                            vec!["dynosim".to_string()],
                             conversations,
                             config,
                             stop,
@@ -4455,7 +4455,7 @@ pub fn run_user_centric_offline_with_adaptive_and_ancillary(
                             clock,
                             start_ns,
                             dispatcher,
-                            vec!["dynamo-offline".to_string()],
+                            vec!["dynosim".to_string()],
                             conversations,
                             config,
                             stop,
@@ -4530,7 +4530,7 @@ pub fn run_request_rate_offline_with_adaptive_and_ancillary(
                     clock,
                     start_ns,
                     dispatcher,
-                    vec!["dynamo-offline".to_string()],
+                    vec!["dynosim".to_string()],
                     conversations,
                     config,
                     stop,
@@ -4741,7 +4741,7 @@ mod tests {
         assert!(called.get());
 
         let encoder = Rc::new(FixedRequestEncoder);
-        let sink = DynamoOfflineSink::new_with_encoders(
+        let sink = DynosimSink::new_with_encoders(
             host.clone(),
             clock.clone(),
             "model".to_string(),
@@ -4827,7 +4827,7 @@ mod tests {
         let clock = Rc::new(SimClock::new());
         let host = EngineHost::new(clock.clone(), &OfflineEngineConfig::default()).unwrap();
         let encoder = Rc::new(RejectingRequestEncoder);
-        let sink = DynamoOfflineSink::new_with_encoders(
+        let sink = DynosimSink::new_with_encoders(
             host.clone(),
             clock.clone(),
             "model".into(),
@@ -4857,7 +4857,7 @@ mod tests {
         )
         .unwrap();
         let encoder = Rc::new(FixedRequestEncoder);
-        let sink = DynamoOfflineSink::new_with_encoders(
+        let sink = DynosimSink::new_with_encoders(
             host.clone(),
             clock.clone(),
             "model".to_string(),
@@ -4978,7 +4978,7 @@ mod tests {
         assert_eq!(tokens.len(), isl);
 
         // AIPerf: the normal online flow (paced workload -> SlotPool admission ->
-        // DynamoOfflineSink -> observer/collector) under the real clock, but with
+        // DynosimSink -> observer/collector) under the real clock, but with
         // the fixed native-format token encoder so the engine sees exactly the
         // native tokens rather than text-encoded synthetic ones.
         let aiperf = {
@@ -4993,7 +4993,7 @@ mod tests {
             let encoder = Rc::new(FixedTokensEncoder {
                 tokens: tokens.clone(),
             });
-            let sink: Rc<dyn HttpRequestDispatcher> = DynamoOfflineSink::new_with_encoders(
+            let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new_with_encoders(
                 host.clone(),
                 clock.clone(),
                 "model".to_string(),
@@ -5011,7 +5011,7 @@ mod tests {
                     clock_for_body,
                     start_ns,
                     sink,
-                    vec!["dynamo-offline".to_string()],
+                    vec!["dynosim".to_string()],
                     SkeletonWorkload {
                         num_requests: REQUESTS,
                         input_tokens: isl,
@@ -5159,7 +5159,7 @@ mod tests {
     fn engine_admission_tokens_usage_and_terminal_flow_through_the_observer() {
         let clock = Rc::new(SimClock::new());
         let host = EngineHost::new(clock.clone(), &OfflineEngineConfig::default()).unwrap();
-        let sink = DynamoOfflineSink::new(host.clone(), clock.clone(), "model".to_string());
+        let sink = DynosimSink::new(host.clone(), clock.clone(), "model".to_string());
         let observer = Rc::new(RecordingObserver::default());
         let observer_for_body = observer.clone();
         let source: Rc<dyn SimEventSource> = host.clone();

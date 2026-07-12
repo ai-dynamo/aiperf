@@ -8,11 +8,11 @@ SPDX-License-Identifier: Apache-2.0
 AIPerf can replay a trace against Dynamo's passive perf-model engine under the
 **real wall clock, in-process** — the equivalent of Dynamo's
 `--replay-mode online`, with no sockets, HTTP, frontend, or mocker trace driver.
-This is selected through the `dynamo_offline` backend's `replay_mode` field:
+This is selected through the `dynosim` backend's `replay_mode` field:
 
 ```yaml
 backend:
-  type: dynamo_offline
+  type: dynosim
   config:
     replay_mode: online   # offline (default) = deterministic virtual clock
     engine: { block_size: 16 }
@@ -44,12 +44,12 @@ same `hash_ids` via Dynamo's own `TurnTrace::synthesize_tokens`.
         │                                                --replay-mode online
         ▼                                                --replay-concurrency N
   aiperf-runner  BINARY                                  --extra-engine-args '{"block_size":16}'
-        │  backend=dynamo_offline                        --report-json <out>
+        │  backend=dynosim                        --report-json <out>
         │  replay_mode=online                                  │
         ▼                                                       ▼
-  PreparedDynamoOfflineScheduledOperation                dynamo.replay.main
+  PreparedDynosimScheduledOperation                dynamo.replay.main
         ▼                                                       ▼
-  DynamoOfflineExecutor  (replay_mode branch)            run_live_runtime
+  DynosimExecutor  (replay_mode branch)            run_live_runtime
         ▼                                                       ▼
   run_scheduled_backend_online_deferred_with_delivery    ┌──────────────────────────────────┐
         ▼                                                 │ DYNAMO's OWN FLOW                 │
@@ -59,7 +59,7 @@ same `hash_ids` via Dynamo's own `TurnTrace::synthesize_tokens`.
   │  • materialize trace hash_ids     │                   │  • its own collector             │
   │    → DynamoTraceHashEncoder       │                   │  • tokio real-clock reactor      │
   │      (TurnTrace::synthesize_tokens)│  ── same conv ──▶ │    (sleep_until deadlines)        │
-  │  • DynamoOfflineSink.dispatch     │                   └──────────────────────────────────┘
+  │  • DynosimSink.dispatch     │                   └──────────────────────────────────┘
   │  • RequestObserver / collector    │                          │
   │  • drive_real_with_source ────────┼──┐               ┌───────┘  steps engine, sleeps real time
   │    (aiperf-graph real-clock pump; │  │               │
@@ -87,7 +87,7 @@ same `hash_ids` via Dynamo's own `TurnTrace::synthesize_tokens`.
 | | AIPerf online (path 1) | Native Dynamo (path 2) |
 |---|---|---|
 | Process | `aiperf-runner` binary | `python -m dynamo.replay` |
-| Trace driving | **AIPerf's own** `ScheduledRuntime`/`SlotPool`/`DynamoOfflineSink` | **Dynamo's own** `LiveRuntime`/demux/channels |
+| Trace driving | **AIPerf's own** `ScheduledRuntime`/`SlotPool`/`DynosimSink` | **Dynamo's own** `LiveRuntime`/demux/channels |
 | Real-clock pump | `aiperf-graph::drive_real_with_source` | Dynamo's tokio reactor + `sleep_until` |
 | Tokens | `hash_ids → TurnTrace::synthesize_tokens` | `hash_ids → TurnTrace::synthesize_tokens` |
 | Engine | passive `SteppableReplay` (library) | **same** passive `SteppableReplay` (library) |
@@ -122,7 +122,7 @@ the engine is a linked library on both sides.
   with the native side run **in-process** via Dynamo's public
   `simulate_concurrency_live_requests` (no Python required; always runs).
 
-`crates/aiperf/src/dynamo_offline.rs`:
+`crates/aiperf/src/dynosim.rs`:
 
 - `online_matches_native_dynamo_live_replay_apples_to_apples` — library-level
   check of the online driver against the in-process native driver.
@@ -131,7 +131,7 @@ the engine is a linked library on both sides.
 
 ```bash
 AIPERF_DYNAMO_NATIVE_DIR=~/nvidia/projects/dynamo-aiperf-native \
-  cargo test -p aiperf-runner --features dynamo-offline --test online_replay_stdio \
+  cargo test -p aiperf-runner --features dynosim --test online_replay_stdio \
   online_product_path_matches_python_dynamo_replay_subprocess_within_3pct -- --nocapture
 ```
 
