@@ -20,6 +20,7 @@ import {
 } from "./observability";
 import { ownershipComponents, ownershipEdges } from "./ownership";
 import { parityLedger } from "./parity";
+import { graphEdges, graphNodes, graphScenes } from "./scenes/graph-catalog";
 
 const allComponents = [
   ...ownershipComponents,
@@ -144,4 +145,7 @@ export const architectureCatalog = architectureCatalogSchema.parse({
   views,
   crates: crateCatalog,
   pairSupport: executionPairSupport,
+  graphNodes,
+  graphEdges,
+  graphScenes,
 });

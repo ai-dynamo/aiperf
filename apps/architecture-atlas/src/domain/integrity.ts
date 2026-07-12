@@ -105,7 +105,115 @@ function allEvidence(catalog: ArchitectureCatalog): EvidenceReference[] {
     ...catalog.lifecycleStages.flatMap(({ evidence }) => evidence),
     ...catalog.crates.flatMap(({ evidence }) => evidence),
     ...catalog.pairSupport.flatMap(({ evidence }) => evidence),
+    ...catalog.graphNodes.flatMap(({ evidence }) => evidence),
+    ...catalog.graphEdges.flatMap(({ evidence }) => evidence),
   ];
+}
+
+function assertGraphHierarchy(nodes: ArchitectureCatalog["graphNodes"]): void {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (nodeId: string): void => {
+    if (visited.has(nodeId)) {
+      return;
+    }
+    if (visiting.has(nodeId)) {
+      throw new Error(`graph hierarchy cycle detected at ${nodeId}`);
+    }
+    visiting.add(nodeId);
+    const node = byId.get(nodeId);
+    if (!node) {
+      throw new Error(`graph hierarchy references missing node ${nodeId}`);
+    }
+    for (const childId of node.childIds) {
+      const child = byId.get(childId);
+      if (!child) {
+        throw new Error(`${node.id} references missing child ${childId}`);
+      }
+      if (child.parentId !== node.id) {
+        throw new Error(
+          `${node.id} child ${childId} must reference parent ${node.id}`,
+        );
+      }
+      visit(childId);
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+  };
+
+  for (const node of nodes) {
+    if (node.parentId && !byId.has(node.parentId)) {
+      throw new Error(`${node.id} references missing parent ${node.parentId}`);
+    }
+  }
+  for (const node of nodes) {
+    visit(node.id);
+  }
+}
+
+function assertImplementationEvidence(catalog: ArchitectureCatalog): void {
+  for (const node of catalog.graphNodes) {
+    const hasSource = node.evidence.some(
+      (reference) => !reference.role || reference.role === "source",
+    );
+    const hasDesign = node.evidence.some((reference) => reference.role === "design");
+    if (node.status.state === "built" && !hasSource) {
+      throw new Error(`${node.id} is built but has only design evidence`);
+    }
+    if (node.status.state === "planned" && !hasDesign) {
+      throw new Error(`${node.id} is planned but has no design evidence`);
+    }
+    if (
+      node.flavors.includes("dynamo_online") &&
+      node.status.delivery === "runner_pair" &&
+      node.status.state === "built"
+    ) {
+      throw new Error(
+        `${node.id} must remain planned for dynamo_online runner integration`,
+      );
+    }
+  }
+}
+
+function assertGraphReferences(catalog: ArchitectureCatalog): void {
+  const nodeIds = new Set(catalog.graphNodes.map(({ id }) => id));
+  const edgeIds = new Set(catalog.graphEdges.map(({ id }) => id));
+  const portsByNode = new Map(
+    catalog.graphNodes.map((node) => [
+      node.id,
+      new Set(node.seamPorts.map((port) => port.id)),
+    ]),
+  );
+
+  for (const edge of catalog.graphEdges) {
+    const endpoints = [edge.source, edge.target];
+    for (const endpoint of endpoints) {
+      if (!nodeIds.has(endpoint.nodeId)) {
+        throw new Error(`${edge.id} references missing node ${endpoint.nodeId}`);
+      }
+      const nodePorts = portsByNode.get(endpoint.nodeId);
+      if (!nodePorts?.has(endpoint.portId)) {
+        throw new Error(
+          `${edge.id} references missing port ${endpoint.portId} on ${endpoint.nodeId}`,
+        );
+      }
+    }
+  }
+
+  for (const scene of catalog.graphScenes) {
+    for (const nodeId of scene.nodeIds) {
+      if (!nodeIds.has(nodeId)) {
+        throw new Error(`${scene.id} references missing scene node ${nodeId}`);
+      }
+    }
+    for (const edgeId of scene.edgeIds) {
+      if (!edgeIds.has(edgeId)) {
+        throw new Error(`${scene.id} references missing scene edge ${edgeId}`);
+      }
+    }
+  }
 }
 
 export async function validateArchitectureCatalog(
@@ -121,6 +229,9 @@ export async function validateArchitectureCatalog(
     catalog.views,
     catalog.crates,
     catalog.pairSupport,
+    catalog.graphNodes,
+    catalog.graphEdges,
+    catalog.graphScenes,
   ]);
 
   const componentIds = new Set(catalog.components.map(({ id }) => id));
@@ -190,6 +301,9 @@ export async function validateArchitectureCatalog(
     catalog.pairSupport.map(({ mode, workload }) => `${mode} + ${workload}`),
     "mode/workload pair",
   );
+  assertGraphHierarchy(catalog.graphNodes);
+  assertGraphReferences(catalog);
+  assertImplementationEvidence(catalog);
 
   for (const entity of [
     ...catalog.components,

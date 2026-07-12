@@ -43,6 +43,41 @@ export const workloadSchema = z.enum([
   "evaluation",
   "telemetry_watch",
 ]);
+export const tierSchema = z.union([
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+]);
+export const audienceLevelSchema = z.enum([
+  "executive",
+  "developer",
+  "maintainer",
+]);
+export const flowChannelSchema = z.enum([
+  "control",
+  "request_data",
+  "token",
+  "telemetry",
+  "report_result",
+]);
+export const executionFlavorSchema = z.enum([
+  "native_http",
+  "native_grpc",
+  "online_mock",
+  "dynamo_offline",
+  "dynamo_online",
+]);
+export const implementationStateSchema = z.enum(["built", "planned"]);
+export const implementationDeliverySchema = z.enum([
+  "unconditional",
+  "feature_gated",
+  "runtime_conditional",
+  "runner_pair",
+  "library_seam",
+  "compatibility_only",
+  "legacy_parallel",
+]);
 
 export const audienceCopySchema = z
   .object({
@@ -64,6 +99,101 @@ export const evidenceReferenceSchema = z
     path: z.string().regex(repositoryPathPattern),
     lines: lineRangeSchema.optional(),
     symbol: z.string().trim().min(1).optional(),
+    role: z.enum(["source", "design"]).optional(),
+  })
+  .strict();
+
+const implementationStatusSchema = z
+  .object({
+    state: implementationStateSchema,
+    delivery: implementationDeliverySchema,
+  })
+  .strict();
+
+const audienceTopologySchema = z
+  .object({
+    visibility: z.array(audienceLevelSchema).min(1),
+    autoExpandDepth: z
+      .object({
+        executive: tierSchema,
+        developer: tierSchema,
+        maintainer: tierSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+const sceneAudienceSchema = z
+  .object({
+    visibility: z.array(audienceLevelSchema).min(1),
+    defaultDepth: z
+      .object({
+        executive: tierSchema,
+        developer: tierSchema,
+        maintainer: tierSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+const seamPortSchema = z
+  .object({
+    id: architectureIdSchema,
+    name: z.string().trim().min(1),
+    channel: flowChannelSchema,
+  })
+  .strict();
+
+export const graphNodeSchema = z
+  .object({
+    id: architectureIdSchema,
+    tier: tierSchema,
+    parentId: architectureIdSchema.nullable(),
+    childIds: z.array(architectureIdSchema),
+    owner: ownershipSchema,
+    status: implementationStatusSchema,
+    flavors: z.array(executionFlavorSchema).min(1),
+    title: audienceCopySchema,
+    summary: audienceCopySchema,
+    evidence: z.array(evidenceReferenceSchema).min(1),
+    seamPorts: z.array(seamPortSchema).min(1),
+    audience: audienceTopologySchema,
+    footnotes: z.array(audienceCopySchema).default([]),
+  })
+  .strict();
+
+export const graphEdgeSchema = z
+  .object({
+    id: architectureIdSchema,
+    source: z
+      .object({
+        nodeId: architectureIdSchema,
+        portId: architectureIdSchema,
+      })
+      .strict(),
+    target: z
+      .object({
+        nodeId: architectureIdSchema,
+        portId: architectureIdSchema,
+      })
+      .strict(),
+    channel: flowChannelSchema,
+    status: implementationStatusSchema,
+    flavors: z.array(executionFlavorSchema).min(1),
+    protocol: z.string().trim().min(1),
+    evidence: z.array(evidenceReferenceSchema).min(1),
+    footnotes: z.array(audienceCopySchema).default([]),
+  })
+  .strict();
+
+export const graphSceneSchema = z
+  .object({
+    id: architectureIdSchema,
+    title: z.string().trim().min(1),
+    rustScene: z.boolean(),
+    nodeIds: z.array(architectureIdSchema).min(1),
+    edgeIds: z.array(architectureIdSchema),
+    audience: sceneAudienceSchema,
   })
   .strict();
 
@@ -189,6 +319,9 @@ export const architectureCatalogSchema = z
     views: z.array(architectureViewSchema).min(1),
     crates: z.array(crateReferenceSchema),
     pairSupport: z.array(pairSupportSchema),
+    graphNodes: z.array(graphNodeSchema).default([]),
+    graphEdges: z.array(graphEdgeSchema).default([]),
+    graphScenes: z.array(graphSceneSchema).default([]),
   })
   .strict();
 
@@ -208,3 +341,12 @@ export type ArchitectureView = z.infer<typeof architectureViewSchema>;
 export type PairSupport = z.infer<typeof pairSupportSchema>;
 export type CrateReference = z.infer<typeof crateReferenceSchema>;
 export type ArchitectureCatalog = z.infer<typeof architectureCatalogSchema>;
+export type Tier = z.infer<typeof tierSchema>;
+export type AudienceLevel = z.infer<typeof audienceLevelSchema>;
+export type FlowChannel = z.infer<typeof flowChannelSchema>;
+export type ExecutionFlavor = z.infer<typeof executionFlavorSchema>;
+export type ImplementationState = z.infer<typeof implementationStateSchema>;
+export type ImplementationDelivery = z.infer<typeof implementationDeliverySchema>;
+export type GraphNode = z.infer<typeof graphNodeSchema>;
+export type GraphEdge = z.infer<typeof graphEdgeSchema>;
+export type GraphScene = z.infer<typeof graphSceneSchema>;
