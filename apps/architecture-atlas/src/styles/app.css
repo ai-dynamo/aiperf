@@ -89,6 +89,7 @@
 @layer layout {
   #root {
     min-block-size: 100vh;
+    container-type: inline-size;
   }
 
   .app-shell {
@@ -97,7 +98,6 @@
       "rail utility" var(--utility-size)
       "rail content" minmax(calc(100vh - var(--utility-size)), auto)
       / var(--rail-size) minmax(0, 1fr);
-    container-type: inline-size;
   }
 
   .side-rail {

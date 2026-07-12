@@ -19,23 +19,37 @@ import {
 } from "../domain/audience";
 import { RoutePlaceholder } from "./placeholders";
 
+const unavailableAudienceStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+};
+
+function getAudienceStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return unavailableAudienceStorage;
+  }
+}
+
 function RootRouteComponent() {
   const search = rootRoute.useSearch();
   const navigate = rootRoute.useNavigate();
-  const audience = resolveAudience(search.audience, window.localStorage);
+  const storage = getAudienceStorage();
+  const audience = resolveAudience(search.audience, storage);
 
   useEffect(() => {
-    persistAudience(audience, window.localStorage);
+    persistAudience(audience, storage);
     if (search.audience !== audience) {
       void navigate({
         replace: true,
         search: (previous) => ({ ...previous, audience }),
       });
     }
-  }, [audience, navigate, search.audience]);
+  }, [audience, navigate, search.audience, storage]);
 
   const handleAudienceChange = (nextAudience: Audience) => {
-    persistAudience(nextAudience, window.localStorage);
+    persistAudience(nextAudience, storage);
     void navigate({
       replace: true,
       search: (previous) => ({ ...previous, audience: nextAudience }),

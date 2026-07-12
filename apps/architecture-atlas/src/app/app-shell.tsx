@@ -89,7 +89,11 @@ export function AppShell({
         <div className="utility-controls">
           <label className="audience-control">
             <span>Audience</span>
-            <select value={audience} onChange={handleAudienceChange}>
+            <select
+              aria-label="Audience"
+              value={audience}
+              onChange={handleAudienceChange}
+            >
               <option value="executive">Executive</option>
               <option value="developer">Developer</option>
               <option value="maintainer">Maintainer</option>

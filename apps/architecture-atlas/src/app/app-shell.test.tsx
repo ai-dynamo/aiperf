@@ -4,7 +4,7 @@
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AUDIENCE_STORAGE_KEY } from "../domain/audience";
 import { createAppRouter } from "../routes/router";
@@ -30,6 +30,14 @@ describe("application shell", () => {
     expect(
       screen.getByRole("button", { name: "Presentation controls" }),
     ).toBeDisabled();
+  });
+
+  it("keeps an explicit audience name when compact styles hide its text", async () => {
+    renderAtlas("/");
+
+    expect(
+      await screen.findByRole("combobox", { name: "Audience" }),
+    ).toHaveAttribute("aria-label", "Audience");
   });
 
   it("uses the URL audience before local storage", async () => {
@@ -72,6 +80,24 @@ describe("application shell", () => {
         audience: "developer",
       });
     });
+  });
+
+  it("uses the safe default when the localStorage getter is unavailable", async () => {
+    const storageGetter = vi
+      .spyOn(window, "localStorage", "get")
+      .mockImplementation(() => {
+        throw new DOMException("denied", "SecurityError");
+      });
+
+    try {
+      renderAtlas("/");
+
+      expect(
+        await screen.findByRole("combobox", { name: "Audience" }),
+      ).toHaveValue("developer");
+    } finally {
+      storageGetter.mockRestore();
+    }
   });
 
   it("persists audience changes in search state and local storage", async () => {
