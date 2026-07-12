@@ -599,7 +599,6 @@ impl BuiltinRunnerDatasetInputAdapterResolver {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct DatasetInputIdentity {
     #[serde(rename = "type")]
     source_type: String,
@@ -796,4 +795,35 @@ fn checked_default_output_tokens(expected: f64) -> Result<usize> {
         "default OSL expected value is outside the native usize range"
     );
     Ok(expected as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discriminator_decode_accepts_fields_owned_by_the_selected_adapter() {
+        let identity: DatasetInputIdentity = serde_json::from_value(serde_json::json!({
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": {"value": 8.0}}
+        }))
+        .unwrap();
+
+        assert_eq!(identity.source_type, "synthetic");
+    }
+
+    #[test]
+    fn selected_adapter_decode_remains_strict() {
+        let result = serde_json::from_value::<SyntheticDatasetInput>(serde_json::json!({
+            "type": "synthetic",
+            "entries": 1,
+            "unknown_policy": true
+        }));
+        let Err(error) = result else {
+            panic!("selected adapter accepted an unknown policy field")
+        };
+
+        assert!(error.to_string().contains("unknown field"));
+    }
 }
