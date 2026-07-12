@@ -146,6 +146,74 @@ async fn anthropic_messages_handler(
 }
 
 #[derive(Default)]
+struct AnthropicReplayCapture {
+    calls: AtomicUsize,
+    bodies: Mutex<Vec<serde_json::Value>>,
+}
+
+async fn anthropic_replay_handler(
+    State(capture): State<Arc<AnthropicReplayCapture>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    capture
+        .bodies
+        .lock()
+        .unwrap()
+        .push(serde_json::from_slice(&body).unwrap());
+    let first = capture.calls.fetch_add(1, Ordering::SeqCst) == 0;
+    let body = if first {
+        concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"why\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"lookup\",\"input\":{}}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\\\"x\\\"}\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":9}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        )
+    } else {
+        concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":15,\"output_tokens\":1}}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":1}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        )
+    };
+    ([(header::CONTENT_TYPE, "text/event-stream")], body)
+}
+
+async fn anthropic_json_handler(
+    State(capture): State<Arc<AnthropicWireCapture>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    *capture.request.lock().unwrap() = Some((headers, body));
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        concat!(
+            "{\"id\":\"msg_json\",\"type\":\"message\",\"role\":\"assistant\",",
+            "\"content\":[{\"type\":\"thinking\",\"thinking\":\"why\"},{\"type\":\"text\",\"text\":\"answer\"}],",
+            "\"model\":\"claude\",\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}",
+        ),
+    )
+}
+
+#[derive(Default)]
 struct ConcurrencyProbe {
     active: AtomicUsize,
     peak: AtomicUsize,
@@ -424,6 +492,7 @@ async fn stdio_child_sends_anthropic_messages_byte_exactly() {
     assert_eq!(headers["x-api-key"], "sk-ant-e2e-secret");
     assert_eq!(headers["anthropic-version"], "2023-06-01");
     assert_eq!(headers["anthropic-beta"], "extended-thinking-test");
+    assert_eq!(headers[header::CONTENT_TYPE], "application/json");
     assert!(headers.get(header::AUTHORIZATION).is_none());
 
     let report: serde_json::Value =
@@ -459,6 +528,162 @@ async fn stdio_child_sends_anthropic_messages_byte_exactly() {
     .unwrap();
     assert_eq!(outputs["data"][0]["response_text"], "whyanswer");
     assert_eq!(outputs["data"][0]["metrics"]["output_token_count"], 1.0);
+    assert_eq!(outputs["data"][0]["metrics"]["output_sequence_length"], 2.0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_child_replays_anthropic_thinking_signature_and_tool_blocks() {
+    let capture = Arc::new(AnthropicReplayCapture::default());
+    let app = Router::new()
+        .route("/v1/messages", post(anthropic_replay_handler))
+        .with_state(capture.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let artifacts = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "anthropic-replay-e2e",
+            "workers": 1,
+            "artifact_dir": artifacts.path(),
+            "models": {"items": [{"name": "claude"}]},
+            "endpoint": {
+                "urls": [format!("http://{address}")],
+                "type": "messages",
+                "streaming": true,
+                "use_server_token_count": true
+            },
+            "dataset": {
+                "type": "file",
+                "format": "multi_turn",
+                "records": [{
+                    "session_id": "replay-proof",
+                    "turns": [
+                        {"text": "first", "output_length": 9},
+                        {"text": "second", "output_length": 1}
+                    ]
+                }]
+            },
+            "phases": [{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": 2,
+                "concurrency": 1
+            }],
+            "artifacts": {}
+        }
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let bodies = capture.bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(
+        bodies[1]["messages"],
+        serde_json::json!([
+            {"role":"user","content":"first"},
+            {"role":"assistant","content":[
+                {"type":"thinking","thinking":"why","signature":"sig"},
+                {"type":"text","text":"answer"},
+                {"type":"tool_use","id":"tool-1","name":"lookup","input":{"q":"x"}}
+            ]},
+            {"role":"user","content":"second"}
+        ])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_child_sends_non_streaming_anthropic_message_json() {
+    let capture = Arc::new(AnthropicWireCapture::default());
+    let app = Router::new()
+        .route("/v1/messages", post(anthropic_json_handler))
+        .with_state(capture.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let artifacts = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "anthropic-json-e2e",
+            "workers": 1,
+            "artifact_dir": artifacts.path(),
+            "models": {"items": [{"name": "claude"}]},
+            "endpoint": {
+                "urls": [format!("http://{address}")],
+                "type": "messages",
+                "streaming": false,
+                "use_server_token_count": true,
+                "api_key": "sk-ant-json-secret"
+            },
+            "dataset": {
+                "type": "file",
+                "format": "single_turn",
+                "records": [{"text": "Hello!", "output_length": 2}]
+            },
+            "phases": [{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": 1,
+                "concurrency": 1
+            }],
+            "artifacts": {"outputs_path": "outputs.json"}
+        }
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let (headers, body) = capture.request.lock().unwrap().take().unwrap();
+    assert_eq!(headers["x-api-key"], "sk-ant-json-secret");
+    assert_eq!(
+        body.as_ref(),
+        br#"{"model":"claude","messages":[{"role":"user","content":"Hello!"}],"max_tokens":2}"#
+    );
+    let outputs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(artifacts.path().join("outputs.json")).unwrap())
+            .unwrap();
+    assert_eq!(outputs["data"][0]["response_text"], "whyanswer");
     assert_eq!(outputs["data"][0]["metrics"]["output_sequence_length"], 2.0);
 }
 
