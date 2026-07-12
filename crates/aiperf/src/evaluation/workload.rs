@@ -918,6 +918,7 @@ impl EvaluationWorkload {
                     case_id: envelope.case_id.clone(),
                     semantic_attempt_id: envelope.semantic_attempt_id.clone(),
                     logical_call_id: envelope.logical_call_id.clone(),
+                    idempotency_key: request.idempotency_key.clone(),
                     service_id: envelope.service_id.clone(),
                     semantic_operation_id: envelope.semantic_operation_id.to_string(),
                     replay_safe_after_output: false,
@@ -1011,7 +1012,6 @@ impl EvaluationWorkload {
                     | OperationState::Streaming
                     | OperationState::Cancelling => {
                         state.operation_deadlines.remove(operation_id);
-                        state.ledger.request_cancel(operation_id)?;
                         if let Some(active) = state.active_operations.get(operation_id) {
                             active.cancellation.cancel();
                         }
@@ -1078,7 +1078,6 @@ impl EvaluationWorkload {
                 .await?;
             }
             OperationState::Admitted | OperationState::Dispatching | OperationState::Streaming => {
-                state.ledger.request_cancel(operation_id)?;
                 let active = state
                     .active_operations
                     .get(operation_id)
@@ -1097,9 +1096,6 @@ impl EvaluationWorkload {
     ) -> Result<()> {
         let operation_id = queued.operation_id.as_str().to_string();
         state.ledger.admit(&operation_id)?;
-        state
-            .ledger
-            .start_attempt(&operation_id, format!("{operation_id}:transport:0"))?;
         let cancellation = OperationCancellation::default();
         let active = ActiveOperation {
             cancellation: cancellation.clone(),
@@ -1118,22 +1114,10 @@ impl EvaluationWorkload {
             sender: host_tx.clone(),
         };
         tokio::task::spawn_local(async move {
-            let execution = queued
+            let result = queued
                 .executor
-                .execute(&queued.envelope, &sink, cancellation.clone());
-            let cancelled = cancellation.cancelled();
-            tokio::pin!(execution);
-            tokio::pin!(cancelled);
-            let result = tokio::select! {
-                biased;
-                _ = &mut cancelled => Ok(HostExecutionTerminal {
-                    class: HostTerminalClass::Cancelled,
-                    payload: serde_json::json!({"status":"cancelled"}),
-                    usage: HostOperationUsage::default(),
-                    retryable: false,
-                }),
-                result = &mut execution => result,
-            };
+                .execute(&queued.envelope, &sink, cancellation)
+                .await;
             let message = RuntimeHostMessage::Terminal {
                 operation_id: queued.operation_id,
                 semantic_attempt_id: queued.semantic_attempt_id,
@@ -1160,10 +1144,6 @@ impl EvaluationWorkload {
                     .ok_or_else(|| anyhow!("stream delta referenced an inactive operation"))?;
                 self.host_executors
                     .validate_stream(&active.semantic_operation_id, &delta.payload)?;
-                state.ledger.observe_output(
-                    operation_id.as_str(),
-                    &format!("{}:transport:0", operation_id.as_str()),
-                )?;
                 let stream_sequence = u64::try_from(delta.ordinal)
                     .map_err(|_| anyhow!("stream sequence exceeds u64"))?;
                 self.provider
@@ -1196,6 +1176,7 @@ impl EvaluationWorkload {
                         payload: serde_json::json!({"error_kind":"executor_error"}),
                         usage: HostOperationUsage::default(),
                         retryable: false,
+                        transport_attempts: Vec::new(),
                     },
                 };
                 state.operation_deadlines.remove(operation_id.as_str());
@@ -1203,16 +1184,39 @@ impl EvaluationWorkload {
                     self.host_executors
                         .validate_response(&active.semantic_operation_id, &terminal.payload)?;
                 }
-                let attempt_id = format!("{}:transport:0", operation_id.as_str());
-                let observed_output = state
-                    .ledger
-                    .operation(operation_id.as_str())?
-                    .attempts
-                    .last()
-                    .is_some_and(|attempt| attempt.output_observed);
-                state
-                    .ledger
-                    .finish_attempt(operation_id.as_str(), &attempt_id, terminal.class)?;
+                let observed_output = terminal
+                    .transport_attempts
+                    .iter()
+                    .any(|attempt| attempt.output_observed);
+                let attempt_count = terminal.transport_attempts.len();
+                for (index, attempt) in terminal.transport_attempts.iter().enumerate() {
+                    ensure!(
+                        attempt.ordinal == index,
+                        "host executor returned non-contiguous transport attempt ordinals"
+                    );
+                    let expected_id = format!("{}:transport:{index}", operation_id.as_str());
+                    ensure!(
+                        attempt.attempt_id == expected_id,
+                        "host executor changed Rust transport attempt identity"
+                    );
+                    state
+                        .ledger
+                        .start_attempt(operation_id.as_str(), attempt.attempt_id.clone())?;
+                    if attempt.output_observed {
+                        state
+                            .ledger
+                            .observe_output(operation_id.as_str(), &attempt.attempt_id)?;
+                    }
+                    let replay_safe = state.ledger.finish_attempt(
+                        operation_id.as_str(),
+                        &attempt.attempt_id,
+                        attempt.terminal,
+                    )?;
+                    ensure!(
+                        index + 1 == attempt_count || replay_safe,
+                        "host executor retried after externally observed output"
+                    );
+                }
                 state
                     .ledger
                     .finish_operation(operation_id.as_str(), terminal.class)?;
@@ -1676,6 +1680,7 @@ fn cancelled_terminal_payload(stage: &str, reason: &str) -> Result<HostExecution
         payload: serde_json::json!({"status":"cancelled"}),
         usage: HostOperationUsage::default(),
         retryable: false,
+        transport_attempts: Vec::new(),
     })
 }
 
