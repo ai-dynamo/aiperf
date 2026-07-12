@@ -24,13 +24,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::dynamo_offline::{
-    CanonicalSharedMetrics, OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig,
-    OfflineGraphReport, OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity,
-    OfflineRouterMode, OfflineRunReport, OfflineScheduledExecution, OfflineScheduledFuture,
-    OfflineScheduledReport, OfflineScheduledRunFactory, OfflineTopology, OfflineTraceConfig,
-    run_graph_offline, run_graph_workload_offline, run_scheduled_backend_offline,
-    run_trace_offline, write_dynamo_per_request_jsonl, write_dynamo_report_json,
-    write_dynamo_worker_artifacts_json,
+    CanonicalSharedMetrics, DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
+    OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig, OfflineGraphReport,
+    OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity, OfflineRouterMode,
+    OfflineRunReport, OfflineScheduledExecution, OfflineScheduledExecutionFinalizer,
+    OfflineScheduledReport, OfflineTopology, OfflineTraceConfig, run_graph_offline,
+    run_graph_workload_offline, run_scheduled_backend_offline_deferred, run_trace_offline,
+    write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::{
@@ -38,8 +38,7 @@ use aiperf::multiturn::{
     NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
     PreparedTurnEndpointResolver,
 };
-use aiperf::phase_runtime::run_scheduled_phases_with_aggregate;
-use aiperf::report::write_native_report_json;
+use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
 use aiperf_clock::Clock;
 use aiperf_dataset::{
     DatasetSource, HuggingFaceTokenizer, LoadConfig, SamplerRegistry, SegmentStore, TextTokenizer,
@@ -58,8 +57,10 @@ use aiperf_graph::workload::{
     SlotPoolTraceAdmission,
 };
 use aiperf_metrics::{
-    CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportRunInfo,
-    ReportSummary, RunOutcome, SloThreshold,
+    CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
+    ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
+    ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
+    ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
 use aiperf_rng::RngRoot;
 use aiperf_timing::{
@@ -189,6 +190,14 @@ impl DynamoOfflineTopologySpec {
             Self::Disaggregated => "disaggregated",
         }
     }
+
+    const fn report(self) -> ReportDynamoTopology {
+        match self {
+            Self::Single => ReportDynamoTopology::Single,
+            Self::Aggregated => ReportDynamoTopology::Aggregated,
+            Self::Disaggregated => ReportDynamoTopology::Disaggregated,
+        }
+    }
 }
 
 impl From<DynamoOfflineTopologySpec> for OfflineTopology {
@@ -217,6 +226,13 @@ impl DynamoOfflineRouterSpec {
         match self {
             Self::RoundRobin => "round_robin",
             Self::Kv => "kv",
+        }
+    }
+
+    const fn report(self) -> ReportDynamoRouter {
+        match self {
+            Self::RoundRobin => ReportDynamoRouter::RoundRobin,
+            Self::Kv => ReportDynamoRouter::Kv,
         }
     }
 }
@@ -715,6 +731,42 @@ impl ValidatedDynamoOfflineBackend {
     }
 }
 
+fn dynamo_report_facts(
+    backend: &ValidatedDynamoOfflineBackend,
+    parity: OfflineMetricParity,
+    performance: &loadgen_core::collector::TraceSimulationReport,
+) -> Result<ReportDynamoRunInfo> {
+    let parity = ReportDynamoParityInfo::new(
+        parity.shared_fields,
+        parity.independently_accumulated_fields,
+        parity.backend_owned_fields,
+        parity.serialized_bytes,
+    )?;
+    let throughput = &performance.throughput;
+    let capacity = ReportDynamoCapacityInfo::new(
+        throughput.prefill_worker_seconds,
+        throughput.decode_worker_seconds,
+        throughput.prefill_gpus_per_worker,
+        throughput.decode_gpus_per_worker,
+        throughput.gpu_hours,
+    )?;
+    Ok(ReportDynamoRunInfo::new(
+        ReportClockKind::Sim,
+        backend.topology.report(),
+        backend.router_mode.report(),
+        backend
+            .required_features
+            .iter()
+            .map(|feature| feature.as_str().to_owned())
+            .collect(),
+        backend.engine.workers,
+        backend.engine.prefill_workers,
+        backend.engine.decode_workers,
+        parity,
+    )?
+    .with_capacity(capacity))
+}
+
 /// Registered strict decoder for the feature-bearing offline backend.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DynamoOfflineBackendFactory;
@@ -899,7 +951,6 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             .map(|item| item.name.clone())
             .ok_or_else(|| anyhow!("dynamo_offline scheduled execution requires a model"))?;
 
-        let native_relative = Path::new("native-v2.json");
         let adaptive_paths = [
             Path::new("adaptive_scale_events.jsonl"),
             Path::new("adaptive_scale_summary.json"),
@@ -912,10 +963,6 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
         .into_iter()
         .flatten()
         {
-            ensure!(
-                backend_path != native_relative,
-                "backend artifact path conflicts with the authoritative native-v2 report"
-            );
             ensure!(
                 !workload
                     .phases
@@ -1130,32 +1177,14 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
             .map_or(rng_root, |seed| RngRoot::new(Some(seed)));
         let default_output_tokens = dataset.default_output_tokens;
         let dataset = dataset.dataset;
-        ensure!(
-            !artifact_target.exists(),
-            "artifact_target already exists: {}",
-            artifact_target.display()
-        );
-        if let Some(parent) = artifact_target
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("creating offline artifact parent {}", parent.display())
-            })?;
-        }
-        std::fs::create_dir(&artifact_target).with_context(|| {
-            format!(
-                "creating exclusive offline artifact target {}",
-                artifact_target.display()
-            )
-        })?;
+        create_artifact_target(&artifact_target)?;
 
         let phase_count = phases.len();
         let backend_sla_metrics = backend.sla.native_metrics_config()?;
         let artifact_for_factory = artifact_target.clone();
         let benchmark_for_factory = benchmark_id.clone();
         let model_for_factory = model.clone();
-        let factory: Box<dyn OfflineScheduledRunFactory> =
+        let factory: Box<dyn DeferredOfflineScheduledRunFactory> =
             Box::new(move |clock: Rc<dyn Clock>, start_ns, dispatcher| {
                 Box::pin(async move {
                     let shared = native_scheduled_resources(&phases);
@@ -1191,7 +1220,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         }
                         plans.push(plan);
                     }
-                    let aggregate = run_scheduled_phases_with_aggregate(
+                    let aggregate = run_scheduled_phases_with_aggregate_deferred(
                         plans,
                         clock.clone(),
                         start_ns,
@@ -1199,22 +1228,32 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         Rc::new(NoopPhaseObserver),
                     )
                     .await?;
-                    let mut execution =
-                        OfflineScheduledExecution::phased(aggregate.phased, aggregate.performance)?;
-                    if let Some(observer) = backend_goodput {
-                        let goodput = observer.finish();
-                        for tag in [
-                            MetricTag::GoodRequestCount,
-                            MetricTag::Goodput,
-                            MetricTag::GoodRequestFraction,
-                        ] {
-                            if let Some(value) = goodput.finite_value(tag) {
-                                execution.profiling.native_metrics.insert_finite(tag, value);
+                    let finalizer: Box<dyn OfflineScheduledExecutionFinalizer> =
+                        Box::new(move || {
+                            let aggregate = aggregate.finish();
+                            let mut execution = OfflineScheduledExecution::phased(
+                                aggregate.phased,
+                                aggregate.performance,
+                            )?;
+                            if let Some(observer) = backend_goodput {
+                                let goodput = observer.finish();
+                                for tag in [
+                                    MetricTag::GoodRequestCount,
+                                    MetricTag::Goodput,
+                                    MetricTag::GoodRequestFraction,
+                                ] {
+                                    if let Some(value) = goodput.finite_value(tag) {
+                                        execution
+                                            .profiling
+                                            .native_metrics
+                                            .insert_finite(tag, value);
+                                    }
+                                }
                             }
-                        }
-                    }
-                    Ok(execution)
-                }) as OfflineScheduledFuture
+                            Ok(execution)
+                        });
+                    Ok(finalizer)
+                }) as DeferredOfflineScheduledFuture
             });
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
@@ -1225,12 +1264,6 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
             .iter()
             .find(|report| report.kind == aiperf_timing::PhaseKind::Warmup)
             .map(|report| report.report.native_metrics.clone());
-        let report_path = artifact_target.join("native-v2.json");
-        ensure!(
-            !report_path.exists(),
-            "native-v2 report target already exists: {}",
-            report_path.display()
-        );
         let native_report = NativeReport::from_outcome(
             &outcome.report.aiperf.native_metrics,
             &RunOutcome {
@@ -1246,13 +1279,18 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                 ..RunOutcome::default()
             },
         );
-        write_native_report_json(&native_report, &report_path)?;
+        let report_facts = ReportPairRunFacts::new().with_dynamo(dynamo_report_facts(
+            &backend,
+            outcome.report.parity,
+            &outcome.report.performance,
+        )?);
         let mut provenance = outcome.provenance;
         provenance.insert("workload".into(), "scheduled".into());
         provenance.insert("phase_count".into(), phase_count.to_string());
         provenance.insert("benchmark_id".into(), benchmark_id);
         Ok(PreparedRunOutcome {
-            report_path,
+            native_report,
+            report_facts,
             provenance,
         })
     }
@@ -1611,21 +1649,6 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             !run.artifact_target.exists(),
             "artifact_target already exists; protocol-v2 execution requires an exclusive uncreated target"
         );
-        let native_relative = Path::new("native-v2.json");
-        for backend_path in [
-            backend.artifacts.report_json.as_deref(),
-            backend.artifacts.per_request_jsonl.as_deref(),
-            backend.artifacts.worker_artifacts_json.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            ensure!(
-                backend_path != native_relative,
-                "backend artifact path conflicts with the authoritative native-v2 report"
-            );
-        }
-
         let model = run.models.items[0].name.clone();
         let tokenizer = tokenizer.load(&model)?;
         let adapter = context
@@ -1655,6 +1678,8 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             random_seed,
             artifact_target: run.artifact_target.clone(),
             default_max_tokens,
+            worker_count: workload.worker_count,
+            phase_count: workload.phases.len(),
         }))
     }
 }
@@ -1677,6 +1702,8 @@ struct PreparedDynamoOfflineGraphOperation {
     random_seed: Option<u64>,
     artifact_target: PathBuf,
     default_max_tokens: usize,
+    worker_count: usize,
+    phase_count: usize,
 }
 
 impl fmt::Debug for PreparedDynamoOfflineGraphOperation {
@@ -1701,7 +1728,17 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             random_seed,
             artifact_target,
             default_max_tokens,
+            worker_count,
+            phase_count,
         } = *self;
+        create_artifact_target(&artifact_target)?;
+        let graph_report = ReportGraphRunInfo::new(
+            input.metadata.format.clone(),
+            input.metadata.root_count,
+            input.metadata.node_count,
+            worker_count,
+            phase_count,
+        )?;
         let rng_root = RngRoot::new(random_seed);
         let node_policy = graph_node_policy(&phase, rng_root)?;
         let workload = graph_workload_factory(input.plans, &phase, rng_root)?;
@@ -1735,13 +1772,6 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             ));
         }
 
-        let report_path = artifact_target.join("native-v2.json");
-        prepare_output_parent(&report_path)?;
-        ensure!(
-            !report_path.exists(),
-            "native-v2 report target already exists: {}",
-            report_path.display()
-        );
         let native_report = NativeReport::from_outcome(
             &outcome.report.native_metrics,
             &RunOutcome {
@@ -1756,14 +1786,26 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
                 ..RunOutcome::default()
             },
         );
-        write_native_report_json(&native_report, &report_path)?;
+        let graph_report = graph_report.with_outcome(ReportGraphOutcomeInfo::new(
+            outcome.report.workload.admitted,
+            outcome.report.workload.completed,
+            outcome.report.workload.failed,
+        ))?;
+        let report_facts = ReportPairRunFacts::new()
+            .with_graph(graph_report)
+            .with_dynamo(dynamo_report_facts(
+                &backend,
+                outcome.report.parity,
+                &outcome.report.performance,
+            )?);
         let mut provenance = outcome.provenance;
         provenance.insert("workload".into(), "graph".into());
         provenance.insert("graph_input".into(), input.metadata.format);
         provenance.insert("graph_roots".into(), input.metadata.root_count.to_string());
         provenance.insert("graph_nodes".into(), input.metadata.node_count.to_string());
         Ok(PreparedRunOutcome {
-            report_path,
+            native_report,
+            report_facts,
             provenance,
         })
     }
@@ -1913,14 +1955,17 @@ impl DynamoOfflineExecutor {
     /// dispatcher supplied by `aiperf::dynamo_offline`.
     pub fn execute_scheduled(
         self,
-        workload: Box<dyn OfflineScheduledRunFactory>,
+        workload: Box<dyn DeferredOfflineScheduledRunFactory>,
     ) -> Result<DynamoOfflineScheduledOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report =
-            run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?;
+        let report = run_scheduled_backend_offline_deferred(
+            self.engine.clone(),
+            self.model.clone(),
+            workload,
+        )?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
@@ -2136,6 +2181,27 @@ fn prepare_output_parent(path: &Path) -> Result<()> {
             .with_context(|| format!("creating offline artifact directory {}", parent.display()))?;
     }
     Ok(())
+}
+
+fn create_artifact_target(path: &Path) -> Result<()> {
+    ensure!(
+        !path.exists(),
+        "artifact_target already exists: {}",
+        path.display()
+    );
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating offline artifact parent {}", parent.display()))?;
+    }
+    std::fs::create_dir(path).with_context(|| {
+        format!(
+            "creating exclusive offline artifact target {}",
+            path.display()
+        )
+    })
 }
 
 fn verify_parity(

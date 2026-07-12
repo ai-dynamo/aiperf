@@ -194,6 +194,14 @@ fn assert_success(output: Output, target: &Path, workload: &str) -> Value {
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
     assert_eq!(native["run"]["mode"], "offline:scheduled");
+    assert_eq!(native["run"]["dynamo"]["clock"], "sim");
+    assert_eq!(native["run"]["dynamo"]["parity"]["shared_fields"], 77);
+    assert_eq!(
+        native["run"]["dynamo"]["parity"]["independently_accumulated_fields"],
+        69
+    );
+    assert_eq!(native["run"]["dynamo"]["parity"]["backend_owned_fields"], 8);
+    assert!(native["run"]["dynamo"]["capacity"].is_object());
     assert!(target.join("dynamo/report.json").is_file());
     terminal
 }
@@ -252,6 +260,9 @@ fn warmup_and_profiling_share_one_engine_clock_and_exact_live_parity_collector()
     let native: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     assert!(native["metrics"]["goodput"].is_object());
+    assert_eq!(native["run"]["dynamo"]["topology"], "aggregated");
+    assert_eq!(native["run"]["dynamo"]["router"], "kv");
+    assert_eq!(native["run"]["dynamo"]["workers"], 2);
     std::fs::remove_dir_all(target).unwrap();
 }
 

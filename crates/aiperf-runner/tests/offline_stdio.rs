@@ -205,6 +205,27 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     let native: Value = serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
     assert_eq!(native["run"]["mode"], "offline:graph");
+    assert_eq!(native["run"]["graph"]["input_format"], "dag_jsonl");
+    assert_eq!(native["run"]["graph"]["root_count"], 1);
+    assert_eq!(native["run"]["graph"]["node_count"], 3);
+    assert_eq!(native["run"]["graph"]["worker_count"], 1);
+    assert_eq!(native["run"]["graph"]["phase_count"], 1);
+    assert_eq!(native["run"]["graph"]["outcome"]["admitted"], 1);
+    assert_eq!(native["run"]["graph"]["outcome"]["completed"], 1);
+    assert_eq!(native["run"]["graph"]["outcome"]["failed"], 0);
+    assert_eq!(native["run"]["dynamo"]["clock"], "sim");
+    assert_eq!(native["run"]["dynamo"]["topology"], "single");
+    assert_eq!(native["run"]["dynamo"]["router"], "round_robin");
+    assert_eq!(native["run"]["dynamo"]["workers"], 1);
+    assert_eq!(native["run"]["dynamo"]["prefill_workers"], 1);
+    assert_eq!(native["run"]["dynamo"]["decode_workers"], 1);
+    assert_eq!(native["run"]["dynamo"]["parity"]["shared_fields"], 74);
+    assert_eq!(
+        native["run"]["dynamo"]["parity"]["independently_accumulated_fields"],
+        69
+    );
+    assert_eq!(native["run"]["dynamo"]["parity"]["backend_owned_fields"], 5);
+    assert!(native["run"]["dynamo"]["capacity"].is_object());
 
     let dynamo: Value =
         serde_json::from_slice(&std::fs::read(target.join("dynamo/report.json")).unwrap()).unwrap();
