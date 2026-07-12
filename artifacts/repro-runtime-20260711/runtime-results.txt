@@ -44,4 +44,3 @@ All reproductions used the real PR binary:
   output: /tmp/aiperf-watch-status-intermediate-20260711/final.parquet
   actual stored row: error_metric=42.0
   conclusion: the response status was never validated.
-
