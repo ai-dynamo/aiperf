@@ -689,7 +689,7 @@ fn model_result(
 /// Combined performance and canonical agentic-evaluation result.
 #[derive(Debug)]
 pub struct AgenticRunReport {
-    /// Requested Harbor package or local task directory.
+    /// Requested Harbor Hub package, legacy dataset, or local task directory.
     pub dataset: String,
     /// Target model name.
     pub model: String,

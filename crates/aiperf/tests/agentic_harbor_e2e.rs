@@ -44,6 +44,10 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
         .expect("set AIPERF_AGENTIC_PYTHON to the hash-pinned Harbor worker Python");
     let dataset = std::env::var("AIPERF_AGENTIC_DATASET")
         .unwrap_or_else(|_| "harbor/hello-world".to_string());
+    let expected_task = std::env::var("AIPERF_AGENTIC_EXPECTED_TASK").ok();
+    let expected_revision = std::env::var("AIPERF_AGENTIC_EXPECTED_REVISION").ok();
+    let expected_benchmark = std::env::var("AIPERF_AGENTIC_EXPECTED_BENCHMARK").ok();
+    let expected_provider = std::env::var("AIPERF_AGENTIC_EXPECTED_PROVIDER").ok();
     let timeout_seconds = std::env::var("AIPERF_AGENTIC_E2E_TIMEOUT_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -91,6 +95,9 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
         .arg(&report_path)
         .env("AIPERF_ACCURACY_PYTHON", python)
         .kill_on_drop(true);
+    if let Some(task) = &expected_task {
+        command.arg("--agentic-tasks").arg(task);
+    }
     let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
         .await
         .expect("real Harbor acceptance run timed out")
@@ -106,6 +113,7 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
     let report: Value = serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
     assert_eq!(report["schema_version"], "2.0");
     assert_eq!(report["run"]["mode"], "agentic_accuracy");
+    assert_eq!(report["agentic"]["config"]["dataset"], dataset);
     assert_eq!(report["evaluator"]["packages"]["harbor"], "0.18.0");
     assert_eq!(
         report["evaluator"]["dependency_lock_sha256"],
@@ -118,6 +126,24 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
         report["agentic"]["evaluator"]["verifier"],
         "harbor packaged task verifier"
     );
+    if let Some(expected) = &expected_benchmark {
+        assert_eq!(
+            report["evaluator"]["dataset"]["benchmark"],
+            expected.as_str()
+        );
+    }
+    if let Some(expected) = &expected_revision {
+        assert_eq!(
+            report["evaluator"]["dataset"]["revision"],
+            expected.as_str()
+        );
+    }
+    if let Some(expected) = &expected_provider {
+        assert_eq!(
+            report["evaluator"]["dataset"]["provider"],
+            expected.as_str()
+        );
+    }
     assert_eq!(report["agentic"]["summary"]["episode_count"], 1);
     assert_eq!(report["agentic"]["summary"]["completed_count"], 1);
     assert_eq!(
@@ -127,6 +153,9 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
     let records = report["agentic"]["records"].as_array().unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["outcome"], "completed");
+    if let Some(expected) = &expected_task {
+        assert_eq!(records[0]["task"], expected.as_str());
+    }
     assert!(!records[0]["rewards"].as_object().unwrap().is_empty());
     assert!(records[0]["model_calls"].as_u64().unwrap() >= 1);
     let artifact_path = records[0]["artifact_path"].as_str().unwrap();
@@ -162,7 +191,25 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
             .iter()
             .all(|body| !body["messages"].as_array().unwrap().is_empty())
     );
+    let model_calls = requests.len();
     drop(requests);
+
+    eprintln!(
+        "AIPERF_AGENTIC_E2E_PROOF={}",
+        serde_json::json!({
+            "dataset": dataset,
+            "benchmark": report["evaluator"]["dataset"]["benchmark"],
+            "provider": report["evaluator"]["dataset"]["provider"],
+            "revision": report["evaluator"]["dataset"]["revision"],
+            "task": records[0]["task"],
+            "outcome": records[0]["outcome"],
+            "rewards": records[0]["rewards"],
+            "model_calls": model_calls,
+            "artifact_path": artifact_path,
+            "harbor": report["evaluator"]["packages"]["harbor"],
+            "dependency_lock_sha256": report["evaluator"]["dependency_lock_sha256"],
+        })
+    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

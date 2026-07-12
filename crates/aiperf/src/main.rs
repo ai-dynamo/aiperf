@@ -266,7 +266,7 @@ struct Cli {
     accuracy_csv: Option<PathBuf>,
 
     // --- stateful agentic accuracy flags (online HTTP path) ---
-    /// Run a canonical Harbor package `org/name[@revision]` or local task directory.
+    /// Run a Harbor Hub package, legacy `name@version`, or local task directory.
     #[arg(long)]
     agentic_benchmark: Option<String>,
     /// Exact Harbor task names/globs; comma-separated or repeated.
