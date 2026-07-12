@@ -14,6 +14,7 @@ pub mod dataset_input;
 pub mod distribution_identity;
 pub mod evaluation_execution;
 pub mod execute;
+pub mod execution_factories;
 mod gpu_telemetry;
 mod graph_execution;
 pub mod graph_input;
@@ -36,6 +37,7 @@ pub mod turn_execution;
 
 pub use distribution_identity::current_distribution_id;
 pub use execute::{execute_run, execute_run_with_all_factories, execute_run_with_backend_factory};
+pub use execution_factories::{RunnerExecutionFactories, native_execution_factories};
 pub use graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
 pub use grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};

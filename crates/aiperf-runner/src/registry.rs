@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunnerComponentId};
@@ -139,6 +140,13 @@ pub trait RunnerWorkloadFactory: Debug + Send + Sync {
     fn requirements(&self, config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements>;
 }
 
+/// One-shot lifecycle acknowledgement after durable report persistence.
+pub trait PreparedReportCommit: Debug {
+    /// Acknowledge evaluator lifecycle completion after the authoritative
+    /// native report has been atomically persisted.
+    fn commit(self: Box<Self>) -> Result<()>;
+}
+
 /// Result returned after one prepared pair executes successfully.
 #[derive(Debug)]
 pub struct PreparedRunOutcome {
@@ -148,6 +156,9 @@ pub struct PreparedRunOutcome {
     pub report_facts: ReportPairRunFacts,
     /// Additive backend/workload provenance for the terminal response.
     pub provenance: BTreeMap<String, String>,
+    /// Optional acknowledgement invoked only after the authoritative native
+    /// report write and atomic rename succeed.
+    pub report_commit: Option<Box<dyn PreparedReportCommit>>,
 }
 
 /// One completely prepared operation.
@@ -764,6 +775,7 @@ pub struct ValidatedEndpointProfileV2 {
 #[derive(Clone)]
 pub struct RunnerRunContext {
     product_registry: Arc<AiperfRegistry>,
+    execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
     sidecar_inputs: Arc<PreparedSidecarInputs>,
@@ -775,6 +787,7 @@ impl Debug for RunnerRunContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RunnerRunContext")
+            .field("execution_factories", &self.execution_factories)
             .field(
                 "sidecar_inputs",
                 &self.sidecar_inputs.ids().collect::<Vec<_>>(),
@@ -795,6 +808,7 @@ impl RunnerRunContext {
     /// Freeze one validated profile collection beside the process registry.
     pub fn new(
         product_registry: Arc<AiperfRegistry>,
+        execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
         sidecar_inputs: Arc<PreparedSidecarInputs>,
@@ -816,6 +830,7 @@ impl RunnerRunContext {
         );
         Ok(Self {
             product_registry,
+            execution_factories,
             graph_inputs,
             dataset_inputs,
             sidecar_inputs,
@@ -832,6 +847,16 @@ impl RunnerRunContext {
     /// Clone the cheap shared registry handle into a prepared operation.
     pub fn product_registry_handle(&self) -> Arc<AiperfRegistry> {
         self.product_registry.clone()
+    }
+
+    /// Borrow the execution-placement universe frozen by the coordinator.
+    pub fn execution_factories(&self) -> &RunnerExecutionFactories {
+        &self.execution_factories
+    }
+
+    /// Retain the exact execution-placement universe in a prepared operation.
+    pub fn execution_factories_handle(&self) -> RunnerExecutionFactories {
+        self.execution_factories.clone()
     }
 
     /// Borrow the frozen graph-input resolver composed by the coordinator.
@@ -1403,6 +1428,7 @@ mod tests {
                     "fixture".into(),
                     format!("{}-{}", self.node, self.message),
                 )]),
+                report_commit: None,
             })
         }
     }
@@ -1494,6 +1520,7 @@ mod tests {
         };
         let context = RunnerRunContext::new(
             Arc::new(AiperfRegistry::builtin().unwrap()),
+            crate::execution_factories::native_execution_factories(),
             Arc::new(crate::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
             Arc::new(crate::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
             Arc::new(crate::sidecar_input::PreparedSidecarInputs::default()),

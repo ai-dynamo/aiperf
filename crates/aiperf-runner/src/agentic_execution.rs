@@ -516,6 +516,7 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
         Ok(Box::new(PreparedAgenticOnlineOperation {
             spec,
             registry: context.product_registry_handle(),
+            backend_factory: context.execution_factories().http_handle(),
         }))
     }
 }
@@ -588,6 +589,7 @@ fn validate_agentic_authored_run(
 struct PreparedAgenticOnlineOperation {
     spec: AgenticOnlineExecutionSpec,
     registry: Arc<AiperfRegistry>,
+    backend_factory: Arc<dyn HttpExecutionBackendFactory>,
 }
 
 impl fmt::Debug for PreparedAgenticOnlineOperation {
@@ -603,8 +605,14 @@ impl fmt::Debug for PreparedAgenticOnlineOperation {
 
 impl PreparedRunnerOperation for PreparedAgenticOnlineOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let report =
-            execute_agentic_online_report_with_registry(&self.spec, self.registry.as_ref())?;
+        let report = execute_agentic_online_report_with_registry_and_factories(
+            &self.spec,
+            self.registry.as_ref(),
+            self.backend_factory.as_ref(),
+            &NativeAgenticEvaluatorProcessFactory,
+            &NativeAgenticGatewayFactory,
+            &NativeAgenticTokenizerFactory,
+        )?;
         Ok(PreparedRunOutcome {
             native_report: report.native_report,
             report_facts: ReportPairRunFacts::new(),
@@ -612,6 +620,7 @@ impl PreparedRunnerOperation for PreparedAgenticOnlineOperation {
                 ("backend".to_owned(), "online_http".to_owned()),
                 ("workload".to_owned(), "agentic".to_owned()),
             ]),
+            report_commit: None,
         })
     }
 }
@@ -848,20 +857,6 @@ pub fn execute_agentic_online_with_registry_and_factories(
         report_path,
         report,
     })
-}
-
-fn execute_agentic_online_report_with_registry(
-    spec: &AgenticOnlineExecutionSpec,
-    registry: &AiperfRegistry,
-) -> Result<AgenticRunReport> {
-    execute_agentic_online_report_with_registry_and_factories(
-        spec,
-        registry,
-        &NativeHttpExecutionBackendFactory,
-        &NativeAgenticEvaluatorProcessFactory,
-        &NativeAgenticGatewayFactory,
-        &NativeAgenticTokenizerFactory,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

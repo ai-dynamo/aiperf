@@ -19,6 +19,7 @@ use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
     RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities, execute_run,
+    native_execution_factories,
 };
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -162,10 +163,12 @@ fn run_v2(input: &[u8]) -> ! {
     let graph_inputs = Arc::new(BuiltinRunnerGraphInputAdapterResolver::new());
     let dataset_inputs = Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new());
     let sidecar_inputs = Arc::new(BuiltinRunnerSidecarInputAdapterResolver::new());
+    let execution_factories = native_execution_factories();
     let coordinator = match RunnerV2Coordinator::new(
         distribution_id.clone(),
         &BuiltinRunnerRegistryFactory,
         &aiperf_extensions::BuiltinAiperfRegistryFactory,
+        execution_factories,
         graph_inputs,
         dataset_inputs,
         sidecar_inputs,

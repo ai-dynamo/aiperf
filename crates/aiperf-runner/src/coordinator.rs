@@ -9,14 +9,17 @@
 //! validated configuration.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use aiperf::report::finalize_and_write_native_report_json;
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory};
+use aiperf_metrics::ReportRunProvenance;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
+use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::RunnerCapabilities;
 use crate::protocol_v2::{
@@ -25,7 +28,8 @@ use crate::protocol_v2::{
 };
 use crate::redaction::redact_diagnostic;
 use crate::registry::{
-    RunnerRegistry, RunnerRegistryFactory, RunnerRunContext, validate_endpoint_profiles_v2,
+    PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory, RunnerRunContext,
+    validate_endpoint_profiles_v2,
 };
 use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
 
@@ -57,6 +61,7 @@ pub struct RunnerV2Coordinator {
     distribution_id: String,
     runner_registry: RunnerRegistry,
     product_registry: Arc<AiperfRegistry>,
+    execution_factories: RunnerExecutionFactories,
     graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
     sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
@@ -78,6 +83,7 @@ impl RunnerV2Coordinator {
         distribution_id: impl Into<String>,
         runner_registry_factory: &dyn RunnerRegistryFactory,
         product_registry_factory: &dyn AiperfRegistryFactory,
+        execution_factories: RunnerExecutionFactories,
         graph_inputs: Arc<dyn RunnerGraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
         sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
@@ -96,6 +102,7 @@ impl RunnerV2Coordinator {
             distribution_id,
             runner_registry,
             product_registry,
+            execution_factories,
             graph_inputs,
             dataset_inputs,
             sidecar_inputs,
@@ -176,6 +183,7 @@ impl RunnerV2Coordinator {
         };
         let context = match RunnerRunContext::new(
             self.product_registry.clone(),
+            self.execution_factories.clone(),
             self.graph_inputs.clone(),
             self.dataset_inputs.clone(),
             sidecar_inputs,
@@ -297,37 +305,23 @@ impl RunnerV2Coordinator {
                 }
             };
         match operation.execute() {
-            Ok(mut outcome) => {
-                if report_path.exists() {
-                    return terminal_failure(
-                        self.distribution_id.clone(),
-                        benchmark_id,
-                        RunnerFailureStageV2::Reporting,
-                        "report_target_exists",
-                        format!(
-                            "native-v2 report target already exists: {}",
-                            report_path.display()
-                        ),
-                        1,
-                    );
-                }
-                if let Err(error) = finalize_and_write_native_report_json(
-                    outcome.native_report,
-                    report_provenance,
-                    outcome.report_facts,
-                    &report_path,
-                ) {
-                    return terminal_failure(
-                        self.distribution_id.clone(),
-                        benchmark_id,
-                        RunnerFailureStageV2::Reporting,
-                        "reporting_failed",
-                        format!("{error:#}"),
-                        1,
-                    );
-                }
-                outcome.provenance.insert("backend".into(), backend_id);
-                outcome.provenance.insert("workload".into(), workload_id);
+            Ok(outcome) => {
+                let mut provenance =
+                    match persist_prepared_report(outcome, report_provenance, &report_path) {
+                        Ok(provenance) => provenance,
+                        Err(error) => {
+                            return terminal_failure(
+                                self.distribution_id.clone(),
+                                benchmark_id,
+                                RunnerFailureStageV2::Reporting,
+                                error.code,
+                                error.message,
+                                1,
+                            );
+                        }
+                    };
+                provenance.insert("backend".into(), backend_id);
+                provenance.insert("workload".into(), workload_id);
                 RunnerProcessResultV2 {
                     response: RunnerResponseV2::Terminal(RunTerminalV2 {
                         protocol_version: RUNNER_PROTOCOL_V2,
@@ -338,7 +332,7 @@ impl RunnerV2Coordinator {
                         report_path: Some(report_path),
                         stage: None,
                         errors: Vec::new(),
-                        provenance: outcome.provenance,
+                        provenance,
                     }),
                     exit_code: 0,
                 }
@@ -358,6 +352,53 @@ impl RunnerV2Coordinator {
     pub fn product_registry(&self) -> &AiperfRegistry {
         self.product_registry.as_ref()
     }
+}
+
+#[derive(Debug)]
+struct ReportPersistenceFailure {
+    code: &'static str,
+    message: String,
+}
+
+fn persist_prepared_report(
+    outcome: PreparedRunOutcome,
+    report_provenance: ReportRunProvenance,
+    report_path: &Path,
+) -> std::result::Result<BTreeMap<String, String>, ReportPersistenceFailure> {
+    if report_path.exists() {
+        return Err(ReportPersistenceFailure {
+            code: "report_target_exists",
+            message: format!(
+                "native-v2 report target already exists: {}",
+                report_path.display()
+            ),
+        });
+    }
+    let PreparedRunOutcome {
+        native_report,
+        report_facts,
+        provenance,
+        report_commit,
+    } = outcome;
+    finalize_and_write_native_report_json(
+        native_report,
+        report_provenance,
+        report_facts,
+        report_path,
+    )
+    .map_err(|error| ReportPersistenceFailure {
+        code: "reporting_failed",
+        message: format!("{error:#}"),
+    })?;
+    if let Some(report_commit) = report_commit {
+        report_commit
+            .commit()
+            .map_err(|error| ReportPersistenceFailure {
+                code: "report_commit_failed",
+                message: format!("post-persistence report lifecycle commit failed: {error:#}"),
+            })?;
+    }
+    Ok(provenance)
 }
 
 fn validate_distribution_id(value: &str) -> Result<()> {
@@ -445,5 +486,125 @@ fn diagnostic(code: &str, message: impl Into<String>) -> RunnerDiagnosticV2 {
         code: code.to_owned(),
         message: redact_diagnostic(message.into()),
         path: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::registry::PreparedReportCommit;
+
+    #[derive(Debug)]
+    struct TrackingCommit {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl PreparedReportCommit for TrackingCommit {
+        fn commit(self: Box<Self>) -> Result<()> {
+            let previous = self.calls.fetch_add(1, Ordering::SeqCst);
+            ensure!(
+                previous == 0,
+                "report commit hook was invoked more than once"
+            );
+            ensure!(!self.fail, "fixture report commit failure");
+            Ok(())
+        }
+    }
+
+    fn provenance() -> ReportRunProvenance {
+        ReportRunProvenance::new(
+            format!("blake3:{}", "a".repeat(64)),
+            "online_http",
+            "evaluation",
+            Vec::new(),
+            vec![aiperf_metrics::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
+        )
+        .unwrap()
+    }
+
+    fn outcome(calls: Arc<AtomicUsize>, fail: bool) -> PreparedRunOutcome {
+        PreparedRunOutcome {
+            native_report: aiperf_metrics::NativeReport::new(
+                &aiperf_metrics::AccumulatorSummary::new(),
+                None,
+            ),
+            report_facts: aiperf_metrics::ReportPairRunFacts::new(),
+            provenance: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
+            report_commit: Some(Box::new(TrackingCommit { calls, fail })),
+        }
+    }
+
+    #[test]
+    fn existing_report_target_never_invokes_lifecycle_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let report_path = root.path().join("native-v2.json");
+        std::fs::write(&report_path, b"existing-authority").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let error =
+            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path)
+                .unwrap_err();
+
+        assert_eq!(error.code, "report_target_exists");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(std::fs::read(report_path).unwrap(), b"existing-authority");
+    }
+
+    #[test]
+    fn failed_report_write_never_invokes_lifecycle_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let report_path = root.path().join("missing-parent/native-v2.json");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let error =
+            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path)
+                .unwrap_err();
+
+        assert_eq!(error.code, "reporting_failed");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!report_path.exists());
+    }
+
+    #[test]
+    fn atomic_report_write_invokes_lifecycle_commit_exactly_once() {
+        let root = tempfile::tempdir().unwrap();
+        let report_path = root.path().join("native-v2.json");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let persisted =
+            persist_prepared_report(outcome(calls.clone(), false), provenance(), &report_path)
+                .unwrap();
+
+        assert_eq!(persisted["fixture"], "durable");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(report_path.is_file());
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
+        assert_eq!(report["run"]["workload"], "evaluation");
+        assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        }));
+    }
+
+    #[test]
+    fn lifecycle_commit_failure_is_a_reporting_failure_after_durable_write() {
+        let root = tempfile::tempdir().unwrap();
+        let report_path = root.path().join("native-v2.json");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let error =
+            persist_prepared_report(outcome(calls.clone(), true), provenance(), &report_path)
+                .unwrap_err();
+
+        assert_eq!(error.code, "report_commit_failed");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(report_path.is_file());
     }
 }

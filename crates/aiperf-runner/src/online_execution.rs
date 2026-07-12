@@ -32,7 +32,7 @@ use crate::execute::{
     StaticAccuracyEvaluatorProcessSpec, execute_prepared_native_plan_uncommitted_with_factories,
     load_tokenizer,
 };
-use crate::graph_execution::NativeRunnerGraphPlacementFactory;
+use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputContext;
 use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
@@ -41,7 +41,6 @@ use crate::registry::{
     RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
     StaticAccuracyWorkloadConfigV2, ValidatedBackendConfig, ValidatedWorkloadConfig,
 };
-use crate::turn_execution::NativeHttpExecutionBackendFactory;
 
 const BACKEND_ID: &str = "online_http";
 
@@ -212,6 +211,7 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
             workload_id: self.adapter.workload_id(),
             harness,
             product_registry: context.product_registry_handle(),
+            execution_factories: context.execution_factories_handle(),
         }))
     }
 }
@@ -224,6 +224,7 @@ trait PreparedOnlineHarness: fmt::Debug {
     fn execute(
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
+        execution_factories: &RunnerExecutionFactories,
     ) -> Result<(NativeReport, ReportPairRunFacts)>;
 }
 
@@ -966,12 +967,13 @@ impl PreparedOnlineHarness for NativePlanHarness {
     fn execute(
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
+        execution_factories: &RunnerExecutionFactories,
     ) -> Result<(NativeReport, ReportPairRunFacts)> {
         let report_facts = native_plan_report_facts(&self.plan)?;
         let native_report = execute_prepared_native_plan_uncommitted_with_factories(
             self.plan,
-            &NativeHttpExecutionBackendFactory,
-            &NativeRunnerGraphPlacementFactory,
+            execution_factories.http(),
+            execution_factories.graph(),
             product_registry,
         )?;
         Ok((native_report, report_facts))
@@ -996,6 +998,7 @@ struct PreparedOnlineOperation {
     workload_id: &'static str,
     harness: Box<dyn PreparedOnlineHarness>,
     product_registry: Arc<aiperf_extensions::AiperfRegistry>,
+    execution_factories: RunnerExecutionFactories,
 }
 
 impl fmt::Debug for PreparedOnlineOperation {
@@ -1010,11 +1013,14 @@ impl fmt::Debug for PreparedOnlineOperation {
 
 impl PreparedRunnerOperation for PreparedOnlineOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let (native_report, report_facts) = self.harness.execute(self.product_registry.as_ref())?;
+        let (native_report, report_facts) = self
+            .harness
+            .execute(self.product_registry.as_ref(), &self.execution_factories)?;
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
             provenance: BTreeMap::new(),
+            report_commit: None,
         })
     }
 }

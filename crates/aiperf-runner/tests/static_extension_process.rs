@@ -24,6 +24,7 @@ use aiperf_runner::dataset_input::{
     RunnerDatasetInputAdapterResolver, RunnerDatasetInputContext,
 };
 use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
+use aiperf_runner::native_execution_factories;
 use aiperf_runner::protocol_v2::RunnerEnvelopeV2;
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
@@ -199,6 +200,7 @@ fn statically_linked_extension_child() {
         DISTRIBUTION_ID,
         &BuiltinRunnerRegistryFactory,
         &StaticTestRegistryFactory,
+        native_execution_factories(),
         Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),
         Arc::new(CountingDatasetInputs {
             inner: BuiltinRunnerDatasetInputAdapterResolver::new(),

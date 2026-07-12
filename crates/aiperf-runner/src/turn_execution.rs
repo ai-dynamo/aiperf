@@ -67,7 +67,7 @@ pub trait HttpPreparedEndpointTableFactory: Send + Sync {
 }
 
 /// Composition seam for local, thread-per-core, or remote execution placement.
-pub trait HttpExecutionBackendFactory {
+pub trait HttpExecutionBackendFactory: Send + Sync {
     /// Construct the backend used below the run's single logical dispatcher.
     fn build(&self, config: HttpExecutionBackendConfig)
     -> Result<Rc<dyn HttpTurnExecutionBackend>>;
