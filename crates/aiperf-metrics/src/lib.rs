@@ -45,11 +45,15 @@ pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_di
 pub use report::{
     AgenticEpisodeReport, AgenticEpisodeReportOutcome, AgenticEvaluationReport,
     AgenticEvaluationSummary, AgenticEvaluatorReportInfo, AgenticRewardSummary,
-    AgenticRunConfigReport, EvaluatorDatasetReportInfo, EvaluatorReportInfo, MetricEntry,
-    MetricSeries, NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReporter, ReportCounterStats,
-    ReportDistributionStats, ReportError, ReportRunInfo, ReportScalarStats,
-    ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata, ReportServerMetricsPhaseRange,
-    ReportStats, ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
+    AgenticRunConfigReport, EvaluatorDatasetReportInfo, EvaluatorReportInfo, FiniteReportValue,
+    MetricEntry, MetricSeries, NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReporter,
+    ReportClockKind, ReportCounterStats, ReportDistributionStats, ReportDynamoCapacityInfo,
+    ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo, ReportDynamoTopology,
+    ReportEndpointProfileIdentity, ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo,
+    ReportGraphRunInfo, ReportPairRunFacts, ReportProvenanceError, ReportRun, ReportRunInfo,
+    ReportRunProvenance, ReportScalarStats, ReportServerMetricsEndpointInfo,
+    ReportServerMetricsMetadata, ReportServerMetricsPhaseRange, ReportStats, ReportSummary,
+    ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
 pub use store::{
