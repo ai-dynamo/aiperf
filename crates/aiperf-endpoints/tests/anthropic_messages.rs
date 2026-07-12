@@ -79,13 +79,19 @@ fn extra_numeric_values_use_orjson_equivalent_wire_spelling() {
 }
 
 #[test]
-fn authored_empty_raw_messages_suppresses_the_synthetic_turn() {
-    let mut turn = text_turn("must not be rendered");
+fn authored_empty_raw_messages_renders_the_synthetic_turn() {
+    let mut turn = text_turn("must be rendered");
+    turn.role = Some(String::new());
+    turn.model = Some(String::new());
     turn.raw_messages = Some(Vec::new());
     let body = MessagesEndpoint
         .format_payload(&request(vec![turn], false))
         .unwrap();
-    assert_eq!(body["messages"], json!([]));
+    assert_eq!(body["model"], "test-model");
+    assert_eq!(
+        body["messages"],
+        json!([{"role":"user","content":"must be rendered"}])
+    );
 }
 
 #[test]

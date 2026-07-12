@@ -513,7 +513,9 @@ pub(crate) enum PartShape {
 pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult<Vec<Value>> {
     let mut messages = Vec::new();
     for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages {
+        if let Some(raw_messages) = &turn.raw_messages
+            && !raw_messages.is_empty()
+        {
             messages.extend(raw_messages.clone());
             continue;
         }
@@ -525,7 +527,9 @@ pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult
 fn build_messages_responses(turns: &[Turn]) -> EndpointResult<Vec<Value>> {
     let mut messages = Vec::new();
     for turn in turns {
-        if let Some(raw_messages) = &turn.raw_messages {
+        if let Some(raw_messages) = &turn.raw_messages
+            && !raw_messages.is_empty()
+        {
             for item in raw_messages {
                 if item
                     .as_object()
@@ -549,9 +553,12 @@ fn build_messages_responses(turns: &[Turn]) -> EndpointResult<Vec<Value>> {
 }
 
 fn render_turn_message(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {
-    Ok(
-        json!({"role": turn.role.as_deref().unwrap_or("user"), "content": render_turn_content(turn, shape)?}),
-    )
+    let role = turn
+        .role
+        .as_deref()
+        .filter(|role| !role.is_empty())
+        .unwrap_or("user");
+    Ok(json!({"role": role, "content": render_turn_content(turn, shape)?}))
 }
 
 fn render_turn_content(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {

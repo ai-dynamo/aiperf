@@ -88,7 +88,10 @@ impl fmt::Debug for EndpointConfig {
             .field("wait_for_model_timeout", &self.wait_for_model_timeout)
             .field("wait_for_model_interval", &self.wait_for_model_interval)
             .field("wait_for_model_mode", &self.wait_for_model_mode)
-            .field("wait_for_model_interval_set", &self.wait_for_model_interval_set)
+            .field(
+                "wait_for_model_interval_set",
+                &self.wait_for_model_interval_set,
+            )
             .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
             .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
             .field("use_server_token_count", &self.use_server_token_count)

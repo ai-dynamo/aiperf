@@ -60,7 +60,7 @@ impl Endpoint for MessagesEndpoint {
         let mut headers =
             BTreeMap::from([("content-type".to_string(), "application/json".to_string())]);
         headers.extend(config.headers.clone());
-        if let Some(api_key) = &config.api_key {
+        if let Some(api_key) = config.api_key.as_ref().filter(|key| !key.is_empty()) {
             headers.insert("x-api-key".into(), api_key.clone());
         }
         headers
@@ -93,6 +93,7 @@ impl Endpoint for MessagesEndpoint {
             Value::String(
                 last.model
                     .clone()
+                    .filter(|model| !model.is_empty())
                     .unwrap_or_else(|| request_info.model_endpoint.primary_model_name.clone()),
             ),
         );
