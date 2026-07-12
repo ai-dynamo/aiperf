@@ -18,8 +18,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use url::Url;
 
 use crate::execute::execute_prepared_native_plan_uncommitted_with_factories;
-use crate::graph_execution::NativeRunnerGraphPlacementFactory;
-use crate::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
+use crate::execution_factories::RunnerExecutionFactories;
 use crate::online_execution::{
     NativeOnlineTokenizerSourceResolver, OnlineTokenizerSourceResolver, lower_scheduled,
     validate_authored_tokenizer,
@@ -105,6 +104,7 @@ impl RunnerPairFactory for OnlineGrpcScheduledPair {
         Ok(Box::new(PreparedGrpcScheduledOperation {
             plan,
             product_registry: context.product_registry_handle(),
+            execution_factories: context.execution_factories_handle(),
         }))
     }
 }
@@ -192,6 +192,7 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
 struct PreparedGrpcScheduledOperation {
     plan: crate::execute::NativeRunPlan,
     product_registry: Arc<aiperf_extensions::AiperfRegistry>,
+    execution_factories: RunnerExecutionFactories,
 }
 
 impl fmt::Debug for PreparedGrpcScheduledOperation {
@@ -205,11 +206,10 @@ impl fmt::Debug for PreparedGrpcScheduledOperation {
 
 impl PreparedRunnerOperation for PreparedGrpcScheduledOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let backend = NativeGrpcExecutionBackendFactory::builtin()?;
         let native_report = execute_prepared_native_plan_uncommitted_with_factories(
             self.plan,
-            &backend,
-            &NativeRunnerGraphPlacementFactory,
+            self.execution_factories.grpc(),
+            self.execution_factories.graph(),
             self.product_registry.as_ref(),
         )?;
         Ok(PreparedRunOutcome {

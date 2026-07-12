@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "aiperf-transport-grpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Clock-injected native gRPC transport with open endpoint bindings for AIPerf protocol v2."
+
+[dependencies]
+aiperf-clock.workspace = true
+aiperf-endpoints.workspace = true
+bytes.workspace = true
+futures.workspace = true
+half.workspace = true
+http = "1"
+prost.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt", "net", "macros", "sync"] }
+tonic.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+aiperf-clock.workspace = true
+tokio = { version = "1", features = ["rt", "net", "macros", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = { workspace = true, features = ["server", "router", "codegen"] }

@@ -346,8 +346,7 @@ impl RawEndpointConfig {
             .as_ref()
             .and_then(|extra| extra.get("payload_template"))
             .and_then(Value::as_str);
-        if require_template && self.template.is_none() && legacy_template.is_none()
-        {
+        if require_template && self.template.is_none() && legacy_template.is_none() {
             return Err(EndpointError::InvalidConfig(
                 "template or extra.payload_template is required when endpoint type is 'template'"
                     .to_string(),
@@ -460,18 +459,18 @@ fn validate_url(raw: &str) -> EndpointResult<()> {
     }
     let parsed = Url::parse(raw).map_err(|_| {
         EndpointError::InvalidConfig(format!(
-            "URL {raw:?} is missing scheme or host. Expected 'http://host:port' or 'https://host:port'."
+            "URL {raw:?} is missing scheme or host. Expected an http(s) or grpc(s) URL."
         ))
     })?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+    if !matches!(parsed.scheme(), "http" | "https" | "grpc" | "grpcs") {
         return Err(EndpointError::InvalidConfig(format!(
-            "URL {raw:?} has unsupported scheme {:?}. Expected 'http' or 'https'.",
+            "URL {raw:?} has unsupported scheme {:?}. Expected 'http', 'https', 'grpc', or 'grpcs'.",
             parsed.scheme()
         )));
     }
     if parsed.host_str().is_none() {
         return Err(EndpointError::InvalidConfig(format!(
-            "URL {raw:?} is missing scheme or host. Expected 'http://host:port' or 'https://host:port'."
+            "URL {raw:?} is missing scheme or host. Expected an http(s) or grpc(s) URL."
         )));
     }
     if let Some(port) = parsed.port()

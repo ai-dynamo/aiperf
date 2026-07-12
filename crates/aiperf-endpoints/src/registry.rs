@@ -25,6 +25,11 @@ use crate::endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
     ResponsesEndpoint,
 };
+use crate::kserve::{
+    KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,
+    KServeV2EmbeddingsFactory, KServeV2ImagesFactory, KServeV2InferFactory,
+    KServeV2RankingsFactory, KServeV2VlmFactory,
+};
 use crate::metadata::{EndpointDescriptor, EndpointType};
 use crate::models::{
     CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ParsedResponse, RequestInfo,
@@ -596,6 +601,15 @@ impl EndpointRegistryBuilder {
         builder.register_endpoint(SolidoRagEndpoint)?;
         builder.register_factory(RawEndpointFactory)?;
         builder.register_factory(TemplateEndpointFactory)?;
+        builder.register_factory(KServeChatFactory)?;
+        builder.register_factory(KServeCompletionsFactory)?;
+        builder.register_factory(KServeEmbeddingsFactory)?;
+        builder.register_factory(KServeV1PredictFactory)?;
+        builder.register_factory(KServeV2InferFactory)?;
+        builder.register_factory(KServeV2EmbeddingsFactory)?;
+        builder.register_factory(KServeV2RankingsFactory)?;
+        builder.register_factory(KServeV2VlmFactory)?;
+        builder.register_factory(KServeV2ImagesFactory)?;
         Ok(builder)
     }
 

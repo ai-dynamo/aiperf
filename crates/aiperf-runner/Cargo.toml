@@ -43,6 +43,7 @@ aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
 aiperf-transport-http.workspace = true
+aiperf-transport-grpc.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 blake3.workspace = true
@@ -60,4 +61,8 @@ uuid.workspace = true
 [dev-dependencies]
 aiperf-test-static-extension = { path = "tests/fixtures/aiperf-test-static-extension" }
 axum.workspace = true
+http = "1"
+prost.workspace = true
 tempfile = "3"
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = { workspace = true, features = ["server", "router", "codegen"] }

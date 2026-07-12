@@ -7,11 +7,14 @@
 //! provider endpoint dialects, including OpenAI-compatible APIs and Anthropic Messages.
 //! Transport concerns such as URL assembly, SSE framing, and cancellation remain outside
 //! this crate; dialect-owned authentication headers are exposed through [`Endpoint`].
+//! KServe HTTP and inference-protocol dialects are open-registry, protocol-v2-only
+//! factories; their native gRPC wire bindings live in `aiperf-transport-grpc`.
 
 mod anthropic;
 mod config;
 mod endpoints;
 mod extraction;
+mod kserve;
 mod metadata;
 mod models;
 mod registry;
@@ -25,6 +28,11 @@ pub use endpoints::{
     ResponsesEndpoint, WARMUP_SYSTEM_MESSAGE_PREFIX,
 };
 pub use extraction::extract_payload;
+pub use kserve::{
+    KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,
+    KServeV2EmbeddingsFactory, KServeV2ImagesFactory, KServeV2InferFactory,
+    KServeV2RankingsFactory, KServeV2VlmFactory,
+};
 pub use metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
 pub use models::{
     CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
@@ -40,7 +48,7 @@ pub use registry::{
 pub use tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
     ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
-    RawEndpoint, RawEndpointFactory, SolidoRagEndpoint, TemplateEndpoint,
-    TemplateEndpointFactory, VideoGenerationEndpoint,
+    RawEndpoint, RawEndpointFactory, SolidoRagEndpoint, TemplateEndpoint, TemplateEndpointFactory,
+    VideoGenerationEndpoint,
 };
 pub use usage::UsageView;

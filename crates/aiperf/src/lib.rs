@@ -27,6 +27,7 @@ pub mod ancillary;
 pub mod dynamo_offline;
 pub mod evaluation;
 pub mod fixed_schedule;
+pub mod grpc;
 pub mod http;
 pub mod metrics;
 pub mod multiturn;
