@@ -284,6 +284,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "bytes",
+ "cc",
  "csv",
  "http 1.4.2",
  "http-body-util",

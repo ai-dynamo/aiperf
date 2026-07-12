@@ -160,6 +160,35 @@ fn mimalloc_preinit_default_preserves_legacy_case_insensitive_override() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn mimalloc_preinit_disables_arena_eager_commit_without_an_override() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"));
+    command.arg("--capabilities").env("MIMALLOC_VERBOSE", "1");
+    for (name, _) in std::env::vars_os() {
+        let normalized = name.to_string_lossy().to_ascii_lowercase();
+        if matches!(
+            normalized.as_str(),
+            "mimalloc_arena_eager_commit" | "mimalloc_eager_region_commit"
+        ) {
+            command.env_remove(name);
+        }
+    }
+    let output = command
+        .output()
+        .expect("spawn native runner without mimalloc arena override");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("option 'arena_eager_commit': 0"),
+        "pre-init default did not disable eager arena commitment:\n{stderr}"
+    );
+}
+
 async fn chat_handler() -> impl IntoResponse {
     let body = concat!(
         "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",

@@ -27,15 +27,20 @@ static AIPERF_MIMALLOC_PREINIT: unsafe extern "C" fn() = configure_mimalloc_befo
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" fn configure_mimalloc_before_process_init() {
-    const MI_OPTION_ARENA_EAGER_COMMIT: i32 = 4;
-
     // mimalloc's own Linux constructor has priority 101. This priority-100 hook
     // changes only its uninitialized default before that constructor commits the
     // initial arena. Leaving the option uninitialized lets mimalloc's own parser
     // honor canonical, case-insensitive, and legacy environment spellings.
+    // The C shim resolves the experimental enum from the exact header compiled
+    // by libmimalloc-sys instead of duplicating its unstable numeric value.
     // SAFETY: mimalloc has not run process initialization and no Rust heap
     // allocation can precede an ELF init-array constructor.
-    unsafe { libmimalloc_sys::mi_option_set_default(MI_OPTION_ARENA_EAGER_COMMIT, 0) };
+    unsafe { libmimalloc_sys::mi_option_set_default(aiperf_mi_option_arena_eager_commit(), 0) };
+}
+
+unsafe extern "C" {
+    fn aiperf_mi_option_arena_eager_commit() -> libmimalloc_sys::mi_option_t;
+    fn aiperf_mi_option_purge_delay() -> libmimalloc_sys::mi_option_t;
 }
 
 fn main() {
@@ -111,10 +116,17 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
     // AIC imports SciPy, whose OpenBLAS builds otherwise create one worker per
     // host CPU. Offline replay uses AIC's scalar Rust interpolation kernels, so
     // those pools only spin and contend with the deterministic event loop. Keep
-    // explicit operator settings authoritative, keep reduction on one predictable
-    // CPU, and avoid allocator purge syscalls before immediate process exit. These
+    // explicit operator settings authoritative, keep the simulator on its one
+    // deterministic event-loop thread, and avoid allocator purge syscalls before
+    // immediate process exit. Rayon is used only by the post-drain report
+    // reduction; bound it to the available affinity and eight workers so large
+    // sweep sorts can leave Tokio without oversubscribing small hosts. These
     // defaults are installed before Python, OpenMP, or either bundled OpenBLAS
     // library is initialized and before offline reduction allocates its buffers.
+    let rayon_threads = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(8)
+        .to_string();
     for (name, value) in [
         ("OPENBLAS_NUM_THREADS", "1"),
         ("OMP_NUM_THREADS", "1"),
@@ -124,7 +136,7 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
         ("NUMEXPR_NUM_THREADS", "1"),
         ("VECLIB_MAXIMUM_THREADS", "1"),
         ("OMP_WAIT_POLICY", "PASSIVE"),
-        ("RAYON_NUM_THREADS", "1"),
+        ("RAYON_NUM_THREADS", rayon_threads.as_str()),
     ] {
         if std::env::var_os(name).is_none() {
             // SAFETY: this runs on the sole process thread before the runner
@@ -134,15 +146,13 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
     }
 
     if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
-        // `libmimalloc-sys` intentionally does not name experimental options;
-        // mimalloc v3's public `mi_option_t` enum assigns purge-delay index 15.
         // The runner exits immediately after committing its report, so purging
         // temporary sweep pages during the run only adds syscalls and cannot
-        // improve a later phase's footprint.
-        const MI_OPTION_PURGE_DELAY: i32 = 15;
+        // improve a later phase's footprint. The C shim resolves the option
+        // against the same exact mimalloc header as the linked allocator.
         // SAFETY: option mutation is not thread-safe, so it is performed here on
         // the sole process thread before Rayon or any benchmark runtime exists.
-        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, -1) };
+        unsafe { libmimalloc_sys::mi_option_set(aiperf_mi_option_purge_delay(), -1) };
     }
 }
 

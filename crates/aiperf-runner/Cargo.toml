@@ -75,3 +75,6 @@ tempfile = "3"
 tokio-stream = { version = "0.1", features = ["net"] }
 tokio-rustls = "0.26"
 tonic = { workspace = true, features = ["server", "router", "codegen"] }
+
+[build-dependencies]
+cc = "1"
