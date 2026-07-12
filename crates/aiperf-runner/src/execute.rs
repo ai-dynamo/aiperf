@@ -95,6 +95,7 @@ use crate::records::{
     CapturedHttpExchange, CapturedRecord, write_outputs_json, write_raw_records_jsonl,
     write_records_jsonl,
 };
+use crate::server_metrics::ServerMetricsRun;
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
@@ -183,6 +184,40 @@ fn validate_request(request: &RunRequest) -> Result<()> {
                 .count()
                 == 1,
             "network latency calibration requires exactly one profiling phase"
+        );
+    }
+    if let Some(spec) = &request.run.server_metrics {
+        ensure!(
+            request
+                .run
+                .phases
+                .iter()
+                .filter(|phase| phase.common().name == "profiling")
+                .count()
+                == 1,
+            "server metrics requires exactly one profiling phase"
+        );
+        ensure!(
+            !spec.urls.is_empty(),
+            "server metrics requires at least one endpoint URL"
+        );
+        ensure!(
+            !spec.formats.is_empty(),
+            "server metrics requires at least one export format"
+        );
+        let has_jsonl = spec
+            .formats
+            .contains(&crate::protocol::ServerMetricsFormatSpec::Jsonl);
+        let has_parquet = spec
+            .formats
+            .contains(&crate::protocol::ServerMetricsFormatSpec::Parquet);
+        ensure!(
+            has_jsonl == spec.jsonl_path.is_some(),
+            "server metrics jsonl_path must be present exactly when JSONL is selected"
+        );
+        ensure!(
+            has_parquet == spec.parquet_wire_path.is_some(),
+            "server metrics parquet_wire_path must be present exactly when Parquet is selected"
         );
     }
     Ok(())
@@ -341,6 +376,12 @@ async fn execute_native_inner(
             )
         })
         .transpose()?;
+    let server_metrics = request
+        .run
+        .server_metrics
+        .as_ref()
+        .map(|spec| ServerMetricsRun::new(spec, clock.clone()))
+        .transpose()?;
     let gpu_records_path = request
         .run
         .gpu_telemetry
@@ -363,6 +404,26 @@ async fn execute_native_inner(
                 &request.run.artifact_dir,
                 &probe.records_path,
                 "network_latency.probe.records_path",
+            )
+        })
+        .transpose()?;
+    let server_metrics_jsonl_path = request
+        .run
+        .server_metrics
+        .as_ref()
+        .and_then(|spec| spec.jsonl_path.as_ref())
+        .map(|path| artifact_path(&request.run.artifact_dir, path, "server_metrics.jsonl_path"))
+        .transpose()?;
+    let server_metrics_parquet_wire_path = request
+        .run
+        .server_metrics
+        .as_ref()
+        .and_then(|spec| spec.parquet_wire_path.as_ref())
+        .map(|path| {
+            artifact_path(
+                &request.run.artifact_dir,
+                path,
+                "server_metrics.parquet_wire_path",
             )
         })
         .transpose()?;
@@ -652,8 +713,11 @@ async fn execute_native_inner(
             .with_resources(resources)
             .with_record_processors(record_processors)
             .with_controller(controller);
+        let mut sidecars = Vec::new();
+        if let Some(server_metrics) = &server_metrics {
+            sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
+        }
         if phase.common().name == "profiling" {
-            let mut sidecars = Vec::new();
             if let Some(gpu_telemetry) = &gpu_telemetry {
                 sidecars.push(gpu_telemetry.sidecar());
             }
@@ -662,9 +726,9 @@ async fn execute_native_inner(
             {
                 sidecars.push(sidecar);
             }
-            if !sidecars.is_empty() {
-                plan = plan.with_sidecars(sidecars);
-            }
+        }
+        if !sidecars.is_empty() {
+            plan = plan.with_sidecars(sidecars);
         }
         if let Some(extension) = runtime_extension {
             plan = plan.with_runtime_extension(extension);
@@ -720,11 +784,21 @@ async fn execute_native_inner(
             .summarize(total_output_tokens, concurrency)
             .attach_to(&mut profiling_metrics);
     }
+    let profiling_server_summary = server_metrics.as_ref().map(|server_metrics| {
+        server_metrics.summarize(MetricsPhase::Profiling, metrics_config.slice_duration_ns)
+    });
     let warmup = phased
         .reports
         .iter()
         .any(|report| report.kind == PhaseKind::Warmup)
         .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    let warmup_server_summary =
+        server_metrics
+            .as_ref()
+            .filter(|_| warmup.is_some())
+            .map(|server_metrics| {
+                server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
+            });
     if let Some(records_path) = &request.run.artifacts.records_path {
         let records_path = artifact_path(&request.run.artifact_dir, records_path, "records_path")?;
         write_records_jsonl(
@@ -750,6 +824,18 @@ async fn execute_native_inner(
     {
         network_latency.write_records_jsonl(records_path)?;
     }
+    if let (Some(server_metrics), Some(path)) = (&server_metrics, &server_metrics_jsonl_path) {
+        server_metrics.write_slim_jsonl(path)?;
+    }
+    if let (Some(server_metrics), Some(path)) = (&server_metrics, &server_metrics_parquet_wire_path)
+    {
+        server_metrics.write_parquet_wire_jsonl(path)?;
+    }
+    let server_metrics_report = server_metrics.as_ref().and_then(|server_metrics| {
+        profiling_server_summary.as_ref().map(|profiling| {
+            server_metrics.report_metadata(profiling, warmup_server_summary.as_ref())
+        })
+    });
     let mut outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
@@ -757,9 +843,18 @@ async fn execute_native_inner(
         },
         summary: ReportSummary {
             endpoints_configured: request.run.endpoint.urls,
+            server_metrics: server_metrics_report,
             ..ReportSummary::default()
         },
         warmup,
+        server_metrics: profiling_server_summary
+            .as_ref()
+            .map(|summary| summary.sidecar_metrics().clone())
+            .unwrap_or_default(),
+        warmup_server_metrics: warmup_server_summary
+            .as_ref()
+            .map(|summary| summary.sidecar_metrics().clone())
+            .unwrap_or_default(),
         ..RunOutcome::default()
     };
     if let Some(accuracy) = prepared_accuracy.take() {

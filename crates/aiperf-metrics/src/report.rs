@@ -193,6 +193,65 @@ pub struct ReportSummary {
     /// Endpoints that returned successful requests.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub endpoints_successful: Vec<String>,
+    /// Phase-bounded inference-server Prometheus metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_metrics: Option<ReportServerMetricsMetadata>,
+}
+
+/// Inclusive native phase window used to aggregate server telemetry.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct ReportServerMetricsPhaseRange {
+    /// Start-boundary snapshot timestamp.
+    pub start_ns: i64,
+    /// End-boundary snapshot timestamp.
+    pub end_ns: i64,
+}
+
+/// Fetch/update metadata for one server-metrics endpoint.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct ReportServerMetricsEndpointInfo {
+    /// Successful fetch count including duplicate bodies.
+    pub total_fetches: usize,
+    /// First successful fetch timestamp.
+    pub first_fetch_ns: i64,
+    /// Last successful fetch timestamp.
+    pub last_fetch_ns: i64,
+    /// Mean successful HTTP latency in milliseconds.
+    pub avg_fetch_latency_ms: f64,
+    /// Changed-body count.
+    pub unique_updates: usize,
+    /// First changed-body timestamp, or zero when absent.
+    pub first_update_ns: i64,
+    /// Last changed-body timestamp, or zero when absent.
+    pub last_update_ns: i64,
+    /// Changed-body time span in seconds.
+    pub duration_seconds: f64,
+    /// Mean changed-body interval in milliseconds.
+    pub avg_update_interval_ms: f64,
+    /// Median changed-body interval in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub median_update_interval_ms: Option<f64>,
+}
+
+/// Metadata needed to render canonical Python server-metrics artifacts.
+#[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
+pub struct ReportServerMetricsMetadata {
+    /// Configured normalized endpoint URLs in stable order.
+    pub endpoints_configured: Vec<String>,
+    /// Endpoints contributing a complete profiling boundary pair.
+    pub endpoints_successful: Vec<String>,
+    /// Prometheus HELP text keyed by metric family name.
+    pub descriptions: BTreeMap<String, String>,
+    /// Original Prometheus semantic type keyed by metric family name.
+    pub metric_types: BTreeMap<String, String>,
+    /// Collection statistics keyed by credential-free endpoint URL.
+    pub endpoint_info: BTreeMap<String, ReportServerMetricsEndpointInfo>,
+    /// Profiling aggregation boundary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profiling: Option<ReportServerMetricsPhaseRange>,
+    /// Warmup aggregation boundary when a warmup phase ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warmup: Option<ReportServerMetricsPhaseRange>,
 }
 
 /// One grouped API error in the unified report.
@@ -426,6 +485,10 @@ pub struct RunOutcome {
     pub summary: ReportSummary,
     /// Optional warmup accumulator output.
     pub warmup: Option<AccumulatorSummary>,
+    /// Profiling inference-server Prometheus series, kept outside request metrics.
+    pub server_metrics: BTreeMap<String, SidecarMetric>,
+    /// Warmup inference-server Prometheus series.
+    pub warmup_server_metrics: BTreeMap<String, SidecarMetric>,
     /// Optional accuracy/analyzer output.
     pub accuracy: Option<AccuracyAnalysis>,
     /// Full per-request grading records in deterministic workload order.
@@ -476,6 +539,8 @@ impl Reporter for NativeReporter {
             summary: run_summary,
             metrics: build_metric_map(summary),
             warmup_metrics: outcome.warmup.as_ref().map(build_metric_map),
+            server_metrics: build_sidecar_map(&outcome.server_metrics),
+            warmup_server_metrics: build_sidecar_map(&outcome.warmup_server_metrics),
             accuracy: outcome.accuracy.clone(),
             accuracy_records: outcome.accuracy_records.clone(),
             evaluator: outcome.evaluator.clone(),
@@ -501,6 +566,12 @@ pub struct NativeReport {
     /// Warmup metrics using the same representation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warmup_metrics: Option<BTreeMap<String, MetricEntry>>,
+    /// Profiling server telemetry keyed by original Prometheus family name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub server_metrics: BTreeMap<String, MetricEntry>,
+    /// Warmup server telemetry keyed by original Prometheus family name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub warmup_server_metrics: BTreeMap<String, MetricEntry>,
     /// Optional accuracy analysis.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accuracy: Option<AccuracyAnalysis>,
@@ -578,6 +649,13 @@ fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntr
             .or_insert_with(|| report_sidecar_metric(metric));
     }
     metrics
+}
+
+fn build_sidecar_map(metrics: &BTreeMap<String, SidecarMetric>) -> BTreeMap<String, MetricEntry> {
+    metrics
+        .iter()
+        .map(|(name, metric)| (name.clone(), report_sidecar_metric(metric)))
+        .collect()
 }
 
 fn report_sidecar_metric(metric: &SidecarMetric) -> MetricEntry {

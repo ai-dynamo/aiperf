@@ -111,6 +111,40 @@ def test_projection_is_explicit_and_canonicalizes_nested_distributions(
             {"type": "dcgm", "url": "http://localhost:9401/metrics"},
         ],
     }
+    assert run["server_metrics"] == {
+        "collection_interval_ns": 333_000_000,
+        "reachability_timeout_ns": 10_000_000_000,
+        "urls": ["http://127.0.0.1:8000/v1/chat/completions/metrics"],
+        "formats": ["json", "csv"],
+    }
+
+
+def test_projects_server_metrics_urls_formats_and_native_artifact_handoffs(
+    tmp_path,
+) -> None:
+    run = _run(tmp_path)
+    run.cfg.server_metrics.urls = [
+        "metrics-node:9000/",
+        "http://127.0.0.1:8000/v1/chat/completions/metrics",
+    ]
+    run.cfg.server_metrics.formats = ["jsonl", "parquet"]
+
+    projected = build_run_request(run)["run"]["server_metrics"]
+
+    assert projected == {
+        "collection_interval_ns": 333_000_000,
+        "reachability_timeout_ns": 10_000_000_000,
+        "urls": [
+            "http://127.0.0.1:8000/v1/chat/completions/metrics",
+            "http://metrics-node:9000/metrics",
+        ],
+        "formats": ["jsonl", "parquet"],
+        "jsonl_path": "server_metrics_export.jsonl",
+        "parquet_wire_path": ".aiperf-server-metrics-parquet-wire.jsonl",
+    }
+
+    run.cfg.server_metrics.enabled = False
+    assert "server_metrics" not in build_run_request(run)["run"]
 
 
 def test_projects_gpu_telemetry_defaults_custom_urls_and_disable(tmp_path) -> None:
@@ -162,9 +196,7 @@ def test_projects_custom_dcgm_through_the_canonical_python_source(tmp_path) -> N
     from aiperf.config.resolution.resolvers import GpuMetricsResolver
 
     metrics_file = tmp_path / "custom-metrics.csv"
-    metrics_file.write_text(
-        "DCGM_FI_DEV_SM_CLOCK,gauge,SM Clock Frequency (in MHz)\n"
-    )
+    metrics_file.write_text("DCGM_FI_DEV_SM_CLOCK,gauge,SM Clock Frequency (in MHz)\n")
     run = _run(tmp_path)
     run.cfg.gpu_telemetry.metrics_file = metrics_file
     run.cfg.gpu_telemetry.urls = ["http://gpu-node:9400"]

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 
 RUNNER_PROTOCOL_VERSION = 1
+SERVER_METRICS_PARQUET_WIRE_PATH = Path(".aiperf-server-metrics-parquet-wire.jsonl")
 
 
 class RustWireError(ValueError):
@@ -169,6 +170,9 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
     network_latency = _network_latency(run)
     if network_latency is not None:
         run_wire["network_latency"] = network_latency
+    server_metrics = _server_metrics(run)
+    if server_metrics is not None:
+        run_wire["server_metrics"] = server_metrics
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
 
 
@@ -280,6 +284,44 @@ def _network_latency(run: BenchmarkRun) -> dict[str, Any] | None:
     }
 
 
+def _server_metrics(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Lower server scraping while keeping Config-v2 discovery Python-owned."""
+    config = run.cfg.server_metrics
+    if not config.enabled:
+        return None
+
+    from aiperf.common.environment import Environment
+    from aiperf.common.metric_utils import normalize_metrics_endpoint_url
+
+    urls = list(
+        dict.fromkeys(
+            normalize_metrics_endpoint_url(url)
+            for url in [*run.cfg.endpoint.urls, *config.urls]
+        )
+    )
+    formats = [str(value) for value in config.formats]
+    result: dict[str, Any] = {
+        "collection_interval_ns": _positive_seconds_to_ns(
+            Environment.SERVER_METRICS.COLLECTION_INTERVAL,
+            "server metrics collection interval",
+        ),
+        "reachability_timeout_ns": _positive_seconds_to_ns(
+            Environment.SERVER_METRICS.REACHABILITY_TIMEOUT,
+            "server metrics reachability timeout",
+        ),
+        "urls": urls,
+        "formats": formats,
+    }
+    if "jsonl" in formats:
+        result["jsonl_path"] = _artifact_relative_path(
+            run.artifact_dir,
+            run.cfg.artifacts.server_metrics_export_jsonl_file,
+        )
+    if "parquet" in formats:
+        result["parquet_wire_path"] = str(SERVER_METRICS_PARQUET_WIRE_PATH)
+    return result
+
+
 def _normalize_dcgm_url(url: str) -> str:
     normalized = url.rstrip("/")
     return normalized if normalized.endswith("/metrics") else f"{normalized}/metrics"
@@ -295,11 +337,7 @@ def _positive_seconds_to_ns(value: float, label: str) -> int:
 
 
 def _nonnegative_seconds_to_ns(value: float, label: str) -> int:
-    if (
-        not isinstance(value, int | float)
-        or isinstance(value, bool)
-        or value < 0
-    ):
+    if not isinstance(value, int | float) or isinstance(value, bool) or value < 0:
         raise RustWireError(f"{label} must be non-negative, got {value!r}")
     nanoseconds = round(float(value) * 1_000_000_000)
     if nanoseconds < 0 or nanoseconds > 2**63 - 1:

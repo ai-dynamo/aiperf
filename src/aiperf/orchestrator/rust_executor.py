@@ -167,6 +167,7 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
         "phase_features",
         "run_features",
         "telemetry_source_types",
+        "server_metrics_formats",
     ):
         values = capabilities.get(field)
         if not isinstance(values, list) or not all(
@@ -257,6 +258,22 @@ def _require_request_capabilities(
         if not isinstance(network_latency, dict):
             raise ValueError("native run network_latency must be an object")
         _require_capability(capabilities, "run_features", "network_latency")
+    server_metrics = run.get("server_metrics")
+    if server_metrics is not None:
+        _require_capability(capabilities, "run_features", "server_metrics")
+        if not isinstance(server_metrics, dict):
+            raise ValueError("native run server_metrics must be an object")
+        formats = server_metrics.get("formats")
+        if not isinstance(formats, list) or not formats:
+            raise ValueError("native run server_metrics requires at least one format")
+        for format_name in formats:
+            if not isinstance(format_name, str):
+                raise ValueError("native server metrics formats must be strings")
+            _require_capability(
+                capabilities,
+                "server_metrics_formats",
+                format_name,
+            )
 
 
 def _require_capability(

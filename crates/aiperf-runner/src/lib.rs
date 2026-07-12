@@ -13,6 +13,7 @@ mod gpu_telemetry;
 mod network_latency;
 pub mod protocol;
 mod records;
+mod server_metrics;
 
 pub use execute::execute_run;
 pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};

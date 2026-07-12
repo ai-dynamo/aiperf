@@ -47,8 +47,9 @@ pub use report::{
     AgenticEvaluationSummary, AgenticEvaluatorReportInfo, AgenticRewardSummary,
     AgenticRunConfigReport, EvaluatorDatasetReportInfo, EvaluatorReportInfo, MetricEntry,
     MetricSeries, NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReporter, ReportCounterStats,
-    ReportDistributionStats, ReportError, ReportRunInfo, ReportScalarStats, ReportStats,
-    ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
+    ReportDistributionStats, ReportError, ReportRunInfo, ReportScalarStats,
+    ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata, ReportServerMetricsPhaseRange,
+    ReportStats, ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
 pub use store::{

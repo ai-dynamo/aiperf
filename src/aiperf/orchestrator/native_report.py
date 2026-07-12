@@ -169,10 +169,12 @@ def export_python_compatibility_reports(
         error_summary=errors,
     )
     telemetry_results = _project_gpu_telemetry(payload, native_summary)
+    server_metrics_results = _project_server_metrics(payload, native_summary, run)
     exporter_config = ExporterConfig(
         results=results,
         cfg=run.cfg,
         telemetry_results=telemetry_results,
+        server_metrics_results=server_metrics_results,
         run=run,
     )
 
@@ -183,6 +185,385 @@ def export_python_compatibility_reports(
     for exporter in exporters:
         destination = exporter.get_export_info().file_path
         _atomic_write_text(destination, exporter.render())
+
+    if server_metrics_results is not None:
+        from aiperf.server_metrics.csv_exporter import ServerMetricsCsvExporter
+        from aiperf.server_metrics.json_exporter import ServerMetricsJsonExporter
+
+        formats = {str(value) for value in run.cfg.server_metrics.formats}
+        server_exporters = []
+        if "json" in formats:
+            server_exporters.append(ServerMetricsJsonExporter(exporter_config))
+        if "csv" in formats:
+            server_exporters.append(ServerMetricsCsvExporter(exporter_config))
+        for exporter in server_exporters:
+            destination = exporter.get_export_info().file_path
+            _atomic_write_text(destination, exporter.render())
+        if "parquet" in formats:
+            _render_server_metrics_parquet(run, server_metrics_results)
+
+
+def _project_server_metrics(
+    payload: dict[str, Any], native_summary: dict[str, Any], run: BenchmarkRun
+) -> Any | None:
+    """Validate native server series into the canonical Python export models."""
+    from aiperf.common.models.server_metrics_models import (
+        CounterMetricData,
+        CounterSeries,
+        CounterStats,
+        GaugeMetricData,
+        GaugeSeries,
+        GaugeStats,
+        HistogramMetricData,
+        HistogramSeries,
+        HistogramStats,
+        ServerMetricsEndpointInfo,
+        ServerMetricsEndpointSummary,
+        ServerMetricsResults,
+        TimeRangeFilter,
+        UnknownMetricData,
+    )
+    from aiperf.exporters.utils import normalize_endpoint_display
+
+    authored_metadata = native_summary.get("server_metrics")
+    if authored_metadata is None:
+        return None
+    metadata = _mapping(authored_metadata, "native server metrics metadata")
+    profiling_metrics = _mapping(
+        payload.get("server_metrics", {}), "native profiling server metrics"
+    )
+    if not profiling_metrics:
+        return None
+    descriptions = _mapping(
+        metadata.get("descriptions"), "native server metric descriptions"
+    )
+    metric_types = _mapping(metadata.get("metric_types"), "native server metric types")
+    endpoint_info_authored = _mapping(
+        metadata.get("endpoint_info"), "native server endpoint info"
+    )
+    endpoint_info = {
+        endpoint: ServerMetricsEndpointInfo.model_validate(info)
+        for endpoint, info in endpoint_info_authored.items()
+    }
+
+    metric_classes = {
+        "gauge": GaugeMetricData,
+        "unknown": UnknownMetricData,
+        "counter": CounterMetricData,
+        "histogram": HistogramMetricData,
+    }
+    series_classes = {
+        "gauge": GaugeSeries,
+        "unknown": GaugeSeries,
+        "counter": CounterSeries,
+        "histogram": HistogramSeries,
+    }
+
+    def project_phase(authored: dict[str, Any]) -> dict[str, Any] | None:
+        grouped: dict[str, dict[str, list[Any]]] = {}
+        metric_meta: dict[str, tuple[str, str, str | None]] = {}
+        for name, authored_entry in authored.items():
+            if name not in metric_types:
+                raise NativeReportError(
+                    f"native server metric {name!r} has no Prometheus type metadata"
+                )
+            metric_type = metric_types[name]
+            if metric_type not in metric_classes:
+                continue
+            entry = _mapping(authored_entry, f"native server metric {name!r}")
+            description = descriptions.get(name, "")
+            if not isinstance(description, str):
+                raise NativeReportError(
+                    f"native server metric {name!r} description must be a string"
+                )
+            unit = entry.get("unit")
+            if not isinstance(unit, str):
+                raise NativeReportError(
+                    f"native server metric {name!r} unit must be a string"
+                )
+            metric_meta[name] = (metric_type, description, unit or None)
+            series_list = entry.get("series")
+            if not isinstance(series_list, list):
+                raise NativeReportError(
+                    f"native server metric {name!r} series must be an array"
+                )
+            for index, authored_series in enumerate(series_list):
+                series = _mapping(
+                    authored_series,
+                    f"native server metric {name!r} series[{index}]",
+                )
+                endpoint = series.get("endpoint_url")
+                if not isinstance(endpoint, str) or not endpoint:
+                    raise NativeReportError(
+                        f"native server metric {name!r} series omitted endpoint_url"
+                    )
+                if endpoint not in endpoint_info:
+                    raise NativeReportError(
+                        f"native server endpoint {endpoint!r} omitted collection metadata"
+                    )
+                labels = series.get("labels")
+                if labels is not None and not isinstance(labels, dict):
+                    raise NativeReportError(
+                        f"native server metric {name!r} labels must be an object or null"
+                    )
+                stats = _mapping(
+                    series.get("stats"), f"native server metric {name!r} stats"
+                )
+                timeslices = _server_metric_timeslices(
+                    metric_type, series.get("timeslices", []), name
+                )
+                common = {"labels": labels, "timeslices": timeslices or None}
+                if metric_type in {"gauge", "unknown"}:
+                    percentiles = _mapping(
+                        stats.get("percentiles", {}),
+                        f"native server metric {name!r} percentiles",
+                    )
+                    gauge_stats = {
+                        key: _optional_number(stats.get(key), name, key)
+                        for key in ("avg", "min", "max", "std")
+                    }
+                    gauge_stats.update(
+                        {
+                            key: _optional_number(percentiles.get(key), name, key)
+                            for key in _PERCENTILE_FIELDS
+                        }
+                    )
+                    projected_series = series_classes[metric_type](
+                        **common,
+                        stats=GaugeStats(**gauge_stats),
+                    )
+                elif metric_type == "counter":
+                    projected_series = CounterSeries(
+                        **common,
+                        stats=CounterStats(
+                            total=_optional_number(stats.get("total"), name, "total"),
+                            rate=_optional_number(stats.get("rate"), name, "rate"),
+                        ),
+                    )
+                else:
+                    percentiles = _mapping(
+                        stats.get("percentiles", {}),
+                        f"native server metric {name!r} percentiles",
+                    )
+                    histogram_stats = {
+                        key: _optional_number(stats.get(key), name, key)
+                        for key in ("sum", "avg", "count_rate", "sum_rate")
+                    }
+                    histogram_stats["count"] = _optional_int(
+                        stats.get("count"), name, "count"
+                    )
+                    histogram_stats.update(
+                        {
+                            f"{key}_estimate": _optional_number(
+                                percentiles.get(key), name, key
+                            )
+                            for key in _PERCENTILE_FIELDS
+                        }
+                    )
+                    buckets = _mapping(
+                        stats.get("buckets", {}),
+                        f"native server metric {name!r} buckets",
+                    )
+                    projected_series = HistogramSeries(
+                        **common,
+                        stats=HistogramStats(**histogram_stats),
+                        buckets={
+                            key: _required_int(value, name, f"bucket {key}")
+                            for key, value in buckets.items()
+                        }
+                        or None,
+                    )
+                grouped.setdefault(endpoint, {}).setdefault(name, []).append(
+                    projected_series
+                )
+
+        summaries = {}
+        for endpoint, grouped_metrics in grouped.items():
+            metrics = {}
+            for name, series in grouped_metrics.items():
+                metric_type, description, unit = metric_meta[name]
+                metrics[name] = metric_classes[metric_type](
+                    description=description,
+                    unit=unit,
+                    series=series,
+                )
+            display = normalize_endpoint_display(endpoint)
+            if display in summaries:
+                raise NativeReportError(
+                    f"server metrics endpoints collide after normalization: {display!r}"
+                )
+            summaries[display] = ServerMetricsEndpointSummary(
+                endpoint_url=endpoint,
+                info=endpoint_info[endpoint],
+                metrics=metrics,
+            )
+        return summaries or None
+
+    profiling = _mapping(metadata.get("profiling"), "native server profiling boundary")
+    start_ns = _required_int(profiling.get("start_ns"), "server metrics", "start_ns")
+    end_ns = _required_int(profiling.get("end_ns"), "server metrics", "end_ns")
+    warmup_boundary = metadata.get("warmup")
+    warmup_start_ns = None
+    warmup_end_ns = None
+    if warmup_boundary is not None:
+        warmup_boundary = _mapping(warmup_boundary, "native server warmup boundary")
+        warmup_start_ns = _required_int(
+            warmup_boundary.get("start_ns"), "server metrics warmup", "start_ns"
+        )
+        warmup_end_ns = _required_int(
+            warmup_boundary.get("end_ns"), "server metrics warmup", "end_ns"
+        )
+    warmup_metrics = _mapping(
+        payload.get("warmup_server_metrics", {}), "native warmup server metrics"
+    )
+    endpoints_configured = metadata.get("endpoints_configured")
+    endpoints_successful = metadata.get("endpoints_successful")
+    if not isinstance(endpoints_configured, list) or not all(
+        isinstance(value, str) for value in endpoints_configured
+    ):
+        raise NativeReportError("server metrics configured endpoints must be strings")
+    if not isinstance(endpoints_successful, list) or not all(
+        isinstance(value, str) for value in endpoints_successful
+    ):
+        raise NativeReportError("server metrics successful endpoints must be strings")
+    return ServerMetricsResults(
+        benchmark_id=run.benchmark_id,
+        endpoint_summaries=project_phase(profiling_metrics),
+        warmup_endpoint_summaries=project_phase(warmup_metrics),
+        start_ns=start_ns,
+        end_ns=end_ns,
+        endpoints_configured=endpoints_configured,
+        endpoints_successful=endpoints_successful,
+        warmup_start_ns=warmup_start_ns,
+        warmup_end_ns=warmup_end_ns,
+        aggregation_time_filter=TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+        if start_ns < end_ns
+        else None,
+    )
+
+
+def _server_metric_timeslices(
+    metric_type: str, authored: Any, metric_name: str
+) -> list[Any]:
+    """Translate typed native timeslices without recomputing their statistics."""
+    from aiperf.common.models.server_metrics_models import (
+        CounterTimeslice,
+        GaugeTimeslice,
+        HistogramTimeslice,
+    )
+
+    if not isinstance(authored, list):
+        raise NativeReportError(
+            f"native server metric {metric_name!r} timeslices must be an array"
+        )
+    output = []
+    for index, authored_slice in enumerate(authored):
+        timeslice = _mapping(
+            authored_slice,
+            f"native server metric {metric_name!r} timeslice[{index}]",
+        )
+        start_ns = _required_int(timeslice.get("start_ns"), metric_name, "start_ns")
+        end_ns = _required_int(timeslice.get("end_ns"), metric_name, "end_ns")
+        complete = timeslice.get("complete")
+        if not isinstance(complete, bool):
+            raise NativeReportError(
+                f"native server metric {metric_name!r} timeslice complete must be boolean"
+            )
+        stats = _mapping(
+            timeslice.get("stats"),
+            f"native server metric {metric_name!r} timeslice stats",
+        )
+        common = {
+            "start_ns": start_ns,
+            "end_ns": end_ns,
+            "is_complete": None if complete else False,
+        }
+        if metric_type in {"gauge", "unknown"}:
+            values = {
+                key: _optional_number(stats.get(key), metric_name, key)
+                for key in ("avg", "min", "max")
+            }
+            if all(value is not None for value in values.values()):
+                output.append(GaugeTimeslice(**common, **values))
+        elif metric_type == "counter":
+            total = _optional_number(stats.get("total"), metric_name, "total")
+            rate = _optional_number(stats.get("rate"), metric_name, "rate")
+            if total is not None and rate is not None:
+                output.append(CounterTimeslice(**common, total=total, rate=rate))
+        elif metric_type == "histogram":
+            count = _optional_int(stats.get("count"), metric_name, "count")
+            total = _optional_number(stats.get("sum"), metric_name, "sum")
+            avg = _optional_number(stats.get("avg"), metric_name, "avg")
+            buckets = _mapping(
+                stats.get("buckets", {}),
+                f"native server metric {metric_name!r} timeslice buckets",
+            )
+            if count is not None and total is not None and avg is not None:
+                output.append(
+                    HistogramTimeslice(
+                        **common,
+                        count=count,
+                        sum=total,
+                        avg=avg,
+                        buckets={
+                            key: _required_int(value, metric_name, f"bucket {key}")
+                            for key, value in buckets.items()
+                        }
+                        or None,
+                    )
+                )
+    return output
+
+
+def _render_server_metrics_parquet(run: BenchmarkRun, results: Any) -> None:
+    """Feed Rust-owned raw records into Python's canonical Parquet renderer."""
+    import asyncio
+
+    from aiperf.common.models.server_metrics_models import (
+        ServerMetricsRecord,
+        TimeRangeFilter,
+    )
+    from aiperf.orchestrator.rust_wire import SERVER_METRICS_PARQUET_WIRE_PATH
+    from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
+    from aiperf.server_metrics.storage import ServerMetricsHierarchy
+
+    wire_path = run.artifact_dir / SERVER_METRICS_PARQUET_WIRE_PATH
+    hierarchy = ServerMetricsHierarchy()
+    try:
+        with wire_path.open("rb") as source:
+            for line_number, line in enumerate(source, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = ServerMetricsRecord.model_validate(orjson.loads(line))
+                except Exception as error:
+                    raise NativeReportError(
+                        f"invalid Rust server-metrics Parquet wire record at line "
+                        f"{line_number}: {error}"
+                    ) from error
+                hierarchy.add_record(record)
+    except OSError as error:
+        raise NativeReportError(
+            f"failed to read Rust server-metrics Parquet wire {wire_path}: {error}"
+        ) from error
+
+    class NativeServerMetricsHierarchyAdapter:
+        def __init__(self) -> None:
+            self.run = run
+
+        def get_hierarchy_for_export(self) -> Any:
+            return hierarchy
+
+    if results.start_ns >= results.end_ns:
+        raise NativeReportError(
+            "cannot render server-metrics Parquet without a positive profiling boundary"
+        )
+    exporter = ServerMetricsParquetExporter(
+        NativeServerMetricsHierarchyAdapter(),
+        TimeRangeFilter(start_ns=results.start_ns, end_ns=results.end_ns),
+    )
+    asyncio.run(exporter.export())
+    wire_path.unlink()
 
 
 def _project_gpu_telemetry(

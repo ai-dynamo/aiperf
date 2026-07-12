@@ -35,6 +35,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
         "phase_features": [],
         "run_features": [],
         "telemetry_source_types": [],
+        "server_metrics_formats": [],
         "runner_version": "0.0.0",
     }
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -63,6 +64,7 @@ def test_capabilities_reject_incompatible_runner(
         "phase_features": [],
         "run_features": [],
         "telemetry_source_types": [],
+        "server_metrics_formats": [],
     }
     response[field] = value
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -107,6 +109,7 @@ def test_missing_terminal_surfaces_exit_and_redacted_stderr() -> None:
         "phase_features",
         "run_features",
         "telemetry_source_types",
+        "server_metrics_formats",
     ],
 )
 def test_capabilities_require_every_typed_feature_inventory(
@@ -122,6 +125,7 @@ def test_capabilities_require_every_typed_feature_inventory(
         "phase_features": [],
         "run_features": [],
         "telemetry_source_types": [],
+        "server_metrics_formats": [],
     }
     response.pop(field)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -143,8 +147,10 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "raw_records",
             "http_transport_policy",
             "network_latency",
+            "server_metrics",
         ],
         "telemetry_source_types": ["dcgm"],
+        "server_metrics_formats": ["json", "csv", "jsonl", "parquet"],
     }
     request = {
         "run": {
@@ -165,6 +171,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             "accuracy": {},
             "gpu_telemetry": {"sources": [{"type": "dcgm"}]},
             "network_latency": {"mean_rtt_ns": 2_500_000},
+            "server_metrics": {"formats": ["json", "parquet"]},
         }
     }
 
@@ -183,7 +190,10 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("run_features", "raw_records"),
         ("run_features", "http_transport_policy"),
         ("run_features", "network_latency"),
+        ("run_features", "server_metrics"),
         ("telemetry_source_types", "dcgm"),
+        ("server_metrics_formats", "json"),
+        ("server_metrics_formats", "parquet"),
     ):
         narrowed = {name: list(values) for name, values in capabilities.items()}
         narrowed[field].remove(value)

@@ -33,6 +33,8 @@ pub struct RunnerCapabilities {
     pub run_features: &'static [&'static str],
     /// GPU telemetry source implementations accepted by the runner.
     pub telemetry_source_types: &'static [&'static str],
+    /// Server-metrics artifact formats accepted by the runner.
+    pub server_metrics_formats: &'static [&'static str],
     /// Rust runner package version.
     pub runner_version: &'static str,
 }
@@ -80,8 +82,10 @@ impl RunnerCapabilities {
                 "raw_records",
                 "http_transport_policy",
                 "network_latency",
+                "server_metrics",
             ],
             telemetry_source_types: &["dcgm", "python"],
+            server_metrics_formats: &["json", "csv", "jsonl", "parquet"],
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -146,6 +150,9 @@ pub struct RunSpec {
     /// Optional fixed or actively measured network RTT calibration.
     #[serde(default)]
     pub network_latency: Option<NetworkLatencySpec>,
+    /// Optional phase-bounded inference-server Prometheus collection.
+    #[serde(default)]
+    pub server_metrics: Option<ServerMetricsSpec>,
 }
 
 /// Canonical evaluator configuration for an accuracy-enabled native run.
@@ -283,6 +290,40 @@ pub struct NetworkLatencyProbeSpec {
     pub min_successful_samples: usize,
     /// Legacy-compatible per-sample JSONL path relative to the run directory.
     pub records_path: PathBuf,
+}
+
+/// Inference-server Prometheus collection and artifact policy.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServerMetricsSpec {
+    /// Clock cadence between sequential continuous scrapes.
+    pub collection_interval_ns: i64,
+    /// Clock deadline used for source reachability/connect attempts.
+    pub reachability_timeout_ns: i64,
+    /// Ordered normalized endpoints after inference and explicit URL expansion.
+    pub urls: Vec<String>,
+    /// Canonical compatibility artifacts requested by Config v2.
+    pub formats: Vec<ServerMetricsFormatSpec>,
+    /// Slim JSONL output relative to the run directory when requested.
+    #[serde(default)]
+    pub jsonl_path: Option<PathBuf>,
+    /// Full-record handoff relative to the run directory for Python Parquet rendering.
+    #[serde(default)]
+    pub parquet_wire_path: Option<PathBuf>,
+}
+
+/// Config-v2 server-metrics export formats.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerMetricsFormatSpec {
+    /// Aggregate JSON rendered by Python's canonical exporter.
+    Json,
+    /// Aggregate CSV rendered by Python's canonical exporter.
+    Csv,
+    /// Slim per-scrape JSONL written by Rust.
+    Jsonl,
+    /// Raw time-series Parquet rendered by Python's canonical exporter.
+    Parquet,
 }
 
 /// One injected GPU telemetry source.

@@ -321,3 +321,154 @@ def test_python_report_generators_serialize_native_values_without_recomputing(
     native_path = tmp_path / "native-v2.json"
     native_path.write_bytes(orjson.dumps(report))
     assert load_native_report(native_path) == report
+
+
+def test_python_server_exporters_render_typed_native_server_series(tmp_path) -> None:
+    gauge = _entry(
+        "distribution",
+        "%",
+        {
+            "count": 3,
+            "avg": 0.5,
+            "min": 0.25,
+            "max": 0.75,
+            "std": 0.25,
+            "percentiles": {"p50": 0.5, "p99": 0.75},
+        },
+        labels={"model": "mock-model"},
+    )
+    gauge["series"][0].update(
+        endpoint_url="http://127.0.0.1:8000/metrics",
+        timeslices=[
+            {
+                "start_ns": 1_000,
+                "end_ns": 2_000,
+                "complete": True,
+                "stats": {
+                    "count": 2,
+                    "avg": 0.375,
+                    "min": 0.25,
+                    "max": 0.5,
+                    "std": 0.125,
+                    "percentiles": {},
+                },
+            }
+        ],
+    )
+    counter = _entry(
+        "counter",
+        "requests",
+        {"total": 8.0, "rate": 4.0},
+        labels={"status": "ok"},
+    )
+    counter["series"][0]["endpoint_url"] = "http://127.0.0.1:8000/metrics"
+    histogram = _entry(
+        "histogram",
+        "s",
+        {
+            "count": 4,
+            "sum": 1.0,
+            "avg": 0.25,
+            "count_rate": 2.0,
+            "sum_rate": 0.5,
+            "percentiles": {"p50": 0.2, "p99": 0.5},
+            "buckets": {"0.1": 1, "0.5": 3, "+Inf": 4},
+        },
+    )
+    histogram["series"][0]["endpoint_url"] = "http://127.0.0.1:8000/metrics"
+    report = {
+        "schema_version": "2.0",
+        "aiperf_version": "0.0.0",
+        "run": {"mode": "online", "model": "mock-model"},
+        "summary": {
+            "was_cancelled": False,
+            "server_metrics": {
+                "endpoints_configured": ["http://127.0.0.1:8000/metrics"],
+                "endpoints_successful": ["http://127.0.0.1:8000/metrics"],
+                "descriptions": {
+                    "kv_cache_usage": "KV cache usage",
+                    "requests": "Completed requests",
+                    "request_latency": "Request latency",
+                },
+                "metric_types": {
+                    "kv_cache_usage": "gauge",
+                    "requests": "counter",
+                    "request_latency": "histogram",
+                },
+                "endpoint_info": {
+                    "http://127.0.0.1:8000/metrics": {
+                        "total_fetches": 3,
+                        "first_fetch_ns": 1_000,
+                        "last_fetch_ns": 3_000,
+                        "avg_fetch_latency_ms": 0.01,
+                        "unique_updates": 3,
+                        "first_update_ns": 1_000,
+                        "last_update_ns": 3_000,
+                        "duration_seconds": 0.000002,
+                        "avg_update_interval_ms": 0.001,
+                        "median_update_interval_ms": 0.001,
+                    }
+                },
+                "profiling": {"start_ns": 1_000, "end_ns": 3_000},
+            },
+        },
+        "metrics": {
+            "request_count": _entry("counter", "requests", {"total": 1.0, "rate": 1.0})
+        },
+        "server_metrics": {
+            "kv_cache_usage": gauge,
+            "requests": counter,
+            "request_latency": histogram,
+        },
+        "errors": [],
+    }
+    envelope = AIPerfConfig.model_validate(
+        {
+            "benchmark": {
+                "models": ["mock-model"],
+                "endpoint": {"urls": ["http://127.0.0.1:8000"]},
+                "dataset": {"type": "synthetic"},
+                "profiling": {
+                    "type": "concurrency",
+                    "requests": 1,
+                    "concurrency": 1,
+                },
+                "artifacts": {"dir": str(tmp_path)},
+                "gpu_telemetry": {"enabled": False},
+                "server_metrics": {"formats": ["json", "csv"]},
+            }
+        }
+    )
+    run = BenchmarkRun(
+        benchmark_id="server-compatibility-proof",
+        cfg=envelope.benchmark,
+        artifact_dir=tmp_path,
+        label="native-server",
+    )
+
+    export_python_compatibility_reports(report, project_native_summary(report), run)
+
+    exported = orjson.loads((tmp_path / "server_metrics_export.json").read_bytes())
+    assert exported["summary"]["endpoints_successful"] == [
+        "http://127.0.0.1:8000/metrics"
+    ]
+    assert exported["metrics"]["kv_cache_usage"]["type"] == "gauge"
+    assert exported["metrics"]["kv_cache_usage"]["series"][0]["stats"] == {
+        "avg": 0.5,
+        "min": 0.25,
+        "max": 0.75,
+        "std": 0.25,
+        "p50": 0.5,
+        "p99": 0.75,
+    }
+    assert exported["metrics"]["requests"]["series"][0]["stats"] == {
+        "total": 8.0,
+        "rate": 4.0,
+    }
+    histogram_stats = exported["metrics"]["request_latency"]["series"][0]
+    assert histogram_stats["stats"]["p50_estimate"] == 0.2
+    assert histogram_stats["buckets"] == {"0.1": 1, "0.5": 3, "+Inf": 4}
+    csv = (tmp_path / "server_metrics_export.csv").read_text()
+    assert "kv_cache_usage" in csv
+    assert "requests" in csv
+    assert "request_latency" in csv
