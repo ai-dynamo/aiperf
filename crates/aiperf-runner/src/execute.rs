@@ -46,15 +46,19 @@ use aiperf_accuracy::{
 };
 use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
+use aiperf_content_server::{
+    ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
+};
 use aiperf_dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig,
     MaterializedTracePromptStorage, ModelId, ModelSelector, ModelSelectorFactory,
-    RandomModelSelectorFactory, RoundRobinModelSelectorFactory, SourceImageSampling,
-    SyntheticAudioConfig, SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig,
-    SyntheticImageFormat, SyntheticImageSource, SyntheticPrefixConfig, SyntheticPromptConfig,
-    SyntheticRankingsConfig, SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat,
-    SyntheticVideoPattern, TextTokenizer, TiktokenEncoding, TiktokenTokenizer,
-    TracePromptStoragePolicy, TraceSynthesisConfig,
+    NativeSyntheticMediaGeneratorFactory, RandomModelSelectorFactory,
+    RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
+    SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
+    SyntheticImageSource, SyntheticMediaGeneratorFactory, SyntheticPrefixConfig,
+    SyntheticPromptConfig, SyntheticRankingsConfig, SyntheticVideoAudioConfig,
+    SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
+    TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
 use aiperf_endpoints::{
     EndpointConfig, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
@@ -121,9 +125,9 @@ use crate::records::{
 use crate::registry::ValidatedEndpointProfileV2;
 use crate::server_metrics::ServerMetricsRun;
 use crate::sidecar_input::{
-    GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec, LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec,
-    NETWORK_LATENCY_SIDECAR_ID, NetworkLatencySpec, PreparedSidecarInputs,
-    SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
+    CONTENT_SERVER_SIDECAR_ID, ContentServerSpec, GPU_TELEMETRY_SIDECAR_ID, GpuTelemetrySpec,
+    LIVE_STREAMING_SIDECAR_ID, LiveStreamingSpec, NETWORK_LATENCY_SIDECAR_ID, NetworkLatencySpec,
+    PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
 use crate::turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
@@ -247,6 +251,13 @@ pub(crate) struct LegacyNativeSidecarInputs {
 }
 
 impl NativeSidecarPlan {
+    fn content_server(&self) -> Result<Option<&ContentServerSpec>> {
+        match self {
+            Self::Legacy(_) => Ok(None),
+            Self::Prepared(inputs) => inputs.get(CONTENT_SERVER_SIDECAR_ID),
+        }
+    }
+
     fn gpu_telemetry(&self) -> Result<Option<&GpuTelemetrySpec>> {
         match self {
             Self::Legacy(inputs) => Ok(inputs.gpu_telemetry.as_ref()),
@@ -284,6 +295,18 @@ impl NativeSidecarPlan {
                     && inputs.live_streaming.is_none()
             }
             Self::Prepared(inputs) => inputs.is_empty(),
+        }
+    }
+
+    fn contains_only_content_server(&self) -> bool {
+        match self {
+            Self::Legacy(inputs) => {
+                inputs.gpu_telemetry.is_none()
+                    && inputs.network_latency.is_none()
+                    && inputs.server_metrics.is_none()
+                    && inputs.live_streaming.is_none()
+            }
+            Self::Prepared(inputs) => inputs.contains_only(&[CONTENT_SERVER_SIDECAR_ID]),
         }
     }
 }
@@ -501,6 +524,7 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) input: Arc<GraphInputBundle>,
     pub(crate) random_seed: Option<u64>,
     pub(crate) default_output_tokens: usize,
+    pub(crate) allow_dataset_wrap: bool,
 }
 
 /// Deprecated protocol-v1 graph source kept outside the prepared run shape.
@@ -826,6 +850,7 @@ async fn prepare_protocol_v1_graph(
             dataset,
             &RunnerGraphInputContext {
                 tokenizer: tokenizer.as_ref(),
+                run_random_seed: plan.run.random_seed,
             },
         )
         .await
@@ -834,6 +859,7 @@ async fn prepare_protocol_v1_graph(
         input: Arc::new(prepared.bundle),
         random_seed: prepared.random_seed,
         default_output_tokens: prepared.default_output_tokens,
+        allow_dataset_wrap: prepared.allow_dataset_wrap,
     }));
     Ok(plan)
 }
@@ -924,6 +950,7 @@ fn materialize_user_files(
 }
 
 fn validate_plan(request: &NativeRunPlan) -> Result<()> {
+    let _content_server = request.run.sidecars.content_server()?;
     let gpu_telemetry = request.run.sidecars.gpu_telemetry()?;
     let network_latency = request.run.sidecars.network_latency()?;
     let server_metrics = request.run.sidecars.server_metrics()?;
@@ -1087,6 +1114,7 @@ pub(crate) struct BuiltinNativeSidecarResourceFactory;
 pub(crate) struct PreparedNativeSidecarResources {
     real_clock_anchor: RealClockAnchor,
     clock: Rc<dyn Clock>,
+    content_server: Option<Box<dyn ContentServerRuntime>>,
     gpu_telemetry: Option<GpuTelemetryRun>,
     network_latency: Option<NetworkLatencyRun>,
     server_metrics: Option<ServerMetricsRun>,
@@ -1103,6 +1131,7 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
         let real_clock_anchor = RealClockAnchor::now();
         let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
         let endpoint_urls = run.endpoint.default_urls()?;
+        let content_server_spec = run.sidecars.content_server()?;
         let gpu_spec = run.sidecars.gpu_telemetry()?;
         let network_spec = run.sidecars.network_latency()?;
         let server_spec = run.sidecars.server_metrics()?;
@@ -1150,6 +1179,21 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             .then(|| metrics_config(&run.metrics))
             .transpose()?;
 
+        let content_server = match content_server_spec {
+            Some(spec) => Some(
+                NativeContentServerFactory::default()
+                    .start(ContentServerConfig {
+                        host: spec.host.clone(),
+                        port: spec.port,
+                        content_dir: spec.content_dir.clone(),
+                        max_tracked_records: spec.max_tracked_records,
+                    })
+                    .await
+                    .context("starting native content server")?,
+            ),
+            None => None,
+        };
+
         let gpu_telemetry = match gpu_spec {
             Some(spec) => Some(GpuTelemetryRun::new(spec, clock.clone()).await?),
             None => None,
@@ -1174,6 +1218,7 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
         Ok(PreparedNativeSidecarResources {
             real_clock_anchor,
             clock,
+            content_server,
             gpu_telemetry,
             network_latency,
             server_metrics,
@@ -1219,6 +1264,11 @@ impl PreparedNativeSidecarResources {
             gpu_telemetry.shutdown().await;
         }
         self.network_latency.take();
+        if let Some(mut content_server) = self.content_server.take()
+            && let Err(error) = content_server.shutdown().await
+        {
+            eprintln!("content server failed to shut down cleanly: {error:#}");
+        }
     }
 }
 
@@ -1314,8 +1364,8 @@ async fn execute_scheduled_native(
 
 fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
     ensure!(
-        request.run.sidecars.is_empty(),
-        "authored Graph-IR runs do not yet support GPU, network, server, or live-streaming telemetry"
+        request.run.sidecars.contains_only_content_server(),
+        "authored Graph-IR runs support the content server but not GPU, network, server, or live-streaming telemetry"
     );
     ensure!(
         request.run.models.items.len() == 1,
@@ -1395,6 +1445,7 @@ async fn execute_graph_native(
     };
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
+    let allow_dataset_wrap = graph.allow_dataset_wrap;
     let metrics_config = metrics_config(&request.run.metrics)?;
     let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
     let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
@@ -1447,7 +1498,7 @@ async fn execute_graph_native(
                     registry.endpoints().clone(),
                     profiles.clone(),
                     input_token_counter.clone(),
-                ))
+                )?)
             }
         };
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -1474,6 +1525,7 @@ async fn execute_graph_native(
         input.as_ref(),
         clock.clone(),
         rng_root,
+        allow_dataset_wrap,
         &backends,
     )
     .await?;
@@ -2404,6 +2456,8 @@ pub(crate) async fn build_dataset(
                 rng_root,
                 tokenizer,
                 is_rankings_endpoint(endpoint_type),
+                Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
+                false,
             )
             .await
         }
@@ -2415,11 +2469,12 @@ pub(crate) async fn build_dataset(
                 rng_root,
                 tokenizer,
                 Arc::new(MaterializedTracePromptStorage),
+                false,
             )
             .await
         }
         DatasetSpec::Public(spec) => {
-            build_public_dataset(registry, spec, models, rng_root, tokenizer).await
+            build_public_dataset(registry, spec, models, rng_root, tokenizer, false).await
         }
     }
 }
@@ -2431,8 +2486,12 @@ pub(crate) async fn build_synthetic_dataset(
     rng_root: RngRoot,
     tokenizer: &dyn TextTokenizer,
     rankings: bool,
+    media_generator_factory: Arc<dyn SyntheticMediaGeneratorFactory>,
+    requires_raw_token_ids: bool,
 ) -> Result<Dataset> {
     let mut compose = compose_config(models, rng_root)?;
+    compose.media_generator_factory = media_generator_factory;
+    compose.requires_raw_token_ids = requires_raw_token_ids;
     if let Some(prompts) = &spec.prompts {
         compose.output_length_distribution = prompts
             .osl
@@ -2506,6 +2565,7 @@ pub(crate) async fn build_file_dataset(
     run_rng_root: RngRoot,
     tokenizer: &dyn TextTokenizer,
     trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
+    requires_raw_token_ids: bool,
 ) -> Result<Dataset> {
     ensure!(
         spec.path.is_some() ^ spec.records.is_some(),
@@ -2516,6 +2576,7 @@ pub(crate) async fn build_file_dataset(
         .map(|seed| RngRoot::new(Some(seed)))
         .unwrap_or(run_rng_root);
     let mut compose = compose_config(models, rng_root)?;
+    compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
     compose.format_options = spec.options.clone();
     compose.trace_prompt_storage = trace_prompt_storage;
@@ -2579,6 +2640,7 @@ pub(crate) async fn build_public_dataset(
     models: &ModelsSpec,
     rng_root: RngRoot,
     tokenizer: &dyn TextTokenizer,
+    requires_raw_token_ids: bool,
 ) -> Result<Dataset> {
     ensure!(
         !spec.name.trim().is_empty(),
@@ -2613,6 +2675,7 @@ pub(crate) async fn build_public_dataset(
         },
     };
     let mut compose = compose_config(models, rng_root)?;
+    compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.format_options = spec.options.clone();
     let mut load = LoadConfig::new(source);
     load.max_rows = max_rows;

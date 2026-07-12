@@ -286,6 +286,52 @@ fn warmup_and_profiling_share_one_engine_clock_and_exact_live_parity_collector()
 }
 
 #[test]
+fn vllm_token_native_dataset_reaches_dynamo_without_request_reencoding() {
+    let distribution_id = distribution_id();
+    let target = target("vllm-token-native");
+    let _ = std::fs::remove_dir_all(&target);
+    let mut request = envelope(
+        &distribution_id,
+        "offline-vllm-token-native",
+        &target,
+        synthetic_dataset(),
+        json!([{
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "requests": 1,
+            "concurrency": 1
+        }]),
+    );
+    request["run"]["resources"]["endpoints"]["profiles"][0]["type"] = json!("vllm_generate");
+    request["run"]["resources"]["endpoints"]["profiles"][0]["streaming"] = json!(false);
+
+    let output = run(&request);
+    let terminal = one_line(&output);
+    assert!(
+        output.status.success(),
+        "terminal={terminal}, stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(terminal["success"], true);
+    let native: Value =
+        serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
+    assert_eq!(
+        native["run"]["endpoint_profiles"],
+        json!([{"profile_id": "default", "endpoint_id": "vllm_generate"}])
+    );
+    assert_eq!(
+        native["metrics"]["total_usage_prompt_tokens"]["series"][0]["stats"]["value"],
+        8.0
+    );
+    assert_eq!(
+        native["metrics"]["total_usage_completion_tokens"]["series"][0]["stats"]["value"],
+        2.0
+    );
+    std::fs::remove_dir_all(target).unwrap();
+}
+
+#[test]
 fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
     let distribution_id = distribution_id();
     let cases = [

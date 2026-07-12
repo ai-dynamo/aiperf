@@ -12,7 +12,10 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf_dataset::{Dataset, TextTokenizer, TracePromptStoragePolicy};
+use aiperf_dataset::{
+    Dataset, SyntheticMediaGeneratorFactory, TextTokenizer, TracePromptStoragePolicy,
+};
+use aiperf_endpoints::EndpointDescriptor;
 use aiperf_extensions::AiperfRegistry;
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -129,6 +132,22 @@ pub struct TraceSynthesisSpec {
     /// Final output-length cap.
     #[serde(default)]
     pub max_osl: Option<u32>,
+    /// Recorded-graph per-trace peak context filter.
+    #[serde(default)]
+    pub max_context_length: Option<u64>,
+    /// Whether outer graph selection may wrap a finite corpus.
+    #[serde(default)]
+    pub allow_dataset_wrap: Option<bool>,
+    /// True-idle gap cap for WEKA/Dynamo replay; null disables compression.
+    #[serde(default = "default_recorded_idle_gap_cap")]
+    pub idle_gap_cap_seconds: Option<f64>,
+    /// Recorded content corpus (`coding` by default, or `sonnet`).
+    #[serde(default)]
+    pub corpus: Option<String>,
+}
+
+fn default_recorded_idle_gap_cap() -> Option<f64> {
+    Some(60.0)
 }
 
 fn default_sampling_strategy() -> String {
@@ -533,8 +552,12 @@ pub struct RunnerDatasetInputContext<'a> {
     pub tokenizer: &'a dyn TextTokenizer,
     /// Whether the selected endpoint expects ranking-shaped synthesis.
     pub rankings: bool,
+    /// Exact descriptor selected for dataset representation and validation.
+    pub endpoint_descriptor: &'static EndpointDescriptor,
     /// Trace prompt storage policy selected by the execution backend.
     pub trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
+    /// Synthetic-media generation/publication policy selected by the backend.
+    pub media_generator_factory: Arc<dyn SyntheticMediaGeneratorFactory>,
 }
 
 /// One direct authored dataset-source adapter.
@@ -684,8 +707,11 @@ impl RunnerDatasetInputAdapter for SyntheticDatasetInputAdapter {
             rng_root,
             context.tokenizer,
             context.rankings,
+            context.media_generator_factory.clone(),
+            context.endpoint_descriptor.requires_raw_token_ids,
         )
         .await?;
+        dataset.validate_for_endpoint(context.endpoint_descriptor)?;
         Ok(PreparedDatasetInput {
             dataset,
             random_seed: spec.random_seed,
@@ -722,8 +748,10 @@ impl RunnerDatasetInputAdapter for FileDatasetInputAdapter {
             rng_root,
             context.tokenizer,
             context.trace_prompt_storage.clone(),
+            context.endpoint_descriptor.requires_raw_token_ids,
         )
         .await?;
+        dataset.validate_for_endpoint(context.endpoint_descriptor)?;
         Ok(PreparedDatasetInput {
             dataset,
             random_seed: spec.random_seed,
@@ -758,8 +786,10 @@ impl RunnerDatasetInputAdapter for PublicDatasetInputAdapter {
             context.models,
             rng_root,
             context.tokenizer,
+            context.endpoint_descriptor.requires_raw_token_ids,
         )
         .await?;
+        dataset.validate_for_endpoint(context.endpoint_descriptor)?;
         Ok(PreparedDatasetInput {
             dataset,
             random_seed: spec.random_seed,

@@ -45,8 +45,8 @@ use aiperf::multiturn::{
 use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
 use aiperf_clock::Clock;
 use aiperf_dataset::{
-    HashIdentityTracePromptStorage, SamplerRegistry, SegmentStore, TextTokenizer,
-    TraceHashAwareRequestMaterializer,
+    HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
+    SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
 };
 use aiperf_endpoints::{Modality, PreparedEndpointTable};
 use aiperf_graph::bench::BenchConfig;
@@ -920,6 +920,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             .descriptor()
             .output_modalities
             .contains(&Modality::Rankings);
+        let endpoint_descriptor = prepared_endpoint.descriptor();
         let mut endpoint_table = PreparedEndpointTable::new();
         let endpoint_key = endpoint_table.push(prepared_endpoint)?;
         let endpoint_reference = PreparedEndpointReference {
@@ -937,7 +938,9 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             run_rng_root: rng_root,
             tokenizer: tokenizer.as_ref(),
             rankings,
+            endpoint_descriptor,
             trace_prompt_storage: Arc::new(HashIdentityTracePromptStorage),
+            media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1415,6 +1418,21 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             context.sidecar_inputs().is_empty(),
             "dynamo_offline graph execution does not support online sidecars"
         );
+        for (profile_id, profile) in context.endpoint_profiles() {
+            let descriptor = context
+                .product_registry()
+                .endpoints()
+                .resolve_factory(&profile.endpoint_id)
+                .with_context(|| {
+                    format!("resolving offline graph endpoint profile {profile_id:?}")
+                })?
+                .descriptor();
+            ensure!(
+                !descriptor.requires_raw_token_ids,
+                "offline graph endpoint profile {profile_id:?} selects {:?}, which requires raw token IDs; direct Graph-IR nodes do not carry the dataset raw-token handle",
+                descriptor.id
+            );
+        }
         Ok(())
     }
 
@@ -1469,11 +1487,13 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
                 &workload.dataset,
                 &RunnerGraphInputContext {
                     tokenizer: tokenizer.as_ref(),
+                    run_random_seed: run.identity.random_seed,
                 },
             ))
             .context("loading direct authored Graph-IR input")?;
         let metrics = offline_metrics_config(&run.metrics)?;
         let default_max_tokens = prepared.default_output_tokens;
+        let allow_dataset_wrap = prepared.allow_dataset_wrap;
         let random_seed = prepared.random_seed.or(run.identity.random_seed);
         Ok(Box::new(PreparedDynamoOfflineGraphOperation {
             backend,
@@ -1485,6 +1505,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             random_seed,
             artifact_target: run.artifact_target.clone(),
             default_max_tokens,
+            allow_dataset_wrap,
             worker_count: workload.worker_count,
             phase_count: workload.phases.len(),
         }))
@@ -1581,6 +1602,7 @@ struct PreparedDynamoOfflineGraphOperation {
     random_seed: Option<u64>,
     artifact_target: PathBuf,
     default_max_tokens: usize,
+    allow_dataset_wrap: bool,
     worker_count: usize,
     phase_count: usize,
 }
@@ -1608,6 +1630,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             random_seed,
             artifact_target,
             default_max_tokens,
+            allow_dataset_wrap,
             worker_count,
             phase_count,
         } = *self;
@@ -1634,6 +1657,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
                         &input,
                         clock,
                         rng_root,
+                        allow_dataset_wrap,
                         &backends,
                     )
                     .await?;

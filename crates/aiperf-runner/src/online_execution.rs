@@ -15,8 +15,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use aiperf_content_server::ContentServerMediaPublisher;
 use aiperf_dataset::{
-    DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage, TiktokenEncoding,
+    DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
+    NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
 };
 use aiperf_endpoints::Modality;
 use aiperf_metrics::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
@@ -43,6 +45,7 @@ use crate::registry::{
     RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
     StaticAccuracyWorkloadConfigV2, ValidatedBackendConfig, ValidatedWorkloadConfig,
 };
+use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
 const BACKEND_ID: &str = "online_http";
 
@@ -321,7 +324,7 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
                 && run.sidecars.network_latency.is_none()
                 && run.sidecars.server_metrics.is_none()
                 && run.sidecars.live_streaming.is_none(),
-            "protocol-v2 graph execution does not support native sidecars"
+            "protocol-v2 graph execution supports only the content-server sidecar"
         );
         ensure!(
             run.models.items.len() == 1,
@@ -361,6 +364,7 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
         validate_online_run(context)?;
+        validate_static_accuracy_endpoint(context)?;
         ensure!(
             run.models.items.len() == 1,
             "static accuracy execution currently requires exactly one model"
@@ -828,13 +832,16 @@ pub(crate) fn lower_scheduled(
         .descriptor()
         .output_modalities
         .contains(&Modality::Rankings);
+    let endpoint_descriptor = prepared_endpoint.descriptor();
     let prepare_context = RunnerDatasetInputContext {
         registry: context.product_registry(),
         models: &run.models,
         run_rng_root: RngRoot::new(run.identity.random_seed),
         tokenizer: tokenizer_impl.as_ref(),
         rankings,
+        endpoint_descriptor,
         trace_prompt_storage: Arc::new(MaterializedTracePromptStorage),
+        media_generator_factory: media_generator_factory(context)?,
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -860,6 +867,27 @@ pub(crate) fn lower_scheduled(
     )
 }
 
+fn media_generator_factory(
+    context: &RunnerRunContext,
+) -> Result<Arc<dyn SyntheticMediaGeneratorFactory>> {
+    let Some(spec) = context
+        .sidecar_inputs()
+        .get::<ContentServerSpec>(CONTENT_SERVER_SIDECAR_ID)?
+    else {
+        return Ok(Arc::new(NativeSyntheticMediaGeneratorFactory::default()));
+    };
+    let Some(content_dir) = &spec.content_dir else {
+        // The Python feature starts a temporary server when CONTENT_DIR is
+        // empty but activates file writing only when both values are present.
+        return Ok(Arc::new(NativeSyntheticMediaGeneratorFactory::default()));
+    };
+    let publisher = ContentServerMediaPublisher::new(content_dir, spec.base_url())
+        .context("preparing synthetic media for the content server")?;
+    Ok(Arc::new(NativeSyntheticMediaGeneratorFactory::new(
+        Arc::new(publisher),
+    )))
+}
+
 fn lower_graph(
     run: &AuthoredRunSpecV2,
     context: &RunnerRunContext,
@@ -880,6 +908,7 @@ fn lower_graph(
                 &workload.dataset,
                 &RunnerGraphInputContext {
                     tokenizer: tokenizer_impl.as_ref(),
+                    run_random_seed: run.identity.random_seed,
                 },
             ),
         )
@@ -889,6 +918,7 @@ fn lower_graph(
         input: Arc::new(prepared.bundle),
         random_seed: prepared.random_seed,
         default_output_tokens: prepared.default_output_tokens,
+        allow_dataset_wrap: prepared.allow_dataset_wrap,
     };
     build_common_plan(
         run,
@@ -908,6 +938,7 @@ fn lower_static_accuracy(
     tokenizers: &dyn OnlineTokenizerSourceResolver,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
 ) -> Result<NativeRunPlan> {
+    validate_static_accuracy_endpoint(context)?;
     let accuracy = StaticAccuracyConfigV2::decode(&workload.accuracy)?.lower(evaluator_factory);
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     build_common_plan(
@@ -919,6 +950,22 @@ fn lower_static_accuracy(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
+}
+
+fn validate_static_accuracy_endpoint(context: &RunnerRunContext) -> Result<()> {
+    let profile = context.default_endpoint_profile()?;
+    let descriptor = context
+        .product_registry()
+        .endpoints()
+        .resolve_factory(&profile.endpoint_id)
+        .context("resolving static-accuracy endpoint")?
+        .descriptor();
+    ensure!(
+        !descriptor.requires_raw_token_ids,
+        "static accuracy endpoint {:?} requires raw token IDs, but evaluator-authored problems provide semantic text",
+        descriptor.id
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

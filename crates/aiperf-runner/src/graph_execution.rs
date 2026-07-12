@@ -386,12 +386,21 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
         registry: EndpointRegistry,
         profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
         input_token_counter: Arc<dyn InputTokenCounter>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        for profile in profiles.iter() {
+            let descriptor = registry.resolve_factory(&profile.endpoint_id)?.descriptor();
+            ensure!(
+                !descriptor.requires_raw_token_ids,
+                "graph endpoint profile {:?} selects {:?}, which requires raw token IDs; direct Graph-IR nodes do not yet carry the dataset raw-token handle",
+                profile.profile_id,
+                descriptor.id
+            );
+        }
+        Ok(Self {
             registry,
             profiles,
             input_token_counter,
-        }
+        })
     }
 }
 
@@ -860,6 +869,11 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
                 })
             })
             .collect::<Result<Vec<Value>>>()?;
+        let extra_headers = uniquify_dynamo_session_headers(
+            self.raw_string_map(node, "extra_headers_handle")?,
+            self.phase,
+            &self.trace_id,
+        );
         let turn = Turn {
             model: Some(model.clone()),
             max_tokens: max_tokens
@@ -880,7 +894,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
             streaming: node.streaming,
             authored_input_tokens: metadata_u64(node, "input_tokens").unwrap_or(0),
             max_output_tokens,
-            extra_headers: self.raw_string_map(node, "extra_headers_handle")?,
+            extra_headers,
             parameters: self.raw_string_map(node, "request_parameters_handle")?,
             trace_id: self.trace_id.clone(),
             is_final_turn: self.terminal_nodes.contains(node_id),
@@ -1097,6 +1111,30 @@ fn metadata_u64(node: &LlmNode, name: &str) -> Option<u64> {
     node.metadata.get(name).and_then(Value::as_u64)
 }
 
+fn uniquify_dynamo_session_headers(
+    mut headers: BTreeMap<String, String>,
+    phase: Phase,
+    trace_id: &str,
+) -> BTreeMap<String, String> {
+    if !headers.contains_key("x-dynamo-session-id") {
+        return headers;
+    }
+    let Some((_, instance_nonce)) = trace_id.split_once("::") else {
+        return headers;
+    };
+    let variant = match phase {
+        Phase::Warmup => "warmup",
+        Phase::Profiling => "profiling",
+    };
+    let suffix = format!("::{variant}-{instance_nonce}");
+    for name in ["x-dynamo-session-id", "x-dynamo-parent-session-id"] {
+        if let Some(value) = headers.get_mut(name) {
+            value.push_str(&suffix);
+        }
+    }
+    headers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1104,8 +1142,8 @@ mod tests {
     use aiperf_clock::SimClock;
     use aiperf_endpoints::{
         ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
-        EndpointRegistryBuilder, EndpointResult, PreparedEndpoint, RawEndpointConfig,
-        StatelessEndpointFactory,
+        EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
+        RawEndpointConfig, StatelessEndpointFactory,
     };
     use aiperf_transport_http::models::ConnectionReuseStrategy;
 
@@ -1151,7 +1189,8 @@ mod tests {
                 session_header: None,
             }]),
             Arc::new(AuthoredInputTokenCounter),
-        );
+        )
+        .unwrap();
         let runtime = factory
             .prepare_worker(Rc::new(SimClock::new()), 0, "fixture-model")
             .unwrap();
@@ -1185,5 +1224,61 @@ mod tests {
         };
         assert_eq!(reference.endpoint_id.as_str(), "chat");
         assert_eq!(reference.key.index(), 1);
+    }
+
+    #[test]
+    fn prepared_graph_runtime_rejects_dataset_only_raw_token_requirements() {
+        let result = PreparedRunnerGraphEndpointRuntimeFactory::new(
+            EndpointRegistry::builtin().unwrap(),
+            Arc::new(vec![crate::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("vllm_generate").unwrap(),
+                config: RawEndpointConfig {
+                    urls: vec!["http://127.0.0.1:1".into()],
+                    ..RawEndpointConfig::default()
+                },
+                connection_reuse: ConnectionReuseStrategy::Pooled,
+                client: Default::default(),
+                session_header: None,
+            }]),
+            Arc::new(AuthoredInputTokenCounter),
+        );
+
+        let Err(error) = result else {
+            panic!("raw-token-only endpoint was accepted by direct Graph-IR")
+        };
+        assert!(format!("{error:#}").contains("requires raw token IDs"));
+    }
+
+    #[test]
+    fn dynamo_session_and_parent_headers_share_the_instance_suffix() {
+        let headers = BTreeMap::from([
+            ("x-dynamo-session-id".into(), "child".into()),
+            ("x-dynamo-parent-session-id".into(), "root::stale".into()),
+            ("x-dynamo-session-final".into(), "true".into()),
+        ]);
+        let unique =
+            uniquify_dynamo_session_headers(headers, Phase::Profiling, "root::instance-27");
+        assert_eq!(
+            unique["x-dynamo-session-id"],
+            "child::profiling-instance-27"
+        );
+        assert_eq!(
+            unique["x-dynamo-parent-session-id"],
+            "root::stale::profiling-instance-27"
+        );
+        assert_eq!(unique["x-dynamo-session-final"], "true");
+    }
+
+    #[test]
+    fn plain_dynamo_trace_keeps_recorded_session_headers_verbatim() {
+        let headers = BTreeMap::from([
+            ("x-dynamo-session-id".into(), "child".into()),
+            ("x-dynamo-session-final".into(), "true".into()),
+        ]);
+        assert_eq!(
+            uniquify_dynamo_session_headers(headers.clone(), Phase::Profiling, "root"),
+            headers
+        );
     }
 }
