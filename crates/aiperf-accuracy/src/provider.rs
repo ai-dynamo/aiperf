@@ -664,6 +664,10 @@ pub trait EvaluationProvider {
     /// Gracefully stop the worker and wait for complete process-tree quiescence.
     async fn shutdown(&mut self) -> Result<(), EvaluationProviderError>;
 
+    /// Force every provider-owned process to stop and prove tree quiescence.
+    /// This must work from every lifecycle state and be idempotent.
+    async fn abort(&mut self) -> Result<(), EvaluationProviderError>;
+
     /// Record that Rust sealed every candidate artifact after quiescence.
     fn mark_artifacts_sealed(&mut self) -> Result<(), EvaluationProviderError>;
 

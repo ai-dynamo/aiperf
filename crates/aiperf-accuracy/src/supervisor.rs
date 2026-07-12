@@ -438,18 +438,20 @@ impl SupervisedProcess {
         &mut self,
         primary: EvaluationProviderError,
     ) -> EvaluationProviderError {
-        if self.quiescence_result.is_some() {
-            return match self.verify_quiescent_once() {
-                Ok(_) => primary,
-                Err(quiescence) => quiescence,
-            };
-        }
-        self.force_kill_and_wait().await;
-        self.join_stderr().await;
-        match self.verify_quiescent_once() {
+        match self.abort_quiescent().await {
             Ok(_) => primary,
             Err(quiescence) => quiescence,
         }
+    }
+
+    async fn abort_quiescent(
+        &mut self,
+    ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
+        if self.quiescence_result.is_none() {
+            self.force_kill_and_wait().await;
+            self.join_stderr().await;
+        }
+        self.verify_quiescent_once()
     }
 
     async fn wait_quiescent(
@@ -1184,6 +1186,17 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
             }
         }
         let proof = self.process.wait_quiescent().await?;
+        self.lifecycle.worker_exited()?;
+        self.quiescence_proof = Some(proof);
+        Ok(())
+    }
+
+    async fn abort(&mut self) -> Result<(), EvaluationProviderError> {
+        if self.quiescence_proof.is_some() {
+            return Ok(());
+        }
+        self.lifecycle.abort_to_quiescing();
+        let proof = self.process.abort_quiescent().await?;
         self.lifecycle.worker_exited()?;
         self.quiescence_proof = Some(proof);
         Ok(())
@@ -1994,6 +2007,44 @@ for line in reader:
         };
         let error = provider.plan(&request).await.unwrap_err();
         assert!(matches!(error, EvaluationProviderError::Protocol(_)));
+        assert_eq!(verification_count.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn abort_from_negotiated_state_is_idempotent_and_verified_once() {
+        const SCRIPT: &str = r#"
+import json, os, sys, time
+reader = os.fdopen(3, 'r', encoding='utf-8', closefd=False)
+writer = os.fdopen(4, 'w', encoding='utf-8', closefd=False)
+request = json.loads(reader.readline())
+result = {
+    'evaluator_protocol': 2,
+    'provider_id': 'fixture',
+    'distribution_id': 'fixture-dist',
+    'package': 'fixture-provider',
+    'package_version': '1.0',
+    'provider_source_sha256': 'a' * 64,
+    'worker_source_sha256': 'b' * 64,
+    'dependency_lock_sha256': 'c' * 64,
+    'python_version': sys.version.split()[0],
+    'launch_nonce': request['launch_nonce'],
+    'operations': ['plan_session','bind_assets','next_units','instantiate_units','start_units','poll_events','submit_host_events','cancel_units','finalize_session','shutdown'],
+}
+writer.write(json.dumps({'id': request['id'], 'ok': True, 'result': result}) + '\n')
+writer.flush()
+time.sleep(60)
+"#;
+        let (result, verification_count, base) =
+            launch_fixture_script("abort-negotiated", SCRIPT, Duration::from_secs(1)).await;
+        let mut provider = result.unwrap();
+        provider.abort().await.unwrap();
+        provider.abort().await.unwrap();
+        assert_eq!(
+            provider.lifecycle_state(),
+            EvaluationLifecycleState::WorkerExited
+        );
+        assert!(provider.quiescence_proof().is_some());
         assert_eq!(verification_count.load(Ordering::SeqCst), 1);
         let _ = std::fs::remove_dir_all(base);
     }
