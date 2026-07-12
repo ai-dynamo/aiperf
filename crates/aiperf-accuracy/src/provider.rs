@@ -1266,7 +1266,7 @@ impl ProviderConfigValidator for NemoConfigValidator {
                 .solver_config
                 .keys()
                 .any(|field| !SOLVER_FIELDS.contains(&field.as_str()))
-            || !max_tokens.is_some_and(|value| value > 0)
+            || max_tokens.is_none_or(|value| value == 0)
             || !numeric_valid
             || !seed_valid
             || !stop_valid
