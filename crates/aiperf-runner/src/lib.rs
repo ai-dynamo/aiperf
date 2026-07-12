@@ -20,7 +20,8 @@ mod server_metrics;
 pub mod turn_execution;
 
 pub use distribution_identity::current_distribution_id;
-pub use execute::{execute_run, execute_run_with_backend_factory};
+pub use execute::{execute_run, execute_run_with_all_factories, execute_run_with_backend_factory};
+pub use graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
 pub use protocol::{RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities};
 pub use turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,

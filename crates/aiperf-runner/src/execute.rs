@@ -55,13 +55,11 @@ use aiperf_dataset::{
     TextTokenizer, TiktokenEncoding, TiktokenTokenizer, TraceSynthesisConfig,
 };
 use aiperf_endpoints::{EndpointConfig, EndpointType};
-use aiperf_extensions::AiperfRegistry;
-use aiperf_graph::execution::GraphTraceExecutionBackend;
+use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use aiperf_graph::input::{
     GraphInputAdapter, GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle,
     GraphInputConfig,
 };
-use aiperf_graph::placement::ThreadPerCoreGraphTraceExecutionBackend;
 use aiperf_graph::policy::FailFastRunFailurePolicy;
 use aiperf_graph::workload::{
     CyclingGraphTraceSource, DurationGraphStop, GraphArrivalPolicy, GraphTraceInstanceSequence,
@@ -94,7 +92,8 @@ use uuid::Uuid;
 
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
-    GraphCancellationConfig, RunnerGraphBackendFactory, RunnerGraphBackendFactoryConfig,
+    GraphCancellationConfig, NativeRunnerGraphPlacementFactory, RunnerGraphBackendFactory,
+    RunnerGraphBackendFactoryConfig, RunnerGraphPlacementFactory,
 };
 use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
@@ -128,7 +127,14 @@ type PhaseRuntimeParts = (
 
 /// Execute exactly one request with the native local execution backend.
 pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
-    execute_run_with_backend_factory(request, &NativeHttpExecutionBackendFactory)
+    let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+    execute_run_with_all_factories(
+        request,
+        &NativeHttpExecutionBackendFactory,
+        &graph_inputs,
+        &NativeRunnerGraphPlacementFactory,
+        &BuiltinAiperfRegistryFactory,
+    )
 }
 
 /// Execute one request with an injected HTTP execution-placement factory.
@@ -142,16 +148,47 @@ pub fn execute_run_with_backend_factory(
     backend_factory: &dyn HttpExecutionBackendFactory,
 ) -> Result<RunTerminal> {
     let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
-    execute_run_with_factories(request, backend_factory, &graph_inputs)
+    execute_run_with_all_factories(
+        request,
+        backend_factory,
+        &graph_inputs,
+        &NativeRunnerGraphPlacementFactory,
+        &BuiltinAiperfRegistryFactory,
+    )
 }
 
-/// Execute one request with independently injected linear and graph backends.
+/// Execute one request with injected HTTP placement and graph-input adapters.
 pub fn execute_run_with_factories(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
     graph_inputs: &dyn GraphInputAdapterResolver,
 ) -> Result<RunTerminal> {
+    execute_run_with_all_factories(
+        request,
+        backend_factory,
+        graph_inputs,
+        &NativeRunnerGraphPlacementFactory,
+        &BuiltinAiperfRegistryFactory,
+    )
+}
+
+/// Execute one request with every runner composition choice injected.
+///
+/// Scheduling, admission, dispatch, observation, and reporting remain inside
+/// the single coordinator path. Factories choose only HTTP placement, direct
+/// graph-input adapters, whole-trace placement, and the statically linked
+/// registry universe.
+pub fn execute_run_with_all_factories(
+    request: RunRequest,
+    backend_factory: &dyn HttpExecutionBackendFactory,
+    graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry_factory: &dyn AiperfRegistryFactory,
+) -> Result<RunTerminal> {
     validate_request(&request)?;
+    let registry = registry_factory
+        .build()
+        .context("constructing frozen runner registry")?;
     let benchmark_id = request.run.benchmark_id.clone();
     let artifact_dir = request.run.artifact_dir.clone();
     std::fs::create_dir_all(&artifact_dir)
@@ -163,7 +200,13 @@ pub fn execute_run_with_factories(
     let local = tokio::task::LocalSet::new();
     let native = local.block_on(
         &runtime,
-        execute_native(request, backend_factory, graph_inputs),
+        execute_native(
+            request,
+            backend_factory,
+            graph_inputs,
+            graph_placement,
+            &registry,
+        ),
     )?;
     let report_path = artifact_dir.join("native-v2.json");
     write_native_report_json(&native, &report_path)?;
@@ -303,10 +346,12 @@ async fn execute_native(
     request: RunRequest,
     backend_factory: &dyn HttpExecutionBackendFactory,
     graph_inputs: &dyn GraphInputAdapterResolver,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     if let Some(adapter) = graph_input_adapter(&request.run.dataset, graph_inputs) {
         validate_graph_request(&request)?;
-        return execute_graph_native(request, adapter).await;
+        return execute_graph_native(request, adapter, graph_placement, registry).await;
     }
     let mut live_streaming = if request.run.live_streaming.is_some() {
         match PythonLiveStreamingRun::spawn(&request.run, metrics_config(&request.run.metrics)?)
@@ -322,7 +367,7 @@ async fn execute_native(
         None
     };
     let live_sink = live_streaming.as_ref().map(PythonLiveStreamingRun::sink);
-    let result = execute_native_with_accuracy(request, live_sink, backend_factory).await;
+    let result = execute_native_with_accuracy(request, live_sink, backend_factory, registry).await;
     if let Some(worker) = live_streaming.take()
         && let Err(error) = worker.shutdown().await
     {
@@ -519,6 +564,8 @@ struct PreparedGraphPhase {
 async fn execute_graph_native(
     request: RunRequest,
     adapter: Arc<dyn GraphInputAdapter>,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
+    registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let metrics_config = metrics_config(&request.run.metrics)?;
     let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
@@ -537,7 +584,6 @@ async fn execute_graph_native(
         !input.plans.is_empty(),
         "authored Graph-IR input contains no root traces after root limiting"
     );
-    let registry = AiperfRegistry::builtin()?;
     let endpoint = endpoint_config(&request.run.endpoint)?;
     let primary_model = request.run.models.items[0].name.clone();
     let default_output_tokens = default_output_tokens(&request.run.dataset)?;
@@ -583,6 +629,7 @@ async fn execute_graph_native(
             default_output_tokens,
             rng_root,
             trace_instances.clone(),
+            graph_placement,
         )?);
     }
 
@@ -679,6 +726,7 @@ fn prepare_graph_phase(
     default_output_tokens: usize,
     rng_root: RngRoot,
     trace_instances: GraphTraceInstanceSequence,
+    graph_placement: &dyn RunnerGraphPlacementFactory,
 ) -> Result<PreparedGraphPhase> {
     let common = phase.common();
     let one_pass =
@@ -747,9 +795,7 @@ fn prepare_graph_phase(
             captured: records_tx,
         },
     ));
-    let placement: Rc<dyn GraphTraceExecutionBackend> = Rc::new(
-        ThreadPerCoreGraphTraceExecutionBackend::new(request.run.workers, worker_factory)?,
-    );
+    let placement = graph_placement.build(request.run.workers, worker_factory)?;
     let mut workload = GraphWorkload::new(clock, source, placement)
         .with_arrival(arrival)
         .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
@@ -792,9 +838,10 @@ async fn execute_native_with_accuracy(
     request: RunRequest,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
     backend_factory: &dyn HttpExecutionBackendFactory,
+    registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let Some(spec) = request.run.accuracy.clone() else {
-        return execute_native_inner(request, None, live_sink, backend_factory).await;
+        return execute_native_inner(request, None, live_sink, backend_factory, registry).await;
     };
     ensure!(
         spec.python_executable.is_absolute(),
@@ -819,6 +866,7 @@ async fn execute_native_with_accuracy(
         }),
         live_sink,
         backend_factory,
+        registry,
     )
     .await;
     let shutdown = evaluator.shutdown().await;
@@ -837,8 +885,8 @@ async fn execute_native_inner(
     accuracy: Option<AccuracyWorkerRun<'_>>,
     live_sink: Option<Rc<dyn LiveResultsSink>>,
     backend_factory: &dyn HttpExecutionBackendFactory,
+    registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    let registry = AiperfRegistry::builtin()?;
     let rng_root = RngRoot::new(request.run.random_seed);
     let dataset_rng_root = dataset_rng_root(&request.run.dataset, rng_root);
     let metrics_config = metrics_config(&request.run.metrics)?;
@@ -891,7 +939,7 @@ async fn execute_native_inner(
         accuracy.dataset.dataset().as_ref().clone()
     } else {
         build_dataset(
-            &registry,
+            registry,
             &request.run.dataset,
             &request.run.models,
             dataset_rng_root,
@@ -2850,6 +2898,10 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use aiperf_graph::errors::TraceError;
+    use aiperf_graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
     use serde_json::json;
 
     use super::*;
@@ -2864,6 +2916,111 @@ mod tests {
             "items": [{"name": "mock-model"}]
         }))
         .unwrap()
+    }
+
+    #[derive(Debug)]
+    struct UnusedHttpPlacement;
+
+    impl HttpExecutionBackendFactory for UnusedHttpPlacement {
+        fn build(
+            &self,
+            _config: HttpExecutionBackendConfig,
+        ) -> Result<Rc<dyn HttpTurnExecutionBackend>> {
+            panic!("direct graph execution must not construct HTTP turn placement")
+        }
+    }
+
+    struct RecordingGraphPlacement {
+        builds: Arc<AtomicUsize>,
+        traces: Arc<AtomicUsize>,
+    }
+
+    impl RunnerGraphPlacementFactory for RecordingGraphPlacement {
+        fn build(
+            &self,
+            worker_count: usize,
+            _worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+        ) -> Result<Rc<dyn aiperf_graph::execution::GraphTraceExecutionBackend>, GraphPlacementError>
+        {
+            assert_eq!(worker_count, 3);
+            self.builds.fetch_add(1, Ordering::SeqCst);
+            Ok(Rc::new(RecordingGraphBackend {
+                traces: self.traces.clone(),
+            }))
+        }
+    }
+
+    struct RecordingGraphBackend {
+        traces: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl aiperf_graph::execution::GraphTraceExecutionBackend for RecordingGraphBackend {
+        async fn execute_trace(
+            &self,
+            _plan: aiperf_graph::model::GraphTracePlan,
+        ) -> Result<(), TraceError> {
+            self.traces.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn graph_coordinator_accepts_injected_whole_trace_placement() {
+        let artifacts = tempfile::tempdir().unwrap();
+        let request: RunRequest = serde_json::from_value(json!({
+            "protocol_version": 1,
+            "run": {
+                "benchmark_id": "injected-graph-placement",
+                "workers": 3,
+                "artifact_dir": artifacts.path(),
+                "models": {"items": [{"name": "fixture-model"}]},
+                "endpoint": {
+                    "urls": ["http://127.0.0.1:1"],
+                    "type": "chat",
+                    "streaming": true
+                },
+                "dataset": {
+                    "type": "file",
+                    "format": "dag_jsonl",
+                    "records": [{
+                        "session_id": "root",
+                        "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
+                    }]
+                },
+                "phases": [{
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "sessions": 1,
+                    "concurrency": 1
+                }],
+                "metrics": {},
+                "artifacts": {}
+            }
+        }))
+        .unwrap();
+        let builds = Arc::new(AtomicUsize::new(0));
+        let traces = Arc::new(AtomicUsize::new(0));
+        let placement = RecordingGraphPlacement {
+            builds: builds.clone(),
+            traces: traces.clone(),
+        };
+        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+
+        let terminal = execute_run_with_all_factories(
+            request,
+            &UnusedHttpPlacement,
+            &graph_inputs,
+            &placement,
+            &BuiltinAiperfRegistryFactory,
+        )
+        .unwrap();
+
+        assert!(terminal.success);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        assert_eq!(traces.load(Ordering::SeqCst), 1);
+        assert!(artifacts.path().join("native-v2.json").is_file());
     }
 
     #[test]

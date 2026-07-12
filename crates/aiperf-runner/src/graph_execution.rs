@@ -26,7 +26,9 @@ use aiperf_graph::errors::TraceError;
 use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
 use aiperf_graph::materialize::SegmentItemsMaterializer;
 use aiperf_graph::model::{GraphTracePlan, LlmNode};
-use aiperf_graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
+use aiperf_graph::placement::{
+    GraphPlacementError, GraphTraceExecutionBackendFactory, ThreadPerCoreGraphTraceExecutionBackend,
+};
 use aiperf_graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, PrefillSlotNodePolicy,
@@ -45,6 +47,38 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::records::{CapturedHttpExchange, CapturedRecord};
+
+/// Composition seam for whole-trace graph execution placement.
+///
+/// The graph coordinator owns root selection, arrival, admission, and failure
+/// policy. This factory owns only where a complete prepared trace executes. A
+/// future ZMQ or RPC implementation can therefore replace native placement
+/// without changing graph workload or runner orchestration code.
+pub trait RunnerGraphPlacementFactory: Send + Sync {
+    /// Build one placement backend from a worker-local execution factory.
+    fn build(
+        &self,
+        worker_count: usize,
+        worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError>;
+}
+
+/// Stock thread-per-core whole-trace placement.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeRunnerGraphPlacementFactory;
+
+impl RunnerGraphPlacementFactory for NativeRunnerGraphPlacementFactory {
+    fn build(
+        &self,
+        worker_count: usize,
+        worker_factory: Arc<dyn GraphTraceExecutionBackendFactory>,
+    ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
+        Ok(Rc::new(ThreadPerCoreGraphTraceExecutionBackend::new(
+            worker_count,
+            worker_factory,
+        )?))
+    }
+}
 
 /// Immutable inputs shared by every worker-local graph backend.
 pub(crate) struct RunnerGraphBackendFactoryConfig {
