@@ -38,7 +38,8 @@ fn capabilities_are_a_single_versioned_json_line() {
     );
     let capabilities: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(capabilities["event"], "runner_capabilities");
-    assert_eq!(capabilities["protocol_versions"], serde_json::json!([1]));
+    assert_eq!(capabilities["protocol_versions"], serde_json::json!([1, 2]));
+    assert_eq!(capabilities["capabilities_schema_version"], 2);
     assert_eq!(capabilities["report_schema_version"], "2.0");
     let distribution_id = capabilities["distribution_id"].as_str().unwrap();
     let mut executable = File::open(env!("CARGO_BIN_EXE_aiperf-runner")).unwrap();

@@ -70,7 +70,7 @@ exports, steppable methods, sweep models, and every Mocker Cargo feature.
 | `aiperf-endpoints` | trait-backed wire dialects plus the open registry foundation: validated `EndpointId`, co-located descriptors, identity-free raw/effective policy, deterministic factories/aliases, dense worker-local prepared bindings, readiness policy, and compile-once raw/template state. Protocol-v1 enum/metadata remain compatibility-only | `src/registry.rs`, `src/config.rs`, `src/anthropic.rs`, `src/endpoints.rs`, `src/tier2/flexible.rs`, `tests/registry.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | Backend-neutral Graph-IR dataflow over the unified segment store, direct authored-input adapter registry + canonical lowering, trait-backed root/arrival/admission/placement/failure policy, firing-gate executor, clock-only and external-source DES drivers, transport benches, and worker-local native metrics merged once at join | `src/input.rs`, `src/lowering.rs`, `src/workload.rs`, `src/placement.rs`, `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf-runner` | sole strict Rust executable: endpoint selection (including `messages`), scheduled phases, direct online `dag_jsonl` Graph-IR, native HTTP, static accuracy, adaptive controls, live events, telemetry sidecars, request artifacts, metric joins, and native-v2 result | `src/main.rs`, `src/execute.rs`, `src/graph_execution.rs`, `src/protocol.rs`, `src/gpu_telemetry.rs`, `src/server_metrics.rs`, `src/network_latency.rs` |
+| `aiperf-runner` | sole strict Rust executable: v1 online execution plus exact-image-bound strict-v2 bootstrap/static validation, frozen endpoint/backend/workload capability registries, executable-only pair inventory, endpoint selection (including `messages`), scheduled phases, direct online `dag_jsonl` Graph-IR, native HTTP, static accuracy, adaptive controls, live events, telemetry sidecars, request artifacts, metric joins, and native-v2 result | `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/execute.rs`, `src/graph_execution.rs`, `src/protocol.rs`, `src/gpu_telemetry.rs`, `src/server_metrics.rs`, `src/network_latency.rs` |
 | `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: online paced/scheduled/adaptive/static-accuracy paths plus retained stateful-agentic and feature-gated offline implementations. Agentic and offline are not runner-reachable yet. | `src/agentic.rs`, `src/agentic_gateway.rs`, `src/dynamo_offline.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/request_rate.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
@@ -300,27 +300,28 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   directly injected Python-worker evaluator seam. The endpoint addendum points
   to the runner-owned redesign for open dialect IDs and production composition.
 - `specs/2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` —
-  **foundation built / runner convergence pending + addenda; authoritative for endpoint ownership**:
+  **foundation + v2 capability/validation convergence built; execution convergence pending + addenda; authoritative for endpoint ownership**:
   `aiperf-endpoints` owns open IDs, adapter-local descriptors, deterministic factory/alias
   composition, raw/effective configuration, worker-local prepared bindings/dense keys,
   readiness policy, and compile-once raw/template state; `aiperf-extensions` proves a genuinely
-  new dialect. The runner still needs one injected registry for derived capabilities,
-  validation, and execution; protocol-v1 compatibility authorities remain. The addendum also
+  new dialect. Runner capability and v2 static-validation paths now consume the frozen registry;
+  protocol-v1 execution compatibility authorities and prepared-binding convergence remain. The addendum also
   pins authored preflight, completeness, the strict v2 envelope, and exact image identity;
   mode reachability is intentionally delegated to the next spec.
 - `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **decided /
-  partly built; Python authored-v2 projection built; authoritative for native product reachability**: one strict v2
+  v2 bootstrap and static validation built; pair execution pending; authoritative for native product reachability**: one strict image-bound v2
   runner envelope composes registered `online_http` or feature-gated
   `dynamo_offline` backends with scheduled, Graph-IR, static-accuracy, or
-  stateful-agentic workloads. Defines feature forwarding, capabilities,
-  preparation, native-v2, packaging, migration, and subprocess gates for every pair.
+  stateful-agentic workloads. The decoder, typed terminals, factory-owned strict config decode,
+  registry-derived static compatibility, and executable-only `supported_pairs` are built; pair
+  preparation/execution, native-v2, packaging, migration, and subprocess gates remain per pair.
   Direct online `dag_jsonl` Graph-IR is already product-reachable through the
   protocol-v1 compatibility projection.
 - `specs/2026-07-11-python-orchestrator-rust-single-run-design.md` — **built v1 +
-  Python v2 projection; Rust v2 pending**: Python `aiperf` is the only human frontend
+  authored v2 static validation; v2 pair execution pending**: Python `aiperf` is the only human frontend
   and `aiperf-runner` the only Rust executable. Python owns structural Config v2 and
   outer/presentation loops; the authored v2 request avoids resolved state and side
-  effects. The separate execution-surface spec owns Rust validation/preparation and
+  effects. Rust now owns strict image-bound static validation; the separate execution-surface spec owns pair preparation and
   the remaining offline/agentic projections; direct online `dag_jsonl` Graph-IR is
   runner-reachable through protocol v1.
 - `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:

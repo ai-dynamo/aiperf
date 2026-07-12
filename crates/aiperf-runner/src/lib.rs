@@ -15,7 +15,9 @@ mod graph_execution;
 mod live_streaming;
 mod network_latency;
 pub mod protocol;
+pub mod protocol_v2;
 mod records;
+pub mod registry;
 mod server_metrics;
 pub mod turn_execution;
 

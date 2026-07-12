@@ -9,6 +9,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::protocol_v2::RUNNER_PROTOCOL_V2;
+use crate::registry::{
+    BuiltinRunnerRegistryFactory, RunnerBackendDescriptor, RunnerRegistry, RunnerRegistryFactory,
+    RunnerWorkloadDescriptor,
+};
+
 /// Current Python-orchestrator/Rust-runner protocol version.
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 
@@ -17,6 +23,8 @@ pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub struct RunnerCapabilities {
     /// Stable response discriminator.
     pub event: &'static str,
+    /// Capability-document schema independent of stdin protocol versions.
+    pub capabilities_schema_version: u32,
     /// Protocol versions accepted on stdin.
     pub protocol_versions: &'static [u32],
     /// Native report schema written after a successful run.
@@ -24,7 +32,19 @@ pub struct RunnerCapabilities {
     /// BLAKE3 identity of the complete executable image serving this response.
     pub distribution_id: String,
     /// Endpoint dialects accepted by the native formatter/parser registry.
-    pub endpoint_types: &'static [&'static str],
+    pub endpoint_types: Vec<&'static str>,
+    /// Canonical endpoint descriptors from the frozen endpoint registry.
+    pub endpoints: Vec<&'static aiperf_endpoints::EndpointDescriptor>,
+    /// Statically linked extension package names in deterministic order.
+    pub extensions: Vec<String>,
+    /// Backend descriptors recognized by protocol-v2 validation.
+    pub backends: Vec<&'static RunnerBackendDescriptor>,
+    /// Workload descriptors recognized by protocol-v2 validation.
+    pub workloads: Vec<&'static RunnerWorkloadDescriptor>,
+    /// Descriptor-compatible pairs, including pairs without an executable v2 adapter.
+    pub statically_compatible_pairs: Vec<[String; 2]>,
+    /// Pairs with a registered executable protocol-v2 adapter.
+    pub supported_pairs: Vec<[String; 2]>,
     /// Dataset variants accepted by the current protocol.
     pub dataset_types: &'static [&'static str],
     /// Phase variants accepted by the current protocol.
@@ -43,32 +63,53 @@ pub struct RunnerCapabilities {
 
 impl RunnerCapabilities {
     /// Describe the exact process contract implemented by this binary.
-    pub fn current() -> std::io::Result<Self> {
-        Ok(Self {
+    pub fn current() -> anyhow::Result<Self> {
+        let runner_registry = BuiltinRunnerRegistryFactory.build()?;
+        let product_registry = aiperf_extensions::AiperfRegistryFactory::build(
+            &aiperf_extensions::BuiltinAiperfRegistryFactory,
+        )?;
+        Ok(Self::from_registries(
+            crate::distribution_identity::current_distribution_id()?,
+            &runner_registry,
+            &product_registry,
+        ))
+    }
+
+    /// Build a deterministic capability document from already frozen registries.
+    pub fn from_registries(
+        distribution_id: String,
+        runner_registry: &RunnerRegistry,
+        product_registry: &aiperf_extensions::AiperfRegistry,
+    ) -> Self {
+        let endpoints = product_registry
+            .endpoints()
+            .descriptors()
+            .collect::<Vec<_>>();
+        let endpoint_types = endpoints.iter().map(|descriptor| descriptor.id).collect();
+        Self {
             event: "runner_capabilities",
-            protocol_versions: &[RUNNER_PROTOCOL_VERSION],
+            capabilities_schema_version: 2,
+            protocol_versions: &[RUNNER_PROTOCOL_VERSION, RUNNER_PROTOCOL_V2],
             report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
-            distribution_id: crate::distribution_identity::current_distribution_id()?,
-            endpoint_types: &[
-                "chat",
-                "completions",
-                "responses",
-                "messages",
-                "embeddings",
-                "chat_embeddings",
-                "nim_embeddings",
-                "cohere_rankings",
-                "hf_tei_rankings",
-                "nim_rankings",
-                "huggingface_generate",
-                "image_generation",
-                "image_edit",
-                "video_generation",
-                "image_retrieval",
-                "solido_rag",
-                "raw",
-                "template",
-            ],
+            distribution_id,
+            endpoint_types,
+            endpoints,
+            extensions: product_registry
+                .extension_names()
+                .map(str::to_owned)
+                .collect(),
+            backends: runner_registry.backend_descriptors(),
+            workloads: runner_registry.workload_descriptors(),
+            statically_compatible_pairs: runner_registry
+                .statically_compatible_pairs()
+                .into_iter()
+                .map(|(backend, workload)| [backend.to_owned(), workload.to_owned()])
+                .collect(),
+            supported_pairs: runner_registry
+                .supported_pairs()
+                .into_iter()
+                .map(|(backend, workload)| [backend.to_owned(), workload.to_owned()])
+                .collect(),
             dataset_types: &["synthetic", "file", "public"],
             phase_types: &[
                 "concurrency",
@@ -93,7 +134,7 @@ impl RunnerCapabilities {
             telemetry_source_types: &["dcgm", "python"],
             server_metrics_formats: &["json", "csv", "jsonl", "parquet"],
             runner_version: env!("CARGO_PKG_VERSION"),
-        })
+        }
     }
 }
 
