@@ -840,9 +840,10 @@ null or `0x01` for present. Present values use this exact schema-directed encodi
 - `Decimal128(38,0)` is the signed two's-complement 16-byte big-endian integer;
 - UTF-8 and variable binary are `u64_be(byte_length) || exact_bytes`; fixed binary is exact bytes;
 - a dictionary/enum value is its logical UTF-8 string, never its Arrow dictionary index;
-- a struct encodes children in descriptor order, including each child's null/present tag; a list
+- a struct encodes children in descriptor order, including each nullable child's null/present tag; a list
   encodes `u64_be(element_count)` followed by ordered elements; a map first rejects duplicate keys,
-  sorts by canonical encoded key bytes, and then encodes its count and ordered key/value pairs;
+  sorts v1's UTF-8 keys by their exact UTF-8 byte sequence, and then encodes its count and ordered
+  key/value pairs;
 - `ArchiveNumber`, timestamp, exemplar, payload, and wire-sample values are ordinary nested structs
   under these same rules; no implementation-specific padding or validity bitmap enters the bytes.
 
@@ -1133,8 +1134,10 @@ the target and may create `recovery_verified`; OS-worker completion time is neve
 Receipts are stored in immutable canonical batches of at most 1,024 events and at most 1 MiB.
 Contiguous WAL targets from one session/segment may coalesce before batching when their record
 ranges and declared-coverage digests compose exactly. A separate content-addressed persistent
-B-tree uses the §8.3 page format and deterministic split rule, keyed by
-`(target_kind, session_id, first_record_seq_or_generation, receipt_seq, event_id)`. A checksummed
+B-tree uses the §8.3 page format and deterministic split rule, keyed lexicographically by
+`(target_kind_u8, session_id_or_zero_16, first_record_seq_or_zero_u64,
+generation_hash_or_zero_32, receipt_seq_u64, event_id_32)`. The unused discriminator fields must be
+all-zero bytes, so two writers cannot choose different encodings. A checksummed
 `LOCAL-RECEIPTS` pointer contains current and preceding receipt-head descriptors; each head binds
 the receipt root hash, logical event count, and last receipt sequence. Batch, copied index pages,
 receipt head, pointer replacement, and parent directory are flushed/fsynced in the same order as
@@ -2205,20 +2208,25 @@ version or material schema/writer change invalidates the profile until rerun.
 1. exact content negotiation and golden corpora for Prometheus text 0.0.4 and OpenMetrics text
    1.0.0; unsupported format/version is typed, never retried under another grammar;
 2. escaped labels, UTF-8, commas, quotes, backslashes, HELP/TYPE/UNIT, info, stateset, unknown/
-   untyped, gauge histogram, summary, histogram, counter-created, source timestamps, and scalar/
-   bucket exemplars retain emitted names/roles;
+   untyped, gauge histogram, summary, histogram, semantic Created timestamps, source timestamps,
+   and scalar/bucket exemplars retain emitted names/roles; arbitrary classic `_created` samples are
+   not retyped without a semantic role;
 3. zero-point metadata-only families, empty MetricSets, repeated MetricPoints for one label set, and
-   point-owned wire samples/timestamps round-trip distinctly;
+   point-owned wire samples/timestamps round-trip distinctly; classic all-absent/uniform/mixed/
+   partial component timestamps produce the exact point status without losing component lexemes;
 4. multiple histogram/gauge-histogram base label sets remain isolated and structured while native
    declared-format compatibility fallback retains pinned old semantics without creating archive
    success rows;
-5. `100000001`, values around 2⁵³, `u64::MAX`, exact numeric lexemes, and exact/rounded f64 status
-   survive every pinned reader; Prometheus-ms/OpenMetrics-seconds exact/sub-ns/out-of-range timestamp
-   cases retain format and normalization status;
+5. `100000001`, values around 2⁵³, `u64::MAX`, values outside analytical f64 range, exact numeric
+   lexemes, and exact/rounded/unavailable f64 status survive every pinned reader; Prometheus-ms/
+   OpenMetrics-seconds exact/sub-ns/out-of-range timestamp cases retain format and normalization
+   status;
 6. the per-format/per-role semantic matrix accepts every legal NaN/Inf case, atomically rejects
    every illegal count/sum/bucket/state/info/metadata case, and emits no raw non-finite boundary;
 7. deterministic keyed pre-redaction identity, post-redaction identity, map order, digest domains,
-   topology epochs, schema descriptors/fingerprints, manifest/index, and report goldens;
+   topology epochs, schema descriptors/fingerprints, manifest/index, and report goldens; independent
+   Rust/Python logical-row fixtures cover every scalar/nested type, null, negative zero, map order,
+   and full semantic rows;
 8. exact field/type/nullability/dictionary/metadata compatibility through pinned Arrow, Parquet,
    DuckDB, Polars, and pyarrow versions;
 9. streaming size/cardinality limits, property parse/encode/decode round trips, and malformed-input
@@ -2238,35 +2246,47 @@ version or material schema/writer change invalidates the profile until rerun.
 8. virtual inline capture/post-simulation persistence cannot advance virtual time; a future external
    progress source blocks quiescence deterministically;
 9. bounded worst-case decode cannot stall unrelated source/request LocalSet work at the qualified
-   profile;
+   profile, and archive family/point construction runs only on the second bounded CPU stage after a
+   nonblocking permit;
 10. failed/empty/unchanged attempt outcomes and missed/rejected loss ranges have exact counters/
    records, and unchanged success retains full family/MetricPoint rows;
 11. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
-    owner-assigned record-sequence watermark before drain.
+    owner-assigned record-sequence watermark before drain;
+12. archive-off/archive-on runs over the run-owned fixed-deadline driver have byte-exact native
+    reports; comparison with the retired completion-paced loop pins formula/boundary parity while
+    explicitly characterizing cadence-caused sample-time differences.
 
 ### 18.3 Durability/recovery gates
 
 1. filesystem/lock capability rejection plus crash before/after create genesis, resume
-   `session_started`, every WAL append/fsync/seal, raw/partition/index/generation/receipt write,
-   file/directory fsync, head replacement, lagged WAL unlink, watermark, and finalization edge;
+   `session_started`, every WAL append/fsync/seal, raw/partition/index/generation/receipt-batch/
+   receipt-index/receipt-head write, file/directory fsync, pointer replacement, lagged WAL unlink,
+   watermark, and finalization edge;
 2. receipt-observed durable projections are recovered exactly once; a complete fsynced but
-   unobserved frame is recovered as an uncertain operation under the same ID;
+   unobserved frame is recovered as an uncertain operation under the same ID. Crashes between
+   fsync/CAS completion, LocalSet Clock observation, receipt-draft return, and receipt-head
+   durability preserve absent response time and a distinct recovery-verification event;
 3. independently rotated multi-table projections cannot make global dedup omit a table, and stale/
-   repeated WAL frames cannot duplicate logical projection evidence;
+   repeated WAL frames cannot duplicate logical projection evidence; empty exposition and metadata-
+   only cases persist zero-row coverage with the empty multiset digest;
 4. finalize on the reserved control lane cannot overtake accepted data or loss-ledger frames;
 5. only incomplete physical WAL tails discard; complete checksum failures restore/fail closed, and
    one-generation-lag WAL makes preceding-head rollback complete without directory guessing;
 6. transaction-reserve exhaustion and real ENOSPC/inode exhaustion fail before destroying the only
    durable copy;
-7. raw-object required coverage, create-if-absent retries, exact-byte verification, named-object
-   visibility horizon, pre-activation writer claims, and uncertain/success/conflict `LATEST` CAS
-   reconciliation are idempotent under competing writers;
+7. raw-reference coverage, one randomized physical envelope per equality ID, duplicate/concurrent
+   candidate reuse, create-if-absent retries with byte-identical ciphertext, exact-byte verification,
+   named-object visibility horizon, pre-activation writer claims, and uncertain/success/conflict
+   `LATEST` CAS reconciliation are idempotent under competing writers;
 8. every equal/ancestor/divergent local/remote reconciliation cell and sync-only finalization path;
 9. exact-resume identity/writer mismatch fails before session/source activation;
 10. bounded exact-parent compaction verifies per-projection logical row counts/multiset digests;
     failure leaves the old head authoritative and cannot expose duplicate/missing replacement rows;
 11. the 24-hour profile produces immutable partitions and O(K log₂₅₆ P) manifest-index update
-    work rather than flat full-history rewrites.
+    work rather than flat full-history rewrites; receipt batches/index pages remain bounded with the
+    same asymptotic property;
+12. terminal publication clears the writer claim in the same CAS, and its receipt binds the exact
+    resulting object version, head hash, state, and absent claim.
 
 ### 18.4 Security gates
 
@@ -2281,7 +2301,7 @@ version or material schema/writer change invalidates the profile until rerun.
 4. redirects/proxies/content negotiation/TLS/mTLS/credential forwarding obey strict defaults and
    a non-2xx metric-looking body never parses;
 5. raw-body retention is off by default; opt-in requires classification, key provider, restrictive
-   permissions, authenticated encryption for remote, and artifact-wide secret scanning;
+   permissions, authenticated encryption locally and remotely, and artifact-wide secret scanning;
 6. path traversal and unsafe artifact/spool/target aliasing fail validation;
 7. partition/index/generation/head hashes detect tampering/corruption;
 8. arbitrary endpoint labels are treated as potentially sensitive source data; configured
@@ -2289,8 +2309,9 @@ version or material schema/writer change invalidates the profile until rerun.
 
 ### 18.5 Product subprocess gates
 
-1. the complete §14.1 envelope with empty resources validates/deserializes, while missing required
-   scheduled resources and present forbidden watch resources fail before preparation;
+1. the complete §14.1 watch envelope and §14.2 attached scheduled envelope validate/deserialize;
+   missing required scheduled resources, forbidden watch resources, empty/duplicate/unknown
+   attachment source IDs, and repeated source configuration fail before preparation;
 2. Python `aiperf watch` -> exact packaged runner -> in-process HTTP Prometheus mock -> durable
    genesis/WAL/Parquet/index/head -> terminal response;
 3. multiple endpoint cadences including one slow/failing/oversized source and distinct per-call
@@ -2301,11 +2322,11 @@ version or material schema/writer change invalidates the profile until rerun.
 6. object-store emulator visibility lag, outage, conflicting CAS, restart, and finalization;
 7. ordinary scheduled benchmark with attached server/GPU archive proves one physical run-owned
    driver/source feeds report and archive across seamless phases, `PhaseObserver` markers align
-   exactly, and native metrics are unchanged;
+   exactly, and archive-off/archive-on native reports are byte-exact on the new cadence;
 8. required attached archive failure yields failed reporting terminal, no `report_path`, and only a
    typed diagnostic artifact; best-effort yields a successful typed archive block;
 9. online-only runner capability advertises watch only after qualified profiles; unsupported
-   distribution/backend capability and deferred Graph attachment fail before IO.
+   distribution/backend capability plus attached Graph and Dynamo-offline pairs fail before IO.
 
 ### 18.6 Query compatibility gates
 
@@ -2338,11 +2359,13 @@ for passing standalone and attached profile artifacts rather than trusting docum
 
 ### Increment 2 — local writer and recovery
 
-1. implement erased prepared drivers, bounded shared decode/two-stage archive permits, fixed-memory
-   loss ledger, Clock maintenance/virtual-inline strategies, and the single mutable archive owner;
+1. implement erased prepared drivers, bounded shared decode and archive-projection CPU stages,
+   fixed-memory loss ledger, Clock maintenance/virtual-inline strategies, the fsync/CAS-to-LocalSet
+   receipt Clock bridge, and the single mutable archive owner;
 2. add qualified lifetime lock, create-only genesis/resumed-session transaction, sealed WAL with
-   lagged retirement, logical/raw projection coverage, immutable Parquet/index/generations/head, and
-   non-self-referential receipt journal;
+   lagged retirement, persistent zero/nonzero table coverage, shared raw-object registry plus raw-
+   reference rows, immutable Parquet/index/generations/head, and the bounded indexed non-self-
+   referential receipt journal;
 3. add every-step crash/property/corruption recovery matrix and transaction-reserved spool quotas;
 4. ship no product command until exact-once recovery gates pass.
 
@@ -2470,7 +2493,8 @@ This design is complete only when:
 
 - Python exposes `aiperf watch` and no second Rust executable exists;
 - the revised workload-scoped runner-v2 DTO deserializes the complete watch envelope and rejects
-  required/forbidden resource violations;
+  required/forbidden resource violations; the strict attached scheduled DTO resolves unique
+  existing telemetry source IDs without duplicating their configuration;
 - the exact runner derives and validates `online_http + telemetry_watch` from frozen factories and
   the typed `ControlPlaneHttpProvider` capability;
 - every physical source uses the injected Clock/native transport, one run-owned fixed-deadline
@@ -2478,12 +2502,15 @@ This design is complete only when:
 - Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves strict grammar, every valid role,
   zero-point families, repeated MetricPoints, numeric/timestamp lexemes, exemplars, and a separately
   named native fallback without changing benchmark semantics;
-- canonical Arrow/head/generation/index descriptors, keyed pre/post-redaction/body identities,
-  tagged exact/analytical numbers, attribute epochs, and native-v2 DTO are deterministic and
-  readable/prunable by the pinned query ecosystem;
+- canonical Arrow/head/generation/index/logical-row descriptors, keyed pre/post-redaction/body
+  identities, exact lexemes with optional analytical numbers, component timestamp status,
+  attribute epochs, and native-v2 DTO are deterministic and readable/prunable by the pinned query
+  ecosystem;
 - qualified lock, create-only genesis, resumed-session generation, sealed/lag-retained WAL,
-  logical/raw coverage, immutable partitions/generations/index/head, and receipt journal recover
-  every complete durable projection exactly once across all injected crash/finalization points;
+  persistent zero/nonzero projection coverage, shared encrypted raw objects with per-frame
+  references, immutable partitions/generations/index/head, and bounded indexed receipt journal
+  recover every complete durable projection exactly once across all injected crash/finalization
+  points;
 - remote sync verifies create-only partition/raw/index/generation objects, owns a pre-activation
   writer claim, and advances a linearizable conditional head without flat rewrites; uncertain CAS
   and exact/sync-only resume reconcile ancestry fail-closed;
@@ -2493,7 +2520,8 @@ This design is complete only when:
 - enrichment is API-limited to attributes, sanitization covers every structured surface, source
   identity survives redaction, and raw retention is separately protected;
 - attached mode reuses one source attempt across active phases, emits exact `PhaseObserver` markers,
-  leaves native results unchanged, and passes the numeric §17 regression profile;
+  produces byte-identical archive-off/archive-on native results on the run-owned cadence, and passes
+  the numeric §17 regression profile;
 - primary watch and attached modes have real Python-to-runner subprocess proofs;
 - the five reproduced Tachometer defects are permanent regression tests;
 - native-v2 2.0 additively identifies archive provenance/completeness without treating archived
