@@ -387,6 +387,27 @@ struct ValidatedProjection {
     evidence: ProjectionEvidence,
 }
 
+#[derive(Debug)]
+enum PreparedFrameProjection {
+    Zero {
+        projection: FrameTableProjectionV1,
+        evidence: ProjectionEvidence,
+    },
+    Nonzero {
+        key: OpenPartitionKey,
+        projection: ValidatedProjection,
+        uncompressed_bytes: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PlannedOpenAction {
+    rotates_existing: bool,
+    seals_combined: bool,
+    combined_rows: u64,
+    combined_uncompressed_bytes: u64,
+}
+
 /// Independent-table, whole-frame deterministic partition builder.
 #[derive(Debug)]
 pub struct ParquetPartitionBuilderV1 {
@@ -408,7 +429,7 @@ impl ParquetPartitionBuilderV1 {
         })
     }
 
-    /// Appends every table projection of one terminal frame atomically by table.
+    /// Appends every table projection of one terminal frame atomically.
     ///
     /// A non-empty projection is either retained whole in one open builder or
     /// returned whole in one sealed partition. Required zero-row projections
@@ -418,79 +439,112 @@ impl ParquetPartitionBuilderV1 {
         projections: Vec<FrameTableProjectionV1>,
     ) -> Result<PartitionBuildOutputV1, ParquetProjectionError> {
         validate_frame_set(&projections)?;
+        let prepared = prepare_frame_projections(projections, &self.schemas, self.config)?;
         let mut output = PartitionBuildOutputV1::default();
-        for projection in projections {
-            let evidence = projection.validate(&self.schemas)?;
-            if evidence.row_count == 0 {
-                output.zero_row_coverage.push(ProjectionCoverageV1::new(
-                    &projection,
+        let mut actions = Vec::with_capacity(prepared.len());
+        for item in &prepared {
+            let PreparedFrameProjection::Nonzero {
+                key,
+                projection,
+                uncompressed_bytes,
+            } = item
+            else {
+                let PreparedFrameProjection::Zero {
+                    projection,
                     evidence,
-                    None,
-                )?);
+                } = item
+                else {
+                    unreachable!("prepared projection variants are exhaustive")
+                };
+                output
+                    .zero_row_coverage
+                    .push(ProjectionCoverageV1::new(projection, *evidence, None)?);
+                actions.push(None);
                 continue;
-            }
-            let uncompressed_bytes = u64::try_from(projection.batch.get_array_memory_size())
-                .map_err(|_| ParquetProjectionError::LengthOverflow)?;
-            if evidence.row_count > self.config.hard_rows
-                || uncompressed_bytes > self.config.hard_bytes
-            {
-                return Err(ParquetProjectionError::ProjectionExceedsHardBound);
-            }
-            let key = OpenPartitionKey {
-                archive_id: projection.archive_id,
-                session_id: projection.session_id,
-                table: projection.table,
-                source_id: projection.source_id.clone(),
-                time_bucket: projection
-                    .authoritative_frame_clock_ns
-                    .div_euclid(self.config.time_bucket_ns),
             };
-            let rotates_existing = self.open.get(&key).is_some_and(|open| {
+            let existing = self.open.get(key);
+            let rotates_existing = existing.is_some_and(|open| {
                 open.row_count
-                    .saturating_add(evidence.row_count)
+                    .saturating_add(projection.evidence.row_count)
                     .gt(&self.config.target_rows)
                     || open
                         .uncompressed_bytes
-                        .saturating_add(uncompressed_bytes)
+                        .saturating_add(*uncompressed_bytes)
                         .gt(&self.config.target_uncompressed_bytes)
             });
             if rotates_existing {
-                let open = self
-                    .open
-                    .remove(&key)
-                    .ok_or(ParquetProjectionError::MissingOpenPartition)?;
-                output
-                    .partitions
-                    .push(seal_partition(open, &self.schemas, self.config)?);
+                output.partitions.push(seal_partition(
+                    existing.expect("rotation requires an existing partition"),
+                    &self.schemas,
+                    self.config,
+                )?);
             }
-            let open = self.open.entry(key.clone()).or_insert(OpenPartition {
-                key: key.clone(),
-                row_count: 0,
-                uncompressed_bytes: 0,
-                projections: Vec::new(),
-            });
-            open.row_count = open
-                .row_count
-                .checked_add(evidence.row_count)
+            let base = if rotates_existing { None } else { existing };
+            let combined_rows = base
+                .map_or(0, |open| open.row_count)
+                .checked_add(projection.evidence.row_count)
                 .ok_or(ParquetProjectionError::LengthOverflow)?;
-            open.uncompressed_bytes = open
-                .uncompressed_bytes
-                .checked_add(uncompressed_bytes)
+            let combined_uncompressed_bytes = base
+                .map_or(0, |open| open.uncompressed_bytes)
+                .checked_add(*uncompressed_bytes)
                 .ok_or(ParquetProjectionError::LengthOverflow)?;
-            open.projections.push(ValidatedProjection {
-                projection,
-                evidence,
-            });
-            if open.row_count >= self.config.target_rows
-                || open.uncompressed_bytes >= self.config.target_uncompressed_bytes
-            {
-                let open = self
-                    .open
+            let seals_combined = combined_rows >= self.config.target_rows
+                || combined_uncompressed_bytes >= self.config.target_uncompressed_bytes;
+            if seals_combined {
+                let mut projection_refs = base
+                    .into_iter()
+                    .flat_map(|open| open.projections.iter())
+                    .collect::<Vec<_>>();
+                projection_refs.push(projection);
+                output.partitions.push(seal_projection_refs(
+                    key,
+                    combined_rows,
+                    &projection_refs,
+                    &self.schemas,
+                    self.config,
+                )?);
+            }
+            actions.push(Some(PlannedOpenAction {
+                rotates_existing,
+                seals_combined,
+                combined_rows,
+                combined_uncompressed_bytes,
+            }));
+        }
+
+        for (item, action) in prepared.into_iter().zip(actions) {
+            let PreparedFrameProjection::Nonzero {
+                key, projection, ..
+            } = item
+            else {
+                continue;
+            };
+            let action = action.expect("nonzero projection has a planned action");
+            if action.rotates_existing {
+                self.open
                     .remove(&key)
-                    .ok_or(ParquetProjectionError::MissingOpenPartition)?;
-                output
-                    .partitions
-                    .push(seal_partition(open, &self.schemas, self.config)?);
+                    .expect("planned rotation retains its existing partition");
+            }
+            if action.seals_combined {
+                if !action.rotates_existing {
+                    self.open.remove(&key);
+                }
+                continue;
+            }
+            if let Some(open) = self.open.get_mut(&key) {
+                open.row_count = action.combined_rows;
+                open.uncompressed_bytes = action.combined_uncompressed_bytes;
+                open.projections.push(projection);
+            } else {
+                self.open.insert(
+                    key.clone(),
+                    OpenPartition {
+                        key,
+                        row_count: action.combined_rows,
+                        uncompressed_bytes: action.combined_uncompressed_bytes,
+                        projections: vec![projection],
+                    },
+                );
             }
         }
         Ok(output)
@@ -502,10 +556,52 @@ impl ParquetPartitionBuilderV1 {
         for (_, open) in std::mem::take(&mut self.open) {
             output
                 .partitions
-                .push(seal_partition(open, &self.schemas, self.config)?);
+                .push(seal_partition(&open, &self.schemas, self.config)?);
         }
         Ok(output)
     }
+}
+
+fn prepare_frame_projections(
+    projections: Vec<FrameTableProjectionV1>,
+    schemas: &ArchiveSchemasV1,
+    config: ParquetRotationConfigV1,
+) -> Result<Vec<PreparedFrameProjection>, ParquetProjectionError> {
+    projections
+        .into_iter()
+        .map(|mut projection| {
+            let evidence = projection.validate(schemas)?;
+            if evidence.row_count == 0 {
+                return Ok(PreparedFrameProjection::Zero {
+                    projection,
+                    evidence,
+                });
+            }
+            let uncompressed_bytes = u64::try_from(projection.batch.get_array_memory_size())
+                .map_err(|_| ParquetProjectionError::LengthOverflow)?;
+            if evidence.row_count > config.hard_rows || uncompressed_bytes > config.hard_bytes {
+                return Err(ParquetProjectionError::ProjectionExceedsHardBound);
+            }
+            let key = OpenPartitionKey {
+                archive_id: projection.archive_id,
+                session_id: projection.session_id,
+                table: projection.table,
+                source_id: projection.source_id.clone(),
+                time_bucket: projection
+                    .authoritative_frame_clock_ns
+                    .div_euclid(config.time_bucket_ns),
+            };
+            projection.logical_rows.clear();
+            Ok(PreparedFrameProjection::Nonzero {
+                key,
+                projection: ValidatedProjection {
+                    projection,
+                    evidence,
+                },
+                uncompressed_bytes,
+            })
+        })
+        .collect()
 }
 
 fn validate_frame_set(
@@ -534,21 +630,32 @@ fn validate_frame_set(
 }
 
 fn seal_partition(
-    open: OpenPartition,
+    open: &OpenPartition,
     schemas: &ArchiveSchemasV1,
     config: ParquetRotationConfigV1,
 ) -> Result<CompletedPartitionV1, ParquetProjectionError> {
-    if open.projections.is_empty() || open.row_count == 0 {
+    let projections = open.projections.iter().collect::<Vec<_>>();
+    seal_projection_refs(&open.key, open.row_count, &projections, schemas, config)
+}
+
+fn seal_projection_refs(
+    key: &OpenPartitionKey,
+    row_count: u64,
+    projection_refs: &[&ValidatedProjection],
+    schemas: &ArchiveSchemasV1,
+    config: ParquetRotationConfigV1,
+) -> Result<CompletedPartitionV1, ParquetProjectionError> {
+    if projection_refs.is_empty() || row_count == 0 {
         return Err(ParquetProjectionError::EmptyPhysicalPartition);
     }
-    let table_schema = schemas.table(open.key.table)?;
+    let table_schema = schemas.table(key.table)?;
     let batch = concat_batches(
         table_schema.schema(),
-        open.projections
+        projection_refs
             .iter()
             .map(|projection| &projection.projection.batch),
     )?;
-    let sorted = sort_record_batch(open.key.table, &batch)?;
+    let sorted = sort_record_batch(key.table, &batch)?;
     let parquet_bytes = encode_parquet(table_schema.schema().clone(), &sorted)?;
     let physical_byte_length =
         u64::try_from(parquet_bytes.len()).map_err(|_| ParquetProjectionError::LengthOverflow)?;
@@ -556,20 +663,17 @@ fn seal_partition(
         return Err(ParquetProjectionError::EncodedPartitionExceedsHardBound);
     }
     let physical_content_hash = domain_digest("aiperf.archive.partition.v1", &[&parquet_bytes]);
-    let minimum_clock_ns = open
-        .projections
+    let minimum_clock_ns = projection_refs
         .iter()
         .map(|projection| projection.projection.authoritative_frame_clock_ns)
         .min()
         .ok_or(ParquetProjectionError::EmptyPhysicalPartition)?;
-    let maximum_clock_ns = open
-        .projections
+    let maximum_clock_ns = projection_refs
         .iter()
         .map(|projection| projection.projection.authoritative_frame_clock_ns)
         .max()
         .ok_or(ParquetProjectionError::EmptyPhysicalPartition)?;
-    let mut projections = open
-        .projections
+    let mut projections = projection_refs
         .iter()
         .map(|projection| PartitionProjectionEvidenceV1 {
             frame_id: projection.projection.frame_id,
@@ -579,12 +683,12 @@ fn seal_partition(
         .collect::<Vec<_>>();
     projections.sort_unstable_by_key(|projection| projection.frame_id);
     let logical_object_id = partition_logical_object_id_v1(
-        open.key.table,
+        key.table,
         table_schema.fingerprint(),
         physical_content_hash,
         &projections,
     );
-    let source_component = open.key.source_id.as_deref().map_or_else(
+    let source_component = key.source_id.as_deref().map_or_else(
         || "global".to_string(),
         |source| {
             format!(
@@ -595,30 +699,29 @@ fn seal_partition(
     );
     let physical_object_key = format!(
         "partitions/{}/session-{}/{source_component}/bucket-{}/part-{}.parquet",
-        table_name(open.key.table),
-        hex(open.key.session_id.as_bytes()),
-        open.key.time_bucket,
+        table_name(key.table),
+        hex(key.session_id.as_bytes()),
+        key.time_bucket,
         physical_content_hash.to_hex(),
     );
     let descriptor = PartitionDescriptorV1 {
-        archive_id: open.key.archive_id,
-        session_id: open.key.session_id,
-        source_id: open.key.source_id.clone(),
-        table: open.key.table,
-        time_bucket: open.key.time_bucket,
+        archive_id: key.archive_id,
+        session_id: key.session_id,
+        source_id: key.source_id.clone(),
+        table: key.table,
+        time_bucket: key.time_bucket,
         schema_fingerprint: table_schema.fingerprint(),
         physical_content_hash,
         physical_object_key,
         physical_byte_length,
-        row_count: open.row_count,
+        row_count,
         minimum_clock_ns,
         maximum_clock_ns,
         logical_object_id,
         projections,
     };
     descriptor.validate()?;
-    let coverage = open
-        .projections
+    let coverage = projection_refs
         .iter()
         .map(|projection| {
             ProjectionCoverageV1::new(
@@ -1139,8 +1242,6 @@ pub enum ParquetProjectionError {
     ProjectionExceedsHardBound,
     /// Encoded Parquet bytes exceeded the validated hard bound.
     EncodedPartitionExceedsHardBound,
-    /// Internal rotation state lost one expected builder.
-    MissingOpenPartition,
     /// A zero-row projection named a fragment or a nonzero projection omitted one.
     CoverageFragmentCardinality,
     /// A physical partition had no rows/projections.
@@ -1248,9 +1349,6 @@ impl Display for ParquetProjectionError {
             }
             Self::EncodedPartitionExceedsHardBound => {
                 formatter.write_str("encoded partition exceeds hard byte bound")
-            }
-            Self::MissingOpenPartition => {
-                formatter.write_str("missing open partition during rotation")
             }
             Self::CoverageFragmentCardinality => {
                 formatter.write_str("invalid coverage fragment cardinality")
@@ -1436,6 +1534,41 @@ mod tests {
             projection.validate(&schemas),
             Err(ParquetProjectionError::PhysicalLogicalEvidenceMismatch)
         ));
+    }
+
+    #[test]
+    fn failing_later_table_leaves_no_partial_frame_in_open_partitions() {
+        let (schemas, family) = family_projection();
+        let invalid_attempt = FrameTableProjectionV1 {
+            archive_id: family.archive_id,
+            session_id: family.session_id,
+            source_id: family.source_id.clone(),
+            frame_id: family.frame_id,
+            authoritative_frame_clock_ns: family.authoritative_frame_clock_ns,
+            table: TableId::Attempts,
+            batch: RecordBatch::new_empty(
+                schemas.table(TableId::Attempts).unwrap().schema().clone(),
+            ),
+            logical_rows: Vec::new(),
+        };
+        let mut builder = ParquetPartitionBuilderV1::new(
+            schemas,
+            ParquetRotationConfigV1 {
+                target_rows: 10,
+                target_uncompressed_bytes: 1 << 20,
+                hard_rows: 10,
+                hard_bytes: 1 << 20,
+                time_bucket_ns: 100,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            builder.append_frame(vec![family, invalid_attempt]),
+            Err(ParquetProjectionError::AttemptFrameCardinality(0))
+        ));
+        let output = builder.finish().unwrap();
+        assert!(output.partitions.is_empty());
+        assert!(output.zero_row_coverage.is_empty());
     }
 
     fn build_family_partition() -> CompletedPartitionV1 {
