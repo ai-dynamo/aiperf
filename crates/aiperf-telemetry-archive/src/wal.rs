@@ -392,6 +392,24 @@ impl WalSegmentBuilder {
         bytes
     }
 
+    /// Returns the immutable segment header.
+    #[must_use]
+    pub const fn header(&self) -> &WalSegmentHeaderV1 {
+        &self.header
+    }
+
+    /// Returns the number of complete frames currently appended.
+    #[must_use]
+    pub const fn frame_count(&self) -> u64 {
+        self.frame_count
+    }
+
+    /// Returns the final record sequence, absent for an empty segment.
+    #[must_use]
+    pub const fn last_record_seq(&self) -> Option<u64> {
+        self.last_record_seq
+    }
+
     /// Returns the current cryptographic prefix.
     #[must_use]
     pub const fn prefix(&self) -> Digest {

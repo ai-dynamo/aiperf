@@ -20,6 +20,12 @@ const MIN_NON_ROOT: usize = 128;
 const MAX_PAGE_ARITY: usize = 256;
 const SPLIT_LEFT_ARITY: usize = 128;
 const MAX_PAGE_BYTES: usize = 1 << 20;
+/// Maximum number of identifiers retained exactly in one pruning-summary set.
+pub const MAX_PRUNING_SUMMARY_EXACT_IDS: usize = 16;
+/// Maximum canonical JSON bytes retained by one exact pruning-summary ID set.
+pub const MAX_PRUNING_SUMMARY_EXACT_ID_BYTES: usize = 512;
+/// Maximum UTF-8 bytes in one physical source identifier.
+pub const MAX_INDEX_SOURCE_ID_BYTES: usize = 256;
 
 /// Closed object-kind discriminants for the primary manifest index.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -309,13 +315,43 @@ impl IndexClockRangeV1 {
     }
 }
 
-/// Exact aggregate facts persisted on every page and internal child reference.
+/// Bounded membership facts persisted in one pruning summary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IndexIdSetV1<T> {
+    /// Complete sorted unique membership while both hard caps fit.
+    Exact(Vec<T>),
+    /// Membership exceeded a hard cap and therefore cannot prove absence.
+    Wildcard,
+}
+
+impl<T> IndexIdSetV1<T> {
+    fn empty() -> Self {
+        Self::Exact(Vec::new())
+    }
+
+    /// Returns exact sorted values, or `None` when membership is wildcarded.
+    #[must_use]
+    pub fn exact(&self) -> Option<&[T]> {
+        match self {
+            Self::Exact(values) => Some(values),
+            Self::Wildcard => None,
+        }
+    }
+
+    /// Whether this set conservatively represents any identifier.
+    #[must_use]
+    pub const fn is_wildcard(&self) -> bool {
+        matches!(self, Self::Wildcard)
+    }
+}
+
+/// Exact-or-conservative aggregate facts persisted on every page and child reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexPruningSummaryV1 {
     object_kind_mask: u64,
     table_mask: u64,
-    session_ids: Vec<[u8; 16]>,
-    source_ids: Vec<String>,
+    session_ids: IndexIdSetV1<[u8; 16]>,
+    source_ids: IndexIdSetV1<String>,
     contains_global_source: bool,
     table_clock_ranges: BTreeMap<TableId, IndexClockRangeV1>,
     opaque_entry_count: u64,
@@ -326,8 +362,8 @@ impl IndexPruningSummaryV1 {
         Self {
             object_kind_mask: 0,
             table_mask: 0,
-            session_ids: Vec::new(),
-            source_ids: Vec::new(),
+            session_ids: IndexIdSetV1::empty(),
+            source_ids: IndexIdSetV1::empty(),
             contains_global_source: false,
             table_clock_ranges: BTreeMap::new(),
             opaque_entry_count: 0,
@@ -351,10 +387,12 @@ impl IndexPruningSummaryV1 {
             summary.table_mask = table_mask(table);
         }
         if let Some(session_id) = view.session_id {
-            summary.session_ids.push(*session_id);
+            summary.session_ids = IndexIdSetV1::Exact(vec![*session_id]);
         }
         match view.source_id {
-            Some(source_id) => summary.source_ids.push(source_id.to_owned()),
+            Some(source_id) => {
+                summary.source_ids = IndexIdSetV1::Exact(vec![source_id.to_owned()]);
+            }
             None => summary.contains_global_source = view.global_source,
         }
         if let (Some(table), Some(clock_ns)) = (view.table, view.clock_ns) {
@@ -366,8 +404,8 @@ impl IndexPruningSummaryV1 {
 
     fn merge<'a>(summaries: impl IntoIterator<Item = &'a Self>) -> Result<Self, IndexError> {
         let mut merged = Self::empty();
-        let mut sessions = BTreeSet::new();
-        let mut sources = BTreeSet::new();
+        let mut sessions = Some(BTreeSet::new());
+        let mut sources = Some(BTreeSet::new());
         for summary in summaries {
             merged.object_kind_mask |= summary.object_kind_mask;
             merged.table_mask |= summary.table_mask;
@@ -376,8 +414,12 @@ impl IndexPruningSummaryV1 {
                 .opaque_entry_count
                 .checked_add(summary.opaque_entry_count)
                 .ok_or(IndexError::LengthOverflow)?;
-            sessions.extend(summary.session_ids.iter().copied());
-            sources.extend(summary.source_ids.iter().cloned());
+            merge_id_values(&mut sessions, &summary.session_ids, |session| {
+                string(hex(session))
+            });
+            merge_id_values(&mut sources, &summary.source_ids, |source| {
+                string(source.clone())
+            });
             for (table, range) in &summary.table_clock_ranges {
                 merged
                     .table_clock_ranges
@@ -386,8 +428,8 @@ impl IndexPruningSummaryV1 {
                     .or_insert(*range);
             }
         }
-        merged.session_ids = sessions.into_iter().collect();
-        merged.source_ids = sources.into_iter().collect();
+        merged.session_ids = finish_id_values(sessions, |session| string(hex(session)));
+        merged.source_ids = finish_id_values(sources, |source| string(source.clone()));
         Ok(merged)
     }
 
@@ -403,15 +445,15 @@ impl IndexPruningSummaryV1 {
         self.table_mask
     }
 
-    /// Returns exact sorted nonzero session identifiers.
+    /// Returns bounded exact sorted nonzero sessions or a wildcard.
     #[must_use]
-    pub fn session_ids(&self) -> &[[u8; 16]] {
+    pub const fn session_ids(&self) -> &IndexIdSetV1<[u8; 16]> {
         &self.session_ids
     }
 
-    /// Returns exact UTF-8-byte-sorted physical source identifiers.
+    /// Returns bounded exact UTF-8-byte-sorted sources or a wildcard.
     #[must_use]
-    pub fn source_ids(&self) -> &[String] {
+    pub const fn source_ids(&self) -> &IndexIdSetV1<String> {
         &self.source_ids
     }
 
@@ -474,16 +516,11 @@ impl IndexPruningSummaryV1 {
             ),
             (
                 "session_ids",
-                CanonicalJsonValue::Array(
-                    self.session_ids
-                        .iter()
-                        .map(|session| string(hex(session)))
-                        .collect(),
-                ),
+                id_set_to_value(&self.session_ids, |session| string(hex(session))),
             ),
             (
                 "source_ids",
-                CanonicalJsonValue::Array(self.source_ids.iter().cloned().map(string).collect()),
+                id_set_to_value(&self.source_ids, |source| string(source.clone())),
             ),
             (
                 "table_clock_ranges",
@@ -497,6 +534,19 @@ impl IndexPruningSummaryV1 {
         let fields = value
             .as_object()
             .ok_or(IndexError::InvalidPage("pruning_summary"))?;
+        require_fields(
+            fields,
+            &[
+                "contains_global_source",
+                "object_kind_mask",
+                "opaque_entry_count",
+                "session_ids",
+                "source_ids",
+                "table_clock_ranges",
+                "table_mask",
+            ],
+            "pruning_summary",
+        )?;
         let object_kind_mask = require_u64(fields, "object_kind_mask")?;
         let table_mask_value = require_u64(fields, "table_mask")?;
         let opaque_entry_count = require_u64(fields, "opaque_entry_count")?;
@@ -504,42 +554,49 @@ impl IndexPruningSummaryV1 {
             Some(CanonicalJsonValue::Bool(value)) => *value,
             _ => return Err(IndexError::InvalidPage("contains_global_source")),
         };
-        let mut session_ids = Vec::new();
-        for value in as_array(fields.get("session_ids"), "session_ids")? {
-            let text = value
-                .as_str()
-                .ok_or(IndexError::InvalidPage("session_ids"))?;
-            let bytes: [u8; 16] = decode_hex(text)?
-                .try_into()
-                .map_err(|_| IndexError::InvalidPage("session_ids"))?;
-            if bytes == [0; 16]
-                || session_ids
-                    .last()
-                    .is_some_and(|previous| previous >= &bytes)
-            {
-                return Err(IndexError::InvalidPage("session_ids"));
-            }
-            session_ids.push(bytes);
-        }
-        let mut source_ids = Vec::new();
-        for value in as_array(fields.get("source_ids"), "source_ids")? {
-            let source = value
-                .as_str()
-                .ok_or(IndexError::InvalidPage("source_ids"))?;
-            if source.is_empty()
-                || source_ids
-                    .last()
-                    .is_some_and(|previous: &String| previous.as_bytes() >= source.as_bytes())
-            {
-                return Err(IndexError::InvalidPage("source_ids"));
-            }
-            source_ids.push(source.to_owned());
-        }
+        let session_ids = id_set_from_value(
+            fields
+                .get("session_ids")
+                .ok_or(IndexError::InvalidPage("session_ids"))?,
+            "session_ids",
+            |value| {
+                let text = value
+                    .as_str()
+                    .ok_or(IndexError::InvalidPage("session_ids"))?;
+                let bytes: [u8; 16] = decode_hex(text)?
+                    .try_into()
+                    .map_err(|_| IndexError::InvalidPage("session_ids"))?;
+                if bytes == [0; 16] {
+                    return Err(IndexError::InvalidPage("session_ids"));
+                }
+                Ok(bytes)
+            },
+            |session| string(hex(session)),
+        )?;
+        let source_ids = id_set_from_value(
+            fields
+                .get("source_ids")
+                .ok_or(IndexError::InvalidPage("source_ids"))?,
+            "source_ids",
+            |value| {
+                let source = value
+                    .as_str()
+                    .ok_or(IndexError::InvalidPage("source_ids"))?;
+                validate_source_id(source)?;
+                Ok(source.to_owned())
+            },
+            |source| string(source.clone()),
+        )?;
         let mut table_clock_ranges = BTreeMap::new();
         for value in as_array(fields.get("table_clock_ranges"), "table_clock_ranges")? {
             let range = value
                 .as_object()
                 .ok_or(IndexError::InvalidPage("table_clock_ranges"))?;
+            require_fields(
+                range,
+                &["maximum_clock_ns", "minimum_clock_ns", "table_id"],
+                "table_clock_ranges",
+            )?;
             let table_value = require_u64(range, "table_id")?;
             let table = table_from_u8(
                 u8::try_from(table_value).map_err(|_| IndexError::InvalidPage("table_id"))?,
@@ -581,6 +638,97 @@ impl IndexPruningSummaryV1 {
     }
 }
 
+fn merge_id_values<T: Clone + Ord>(
+    target: &mut Option<BTreeSet<T>>,
+    incoming: &IndexIdSetV1<T>,
+    encode: impl Fn(&T) -> CanonicalJsonValue,
+) {
+    let Some(values) = target.as_mut() else {
+        return;
+    };
+    let IndexIdSetV1::Exact(incoming) = incoming else {
+        *target = None;
+        return;
+    };
+    values.extend(incoming.iter().cloned());
+    if values.len() > MAX_PRUNING_SUMMARY_EXACT_IDS
+        || encoded_id_values_len(values.iter(), encode) > MAX_PRUNING_SUMMARY_EXACT_ID_BYTES
+    {
+        *target = None;
+    }
+}
+
+fn finish_id_values<T: Ord>(
+    values: Option<BTreeSet<T>>,
+    encode: impl Fn(&T) -> CanonicalJsonValue,
+) -> IndexIdSetV1<T> {
+    let Some(values) = values else {
+        return IndexIdSetV1::Wildcard;
+    };
+    if values.len() > MAX_PRUNING_SUMMARY_EXACT_IDS
+        || encoded_id_values_len(values.iter(), encode) > MAX_PRUNING_SUMMARY_EXACT_ID_BYTES
+    {
+        IndexIdSetV1::Wildcard
+    } else {
+        IndexIdSetV1::Exact(values.into_iter().collect())
+    }
+}
+
+fn encoded_id_values_len<'a, T: 'a>(
+    values: impl IntoIterator<Item = &'a T>,
+    encode: impl Fn(&T) -> CanonicalJsonValue,
+) -> usize {
+    CanonicalJsonValue::Array(values.into_iter().map(encode).collect())
+        .to_bytes()
+        .len()
+}
+
+fn id_set_to_value<T>(
+    values: &IndexIdSetV1<T>,
+    encode: impl Fn(&T) -> CanonicalJsonValue,
+) -> CanonicalJsonValue {
+    match values {
+        IndexIdSetV1::Exact(values) => object(vec![
+            ("kind", string("exact")),
+            (
+                "values",
+                CanonicalJsonValue::Array(values.iter().map(encode).collect()),
+            ),
+        ]),
+        IndexIdSetV1::Wildcard => object(vec![("kind", string("wildcard"))]),
+    }
+}
+
+fn id_set_from_value<T: Ord>(
+    value: &CanonicalJsonValue,
+    field: &'static str,
+    decode: impl Fn(&CanonicalJsonValue) -> Result<T, IndexError>,
+    encode: impl Fn(&T) -> CanonicalJsonValue,
+) -> Result<IndexIdSetV1<T>, IndexError> {
+    let fields = value.as_object().ok_or(IndexError::InvalidPage(field))?;
+    match require_text(fields, "kind")? {
+        "wildcard" => {
+            require_fields(fields, &["kind"], field)?;
+            Ok(IndexIdSetV1::Wildcard)
+        }
+        "exact" => {
+            require_fields(fields, &["kind", "values"], field)?;
+            let values = as_array(fields.get("values"), field)?
+                .iter()
+                .map(decode)
+                .collect::<Result<Vec<_>, _>>()?;
+            if values.len() > MAX_PRUNING_SUMMARY_EXACT_IDS
+                || values.windows(2).any(|pair| pair[0] >= pair[1])
+                || encoded_id_values_len(values.iter(), encode) > MAX_PRUNING_SUMMARY_EXACT_ID_BYTES
+            {
+                return Err(IndexError::InvalidPage(field));
+            }
+            Ok(IndexIdSetV1::Exact(values))
+        }
+        _ => Err(IndexError::InvalidPage(field)),
+    }
+}
+
 /// Source/global selection understood directly by the persistent index.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IndexSourceSelectionV1 {
@@ -612,8 +760,8 @@ impl IndexScanPredicateV1 {
         minimum_clock_ns: Option<i64>,
         maximum_clock_ns: Option<i64>,
     ) -> Result<Self, IndexError> {
-        if matches!(&source, IndexSourceSelectionV1::Exact(value) if value.is_empty()) {
-            return Err(IndexError::EmptySourceId);
+        if let IndexSourceSelectionV1::Exact(value) = &source {
+            validate_source_id(value)?;
         }
         if minimum_clock_ns
             .zip(maximum_clock_ns)
@@ -646,19 +794,24 @@ impl IndexScanPredicateV1 {
         {
             return false;
         }
-        if self
-            .session_id
-            .is_some_and(|session| summary.session_ids.binary_search(&session).is_err())
+        if let (Some(session), IndexIdSetV1::Exact(session_ids)) =
+            (self.session_id, &summary.session_ids)
+            && session_ids.binary_search(&session).is_err()
         {
             return false;
         }
         match &self.source {
             IndexSourceSelectionV1::Any => {}
             IndexSourceSelectionV1::Exact(source)
-                if summary
-                    .source_ids
-                    .binary_search_by(|candidate| candidate.as_bytes().cmp(source.as_bytes()))
-                    .is_err() =>
+                if matches!(
+                    &summary.source_ids,
+                    IndexIdSetV1::Exact(source_ids)
+                        if source_ids
+                            .binary_search_by(|candidate| {
+                                candidate.as_bytes().cmp(source.as_bytes())
+                            })
+                            .is_err()
+                ) =>
             {
                 return false;
             }
@@ -822,18 +975,26 @@ impl IndexRootV1 {
                     .ok_or(IndexError::InvalidPage("pruning_summary"))?,
             )?,
         };
-        if root.height == 0
-            || (root.logical_entry_count == 0
-                && (root.minimum_key.is_some()
-                    || root.maximum_key.is_some()
-                    || root.pruning_summary != IndexPruningSummaryV1::empty()))
-            || (root.logical_entry_count != 0
-                && (root.minimum_key.is_none() || root.maximum_key.is_none()))
-            || root.minimum_key > root.maximum_key
+        root.validate()?;
+        Ok(root)
+    }
+
+    fn validate(&self) -> Result<(), IndexError> {
+        if self.height == 0
+            || self.root_byte_length == 0
+            || self.root_byte_length > MAX_PAGE_BYTES as u64
+            || (self.logical_entry_count == 0
+                && (self.height != 1
+                    || self.minimum_key.is_some()
+                    || self.maximum_key.is_some()
+                    || self.pruning_summary != IndexPruningSummaryV1::empty()))
+            || (self.logical_entry_count != 0
+                && (self.minimum_key.is_none() || self.maximum_key.is_none()))
+            || self.minimum_key > self.maximum_key
         {
             return Err(IndexError::InvalidPage("index_root"));
         }
-        Ok(root)
+        Ok(())
     }
 }
 
@@ -877,28 +1038,12 @@ impl IndexSnapshot {
         max_pages_read: u64,
         max_entries_examined: u64,
     ) -> Result<IndexScanV1, IndexError> {
-        if max_pages_read == 0 || max_entries_examined == 0 {
-            return Err(IndexError::ZeroWorkBound);
-        }
-        if self.root.pruning_summary.opaque_entry_count != 0 {
-            return Err(IndexError::OpaqueManifestEntries(
-                self.root.pruning_summary.opaque_entry_count,
-            ));
-        }
-        let mut scan = IndexScanV1 {
-            entries: Vec::new(),
-            stats: IndexScanStatsV1::default(),
-        };
-        scan_persisted_page(
-            self.root.root_hash,
-            self.root.root_byte_length,
-            &self.pages,
+        let source = SnapshotIndexPageSource { pages: &self.pages };
+        VerifiedIndexScannerV1::new(&self.root, &source)?.scan(
             predicate,
             max_pages_read,
             max_entries_examined,
-            &mut scan,
-        )?;
-        Ok(scan)
+        )
     }
 
     /// Iterates every reachable content-addressed page in hash order.
@@ -988,6 +1133,79 @@ pub trait IndexPageSource: Debug {
     fn get(&self, hash: Digest) -> Result<Vec<u8>, IndexError>;
 }
 
+/// Lazy authenticated reader bound to one immutable root and page source.
+///
+/// Unlike [`IndexSnapshot::load`], this reader never materializes the complete
+/// tree. It validates persisted summaries before selecting a child and fetches
+/// only pages that may match the query predicate.
+#[derive(Debug)]
+pub struct VerifiedIndexScannerV1<'a> {
+    root: &'a IndexRootV1,
+    source: &'a dyn IndexPageSource,
+}
+
+impl<'a> VerifiedIndexScannerV1<'a> {
+    /// Binds one structurally valid root descriptor to an immutable page source.
+    pub fn new(root: &'a IndexRootV1, source: &'a dyn IndexPageSource) -> Result<Self, IndexError> {
+        root.validate()?;
+        Ok(Self { root, source })
+    }
+
+    /// Lazily scans matching entries under explicit page and entry ceilings.
+    pub fn scan(
+        &self,
+        predicate: &IndexScanPredicateV1,
+        max_pages_read: u64,
+        max_entries_examined: u64,
+    ) -> Result<IndexScanV1, IndexError> {
+        if max_pages_read == 0 || max_entries_examined == 0 {
+            return Err(IndexError::ZeroWorkBound);
+        }
+        if self.root.pruning_summary.opaque_entry_count != 0 {
+            return Err(IndexError::OpaqueManifestEntries(
+                self.root.pruning_summary.opaque_entry_count,
+            ));
+        }
+        let mut scan = IndexScanV1 {
+            entries: Vec::new(),
+            stats: IndexScanStatsV1::default(),
+        };
+        if !predicate.may_match_summary(&self.root.pruning_summary) {
+            return Ok(scan);
+        }
+        let expected = PageExpectationV1::from_root(self.root);
+        let mut visiting = BTreeSet::new();
+        let bounds = IndexScanBoundsV1 {
+            max_pages_read,
+            max_entries_examined,
+        };
+        scan_verified_page(
+            &expected,
+            true,
+            self.source,
+            predicate,
+            bounds,
+            &mut visiting,
+            &mut scan,
+        )?;
+        Ok(scan)
+    }
+}
+
+#[derive(Debug)]
+struct SnapshotIndexPageSource<'a> {
+    pages: &'a BTreeMap<Digest, Vec<u8>>,
+}
+
+impl IndexPageSource for SnapshotIndexPageSource<'_> {
+    fn get(&self, hash: Digest) -> Result<Vec<u8>, IndexError> {
+        self.pages
+            .get(&hash)
+            .cloned()
+            .ok_or(IndexError::MissingPage(hash))
+    }
+}
+
 /// Create-if-absent page writes used by local and remote persistence.
 pub trait IndexPageSink: Debug {
     /// Creates a page or verifies an already-present byte-identical page.
@@ -1052,6 +1270,13 @@ pub enum IndexError {
     EmptyKey,
     /// A source component is present but empty.
     EmptySourceId,
+    /// A source component exceeds the persisted index bound.
+    SourceIdTooLong {
+        /// Observed UTF-8 byte length.
+        actual: usize,
+        /// Maximum accepted UTF-8 byte length.
+        maximum: usize,
+    },
     /// Raw nonce key ID is empty.
     EmptyKeyId,
     /// Raw nonce bytes are empty.
@@ -1128,6 +1353,10 @@ impl Display for IndexError {
         match self {
             Self::EmptyKey => formatter.write_str("index key cannot be empty"),
             Self::EmptySourceId => formatter.write_str("index source ID cannot be empty"),
+            Self::SourceIdTooLong { actual, maximum } => write!(
+                formatter,
+                "index source ID has {actual} UTF-8 bytes above {maximum}"
+            ),
             Self::EmptyKeyId => formatter.write_str("raw nonce key ID cannot be empty"),
             Self::EmptyNonce => formatter.write_str("raw nonce cannot be empty"),
             Self::UnknownObjectKind(kind) => write!(formatter, "unknown index object kind {kind}"),
@@ -1689,13 +1918,107 @@ fn load_node(
     Ok(node)
 }
 
-fn scan_persisted_page(
+#[derive(Clone, Debug)]
+struct PageExpectationV1 {
     hash: Digest,
-    expected_length: u64,
-    pages: &BTreeMap<Digest, Vec<u8>>,
-    predicate: &IndexScanPredicateV1,
+    byte_length: u64,
+    height: u16,
+    entry_count: u64,
+    minimum_key: Option<IndexKey>,
+    maximum_key: Option<IndexKey>,
+    pruning_summary: IndexPruningSummaryV1,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IndexScanBoundsV1 {
     max_pages_read: u64,
     max_entries_examined: u64,
+}
+
+impl PageExpectationV1 {
+    fn from_root(root: &IndexRootV1) -> Self {
+        Self {
+            hash: root.root_hash,
+            byte_length: root.root_byte_length,
+            height: root.height,
+            entry_count: root.logical_entry_count,
+            minimum_key: root.minimum_key.clone(),
+            maximum_key: root.maximum_key.clone(),
+            pruning_summary: root.pruning_summary.clone(),
+        }
+    }
+
+    fn from_child(value: &CanonicalJsonValue) -> Result<Self, IndexError> {
+        let fields = value.as_object().ok_or(IndexError::InvalidPage("child"))?;
+        require_fields(
+            fields,
+            &[
+                "byte_length",
+                "entry_count",
+                "hash",
+                "height",
+                "maximum_key",
+                "minimum_key",
+                "pruning_summary",
+            ],
+            "child",
+        )?;
+        let expectation = Self {
+            hash: Digest::parse(require_text(fields, "hash")?)
+                .map_err(|_| IndexError::InvalidPage("child hash"))?,
+            byte_length: require_u64(fields, "byte_length")?,
+            height: require_u16(fields, "height")?,
+            entry_count: require_u64(fields, "entry_count")?,
+            minimum_key: decode_optional_key(fields.get("minimum_key"))?,
+            maximum_key: decode_optional_key(fields.get("maximum_key"))?,
+            pruning_summary: IndexPruningSummaryV1::from_value(
+                fields
+                    .get("pruning_summary")
+                    .ok_or(IndexError::InvalidPage("child pruning_summary"))?,
+            )?,
+        };
+        if expectation.byte_length == 0
+            || expectation.byte_length > MAX_PAGE_BYTES as u64
+            || expectation.height == 0
+            || expectation.entry_count == 0
+            || expectation.minimum_key.is_none()
+            || expectation.maximum_key.is_none()
+            || expectation.minimum_key > expectation.maximum_key
+        {
+            return Err(IndexError::InvalidPage("child summary"));
+        }
+        Ok(expectation)
+    }
+}
+
+fn scan_verified_page(
+    expected: &PageExpectationV1,
+    root: bool,
+    source: &dyn IndexPageSource,
+    predicate: &IndexScanPredicateV1,
+    bounds: IndexScanBoundsV1,
+    visiting: &mut BTreeSet<Digest>,
+    scan: &mut IndexScanV1,
+) -> Result<(), IndexError> {
+    if !predicate.may_match_summary(&expected.pruning_summary) {
+        return Ok(());
+    }
+    if !visiting.insert(expected.hash) {
+        return Err(IndexError::PageCycle(expected.hash));
+    }
+    let result =
+        scan_verified_page_inner(expected, root, source, predicate, bounds, visiting, scan);
+    visiting.remove(&expected.hash);
+    result
+}
+
+fn scan_verified_page_inner(
+    expected: &PageExpectationV1,
+    root: bool,
+    source: &dyn IndexPageSource,
+    predicate: &IndexScanPredicateV1,
+    bounds: IndexScanBoundsV1,
+    visiting: &mut BTreeSet<Digest>,
     scan: &mut IndexScanV1,
 ) -> Result<(), IndexError> {
     let next_pages = scan
@@ -1703,18 +2026,21 @@ fn scan_persisted_page(
         .pages_read
         .checked_add(1)
         .ok_or(IndexError::LengthOverflow)?;
-    if next_pages > max_pages_read {
-        return Err(IndexError::PageWorkBoundExceeded(max_pages_read));
+    if next_pages > bounds.max_pages_read {
+        return Err(IndexError::PageWorkBoundExceeded(bounds.max_pages_read));
     }
     scan.stats.pages_read = next_pages;
-    let bytes = pages.get(&hash).ok_or(IndexError::MissingPage(hash))?;
-    if u64::try_from(bytes.len()).map_err(|_| IndexError::LengthOverflow)? != expected_length {
-        return Err(IndexError::PageLengthMismatch(hash));
+    let bytes = source.get(expected.hash)?;
+    if u64::try_from(bytes.len()).map_err(|_| IndexError::LengthOverflow)? != expected.byte_length {
+        return Err(IndexError::PageLengthMismatch(expected.hash));
     }
-    if page_hash(bytes) != hash {
-        return Err(IndexError::PageHashMismatch(hash));
+    if bytes.len() > MAX_PAGE_BYTES {
+        return Err(IndexError::PageTooLarge(bytes.len()));
     }
-    let value = CanonicalJsonValue::parse_canonical(bytes).map_err(IndexError::Canonical)?;
+    if page_hash(&bytes) != expected.hash {
+        return Err(IndexError::PageHashMismatch(expected.hash));
+    }
+    let value = CanonicalJsonValue::parse_canonical(&bytes).map_err(IndexError::Canonical)?;
     let fields = value.as_object().ok_or(IndexError::InvalidPage("object"))?;
     require_string(fields, "magic", PAGE_MAGIC)?;
     require_string(
@@ -1723,41 +2049,118 @@ fn scan_persisted_page(
         &INDEX_V1.fingerprint().to_hex(),
     )?;
     require_integer(fields, "version", 1)?;
-    let summary = IndexPruningSummaryV1::from_value(
+    let declared_summary = IndexPruningSummaryV1::from_value(
         fields
             .get("pruning_summary")
             .ok_or(IndexError::InvalidPage("pruning_summary"))?,
     )?;
-    if !predicate.may_match_summary(&summary) {
-        return Ok(());
-    }
     match require_text(fields, "kind")? {
         "leaf" => {
-            for value in as_array(fields.get("entries"), "entries")? {
+            require_fields(
+                fields,
+                &[
+                    "descriptor_fingerprint",
+                    "entries",
+                    "kind",
+                    "magic",
+                    "pruning_summary",
+                    "version",
+                ],
+                "leaf",
+            )?;
+            let values = as_array(fields.get("entries"), "entries")?;
+            validate_page_arity("leaf", values.len(), root)?;
+            let mut entries = Vec::with_capacity(values.len());
+            for value in values {
                 let next_entries = scan
                     .stats
                     .entries_examined
                     .checked_add(1)
                     .ok_or(IndexError::LengthOverflow)?;
-                if next_entries > max_entries_examined {
-                    return Err(IndexError::EntryWorkBoundExceeded(max_entries_examined));
+                if next_entries > bounds.max_entries_examined {
+                    return Err(IndexError::EntryWorkBoundExceeded(
+                        bounds.max_entries_examined,
+                    ));
                 }
                 scan.stats.entries_examined = next_entries;
                 let entry = decode_page_entry(value)?;
+                entries.push(entry);
+            }
+            if entries.windows(2).any(|pair| pair[0].key >= pair[1].key) {
+                return Err(IndexError::UnsortedKeys);
+            }
+            let summary =
+                IndexPruningSummaryV1::merge(entries.iter().map(IndexEntry::pruning_summary))?;
+            if summary != declared_summary {
+                return Err(IndexError::InvalidPage("pruning_summary"));
+            }
+            verify_page_expectation(
+                expected,
+                1,
+                u64::try_from(entries.len()).map_err(|_| IndexError::LengthOverflow)?,
+                entries.first().map(|entry| entry.key.clone()),
+                entries.last().map(|entry| entry.key.clone()),
+                &summary,
+                root,
+            )?;
+            for entry in entries {
                 if predicate.matches_entry(&entry) {
                     scan.entries.push(entry);
                 }
             }
         }
         "internal" => {
-            for value in as_array(fields.get("children"), "children")? {
-                let child = value.as_object().ok_or(IndexError::InvalidPage("child"))?;
-                let child_summary = IndexPruningSummaryV1::from_value(
-                    child
-                        .get("pruning_summary")
-                        .ok_or(IndexError::InvalidPage("child pruning_summary"))?,
-                )?;
-                if !predicate.may_match_summary(&child_summary) {
+            require_fields(
+                fields,
+                &[
+                    "children",
+                    "descriptor_fingerprint",
+                    "kind",
+                    "magic",
+                    "pruning_summary",
+                    "version",
+                ],
+                "internal",
+            )?;
+            let values = as_array(fields.get("children"), "children")?;
+            validate_page_arity("internal", values.len(), root)?;
+            let children = values
+                .iter()
+                .map(PageExpectationV1::from_child)
+                .collect::<Result<Vec<_>, _>>()?;
+            let child_height = children.first().ok_or(IndexError::EmptyInternal)?.height;
+            if children.iter().any(|child| child.height != child_height) {
+                return Err(IndexError::UnequalChildHeight);
+            }
+            if children
+                .windows(2)
+                .any(|pair| pair[0].maximum_key.as_ref() >= pair[1].minimum_key.as_ref())
+            {
+                return Err(IndexError::UnsortedKeys);
+            }
+            let entry_count = children.iter().try_fold(0_u64, |total, child| {
+                total
+                    .checked_add(child.entry_count)
+                    .ok_or(IndexError::LengthOverflow)
+            })?;
+            let summary =
+                IndexPruningSummaryV1::merge(children.iter().map(|child| &child.pruning_summary))?;
+            if summary != declared_summary {
+                return Err(IndexError::InvalidPage("pruning_summary"));
+            }
+            verify_page_expectation(
+                expected,
+                child_height
+                    .checked_add(1)
+                    .ok_or(IndexError::LengthOverflow)?,
+                entry_count,
+                children.first().and_then(|child| child.minimum_key.clone()),
+                children.last().and_then(|child| child.maximum_key.clone()),
+                &summary,
+                root,
+            )?;
+            for child in children {
+                if !predicate.may_match_summary(&child.pruning_summary) {
                     scan.stats.child_pages_pruned = scan
                         .stats
                         .child_pages_pruned
@@ -1765,17 +2168,7 @@ fn scan_persisted_page(
                         .ok_or(IndexError::LengthOverflow)?;
                     continue;
                 }
-                let child_hash = Digest::parse(require_text(child, "hash")?)
-                    .map_err(|_| IndexError::InvalidPage("child hash"))?;
-                scan_persisted_page(
-                    child_hash,
-                    require_u64(child, "byte_length")?,
-                    pages,
-                    predicate,
-                    max_pages_read,
-                    max_entries_examined,
-                    scan,
-                )?;
+                scan_verified_page(&child, false, source, predicate, bounds, visiting, scan)?;
             }
         }
         _ => return Err(IndexError::InvalidPage("kind")),
@@ -1783,8 +2176,51 @@ fn scan_persisted_page(
     Ok(())
 }
 
+fn validate_page_arity(kind: &'static str, arity: usize, root: bool) -> Result<(), IndexError> {
+    let valid = match (kind, root) {
+        ("leaf", true) => arity <= MAX_PAGE_ARITY,
+        ("internal", true) => (2..=MAX_PAGE_ARITY).contains(&arity),
+        ("leaf" | "internal", false) => (MIN_NON_ROOT..=MAX_PAGE_ARITY).contains(&arity),
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(IndexError::PageOccupancy {
+            actual: arity,
+            root,
+        })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_page_expectation(
+    expected: &PageExpectationV1,
+    height: u16,
+    entry_count: u64,
+    minimum_key: Option<IndexKey>,
+    maximum_key: Option<IndexKey>,
+    pruning_summary: &IndexPruningSummaryV1,
+    root: bool,
+) -> Result<(), IndexError> {
+    if expected.height != height
+        || expected.entry_count != entry_count
+        || expected.minimum_key != minimum_key
+        || expected.maximum_key != maximum_key
+        || &expected.pruning_summary != pruning_summary
+    {
+        return Err(if root {
+            IndexError::RootMismatch
+        } else {
+            IndexError::InvalidPage("child summary")
+        });
+    }
+    Ok(())
+}
+
 fn decode_page_entry(value: &CanonicalJsonValue) -> Result<IndexEntry, IndexError> {
     let fields = value.as_object().ok_or(IndexError::InvalidPage("entry"))?;
+    require_fields(fields, &["descriptor", "descriptor_hash", "key"], "entry")?;
     let key = IndexKey::new(decode_hex(require_text(fields, "key")?)?)?;
     let descriptor_hash = Digest::parse(require_text(fields, "descriptor_hash")?)
         .map_err(|_| IndexError::InvalidPage("descriptor_hash"))?;
@@ -1844,8 +2280,8 @@ fn primary_key(
     clock_ns: Option<i64>,
     logical_object_id: Digest,
 ) -> Result<IndexKey, IndexError> {
-    if source.is_some_and(str::is_empty) {
-        return Err(IndexError::EmptySourceId);
+    if let Some(source) = source {
+        validate_source_id(source)?;
     }
     let mut bytes = Vec::new();
     bytes.push(kind as u8);
@@ -1888,7 +2324,7 @@ fn parse_primary_key(bytes: &[u8]) -> Option<PrimaryIndexKeyView<'_>> {
             let length = u32::from_be_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?);
             offset += 4;
             let length = usize::try_from(length).ok()?;
-            if length == 0 {
+            if length == 0 || length > MAX_INDEX_SOURCE_ID_BYTES {
                 return None;
             }
             let source =
@@ -1931,6 +2367,19 @@ fn parse_primary_key(bytes: &[u8]) -> Option<PrimaryIndexKeyView<'_>> {
             })
         }
     }
+}
+
+fn validate_source_id(source: &str) -> Result<(), IndexError> {
+    if source.is_empty() {
+        return Err(IndexError::EmptySourceId);
+    }
+    if source.len() > MAX_INDEX_SOURCE_ID_BYTES {
+        return Err(IndexError::SourceIdTooLong {
+            actual: source.len(),
+            maximum: MAX_INDEX_SOURCE_ID_BYTES,
+        });
+    }
+    Ok(())
 }
 
 fn entry_clock_range(
@@ -2049,6 +2498,23 @@ fn require_text<'a>(
         .get(field)
         .and_then(CanonicalJsonValue::as_str)
         .ok_or(IndexError::InvalidPage(field))
+}
+
+fn require_fields(
+    object: &BTreeMap<String, CanonicalJsonValue>,
+    expected: &[&str],
+    field: &'static str,
+) -> Result<(), IndexError> {
+    if object.len() != expected.len()
+        || object
+            .keys()
+            .map(String::as_str)
+            .zip(expected.iter().copied())
+            .any(|(actual, expected)| actual != expected)
+    {
+        return Err(IndexError::InvalidPage(field));
+    }
+    Ok(())
 }
 
 fn require_string(
@@ -2211,7 +2677,7 @@ mod tests {
         assert_eq!(children[1].arity(), 129);
         assert_eq!(
             snapshot.root.root_hash.to_hex(),
-            "b8f6bee8e8d1b7b2703e4ad3627d76ca4926aa9144cdbbaeca0323538bb84f09"
+            "2ff756d27ac8af2ea7b79466f131c4cc30c1747360b42b919834daba544bed91"
         );
     }
 
@@ -2400,8 +2866,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            snapshot.root.pruning_summary.source_ids(),
-            ["source-a", "source-b"]
+            snapshot.root.pruning_summary.source_ids().exact().unwrap(),
+            &["source-a".to_owned(), "source-b".to_owned()]
         );
         assert_eq!(
             snapshot
@@ -2438,6 +2904,125 @@ mod tests {
         assert!(matches!(
             snapshot.scan(&predicate, 2, 127),
             Err(IndexError::EntryWorkBoundExceeded(127))
+        ));
+    }
+
+    #[test]
+    fn pruning_id_sets_wildcard_at_encoded_byte_cap_and_bound_each_source() {
+        let maximum = "x".repeat(MAX_INDEX_SOURCE_ID_BYTES);
+        assert!(
+            CompositeIndexKeyV1::table_partition(
+                TableId::Families,
+                session(),
+                Some(&maximum),
+                1,
+                Digest::from_bytes([1; 32]),
+            )
+            .is_ok()
+        );
+        let oversized = "x".repeat(MAX_INDEX_SOURCE_ID_BYTES + 1);
+        assert!(matches!(
+            CompositeIndexKeyV1::table_partition(
+                TableId::Families,
+                session(),
+                Some(&oversized),
+                1,
+                Digest::from_bytes([1; 32]),
+            ),
+            Err(IndexError::SourceIdTooLong { .. })
+        ));
+        assert!(matches!(
+            IndexScanPredicateV1::table_partitions(
+                BTreeSet::new(),
+                None,
+                IndexSourceSelectionV1::Exact(oversized),
+                None,
+                None,
+            ),
+            Err(IndexError::SourceIdTooLong { .. })
+        ));
+
+        let additions = (0..5_u64)
+            .map(|index| {
+                let source = format!("{index:02}-{}", "x".repeat(245));
+                primary_entry(
+                    index,
+                    TableId::Families,
+                    Some(&source),
+                    i64::try_from(index).unwrap(),
+                    i64::try_from(index).unwrap(),
+                )
+            })
+            .collect();
+        let snapshot = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(Vec::new(), additions).unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        assert!(snapshot.root().pruning_summary.source_ids().is_wildcard());
+        assert!(snapshot.root().canonical_bytes().len() < 4096);
+    }
+
+    #[test]
+    fn lazy_scanner_rejects_a_visited_child_reference_summary_mismatch() {
+        let additions = (0..600_i64)
+            .map(|clock| {
+                primary_entry(
+                    u64::try_from(clock).unwrap(),
+                    TableId::Families,
+                    Some("source-a"),
+                    clock,
+                    clock,
+                )
+            })
+            .collect();
+        let snapshot = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(Vec::new(), additions).unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        let mut store = MemoryIndexPageStore::default();
+        snapshot.persist(&mut store).unwrap();
+        let mut root_page =
+            CanonicalJsonValue::parse_canonical(&store.get(snapshot.root().root_hash).unwrap())
+                .unwrap();
+        let CanonicalJsonValue::Object(root_fields) = &mut root_page else {
+            panic!("root page must be an object")
+        };
+        let Some(CanonicalJsonValue::Array(children)) = root_fields.get_mut("children") else {
+            panic!("root page must be internal")
+        };
+        let replacement = children[1].as_object().unwrap();
+        let replacement_hash = replacement.get("hash").unwrap().clone();
+        let replacement_length = replacement.get("byte_length").unwrap().clone();
+        let CanonicalJsonValue::Object(first) = &mut children[0] else {
+            panic!("child reference must be an object")
+        };
+        first.insert("hash".to_owned(), replacement_hash);
+        first.insert("byte_length".to_owned(), replacement_length);
+        let forged_bytes = root_page.to_bytes();
+        let forged_hash = page_hash(&forged_bytes);
+        store.put_if_absent(forged_hash, &forged_bytes).unwrap();
+        let mut forged_root = snapshot.root().clone();
+        forged_root.root_hash = forged_hash;
+        forged_root.root_byte_length = u64::try_from(forged_bytes.len()).unwrap();
+        let predicate = IndexScanPredicateV1::table_partitions(
+            BTreeSet::from([TableId::Families]),
+            Some(session()),
+            IndexSourceSelectionV1::Exact("source-a".to_owned()),
+            Some(10),
+            Some(10),
+        )
+        .unwrap();
+        assert!(matches!(
+            VerifiedIndexScannerV1::new(&forged_root, &store)
+                .unwrap()
+                .scan(&predicate, 2, 128),
+            Err(IndexError::InvalidPage("child summary"))
         ));
     }
 
@@ -2481,7 +3066,10 @@ mod tests {
         };
         summary.insert(
             "source_ids".to_owned(),
-            CanonicalJsonValue::Array(vec![string("forged-source")]),
+            id_set_to_value(
+                &IndexIdSetV1::Exact(vec!["forged-source".to_owned()]),
+                |source| string(source.clone()),
+            ),
         );
         let forged_bytes = forged.to_bytes();
         let forged_hash = page_hash(&forged_bytes);

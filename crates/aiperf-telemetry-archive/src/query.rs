@@ -14,11 +14,14 @@ use arrow_array::{Array, FixedSizeBinaryArray, RecordBatch, StringArray};
 use bytes::Bytes;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
-use crate::index::{IndexScanPredicateV1, IndexSourceSelectionV1};
+use crate::index::{
+    IndexPageSource, IndexRootV1, IndexScanPredicateV1, IndexSourceSelectionV1,
+    VerifiedIndexScannerV1,
+};
 use crate::parquet::{PartitionDescriptorV1, PartitionProjectionEvidenceV1};
 use crate::{
-    ArchiveId, ArchiveSchemasV1, Digest, GenerationObjectV1, HeadDescriptorV1, IndexSnapshot,
-    SchemaError, SessionId, TableId, domain_digest,
+    ArchiveId, ArchiveSchemasV1, Digest, GenerationObjectV1, HeadDescriptorV1, SchemaError,
+    SessionId, TableId, domain_digest,
 };
 
 /// Source selection over the explicit global/source partition key.
@@ -106,7 +109,7 @@ pub struct PartitionDiscoveryV1 {
 pub struct VerifiedQueryRootV1<'a> {
     head: &'a HeadDescriptorV1,
     generation: &'a GenerationObjectV1,
-    index: &'a IndexSnapshot,
+    index: VerifiedIndexScannerV1<'a>,
     schemas: &'a ArchiveSchemasV1,
 }
 
@@ -115,7 +118,8 @@ impl<'a> VerifiedQueryRootV1<'a> {
     pub fn new(
         head: &'a HeadDescriptorV1,
         generation: &'a GenerationObjectV1,
-        index: &'a IndexSnapshot,
+        index_root: &'a IndexRootV1,
+        index_pages: &'a dyn IndexPageSource,
         schemas: &'a ArchiveSchemasV1,
     ) -> Result<Self, QueryError> {
         let decoded =
@@ -128,8 +132,8 @@ impl<'a> VerifiedQueryRootV1<'a> {
         if &expected_head != head {
             return Err(QueryError::HeadGenerationMismatch);
         }
-        if index.root() != &generation.generation.index_root
-            || head.index_root_hash != index.root().root_hash
+        if index_root != &generation.generation.index_root
+            || head.index_root_hash != index_root.root_hash
         {
             return Err(QueryError::IndexRootMismatch);
         }
@@ -139,7 +143,8 @@ impl<'a> VerifiedQueryRootV1<'a> {
         Ok(Self {
             head,
             generation,
-            index,
+            index: VerifiedIndexScannerV1::new(index_root, index_pages)
+                .map_err(QueryError::Index)?,
             schemas,
         })
     }
@@ -788,6 +793,7 @@ impl std::error::Error for QueryError {}
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
     use std::sync::Arc;
 
     use arrow_array::builder::{ListBuilder, StringBuilder, StringDictionaryBuilder};
@@ -797,9 +803,9 @@ mod tests {
     use super::*;
     use crate::{
         ArchiveState, CanonicalJsonValue, CanonicalLogicalRow, EpochAnchor, FrameTableProjectionV1,
-        GenerationTransactionKind, GenerationV1, GenesisV1, IndexMutationSetV1, LogicalValue,
-        MutationMode, ParquetPartitionBuilderV1, ParquetRotationConfigV1, TimeDomain,
-        partition_object_key_v1,
+        GenerationTransactionKind, GenerationV1, GenesisV1, IndexMutationSetV1, IndexSnapshot,
+        LogicalValue, MemoryIndexPageStore, MutationMode, ParquetPartitionBuilderV1,
+        ParquetRotationConfigV1, TimeDomain, partition_object_key_v1,
     };
 
     fn archive() -> ArchiveId {
@@ -808,6 +814,51 @@ mod tests {
 
     fn session() -> SessionId {
         SessionId::new([0x22; 16]).unwrap()
+    }
+
+    #[derive(Debug)]
+    struct CountingIndexPageSource {
+        pages: RefCell<BTreeMap<Digest, Vec<u8>>>,
+        reads: Cell<u64>,
+        touched: RefCell<Vec<Digest>>,
+    }
+
+    impl CountingIndexPageSource {
+        fn from_snapshot(snapshot: &IndexSnapshot) -> Self {
+            Self {
+                pages: RefCell::new(
+                    snapshot
+                        .page_objects()
+                        .map(|(hash, bytes)| (hash, bytes.to_vec()))
+                        .collect(),
+                ),
+                reads: Cell::new(0),
+                touched: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn reset_reads(&self) {
+            self.reads.set(0);
+            self.touched.borrow_mut().clear();
+        }
+
+        fn corrupt(&self, hash: Digest) {
+            let mut pages = self.pages.borrow_mut();
+            let bytes = pages.get_mut(&hash).unwrap();
+            bytes[0] ^= 1;
+        }
+    }
+
+    impl IndexPageSource for CountingIndexPageSource {
+        fn get(&self, hash: Digest) -> Result<Vec<u8>, crate::IndexError> {
+            self.reads.set(self.reads.get() + 1);
+            self.touched.borrow_mut().push(hash);
+            self.pages
+                .borrow()
+                .get(&hash)
+                .cloned()
+                .ok_or(crate::IndexError::MissingPage(hash))
+        }
     }
 
     #[test]
@@ -831,7 +882,11 @@ mod tests {
             .unwrap();
         let generation = GenerationObjectV1::new(genesis(index.root().clone())).unwrap();
         let head = HeadDescriptorV1::from_generation(&generation).unwrap();
-        let resolver = VerifiedQueryRootV1::new(&head, &generation, &index, &schemas).unwrap();
+        let mut index_pages = MemoryIndexPageStore::default();
+        index.persist(&mut index_pages).unwrap();
+        let resolver =
+            VerifiedQueryRootV1::new(&head, &generation, index.root(), &index_pages, &schemas)
+                .unwrap();
         let result = resolver
             .discover(&PartitionPredicateV1 {
                 tables: BTreeSet::from([TableId::Families]),
@@ -888,7 +943,11 @@ mod tests {
             .unwrap();
         let generation = GenerationObjectV1::new(genesis(index.root().clone())).unwrap();
         let head = HeadDescriptorV1::from_generation(&generation).unwrap();
-        let resolver = VerifiedQueryRootV1::new(&head, &generation, &index, &schemas).unwrap();
+        let mut index_pages = MemoryIndexPageStore::default();
+        index.persist(&mut index_pages).unwrap();
+        let resolver =
+            VerifiedQueryRootV1::new(&head, &generation, index.root(), &index_pages, &schemas)
+                .unwrap();
         let predicate = PartitionPredicateV1 {
             tables: BTreeSet::from([TableId::Families]),
             session_id: Some(session()),
@@ -918,6 +977,220 @@ mod tests {
     }
 
     #[test]
+    fn lazy_discovery_reads_only_visited_pages_and_enforces_bounds_before_fetch() {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let mut descriptors = Vec::new();
+        for clock in 0..300_i64 {
+            descriptors.push(descriptor(
+                "source-a",
+                clock,
+                clock,
+                u8::try_from(clock.rem_euclid(250) + 1).unwrap(),
+                TableId::Families,
+                &schemas,
+            ));
+        }
+        for offset in 0..300_i64 {
+            descriptors.push(descriptor(
+                "source-b",
+                10_000 + offset,
+                10_000 + offset,
+                u8::try_from(offset.rem_euclid(250) + 1).unwrap(),
+                TableId::Samples,
+                &schemas,
+            ));
+        }
+        let index = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(
+                    Vec::new(),
+                    descriptors
+                        .iter()
+                        .map(PartitionDescriptorV1::index_entry)
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap(),
+                )
+                .unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        let generation = GenerationObjectV1::new(genesis(index.root().clone())).unwrap();
+        let head = HeadDescriptorV1::from_generation(&generation).unwrap();
+        let pages = CountingIndexPageSource::from_snapshot(&index);
+        let total_pages = pages.pages.borrow().len();
+        let resolver =
+            VerifiedQueryRootV1::new(&head, &generation, index.root(), &pages, &schemas).unwrap();
+        let predicate = PartitionPredicateV1 {
+            tables: BTreeSet::from([TableId::Families]),
+            session_id: Some(session()),
+            source: SourcePredicateV1::Exact("source-a".to_owned()),
+            minimum_clock_ns: Some(10),
+            maximum_clock_ns: Some(10),
+            max_index_entries: 128,
+            max_index_pages: 2,
+            max_partitions: 2,
+        };
+        let discovery = resolver.discover(&predicate).unwrap();
+        assert_eq!(discovery.partitions, vec![descriptors[10].clone()]);
+        assert_eq!(pages.reads.get(), discovery.index_pages_read);
+        assert!(usize::try_from(discovery.index_pages_read).unwrap() < total_pages);
+
+        let clean_touched = pages.touched.borrow().clone();
+        let pruned_hash = pages
+            .pages
+            .borrow()
+            .keys()
+            .find(|hash| !clean_touched.contains(hash))
+            .copied()
+            .expect("the predicate must prune at least one persisted child");
+        pages.corrupt(pruned_hash);
+        pages.reset_reads();
+        assert_eq!(resolver.discover(&predicate).unwrap().partitions.len(), 1);
+        assert!(!pages.touched.borrow().contains(&pruned_hash));
+
+        let visited_hash = clean_touched[1];
+        pages.corrupt(visited_hash);
+        pages.reset_reads();
+        assert!(matches!(
+            resolver.discover(&predicate),
+            Err(QueryError::Index(crate::IndexError::PageHashMismatch(hash)))
+                if hash == visited_hash
+        ));
+
+        let bounded_pages = CountingIndexPageSource::from_snapshot(&index);
+        let bounded =
+            VerifiedQueryRootV1::new(&head, &generation, index.root(), &bounded_pages, &schemas)
+                .unwrap();
+        assert!(matches!(
+            bounded.discover(&PartitionPredicateV1 {
+                max_index_pages: 1,
+                ..predicate
+            }),
+            Err(QueryError::IndexPageWorkBoundExceeded { bound: 1 })
+        ));
+        assert_eq!(bounded_pages.reads.get(), 1, "N+1 was never fetched");
+    }
+
+    #[test]
+    fn exact_root_summary_prunes_before_fetch_while_wildcard_scans_conservatively() {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let exact_descriptors = [
+            descriptor("source-a", 1, 1, 1, TableId::Families, &schemas),
+            descriptor("source-b", 2, 2, 2, TableId::Families, &schemas),
+        ];
+        let exact = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(
+                    Vec::new(),
+                    exact_descriptors
+                        .iter()
+                        .map(PartitionDescriptorV1::index_entry)
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap(),
+                )
+                .unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        let exact_generation = GenerationObjectV1::new(genesis(exact.root().clone())).unwrap();
+        let exact_head = HeadDescriptorV1::from_generation(&exact_generation).unwrap();
+        let exact_pages = CountingIndexPageSource::from_snapshot(&exact);
+        let exact_query = VerifiedQueryRootV1::new(
+            &exact_head,
+            &exact_generation,
+            exact.root(),
+            &exact_pages,
+            &schemas,
+        )
+        .unwrap();
+        let absent = exact_query
+            .discover(&PartitionPredicateV1 {
+                source: SourcePredicateV1::Exact("absent".to_owned()),
+                ..PartitionPredicateV1::default()
+            })
+            .unwrap();
+        assert!(absent.partitions.is_empty());
+        assert_eq!(absent.index_pages_read, 0);
+        assert_eq!(exact_pages.reads.get(), 0);
+
+        let descriptors = (0..=crate::MAX_PRUNING_SUMMARY_EXACT_IDS)
+            .map(|index| {
+                descriptor(
+                    &format!("source-{index:03}"),
+                    i64::try_from(index).unwrap(),
+                    i64::try_from(index).unwrap(),
+                    u8::try_from(index + 1).unwrap(),
+                    TableId::Families,
+                    &schemas,
+                )
+            })
+            .collect::<Vec<_>>();
+        let additions = descriptors
+            .iter()
+            .map(PartitionDescriptorV1::index_entry)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let wildcard = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(Vec::new(), additions.clone()).unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        let reverse = IndexSnapshot::empty()
+            .unwrap()
+            .apply(
+                &IndexMutationSetV1::new(Vec::new(), additions.into_iter().rev().collect())
+                    .unwrap(),
+                MutationMode::Normal,
+            )
+            .unwrap();
+        assert!(wildcard.root().pruning_summary.source_ids().is_wildcard());
+        assert!(wildcard.root().canonical_bytes().len() < 4096);
+        assert_eq!(wildcard.root(), reverse.root());
+        assert_eq!(
+            wildcard.page_objects().collect::<Vec<_>>(),
+            reverse.page_objects().collect::<Vec<_>>()
+        );
+
+        let generation = GenerationObjectV1::new(genesis(wildcard.root().clone())).unwrap();
+        let head = HeadDescriptorV1::from_generation(&generation).unwrap();
+        let pages = CountingIndexPageSource::from_snapshot(&wildcard);
+        let query = VerifiedQueryRootV1::new(&head, &generation, wildcard.root(), &pages, &schemas)
+            .unwrap();
+        let selected = query
+            .discover(&PartitionPredicateV1 {
+                source: SourcePredicateV1::Exact("source-010".to_owned()),
+                ..PartitionPredicateV1::default()
+            })
+            .unwrap();
+        let mut oracle = descriptors
+            .iter()
+            .filter(|descriptor| descriptor.source_id.as_deref() == Some("source-010"))
+            .cloned()
+            .collect::<Vec<_>>();
+        oracle.sort_by_key(|descriptor| descriptor.index_key().unwrap());
+        assert_eq!(selected.partitions, oracle);
+
+        pages.reset_reads();
+        let unknown = query
+            .discover(&PartitionPredicateV1 {
+                source: SourcePredicateV1::Exact("unknown".to_owned()),
+                ..PartitionPredicateV1::default()
+            })
+            .unwrap();
+        assert!(unknown.partitions.is_empty());
+        assert_eq!(unknown.index_pages_read, 1);
+        assert_eq!(
+            unknown.index_entries_examined,
+            u64::try_from(descriptors.len()).unwrap()
+        );
+        assert_eq!(pages.reads.get(), 1);
+    }
+
+    #[test]
     fn discovery_fails_closed_at_explicit_index_and_result_bounds() {
         let schemas = ArchiveSchemasV1::load().unwrap();
         let partition = descriptor("source-a", 10, 20, 1, TableId::Families, &schemas);
@@ -931,7 +1204,11 @@ mod tests {
             .unwrap();
         let generation = GenerationObjectV1::new(genesis(index.root().clone())).unwrap();
         let head = HeadDescriptorV1::from_generation(&generation).unwrap();
-        let resolver = VerifiedQueryRootV1::new(&head, &generation, &index, &schemas).unwrap();
+        let mut index_pages = MemoryIndexPageStore::default();
+        index.persist(&mut index_pages).unwrap();
+        let resolver =
+            VerifiedQueryRootV1::new(&head, &generation, index.root(), &index_pages, &schemas)
+                .unwrap();
         let error = resolver
             .discover(&PartitionPredicateV1 {
                 max_index_entries: 1,

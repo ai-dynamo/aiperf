@@ -131,6 +131,12 @@ pub const RECEIPT_V1: CanonicalDescriptor = CanonicalDescriptor::new(
     include_bytes!("../descriptors/receipt-v1.json"),
 );
 
+/// Exact raw-envelope and nonce-registry descriptor.
+pub const RAW_ENVELOPE_V1: CanonicalDescriptor = CanonicalDescriptor::new(
+    "raw-envelope-v1",
+    include_bytes!("../descriptors/raw-envelope-v1.json"),
+);
+
 /// Every durable-core descriptor in deterministic validation order.
 pub const ALL_DESCRIPTORS: &[CanonicalDescriptor] = &[
     CANONICAL_JSON_V1,
@@ -139,6 +145,7 @@ pub const ALL_DESCRIPTORS: &[CanonicalDescriptor] = &[
     WAL_V1,
     INDEX_V1,
     RECEIPT_V1,
+    RAW_ENVELOPE_V1,
 ];
 
 #[cfg(test)]

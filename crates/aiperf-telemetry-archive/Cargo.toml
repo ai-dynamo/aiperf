@@ -11,6 +11,7 @@ description = "Durable telemetry archive identities, WAL, manifests, recovery, a
 [dependencies]
 aiperf-clock.workspace = true
 aiperf-prometheus = { path = "../aiperf-prometheus" }
+aes-gcm-siv = "0.11.1"
 arrow-array = "58.3"
 arrow-schema = "58.3"
 arrow-select = "58.3"

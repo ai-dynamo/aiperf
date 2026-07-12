@@ -22,12 +22,16 @@ pub mod index;
 pub mod key;
 pub mod manifest;
 pub mod object_store;
+pub mod owner;
 pub mod parquet;
+pub mod policy;
 pub mod projection;
 pub mod query;
+pub mod raw;
 pub mod receipt;
 pub mod scheduling;
 pub mod schema;
+pub mod sink;
 pub mod spool;
 pub mod time;
 pub mod wal;
@@ -64,10 +68,11 @@ pub use identity::{
     SourceOutcome, TerminalKind,
 };
 pub use index::{
-    CompositeIndexKeyV1, IndexClockRangeV1, IndexEntry, IndexError, IndexKey, IndexMutationSetV1,
-    IndexObjectKind, IndexPageSink, IndexPageSource, IndexPruningSummaryV1, IndexRemoval,
-    IndexRootV1, IndexScanPredicateV1, IndexScanStatsV1, IndexScanV1, IndexSnapshot,
-    IndexSourceSelectionV1, MemoryIndexPageStore, MutationMode,
+    CompositeIndexKeyV1, IndexClockRangeV1, IndexEntry, IndexError, IndexIdSetV1, IndexKey,
+    IndexMutationSetV1, IndexObjectKind, IndexPageSink, IndexPageSource, IndexPruningSummaryV1,
+    IndexRemoval, IndexRootV1, IndexScanPredicateV1, IndexScanStatsV1, IndexScanV1, IndexSnapshot,
+    IndexSourceSelectionV1, MAX_INDEX_SOURCE_ID_BYTES, MAX_PRUNING_SUMMARY_EXACT_ID_BYTES,
+    MAX_PRUNING_SUMMARY_EXACT_IDS, MemoryIndexPageStore, MutationMode, VerifiedIndexScannerV1,
 };
 pub use key::{
     ArchiveKeyError, ArchiveKeyProvider, ArchiveSubkey, Blake3ArchiveKeyProvider,
@@ -82,11 +87,23 @@ pub use object_store::{
     HeadUpdateError, MemoryArchiveObjectStore, MemoryStoreFault, NamedObjectVisibility,
     VersionedHead, archive_object_digest,
 };
+pub use owner::{
+    ArchiveFrameSequencerV1, ArchiveFrameTimingV1, FrameSequencingError, SequencedArchiveFrameV1,
+    SourceProjectionPolicyV1,
+};
 pub use parquet::{
     CompletedPartitionV1, FrameTableProjectionV1, ParquetPartitionBuilderV1,
     ParquetProjectionError, ParquetRotationConfigV1, PartitionBuildOutputV1, PartitionDescriptorV1,
     PartitionProjectionEvidenceV1, ProjectionCoverageV1, partition_logical_object_id_v1,
     partition_object_key_v1,
+};
+pub use policy::{
+    AdmissionRejection, AnyRotationPolicy, ArchiveAdmissionMode, ArchiveAdmissionPolicy,
+    ArchiveIngressState, ArchiveProjectionFootprint, ArchiveProjectionPermit, ArchiveRecoveryError,
+    ArchiveRecoveryPolicy, AttachedBestEffortAdmissionPolicy, BoundedSegmentRotationPolicy,
+    CreateNewRecoveryPolicy, ExactResumeRecoveryPolicy, LocalArchiveState, OpenSegmentState,
+    PolicyError, PrimaryWatchAdmissionPolicy, RecoveryPlan, RemoteArchiveState,
+    SegmentRotationPolicy,
 };
 pub use projection::{
     ArchiveInfoLabelPartitionStatus, ArchiveSampleView, ArchiveSanitizer, AttributeMap,
@@ -99,6 +116,18 @@ pub use query::{
     PartitionObjectReadError, PartitionObjectSourceV1, PartitionPredicateV1, QueryError,
     SourcePredicateV1, VerifiedQueryRootV1, read_partition_v1,
     verify_compaction_logical_equality_v1,
+};
+pub use raw::{
+    AES_256_GCM_SIV_RANDOM96_V1_DESCRIPTOR, Aes256GcmSivRandom96V1, ArchiveRawKeyProvider,
+    MemoryRawKeyProvider, OsRawNonceSource, RAW_ENVELOPE_AAD_BYTES, RAW_ENVELOPE_ALGORITHM_V1,
+    RAW_ENVELOPE_KEY_BYTES, RAW_ENVELOPE_MAX_NONCE_DRAWS, RAW_ENVELOPE_MAX_OBJECTS_PER_KEY,
+    RAW_ENVELOPE_MAX_PLAINTEXT_BYTES, RAW_ENVELOPE_NONCE_BYTES, RAW_ENVELOPE_TAG_BYTES,
+    RAW_ENVELOPE_V1, RawCoverageRequirementV1, RawEnvelope, RawEnvelopeDescriptor,
+    RawEnvelopeError, RawEnvelopeKey, RawEnvelopeObjectV1, RawEnvelopeProfile,
+    RawEnvelopePublicHeaderV1, RawKeyError, RawNonceError, RawNonceReservationV1, RawNonceSource,
+    RawObjectCandidate, RawObjectDescriptorV1, RawObjectRegistry, RawObjectStateV1,
+    RawPrepareContext, RawPrepareDispositionV1, RawPrepareOutcomeV1, RawRegisteredObjectV1,
+    RawRegistryError, RawRegistryLimitsV1, raw_envelope_aad_v1, raw_object_id_v1,
 };
 pub use receipt::{
     ExecutionId, ObjectVersionKind, ObservationKind, ReceiptBatchId, ReceiptBatchV1, ReceiptError,
@@ -116,6 +145,11 @@ pub use schema::{
     ArchiveTableSchemaV1, FAMILIES_ARROW_SCHEMA_V1, LOSSES_ARROW_SCHEMA_V1,
     MARKERS_ARROW_SCHEMA_V1, RAW_REFERENCES_ARROW_SCHEMA_V1, SAMPLES_ARROW_SCHEMA_V1, SchemaError,
     arrow_schema_fingerprint, table_id, table_name,
+};
+pub use sink::{
+    AppendReceipt, ArchiveSink, ArchiveSinkError, ArchiveWalFrame, CheckpointCompletion,
+    DurabilityCompletion, FinalizeCompletion, LocalParquetArchiveSink, MemoryArchiveSink,
+    MemoryArchiveSinkFault, ReceiptEventDraft, RecoveredArchive, TerminationReason,
 };
 pub use spool::{
     DurabilityEdge, DurabilityFaultInjector, FailAtDurabilityEdge, FilesystemKind,

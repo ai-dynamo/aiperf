@@ -78,6 +78,14 @@ pub enum DurabilityEdge {
     GenerationRenamed,
     /// Generation parent directory was fsynced.
     GenerationDirectorySynced,
+    /// Parquet partition temporary file has complete bytes.
+    PartitionTempWritten,
+    /// Parquet partition file has been fsynced.
+    PartitionFileSynced,
+    /// Parquet partition temporary file was create-only renamed.
+    PartitionRenamed,
+    /// Parquet partition parent directory was fsynced.
+    PartitionDirectorySynced,
     /// Pointer temporary file has complete bytes.
     PointerTempWritten,
     /// Pointer temporary file has been fsynced.
@@ -857,6 +865,24 @@ impl<'a> LocalWalWriter<'a> {
         Ok(())
     }
 
+    /// Returns the immutable segment header bound at file creation.
+    #[must_use]
+    pub const fn header(&self) -> &WalSegmentHeaderV1 {
+        self.builder.header()
+    }
+
+    /// Returns the durable cryptographic prefix after the last fsynced frame.
+    #[must_use]
+    pub const fn durable_prefix(&self) -> Digest {
+        self.builder.prefix()
+    }
+
+    /// Returns the final durable record sequence, absent before the first frame.
+    #[must_use]
+    pub const fn last_record_seq(&self) -> Option<u64> {
+        self.builder.last_record_seq()
+    }
+
     /// Seals, fsyncs, create-only renames, and directory-fsyncs the whole segment.
     pub fn seal(mut self) -> Result<SealedWalSegment, SpoolError> {
         if self.poisoned {
@@ -1038,6 +1064,7 @@ impl std::error::Error for SpoolError {
 pub(crate) enum ImmutableClass {
     Index,
     Generation,
+    Partition,
     ReceiptBatch,
     ReceiptIndex,
     ReceiptHead,
@@ -1048,6 +1075,7 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexTempWritten,
             Self::Generation => DurabilityEdge::GenerationTempWritten,
+            Self::Partition => DurabilityEdge::PartitionTempWritten,
             Self::ReceiptBatch => DurabilityEdge::ReceiptBatchTempWritten,
             Self::ReceiptIndex => DurabilityEdge::ReceiptIndexTempWritten,
             Self::ReceiptHead => DurabilityEdge::ReceiptHeadTempWritten,
@@ -1058,6 +1086,7 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexFileSynced,
             Self::Generation => DurabilityEdge::GenerationFileSynced,
+            Self::Partition => DurabilityEdge::PartitionFileSynced,
             Self::ReceiptBatch => DurabilityEdge::ReceiptBatchFileSynced,
             Self::ReceiptIndex => DurabilityEdge::ReceiptIndexFileSynced,
             Self::ReceiptHead => DurabilityEdge::ReceiptHeadFileSynced,
@@ -1068,6 +1097,7 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexRenamed,
             Self::Generation => DurabilityEdge::GenerationRenamed,
+            Self::Partition => DurabilityEdge::PartitionRenamed,
             Self::ReceiptBatch => DurabilityEdge::ReceiptBatchRenamed,
             Self::ReceiptIndex => DurabilityEdge::ReceiptIndexRenamed,
             Self::ReceiptHead => DurabilityEdge::ReceiptHeadRenamed,
@@ -1078,6 +1108,7 @@ impl ImmutableClass {
         match self {
             Self::Index => DurabilityEdge::IndexDirectorySynced,
             Self::Generation => DurabilityEdge::GenerationDirectorySynced,
+            Self::Partition => DurabilityEdge::PartitionDirectorySynced,
             Self::ReceiptBatch => DurabilityEdge::ReceiptBatchDirectorySynced,
             Self::ReceiptIndex => DurabilityEdge::ReceiptIndexDirectorySynced,
             Self::ReceiptHead => DurabilityEdge::ReceiptHeadDirectorySynced,
