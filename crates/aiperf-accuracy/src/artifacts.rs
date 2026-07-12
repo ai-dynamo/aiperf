@@ -10,6 +10,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -262,10 +263,25 @@ impl EvaluationArtifactSealer {
                 return Err(error);
             }
         };
+        // Persist an immutable, owner-only tree. Restricted artifacts carry
+        // provider targets and hidden verifier state, so the sealed tree must
+        // not remain world-readable, world-traversable, or owner-writable.
+        // Hardening happens before promotion so the tree at its final path is
+        // never briefly world-readable.
+        if let Err(error) = harden_sealed_tree(&temp_root) {
+            make_tree_removable(&temp_root);
+            let _ = std::fs::remove_dir_all(&temp_root);
+            return Err(error);
+        }
         std::fs::rename(&temp_root, promoted_root).map_err(|error| {
+            make_tree_removable(&temp_root);
             let _ = std::fs::remove_dir_all(&temp_root);
             ArtifactSealError::Promotion(error.to_string())
         })?;
+        // Durably persist the rename: per-file `sync_all` cannot survive a crash
+        // that loses the parent directory entry created by the rename.
+        let parent_dir = File::open(parent).map_err(ArtifactSealError::io)?;
+        parent_dir.sync_all().map_err(ArtifactSealError::io)?;
 
         Ok(SealedEvaluationArtifacts {
             root: promoted_root.to_path_buf(),
@@ -403,6 +419,62 @@ impl EvaluationArtifactSealer {
             ArtifactSealError::Manifest("provider bundle path was absent from manifest".to_string())
         })?;
         Ok((sealed, provider_bundle_sha256))
+    }
+}
+
+/// Recursively strip write and world/group access from a freshly built seal
+/// tree: regular files become owner read-only (`0o400`) and directories become
+/// owner traverse-only (`0o500`). Children are hardened before their parent so
+/// the walk never loses the search permission it needs to descend. Any symlink
+/// or non-regular entry is a sealing violation because the tree is built solely
+/// with `create_new` regular files under `create_dir`/`create_dir_all`.
+fn harden_sealed_tree(path: &Path) -> Result<(), ArtifactSealError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(ArtifactSealError::io)?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(ArtifactSealError::Traversal(
+            "sealed artifact tree contained a symlink".to_string(),
+        ));
+    }
+    if file_type.is_dir() {
+        for entry in std::fs::read_dir(path).map_err(ArtifactSealError::io)? {
+            let entry = entry.map_err(ArtifactSealError::io)?;
+            harden_sealed_tree(&entry.path())?;
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o500))
+            .map_err(ArtifactSealError::io)?;
+    } else if file_type.is_file() {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o400))
+            .map_err(ArtifactSealError::io)?;
+    } else {
+        return Err(ArtifactSealError::Traversal(
+            "sealed artifact tree contained a non-regular entry".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Best-effort restoration of owner write/traverse permissions so a partially
+/// hardened tree can be removed on a sealing-failure cleanup path. Directories
+/// are made writable before descending, and every error is ignored because this
+/// only runs while unwinding an already-failed seal.
+fn make_tree_removable(path: &Path) {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return;
+    }
+    if file_type.is_dir() {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                make_tree_removable(&entry.path());
+            }
+        }
+    } else {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
 }
 
@@ -833,6 +905,46 @@ mod tests {
             artifact_content_sha256(bytes)
         );
         assert_eq!(std::fs::read(promoted.join("bundle.json")).unwrap(), bytes);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn sealed_tree_is_owner_read_only_and_not_world_readable() {
+        let bytes = br#"{"result":1}"#;
+        let (base, staging, promoted) = temp_roots("hardened");
+        std::fs::write(staging.join("bundle.json"), bytes).unwrap();
+        let mut candidate = candidate(bytes, "bundle.json");
+        let proof = IsolationQuiescenceProof::verified(42, "9".repeat(64));
+        EvaluationArtifactSealer::new(
+            ArtifactSealLimits::default(),
+            ArtifactProjectionPolicy::restricted_only(),
+        )
+        .unwrap()
+        .seal(&staging, &promoted, &mut candidate, &proof)
+        .unwrap();
+
+        let dir_mode = std::fs::symlink_metadata(&promoted)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = std::fs::symlink_metadata(promoted.join("bundle.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        // Owner traverse-only directory; owner read-only file. No group/world
+        // bits and no owner-write bit: restricted artifacts are immutable and
+        // never world-readable once sealed.
+        assert_eq!(
+            dir_mode, 0o500,
+            "sealed directory must be owner traverse-only"
+        );
+        assert_eq!(file_mode, 0o400, "sealed file must be owner read-only");
+        // The owning runner can still read the sealed content.
+        assert_eq!(std::fs::read(promoted.join("bundle.json")).unwrap(), bytes);
+
+        make_tree_removable(&promoted);
         let _ = std::fs::remove_dir_all(base);
     }
 
