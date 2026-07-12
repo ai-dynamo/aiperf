@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -22,7 +23,7 @@ use crate::config::ClientConfig;
 use crate::models::{
     ErrorDetails, ErrorKind, RequestRecord, Response, SseMessage, TextResponse, TraceData,
 };
-use crate::sse::read_sse;
+use crate::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
 
 #[derive(Default)]
 struct ChunkTiming {
@@ -58,6 +59,74 @@ impl ChunkTiming {
 /// Map a response-body stream error into a transport [`ErrorDetails`].
 fn body_err(e: impl std::fmt::Display) -> ErrorDetails {
     ErrorDetails::other(format!("body: {e}"))
+}
+
+/// Backpressured significance/observation hook for decoded SSE messages.
+pub trait SseMessageFilter {
+    /// Whether the reader must poll capacity between decoded frames.
+    fn is_backpressured(&self) -> bool {
+        true
+    }
+
+    /// Reserve downstream capacity for the next message.
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>>;
+
+    /// Observe one ready message and report whether one-shot filtering is complete.
+    ///
+    /// Backpressured filters are still invoked for every frame; the completion
+    /// signal only lets the synchronous fast path stop its first-token search.
+    fn start_send(&mut self, ttft_ns: i64, message: &SseMessage) -> Result<bool, ErrorDetails>;
+}
+
+pub(crate) struct SynchronousSseMessageFilter<F>(F);
+
+impl<F> SynchronousSseMessageFilter<F> {
+    pub(crate) fn new(filter: F) -> Self {
+        Self(filter)
+    }
+}
+
+impl<F> SseMessageFilter for SynchronousSseMessageFilter<F>
+where
+    F: FnMut(i64, &SseMessage) -> bool,
+{
+    fn is_backpressured(&self) -> bool {
+        false
+    }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(&mut self, ttft_ns: i64, message: &SseMessage) -> Result<bool, ErrorDetails> {
+        Ok((self.0)(ttft_ns, message))
+    }
+}
+
+struct RecordingSseHandler<'a, F>
+where
+    F: SseMessageFilter + ?Sized,
+{
+    start_ns: i64,
+    filter: &'a mut F,
+    responses: &'a mut Vec<Response>,
+}
+
+impl<F> SseMessageHandler for RecordingSseHandler<'_, F>
+where
+    F: SseMessageFilter + ?Sized,
+{
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>> {
+        self.filter.poll_ready(context)
+    }
+
+    fn start_send(&mut self, message: SseMessage) -> Result<(), ErrorDetails> {
+        let _ = self
+            .filter
+            .start_send(message.perf_ns - self.start_ns, &message)?;
+        self.responses.push(Response::Sse(message));
+        Ok(())
+    }
 }
 
 pub struct HttpClient {
@@ -125,10 +194,11 @@ impl HttpClient {
             request_send_start_ns: Some(start_ns),
             ..TraceData::default()
         };
-        let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
-            on_first_token(ttft_ns);
-            true
-        };
+        let mut first_token_filter =
+            SynchronousSseMessageFilter::new(|ttft_ns: i64, _message: &SseMessage| {
+                on_first_token(ttft_ns);
+                true
+            });
 
         let body_len = body.len();
         let result = async {
@@ -180,10 +250,11 @@ impl HttpClient {
         let completion = Rc::new(SendCompletion::new());
         let completion_for_dispatch = completion.clone();
         let completion_for_record = completion.clone();
-        let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
-            on_first_token(ttft_ns);
-            true
-        };
+        let mut first_token_filter =
+            SynchronousSseMessageFilter::new(|ttft_ns: i64, _message: &SseMessage| {
+                on_first_token(ttft_ns);
+                true
+            });
         let request = async {
             let (mut sender, _socket) =
                 establish(url, &self.cfg, self.clock.clone(), &mut trace).await?;
@@ -336,10 +407,11 @@ impl HttpClient {
         on_first_token: &mut impl FnMut(i64),
         body_len: usize,
     ) -> Result<(), ErrorDetails> {
-        let mut first_token_filter = |ttft_ns: i64, _message: &SseMessage| {
-            on_first_token(ttft_ns);
-            true
-        };
+        let mut first_token_filter =
+            SynchronousSseMessageFilter::new(|ttft_ns: i64, _message: &SseMessage| {
+                on_first_token(ttft_ns);
+                true
+            });
         self.dispatch_with_method_and_completion(
             method,
             sender,
@@ -369,7 +441,7 @@ impl HttpClient {
         streaming: bool,
         trace: &mut TraceData,
         record: &mut RequestRecord,
-        first_token_filter: &mut impl FnMut(i64, &SseMessage) -> bool,
+        first_token_filter: &mut impl SseMessageFilter,
         body_len: usize,
         completion: Rc<SendCompletion>,
     ) -> Result<(), ErrorDetails> {
@@ -408,7 +480,7 @@ impl HttpClient {
         streaming: bool,
         trace: &mut TraceData,
         record: &mut RequestRecord,
-        first_token_filter: &mut impl FnMut(i64, &SseMessage) -> bool,
+        first_token_filter: &mut impl SseMessageFilter,
         body_len: usize,
         completion: Rc<SendCompletion>,
         timeout_ns: Option<i64>,
@@ -452,7 +524,7 @@ impl HttpClient {
         streaming: bool,
         trace: &mut TraceData,
         record: &mut RequestRecord,
-        first_token_filter: &mut impl FnMut(i64, &SseMessage) -> bool,
+        first_token_filter: &mut impl SseMessageFilter,
         body_len: usize,
         completion: Rc<SendCompletion>,
     ) -> Result<(), ErrorDetails> {
@@ -541,16 +613,29 @@ impl HttpClient {
         }
 
         if is_sse {
-            let start_ns = record.start_ns;
-            let mut first_seen = false;
-            let responses = &mut record.responses;
-            let sse_result = read_sse(timed, self.clock.clone(), |m: SseMessage| {
-                if !first_seen && first_token_filter(m.perf_ns - start_ns, &m) {
-                    first_seen = true;
-                }
-                responses.push(Response::Sse(m));
-            })
-            .await;
+            let sse_result = if first_token_filter.is_backpressured() {
+                let mut handler = RecordingSseHandler {
+                    start_ns: record.start_ns,
+                    filter: first_token_filter,
+                    responses: &mut record.responses,
+                };
+                read_sse_with_handler(timed, self.clock.clone(), &mut handler).await
+            } else {
+                let start_ns = record.start_ns;
+                let mut first_seen = false;
+                let responses = &mut record.responses;
+                read_sse(timed, self.clock.clone(), |message: SseMessage| {
+                    if !first_seen
+                        && first_token_filter
+                            .start_send(message.perf_ns - start_ns, &message)
+                            .expect("synchronous SSE filter is infallible")
+                    {
+                        first_seen = true;
+                    }
+                    responses.push(Response::Sse(message));
+                })
+                .await
+            };
 
             timing.borrow().copy_to(trace);
             sse_result?;

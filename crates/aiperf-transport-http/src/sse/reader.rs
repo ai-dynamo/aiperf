@@ -7,14 +7,29 @@
 //! Behavioral port of Python `AsyncSSEStreamReader`.
 
 use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
 use futures::StreamExt;
+use futures::future::poll_fn;
 
 use aiperf_clock::Clock;
 
 use crate::models::{ErrorDetails, SseMessage};
+
+/// Backpressured consumer for one decoded SSE message.
+///
+/// The HTTP reader awaits this seam before decoding the next frame, so a slow
+/// downstream placement cannot turn one large network chunk into an unbounded
+/// queue or a false queue-full transport failure.
+pub trait SseMessageHandler {
+    /// Reserve capacity for the next decoded message.
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>>;
+
+    /// Consume one message after [`Self::poll_ready`] returned ready.
+    fn start_send(&mut self, message: SseMessage) -> Result<(), ErrorDetails>;
+}
 
 /// Read `stream` as SSE, invoking `on_message` per parsed message and draining
 /// through transport EOF, including after a `[DONE]` sentinel. Returns `Err`
@@ -29,10 +44,24 @@ use crate::models::{ErrorDetails, SseMessage};
 pub async fn read_sse<S>(
     stream: S,
     clock: Rc<dyn Clock>,
-    mut on_message: impl FnMut(SseMessage),
+    on_message: impl FnMut(SseMessage),
 ) -> Result<(), ErrorDetails>
 where
     S: Stream<Item = Result<Bytes, ErrorDetails>>,
+{
+    let mut handler = SynchronousSseMessageHandler(on_message);
+    read_sse_with_handler(stream, clock, &mut handler).await
+}
+
+/// Read `stream` while awaiting an injected message handler after every frame.
+pub async fn read_sse_with_handler<S, H>(
+    stream: S,
+    clock: Rc<dyn Clock>,
+    handler: &mut H,
+) -> Result<(), ErrorDetails>
+where
+    S: Stream<Item = Result<Bytes, ErrorDetails>>,
+    H: SseMessageHandler + ?Sized,
 {
     futures::pin_mut!(stream);
 
@@ -70,7 +99,8 @@ where
                         "Error occurred in SSE response: {err}"
                     )));
                 }
-                on_message(msg);
+                poll_fn(|context| handler.poll_ready(context)).await?;
+                handler.start_send(msg)?;
             }
         }
 
@@ -92,9 +122,26 @@ where
                 "Error occurred in SSE response: {err}"
             )));
         }
-        on_message(msg);
+        poll_fn(|context| handler.poll_ready(context)).await?;
+        handler.start_send(msg)?;
     }
     Ok(())
+}
+
+struct SynchronousSseMessageHandler<F>(F);
+
+impl<F> SseMessageHandler for SynchronousSseMessageHandler<F>
+where
+    F: FnMut(SseMessage),
+{
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(&mut self, message: SseMessage) -> Result<(), ErrorDetails> {
+        (self.0)(message);
+        Ok(())
+    }
 }
 
 /// First index >= `from` where `needle` occurs in `haystack`.

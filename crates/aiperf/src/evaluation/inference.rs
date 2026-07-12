@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
 
 use aiperf_accuracy::{HostOperationUsage, STOCK_EVALUATION_OPERATION_SCHEMAS};
 use aiperf_dataset::{
@@ -28,6 +29,7 @@ use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::PollSender;
 
 use super::host::{
     EvaluationRoute, HostExecutionDelta, HostExecutionEventSink, HostExecutionTerminal,
@@ -1363,7 +1365,7 @@ impl ScheduledInferenceHostExecutor {
         let (response_tx, mut response_rx) = mpsc::channel(64);
         let response_failure = Rc::new(RefCell::new(None));
         let response_observer = Rc::new(InferenceResponseObserver {
-            sender: response_tx,
+            sender: RefCell::new(PollSender::new(response_tx)),
             cancellation: cancellation.clone(),
             failure: response_failure.clone(),
         });
@@ -1386,22 +1388,24 @@ impl ScheduledInferenceHostExecutor {
                 terminal = &mut terminal_rx => {
                     let outcome = terminal.context("scheduled evaluator inference lost its terminal callback")?;
                     while let Ok(response) = response_rx.try_recv() {
-                        publish_stream_response(
+                        publish_stream_response_or_cancel(
                             self.operation_id.as_str(),
                             response,
                             events,
                             &mut ordinal,
+                            &cancellation,
                         ).await?;
                     }
                     break outcome;
                 }
                 response = response_rx.recv() => {
                     if let Some(response) = response {
-                        publish_stream_response(
+                        publish_stream_response_or_cancel(
                             self.operation_id.as_str(),
                             response,
                             events,
                             &mut ordinal,
+                            &cancellation,
                         ).await?;
                     }
                 }
@@ -1480,26 +1484,53 @@ impl HostOperationExecutor for ScheduledInferenceHostExecutor {
 }
 
 struct InferenceResponseObserver {
-    sender: mpsc::Sender<ParsedResponse>,
+    sender: RefCell<PollSender<ParsedResponse>>,
     cancellation: OperationCancellation,
     failure: Rc<RefCell<Option<String>>>,
 }
 
 impl TurnResponseObserver for InferenceResponseObserver {
-    fn on_response(&self, response: ParsedResponse) {
-        if let Err(error) = self.sender.try_send(response) {
-            let message = match error {
-                mpsc::error::TrySendError::Full(_) => {
-                    "bounded evaluator streaming response queue is full"
-                }
-                mpsc::error::TrySendError::Closed(_) => {
-                    "evaluator streaming response consumer closed"
-                }
-            };
+    fn poll_ready(&self, context: &mut TaskContext<'_>) -> Poll<Result<()>> {
+        self.sender
+            .borrow_mut()
+            .poll_reserve(context)
+            .map(|result| {
+                result.map_err(|_| {
+                    let message = "evaluator streaming response consumer closed";
+                    self.failure
+                        .borrow_mut()
+                        .get_or_insert_with(|| message.into());
+                    self.cancellation.cancel();
+                    anyhow!(message)
+                })
+            })
+    }
+
+    fn start_send(&self, response: ParsedResponse) -> Result<()> {
+        if self.sender.borrow_mut().send_item(response).is_err() {
+            let message = "evaluator streaming response consumer closed";
             self.failure
                 .borrow_mut()
                 .get_or_insert_with(|| message.into());
             self.cancellation.cancel();
+            return Err(anyhow!(message));
+        }
+        Ok(())
+    }
+}
+
+async fn publish_stream_response_or_cancel(
+    operation_id: &str,
+    response: ParsedResponse,
+    events: &dyn HostExecutionEventSink,
+    ordinal: &mut usize,
+    cancellation: &OperationCancellation,
+) -> Result<()> {
+    match publish_stream_response(operation_id, response, events, ordinal).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            cancellation.cancel();
+            Err(error)
         }
     }
 }
@@ -1999,8 +2030,13 @@ pub fn builtin_inference_operation_ids() -> Result<BTreeSet<RegisteredOperationI
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::future::poll_fn;
+
+    use aiperf_clock::SimClock;
     use aiperf_dataset::TiktokenTokenizer;
     use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
+    use loadgen_core::sink::{ObservedUsage, RequestObserver};
 
     use super::*;
 
@@ -2085,6 +2121,239 @@ mod tests {
             restricted: service == "judge",
             stream: semantic != "model.embed",
         }
+    }
+
+    struct BurstStreamingDispatcher;
+
+    #[async_trait(?Send)]
+    impl crate::scheduled::TurnDispatcher for BurstStreamingDispatcher {
+        fn supports_response_streaming(&self) -> bool {
+            true
+        }
+
+        async fn dispatch_turn(
+            &self,
+            _turn: TurnToSend,
+            _observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            Err(anyhow!("burst fixture requires streaming dispatch"))
+        }
+
+        async fn dispatch_turn_streaming(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            on_first_token: &dyn Fn(i64),
+            responses: &dyn TurnResponseObserver,
+        ) -> Result<TurnDispatchOutcome> {
+            observer.on_admit(turn.uuid, 0.0, 0);
+            for ordinal in 0..300 {
+                poll_fn(|context| responses.poll_ready(context)).await?;
+                responses.start_send(ParsedResponse {
+                    perf_ns: ordinal,
+                    data: Some(ResponseData::Text { text: "x".into() }),
+                    usage: None,
+                    sources: None,
+                })?;
+                if ordinal == 0 {
+                    on_first_token(1);
+                }
+                observer.on_token(turn.uuid, ordinal as f64);
+            }
+            observer.on_usage(
+                turn.uuid,
+                ObservedUsage {
+                    prompt_tokens: Some(1),
+                    completion_tokens: Some(300),
+                    ..ObservedUsage::default()
+                },
+            );
+            observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
+            Ok(TurnDispatchOutcome {
+                start_ns: 0,
+                end_ns: 300,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: "x".repeat(300),
+                model_response: crate::scheduled::ModelResponseMetadata {
+                    wire_responses: vec![json!({
+                        "choices":[{
+                            "message":{"role":"assistant","content":"done"},
+                            "finish_reason":"stop"
+                        }],
+                        "usage":{"prompt_tokens":1,"completion_tokens":300}
+                    })],
+                    ..Default::default()
+                },
+                prompt_tokens: Some(1),
+                completion_tokens: Some(300),
+                http: aiperf_metrics::HttpTrace::default(),
+            })
+        }
+    }
+
+    struct StalledStreamingDispatcher {
+        dropped: Rc<Cell<bool>>,
+    }
+
+    struct DispatchDropSignal(Rc<Cell<bool>>);
+
+    impl Drop for DispatchDropSignal {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl crate::scheduled::TurnDispatcher for StalledStreamingDispatcher {
+        fn supports_response_streaming(&self) -> bool {
+            true
+        }
+
+        async fn dispatch_turn(
+            &self,
+            _turn: TurnToSend,
+            _observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            Err(anyhow!("stalled fixture requires streaming dispatch"))
+        }
+
+        async fn dispatch_turn_streaming(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+            responses: &dyn TurnResponseObserver,
+        ) -> Result<TurnDispatchOutcome> {
+            let _drop_signal = DispatchDropSignal(self.dropped.clone());
+            observer.on_admit(turn.uuid, 0.0, 0);
+            poll_fn(|context| responses.poll_ready(context)).await?;
+            responses.start_send(ParsedResponse {
+                perf_ns: 0,
+                data: Some(ResponseData::Text { text: "x".into() }),
+                usage: None,
+                sources: None,
+            })?;
+            std::future::pending::<()>().await;
+            unreachable!("stalled fixture resumed without cancellation")
+        }
+    }
+
+    #[derive(Default)]
+    struct CollectedDeltas(RefCell<Vec<HostExecutionDelta>>);
+
+    #[async_trait(?Send)]
+    impl HostExecutionEventSink for CollectedDeltas {
+        async fn publish(&self, delta: HostExecutionDelta) -> Result<()> {
+            self.0.borrow_mut().push(delta);
+            Ok(())
+        }
+    }
+
+    struct FailingEventSink;
+
+    #[async_trait(?Send)]
+    impl HostExecutionEventSink for FailingEventSink {
+        async fn publish(&self, _delta: HostExecutionDelta) -> Result<()> {
+            Err(anyhow!("fixture event consumer failed"))
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn evaluator_stream_backpressures_bursts_without_dropping_frames() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let clock = Rc::new(SimClock::new());
+                let runtime = ScheduledRuntime::new(
+                    clock,
+                    0,
+                    Rc::new(BurstStreamingDispatcher),
+                    aiperf_timing::StopConfig::default(),
+                    false,
+                );
+                let executor =
+                    ScheduledInferenceHostExecutor::new(runtime, Rc::new(materializer()));
+                let events = CollectedDeltas::default();
+                let terminal = executor
+                    .execute(
+                        &operation(
+                            "primary",
+                            "model.generate",
+                            json!({
+                                "messages":[{"role":"user","content":"hello"}],
+                                "generation":{"max_tokens":300}
+                            }),
+                        ),
+                        &events,
+                        OperationCancellation::default(),
+                    )
+                    .await
+                    .unwrap();
+
+                let deltas = events.0.borrow();
+                assert_eq!(deltas.len(), 300);
+                assert!(deltas.iter().enumerate().all(|(ordinal, delta)| {
+                    delta.ordinal == ordinal && delta.payload["delta"]["content"] == "x"
+                }));
+                assert_eq!(terminal.class, HostTerminalClass::Completed);
+                assert_eq!(terminal.usage.completion_tokens, Some(300));
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn event_publication_failure_cancels_a_stalled_model_stream() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dropped = Rc::new(Cell::new(false));
+                let clock = Rc::new(SimClock::new());
+                let runtime = ScheduledRuntime::new(
+                    clock,
+                    0,
+                    Rc::new(StalledStreamingDispatcher {
+                        dropped: dropped.clone(),
+                    }),
+                    aiperf_timing::StopConfig::default(),
+                    false,
+                );
+                let executor =
+                    ScheduledInferenceHostExecutor::new(runtime, Rc::new(materializer()));
+                let cancellation = OperationCancellation::default();
+                let result = executor
+                    .execute(
+                        &operation(
+                            "primary",
+                            "model.generate",
+                            json!({
+                                "messages":[{"role":"user","content":"hello"}],
+                                "generation":{"max_tokens":4}
+                            }),
+                        ),
+                        &FailingEventSink,
+                        cancellation.clone(),
+                    )
+                    .await;
+
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("fixture event consumer failed")
+                );
+                assert!(cancellation.is_cancelled());
+                for _ in 0..100 {
+                    if dropped.get() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert!(
+                    dropped.get(),
+                    "event publication failure left the model dispatch future live"
+                );
+            })
+            .await;
     }
 
     #[test]

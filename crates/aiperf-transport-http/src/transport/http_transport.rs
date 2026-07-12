@@ -13,7 +13,7 @@ use aiperf_clock::Clock;
 
 use crate::client::cancellation::{CancelOutcome, race_cancel_after_send};
 use crate::client::connection::{SendCompletion, with_timeout};
-use crate::client::http_client::HttpClient;
+use crate::client::http_client::{HttpClient, SseMessageFilter, SynchronousSseMessageFilter};
 use crate::client::pool::{ConnectionManager, ConnectionPool};
 use crate::config::ClientConfig;
 use crate::models::{
@@ -117,7 +117,8 @@ impl HttpTransport {
                 return r;
             }
         };
-        self.send_body(cfg, Method::POST, body, streaming, first_token_filter)
+        let mut first_token_filter = SynchronousSseMessageFilter::new(first_token_filter);
+        self.send_body(cfg, Method::POST, body, streaming, &mut first_token_filter)
             .await
     }
 
@@ -156,6 +157,19 @@ impl HttpTransport {
         streaming: bool,
         first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
     ) -> RequestRecord {
+        let mut first_token_filter = SynchronousSseMessageFilter::new(first_token_filter);
+        self.send_body(cfg, Method::POST, body, streaming, &mut first_token_filter)
+            .await
+    }
+
+    /// Send serialized JSON while awaiting a backpressured SSE response filter.
+    pub async fn send_request_bytes_with_sse_filter(
+        &self,
+        cfg: &RequestConfig,
+        body: Bytes,
+        streaming: bool,
+        first_token_filter: &mut impl SseMessageFilter,
+    ) -> RequestRecord {
         self.send_body(cfg, Method::POST, body, streaming, first_token_filter)
             .await
     }
@@ -164,8 +178,16 @@ impl HttpTransport {
     /// and connection pool. This is intended for control-plane inputs such as
     /// public benchmark datasets; inference dispatch remains [`send_request`](Self::send_request).
     pub async fn get(&self, cfg: &RequestConfig) -> RequestRecord {
-        self.send_body(cfg, Method::GET, Bytes::new(), false, |_, _| true)
-            .await
+        let mut first_token_filter =
+            SynchronousSseMessageFilter::new(|_: i64, _: &SseMessage| true);
+        self.send_body(
+            cfg,
+            Method::GET,
+            Bytes::new(),
+            false,
+            &mut first_token_filter,
+        )
+        .await
     }
 
     async fn send_body(
@@ -174,7 +196,7 @@ impl HttpTransport {
         method: Method,
         body: Bytes,
         streaming: bool,
-        mut first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
+        first_token_filter: &mut impl SseMessageFilter,
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
         let headers = build_headers(
@@ -261,7 +283,7 @@ impl HttpTransport {
                     streaming,
                     &mut trace,
                     &mut record,
-                    &mut first_token_filter,
+                    first_token_filter,
                     body_len,
                     completion_for_dispatch,
                     dispatch_timeout_ns,

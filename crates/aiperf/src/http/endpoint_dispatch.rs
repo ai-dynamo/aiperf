@@ -10,6 +10,7 @@
 //! scheduled result shape.
 
 use std::cell::Cell;
+use std::task::{Context, Poll};
 
 use anyhow::{Result, ensure};
 use bytes::Bytes;
@@ -21,9 +22,10 @@ use aiperf_endpoints::{
     UsageView,
 };
 use aiperf_metrics::HttpTrace;
-use aiperf_transport_http::models::{ErrorKind, RequestRecord};
+use aiperf_transport_http::models::{ErrorDetails, ErrorKind, RequestRecord};
 use aiperf_transport_http::transport::endpoint_binding::{
-    HttpEndpointBinding, HttpEndpointRequest, MetadataHttpEndpointBinding, prepare_request,
+    HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
+    MetadataHttpEndpointBinding, prepare_request,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
@@ -44,6 +46,70 @@ trait RuntimeEndpointAdapter {
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
     fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>>;
     fn captures_assistant_turn(&self) -> bool;
+}
+
+struct EndpointResponseFilter<'a, A, F>
+where
+    A: RuntimeEndpointAdapter + ?Sized,
+{
+    endpoint: &'a A,
+    responses: Option<&'a dyn TurnResponseObserver>,
+    first_token_released: &'a Cell<bool>,
+    on_first_token: &'a mut F,
+}
+
+impl<A, F> HttpEndpointResponseFilter for EndpointResponseFilter<'_, A, F>
+where
+    A: RuntimeEndpointAdapter + ?Sized,
+    F: FnMut(i64),
+{
+    fn poll_ready(
+        &mut self,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), HttpEndpointBindingError>> {
+        match self.responses {
+            Some(responses) => responses.poll_ready(context).map(|result| {
+                result.map_err(|_| {
+                    HttpEndpointBindingError::from(ErrorDetails::other(
+                        "normalized response consumer closed before terminal",
+                    ))
+                })
+            }),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn start_send(
+        &mut self,
+        ttft_ns: i64,
+        response: &ServerResponse,
+    ) -> Result<bool, HttpEndpointBindingError> {
+        let parsed = parse_endpoint_response(self.endpoint, response)
+            .ok()
+            .flatten();
+        if let (Some(responses), Some(parsed)) = (self.responses, parsed.as_ref())
+            && parsed.data.is_some()
+        {
+            responses.start_send(parsed.clone()).map_err(|_| {
+                HttpEndpointBindingError::from(ErrorDetails::other(
+                    "normalized response consumer closed before terminal",
+                ))
+            })?;
+        }
+        let meaningful = parsed
+            .as_ref()
+            .and_then(|parsed| parsed.data.as_ref())
+            .is_some_and(|data| {
+                self.endpoint.descriptor().produces_tokens && !data.get_text().is_empty()
+            });
+        if !meaningful {
+            return Ok(false);
+        }
+        if !self.first_token_released.replace(true) {
+            (self.on_first_token)(ttft_ns);
+        }
+        Ok(true)
+    }
 }
 
 struct LegacyEndpointAdapter<'a> {
@@ -242,34 +308,44 @@ impl TransportSink {
         let request_url = prepared.request_config().url.clone();
 
         let first_token_released = Cell::new(false);
-        let mut first_response_filter = |ttft_ns, response: &ServerResponse| {
-            let parsed = parse_endpoint_response(endpoint, response).ok().flatten();
-            if let (Some(responses), Some(parsed)) = (responses, parsed.as_ref())
-                && parsed.data.is_some()
-            {
-                responses.on_response(parsed.clone());
-            }
-            if !parsed.and_then(|parsed| parsed.data).is_some_and(|data| {
-                endpoint.descriptor().produces_tokens && !data.get_text().is_empty()
-            }) {
-                return false;
-            }
-            if !first_token_released.replace(true) {
-                on_first_token(ttft_ns);
-            }
-            // HttpClient stops invoking this filter after it returns true. A
-            // response observer needs every normalized SSE frame, while the
-            // ordinary timing path should retain the one-shot parse fast path.
-            responses.is_none()
+        let record = if responses.is_some() {
+            let mut first_response_filter = EndpointResponseFilter {
+                endpoint,
+                responses,
+                first_token_released: &first_token_released,
+                on_first_token: &mut on_first_token,
+            };
+            prepared
+                .dispatch_backpressured(
+                    &self.transport,
+                    self.clock.clone(),
+                    binding,
+                    &mut first_response_filter,
+                )
+                .await
+        } else {
+            let mut first_response_filter = |ttft_ns, response: &ServerResponse| {
+                let meaningful = parse_endpoint_response(endpoint, response)
+                    .ok()
+                    .flatten()
+                    .and_then(|parsed| parsed.data)
+                    .is_some_and(|data| {
+                        endpoint.descriptor().produces_tokens && !data.get_text().is_empty()
+                    });
+                if meaningful && !first_token_released.replace(true) {
+                    on_first_token(ttft_ns);
+                }
+                meaningful
+            };
+            prepared
+                .dispatch(
+                    &self.transport,
+                    self.clock.clone(),
+                    binding,
+                    &mut first_response_filter,
+                )
+                .await
         };
-        let record = prepared
-            .dispatch(
-                &self.transport,
-                self.clock.clone(),
-                binding,
-                &mut first_response_filter,
-            )
-            .await;
 
         let mut parsed_any = false;
         let mut parsed_content = false;

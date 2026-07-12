@@ -11,8 +11,11 @@
 //! command ran.
 
 use std::cell::{Cell, RefCell};
+use std::future::poll_fn;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context as TaskContext, Poll};
 use std::thread::JoinHandle;
 
 use aiperf::http::{
@@ -30,8 +33,9 @@ use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinSet;
+use tokio_util::sync::PollSender;
 use uuid::Uuid;
 
 const WORKER_QUEUE_CAPACITY: usize = 256;
@@ -228,6 +232,64 @@ struct WorkerCommand {
     first_token: oneshot::Sender<i64>,
     responses: Option<mpsc::Sender<ParsedResponse>>,
     completed: oneshot::Sender<WorkerReply>,
+    cancellation: PlacementCancellation,
+}
+
+#[derive(Clone)]
+struct PlacementCancellation {
+    cancelled: Arc<AtomicBool>,
+    notify: Arc<Notify>,
+}
+
+impl PlacementCancellation {
+    fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    fn cancel(&self) {
+        if !self.cancelled.swap(true, Ordering::AcqRel) {
+            self.notify.notify_waiters();
+        }
+    }
+
+    async fn cancelled(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+struct PlacementCancellationGuard {
+    cancellation: PlacementCancellation,
+    armed: bool,
+}
+
+impl PlacementCancellationGuard {
+    fn new(cancellation: PlacementCancellation) -> Self {
+        Self {
+            cancellation,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PlacementCancellationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancellation.cancel();
+        }
+    }
 }
 
 /// Local thread-per-core placement behind the single dispatcher.
@@ -400,12 +462,15 @@ impl ThreadPerCoreHttpExecutionBackend {
         let (first_token_tx, mut first_token_rx) = oneshot::channel();
         let (response_tx, mut response_rx) = mpsc::channel(WORKER_RESPONSE_CAPACITY);
         let (completed_tx, mut completed_rx) = oneshot::channel();
+        let cancellation = PlacementCancellation::new();
+        let mut cancellation_guard = PlacementCancellationGuard::new(cancellation.clone());
         sender
             .send(WorkerCommand {
                 turn,
                 first_token: first_token_tx,
                 responses: responses.map(|_| response_tx),
                 completed: completed_tx,
+                cancellation,
             })
             .await
             .map_err(|_| anyhow!("HTTP execution worker stopped before accepting a command"))?;
@@ -423,9 +488,12 @@ impl ThreadPerCoreHttpExecutionBackend {
                 }
                 response = response_rx.recv(), if !response_channel_done => {
                     match response {
-                        Some(response) => responses
-                            .expect("response channel exists only for streaming dispatch")
-                            .on_response(response),
+                        Some(response) => {
+                            let responses = responses
+                                .expect("response channel exists only for streaming dispatch");
+                            poll_fn(|context| responses.poll_ready(context)).await?;
+                            responses.start_send(response)?;
+                        }
                         None => response_channel_done = true,
                     }
                 }
@@ -441,12 +509,14 @@ impl ThreadPerCoreHttpExecutionBackend {
         }
         if let Some(responses) = responses {
             while let Ok(response) = response_rx.try_recv() {
-                responses.on_response(response);
+                poll_fn(|context| responses.poll_ready(context)).await?;
+                responses.start_send(response)?;
             }
         }
         for event in reply.events {
             event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
         }
+        cancellation_guard.disarm();
         reply.result
     }
 }
@@ -543,76 +613,80 @@ async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<Transp
 }
 
 struct WorkerResponseObserver {
-    sender: mpsc::Sender<ParsedResponse>,
-    failure: RefCell<Option<String>>,
+    sender: RefCell<PollSender<ParsedResponse>>,
 }
 
 impl WorkerResponseObserver {
     fn new(sender: mpsc::Sender<ParsedResponse>) -> Self {
         Self {
-            sender,
-            failure: RefCell::new(None),
+            sender: RefCell::new(PollSender::new(sender)),
         }
-    }
-
-    fn take_failure(&self) -> Option<String> {
-        self.failure.borrow_mut().take()
     }
 }
 
 impl TurnResponseObserver for WorkerResponseObserver {
-    fn on_response(&self, response: ParsedResponse) {
-        if let Err(error) = self.sender.try_send(response) {
-            self.failure
-                .borrow_mut()
-                .get_or_insert_with(|| match error {
-                    mpsc::error::TrySendError::Full(_) => {
-                        "HTTP execution response stream exceeded its bounded placement channel"
-                            .to_string()
-                    }
-                    mpsc::error::TrySendError::Closed(_) => {
-                        "HTTP execution response stream receiver closed before terminal".to_string()
-                    }
-                });
-        }
+    fn poll_ready(&self, context: &mut TaskContext<'_>) -> Poll<Result<()>> {
+        self.sender
+            .borrow_mut()
+            .poll_reserve(context)
+            .map(|result| {
+                result.map_err(|_| {
+                    anyhow!("HTTP execution response stream receiver closed before terminal")
+                })
+            })
+    }
+
+    fn start_send(&self, response: ParsedResponse) -> Result<()> {
+        self.sender
+            .borrow_mut()
+            .send_item(response)
+            .map_err(|_| anyhow!("HTTP execution response stream receiver closed before terminal"))
     }
 }
 
 async fn execute_worker_command(sink: Rc<TransportSink>, command: WorkerCommand) {
+    let WorkerCommand {
+        turn,
+        first_token,
+        responses,
+        completed,
+        cancellation,
+    } = command;
     let observer = Rc::new(BufferedObserver::default());
-    let first_token = RefCell::new(Some(command.first_token));
+    let first_token = RefCell::new(Some(first_token));
     let on_first_token = |ttft_ns| {
         if let Some(sender) = first_token.borrow_mut().take() {
             let _ = sender.send(ttft_ns);
         }
     };
-    let response_observer = command.responses.map(WorkerResponseObserver::new);
-    let mut result = match response_observer.as_ref() {
-        Some(responses) => {
-            sink.dispatch_prepared_turn_collect_record_streaming(
-                command.turn,
-                observer.as_ref(),
-                &on_first_token,
-                responses,
-            )
-            .await
-        }
-        None => {
-            sink.dispatch_prepared_turn_collect_record(
-                command.turn,
-                observer.as_ref(),
-                &on_first_token,
-            )
-            .await
+    let response_observer = responses.map(WorkerResponseObserver::new);
+    let dispatch = async {
+        match response_observer.as_ref() {
+            Some(responses) => {
+                sink.dispatch_prepared_turn_collect_record_streaming(
+                    turn,
+                    observer.as_ref(),
+                    &on_first_token,
+                    responses,
+                )
+                .await
+            }
+            None => {
+                sink.dispatch_prepared_turn_collect_record(turn, observer.as_ref(), &on_first_token)
+                    .await
+            }
         }
     };
-    if let Some(failure) = response_observer.and_then(|responses| responses.take_failure())
-        && result.is_ok()
-    {
-        result = Err(anyhow!(failure));
-    }
+    tokio::pin!(dispatch);
+    let result = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => {
+            Err(anyhow!("HTTP execution command cancelled by its coordinator"))
+        }
+        result = &mut dispatch => result,
+    };
     drop(first_token.borrow_mut().take());
-    let _ = command.completed.send(WorkerReply {
+    let _ = completed.send(WorkerReply {
         result,
         events: observer.take(),
     });
@@ -641,6 +715,7 @@ fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use aiperf::http::{HttpRequest, PreparedHttpEndpoint};
@@ -712,48 +787,26 @@ mod tests {
     }
 
     struct ResponseCollector {
-        responses: RefCell<Vec<ParsedResponse>>,
-        server_sent_terminal: Arc<AtomicBool>,
-        saw_frame_before_terminal: Cell<bool>,
+        sender: RefCell<PollSender<ParsedResponse>>,
     }
 
     impl TurnResponseObserver for ResponseCollector {
-        fn on_response(&self, response: ParsedResponse) {
-            if !self.server_sent_terminal.load(Ordering::SeqCst) {
-                self.saw_frame_before_terminal.set(true);
-            }
-            self.responses.borrow_mut().push(response);
+        fn poll_ready(&self, context: &mut TaskContext<'_>) -> Poll<Result<()>> {
+            self.sender
+                .borrow_mut()
+                .poll_reserve(context)
+                .map(|result| result.map_err(|_| anyhow!("fixture response consumer closed")))
+        }
+
+        fn start_send(&self, response: ParsedResponse) -> Result<()> {
+            self.sender
+                .borrow_mut()
+                .send_item(response)
+                .map_err(|_| anyhow!("fixture response consumer closed"))
         }
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn thread_per_core_placement_forwards_live_normalized_sse_frames() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server_sent_terminal = Arc::new(AtomicBool::new(false));
-        let server_terminal = server_sent_terminal.clone();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = vec![0_u8; 16 * 1024];
-            let _ = socket.read(&mut request).await.unwrap();
-            let first = "data: {\"id\":\"response\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel\"}}]}\n\n";
-            let terminal = concat!(
-                "data: {\"id\":\"response\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n",
-                "data: {\"id\":\"response\",\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}\n\n",
-                "data: [DONE]\n\n"
-            );
-            let headers = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                first.len() + terminal.len(),
-            );
-            socket.write_all(headers.as_bytes()).await.unwrap();
-            socket.write_all(first.as_bytes()).await.unwrap();
-            socket.flush().await.unwrap();
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            server_terminal.store(true, Ordering::SeqCst);
-            socket.write_all(terminal.as_bytes()).await.unwrap();
-        });
-
+    fn streaming_backend(address: std::net::SocketAddr) -> Rc<dyn HttpTurnExecutionBackend> {
         let anchor = RealClockAnchor::now();
         let clock: Rc<dyn Clock> = RealClock::from_anchor(anchor);
         let url = format!("http://{address}");
@@ -773,8 +826,11 @@ mod tests {
             })
             .unwrap();
         backend.set_run_origin(clock.now_ns()).unwrap();
-        assert!(backend.supports_response_streaming());
-        let turn = PreparedHttpTurn {
+        backend
+    }
+
+    fn streaming_turn() -> PreparedHttpTurn {
+        PreparedHttpTurn {
             request: HttpRequest {
                 uuid: Uuid::new_v4(),
                 input_length: 1,
@@ -803,12 +859,90 @@ mod tests {
                 endpoint_id: EndpointId::new("chat").unwrap(),
             }),
             endpoint_aware: true,
-        };
+        }
+    }
+
+    struct FirstResponseObserver {
+        observed: Arc<Notify>,
+    }
+
+    impl TurnResponseObserver for FirstResponseObserver {
+        fn poll_ready(&self, _context: &mut TaskContext<'_>) -> Poll<Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn start_send(&self, _response: ParsedResponse) -> Result<()> {
+            self.observed.notify_one();
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn thread_per_core_placement_forwards_live_normalized_sse_frames() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_sent_terminal = Arc::new(AtomicBool::new(false));
+        let server_terminal = server_sent_terminal.clone();
+        let first_observed = Arc::new(Notify::new());
+        let server_first_observed = first_observed.clone();
+        let release_burst = Arc::new(Notify::new());
+        let server_release_burst = release_burst.clone();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 16 * 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            let first = "data: {\"id\":\"response\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel\"}}]}\n\n";
+            let mut terminal = String::new();
+            for index in 0..300 {
+                let finish_reason = if index == 299 { "\"stop\"" } else { "null" };
+                terminal.push_str(&format!(
+                    "data: {{\"id\":\"response\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"x\"}},\"finish_reason\":{finish_reason}}}]}}\n\n"
+                ));
+            }
+            terminal.push_str(
+                "data: {\"id\":\"response\",\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":300}}\n\ndata: [DONE]\n\n",
+            );
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                first.len() + terminal.len(),
+            );
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            socket.write_all(first.as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            server_first_observed.notified().await;
+            server_terminal.store(true, Ordering::SeqCst);
+            socket.write_all(terminal.as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+            server_release_burst.notify_one();
+        });
+
+        let backend = streaming_backend(address);
+        assert!(backend.supports_response_streaming());
+        let turn = streaming_turn();
+        let (response_tx, mut response_rx) = mpsc::channel(1);
         let responses = ResponseCollector {
-            responses: RefCell::new(Vec::new()),
-            server_sent_terminal,
-            saw_frame_before_terminal: Cell::new(false),
+            sender: RefCell::new(PollSender::new(response_tx)),
         };
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let collected_for_task = collected.clone();
+        let saw_frame_before_terminal = Arc::new(AtomicBool::new(false));
+        let saw_frame_for_task = saw_frame_before_terminal.clone();
+        let consumer = tokio::spawn(async move {
+            let mut count = 0_usize;
+            while let Some(response) = response_rx.recv().await {
+                count += 1;
+                if count == 1 {
+                    saw_frame_for_task.store(
+                        !server_sent_terminal.load(Ordering::SeqCst),
+                        Ordering::SeqCst,
+                    );
+                    first_observed.notify_one();
+                } else if count == 2 {
+                    release_burst.notified().await;
+                }
+                collected_for_task.lock().unwrap().push(response);
+            }
+        });
         let observer = BufferedObserver::default();
         let first_tokens = Cell::new(0_usize);
         let result = backend
@@ -820,14 +954,93 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.outcome.response_text, "hello");
+        drop(responses);
+        consumer.await.unwrap();
+        assert_eq!(
+            result.outcome.response_text,
+            format!("hel{}", "x".repeat(300))
+        );
         assert_eq!(first_tokens.get(), 1);
-        assert!(!responses.responses.borrow().is_empty());
+        assert_eq!(collected.lock().unwrap().len(), 301);
         assert!(
-            responses.saw_frame_before_terminal.get(),
+            saw_frame_before_terminal.load(Ordering::SeqCst),
             "cross-thread placement buffered SSE until terminal"
         );
         backend.shutdown().unwrap();
         server.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dropping_placement_dispatch_cancels_the_worker_transport() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let force_close = Arc::new(Notify::new());
+        let server_force_close = force_close.clone();
+        let (closed_tx, mut closed_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 16 * 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\ndata: {\"id\":\"response\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\n",
+                )
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+            let mut probe = [0_u8; 1024];
+            let closed = loop {
+                tokio::select! {
+                    read = socket.read(&mut probe) => {
+                        match read {
+                            Ok(0) | Err(_) => break true,
+                            Ok(_) => continue,
+                        }
+                    }
+                    () = server_force_close.notified() => break false,
+                }
+            };
+            let _ = closed_tx.send(closed);
+        });
+
+        let backend = streaming_backend(address);
+        let first_response = Arc::new(Notify::new());
+        let responses = FirstResponseObserver {
+            observed: first_response.clone(),
+        };
+        let observer = BufferedObserver::default();
+        {
+            let dispatch =
+                backend.execute_turn_streaming(streaming_turn(), &observer, &|_| {}, &responses);
+            tokio::pin!(dispatch);
+            tokio::select! {
+                biased;
+                result = &mut dispatch => panic!("infinite SSE dispatch terminated before cancellation: {result:?}"),
+                () = first_response.notified() => {}
+            }
+        }
+
+        let mut worker_closed_socket = None;
+        for _ in 0..10_000 {
+            match closed_rx.try_recv() {
+                Ok(closed) => {
+                    worker_closed_socket = Some(closed);
+                    break;
+                }
+                Err(oneshot::error::TryRecvError::Empty) => tokio::task::yield_now().await,
+                Err(oneshot::error::TryRecvError::Closed) => break,
+            }
+        }
+        if worker_closed_socket.is_none() {
+            force_close.notify_one();
+            worker_closed_socket = closed_rx.await.ok();
+        }
+        backend.shutdown().unwrap();
+        server.await.unwrap();
+        assert_eq!(
+            worker_closed_socket,
+            Some(true),
+            "dropping coordinator dispatch did not cancel the worker HTTP request"
+        );
     }
 }

@@ -19,6 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use aiperf_clock::Clock;
 use aiperf_core::observer::CollectorObserver;
@@ -71,14 +72,18 @@ pub trait DispatchCancellation {
     fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + '_>>;
 }
 
-/// Synchronous endpoint-normalized response-frame consumer.
+/// Backpressured endpoint-normalized response-frame consumer.
 ///
 /// HTTP invokes this callback on the local reactor as each decoded SSE event
-/// arrives. Implementations must perform only bounded non-blocking work, such
-/// as `try_send` into a Rust-owned channel. Raw SSE bytes never cross this seam.
+/// arrives. The poll/send split reserves bounded downstream capacity without
+/// blocking a current-thread reactor or allocating a future per frame. Raw SSE
+/// bytes never cross this seam.
 pub trait TurnResponseObserver {
-    /// Observe one endpoint-parsed response frame in arrival order.
-    fn on_response(&self, response: ParsedResponse);
+    /// Reserve capacity for the next endpoint-parsed frame.
+    fn poll_ready(&self, context: &mut Context<'_>) -> Poll<Result<()>>;
+
+    /// Send one frame after [`Self::poll_ready`] returned ready.
+    fn start_send(&self, response: ParsedResponse) -> Result<()>;
 }
 
 /// Optional external admission gate layered above ordinary stop conditions.

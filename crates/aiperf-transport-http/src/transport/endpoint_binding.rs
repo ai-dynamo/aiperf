@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use aiperf_clock::Clock;
 use aiperf_endpoints::{
@@ -21,6 +22,7 @@ use aiperf_endpoints::{
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::client::http_client::SseMessageFilter;
 use crate::models::{
     ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, Response, SseMessage,
 };
@@ -108,6 +110,44 @@ pub struct PreparedHttpEndpointRequest {
     polling: Option<PollingOptions>,
 }
 
+/// Backpressured consumer for one endpoint-decoded HTTP/SSE response frame.
+pub trait HttpEndpointResponseFilter {
+    /// Reserve downstream capacity for the next decoded frame.
+    fn poll_ready(
+        &mut self,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), HttpEndpointBindingError>>;
+
+    /// Observe one ready frame and report whether first-token search is done.
+    fn start_send(
+        &mut self,
+        ttft_ns: i64,
+        response: &ServerResponse,
+    ) -> Result<bool, HttpEndpointBindingError>;
+}
+
+struct BindingSseMessageFilter<'a> {
+    binding: &'a dyn HttpEndpointBinding,
+    responses: &'a mut dyn HttpEndpointResponseFilter,
+}
+
+impl SseMessageFilter for BindingSseMessageFilter<'_> {
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>> {
+        self.responses
+            .poll_ready(context)
+            .map(|result| result.map_err(|error| ErrorDetails::other(error.to_string())))
+    }
+
+    fn start_send(&mut self, ttft_ns: i64, message: &SseMessage) -> Result<bool, ErrorDetails> {
+        let Some(response) = self.binding.decode_sse_response(message) else {
+            return Ok(false);
+        };
+        self.responses
+            .start_send(ttft_ns, &response)
+            .map_err(|error| ErrorDetails::other(error.to_string()))
+    }
+}
+
 impl PreparedHttpEndpointRequest {
     /// Return the endpoint's canonical JSON bytes before HTTP-specific lowering.
     pub fn canonical_body(&self) -> &Bytes {
@@ -152,6 +192,41 @@ impl PreparedHttpEndpointRequest {
                         .as_ref()
                         .is_some_and(|response| first_response_filter(ttft_ns, response))
                 },
+            )
+            .await
+    }
+
+    /// Dispatch while awaiting bounded capacity for every decoded response.
+    pub async fn dispatch_backpressured(
+        &self,
+        transport: &HttpTransport,
+        clock: Rc<dyn Clock>,
+        binding: &dyn HttpEndpointBinding,
+        first_response_filter: &mut dyn HttpEndpointResponseFilter,
+    ) -> RequestRecord {
+        if let Some(options) = self.polling {
+            return submit_and_poll(
+                transport,
+                clock,
+                &self.request_config,
+                self.wire_body.clone(),
+                options,
+                &JsonVideoPollingProtocol,
+            )
+            .await
+            .record;
+        }
+
+        let mut filter = BindingSseMessageFilter {
+            binding,
+            responses: first_response_filter,
+        };
+        transport
+            .send_request_bytes_with_sse_filter(
+                &self.request_config,
+                self.wire_body.clone(),
+                self.streaming,
+                &mut filter,
             )
             .await
     }
