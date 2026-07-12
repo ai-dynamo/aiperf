@@ -14,6 +14,7 @@ pub mod descriptor;
 pub mod digest;
 pub mod evidence;
 pub mod identity;
+pub mod index;
 pub mod time;
 pub mod wal;
 
@@ -28,6 +29,11 @@ pub use identity::{
     ArchiveId, BatchId, ExactLossBatchInput, FrameId, FrameIdentityError, FrameIdentityV1,
     LifecycleBatchInput, ProjectionReservationId, ReservationKind, SaturationBatchInput, SessionId,
     SourceOutcome, TerminalKind,
+};
+pub use index::{
+    CompositeIndexKeyV1, IndexEntry, IndexError, IndexKey, IndexMutationSetV1, IndexObjectKind,
+    IndexPageSink, IndexPageSource, IndexRemoval, IndexRootV1, IndexSnapshot, MemoryIndexPageStore,
+    MutationMode,
 };
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
 pub use wal::{

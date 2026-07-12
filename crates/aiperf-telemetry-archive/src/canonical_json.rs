@@ -38,6 +38,15 @@ impl CanonicalJsonValue {
         Ok(value)
     }
 
+    /// Parses bytes that must already be in the exact canonical representation.
+    pub fn parse_canonical(bytes: &[u8]) -> Result<Self, CanonicalJsonError> {
+        let value = Self::parse(bytes)?;
+        if value.to_bytes() != bytes {
+            return Err(CanonicalJsonError::NonCanonical);
+        }
+        Ok(value)
+    }
+
     /// Builds an object and rejects duplicate authored keys before sorting them.
     pub fn object<I>(entries: I) -> Result<Self, CanonicalJsonError>
     where
@@ -207,6 +216,8 @@ pub enum CanonicalJsonError {
     Decode(String),
     /// An object builder received the same key more than once.
     DuplicateKey(String),
+    /// The input decodes but contains non-canonical ordering, escapes, or integer spelling.
+    NonCanonical,
 }
 
 impl Display for CanonicalJsonError {
@@ -216,6 +227,7 @@ impl Display for CanonicalJsonError {
             Self::DuplicateKey(key) => {
                 write!(formatter, "duplicate canonical JSON object key {key:?}")
             }
+            Self::NonCanonical => formatter.write_str("JSON bytes are not canonical"),
         }
     }
 }
@@ -280,5 +292,9 @@ mod tests {
         let value = CanonicalJsonValue::parse(b"[-1,0,1]").unwrap();
         assert_eq!(value.to_bytes(), b"[-1,0,1]");
         assert!(CanonicalJsonValue::parse(b"-0").is_err());
+        assert!(matches!(
+            CanonicalJsonValue::parse_canonical(br#"{"b":1,"a":2}"#),
+            Err(CanonicalJsonError::NonCanonical)
+        ));
     }
 }
