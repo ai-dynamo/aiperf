@@ -495,6 +495,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_implicit_workload_phase_stops(self) -> Self:
+        """Require generic stops only when Python selected the workload.
+
+        An explicit workload is an open runner-factory selection. Its factory
+        owns whether phases stop by requests, time, sessions, a dataset, or a
+        harness lifecycle; requiring one of the generic fields here would force
+        extension workloads to author a second, inert scheduling contract.
+        """
+        if self.workload is not None:
+            return self
+        for phase in self.phases:
+            if (
+                phase._stop_condition_required
+                and phase.requests is None
+                and phase.duration is None
+                and phase.sessions is None
+            ):
+                raise ValueError(
+                    f"Phase '{phase.name}': at least one of "
+                    "'requests', 'duration', or 'sessions' must be specified"
+                )
+        return self
+
+    @model_validator(mode="after")
     def validate_seamless_not_on_first_phase(self) -> Self:
         """Ensure seamless is not enabled on the first phase config."""
         if self.phases and self.phases[0].seamless:

@@ -107,7 +107,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     ]
 
     # -------------------------------------------------------------------------
-    # Stop Conditions (at least one required unless _stop_condition_required=False)
+    # Stop Conditions (the owning workload decides whether one is required)
     # -------------------------------------------------------------------------
 
     requests: Annotated[
@@ -220,11 +220,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
-    # stop condition is inferred from the dataset). Otherwise CLI users
-    # get autodefaults applied in the CLI->YAML converter (see
-    # ``aiperf.config.flags._converter_profiling``); YAML users must be
-    # explicit.
+    # BenchmarkConfig uses this classification for its implicit scheduled or
+    # graph workload. Explicit open workloads delegate the decision to their
+    # registered runner factory because Python cannot interpret their phase
+    # semantics. Subclasses set False when the built-in phase itself owns a
+    # stop (for example FixedSchedulePhase infers it from the dataset).
     _stop_condition_required: ClassVar[bool] = True
 
     # =========================================================================
@@ -247,16 +247,6 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
                 )
             if self.exclude_from_results != required:
                 self.exclude_from_results = required
-        if (
-            self._stop_condition_required
-            and self.requests is None
-            and self.duration is None
-            and self.sessions is None
-        ):
-            raise ValueError(
-                f"Phase '{self.name}': at least one of "
-                "'requests', 'duration', or 'sessions' must be specified"
-            )
         if (
             self.prefill_concurrency is not None
             and self.concurrency is not None
