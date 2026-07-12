@@ -19,9 +19,9 @@
       ],
       "operation_schemas": {
         "model.generate": {
-          "request_sha256": "c2f30f5396f4af6e44025d80294b2685916492c23dd730cd1e2a6ebdb6ae5d21",
-          "response_sha256": "6c8d726e5a0c05a22de946ce2495d6a4bcf3b3b7bb7a48e5c39bad07ff954ca0",
-          "stream_sha256": "84a861ea0a983368cd48e6db2fa4ac71b8219d7685065718859f0bfc4ea49206"
+          "request_sha256": "0d89f49e356ebae5f637768b43dc0e957f25b1e5ee5a9148df3ddbb2e932c96d",
+          "response_sha256": "1c2284478c7e01acaa3a88e611cd7d09f38f8374e08213582898d94ad56cf297",
+          "stream_sha256": "025ddc6243a449525a8d9db0cf3afc4d311265329b96ea73e9014da224100582"
         }
       },
       "assets": [
@@ -34,6 +34,71 @@
         }
       ],
       "selection_count": 5,
+      "public_projection": {
+        "metadata_schema_sha256": "635b6d8e9c8f374b5bf676da2ebb173c844d6c29b2322408fb7b4458246cf0c2",
+        "schema": "aiperf-public-evaluation-metadata-v1",
+        "case_rules": [
+          {
+            "provider_task": "gsm8k",
+            "provider_source": "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866",
+            "public_task": "gsm8k",
+            "public_source": "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866"
+          }
+        ],
+        "numeric_metric_rules": [
+          {"provider_name": "reward", "public_name": "reward"}
+        ],
+        "safe_config_fields": [
+          "environment",
+          "environment_config",
+          "selection.limit",
+          "selection.seed",
+          "solver",
+          "solver_config.frequency_penalty",
+          "solver_config.max_tokens",
+          "solver_config.presence_penalty",
+          "solver_config.seed",
+          "solver_config.stop",
+          "solver_config.temperature",
+          "solver_config.top_p"
+        ],
+        "score_schemas": [
+          {
+            "score_name": "reward",
+            "primary": true,
+            "projection_id": "gsm8k_scalar_score_v1",
+            "schema_sha256": "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9",
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                }
+              },
+              "required": ["value"],
+              "type": "object"
+            }
+          }
+        ],
+        "aggregate_rules": [
+          {
+            "provider_scorer": "nemo_evaluator.gsm8k_scorer",
+            "provider_reducer": "mean",
+            "provider_metric": "reward",
+            "definition": {
+              "exclude_cancelled": true,
+              "exclude_infrastructure": true
+            },
+            "public_scorer": "accuracy",
+            "public_reducer": "mean",
+            "public_metric": "accuracy"
+          }
+        ],
+        "artifacts": []
+      },
       "executable": true
     }
   }

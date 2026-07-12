@@ -1,0 +1,276 @@
+diff --git a/engine/host.py b/engine/host.py
+new file mode 100644
+index 0000000..3a81e25
+--- /dev/null
++++ b/engine/host.py
+@@ -0,0 +1,96 @@
++"""Provider-neutral effect host used by NeMo Evaluator sessions."""
++
++from __future__ import annotations
++
++from contextlib import contextmanager
++from contextvars import ContextVar
++from dataclasses import dataclass
++from typing import Any, Iterator, Protocol, runtime_checkable
++
++from nemo_evaluator.schemas import RetryConfig
++
++
++@dataclass(frozen=True)
++class ModelOperation:
++    """One typed model operation requested by a solver-facing client."""
++
++    client_id: int
++    semantic_operation_id: str
++    service_id: str
++    purpose: str
++    base_url: str
++    api_key: str | None
++    timeout: float
++    max_concurrent: int
++    retry: RetryConfig
++    path: str
++    payload: dict[str, Any]
++
++
++@runtime_checkable
++class EvaluationHost(Protocol):
++    """Effect boundary supplied to one evaluation session."""
++
++    async def __aenter__(self) -> EvaluationHost:
++        """Start host-owned resources."""
++        ...
++
++    async def __aexit__(
++        self,
++        exc_type: type[BaseException] | None,
++        exc: BaseException | None,
++        traceback: object | None,
++    ) -> None:
++        """Quiesce all host-owned resources."""
++        ...
++
++    async def execute_model(self, operation: ModelOperation) -> dict[str, Any]:
++        """Execute one typed model operation to a terminal result."""
++        ...
++
++
++_CURRENT_HOST: ContextVar[EvaluationHost | None] = ContextVar(
++    "nemo_evaluator_host", default=None
++)
++
++
++def current_evaluation_host() -> EvaluationHost:
++    """Return the active host or fail before an external effect."""
++    host = _CURRENT_HOST.get()
++    if host is None:
++        raise RuntimeError("model operation has no active EvaluationHost")
++    return host
++
++
++@contextmanager
++def evaluation_host_scope(host: EvaluationHost) -> Iterator[None]:
++    """Activate one host for the current evaluation task tree."""
++    token = _CURRENT_HOST.set(host)
++    try:
++        yield
++    finally:
++        _CURRENT_HOST.reset(token)
++
++
++class RecordingEvaluationHost:
++    """Record every operation/purpose and delegate without changing semantics."""
++
++    def __init__(self, delegate: EvaluationHost) -> None:
++        self.delegate = delegate
++        self.operations: list[ModelOperation] = []
++
++    async def __aenter__(self) -> RecordingEvaluationHost:
++        await self.delegate.__aenter__()
++        return self
++
++    async def __aexit__(
++        self,
++        exc_type: type[BaseException] | None,
++        exc: BaseException | None,
++        traceback: object | None,
++    ) -> None:
++        await self.delegate.__aexit__(exc_type, exc, traceback)
++
++    async def execute_model(self, operation: ModelOperation) -> dict[str, Any]:
++        self.operations.append(operation)
++        return await self.delegate.execute_model(operation)
+diff --git a/engine/session.py b/engine/session.py
+new file mode 100644
+index 0000000..77e0b84
+--- /dev/null
++++ b/engine/session.py
+@@ -0,0 +1,16 @@
++"""Neutral session protocol for extracted evaluator execution."""
++
++from __future__ import annotations
++
++from typing import Any, Protocol, runtime_checkable
++
++from nemo_evaluator.engine.host import EvaluationHost
++
++
++@runtime_checkable
++class EvaluationSession(Protocol):
++    """A frozen provider session executable against an injected host."""
++
++    async def run(self, host: EvaluationHost) -> dict[str, Any]:
++        """Run provider semantics while delegating external effects to host."""
++        ...
+diff --git a/hosts/__init__.py b/hosts/__init__.py
+new file mode 100644
+index 0000000..b49e5c8
+--- /dev/null
++++ b/hosts/__init__.py
+@@ -0,0 +1 @@
++"""Concrete standalone and inherited-pipe evaluator hosts."""
+diff --git a/hosts/local/__init__.py b/hosts/local/__init__.py
+new file mode 100644
+index 0000000..3fb32f7
+--- /dev/null
++++ b/hosts/local/__init__.py
+@@ -0,0 +1,5 @@
++"""Standalone local host implementations."""
++
++from .inference import LocalEvaluationHost
++
++__all__ = ["LocalEvaluationHost"]
+diff --git a/hosts/local/inference.py b/hosts/local/inference.py
+new file mode 100644
+index 0000000..0183b29
+--- /dev/null
++++ b/hosts/local/inference.py
+@@ -0,0 +1,128 @@
++"""Standalone HTTP implementation of the neutral evaluator host."""
++
++from __future__ import annotations
++
++import asyncio
++import logging
++import random
++from dataclasses import dataclass
++from typing import Any
++
++import aiohttp
++
++from nemo_evaluator.engine.host import ModelOperation
++from nemo_evaluator.errors import InfraError
++
++logger = logging.getLogger(__name__)
++
++
++@dataclass
++class _ClientState:
++    semaphore: asyncio.Semaphore
++    session: aiohttp.ClientSession
++
++
++class LocalEvaluationHost:
++    """Preserve standalone endpoint, retry, and connection-pool behavior."""
++
++    def __init__(self) -> None:
++        self._clients: dict[int, _ClientState] = {}
++
++    async def __aenter__(self) -> LocalEvaluationHost:
++        return self
++
++    async def __aexit__(
++        self,
++        exc_type: type[BaseException] | None,
++        exc: BaseException | None,
++        traceback: object | None,
++    ) -> None:
++        del exc_type, exc, traceback
++        sessions = [state.session for state in self._clients.values()]
++        self._clients.clear()
++        for session in sessions:
++            if not session.closed:
++                await session.close()
++
++    def _state(self, operation: ModelOperation) -> _ClientState:
++        state = self._clients.get(operation.client_id)
++        if state is not None:
++            return state
++        headers = {"Content-Type": "application/json"}
++        if operation.api_key:
++            headers["Authorization"] = f"Bearer {operation.api_key}"
++        state = _ClientState(
++            semaphore=asyncio.Semaphore(operation.max_concurrent),
++            session=aiohttp.ClientSession(
++                timeout=aiohttp.ClientTimeout(total=operation.timeout),
++                connector=aiohttp.TCPConnector(
++                    limit=operation.max_concurrent * 2,
++                    limit_per_host=operation.max_concurrent,
++                ),
++                headers=headers,
++            ),
++        )
++        self._clients[operation.client_id] = state
++        return state
++
++    async def execute_model(self, operation: ModelOperation) -> dict[str, Any]:
++        """Execute the exact legacy JSON request under local ownership."""
++        state = self._state(operation)
++        retry = operation.retry
++        last_exc: Exception | None = None
++        url = f"{operation.base_url}{operation.path}"
++        for attempt in range(retry.max_retries + 1):
++            async with state.semaphore:
++                try:
++                    async with state.session.post(url, json=operation.payload) as response:
++                        if (
++                            response.status in retry.retry_on_status
++                            and attempt < retry.max_retries
++                        ):
++                            delay = self._backoff_delay(retry, attempt)
++                            body = await response.text()
++                            logger.warning(
++                                "Retryable status %d on attempt %d/%d, sleeping %.1fs | body: %.500s",
++                                response.status,
++                                attempt + 1,
++                                retry.max_retries + 1,
++                                delay,
++                                body,
++                            )
++                            await asyncio.sleep(delay)
++                            continue
++                        response.raise_for_status()
++                        value = await response.json()
++                        if not isinstance(value, dict):
++                            raise InfraError("Model response JSON root is not an object")
++                        return value
++                except asyncio.TimeoutError as error:
++                    last_exc = error
++                    if attempt < retry.max_retries:
++                        await asyncio.sleep(self._backoff_delay(retry, attempt))
++                        continue
++                    raise InfraError(
++                        f"Model request timed out after {retry.max_retries} retries"
++                    ) from error
++                except aiohttp.ClientResponseError as error:
++                    raise InfraError(
++                        f"Model returned HTTP {error.status} after retries: {error.message}"
++                    ) from error
++                except InfraError:
++                    raise
++                except Exception as error:
++                    last_exc = error
++                    if attempt < retry.max_retries:
++                        await asyncio.sleep(self._backoff_delay(retry, attempt))
++                        continue
++                    raise InfraError(
++                        f"Model endpoint unreachable after {retry.max_retries} retries: {error}"
++                    ) from error
++        raise last_exc or InfraError("All retries exhausted")
++
++    @staticmethod
++    def _backoff_delay(retry: Any, attempt: int) -> float:
++        delay = min(retry.base_delay * (2**attempt), retry.max_delay)
++        if retry.jitter:
++            delay *= 0.5 + random.random()
++        return delay

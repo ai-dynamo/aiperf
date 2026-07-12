@@ -8,8 +8,11 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import os
+import re
 import select
+import socket
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,8 @@ from aiperf.accuracy.evaluation.distributions import (
 )
 from aiperf.accuracy.evaluation.host import PipeEvaluationHost
 from aiperf.accuracy.evaluation.operation_schemas import (
+    MODEL_GENERATE_SCHEMA,
+    MODEL_RESPONSES_SCHEMA,
     OPERATION_DIRECTION_SCHEMA_SHA256,
     OPERATION_SCHEMA_SHA256,
 )
@@ -50,6 +55,90 @@ _ASSET_SHA256 = "fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398
 _ASSET_REVISION = (
     "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5"
 )
+_NEMO_PROVIDER_ROOT = Path(
+    os.environ.get(
+        "AIPERF_TEST_NEMO_PROVIDER_ROOT",
+        _ROOT / "tools/stock_evaluators/nemo/.venv",
+    )
+)
+_OPENBENCH_PROVIDER_ROOT = Path(
+    os.environ.get(
+        "AIPERF_TEST_OPENBENCH_PROVIDER_ROOT",
+        _ROOT / "tools/stock_evaluators/openbench/.venv",
+    )
+)
+
+
+class _OpenAiUdsFixture:
+    """One-request OpenAI terminal fixture for the pinned Inspect SDK path."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.request: dict[str, Any] | None = None
+        self.headers: dict[str, str] = {}
+        self.error: BaseException | None = None
+        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._listener.bind(str(path))
+        self._listener.listen(1)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def join(self) -> None:
+        self._thread.join(timeout=10)
+        assert not self._thread.is_alive(), "OpenAI UDS fixture did not terminate"
+        if self.error is not None:
+            raise self.error
+
+    def _serve(self) -> None:
+        try:
+            connection, _ = self._listener.accept()
+            with connection, connection.makefile("rb") as stream:
+                request_line = stream.readline().decode("ascii")
+                assert request_line.startswith("POST /v1/chat/completions HTTP/1.1")
+                while True:
+                    line = stream.readline()
+                    if line == b"\r\n":
+                        break
+                    name, value = line.decode("ascii").split(":", 1)
+                    self.headers[name.lower()] = value.strip()
+                length = int(self.headers["content-length"])
+                self.request = canonical_loads(stream.read(length))
+                body = canonical_dumps(
+                    {
+                        "id": "chatcmpl-openbench-proof",
+                        "object": "chat.completion",
+                        "created": 0,
+                        "model": "candidate",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Reasoning complete. Answer: 18. The answer is 18",
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 7,
+                            "total_tokens": 17,
+                        },
+                    }
+                )
+                connection.sendall(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: application/json\r\n"
+                    + f"Content-Length: {len(body)}\r\n".encode("ascii")
+                    + b"Connection: close\r\n\r\n"
+                    + body
+                )
+        except BaseException as error:  # noqa: BLE001 - re-raised on the test thread.
+            self.error = error
+        finally:
+            self._listener.close()
 
 
 def test_canonical_json_rejects_duplicate_keys_and_normalizes_numbers() -> None:
@@ -105,12 +194,20 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         "2c1a1a970a9695dc8d741096f2fc1b92cd57c7823b6b6c53b20f37e78f4da57b"
     )
     assert OPERATION_SCHEMA_SHA256["model.generate"] == (
-        "d468bbc4f1fdbbc54360cede8194732b2ebaabbdfb55490bc572c4bb44f89cdf"
+        "5077609c909bb093f7e1db8617318fffc90947f6799aae9f8d7aced35107f416"
     )
     assert dict(OPERATION_DIRECTION_SCHEMA_SHA256["model.generate"]) == {
-        "request": "c2f30f5396f4af6e44025d80294b2685916492c23dd730cd1e2a6ebdb6ae5d21",
-        "response": "6c8d726e5a0c05a22de946ce2495d6a4bcf3b3b7bb7a48e5c39bad07ff954ca0",
-        "stream": "84a861ea0a983368cd48e6db2fa4ac71b8219d7685065718859f0bfc4ea49206",
+        "request": "0d89f49e356ebae5f637768b43dc0e957f25b1e5ee5a9148df3ddbb2e932c96d",
+        "response": "1c2284478c7e01acaa3a88e611cd7d09f38f8374e08213582898d94ad56cf297",
+        "stream": "025ddc6243a449525a8d9db0cf3afc4d311265329b96ea73e9014da224100582",
+    }
+    assert OPERATION_SCHEMA_SHA256["model.responses"] == (
+        "b7441ef4a0fd0ea2cbb2410c09f3f18ad8fab00fdcea08c59bfc34fb1368cc9b"
+    )
+    assert dict(OPERATION_DIRECTION_SCHEMA_SHA256["model.responses"]) == {
+        "request": "6afa8c604041566bb843367664c8ffff6961d0f17a5c25031b6a745991219f96",
+        "response": "530ae988b7935903f54292c9c20ec7118a02688402d18bd66e9e4a94df5e7086",
+        "stream": "800695bec0f214e79c9eb0b469ce020fc2931167126cb0d4e0ca7cce2d2f262e",
     }
     for descriptor in (
         NEMO_EVALUATOR_DISTRIBUTION,
@@ -123,9 +220,45 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         assert argv[argv.index("--write-fd") + 1] == "4"
         environment = descriptor.clean_environment
         assert set(environment).isdisjoint(
-            {"HOME", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "OPENAI_API_KEY"}
+            {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "OPENAI_API_KEY"}
         )
+        assert environment["HOME"].startswith("/staging/")
+        assert environment["TMPDIR"].startswith("/staging/")
         assert environment["XDG_DATA_HOME"].startswith("/staging/")
+
+
+def test_model_operation_schema_confines_inline_images_to_strict_raster_data() -> None:
+    generate_content = MODEL_GENERATE_SCHEMA["request"]["properties"]["messages"][
+        "items"
+    ]["properties"]["content"]["oneOf"][1]["items"]["oneOf"]
+    responses_content = MODEL_RESPONSES_SCHEMA["request"]["properties"]["input"][
+        "items"
+    ]["properties"]["content"]["oneOf"][1]["items"]["oneOf"]
+    image = next(
+        block
+        for block in generate_content
+        if block["properties"]["type"].get("const") == "image_url"
+    )
+    assert image in responses_content
+    url_schema = image["properties"]["image_url"]["properties"]["url"]
+    assert url_schema["maxLength"] == 1_048_576
+    pattern = re.compile(url_schema["pattern"])
+    for url in (
+        "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
+        "data:image/jpeg;base64,/9j/2Q==",
+        "data:image/png;base64,aW5lcnQ=",
+        "data:image/webp;base64,UklGRg==",
+    ):
+        assert pattern.fullmatch(url), url
+    for url in (
+        "",
+        "https://model.invalid/image.png",
+        "file:///etc/passwd",
+        "data:image/svg+xml;base64,PHN2Zz4=",
+        "data:image/png;base64,not-base64!",
+        "data:image/png;base64,A===",
+    ):
+        assert pattern.fullmatch(url) is None, url
 
 
 @pytest.mark.asyncio
@@ -236,15 +369,25 @@ def test_stock_provider_over_dedicated_fds(
     tmp_path: Path,
 ) -> None:
     """Run the real pinned provider lifecycle over inherited one-way pipes."""
-    if not _requirements_present(requirements):
-        pytest.skip("exact external evaluator distribution is not installed")
+    provider_root = (
+        _NEMO_PROVIDER_ROOT if provider == "nemo_evaluator" else _OPENBENCH_PROVIDER_ROOT
+    )
+    if not _requirements_present(requirements, provider_root):
+        _skip_optional_stock_proof(
+            "exact external evaluator distribution is not installed"
+        )
     descriptor = (
         NEMO_EVALUATOR_DISTRIBUTION
         if provider == "nemo_evaluator"
         else OPENBENCH_DISTRIBUTION
     )
     worker_root = tmp_path / "worker-root"
-    materialize(distribution, worker_root)
+    materialize(
+        distribution,
+        worker_root,
+        nemo_root=_NEMO_PROVIDER_ROOT,
+        openbench_root=_OPENBENCH_PROVIDER_ROOT,
+    )
     for relative in ("work", "staging", "proc", "dev", "run/aiperf"):
         mountpoint = worker_root / relative
         assert mountpoint.is_dir()
@@ -258,11 +401,64 @@ def test_stock_provider_over_dedicated_fds(
     response_read_fd, response_write_fd = os.pipe()
     environment = dict(descriptor.clean_environment)
     environment["PATH"] = str(worker_root / "runtime/bin")
-    environment["XDG_DATA_HOME"] = str(staging_root / ".xdg-data")
-    environment["XDG_CACHE_HOME"] = str(staging_root / ".xdg-cache")
-    process = subprocess.Popen(
-        [
-            str(worker_root / "runtime/bin/python3.12"),
+    for key in ("HOME", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+        directory = staging_root / Path(environment[key]).relative_to("/staging")
+        directory.mkdir(parents=True, exist_ok=True)
+        environment[key] = str(directory)
+    worker_command = [
+        str(worker_root / "runtime/bin/python3.12"),
+        "-I",
+        "-m",
+        "aiperf.accuracy.evaluation.worker",
+        "--provider",
+        provider,
+        "--distribution",
+        distribution,
+        "--read-fd",
+        str(request_read_fd),
+        "--write-fd",
+        str(response_write_fd),
+        "--staging-root",
+        str(staging_root),
+    ]
+    proxy_fixture: _OpenAiUdsFixture | None = None
+    if provider == "openbench":
+        bubblewrap = Path("/usr/bin/bwrap")
+        if not bubblewrap.is_file():
+            _skip_optional_stock_proof("registered Bubblewrap is unavailable")
+        preflight = subprocess.run(
+            [str(bubblewrap), "--unshare-all", "--ro-bind", "/", "/", "--", "/bin/true"],
+            check=False,
+            capture_output=True,
+        )
+        if preflight.returncode != 0:
+            _skip_optional_stock_proof(
+                "unprivileged Bubblewrap namespaces are unavailable"
+            )
+        proxy_socket = tmp_path / "evaluator-proxy.sock"
+        proxy_fixture = _OpenAiUdsFixture(proxy_socket)
+        proxy_fixture.start()
+        environment = dict(descriptor.clean_environment)
+        worker_command = [
+            str(bubblewrap),
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-all",
+            "--ro-bind",
+            str(worker_root),
+            "/",
+            "--bind",
+            str(staging_root),
+            "/staging",
+            "--tmpfs",
+            "/run/aiperf",
+            "--ro-bind",
+            str(proxy_socket),
+            "/run/aiperf/evaluator-proxy.sock",
+            "--chdir",
+            "/work",
+            "--",
+            "/runtime/bin/python3.12",
             "-I",
             "-m",
             "aiperf.accuracy.evaluation.worker",
@@ -275,8 +471,10 @@ def test_stock_provider_over_dedicated_fds(
             "--write-fd",
             str(response_write_fd),
             "--staging-root",
-            str(staging_root),
-        ],
+            "/staging",
+        ]
+    process = subprocess.Popen(
+        worker_command,
         env=environment,
         pass_fds=(request_read_fd, response_write_fd),
         cwd=worker_root / "work",
@@ -311,7 +509,13 @@ def test_stock_provider_over_dedicated_fds(
                 f"worker timed out during {operation}; poll={process.poll()}; {diagnostic}"
             )
         raw = response_reader.readline()
-        assert raw, f"worker pipe closed during {operation}"
+        if not raw:
+            assert process.stderr is not None
+            diagnostic = process.stderr.read().decode("utf-8", errors="replace")
+            pytest.fail(
+                f"worker pipe closed during {operation}; poll={process.poll()}; "
+                f"{diagnostic}"
+            )
         response = canonical_loads(raw)
         assert response["id"] == request_id
         assert response["ok"], response.get("error")
@@ -351,18 +555,20 @@ def test_stock_provider_over_dedicated_fds(
             },
         )
         assert plan["finite_case_count"] == 1
-        call(
-            "bind_assets",
-            assets=[
+        contained_asset = (
+            "/assets/gsm8k_canary.jsonl" if provider == "openbench" else str(asset)
+        )
+        bind_fields: dict[str, Any] = {
+            "assets": [
                 {
                     "asset_id": "openai_gsm8k_main_test_canary",
-                    "contained_path": str(asset),
+                    "contained_path": contained_asset,
                     "content_sha256": _ASSET_SHA256,
                     "immutable_revision": _ASSET_REVISION,
                     "media_type": "application/x-ndjson",
                 }
             ],
-            host_binding={
+            "host_binding": {
                 "host": {
                     "runner_sha256": "4" * 64,
                     "capability_inventory_sha256": "5" * 64,
@@ -372,6 +578,29 @@ def test_stock_provider_over_dedicated_fds(
                 "route_map_sha256": "8" * 64,
                 "prepared_endpoints_sha256": "9" * 64,
             },
+        }
+        if provider == "openbench":
+            bind_fields["proxy"] = {
+                "local_locator": "unix:///run/aiperf/evaluator-proxy.sock",
+                "grant": {
+                    "grant_id": "openbench-proof-grant",
+                    "session_id": "openbench-proof",
+                    "secret": "s" * 48,
+                    "service_ids": ["candidate"],
+                    "purposes": ["primary"],
+                    "semantic_operation_ids": ["model.generate"],
+                    "process_scope_sha256": "a" * 64,
+                    "max_operations": 1,
+                    "max_concurrent_operations": 1,
+                    "max_request_bytes": 8 * 1024 * 1024,
+                    "max_response_bytes": 8 * 1024 * 1024,
+                    "max_stream_events": 1,
+                    "expires_after_ms": 60_000,
+                },
+            }
+        call(
+            "bind_assets",
+            **bind_fields,
         )
         page = call("next_units", offset=0, limit=4)
         unit_ids = [item["unit_id"] for item in page["items"]]
@@ -408,6 +637,15 @@ def test_stock_provider_over_dedicated_fds(
     stdout, stderr = process.communicate(timeout=20)
     assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
     assert stdout == b""
+    if proxy_fixture is not None:
+        proxy_fixture.join()
+        assert proxy_fixture.request is not None
+        assert proxy_fixture.request["model"] == "candidate"
+        assert proxy_fixture.headers["x-aiperf-proxy-grant"] == "openbench-proof-grant"
+        assert proxy_fixture.headers["x-aiperf-case-id"] == "openbench-gsm8k-case-0"
+        assert proxy_fixture.headers["x-aiperf-semantic-attempt-id"] == (
+            "attempt-openbench-gsm8k-case-0-0"
+        )
 
 
 def _terminal_event(
@@ -435,11 +673,21 @@ def _terminal_event(
     }
 
 
-def _requirements_present(requirements: dict[str, str]) -> bool:
-    try:
-        return all(
-            importlib.metadata.version(distribution) == version
-            for distribution, version in requirements.items()
-        )
-    except importlib.metadata.PackageNotFoundError:
+def _requirements_present(requirements: dict[str, str], root: Path) -> bool:
+    site_packages = root / "lib/python3.12/site-packages"
+    if not site_packages.is_dir():
         return False
+    installed = {
+        item.metadata["Name"].lower().replace("_", "-"): item.version
+        for item in importlib.metadata.distributions(path=[str(site_packages)])
+    }
+    return all(
+        installed.get(distribution.lower().replace("_", "-")) == version
+        for distribution, version in requirements.items()
+    )
+
+
+def _skip_optional_stock_proof(reason: str) -> None:
+    if os.environ.get("AIPERF_REQUIRE_STOCK_PROVIDER_PROOF") == "1":
+        pytest.fail(reason)
+    pytest.skip(reason)

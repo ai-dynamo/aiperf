@@ -11,7 +11,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -24,7 +24,8 @@ use tokio::task::JoinHandle;
 
 use crate::canonical::{CanonicalJson, CanonicalJsonLimits};
 use crate::isolation::{
-    AttestedWorkerLaunch, EvaluatorIsolation, EvaluatorLaunchAttestor, IsolationQuiescenceProof,
+    AttestedWorkerLaunch, EvaluatorIsolation, EvaluatorLaunchAttestor,
+    IsolationProcessTreeIdentity, IsolationQuiescenceProof,
 };
 use crate::lifecycle::{EvaluationLifecycle, EvaluationLifecycleState};
 use crate::provider::{
@@ -395,6 +396,7 @@ struct SupervisedProcess {
     diagnostics: RestrictedProviderDiagnostics,
     isolation: Arc<dyn EvaluatorIsolation>,
     shutdown_timeout: Duration,
+    process_tree: Option<IsolationProcessTreeIdentity>,
     quiescence_result: Option<Result<IsolationQuiescenceProof, EvaluationProviderError>>,
 }
 
@@ -423,13 +425,35 @@ impl SupervisedProcess {
         let _ = tokio::time::timeout(self.shutdown_timeout, self.child.wait()).await;
     }
 
-    fn verify_quiescent_once(
+    fn observe_process_tree(&mut self) -> Result<(), EvaluationProviderError> {
+        let observed = self
+            .isolation
+            .observe_process_tree(self.root_pid, self.process_tree.as_ref())?;
+        self.process_tree = Some(observed);
+        Ok(())
+    }
+
+    async fn verify_quiescent_once(
         &mut self,
     ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
         if let Some(result) = &self.quiescence_result {
             return result.clone();
         }
-        let result = self.isolation.verify_quiescent(self.root_pid);
+        let identity = self.process_tree.as_ref().ok_or_else(|| {
+            EvaluationProviderError::Quiescence(
+                "evaluator subtree identity was never captured".to_string(),
+            )
+        })?;
+        let deadline = Instant::now() + self.shutdown_timeout;
+        let result = loop {
+            match self.isolation.verify_quiescent(identity) {
+                Ok(proof) => break Ok(proof),
+                Err(_error) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                Err(error) => break Err(error),
+            }
+        };
         self.quiescence_result = Some(result.clone());
         result
     }
@@ -448,15 +472,18 @@ impl SupervisedProcess {
         &mut self,
     ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
         if self.quiescence_result.is_none() {
+            let observation = self.observe_process_tree();
             self.force_kill_and_wait().await;
             self.join_stderr().await;
+            observation?;
         }
-        self.verify_quiescent_once()
+        self.verify_quiescent_once().await
     }
 
     async fn wait_quiescent(
         &mut self,
     ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
+        self.observe_process_tree()?;
         let waited = tokio::time::timeout(self.shutdown_timeout, self.child.wait()).await;
         let primary = match waited {
             Ok(Ok(status)) if status.success() => None,
@@ -474,7 +501,7 @@ impl SupervisedProcess {
             }
         };
         self.join_stderr().await;
-        let proof = self.verify_quiescent_once()?;
+        let proof = self.verify_quiescent_once().await?;
         match primary {
             Some(error) => Err(error),
             None => Ok(proof),
@@ -577,6 +604,7 @@ impl SupervisedEvaluationProvider {
                         libc::close(fd);
                     }
                 }
+                mark_unexpected_fds_close_on_exec()?;
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -612,8 +640,13 @@ impl SupervisedEvaluationProvider {
             diagnostics,
             isolation,
             shutdown_timeout,
+            process_tree: None,
             quiescence_result: None,
         };
+        if let Err(error) = process.observe_process_tree() {
+            let error = process.terminate_with_primary(error).await;
+            return Err(error);
+        }
         if process.stderr_task.is_none() {
             let error = process
                 .terminate_with_primary(EvaluationProviderError::Launch(
@@ -676,6 +709,7 @@ impl SupervisedEvaluationProvider {
             )?;
             provider.identity = identity;
             provider.lifecycle.negotiated()?;
+            provider.process.observe_process_tree()?;
             Ok::<(), EvaluationProviderError>(())
         }
         .await;
@@ -1415,7 +1449,7 @@ fn create_control_pipe() -> Result<(File, File), EvaluationProviderError> {
     Ok((read, write))
 }
 
-unsafe fn set_resource_limit(
+pub(crate) unsafe fn set_resource_limit(
     resource: libc::__rlimit_resource_t,
     value: u64,
 ) -> std::io::Result<()> {
@@ -1439,6 +1473,56 @@ unsafe fn set_resource_limit(
     Ok(())
 }
 
+pub(crate) unsafe fn mark_unexpected_fds_close_on_exec() -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: `close_range` changes only descriptor flags in the calling
+        // child between fork and exec. Control descriptors 3 and 4 are below
+        // the selected range and remain deliberately inherited.
+        let result = unsafe {
+            libc::syscall(
+                libc::SYS_close_range,
+                (CONTROL_WRITE_FD + 1) as libc::c_uint,
+                libc::c_uint::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ENOSYS) {
+            return Err(error);
+        }
+    }
+
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    // SAFETY: `limit` is initialized by a successful `getrlimit` call.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `getrlimit` succeeded above.
+    let limit = unsafe { limit.assume_init() };
+    let maximum = if limit.rlim_max == libc::RLIM_INFINITY {
+        1_048_576
+    } else {
+        limit.rlim_max.min(1_048_576)
+    } as i32;
+    for fd in CONTROL_WRITE_FD + 1..maximum {
+        // SAFETY: `fcntl` receives one candidate descriptor and the fixed
+        // close-on-exec command. EBADF merely identifies an unused slot.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags >= 0 {
+            if unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        } else if std::io::Error::last_os_error().raw_os_error() != Some(libc::EBADF) {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -1448,8 +1532,8 @@ mod tests {
     use super::*;
     use crate::canonical::sha256_hex;
     use crate::isolation::{
-        EvaluatorIsolationEvidence, EvaluatorResourceLimits, IsolationQuiescenceProof,
-        LaunchClosureFile, PreparedEvaluatorLaunch, Sha256LaunchAttestor,
+        EvaluatorIsolationEvidence, EvaluatorResourceLimits, IsolationProcessTreeIdentity,
+        IsolationQuiescenceProof, LaunchClosureFile, PreparedEvaluatorLaunch, Sha256LaunchAttestor,
     };
     use crate::provider::{
         EvaluationOperationDescriptor, EvaluationProviderFactory, EvaluatorIsolationRequirements,
@@ -1570,8 +1654,9 @@ mod tests {
 
         fn verify_quiescent(
             &self,
-            root_pid: u32,
+            identity: &IsolationProcessTreeIdentity,
         ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
+            let root_pid = identity.root_pid();
             if Path::new(&format!("/proc/{root_pid}")).exists() {
                 return Err(EvaluationProviderError::Quiescence(
                     "fixture worker remained live".to_string(),
@@ -1581,6 +1666,14 @@ mod tests {
                 root_pid,
                 sha256_hex(format!("fixture-quiescent:{root_pid}").as_bytes()),
             ))
+        }
+
+        fn observe_process_tree(
+            &self,
+            root_pid: u32,
+            previous: Option<&IsolationProcessTreeIdentity>,
+        ) -> Result<IsolationProcessTreeIdentity, EvaluationProviderError> {
+            IsolationProcessTreeIdentity::fixture(root_pid, previous)
         }
     }
 
@@ -1620,8 +1713,9 @@ mod tests {
 
         fn verify_quiescent(
             &self,
-            root_pid: u32,
+            identity: &IsolationProcessTreeIdentity,
         ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
+            let root_pid = identity.root_pid();
             self.verification_count.fetch_add(1, Ordering::SeqCst);
             if self.fail_verification {
                 return Err(EvaluationProviderError::Quiescence(
@@ -1637,6 +1731,14 @@ mod tests {
                 root_pid,
                 sha256_hex(format!("counting-quiescent:{root_pid}").as_bytes()),
             ))
+        }
+
+        fn observe_process_tree(
+            &self,
+            root_pid: u32,
+            previous: Option<&IsolationProcessTreeIdentity>,
+        ) -> Result<IsolationProcessTreeIdentity, EvaluationProviderError> {
+            IsolationProcessTreeIdentity::fixture(root_pid, previous)
         }
     }
 
@@ -1668,6 +1770,7 @@ mod tests {
             diagnostics,
             isolation,
             shutdown_timeout,
+            process_tree: Some(IsolationProcessTreeIdentity::fixture(root_pid, None).unwrap()),
             quiescence_result: None,
         }
     }
@@ -1697,7 +1800,7 @@ mod tests {
             "raise SystemExit(17)",
             isolation,
             sink,
-            Duration::from_secs(1),
+            Duration::from_millis(10),
         )
         .await;
         let error = process.wait_quiescent().await.unwrap_err();
@@ -1705,7 +1808,7 @@ mod tests {
             error,
             EvaluationProviderError::Quiescence("fixture subtree was not quiescent".to_string())
         );
-        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert!(count.load(Ordering::SeqCst) >= 2);
     }
 
     fn find_python() -> PathBuf {
@@ -2004,6 +2107,8 @@ for line in reader:
             'scheduling_mode': 'finite',
             'finite_unit_count': 1,
             'finite_case_count': 1,
+            'max_total_host_operations': 1,
+            'max_total_stream_events': 0,
             'queue_credits': {
                 'units': 0,
                 'host_operations': 0,

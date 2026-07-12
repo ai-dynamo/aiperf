@@ -1,0 +1,32 @@
+diff --git a/model/_model.py b/model/_model.py
+index 074a148..a301873 100644
+--- a/model/_model.py
++++ b/model/_model.py
+@@ -255,7 +255,16 @@ class ModelAPI(abc.ABC):
+     def connection_key(self) -> str:
+         """Scope for enforcement of max_connections."""
+         return "default"
+ 
++    def allows_cache(self) -> bool:
++        """Whether this provider permits Inspect's model-output cache.
++
++        Custom providers that delegate accounting or replay authority to an
++        external host can return ``False`` to reject cache access before a
++        lookup occurs. Existing providers retain the standalone default.
++        """
++        return True
++
+     def should_retry(self, ex: Exception) -> bool:
+         """Should this exception be retried?
+ 
+@@ -664,6 +672,10 @@ class Model:
+             assert tool_choice is not None
+ 
+             cache_entry: CacheEntry | None
++            if cache and not self.api.allows_cache():
++                raise RuntimeError(
++                    f"Model provider {self.api.model_name!r} forbids cache access"
++                )
+             if cache:
+                 if isinstance(cache, CachePolicy):
+                     policy = cache

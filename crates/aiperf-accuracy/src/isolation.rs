@@ -20,6 +20,17 @@ use crate::provider::{
 };
 use crate::provider_protocol::{EvaluationDistributionId, ScopedProxyBinding};
 
+const SANDBOX_UID: u32 = 65_534;
+const SANDBOX_GID: u32 = 65_534;
+const PRIVATE_STAGING_MODE: u32 = 0o700;
+const REQUIRED_STAGING_ENVIRONMENT: [(&str, &str, &str); 5] = [
+    ("HOME", "/staging/home", "home"),
+    ("TMPDIR", "/staging/tmp", "tmp"),
+    ("XDG_CONFIG_HOME", "/staging/.xdg-config", ".xdg-config"),
+    ("XDG_DATA_HOME", "/staging/.xdg-data", ".xdg-data"),
+    ("XDG_CACHE_HOME", "/staging/.xdg-cache", ".xdg-cache"),
+];
+
 /// One file in the immutable worker launch closure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchClosureFile {
@@ -367,6 +378,52 @@ pub struct PreparedEvaluatorLaunch {
     pub evidence: EvaluatorIsolationEvidence,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct LinuxProcessIdentity {
+    pid: u32,
+    start_time_ticks: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct LinuxPidNamespaceIdentity {
+    device: u64,
+    inode: u64,
+}
+
+/// Host-observed identity of one isolated evaluator process tree.
+///
+/// The identity captures concrete `(pid, start-time)` pairs plus each private
+/// PID namespace and its PID-1 process while the attested root is live. Linux
+/// terminates every namespace member when that init exits, so pinning and
+/// checking the init also covers descendants forked after observation. A
+/// future platform isolation implementation can populate an equivalent
+/// subtree identity behind [`EvaluatorIsolation`] without changing the
+/// supervisor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolationProcessTreeIdentity {
+    root: LinuxProcessIdentity,
+    outer_uid: u32,
+    processes: BTreeSet<LinuxProcessIdentity>,
+    isolated_pid_namespaces: BTreeSet<LinuxPidNamespaceIdentity>,
+    isolated_pid_namespace_inits: BTreeMap<LinuxPidNamespaceIdentity, LinuxProcessIdentity>,
+    require_isolated_pid_namespace: bool,
+}
+
+impl IsolationProcessTreeIdentity {
+    /// Host PID of the attested isolation root.
+    pub fn root_pid(&self) -> u32 {
+        self.root.pid
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(
+        root_pid: u32,
+        previous: Option<&Self>,
+    ) -> Result<Self, EvaluationProviderError> {
+        capture_linux_process_tree(root_pid, previous, false)
+    }
+}
+
 /// Replaceable platform implementation for the full evaluator isolation outcome.
 pub trait EvaluatorIsolation: Send + Sync {
     /// Prove the platform isolation mechanism is present and immutable without
@@ -381,10 +438,20 @@ pub trait EvaluatorIsolation: Send + Sync {
         context: &ProviderLaunchContext,
     ) -> Result<PreparedEvaluatorLaunch, EvaluationProviderError>;
 
-    /// Verify no process in the isolated subtree remains after worker exit.
-    fn verify_quiescent(
+    /// Observe the live isolated subtree before allowing worker execution.
+    ///
+    /// Re-observation receives the prior identity so implementations can
+    /// monotonically retain namespaces and short-lived process identities.
+    fn observe_process_tree(
         &self,
         root_pid: u32,
+        previous: Option<&IsolationProcessTreeIdentity>,
+    ) -> Result<IsolationProcessTreeIdentity, EvaluationProviderError>;
+
+    /// Verify no captured process or process in a captured namespace remains.
+    fn verify_quiescent(
+        &self,
+        identity: &IsolationProcessTreeIdentity,
     ) -> Result<IsolationQuiescenceProof, EvaluationProviderError>;
 }
 
@@ -509,6 +576,8 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         let staging = std::fs::canonicalize(&context.staging_dir).map_err(|error| {
             EvaluationProviderError::Launch(format!("failed to resolve staging root: {error}"))
         })?;
+        let staging_identities = prepare_private_staging_layout(&staging)?;
+        let environment = exact_staging_environment(&launch.environment)?;
         let program = std::fs::canonicalize(&launch.program).map_err(|error| {
             EvaluationProviderError::Launch(format!("failed to resolve worker program: {error}"))
         })?;
@@ -537,6 +606,12 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             OsString::from("--die-with-parent"),
             OsString::from("--new-session"),
             OsString::from("--unshare-all"),
+            OsString::from("--uid"),
+            OsString::from(SANDBOX_UID.to_string()),
+            OsString::from("--gid"),
+            OsString::from(SANDBOX_GID.to_string()),
+            OsString::from("--cap-drop"),
+            OsString::from("ALL"),
             OsString::from("--clearenv"),
             OsString::from("--ro-bind"),
             worker_root.as_os_str().to_owned(),
@@ -557,7 +632,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
             OsString::from("--chdir"),
             inside_current.as_os_str().to_owned(),
         ];
-        for (key, value) in &launch.environment {
+        for (key, value) in &environment {
             args.push(OsString::from("--setenv"));
             args.push(key.clone());
             args.push(value.clone());
@@ -570,7 +645,7 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         args.extend(launch.args.iter().cloned());
 
         let proof_input = format!(
-            "aiperf-bwrap-rootfs-v2\n{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}\n{}",
+            "aiperf-bwrap-rootfs-v3\n{}\n{}\n{}\n{}\n{}\nuid={}\ngid={}\ncap-drop=ALL\n{:?}\n{:?}\n{}\n{}\n{:?}",
             self.bubblewrap_sha256,
             attestation.launch_closure_sha256,
             context
@@ -578,15 +653,19 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
                 .map_err(EvaluationProviderError::registry)?,
             worker_root.display(),
             staging.display(),
+            SANDBOX_UID,
+            SANDBOX_GID,
             self.limits,
             context
                 .proxy
                 .as_ref()
                 .map(|binding| &binding.grant.process_scope_sha256),
             mountpoint_identities.join(","),
+            staging_identities.join(","),
+            environment,
         );
         let evidence = EvaluatorIsolationEvidence {
-            profile_id: "linux-bubblewrap-rootfs-process-tree-v2".to_string(),
+            profile_id: "linux-bubblewrap-rootfs-process-tree-v3".to_string(),
             proof_sha256: sha256_hex(proof_input.as_bytes()),
             enforced: EvaluatorIsolationRequirements::strict_process_tree(),
         };
@@ -601,31 +680,453 @@ impl EvaluatorIsolation for BubblewrapEvaluatorIsolation {
         })
     }
 
-    fn verify_quiescent(
+    fn observe_process_tree(
         &self,
         root_pid: u32,
+        previous: Option<&IsolationProcessTreeIdentity>,
+    ) -> Result<IsolationProcessTreeIdentity, EvaluationProviderError> {
+        #[cfg(target_os = "linux")]
+        {
+            capture_linux_process_tree(root_pid, previous, true)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (root_pid, previous);
+            Err(EvaluationProviderError::Quiescence(
+                "Bubblewrap process-tree observation is available only on Linux".to_string(),
+            ))
+        }
+    }
+
+    fn verify_quiescent(
+        &self,
+        identity: &IsolationProcessTreeIdentity,
     ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
         #[cfg(target_os = "linux")]
         {
-            let proc_path = PathBuf::from(format!("/proc/{root_pid}"));
-            if proc_path.exists() {
-                return Err(EvaluationProviderError::Quiescence(format!(
-                    "isolated root process {root_pid} remained live"
-                )));
-            }
+            verify_linux_process_tree_quiescent(identity)?;
+            let root_pid = identity.root.pid;
+            let identity_sha256 = process_tree_identity_sha256(identity);
             Ok(IsolationQuiescenceProof::verified(
                 root_pid,
-                sha256_hex(format!("linux-bwrap-quiescent-v1:{root_pid}").as_bytes()),
+                sha256_hex(
+                    format!("linux-bwrap-quiescent-v2:{root_pid}:{identity_sha256}").as_bytes(),
+                ),
             ))
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = root_pid;
+            let _ = identity;
             Err(EvaluationProviderError::Quiescence(
                 "Bubblewrap process-tree proof is available only on Linux".to_string(),
             ))
         }
     }
+}
+
+fn exact_staging_environment(
+    authored: &BTreeMap<OsString, OsString>,
+) -> Result<BTreeMap<OsString, OsString>, EvaluationProviderError> {
+    let mut environment = authored.clone();
+    for (key, expected, _) in REQUIRED_STAGING_ENVIRONMENT {
+        let key = OsString::from(key);
+        let expected = OsString::from(expected);
+        if let Some(actual) = environment.get(&key)
+            && actual != &expected
+        {
+            return Err(EvaluationProviderError::Launch(format!(
+                "worker environment supplied an invalid private staging path for {}",
+                key.to_string_lossy()
+            )));
+        }
+        environment.insert(key, expected);
+    }
+    Ok(environment)
+}
+
+fn prepare_private_staging_layout(staging: &Path) -> Result<Vec<String>, EvaluationProviderError> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+        let expected_uid = unsafe { libc::geteuid() };
+        let expected_gid = unsafe { libc::getegid() };
+        let mut identities = Vec::with_capacity(REQUIRED_STAGING_ENVIRONMENT.len() + 1);
+        for (name, path) in std::iter::once(("staging", staging.to_path_buf())).chain(
+            REQUIRED_STAGING_ENVIRONMENT
+                .iter()
+                .map(|(_, _, relative)| (*relative, staging.join(relative))),
+        ) {
+            if name != "staging" {
+                match std::fs::create_dir(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(EvaluationProviderError::Launch(format!(
+                            "failed to create private staging directory {name:?}: {error}"
+                        )));
+                    }
+                }
+            }
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+                EvaluationProviderError::Launch(format!(
+                    "failed to inspect private staging directory {name:?}: {error}"
+                ))
+            })?;
+            if !metadata.file_type().is_dir()
+                || metadata.file_type().is_symlink()
+                || metadata.uid() != expected_uid
+                || metadata.gid() != expected_gid
+            {
+                return Err(EvaluationProviderError::Launch(format!(
+                    "private staging directory {name:?} was not a host-owned real directory"
+                )));
+            }
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(PRIVATE_STAGING_MODE))
+                .map_err(|error| {
+                    EvaluationProviderError::Launch(format!(
+                        "failed to secure private staging directory {name:?}: {error}"
+                    ))
+                })?;
+            let secured = std::fs::symlink_metadata(&path).map_err(|error| {
+                EvaluationProviderError::Launch(format!(
+                    "failed to re-inspect private staging directory {name:?}: {error}"
+                ))
+            })?;
+            if secured.uid() != expected_uid
+                || secured.gid() != expected_gid
+                || secured.permissions().mode() & 0o7777 != PRIVATE_STAGING_MODE
+            {
+                return Err(EvaluationProviderError::Launch(format!(
+                    "private staging directory {name:?} ownership or permissions drifted"
+                )));
+            }
+            identities.push(format!(
+                "{name}:{}:{}:{:o}",
+                secured.uid(),
+                secured.gid(),
+                secured.permissions().mode() & 0o7777
+            ));
+        }
+        Ok(identities)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = staging;
+        Err(EvaluationProviderError::Launch(
+            "private evaluator staging layout is available only on Linux".to_string(),
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn capture_linux_process_tree(
+    root_pid: u32,
+    previous: Option<&IsolationProcessTreeIdentity>,
+    require_isolated_pid_namespace: bool,
+) -> Result<IsolationProcessTreeIdentity, EvaluationProviderError> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    if let Some(previous) = previous
+        && previous.root.pid != root_pid
+    {
+        return Err(EvaluationProviderError::Quiescence(
+            "process-tree observation changed isolation root PID".to_string(),
+        ));
+    }
+    let Some(root_stat) = read_linux_process_stat(root_pid)? else {
+        return previous.cloned().ok_or_else(|| {
+            EvaluationProviderError::Quiescence(format!(
+                "isolated root process {root_pid} exited before its subtree identity was captured"
+            ))
+        });
+    };
+    let root = LinuxProcessIdentity {
+        pid: root_pid,
+        start_time_ticks: root_stat.start_time_ticks,
+    };
+    let root_metadata = std::fs::metadata(format!("/proc/{root_pid}")).map_err(|error| {
+        EvaluationProviderError::Quiescence(format!(
+            "failed to inspect isolation root ownership: {error}"
+        ))
+    })?;
+    let outer_uid = root_metadata.uid();
+    if outer_uid != unsafe { libc::geteuid() } {
+        return Err(EvaluationProviderError::Quiescence(
+            "isolation root did not retain the supervising host identity".to_string(),
+        ));
+    }
+    if let Some(previous) = previous
+        && (previous.root != root || previous.outer_uid != outer_uid)
+    {
+        return Err(EvaluationProviderError::Quiescence(
+            "isolation root PID was reused while the worker was active".to_string(),
+        ));
+    }
+
+    let mut stats = BTreeMap::new();
+    let proc_entries = std::fs::read_dir("/proc").map_err(|error| {
+        EvaluationProviderError::Quiescence(format!("failed to enumerate /proc: {error}"))
+    })?;
+    for entry in proc_entries {
+        let entry = entry.map_err(|error| {
+            EvaluationProviderError::Quiescence(format!(
+                "failed to enumerate a /proc entry: {error}"
+            ))
+        })?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|value| value.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(EvaluationProviderError::Quiescence(format!(
+                    "failed to inspect process {pid} ownership: {error}"
+                )));
+            }
+        };
+        if metadata.uid() != outer_uid {
+            continue;
+        }
+        if let Some(stat) = read_linux_process_stat(pid)? {
+            stats.insert(pid, stat);
+        }
+    }
+
+    let host_namespace = namespace_identity(Path::new("/proc/self/ns/pid"))?;
+    let mut processes = previous
+        .map(|identity| identity.processes.clone())
+        .unwrap_or_default();
+    let mut isolated_pid_namespaces = previous
+        .map(|identity| identity.isolated_pid_namespaces.clone())
+        .unwrap_or_default();
+    let mut isolated_pid_namespace_inits = previous
+        .map(|identity| identity.isolated_pid_namespace_inits.clone())
+        .unwrap_or_default();
+    for (&pid, stat) in &stats {
+        if !linux_process_is_descendant(pid, root_pid, &stats) {
+            continue;
+        }
+        let process = LinuxProcessIdentity {
+            pid,
+            start_time_ticks: stat.start_time_ticks,
+        };
+        processes.insert(process);
+        let namespace_path = PathBuf::from(format!("/proc/{pid}/ns/pid"));
+        if let Some(namespace) = namespace_identity_if_present(&namespace_path)?
+            && namespace != host_namespace
+        {
+            isolated_pid_namespaces.insert(namespace);
+            if linux_process_namespace_pid(pid)? == Some(1)
+                && isolated_pid_namespace_inits
+                    .insert(namespace, process)
+                    .is_some_and(|existing| existing != process)
+            {
+                return Err(EvaluationProviderError::Quiescence(
+                    "one PID namespace exposed multiple init identities".to_string(),
+                ));
+            }
+        }
+    }
+    processes.insert(root);
+
+    // Reading the namespace metadata above follows the procfs magic symlink;
+    // pin its kernel object identity rather than trusting its display text.
+    let _ = std::fs::metadata("/proc/self/ns/pid").map(|metadata| metadata.ino());
+    Ok(IsolationProcessTreeIdentity {
+        root,
+        outer_uid,
+        processes,
+        isolated_pid_namespaces,
+        isolated_pid_namespace_inits,
+        require_isolated_pid_namespace: previous
+            .is_some_and(|identity| identity.require_isolated_pid_namespace)
+            || require_isolated_pid_namespace,
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct LinuxProcessStat {
+    parent_pid: u32,
+    start_time_ticks: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_process_stat(pid: u32) -> Result<Option<LinuxProcessStat>, EvaluationProviderError> {
+    let path = PathBuf::from(format!("/proc/{pid}/stat"));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(EvaluationProviderError::Quiescence(format!(
+                "failed to inspect process {pid}: {error}"
+            )));
+        }
+    };
+    let close = text.rfind(')').ok_or_else(|| {
+        EvaluationProviderError::Quiescence(format!("process {pid} had malformed procfs stat"))
+    })?;
+    let fields = text[close + 1..]
+        .split_ascii_whitespace()
+        .collect::<Vec<_>>();
+    if fields.len() <= 19 {
+        return Err(EvaluationProviderError::Quiescence(format!(
+            "process {pid} had incomplete procfs stat"
+        )));
+    }
+    let parent_pid = fields[1].parse::<u32>().map_err(|_| {
+        EvaluationProviderError::Quiescence(format!("process {pid} had invalid parent identity"))
+    })?;
+    let start_time_ticks = fields[19].parse::<u64>().map_err(|_| {
+        EvaluationProviderError::Quiescence(format!(
+            "process {pid} had invalid start-time identity"
+        ))
+    })?;
+    Ok(Some(LinuxProcessStat {
+        parent_pid,
+        start_time_ticks,
+    }))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_namespace_pid(pid: u32) -> Result<Option<u32>, EvaluationProviderError> {
+    let path = PathBuf::from(format!("/proc/{pid}/status"));
+    let status = match std::fs::read_to_string(&path) {
+        Ok(status) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(EvaluationProviderError::Quiescence(format!(
+                "failed to inspect process {pid} namespace PID: {error}"
+            )));
+        }
+    };
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("NSpid:"))
+        .and_then(|value| value.split_ascii_whitespace().last())
+        .map(|value| {
+            value.parse::<u32>().map_err(|_| {
+                EvaluationProviderError::Quiescence(format!(
+                    "process {pid} had an invalid namespace PID identity"
+                ))
+            })
+        })
+        .transpose()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_is_descendant(
+    mut pid: u32,
+    root_pid: u32,
+    stats: &BTreeMap<u32, LinuxProcessStat>,
+) -> bool {
+    for _ in 0..256 {
+        if pid == root_pid {
+            return true;
+        }
+        let Some(stat) = stats.get(&pid) else {
+            return false;
+        };
+        if stat.parent_pid <= 1 || stat.parent_pid == pid {
+            return false;
+        }
+        pid = stat.parent_pid;
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn namespace_identity(path: &Path) -> Result<LinuxPidNamespaceIdentity, EvaluationProviderError> {
+    namespace_identity_if_present(path)?.ok_or_else(|| {
+        EvaluationProviderError::Quiescence(format!(
+            "PID namespace identity {} disappeared",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn namespace_identity_if_present(
+    path: &Path,
+) -> Result<Option<LinuxPidNamespaceIdentity>, EvaluationProviderError> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(Some(LinuxPidNamespaceIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(EvaluationProviderError::Quiescence(format!(
+            "failed to inspect PID namespace {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn verify_linux_process_tree_quiescent(
+    identity: &IsolationProcessTreeIdentity,
+) -> Result<(), EvaluationProviderError> {
+    if identity.require_isolated_pid_namespace && identity.isolated_pid_namespaces.is_empty() {
+        return Err(EvaluationProviderError::Quiescence(
+            "isolated worker exited without a captured private PID namespace".to_string(),
+        ));
+    }
+    if identity.isolated_pid_namespaces.len() != identity.isolated_pid_namespace_inits.len()
+        || !identity.isolated_pid_namespaces.iter().all(|namespace| {
+            identity
+                .isolated_pid_namespace_inits
+                .contains_key(namespace)
+        })
+    {
+        return Err(EvaluationProviderError::Quiescence(
+            "isolated worker exited without pinning every PID namespace init".to_string(),
+        ));
+    }
+    for process in &identity.processes {
+        if read_linux_process_stat(process.pid)?
+            .is_some_and(|stat| stat.start_time_ticks == process.start_time_ticks)
+        {
+            return Err(EvaluationProviderError::Quiescence(format!(
+                "captured evaluator process {} remained live",
+                process.pid
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn process_tree_identity_sha256(identity: &IsolationProcessTreeIdentity) -> String {
+    let mut proof = format!(
+        "{}:{}:{}:{}\n",
+        identity.root.pid,
+        identity.root.start_time_ticks,
+        identity.outer_uid,
+        identity.require_isolated_pid_namespace
+    );
+    for process in &identity.processes {
+        proof.push_str(&format!(
+            "process:{}:{}\n",
+            process.pid, process.start_time_ticks
+        ));
+    }
+    for namespace in &identity.isolated_pid_namespaces {
+        proof.push_str(&format!("pidns:{}:{}\n", namespace.device, namespace.inode));
+    }
+    for (namespace, init) in &identity.isolated_pid_namespace_inits {
+        proof.push_str(&format!(
+            "pidns-init:{}:{}:{}:{}\n",
+            namespace.device, namespace.inode, init.pid, init.start_time_ticks
+        ));
+    }
+    sha256_hex(proof.as_bytes())
 }
 
 fn bind_proxy_socket(
@@ -789,8 +1290,9 @@ impl std::error::Error for IsolationError {}
 #[cfg(test)]
 mod tests {
     use std::io::{Read as _, Write};
+    use std::net::TcpListener;
     use std::os::fd::AsRawFd as _;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
@@ -924,7 +1426,7 @@ mod tests {
             );
             assert_eq!(
                 isolation["profile_id"].as_str(),
-                Some("linux-bubblewrap-rootfs-process-tree-v2")
+                Some("linux-bubblewrap-rootfs-process-tree-v3")
             );
         }
         (path, digest, limits)
@@ -1009,7 +1511,7 @@ mod tests {
             .args([
                 "-S",
                 "-c",
-                "import encodings,_socket; print(encodings.__path__[0]); print(_socket.__file__)",
+                "import encodings,_socket,resource; print(encodings.__path__[0]); print(_socket.__file__); print(resource.__file__)",
             ])
             .output()
             .unwrap();
@@ -1022,6 +1524,7 @@ mod tests {
         let mut paths = paths.lines();
         let encodings = PathBuf::from(paths.next().unwrap());
         let socket_extension = PathBuf::from(paths.next().unwrap());
+        let resource_extension = PathBuf::from(paths.next().unwrap());
         assert!(paths.next().is_none());
 
         let contained_python = PathBuf::from("/usr/bin/python3");
@@ -1035,6 +1538,7 @@ mod tests {
                 .join(stdlib.file_name().expect("Python stdlib version directory")),
         );
         copy_dynamic_dependencies(&socket_extension, worker_root);
+        copy_dynamic_dependencies(&resource_extension, worker_root);
         worker_root.join(contained_python.strip_prefix("/").unwrap())
     }
 
@@ -1084,9 +1588,46 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn effective_resource_limit(resource: libc::__rlimit_resource_t, requested: u64) -> u64 {
+        let mut current = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+        // SAFETY: the fixed resource identifier is valid and the successful
+        // syscall initializes the complete output structure.
+        assert_eq!(
+            unsafe { libc::getrlimit(resource, current.as_mut_ptr()) },
+            0
+        );
+        // SAFETY: `getrlimit` succeeded above.
+        requested.min(unsafe { current.assume_init() }.rlim_max)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn current_uid_task_count() -> u64 {
+        let uid = unsafe { libc::geteuid() };
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
+                    .then_some(entry)
+            })
+            .filter(|entry| entry.metadata().is_ok_and(|metadata| metadata.uid() == uid))
+            .filter_map(|entry| std::fs::read_dir(entry.path().join("task")).ok())
+            .map(|tasks| tasks.filter_map(Result::ok).count() as u64)
+            .sum()
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
-    fn registered_bubblewrap_ro_bound_proxy_preserves_host_peer_ancestry() {
-        let (bubblewrap, digest, limits) = registered_bubblewrap();
+    fn registered_bubblewrap_enforces_literal_isolation_acceptance_contract() {
+        let (bubblewrap, digest, mut limits) = registered_bubblewrap();
+        // RLIMIT_NPROC counts every process with the outer real UID, including
+        // unrelated test jobs. Keep the acceptance ceiling finite while
+        // reserving enough headroom for Bubblewrap's reaper and the one
+        // deliberate descendant used below.
+        limits.processes = limits.processes.max(current_uid_task_count() + 256);
         let isolation = BubblewrapEvaluatorIsolation::new(&bubblewrap, digest, limits).unwrap();
         if let Err(error) = isolation.check_available() {
             eprintln!("skipping unavailable immutable Bubblewrap profile: {error}");
@@ -1109,6 +1650,12 @@ mod tests {
         let socket_path = base.join("evaluator-proxy.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
         listener.set_nonblocking(true).unwrap();
+        let sibling_socket_path = base.join("sibling-provider.sock");
+        let _sibling_listener = UnixListener::bind(&sibling_socket_path).unwrap();
+        let host_secret_path = base.join("undeclared-host-secret");
+        std::fs::write(&host_secret_path, b"not mounted").unwrap();
+        let loopback_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let loopback_port = loopback_listener.local_addr().unwrap().port();
 
         let session_id = EvaluationSessionId::new("real-bwrap-e2e").unwrap();
         let proxy = ScopedProxyBinding {
@@ -1131,7 +1678,8 @@ mod tests {
             },
         };
         let script = r#"
-import posix as os
+import os
+import resource
 os.fstat(3)
 os.fstat(4)
 try:
@@ -1139,6 +1687,109 @@ try:
 except BaseException as error:
     os.write(2, (type(error).__name__ + ': ' + str(error)).encode())
     os._exit(34)
+
+def require(condition, code):
+    if not condition:
+        os._exit(code)
+
+required_environment = {
+    'HOME': '/staging/home',
+    'TMPDIR': '/staging/tmp',
+    'XDG_CONFIG_HOME': '/staging/.xdg-config',
+    'XDG_DATA_HOME': '/staging/.xdg-data',
+    'XDG_CACHE_HOME': '/staging/.xdg-cache',
+}
+for key, expected in required_environment.items():
+    require(os.environ.get(key) == expected, 40)
+    metadata = os.stat(expected)
+    require(metadata.st_uid == 65534 and metadata.st_gid == 65534, 41)
+    require(metadata.st_mode & 0o7777 == 0o700, 42)
+    with open(expected + '/write-proof', 'wb') as output:
+        output.write(b'private')
+
+require(os.geteuid() == 65534 and os.getegid() == 65534, 43)
+status = {}
+with open('/proc/self/status', 'rt', encoding='utf-8') as source:
+    for line in source:
+        key, _, value = line.partition(':')
+        status[key] = value.strip()
+require(int(status['CapEff'], 16) == 0, 44)
+require(status['NoNewPrivs'] == '1', 45)
+
+expected_limits = [
+    (resource.RLIMIT_AS, int(os.environ['AIPERF_EXPECT_RLIMIT_AS'])),
+    (resource.RLIMIT_FSIZE, int(os.environ['AIPERF_EXPECT_RLIMIT_FSIZE'])),
+    (resource.RLIMIT_NOFILE, int(os.environ['AIPERF_EXPECT_RLIMIT_NOFILE'])),
+    (resource.RLIMIT_NPROC, int(os.environ['AIPERF_EXPECT_RLIMIT_NPROC'])),
+    (resource.RLIMIT_CPU, int(os.environ['AIPERF_EXPECT_RLIMIT_CPU'])),
+]
+for resource_id, expected in expected_limits:
+    require(resource.getrlimit(resource_id)[0] == expected, 46)
+
+open_descriptors = []
+for descriptor in range(64):
+    try:
+        os.fstat(descriptor)
+        open_descriptors.append(descriptor)
+    except OSError:
+        pass
+require(open_descriptors == [0, 1, 2, 3, 4], 47)
+unexpected_descriptor = int(os.environ['AIPERF_UNEXPECTED_FD'])
+require(unexpected_descriptor > 4, 52)
+try:
+    os.fstat(unexpected_descriptor)
+except OSError:
+    pass
+else:
+    os._exit(53)
+os.set_inheritable(3, False)
+os.set_inheritable(4, False)
+descendant = """
+import os
+for descriptor in (3, 4):
+    try:
+        os.fstat(descriptor)
+        raise SystemExit(1)
+    except OSError:
+        pass
+raise SystemExit(0)
+"""
+descendant_pid = os.posix_spawn(
+    '/usr/bin/python3',
+    ['python3', '-S', '-c', descendant],
+    os.environ,
+)
+_, descendant_status = os.waitpid(descendant_pid, 0)
+require(os.waitstatus_to_exitcode(descendant_status) == 0, 48)
+
+def denied_socket(family, address):
+    try:
+        stream = _socket.socket(family, _socket.SOCK_STREAM)
+        stream.settimeout(0.5)
+        stream.connect(address)
+    except BaseException:
+        try:
+            stream.close()
+        except BaseException:
+            pass
+        return
+    stream.close()
+    os._exit(49)
+
+try:
+    _socket.getaddrinfo('example.com', 443)
+except BaseException:
+    pass
+else:
+    os._exit(50)
+denied_socket(_socket.AF_INET, ('1.1.1.1', 443))
+denied_socket(_socket.AF_INET6, ('::1', 443))
+denied_socket(_socket.AF_INET, ('127.0.0.1', int(os.environ['AIPERF_HOST_PORT'])))
+denied_socket(_socket.AF_UNIX, '/run/aiperf/sibling-provider.sock')
+denied_socket(_socket.AF_UNIX, '/var/run/docker.sock')
+denied_socket(_socket.AF_UNIX, '/run/provider.sock')
+require(not os.path.exists(os.environ['AIPERF_UNDECLARED_HOST_PATH']), 51)
+
 try:
     stream = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
     stream.connect('/run/aiperf/evaluator-proxy.sock')
@@ -1149,6 +1800,20 @@ except BaseException as error:
     os.write(2, (type(error).__name__ + ': ' + str(error)).encode())
     os._exit(33)
 "#;
+        let unexpected = File::open(&host_secret_path).unwrap();
+        let unexpected_fd = unexpected.as_raw_fd();
+        let unexpected_flags = unsafe { libc::fcntl(unexpected_fd, libc::F_GETFD) };
+        assert!(unexpected_fd > 4 && unexpected_flags >= 0);
+        assert_eq!(
+            unsafe {
+                libc::fcntl(
+                    unexpected_fd,
+                    libc::F_SETFD,
+                    unexpected_flags & !libc::FD_CLOEXEC,
+                )
+            },
+            0
+        );
         let launch = AttestedWorkerLaunch {
             distribution_id: EvaluationDistributionId::new("real-bwrap-fixture").unwrap(),
             program: contained_python.clone(),
@@ -1157,7 +1822,54 @@ except BaseException as error:
                 OsString::from("-c"),
                 OsString::from(script),
             ],
-            environment: BTreeMap::from([(OsString::from("PYTHONHOME"), OsString::from("/usr"))]),
+            environment: BTreeMap::from([
+                (OsString::from("PYTHONHOME"), OsString::from("/usr")),
+                (
+                    OsString::from("AIPERF_HOST_PORT"),
+                    OsString::from(loopback_port.to_string()),
+                ),
+                (
+                    OsString::from("AIPERF_UNDECLARED_HOST_PATH"),
+                    host_secret_path.as_os_str().to_owned(),
+                ),
+                (
+                    OsString::from("AIPERF_UNEXPECTED_FD"),
+                    OsString::from(unexpected_fd.to_string()),
+                ),
+                (
+                    OsString::from("AIPERF_EXPECT_RLIMIT_AS"),
+                    OsString::from(
+                        effective_resource_limit(libc::RLIMIT_AS, limits.address_space_bytes)
+                            .to_string(),
+                    ),
+                ),
+                (
+                    OsString::from("AIPERF_EXPECT_RLIMIT_FSIZE"),
+                    OsString::from(
+                        effective_resource_limit(libc::RLIMIT_FSIZE, limits.file_size_bytes)
+                            .to_string(),
+                    ),
+                ),
+                (
+                    OsString::from("AIPERF_EXPECT_RLIMIT_NOFILE"),
+                    OsString::from(
+                        effective_resource_limit(libc::RLIMIT_NOFILE, limits.open_files)
+                            .to_string(),
+                    ),
+                ),
+                (
+                    OsString::from("AIPERF_EXPECT_RLIMIT_NPROC"),
+                    OsString::from(
+                        effective_resource_limit(libc::RLIMIT_NPROC, limits.processes).to_string(),
+                    ),
+                ),
+                (
+                    OsString::from("AIPERF_EXPECT_RLIMIT_CPU"),
+                    OsString::from(
+                        effective_resource_limit(libc::RLIMIT_CPU, limits.cpu_seconds).to_string(),
+                    ),
+                ),
+            ]),
             current_dir: worker_root.clone(),
             worker_root: worker_root.clone(),
             closure: vec![LaunchClosureFile {
@@ -1190,6 +1902,7 @@ except BaseException as error:
         let control_write = File::open("/dev/null").unwrap();
         let control_read_fd = control_read.as_raw_fd();
         let control_write_fd = control_write.as_raw_fd();
+        let prepared_limits = prepared.resource_limits;
         let mut command = Command::new(&prepared.program);
         command
             .args(&prepared.args)
@@ -1211,13 +1924,39 @@ except BaseException as error:
                         libc::close(descriptor);
                     }
                 }
+                crate::supervisor::mark_unexpected_fds_close_on_exec()?;
+                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                crate::supervisor::set_resource_limit(
+                    libc::RLIMIT_AS,
+                    prepared_limits.address_space_bytes,
+                )?;
+                crate::supervisor::set_resource_limit(
+                    libc::RLIMIT_FSIZE,
+                    prepared_limits.file_size_bytes,
+                )?;
+                crate::supervisor::set_resource_limit(
+                    libc::RLIMIT_NOFILE,
+                    prepared_limits.open_files,
+                )?;
+                crate::supervisor::set_resource_limit(
+                    libc::RLIMIT_NPROC,
+                    prepared_limits.processes,
+                )?;
+                crate::supervisor::set_resource_limit(
+                    libc::RLIMIT_CPU,
+                    prepared_limits.cpu_seconds,
+                )?;
                 Ok(())
             });
         }
         let mut isolated = command.spawn().unwrap();
         let root_pid = isolated.id();
+        let mut process_tree = isolation.observe_process_tree(root_pid, None).unwrap();
         drop(control_read);
         drop(control_write);
+        drop(unexpected);
 
         let sibling_script = r#"
 import os, socket
@@ -1247,6 +1986,9 @@ raise SystemExit(0 if stream.recv(1) == b'D' else 41)
                     let authorized = peer_uid == expected_uid && is_descendant(peer_pid, root_pid);
                     match marker[0] {
                         b'I' => {
+                            process_tree = isolation
+                                .observe_process_tree(root_pid, Some(&process_tree))
+                                .unwrap();
                             let duplicate = isolated_authorized.replace(authorized).is_some();
                             stream
                                 .write_all(if authorized && !duplicate { b"A" } else { b"D" })
@@ -1292,7 +2034,16 @@ raise SystemExit(0 if stream.recv(1) == b'D' else 41)
             "host sibling failed: {}",
             String::from_utf8_lossy(&sibling_output.stderr)
         );
-        isolation.verify_quiescent(root_pid).unwrap();
+        let quiescence_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            match isolation.verify_quiescent(&process_tree) {
+                Ok(_) => break,
+                Err(_error) if Instant::now() < quiescence_deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("Bubblewrap subtree did not quiesce: {error}"),
+            }
+        }
         let _ = std::fs::remove_dir_all(base);
     }
 
@@ -1389,7 +2140,7 @@ raise SystemExit(0 if stream.recv(1) == b'D' else 41)
         );
         assert_eq!(
             prepared.evidence.profile_id,
-            "linux-bubblewrap-rootfs-process-tree-v2"
+            "linux-bubblewrap-rootfs-process-tree-v3"
         );
         std::fs::write(worker_root.join("dev/undeclared"), b"not-empty").unwrap();
         assert!(

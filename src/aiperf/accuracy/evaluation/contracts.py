@@ -504,11 +504,23 @@ class EvaluationPlan:
     execution_granularity: ExecutionGranularity
     scheduling_mode: SchedulingMode
     queue_credits: EvaluationQueueCredits
+    max_total_host_operations: int
+    max_total_stream_events: int
     finite_unit_count: int | None = None
     finite_case_count: int | None = None
 
     def __post_init__(self) -> None:
         self.queue_credits.validate_plan()
+        require_positive_int(
+            self.max_total_host_operations, "max_total_host_operations"
+        )
+        require_non_negative_int(
+            self.max_total_stream_events, "max_total_stream_events"
+        )
+        if self.queue_credits.host_operations > self.max_total_host_operations:
+            raise ValueError(
+                "outstanding host-operation credits exceed the total operation envelope"
+            )
         if self.scheduling_mode is SchedulingMode.FINITE:
             if self.finite_unit_count is None or self.finite_case_count is None:
                 raise ValueError("finite plan requires exact unit/case counts")
@@ -526,6 +538,8 @@ class EvaluationPlan:
             "execution_granularity": self.execution_granularity.value,
             "scheduling_mode": self.scheduling_mode.value,
             "queue_credits": self.queue_credits.to_wire(),
+            "max_total_host_operations": self.max_total_host_operations,
+            "max_total_stream_events": self.max_total_stream_events,
         }
         if self.finite_unit_count is not None:
             result["finite_unit_count"] = self.finite_unit_count
@@ -680,21 +694,90 @@ class EvaluationUnitPage:
 
 
 @dataclass(frozen=True)
+class EvaluationIdentityOverlay:
+    """One ordered source overlay bound into evaluation identity."""
+
+    overlay_id: str
+    artifact_content_sha256: str
+
+    def to_wire(self) -> dict[str, JsonValue]:
+        return {
+            "overlay_id": require_open_id(self.overlay_id, "overlay_id"),
+            "artifact_content_sha256": require_sha256(
+                self.artifact_content_sha256, "overlay artifact_content_sha256"
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationIdentityComponent:
     """One immutable provider identity component."""
 
     name: str
     version: str
     source_sha256: str
+    source_commit: str | None = None
+    base_source_sha256: str | None = None
+    overlay_policy: str | None = None
+    overlays: tuple[EvaluationIdentityOverlay, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_string(self.name, "component.name")
+        require_string(self.version, "component.version")
+        require_sha256(self.source_sha256, "component.source_sha256")
+        if self.overlays:
+            if (
+                self.source_commit is None
+                or self.base_source_sha256 is None
+                or self.overlay_policy != "aiperf-unified-diff-overlay-v1"
+            ):
+                raise ValueError(
+                    "overlaid component requires source commit, base source, and overlay policy"
+                )
+            if len(self.source_commit) not in {40, 64} or any(
+                character not in "0123456789abcdef"
+                for character in self.source_commit
+            ):
+                raise ValueError("component source_commit is not lowercase hex")
+            require_sha256(
+                self.base_source_sha256, "component.base_source_sha256"
+            )
+            ids = [item.overlay_id for item in self.overlays]
+            if len(set(ids)) != len(ids):
+                raise ValueError("component overlays contain duplicate IDs")
+            for overlay in self.overlays:
+                overlay.to_wire()
+        elif any(
+            value is not None
+            for value in (
+                self.source_commit,
+                self.base_source_sha256,
+                self.overlay_policy,
+            )
+        ):
+            raise ValueError("non-overlaid component cannot claim overlay provenance")
 
     def to_wire(self) -> dict[str, JsonValue]:
-        return {
+        result: dict[str, JsonValue] = {
             "name": require_string(self.name, "component.name"),
             "version": require_string(self.version, "component.version"),
             "source_sha256": require_sha256(
                 self.source_sha256, "component.source_sha256"
             ),
+            "overlays": [item.to_wire() for item in self.overlays],
         }
+        if self.overlays:
+            assert self.source_commit is not None
+            assert self.base_source_sha256 is not None
+            assert self.overlay_policy is not None
+            result.update(
+                {
+                    "source_commit": self.source_commit,
+                    "base_source_sha256": self.base_source_sha256,
+                    "overlay_policy": self.overlay_policy,
+                }
+            )
+        return result
 
 
 @dataclass(frozen=True)
@@ -1547,7 +1630,7 @@ class ScopedProxyBinding:
             max_response_bytes=require_positive_int(
                 grant["max_response_bytes"], "max_response_bytes"
             ),
-            max_stream_events=require_positive_int(
+            max_stream_events=require_non_negative_int(
                 grant["max_stream_events"], "max_stream_events"
             ),
             expires_after_ms=require_positive_int(

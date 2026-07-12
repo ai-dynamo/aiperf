@@ -1,0 +1,301 @@
+diff --git a/__init__.py b/__init__.py
+index 50895a7..a9c1d87 100644
+--- a/__init__.py
++++ b/__init__.py
+@@ -1,3 +1,10 @@
+-from ._cli.eval_command import run_eval
+-
+ __all__ = ["run_eval"]
++
++
++def __getattr__(name: str):
++    """Retain the standalone export without eagerly importing every CLI task."""
++    if name == "run_eval":
++        from ._cli.eval_command import run_eval
++
++        return run_eval
++    raise AttributeError(name)
+diff --git a/runtime/__init__.py b/runtime/__init__.py
+new file mode 100644
+index 0000000..a3ba4ac
+--- /dev/null
++++ b/runtime/__init__.py
+@@ -0,0 +1,13 @@
++"""Explicit programmatic runtime for hosted OpenBench tasks."""
++
++from .artifacts import normalize_eval_log
++from .host import EvaluationHost, ModelEffect, RecordingEvaluationHost
++from .inspect_session import eval_async_hosted
++
++__all__ = [
++    "EvaluationHost",
++    "ModelEffect",
++    "RecordingEvaluationHost",
++    "eval_async_hosted",
++    "normalize_eval_log",
++]
+diff --git a/runtime/host.py b/runtime/host.py
+new file mode 100644
+index 0000000..b9dd8f0
+--- /dev/null
++++ b/runtime/host.py
+@@ -0,0 +1,45 @@
++"""Provider-neutral host contracts for the programmatic OpenBench runtime."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any, Protocol, runtime_checkable
++
++
++@dataclass(frozen=True)
++class ModelEffect:
++    """One correlated model effect emitted by an Inspect ``ModelAPI``."""
++
++    task_name: str
++    task_id: str
++    run_id: str
++    sample_id: str | int
++    epoch: int
++    semantic_attempt: int
++    call_ordinal: int
++    service_id: str
++    purpose: str
++    payload: dict[str, Any]
++
++
++@runtime_checkable
++class EvaluationHost(Protocol):
++    """Effect host implemented by standalone, recording, or pipe runtimes."""
++
++    async def model_generate(self, effect: ModelEffect) -> dict[str, Any]:
++        """Return a serialized public Inspect ``ModelOutput``."""
++        ...
++
++
++class RecordingEvaluationHost:
++    """Record exact operations/purposes while returning scripted outputs."""
++
++    def __init__(self, outputs: list[dict[str, Any]]) -> None:
++        self._outputs = list(outputs)
++        self.effects: list[ModelEffect] = []
++
++    async def model_generate(self, effect: ModelEffect) -> dict[str, Any]:
++        self.effects.append(effect)
++        if not self._outputs:
++            raise RuntimeError("recording host has no scripted model result")
++        return self._outputs.pop(0)
+diff --git a/runtime/inspect_session.py b/runtime/inspect_session.py
+new file mode 100644
+index 0000000..6ca47ca
+--- /dev/null
++++ b/runtime/inspect_session.py
+@@ -0,0 +1,23 @@
++"""Fail-closed public Inspect entry point for one explicit OpenBench task."""
++
++from __future__ import annotations
++
++from typing import Any
++
++from inspect_ai import eval_async
++from inspect_ai.extensions import entry_point_loading
++
++
++async def eval_async_hosted(**kwargs: Any) -> Any:
++    """Run ``inspect_ai.eval_async`` with installed entry points denied.
++
++    Callers must pass an explicitly constructed ``Task`` and ``Model``. The
++    wrapper intentionally exposes no task-name registry, CLI display, recorder
++    mutation, provider URL, or installed-plugin fallback.
++    """
++    if "tasks" not in kwargs or isinstance(kwargs["tasks"], str):
++        raise TypeError("hosted OpenBench requires an explicit Inspect Task")
++    if "model" not in kwargs or isinstance(kwargs["model"], str):
++        raise TypeError("hosted OpenBench requires an explicit Inspect Model")
++    with entry_point_loading("deny"):
++        return await eval_async(**kwargs)
+diff --git a/runtime/artifacts.py b/runtime/artifacts.py
+new file mode 100644
+index 0000000..407eb57
+--- /dev/null
++++ b/runtime/artifacts.py
+@@ -0,0 +1,91 @@
++"""Declared nondeterministic normalization for restricted Inspect logs."""
++
++from __future__ import annotations
++
++from typing import Any
++
++
++def _dump(value: Any) -> Any:
++    if value is None:
++        return None
++    dump = getattr(value, "model_dump", None)
++    return dump(mode="json", exclude_none=True) if callable(dump) else value
++
++
++def _error(value: Any) -> Any:
++    if value is None:
++        return None
++    raw = _dump(value)
++    if not isinstance(raw, dict):
++        return raw
++    return {key: raw[key] for key in ("message", "type") if key in raw}
++
++
++def normalize_eval_log(log: Any) -> dict[str, Any]:
++    """Return the complete semantic result after named normalization.
++
++    Wall-clock timestamps, durations, UUIDs, filesystem locations, event
++    timing, and tracebacks are deliberately excluded. Inputs, targets,
++    messages, typed score trees, epoch reductions, named metrics, errors, and
++    model outputs remain restricted and participate in parity digests.
++    """
++    results = None
++    if log.results is not None:
++        scores = sorted(
++            (_dump(score) for score in log.results.scores),
++            key=lambda item: (
++                str(item.get("scorer", "")),
++                str(item.get("reducer", "")),
++                str(item.get("name", "")),
++            ),
++        )
++        results = {
++            "total_samples": log.results.total_samples,
++            "completed_samples": log.results.completed_samples,
++            "scores": scores,
++            "metadata": _dump(log.results.metadata),
++        }
++    samples = []
++    for sample in log.samples or []:
++        samples.append(
++            {
++                "id": sample.id,
++                "epoch": sample.epoch,
++                "input": _dump(sample.input),
++                "target": _dump(sample.target),
++                "choices": _dump(sample.choices),
++                "messages": _dump(sample.messages),
++                "output": _dump(sample.output),
++                "scores": {
++                    key: _dump(value)
++                    for key, value in sorted((sample.scores or {}).items())
++                },
++                "metadata": _dump(sample.metadata),
++                "store": _dump(sample.store),
++                "error": _error(sample.error),
++                "error_retries": [_error(item) for item in sample.error_retries or []],
++                "limit": _dump(sample.limit),
++            }
++        )
++    samples.sort(key=lambda item: (item["epoch"], str(item["id"])))
++    reductions = sorted(
++        (_dump(item) for item in log.reductions or []),
++        key=lambda item: (str(item.get("scorer", "")), str(item.get("reducer", ""))),
++    )
++    return {
++        "normalization": "openbench-inspect-semantic-v1",
++        "version": log.version,
++        "status": log.status,
++        "eval": {
++            "task": log.eval.task,
++            "task_id": log.eval.task_id,
++            "dataset": _dump(log.eval.dataset),
++            "model": log.eval.model,
++            "config": _dump(log.eval.config),
++        },
++        "plan": _dump(log.plan),
++        "results": results,
++        "error": _error(log.error),
++        "samples": samples,
++        "reductions": reductions,
++    }
+diff --git a/model/_providers/aiperf_pipe.py b/model/_providers/aiperf_pipe.py
+new file mode 100644
+index 0000000..150b936
+--- /dev/null
++++ b/model/_providers/aiperf_pipe.py
+@@ -0,0 +1,82 @@
++"""Public Inspect ``ModelAPI`` adapter for an inherited evaluation host."""
++
++from __future__ import annotations
++
++from typing import Any
++
++from inspect_ai.model import ModelAPI, ModelCall, ModelCallContext, ModelOutput, modelapi
++
++from openbench.runtime.host import EvaluationHost, ModelEffect
++
++
++@modelapi(name="aiperf-pipe")
++class AiperfPipeModelAPI(ModelAPI):
++    """Model API with no URL, credential, client, retry, batch, or cache."""
++
++    def __init__(
++        self,
++        *,
++        host: EvaluationHost,
++        service_id: str = "candidate",
++        purpose: str = "primary",
++    ) -> None:
++        if not service_id or not purpose:
++            raise ValueError("logical service and purpose cannot be empty")
++        super().__init__(
++            model_name=f"aiperf/{service_id}",
++            base_url=None,
++            api_key=None,
++            api_key_vars=[],
++        )
++        self._host = host
++        self._service_id = service_id
++        self._purpose = purpose
++
++    async def generate(
++        self,
++        input: list[Any],
++        tools: list[Any],
++        tool_choice: Any,
++        config: Any,
++    ) -> tuple[ModelOutput, ModelCall]:
++        identity = ModelCallContext.current().claim_call()
++        payload = {
++            "messages": [_dump(item) for item in input],
++            "tools": [_dump(item) for item in tools],
++            "tool_choice": _dump(tool_choice),
++            "config": _dump(config),
++        }
++        raw = await self._host.model_generate(
++            ModelEffect(
++                task_name=identity.task_name,
++                task_id=identity.task_id,
++                run_id=identity.run_id,
++                sample_id=identity.sample_id,
++                epoch=identity.epoch,
++                semantic_attempt=identity.semantic_attempt,
++                call_ordinal=identity.call_ordinal,
++                service_id=self._service_id,
++                purpose=self._purpose,
++                payload=payload,
++            )
++        )
++        output = ModelOutput.model_validate(raw)
++        return output, ModelCall(request=payload, response=_dump(output))
++
++    def should_retry(self, ex: Exception) -> bool:
++        del ex
++        return False
++
++    def allows_cache(self) -> bool:
++        return False
++
++
++def _dump(value: Any) -> Any:
++    if value is None:
++        return None
++    dump = getattr(value, "model_dump", None)
++    if callable(dump):
++        return dump(mode="json", exclude_none=True)
++    if isinstance(value, str | int | float | bool | list | dict):
++        return value
++    raise TypeError(f"unsupported Inspect value {type(value).__name__}")

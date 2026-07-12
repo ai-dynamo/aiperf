@@ -29,7 +29,6 @@ from aiperf.accuracy.evaluation.contracts import (
     CaseOutcomeKind,
     CaseTemplateDescriptor,
     EvaluationHostBinding,
-    EvaluationIdentityComponent,
     EvaluationPlan,
     EvaluationPlanRequest,
     EvaluationQueueCredits,
@@ -48,6 +47,7 @@ from aiperf.accuracy.evaluation.contracts import (
 )
 from aiperf.accuracy.evaluation.distributions import (
     NEMO_EVALUATOR_DISTRIBUTION,
+    distribution_identity_components,
     task_manifest,
 )
 from aiperf.accuracy.evaluation.host import PipeEvaluationHost, terminal_result_payload
@@ -224,6 +224,8 @@ class NemoEvaluatorAdapter:
             scheduling_mode=SchedulingMode.FINITE,
             finite_unit_count=limit,
             finite_case_count=limit,
+            max_total_host_operations=limit,
+            max_total_stream_events=0,
             queue_credits=EvaluationQueueCredits(
                 units=min(limit, 8),
                 host_operations=max(limit, 1),
@@ -308,12 +310,10 @@ class NemoEvaluatorAdapter:
             provider_config=self._request.provider_config,
             case_templates=case_templates,
             unit_templates=unit_templates,
-            components=(
-                EvaluationIdentityComponent(
-                    name="nemo_evaluator",
-                    version="0.4.0@a668af906b46c802984f2d471f15ca83b763092d",
-                    source_sha256="19ec02c2ab2e3e1d4fb84f65a14c970fa3b776e536f372abc4c536e0e6219a3a",
-                ),
+            components=distribution_identity_components(
+                NEMO_EVALUATOR_DISTRIBUTION,
+                worker_source_sha256=self._worker_identity.worker_source_sha256,
+                dependency_lock_sha256=self._worker_identity.dependency_lock_sha256,
             ),
             policies=self._plan.aggregation_policy.to_wire(),
             host_binding=host_binding,
@@ -379,6 +379,14 @@ class NemoGsm8kSession(BaseEvaluationSession):
                     seed.expected_answer,
                     **seed.metadata,
                 )
+            if (
+                not isinstance(verified.reward, int | float)
+                or isinstance(verified.reward, bool)
+                or not math.isfinite(float(verified.reward))
+                or not 0.0 <= float(verified.reward) <= 1.0
+            ):
+                raise RuntimeError("NeMo Evaluator GSM8K reward is outside [0, 1]")
+            public_reward = float(verified.reward)
             native_score = {
                 "reward": verified.reward,
                 "extracted_answer": verified.extracted_answer,
@@ -399,9 +407,10 @@ class NemoGsm8kSession(BaseEvaluationSession):
                     scores={
                         "reward": ProviderScore(
                             value=native_score,
+                            public_projection={"value": public_reward},
                         )
                     },
-                    numeric_metrics={"reward": verified.reward},
+                    numeric_metrics={"reward": public_reward},
                     primary_score="reward",
                 ),
             )

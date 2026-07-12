@@ -1,0 +1,247 @@
+diff --git a/engine/eval_loop.py b/engine/eval_loop.py
+index c52fd94..37e54c9 100644
+--- a/engine/eval_loop.py
++++ b/engine/eval_loop.py
+@@ -67,7 +67,7 @@ def _get_error_category(entry: dict) -> str | None:
+     return sd.get("error_category")
+ 
+ 
+-async def run_evaluation(
++async def _run_evaluation(
+     env: EvalEnvironment,
+     solver: Solver,
+     n_repeats: int = 1,
+@@ -885,6 +885,65 @@ async def _run_evaluation(
+     return bundle
+ 
+ 
++async def run_evaluation(
++    env: EvalEnvironment,
++    solver: Solver,
++    n_repeats: int = 1,
++    max_problems: int | None = None,
++    config: dict[str, Any] | None = None,
++    progress: ProgressTracker | None = None,
++    problem_range: tuple[int, int] | None = None,
++    max_concurrent: int = DEFAULT_MAX_CONCURRENT,
++    judge_client: Any = None,
++    sandbox_manager: SandboxManager | None = None,
++    model_url: str | None = None,
++    step_log_dir: Path | None = None,
++    resume: bool = False,
++    skip_failed: bool = False,
++    max_system_retries: int = 3,
++    shard_info: tuple[int, int] | None = None,
++    instruction_template: Path | None = None,
++    shuffle_seed: int | None = None,
++    model_traffic_store: ModelTrafficStore | None = None,
++    evaluation_host: Any = None,
++) -> dict[str, Any]:
++    """Run a provider session through an injected effect host.
++
++    With no explicit host this compatibility entry point constructs the local
++    implementation, preserving the public API and every existing ``nel`` CLI
++    caller. Hosted runtimes can inject a recording or inherited-pipe host.
++    """
++    from nemo_evaluator.engine.host import evaluation_host_scope
++
++    if evaluation_host is None:
++        from nemo_evaluator.hosts.local import LocalEvaluationHost
++
++        evaluation_host = LocalEvaluationHost()
++    async with evaluation_host:
++        with evaluation_host_scope(evaluation_host):
++            return await _run_evaluation(
++                env=env,
++                solver=solver,
++                n_repeats=n_repeats,
++                max_problems=max_problems,
++                config=config,
++                progress=progress,
++                problem_range=problem_range,
++                max_concurrent=max_concurrent,
++                judge_client=judge_client,
++                sandbox_manager=sandbox_manager,
++                model_url=model_url,
++                step_log_dir=step_log_dir,
++                resume=resume,
++                skip_failed=skip_failed,
++                max_system_retries=max_system_retries,
++                shard_info=shard_info,
++                instruction_template=instruction_template,
++                shuffle_seed=shuffle_seed,
++                model_traffic_store=model_traffic_store,
++            )
++
++
+ def _solver_accepts_sandbox(solver: Any) -> bool:
+     """Check if a solver's solve() method accepts a 'sandbox' keyword argument."""
+     import inspect
+diff --git a/engine/model_client.py b/engine/model_client.py
+index 484e0b5..07dbe09 100644
+--- a/engine/model_client.py
++++ b/engine/model_client.py
+@@ -14,24 +14,16 @@
+ # limitations under the License.
+ from __future__ import annotations
+ 
+-import asyncio
+ import json
+-import logging
+-import random
+ import time
+ from dataclasses import dataclass, field
+ from typing import Any
+ 
+-import aiohttp
+-
+-from nemo_evaluator.engine.model_call_context import url_for_current_adapter_session
++from nemo_evaluator.engine.host import ModelOperation, current_evaluation_host
+ from nemo_evaluator.errors import InfraError
+ from nemo_evaluator.observability.types import ModelResponse
+ from nemo_evaluator.schemas import RetryConfig
+ 
+-logger = logging.getLogger(__name__)
+-
+-
+ @dataclass
+ class ToolCallInfo:
+     """A single parsed tool call from a model response."""
+@@ -91,12 +83,11 @@ class ModelClient:
+     cache_dir: str | None = None
+     retry: RetryConfig = field(default_factory=RetryConfig)
+     reasoning_pattern: str | None = None
+-    _sem: asyncio.Semaphore = field(init=False, repr=False)
+-    _http: aiohttp.ClientSession | None = field(init=False, repr=False, default=None)
++    service_id: str = "candidate"
++    purpose: str = "primary"
+     _cache: Any = field(init=False, repr=False, default=None)
+ 
+     def __post_init__(self) -> None:
+-        self._sem = asyncio.Semaphore(self.max_concurrent)
+         self.base_url = self.base_url.rstrip("/")
+         if self.base_url.endswith("/chat/completions"):
+             self.base_url = self.base_url[: -len("/chat/completions")]
+@@ -105,28 +96,9 @@ class ModelClient:
+ 
+             self._cache = ResponseCache(self.cache_dir)
+ 
+-    def _headers(self) -> dict[str, str]:
+-        h = {"Content-Type": "application/json"}
+-        if self.api_key:
+-            h["Authorization"] = f"Bearer {self.api_key}"
+-        return h
+-
+-    def _get_client(self) -> aiohttp.ClientSession:
+-        if self._http is None or self._http.closed:
+-            self._http = aiohttp.ClientSession(
+-                timeout=aiohttp.ClientTimeout(total=self.timeout),
+-                connector=aiohttp.TCPConnector(
+-                    limit=self.max_concurrent * 2,
+-                    limit_per_host=self.max_concurrent,
+-                ),
+-                headers=self._headers(),
+-            )
+-        return self._http
+-
+     async def close(self) -> None:
+-        if self._http and not self._http.closed:
+-            await self._http.close()
+-            self._http = None
++        """Host-owned sessions close when the evaluation scope quiesces."""
++        return None
+ 
+     _GENERATION_KEYS = ("temperature", "max_tokens", "top_p", "seed", "stop", "frequency_penalty", "presence_penalty")
+ 
+@@ -329,49 +301,30 @@ class ModelClient:
+             reasoning_content=reasoning_content,
+         )
+ 
+-    async def _post_with_retry(self, url: str, payload: dict[str, Any]) -> dict:
+-        """Shared retry logic for all HTTP endpoints."""
+-        last_exc: Exception | None = None
+-        url = url_for_current_adapter_session(url)
+-
+-        for attempt in range(self.retry.max_retries + 1):
+-            async with self._sem:
+-                try:
+-                    client = self._get_client()
+-                    async with client.post(url, json=payload) as resp:
+-                        if resp.status in self.retry.retry_on_status and attempt < self.retry.max_retries:
+-                            delay = self._backoff_delay(attempt)
+-                            body = await resp.text()
+-                            logger.warning(
+-                                "Retryable status %d on attempt %d/%d, sleeping %.1fs | body: %.500s",
+-                                resp.status,
+-                                attempt + 1,
+-                                self.retry.max_retries + 1,
+-                                delay,
+-                                body,
+-                            )
+-                            await asyncio.sleep(delay)
+-                            continue
+-
+-                        resp.raise_for_status()
+-                        return await resp.json()
+-
+-                except asyncio.TimeoutError as e:
+-                    last_exc = e
+-                    if attempt < self.retry.max_retries:
+-                        await asyncio.sleep(self._backoff_delay(attempt))
+-                        continue
+-                    raise InfraError(f"Model request timed out after {self.retry.max_retries} retries") from e
+-                except aiohttp.ClientResponseError as e:
+-                    raise InfraError(f"Model returned HTTP {e.status} after retries: {e.message}") from e
+-                except Exception as e:
+-                    last_exc = e
+-                    if attempt < self.retry.max_retries:
+-                        await asyncio.sleep(self._backoff_delay(attempt))
+-                        continue
+-                    raise InfraError(f"Model endpoint unreachable after {self.retry.max_retries} retries: {e}") from e
+-
+-        raise last_exc or InfraError("All retries exhausted")
++    async def _post_with_retry(
++        self,
++        url: str,
++        payload: dict[str, Any],
++        semantic_operation_id: str = "model.generate",
++    ) -> dict[str, Any]:
++        """Delegate a typed model operation to the active evaluation host."""
++        if not url.startswith(f"{self.base_url}/"):
++            raise InfraError("Model operation URL escaped its configured base")
++        return await current_evaluation_host().execute_model(
++            ModelOperation(
++                client_id=id(self),
++                semantic_operation_id=semantic_operation_id,
++                service_id=self.service_id,
++                purpose=self.purpose,
++                base_url=self.base_url,
++                api_key=self.api_key,
++                timeout=self.timeout,
++                max_concurrent=self.max_concurrent,
++                retry=self.retry,
++                path=url.removeprefix(self.base_url),
++                payload=payload,
++            )
++        )
+ 
+     async def embed(self, text: str) -> list[float]:
+         """Get embedding for a single text via /v1/embeddings."""
+@@ -382,16 +335,10 @@ class ModelClient:
+         """Get embeddings for multiple texts via /v1/embeddings."""
+         url = f"{self.base_url}/embeddings"
+         payload = {"model": self.model, "input": texts}
+-        data = await self._post_with_retry(url, payload)
++        data = await self._post_with_retry(url, payload, "model.embed")
+         embeddings_data = sorted(data["data"], key=lambda x: x["index"])
+         return [item["embedding"] for item in embeddings_data]
+ 
+-    def _backoff_delay(self, attempt: int) -> float:
+-        delay = min(self.retry.base_delay * (2**attempt), self.retry.max_delay)
+-        if self.retry.jitter:
+-            delay *= 0.5 + random.random()
+-        return delay
+-
+     def _parse_response(self, data: dict, latency: float, prompt: str, system: str | None) -> ModelResponse:
+         choices = data.get("choices", [])
+         if not choices:

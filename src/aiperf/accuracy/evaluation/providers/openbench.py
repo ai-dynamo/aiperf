@@ -1,20 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OpenBench/Inspect adapter over Inspect's public ``ModelAPI`` seam."""
+"""OpenBench/Inspect adapter over its public ``ModelAPI`` and OpenAI SDK seams."""
 
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import importlib
 import importlib.machinery
 import importlib.metadata
 import math
 import sys
 import types
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +28,6 @@ from aiperf.accuracy.evaluation.contracts import (
     CaseOutcomeKind,
     CaseTemplateDescriptor,
     EvaluationHostBinding,
-    EvaluationIdentityComponent,
     EvaluationPlan,
     EvaluationPlanRequest,
     EvaluationQueueCredits,
@@ -39,19 +36,18 @@ from aiperf.accuracy.evaluation.contracts import (
     ExecutionUnitOccurrence,
     ExecutionUnitTemplateDescriptor,
     HostCapabilityRequirement,
-    HostOperationRequest,
     LogicalServiceRequirement,
     ProviderScore,
     ResolvedAsset,
-    ResponseMode,
     SchedulingMode,
     ScopedProxyBinding,
 )
 from aiperf.accuracy.evaluation.distributions import (
     OPENBENCH_DISTRIBUTION,
+    distribution_identity_components,
     task_manifest,
 )
-from aiperf.accuracy.evaluation.host import PipeEvaluationHost, terminal_result_payload
+from aiperf.accuracy.evaluation.host import PipeEvaluationHost
 from aiperf.accuracy.evaluation.operation_schemas import OPERATION_SCHEMA_SHA256
 from aiperf.accuracy.evaluation.providers.base import ProviderCapabilityError
 from aiperf.accuracy.evaluation.providers.gsm8k import (
@@ -69,18 +65,6 @@ from aiperf.accuracy.evaluation.session import (
     EvaluationSession,
     infrastructure_outcome,
 )
-
-
-@dataclass
-class _InspectCallState:
-    context: CallContext
-    next_ordinal: int = 0
-
-
-_CURRENT_CONTEXT: contextvars.ContextVar[_InspectCallState | None] = (
-    contextvars.ContextVar("aiperf_inspect_model_call_context", default=None)
-)
-
 
 class OpenBenchAdapter:
     """Side-effect-free planner for pinned OpenBench plus Inspect AI."""
@@ -173,6 +157,8 @@ class OpenBenchAdapter:
             scheduling_mode=SchedulingMode.FINITE,
             finite_unit_count=1,
             finite_case_count=case_count,
+            max_total_host_operations=case_count,
+            max_total_stream_events=0,
             queue_credits=EvaluationQueueCredits(
                 units=1,
                 host_operations=case_count,
@@ -198,8 +184,14 @@ class OpenBenchAdapter:
         """Construct an asset-bound public Inspect task without registry lookup."""
         if self._plan is None or self._request is None:
             raise RuntimeError("bind_assets requires successful plan_session")
-        if proxy is not None:
-            raise ValueError("OpenBench GSM8K pipe canary does not request a proxy")
+        if proxy is None:
+            raise ValueError("OpenBench GSM8K requires its scoped compatibility proxy")
+        if (
+            "candidate" not in proxy.service_ids
+            or "primary" not in proxy.purposes
+            or "model.generate" not in proxy.semantic_operation_ids
+        ):
+            raise ValueError("OpenBench compatibility proxy grant omitted its exact route")
         asset_path, _ = bind_gsm8k_asset(assets)
         config = self._request.provider_config
         limit = config.get("limit", 5)
@@ -239,17 +231,10 @@ class OpenBenchAdapter:
             provider_config=self._request.provider_config,
             case_templates=case_templates,
             unit_templates=(unit_template,),
-            components=(
-                EvaluationIdentityComponent(
-                    name="openbench",
-                    version="0.5.3@3f190a835f7fee34ccd96e17242a36a29e0620a6",
-                    source_sha256="bdfcc39c2423619696d359970e75611dd0aadee6c87a383961b78ab705acf1d5",
-                ),
-                EvaluationIdentityComponent(
-                    name="inspect_ai",
-                    version="0.3.141@bb78d82dde311b68dbfd0b49f3186b9fc13a1465",
-                    source_sha256="6bd6016a593ebc0e976285e6416025a0c8a123d8451b0fc180da9a6a17d9794b",
-                ),
+            components=distribution_identity_components(
+                OPENBENCH_DISTRIBUTION,
+                worker_source_sha256=self._worker_identity.worker_source_sha256,
+                dependency_lock_sha256=self._worker_identity.dependency_lock_sha256,
             ),
             policies=self._plan.aggregation_policy.to_wire(),
             host_binding=host_binding,
@@ -263,6 +248,7 @@ class OpenBenchAdapter:
             limit=limit,
             epochs=epochs,
             staging_root=staging_root,
+            proxy=proxy,
         )
 
 
@@ -280,6 +266,7 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
         limit: int,
         epochs: int,
         staging_root: Path,
+        proxy: ScopedProxyBinding,
     ) -> None:
         super().__init__(session_id, identity, plan, (occurrence,))
         self._session_id = session_id
@@ -287,7 +274,9 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
         self._limit = limit
         self._epochs = epochs
         self._staging_root = staging_root
+        self._proxy = proxy
         self._eval_log: Any | None = None
+        self._normalized_eval_log: dict[str, Any] | None = None
         self._eval_artifact: Path | None = None
 
     def _case_for(self, sample_id: int | str, epoch: int) -> str:
@@ -311,81 +300,88 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
         try:
             from inspect_ai import Task, eval_async
             from inspect_ai.dataset import json_dataset
+            from inspect_ai.extensions import entry_point_loading
             from inspect_ai.model import GenerateConfig, Model
-            from inspect_ai.solver import generate, solver
+            from inspect_ai.solver import generate
 
-            record_to_sample, grade_school_math_scorer = _openbench_gsm8k_symbols()
-
-            dataset = json_dataset(
-                str(self._asset_path),
-                sample_fields=record_to_sample,
-                auto_id=True,
-                limit=self._limit,
-                name="openbench_gsm8k_canary",
-            )
-            base_solver = generate()
-            base_scorer = grade_school_math_scorer()
-
-            @solver("aiperf_contextual_generate")
-            def contextual_generate() -> Any:
-                async def solve(state: Any, generate_fn: Any) -> Any:
-                    case_id = self._case_for(state.sample_id, state.epoch)
-                    context = CallContext(
-                        session_id=self._session_id,
-                        unit_id=unit_id,
-                        case_id=case_id,
-                        semantic_attempt_id=f"attempt-{case_id}-0",
-                        logical_call_id=f"call-{case_id}",
-                    )
-                    with inspect_model_call_context(context):
-                        return await base_solver(state, generate_fn)
-
-                return solve
-
-            generate_config = GenerateConfig(
-                temperature=0.0,
-                max_tokens=2048,
-                batch=False,
-                attempt_timeout=None,
-                max_retries=0,
-            )
-            task = Task(
-                dataset=dataset,
-                solver=[contextual_generate()],
-                scorer=base_scorer,
-                config=generate_config,
-            )
-            api = build_aiperf_pipe_model_api(host)
-            model = Model(api, generate_config)
-            logs = await eval_async(
-                tasks=task,
-                model=model,
-                log_dir=str(self._staging_root),
-                log_format="eval",
-                limit=self._limit,
-                epochs=self._epochs,
-                fail_on_error=False,
-                continue_on_fail=True,
-                retry_on_error=0,
-                max_sandboxes=None,
-                log_samples=True,
-                log_realtime=False,
-                log_images=False,
-                score_display=False,
-            )
+            with entry_point_loading("deny"):
+                (
+                    record_to_sample,
+                    grade_school_math_scorer,
+                    normalize_eval_log,
+                ) = _openbench_gsm8k_symbols()
+                dataset = json_dataset(
+                    str(self._asset_path),
+                    sample_fields=record_to_sample,
+                    auto_id=True,
+                    limit=self._limit,
+                    name="openbench_gsm8k_canary",
+                )
+                generate_config = GenerateConfig(
+                    temperature=0.0,
+                    max_tokens=2048,
+                    batch=False,
+                    attempt_timeout=None,
+                    max_retries=0,
+                )
+                task = Task(
+                    dataset=dataset,
+                    solver=[generate()],
+                    scorer=grade_school_math_scorer(),
+                    config=generate_config,
+                )
+                del host
+                api = build_aiperf_openai_model_api(
+                    self._proxy,
+                    session_id=self._session_id,
+                    unit_id=unit_id,
+                    case_for=self._case_for,
+                )
+                model = Model(api, generate_config)
+                logs = await eval_async(
+                    tasks=task,
+                    model=model,
+                    log_dir=str(self._staging_root),
+                    log_format="eval",
+                    limit=self._limit,
+                    epochs=self._epochs,
+                    fail_on_error=False,
+                    continue_on_fail=True,
+                    retry_on_error=0,
+                    max_sandboxes=None,
+                    log_samples=True,
+                    log_realtime=False,
+                    log_images=False,
+                    score_display=False,
+                )
             if len(logs) != 1:
                 raise RuntimeError("Inspect returned an unexpected task-log count")
             log = logs[0]
+            if log.status != "success" or log.error is not None:
+                raise RuntimeError("Inspect host batch did not complete successfully")
             self._eval_log = log
             candidates = tuple(self._staging_root.glob("*.eval"))
             if len(candidates) != 1:
                 raise RuntimeError(
                     "Inspect did not produce exactly one contained .eval artifact"
                 )
-            self._eval_artifact = candidates[0]
-            samples = {
-                (int(sample.id), sample.epoch): sample for sample in (log.samples or [])
+            self._eval_artifact = candidates[0].replace(
+                self._staging_root / "openbench_inspect.eval"
+            )
+            self._normalized_eval_log = normalize_eval_log(log)
+            samples: dict[tuple[int, int], Any] = {}
+            for sample in log.samples or []:
+                key = (int(sample.id), sample.epoch)
+                if key in samples:
+                    raise RuntimeError("Inspect returned a duplicate sample/epoch")
+                samples[key] = sample
+            expected = {
+                (sample_id, epoch)
+                for epoch in range(1, self._epochs + 1)
+                for sample_id in range(1, self._limit + 1)
             }
+            if set(samples) - expected:
+                raise RuntimeError("Inspect returned a sample/epoch outside the frozen batch")
             outcomes: list[CaseOutcome] = []
             for epoch in range(1, self._epochs + 1):
                 for sample_id in range(1, self._limit + 1):
@@ -398,9 +394,27 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
                             )
                         )
                         continue
+                    if set(sample.scores) != {"grade_school_math_scorer"}:
+                        raise RuntimeError("Inspect GSM8K score tree drifted")
+                    native_score = sample.scores["grade_school_math_scorer"]
+                    if (
+                        not isinstance(native_score.value, int | float)
+                        or isinstance(native_score.value, bool)
+                        or not math.isfinite(float(native_score.value))
+                        or not 0.0 <= float(native_score.value) <= 1.0
+                    ):
+                        raise RuntimeError("Inspect GSM8K score is outside [0, 1]")
                     scores = {
                         name: ProviderScore(
                             value=score.model_dump(mode="json", exclude_none=True),
+                            public_projection=(
+                                {"value": float(score.value)}
+                                if isinstance(score.value, int | float)
+                                and not isinstance(score.value, bool)
+                                and math.isfinite(float(score.value))
+                                and 0.0 <= float(score.value) <= 1.0
+                                else None
+                            ),
                         )
                         for name, score in sample.scores.items()
                     }
@@ -411,14 +425,13 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
                         and not isinstance(score.value, bool)
                         and math.isfinite(float(score.value))
                     }
-                    primary = next(iter(scores))
                     outcomes.append(
                         CaseOutcome(
                             case_id=case_id,
                             kind=CaseOutcomeKind.COMPLETED,
                             scores=scores,
                             numeric_metrics=numeric,
-                            primary_score=primary,
+                            primary_score="grade_school_math_scorer",
                             artifact_refs=(
                                 ArtifactRef(
                                     artifact_id="inspect_eval_log",
@@ -433,7 +446,11 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
             raise
 
     async def finalize(self) -> Any:
-        if self._eval_log is None or self._eval_artifact is None:
+        if (
+            self._eval_log is None
+            or self._normalized_eval_log is None
+            or self._eval_artifact is None
+        ):
             raise RuntimeError("OpenBench finalize requires a complete Inspect EvalLog")
         outcomes = self.outcomes
         aggregates: list[AggregateMetric] = []
@@ -456,13 +473,20 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
                             },
                         )
                     )
+        expected_aggregates = {
+            ("grade_school_math_scorer", "identity", "accuracy"),
+            ("grade_school_math_scorer", "identity", "stderr"),
+        }
+        actual_aggregates = {
+            (item.scorer, item.reducer, item.metric) for item in aggregates
+        }
+        if actual_aggregates != expected_aggregates or len(aggregates) != 2:
+            raise RuntimeError("Inspect GSM8K aggregate tree drifted")
         return finish_candidate(
             identity=self.identity,
             outcomes=outcomes,
             aggregates=tuple(aggregates),
-            restricted_records=self._eval_log.model_dump(
-                mode="json", exclude_none=True
-            ),
+            restricted_records=self._normalized_eval_log,
             staging_root=self._staging_root,
             filename="openbench_provider_bundle.json",
             additional_artifacts=(
@@ -473,10 +497,11 @@ class OpenBenchGsm8kSession(BaseEvaluationSession):
                     ArtifactVisibility.RESTRICTED,
                 ),
             ),
+            normalized_result=self._normalized_eval_log,
         )
 
 
-def _openbench_gsm8k_symbols() -> tuple[Any, Any]:
+def _openbench_gsm8k_symbols() -> tuple[Any, Any, Any]:
     """Load only the attested OpenBench GSM8K leaves.
 
     OpenBench 0.5.3's top-level ``openbench.__init__`` eagerly imports its CLI
@@ -502,6 +527,7 @@ def _openbench_gsm8k_symbols() -> tuple[Any, Any]:
         "openbench": root,
         "openbench.evals": root / "evals",
         "openbench.scorers": root / "scorers",
+        "openbench.runtime": root / "runtime",
         "openbench.utils": root / "utils",
     }
     for name, package_root in package_roots.items():
@@ -524,33 +550,64 @@ def _openbench_gsm8k_symbols() -> tuple[Any, Any]:
         sys.modules[name] = module
     task_module = importlib.import_module("openbench.evals.gsm8k")
     scorer_module = importlib.import_module("openbench.scorers.grade_school_math")
-    return task_module.record_to_sample, scorer_module.grade_school_math_scorer
+    artifact_module = importlib.import_module("openbench.runtime.artifacts")
+    return (
+        task_module.record_to_sample,
+        scorer_module.grade_school_math_scorer,
+        artifact_module.normalize_eval_log,
+    )
 
 
-def build_aiperf_pipe_model_api(
-    host: PipeEvaluationHost,
+def build_aiperf_openai_model_api(
+    proxy: ScopedProxyBinding,
     *,
+    session_id: str,
+    unit_id: str,
+    case_for: Callable[[int | str, int], str],
     service_id: str = "candidate",
     purpose: str = "primary",
 ) -> Any:
-    """Construct an Inspect ``ModelAPI`` using only the official public seam.
+    """Construct an Inspect ``ModelAPI`` over the pinned official OpenAI client.
 
     Import is intentionally lazy and occurs only after distribution attestation
-    and asset binding.  The object never accepts or constructs a provider URL,
-    API key, SDK client, cache, batch request, or retry policy.
+    and asset binding. The SDK talks only to Rust's fixed Unix-domain endpoint;
+    its bearer value is a per-run local grant, never a model-server credential.
     """
-    from inspect_ai.model import ModelAPI, modelapi
+    import httpx
+    from openai import AsyncOpenAI
+    from inspect_ai.model import ModelAPI, ModelCallContext, modelapi
 
-    @modelapi(name="aiperf-pipe")
-    class AiperfPipeModelAPI(ModelAPI):
-        """Inspect ModelAPI implementation backed by evaluator host pipes."""
+    prefix = "unix://"
+    if not proxy.local_locator.startswith(prefix):
+        raise ValueError("OpenBench compatibility proxy is not Unix-domain local")
+    socket_path = proxy.local_locator.removeprefix(prefix)
+    if socket_path != "/run/aiperf/evaluator-proxy.sock":
+        raise ValueError("OpenBench compatibility proxy locator drifted")
+    if service_id not in proxy.service_ids or purpose not in proxy.purposes:
+        raise ValueError("OpenBench ModelAPI route exceeded its scoped proxy grant")
+
+    @modelapi(name="aiperf-openai-uds")
+    class AiperfOpenAiModelAPI(ModelAPI):
+        """Inspect ModelAPI backed by OpenAI 2.30 over Rust's scoped UDS."""
 
         def __init__(self) -> None:
             super().__init__(
                 model_name=f"aiperf/{service_id}",
-                base_url=None,
-                api_key=None,
+                base_url="http://localhost/v1",
+                api_key=proxy.secret,
                 api_key_vars=[],
+            )
+            self._http_client = httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(uds=socket_path),
+                timeout=None,
+            )
+            self._client = AsyncOpenAI(
+                api_key=proxy.secret,
+                base_url="http://localhost/v1",
+                default_headers={"x-aiperf-proxy-grant": proxy.grant_id},
+                http_client=self._http_client,
+                max_retries=0,
+                timeout=None,
             )
 
         async def generate(
@@ -560,35 +617,38 @@ def build_aiperf_pipe_model_api(
             tool_choice: Any,
             config: Any,
         ) -> Any:
-            state = _CURRENT_CONTEXT.get()
-            if state is None:
-                raise RuntimeError(
-                    "Inspect model call has no active sample/epoch context"
-                )
-            ordinal = state.next_ordinal
-            state.next_ordinal += 1
-            logical_call_id = f"{state.context.logical_call_id}-{ordinal}"
+            identity = ModelCallContext.current().claim_call()
+            case_id = case_for(identity.sample_id, identity.epoch)
             call_context = CallContext(
-                session_id=state.context.session_id,
-                unit_id=state.context.unit_id,
-                case_id=state.context.case_id,
-                semantic_attempt_id=state.context.semantic_attempt_id,
-                logical_call_id=logical_call_id,
+                session_id=session_id,
+                unit_id=unit_id,
+                case_id=case_id,
+                semantic_attempt_id=f"attempt-{case_id}-{identity.semantic_attempt}",
+                logical_call_id=f"call-{case_id}-{identity.call_ordinal}",
             )
             payload = _inspect_generate_payload(input, tools, tool_choice, config)
-            request = HostOperationRequest(
-                operation_id=f"op-{logical_call_id}",
-                context=call_context,
-                service_id=service_id,
-                purpose=purpose,
-                semantic_operation_id="model.generate",
-                payload=payload,
-                response_mode=ResponseMode.TERMINAL,
-                idempotency_key=f"host-{logical_call_id}",
+            model_call_request = dict(payload)
+            generation = payload.pop("generation")
+            parameters = payload.pop("parameters", {})
+            if parameters:
+                raise ValueError(
+                    "OpenBench requested generation parameters outside the audited OpenAI shim"
+                )
+            response = await self._client.chat.completions.create(
+                model=service_id,
+                messages=payload.pop("messages"),
+                stream=False,
+                extra_headers={
+                    "x-aiperf-case-id": call_context.case_id,
+                    "x-aiperf-semantic-attempt-id": call_context.semantic_attempt_id,
+                    "x-aiperf-logical-call-id": call_context.logical_call_id,
+                },
+                **generation,
+                **payload,
             )
-            result = terminal_result_payload(await host.execute(request))
+            result = response.model_dump(mode="json", exclude_none=True)
             if not isinstance(result, dict):
-                raise ValueError("Inspect host result must be an object")
+                raise ValueError("OpenAI SDK result must be an object")
             from inspect_ai.model import (
                 ChatCompletionChoice,
                 ChatMessageAssistant,
@@ -611,7 +671,7 @@ def build_aiperf_pipe_model_api(
                         message=ChatMessageAssistant.model_validate(
                             raw_choice["message"]
                         ),
-                        stop_reason=raw_choice.get("stop_reason", "unknown"),
+                        stop_reason=raw_choice.get("finish_reason", "unknown"),
                         logprobs=raw_choice.get("logprobs"),
                     )
                 )
@@ -638,7 +698,7 @@ def build_aiperf_pipe_model_api(
             # Inspect's complete EvalLog is a restricted artifact.  Returning a
             # ModelCall here preserves provider-native trace semantics without
             # publishing its prompt/response in AIPerf's public projection.
-            call = ModelCall(request=payload, response=result)
+            call = ModelCall(request=model_call_request, response=result)
             return output, call
 
         def should_retry(self, ex: Exception) -> bool:
@@ -652,24 +712,12 @@ def build_aiperf_pipe_model_api(
         def max_connections(self) -> int:
             # This bounds only Python producers. Rust SlotPools remain the sole
             # network/inference admission authority.
-            return host.producer_capacity
+            return proxy.max_concurrent_operations
 
-    return AiperfPipeModelAPI()
+        async def aclose(self) -> None:
+            await self._client.close()
 
-
-class inspect_model_call_context:
-    """Task-local context wrapper for public Inspect solver/scorer calls."""
-
-    def __init__(self, context: CallContext) -> None:
-        self._state = _InspectCallState(context=context)
-        self._token: contextvars.Token[_InspectCallState | None] | None = None
-
-    def __enter__(self) -> None:
-        self._token = _CURRENT_CONTEXT.set(self._state)
-
-    def __exit__(self, *_: object) -> None:
-        assert self._token is not None
-        _CURRENT_CONTEXT.reset(self._token)
+    return AiperfOpenAiModelAPI()
 
 
 def _inspect_generate_payload(

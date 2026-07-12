@@ -116,6 +116,7 @@ def finish_candidate(
     staging_root: Path,
     filename: str,
     additional_artifacts: Sequence[tuple[str, Path, str, ArtifactVisibility]] = (),
+    normalized_result: Any | None = None,
 ) -> EvaluationFinishCandidate:
     """Write a canonical restricted provider bundle and return its manifest candidate."""
     semantic = {
@@ -167,7 +168,9 @@ def finish_candidate(
         artifacts=tuple(manifests),
         provider_bundle=reference,
         normalized_result_sha256=canonical_sha256(
-            {
+            normalized_result
+            if normalized_result is not None
+            else {
                 "outcomes": [outcome.to_wire() for outcome in outcomes],
                 "aggregates": [aggregate.to_wire() for aggregate in aggregates],
             }

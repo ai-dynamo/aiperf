@@ -9,12 +9,12 @@ from aiperf.accuracy.evaluation.providers.nemo_evaluator import (
 )
 from aiperf.accuracy.evaluation.providers.openbench import (
     OpenBenchAdapter,
-    build_aiperf_pipe_model_api,
+    build_aiperf_openai_model_api,
 )
 
 __all__ = [
     "NemoEvaluatorAdapter",
     "NemoPipeModelClient",
     "OpenBenchAdapter",
-    "build_aiperf_pipe_model_api",
+    "build_aiperf_openai_model_api",
 ]

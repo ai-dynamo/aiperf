@@ -27,18 +27,26 @@ import stat
 import subprocess
 import sys
 import sysconfig
+import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
 
 from aiperf.accuracy.evaluation.canonical import canonical_dumps, canonical_sha256
 from aiperf.accuracy.evaluation.distributions import (
     ISOLATION_PROFILE,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
+    SOURCE_TREE_DIGEST_POLICY,
     STOCK_DISTRIBUTIONS,
     SourceComponentLock,
+    SourceOverlayLock,
     StockDistributionDescriptor,
+    distribution_identity_components,
     task_manifest,
 )
 from aiperf.accuracy.evaluation.operation_schemas import (
@@ -62,28 +70,18 @@ GSM8K_CANARY_SOURCE = (
     ROOT / "src/aiperf/accuracy/evaluation/manifests/assets/gsm8k_canary.jsonl"
 )
 GSM8K_CANARY_DESTINATION = "assets/gsm8k_canary.jsonl"
-
-# These are the exact distribution records observed during the complete pinned
-# one-case provider proofs. Optional provider SDKs, registries, CLIs, and
-# unselected benchmark packages are intentionally absent.
-NEMO_RECORD_DISTRIBUTIONS = """
-PyYAML aiohappyeyeballs aiohttp aiosignal annotated-types attrs brotli
-frozenlist idna multidict nemo-evaluator numpy orjson propcache pydantic
-pydantic_core setuptools typing-inspection typing_extensions yarl
-""".split()  # noqa: SIM905 - compact audited inventory.
-
-OPENBENCH_RECORD_DISTRIBUTIONS = """
-PyYAML Pygments aiobotocore aiohappyeyeballs aiohttp aioitertools aiosignal
-annotated-types anthropic anyio attrs boto3 botocore brotli certifi click
-distro docstring_parser frozenlist fsspec h11 httpcore httpx idna ijson
-inspect_ai jiter jmespath jsonlines jsonpatch jsonpointer jsonschema
-jsonschema-specifications linkify-it-py markdown-it-py mdurl mmh3 multidict
-nest-asyncio numpy openai openbench orjson platformdirs propcache psutil
-pydantic pydantic_core python-dateutil python-dotenv referencing rich rpds-py
-s3fs semver setuptools shortuuid six sniffio tenacity textual tiktoken tornado
-typing-inspection typing_extensions uc-micro-py urllib3 wrapt yarl zstandard
-""".split()  # noqa: SIM905 - compact audited inventory.
-
+SOURCE_OVERLAY_DIR = ROOT / "src/aiperf/accuracy/evaluation/source_overlays"
+NEMO_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/nemo/uv.lock"
+OPENBENCH_ENVIRONMENT_LOCK = ROOT / "tools/stock_evaluators/openbench/uv.lock"
+GSM8K_SCORE_PROJECTION_ID = "gsm8k_scalar_score_v1"
+GSM8K_SCORE_SCHEMA_SHA256 = (
+    "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9"
+)
+GSM8K_SCORE_SCHEMA_CANONICAL = (
+    b'{"$schema":"https://json-schema.org/draft/2020-12/schema",'
+    b'"additionalProperties":false,"properties":{"value":{"maximum":1.0,'
+    b'"minimum":0,"type":"number"}},"required":["value"],"type":"object"}'
+)
 
 def _canonical_distribution_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
@@ -95,7 +93,15 @@ _COMPONENT_BY_DISTRIBUTION = {
     for component in descriptor.components
 }
 _ELF_INTERPRETER = re.compile(r"Requesting program interpreter:\s*([^\]]+)\]")
-_ALLOWED_WORKER_SUFFIXES = {".py", ".json", ".jsonl", ".toml", ".yaml", ".yml"}
+_ALLOWED_WORKER_SUFFIXES = {
+    ".py",
+    ".json",
+    ".jsonl",
+    ".patch",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
 _INSPECT_SOURCE_SUPPLEMENTS_BASE64 = {
     "tool/_tools/_computer/_resources/image_home_dir/.config/Code/User/settings.json": "ewogICJzZWN1cml0eS53b3Jrc3BhY2UudHJ1c3QuZW5hYmxlZCI6IGZhbHNlLAogICJ1cGRhdGUuc2hvd1JlbGVhc2VOb3RlcyI6IGZhbHNlLAogICJlZGl0b3IuY3Vyc29yQmxpbmtpbmciOiAic29saWQiLAogICJlZGl0b3IuY3Vyc29yV2lkdGgiOiAzLAogICJ3b3JrYmVuY2guY29sb3JDdXN0b21pemF0aW9ucyI6IHsKICAgICJlZGl0b3JDdXJzb3IuZm9yZWdyb3VuZCI6ICIjRkYwMDAwIgogIH0KfQo=",
     "tool/_tools/_computer/_resources/tool/.vscode/settings.json": "ewogICJjU3BlbGwud29yZHMiOiBbCiAgICAiRldYR0EiLAogICAgImdldG1vdXNlbG9jYXRpb24iLAogICAgImtleXVwIiwKICAgICJtb3VzZWRvd24iLAogICAgIm1vdXNlbW92ZSIsCiAgICAibW91c2V1cCIsCiAgICAic2Nyb3QiLAogICAgIldYR0EiCiAgXQp9Cg==",
@@ -105,6 +111,51 @@ _INSPECT_SOURCE_SUPPLEMENTS_BASE64 = {
 
 class ManifestGenerationError(RuntimeError):
     """The installed closure did not match the frozen generator contract."""
+
+
+@dataclass(frozen=True)
+class ProviderEnvironment:
+    """One explicit complete virtual-environment input to manifest generation."""
+
+    prefix: Path
+    site_packages: Path
+    runtime_root: Path
+    distributions: Mapping[str, importlib.metadata.Distribution]
+    resolution_lock: Path
+
+
+def _provider_environment(prefix: Path, resolution_lock: Path) -> ProviderEnvironment:
+    prefix = prefix.expanduser().resolve(strict=True)
+    if not prefix.is_absolute():
+        raise ManifestGenerationError("provider environment prefix must be absolute")
+    executable = prefix / "bin/python3.12"
+    site_packages = prefix / "lib/python3.12/site-packages"
+    if not executable.exists() or not site_packages.is_dir():
+        raise ManifestGenerationError(
+            f"provider environment is not a CPython 3.12 virtualenv: {prefix}"
+        )
+    runtime_executable = executable.resolve(strict=True)
+    runtime_root = runtime_executable.parent.parent
+    if runtime_executable != runtime_root / "bin/python3.12":
+        raise ManifestGenerationError("provider environment runtime layout drifted")
+    observed: dict[str, importlib.metadata.Distribution] = {}
+    for distribution in importlib.metadata.distributions(path=[str(site_packages)]):
+        name = _canonical_distribution_name(distribution.metadata["Name"])
+        if name in observed:
+            raise ManifestGenerationError(
+                f"provider environment contains duplicate distribution {name!r}"
+            )
+        observed[name] = distribution
+    if not observed:
+        raise ManifestGenerationError("provider environment contains no distributions")
+    resolution_lock = resolution_lock.resolve(strict=True)
+    return ProviderEnvironment(
+        prefix=prefix,
+        site_packages=site_packages.resolve(strict=True),
+        runtime_root=runtime_root.resolve(strict=True),
+        distributions=observed,
+        resolution_lock=resolution_lock,
+    )
 
 
 def _sha256(content: bytes) -> str:
@@ -157,17 +208,29 @@ def _logical_file(
     }
 
 
-def _runtime_root() -> Path:
-    root = Path(sys.base_prefix).resolve(strict=True)
+def _runtime_root(environments: Sequence[ProviderEnvironment]) -> Path:
+    roots = {environment.runtime_root for environment in environments}
+    if len(roots) != 1:
+        raise ManifestGenerationError(
+            "provider environments do not share the pinned CPython runtime"
+        )
+    root = next(iter(roots))
     executable = root / "bin/python3.12"
-    if (
-        sys.implementation.name != "cpython"
-        or ".".join(map(str, sys.version_info[:3])) != PYTHON_VERSION
-        or sysconfig.get_config_var("SOABI") != PYTHON_ABI
-        or not executable.is_file()
-        or executable.is_symlink()
-    ):
+    result = subprocess.run(
+        [
+            str(executable),
+            "-I",
+            "-c",
+            "import sys,sysconfig;print(sys.implementation.name);print('.'.join(map(str,sys.version_info[:3])));print(sysconfig.get_config_var('SOABI'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout.splitlines() != ["cpython", PYTHON_VERSION, PYTHON_ABI]:
         raise ManifestGenerationError("generator is not running on pinned CPython")
+    if not executable.is_file() or executable.is_symlink():
+        raise ManifestGenerationError("pinned CPython executable is not a regular file")
     return root
 
 
@@ -199,11 +262,15 @@ def _runtime_files(root: Path) -> tuple[dict[str, Any], ...]:
     return tuple(result)
 
 
-def _distribution(name: str) -> importlib.metadata.Distribution:
-    try:
-        return importlib.metadata.distribution(name)
-    except importlib.metadata.PackageNotFoundError as error:
-        raise ManifestGenerationError(f"missing distribution {name!r}") from error
+def _distribution(
+    name: str, environment: ProviderEnvironment
+) -> importlib.metadata.Distribution:
+    distribution = environment.distributions.get(_canonical_distribution_name(name))
+    if distribution is None:
+        raise ManifestGenerationError(
+            f"missing distribution {name!r} in {environment.prefix}"
+        )
+    return distribution
 
 
 def _record_path(distribution: importlib.metadata.Distribution) -> Path:
@@ -236,8 +303,8 @@ def _record_digest(encoded: str) -> str:
         raise ManifestGenerationError("RECORD uses a non-SHA256 digest") from error
 
 
-def _record_info(name: str) -> dict[str, Any]:
-    distribution = _distribution(name)
+def _record_info(name: str, environment: ProviderEnvironment) -> dict[str, Any]:
+    distribution = _distribution(name, environment)
     record = _record_path(distribution).read_bytes()
     return {
         "distribution": distribution.metadata["Name"],
@@ -246,8 +313,12 @@ def _record_info(name: str) -> dict[str, Any]:
     }
 
 
-def _source_omissions(component: SourceComponentLock) -> tuple[str, ...]:
-    distribution = _distribution(component.distribution)
+def _source_omissions(
+    component: SourceComponentLock,
+    environment: ProviderEnvironment,
+    existing_overlay_targets: Sequence[str] = (),
+) -> tuple[str, ...]:
+    distribution = _distribution(component.distribution, environment)
     dist_info = Path(distribution._path).name  # type: ignore[attr-defined]
     values = {
         f"{dist_info}/METADATA",
@@ -256,32 +327,120 @@ def _source_omissions(component: SourceComponentLock) -> tuple[str, ...]:
     }
     if component.distribution == "openbench":
         values.add(f"{dist_info}/entry_points.txt")
+    values.update(
+        f"{component.import_package}/{relative}"
+        for relative in existing_overlay_targets
+    )
     return tuple(sorted(values, key=str.encode))
 
 
-def _record_closures(names: Sequence[str]) -> tuple[dict[str, Any], ...]:
+def _record_closures(
+    names: Sequence[str],
+    environment: ProviderEnvironment,
+    projections: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
     result = []
     for name in names:
-        info = _record_info(name)
+        info = _record_info(name, environment)
         component = _COMPONENT_BY_DISTRIBUTION.get(
             _canonical_distribution_name(info["distribution"])
+        )
+        projection = (
+            projections.get(_canonical_distribution_name(component.distribution))
+            if component is not None
+            else None
         )
         result.append(
             {
                 **info,
                 "destination_prefix": SITE_PACKAGES_DESTINATION,
                 "omitted_paths": (
-                    list(_source_omissions(component)) if component else []
+                    list(
+                        _source_omissions(
+                            component,
+                            environment,
+                            projection["existing_overlay_targets"] if projection else (),
+                        )
+                    )
+                    if component
+                    else []
                 ),
+                "_environment": environment,
             }
         )
     return tuple(sorted(result, key=lambda item: item["distribution"].lower().encode()))
 
 
+def _dependency_closure(
+    environment: ProviderEnvironment, root_distributions: Sequence[str]
+) -> tuple[str, ...]:
+    """Resolve the exact base dependency graph from installed METADATA."""
+    marker_environment = default_environment()
+    marker_environment.update(
+        {
+            "python_version": "3.12",
+            "python_full_version": PYTHON_VERSION,
+            "sys_platform": "linux",
+            "platform_machine": "x86_64",
+        }
+    )
+    pending: list[tuple[str, frozenset[str]]] = [
+        (distribution, frozenset()) for distribution in root_distributions
+    ]
+    selected: dict[str, frozenset[str]] = {}
+    while pending:
+        raw_name, extras = pending.pop()
+        name = _canonical_distribution_name(raw_name)
+        prior = selected.get(name, frozenset())
+        merged = prior | extras
+        if name in selected and merged == prior:
+            continue
+        selected[name] = merged
+        distribution = _distribution(name, environment)
+        for raw_requirement in distribution.requires or ():
+            requirement = Requirement(raw_requirement)
+            marker = requirement.marker
+            applies = marker is None or marker.evaluate(
+                {**marker_environment, "extra": ""}
+            )
+            if not applies:
+                applies = any(
+                    marker.evaluate({**marker_environment, "extra": extra})
+                    for extra in merged
+                )
+            if applies:
+                dependency = _distribution(requirement.name, environment)
+                if requirement.specifier and dependency.version not in requirement.specifier:
+                    raise ManifestGenerationError(
+                        f"installed dependency {requirement.name!r} {dependency.version} violates {requirement.specifier}"
+                    )
+                pending.append((requirement.name, frozenset(requirement.extras)))
+    installed = set(environment.distributions)
+    if installed != set(selected):
+        extra = sorted(installed - set(selected))
+        missing = sorted(set(selected) - installed)
+        raise ManifestGenerationError(
+            f"provider environment is not the exact dependency closure; extra={extra}, missing={missing}"
+        )
+    return tuple(
+        environment.distributions[name].metadata["Name"]
+        for name in sorted(selected, key=str.encode)
+    )
+
+
 def _lock_value(
     descriptor: StockDistributionDescriptor,
     record_closures: Sequence[Mapping[str, Any]],
+    environment: ProviderEnvironment,
 ) -> dict[str, Any]:
+    record_identity = [
+        {
+            "distribution": item["distribution"],
+            "version": item["version"],
+            "record_sha256": item["record_sha256"],
+        }
+        for item in record_closures
+    ]
     return {
         "format": "aiperf-evaluator-lock-v2",
         "provider": descriptor.provider_id,
@@ -297,10 +456,28 @@ def _lock_value(
                 "package": component.distribution,
                 "version": component.version,
                 "commit": component.commit,
-                "source_tree_sha256": component.source_tree_sha256,
+                "base_source_tree_sha256": component.base_source_tree_sha256,
+                "source_tree_digest_policy": SOURCE_TREE_DIGEST_POLICY,
+                "overlays": [
+                    {
+                        "overlay_id": overlay.overlay_id,
+                        "resource": overlay.resource,
+                        "artifact_content_sha256": overlay.resource_sha256,
+                        "targets": list(overlay.targets),
+                    }
+                    for overlay in component.overlays
+                ],
+                "effective_source_tree_sha256": component.source_tree_sha256,
             }
             for component in descriptor.components
         ],
+        "resolution": {
+            "kind": "uv-lock-v1",
+            "artifact_content_sha256": _sha256(
+                environment.resolution_lock.read_bytes()
+            ),
+            "environment_record_set_sha256": canonical_sha256(record_identity),
+        },
         "audit_scope": {
             "task": "gsm8k",
             "asset": "openai_gsm8k_main_test_canary",
@@ -332,23 +509,32 @@ def _provider_source_digest(descriptor: StockDistributionDescriptor) -> str:
                 "distribution": component.distribution,
                 "version": component.version,
                 "commit": component.commit,
-                "source_tree_sha256": component.source_tree_sha256,
+                "base_source_tree_sha256": component.base_source_tree_sha256,
+                "overlays": [
+                    {
+                        "overlay_id": overlay.overlay_id,
+                        "artifact_content_sha256": overlay.resource_sha256,
+                    }
+                    for overlay in component.overlays
+                ],
+                "effective_source_tree_sha256": component.source_tree_sha256,
             }
             for component in descriptor.components
         ]
     )
 
 
-def _verify_component_sources() -> None:
-    for component in _COMPONENT_BY_DISTRIBUTION.values():
-        spec = importlib.util.find_spec(component.import_package)
-        if spec is None or not spec.submodule_search_locations:
+def _verify_component_sources(
+    descriptor: StockDistributionDescriptor, environment: ProviderEnvironment
+) -> dict[str, dict[str, Any]]:
+    projections: dict[str, dict[str, Any]] = {}
+    for component in descriptor.components:
+        distribution = _distribution(component.distribution, environment)
+        root = Path(distribution.locate_file(component.import_package))
+        if not root.is_dir() or root.is_symlink():
             raise ManifestGenerationError(
                 f"source component {component.import_package!r} is unavailable"
             )
-        locations = tuple(spec.submodule_search_locations)
-        if len(locations) != 1:
-            raise ManifestGenerationError("source component is namespace ambiguous")
         supplements = (
             {
                 relative: base64.b64decode(content, validate=True)
@@ -357,13 +543,134 @@ def _verify_component_sources() -> None:
             if component.distribution == "inspect-ai"
             else {}
         )
-        actual = _projected_source_tree_sha256(
-            Path(locations[0]), component.source_tree_excluded_paths, supplements
-        )
-        if actual != component.source_tree_sha256:
+        expected_restored = {
+            item.relative_path: item.content_sha256
+            for item in component.restored_base_files
+        }
+        actual_restored = {
+            relative: _sha256(content) for relative, content in supplements.items()
+        }
+        if actual_restored != expected_restored:
             raise ManifestGenerationError(
-                f"source tree drift for {component.distribution!r}: {actual}"
+                f"restored base-file inventory drift for {component.distribution!r}"
             )
+        actual_base = _projected_source_tree_sha256(
+            root, component.source_tree_excluded_paths, supplements
+        )
+        if actual_base != component.base_source_tree_sha256:
+            raise ManifestGenerationError(
+                f"base source tree drift for {component.distribution!r}: {actual_base}"
+            )
+        with tempfile.TemporaryDirectory(
+            prefix=f"aiperf-{component.import_package}-overlay-"
+        ) as temporary:
+            effective_root = Path(temporary) / component.import_package
+            shutil.copytree(root, effective_root, symlinks=False)
+            for relative, content in supplements.items():
+                target = effective_root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    raise ManifestGenerationError(
+                        f"restored base file collided with wheel content: {relative}"
+                    )
+                target.write_bytes(content)
+            entries: list[dict[str, Any]] = []
+            existing_targets: set[str] = set()
+            for ordinal, overlay in enumerate(component.overlays):
+                entry = _apply_source_overlay(
+                    effective_root,
+                    overlay,
+                    component.source_tree_excluded_paths,
+                    ordinal,
+                )
+                entries.append(entry)
+                existing_targets.update(
+                    target["relative_path"]
+                    for target in entry["targets"]
+                    if target["base_content_sha256"] is not None
+                )
+            effective = _projected_source_tree_sha256(
+                effective_root, component.source_tree_excluded_paths, {}
+            )
+            if effective != component.source_tree_sha256:
+                raise ManifestGenerationError(
+                    f"effective source tree drift for {component.distribution!r}: {effective}"
+                )
+            replacement_contents = {
+                relative: (effective_root / relative).read_bytes()
+                for overlay in component.overlays
+                for relative in overlay.targets
+            }
+        projections[_canonical_distribution_name(component.distribution)] = {
+            "base_source_tree_sha256": actual_base,
+            "restored_base_files": supplements,
+            "overlays": entries,
+            "effective_source_tree_sha256": effective,
+            "existing_overlay_targets": tuple(
+                sorted(existing_targets, key=str.encode)
+            ),
+            "replacement_contents": replacement_contents,
+        }
+    return projections
+
+
+def _apply_source_overlay(
+    root: Path,
+    overlay: SourceOverlayLock,
+    excluded: Sequence[str],
+    ordinal: int,
+) -> dict[str, Any]:
+    patch = SOURCE_OVERLAY_DIR / overlay.resource
+    content = patch.read_bytes()
+    if _sha256(content) != overlay.resource_sha256:
+        raise ManifestGenerationError(
+            f"source overlay digest drift for {overlay.overlay_id!r}"
+        )
+    before = _semantic_tree(root, excluded, {})
+    result = subprocess.run(
+        ["git", "apply", "--recount", "-p1", str(patch)],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ManifestGenerationError(
+            f"source overlay {overlay.overlay_id!r} did not apply: {result.stderr.strip()}"
+        )
+    after = _semantic_tree(root, excluded, {})
+    changed = tuple(
+        sorted(
+            {
+                relative
+                for relative in set(before) | set(after)
+                if before.get(relative) != after.get(relative)
+            },
+            key=str.encode,
+        )
+    )
+    if changed != tuple(sorted(overlay.targets, key=str.encode)):
+        raise ManifestGenerationError(
+            f"source overlay {overlay.overlay_id!r} target set drifted: {changed}"
+        )
+    if any(relative not in after for relative in changed):
+        raise ManifestGenerationError("source overlays may not delete semantic files")
+    return {
+        "ordinal": ordinal,
+        "overlay_id": overlay.overlay_id,
+        "resource": overlay.resource,
+        "artifact_content_sha256": overlay.resource_sha256,
+        "targets": [
+            {
+                "relative_path": relative,
+                "base_content_sha256": (
+                    _sha256(before[relative]) if relative in before else None
+                ),
+                "effective_content_sha256": _sha256(after[relative]),
+            }
+            for relative in overlay.targets
+        ],
+    }
 
 
 def _projected_source_tree_sha256(
@@ -371,6 +678,22 @@ def _projected_source_tree_sha256(
     excluded: Sequence[str],
     supplements: Mapping[str, bytes],
 ) -> str:
+    semantic = _semantic_tree(root, excluded, supplements)
+    digest = hashlib.sha256()
+    for relative, content in sorted(
+        semantic.items(), key=lambda item: item[0].encode()
+    ):
+        encoded = relative.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
+def _semantic_tree(
+    root: Path, excluded: Sequence[str], supplements: Mapping[str, bytes]
+) -> dict[str, bytes]:
     allowed = {".py", ".json", ".toml", ".yaml", ".yml"}
     semantic = {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -384,16 +707,7 @@ def _projected_source_tree_sha256(
         if relative in semantic:
             raise ManifestGenerationError(f"source supplement collision: {relative}")
         semantic[relative] = content
-    digest = hashlib.sha256()
-    for relative, content in sorted(
-        semantic.items(), key=lambda item: item[0].encode()
-    ):
-        encoded = relative.encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return digest.hexdigest()
+    return semantic
 
 
 def _embedded_file(resource: str, destination: str, content: bytes) -> dict[str, Any]:
@@ -438,7 +752,14 @@ def _worker_source_digest(resources: Sequence[tuple[Path, str, bytes]]) -> str:
         if not path.is_relative_to(evaluation):
             continue
         relative = path.relative_to(evaluation).as_posix()
-        if path.suffix not in {".py", ".json", ".toml", ".yaml", ".yml"}:
+        if path.suffix not in {
+            ".py",
+            ".json",
+            ".patch",
+            ".toml",
+            ".yaml",
+            ".yml",
+        }:
             continue
         semantic.append((relative, content))
     digest = hashlib.sha256()
@@ -451,30 +772,67 @@ def _worker_source_digest(resources: Sequence[tuple[Path, str, bytes]]) -> str:
     return digest.hexdigest()
 
 
-def _metadata_overlay(component: SourceComponentLock) -> dict[str, Any]:
-    distribution = _distribution(component.distribution)
+def _metadata_overlay(
+    component: SourceComponentLock,
+    environment: ProviderEnvironment,
+    projection: Mapping[str, Any],
+) -> dict[str, Any]:
+    distribution = _distribution(component.distribution, environment)
     record_path = _record_path(distribution)
     upstream_record = record_path.read_bytes()
     rows = _record_rows(upstream_record)
-    omitted = set(_source_omissions(component))
+    omitted = set(
+        _source_omissions(
+            component,
+            environment,
+            projection["existing_overlay_targets"],
+        )
+    )
     dist_info = Path(distribution._path).name  # type: ignore[attr-defined]
     metadata_relative = f"{dist_info}/METADATA"
     record_relative = f"{dist_info}/RECORD"
     attestation_relative = f"{dist_info}/aiperf_source_attestation.json"
     metadata = (Path(distribution._path) / "METADATA").read_bytes()  # type: ignore[attr-defined]
-    attestation = canonical_dumps(
-        {
-            "distribution": component.distribution,
-            "version": component.version,
+    attestation_value = {
+        "format": "aiperf-pinned-source-overlay-v1",
+        "distribution": component.distribution,
+        "version": component.version,
+        "base": {
             "commit": component.commit,
-            "source_tree_sha256": component.source_tree_sha256,
+            "digest_policy": SOURCE_TREE_DIGEST_POLICY,
+            "source_tree_sha256": component.base_source_tree_sha256,
+            "excluded_relative_paths": list(component.source_tree_excluded_paths),
+            "restored_files": [
+                {
+                    "relative_path": item.relative_path,
+                    "artifact_content_sha256": item.content_sha256,
+                }
+                for item in component.restored_base_files
+            ],
+        },
+        "overlay_policy": "aiperf-unified-diff-overlay-v1",
+        "overlays": projection["overlays"],
+        "effective_source_tree_sha256": component.source_tree_sha256,
+        "effective_source_tree_digest_policy": SOURCE_TREE_DIGEST_POLICY,
+    }
+    attestation = canonical_dumps(attestation_value)
+    source_replacements: dict[str, bytes] = {
+        f"{component.import_package}/{relative}": content
+        for relative, content in projection["replacement_contents"].items()
+    }
+    source_replacements.update(
+        {
+            f"{component.import_package}/{relative}": content
+            for relative, content in projection["restored_base_files"].items()
         }
     )
     final_rows = [row for row in rows if row[0] not in omitted]
-    for relative, content in (
-        (metadata_relative, metadata),
-        (attestation_relative, attestation),
-    ):
+    replacements = {
+        **source_replacements,
+        metadata_relative: metadata,
+        attestation_relative: attestation,
+    }
+    for relative, content in replacements.items():
         encoded = (
             base64.urlsafe_b64encode(hashlib.sha256(content).digest())
             .decode("ascii")
@@ -486,37 +844,36 @@ def _metadata_overlay(component: SourceComponentLock) -> dict[str, Any]:
     writer = csv.writer(output, lineterminator="\n")
     writer.writerows(sorted(final_rows, key=lambda row: row[0].encode("utf-8")))
     replacement_record = output.getvalue().encode("utf-8")
-    policy = (
-        "inspect_entry_point_policy_deny_v1"
-        if component.distribution == "openbench"
-        else "aiperf_source_attestation_v1"
-    )
-    replacements = (
-        (metadata_relative, metadata),
-        (attestation_relative, attestation),
-        (record_relative, replacement_record),
-    )
+    replacements[record_relative] = replacement_record
     return {
-        "policy_id": policy,
+        "policy_id": "pinned_source_overlay_v1",
         "distribution": distribution.metadata["Name"],
         "version": component.version,
         "upstream_record_sha256": _sha256(upstream_record),
         "omitted_paths": sorted(omitted, key=str.encode),
+        "base_source": attestation_value["base"],
+        "overlay_policy": attestation_value["overlay_policy"],
+        "overlays": projection["overlays"],
+        "effective_source_tree_sha256": component.source_tree_sha256,
+        "effective_source_tree_digest_policy": SOURCE_TREE_DIGEST_POLICY,
         "replacement_files": [
             _embedded_file(
-                f"generated://metadata-overlay/{component.distribution}/{relative}",
+                f"generated://source-overlay/{component.distribution}/{relative}",
                 f"{SITE_PACKAGES_DESTINATION}/{relative}",
                 content,
             )
-            for relative, content in replacements
+            for relative, content in sorted(
+                replacements.items(), key=lambda item: item[0].encode()
+            )
         ],
     }
 
 
 def _expand_record_closure(
     closure: Mapping[str, Any],
+    environment: ProviderEnvironment,
 ) -> tuple[tuple[dict[str, Any], Path], ...]:
-    distribution = _distribution(str(closure["distribution"]))
+    distribution = _distribution(str(closure["distribution"]), environment)
     if distribution.version != closure["version"]:
         raise ManifestGenerationError(f"version drift for {closure['distribution']!r}")
     record_path = _record_path(distribution)
@@ -556,6 +913,7 @@ def _elf_inputs(
     runtime_root: Path,
     runtime_files: Sequence[Mapping[str, Any]],
     record_closures: Sequence[Mapping[str, Any]],
+    environment: ProviderEnvironment,
 ) -> tuple[Path, ...]:
     result: set[Path] = set()
     for item in runtime_files:
@@ -563,7 +921,7 @@ def _elf_inputs(
         if source.read_bytes()[:4] == b"\x7fELF":
             result.add(source)
     for closure in record_closures:
-        for _, source in _expand_record_closure(closure):
+        for _, source in _expand_record_closure(closure, environment):
             try:
                 if source.read_bytes()[:4] == b"\x7fELF":
                     result.add(source)
@@ -618,9 +976,12 @@ def _system_files(
     runtime_root: Path,
     runtime_files: Sequence[Mapping[str, Any]],
     record_closures: Sequence[Mapping[str, Any]],
+    environment: ProviderEnvironment,
 ) -> tuple[dict[str, Any], ...]:
-    site_packages = Path(next(iter(importlib.metadata.distributions())).locate_file(""))
-    queue = list(_elf_inputs(runtime_root, runtime_files, record_closures))
+    package_roots = {environment.site_packages}
+    queue = list(
+        _elf_inputs(runtime_root, runtime_files, record_closures, environment)
+    )
     system: dict[str, Path] = {}
     visited: set[Path] = set()
     while queue:
@@ -631,10 +992,15 @@ def _system_files(
         visited.add(resolved_current)
         for dependency in _ldd_dependencies(current):
             resolved = dependency.resolve(strict=True)
-            if resolved.is_relative_to(runtime_root) or resolved.is_relative_to(
-                site_packages
+            if resolved.is_relative_to(runtime_root) or any(
+                resolved.is_relative_to(package_root)
+                for package_root in package_roots
             ):
                 continue
+            if not _is_allowed_system_source(resolved):
+                raise ManifestGenerationError(
+                    f"ELF dependency escaped pinned runtime/package roots and system library prefixes: {resolved}"
+                )
             destination = _normalize_relative(dependency.as_posix().lstrip("/"))
             prior = system.get(destination)
             if prior is not None and prior.read_bytes() != resolved.read_bytes():
@@ -652,6 +1018,19 @@ def _system_files(
         )
         for destination, source in sorted(
             system.items(), key=lambda item: item[0].encode()
+        )
+    )
+
+
+def _is_allowed_system_source(path: Path) -> bool:
+    """Accept only deployment-owned dynamic-library roots, never host worktrees."""
+    parts = path.parts
+    return (
+        len(parts) >= 3
+        and parts[0] == "/"
+        and (
+            parts[1] in {"lib", "lib64"}
+            or (len(parts) >= 4 and parts[1] == "usr" and parts[2] in {"lib", "lib64"})
         )
     )
 
@@ -678,6 +1057,7 @@ def _expanded_inventory(
     record_closures: Sequence[Mapping[str, Any]],
     embedded_files: Sequence[Mapping[str, Any]],
     overlays: Sequence[Mapping[str, Any]],
+    environment: ProviderEnvironment,
 ) -> dict[str, tuple[str, bool]]:
     inventory: dict[str, tuple[str, bool]] = {}
     for closure_id in shared_closure_ids:
@@ -689,7 +1069,7 @@ def _expanded_inventory(
                 bool(item["executable"]),
             )
     for closure in record_closures:
-        for item, _ in _expand_record_closure(closure):
+        for item, _ in _expand_record_closure(closure, environment):
             _insert_inventory(
                 inventory,
                 item["destination"],
@@ -726,6 +1106,36 @@ def _closure_sha256(inventory: Mapping[str, tuple[str, bool]]) -> str:
     return digest.hexdigest()
 
 
+def _validate_public_projection(public_projection: Mapping[str, Any]) -> None:
+    """Bind every stock public score to the reviewed executable validator."""
+    score_schemas = public_projection.get("score_schemas")
+    if not isinstance(score_schemas, list) or len(score_schemas) != 1:
+        raise ManifestGenerationError(
+            "stock public projection must contain exactly one score schema"
+        )
+    score = score_schemas[0]
+    if not isinstance(score, dict):
+        raise ManifestGenerationError("stock public score schema must be an object")
+    if score.get("projection_id") != GSM8K_SCORE_PROJECTION_ID:
+        raise ManifestGenerationError(
+            "stock public score schema named an unreviewed executable validator"
+        )
+    schema = score.get("schema")
+    if canonical_dumps(schema) != GSM8K_SCORE_SCHEMA_CANONICAL:
+        raise ManifestGenerationError(
+            "stock GSM8K public score schema drifted from the reviewed object"
+        )
+    actual_sha256 = canonical_sha256(schema)
+    if actual_sha256 != GSM8K_SCORE_SCHEMA_SHA256:
+        raise ManifestGenerationError(
+            f"stock GSM8K public score schema digest drifted: {actual_sha256}"
+        )
+    if score.get("schema_sha256") != actual_sha256:
+        raise ManifestGenerationError(
+            "stock GSM8K public score schema advertised the wrong digest"
+        )
+
+
 def _distribution_entry(
     descriptor: StockDistributionDescriptor,
     lock_bytes: bytes,
@@ -733,6 +1143,8 @@ def _distribution_entry(
     shared_closure_ids: Sequence[str],
     shared_closures: Mapping[str, Mapping[str, Any]],
     worker_resources: Sequence[tuple[Path, str, bytes]],
+    environment: ProviderEnvironment,
+    projections: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     embedded_files = [
         _embedded_file(path.relative_to(ROOT).as_posix(), destination, content)
@@ -745,54 +1157,74 @@ def _distribution_entry(
             GSM8K_CANARY_SOURCE.read_bytes(),
         )
     )
-    if any(
-        component.distribution == "inspect-ai" for component in descriptor.components
-    ):
-        embedded_files.extend(
-            _embedded_file(
-                f"pinned-source://inspect-ai/{relative}",
-                f"{SITE_PACKAGES_DESTINATION}/inspect_ai/{relative}",
-                base64.b64decode(encoded, validate=True),
-            )
-            for relative, encoded in sorted(
-                _INSPECT_SOURCE_SUPPLEMENTS_BASE64.items(),
-                key=lambda item: item[0].encode(),
-            )
+    overlays = [
+        _metadata_overlay(
+            component,
+            environment,
+            projections[_canonical_distribution_name(component.distribution)],
         )
-    overlays = [_metadata_overlay(component) for component in descriptor.components]
+        for component in descriptor.components
+    ]
     inventory = _expanded_inventory(
         shared_closure_ids,
         shared_closures,
         record_closures,
         embedded_files,
         overlays,
+        environment,
     )
     manifest_resource = descriptor.task_manifest_resource
     manifest_path = MANIFEST_DIR / manifest_resource
     manifest_bytes = manifest_path.read_bytes()
+    manifest_value = task_manifest(descriptor)
+    manifest_entries = (
+        manifest_value.get("environments", {})
+        if descriptor.provider_id == "nemo_evaluator"
+        else manifest_value.get("tasks", {})
+    )
+    executable_entries = {
+        name: value
+        for name, value in manifest_entries.items()
+        if isinstance(value, dict) and value.get("executable") is True
+    }
+    if len(executable_entries) != 1:
+        raise ManifestGenerationError(
+            "stock distribution must expose exactly one audited executable task"
+        )
+    public_projection = next(iter(executable_entries.values())).get(
+        "public_projection"
+    )
+    if not isinstance(public_projection, dict):
+        raise ManifestGenerationError("executable task omitted public projection")
+    _validate_public_projection(public_projection)
     operation = OPERATION_DIRECTION_SCHEMA_SHA256["model.generate"]
+    worker_source_sha256 = _worker_source_digest(worker_resources)
+    dependency_lock_sha256 = _sha256(lock_bytes)
     return {
         "provider_id": descriptor.provider_id,
         "distribution_id": descriptor.distribution_id,
         "package": descriptor.package,
         "package_version": descriptor.package_version,
         "provider_source_sha256": _provider_source_digest(descriptor),
-        "worker_source_sha256": _worker_source_digest(worker_resources),
-        "dependency_lock_sha256": _sha256(lock_bytes),
+        "identity_components": [
+            component.to_wire()
+            for component in distribution_identity_components(
+                descriptor,
+                worker_source_sha256=worker_source_sha256,
+                dependency_lock_sha256=dependency_lock_sha256,
+            )
+        ],
+        "worker_source_sha256": worker_source_sha256,
+        "dependency_lock_sha256": dependency_lock_sha256,
         "oci_digest": None,
         "config_schema_version": descriptor.config_schema_version,
         "config_schema_sha256": descriptor.config_schema_sha256,
         "task_manifest": {
             "resource": f"aiperf.accuracy.evaluation.manifests/{manifest_resource}",
             "artifact_content_sha256": _sha256(manifest_bytes),
-            "executable_tasks": list(
-                (
-                    task_manifest(descriptor).get("environments", {})
-                    if descriptor.provider_id == "nemo_evaluator"
-                    else task_manifest(descriptor).get("tasks", {})
-                ).keys()
-            ),
+            "executable_tasks": list(executable_entries),
         },
+        "public_projection": public_projection,
         "operations": [
             {
                 "operation_id": "model.generate",
@@ -802,6 +1234,32 @@ def _distribution_entry(
                 "endpoint_capability": "chat",
             }
         ],
+        "compatibility_proxy": (
+            {
+                "dialects": list(descriptor.compatibility_proxy.dialects),
+                "routes": [
+                    {
+                        "dialect": route.dialect,
+                        "selector": route.selector,
+                        "service_id": route.service_id,
+                        "purpose": route.purpose,
+                        "semantic_operation_id": route.semantic_operation_id,
+                        "restricted_payload": route.restricted_payload,
+                    }
+                    for route in descriptor.compatibility_proxy.routes
+                ],
+                "grant_limits": {
+                    "max_operations": descriptor.compatibility_proxy.max_operations,
+                    "max_concurrent_operations": descriptor.compatibility_proxy.max_concurrent_operations,
+                    "max_request_bytes": descriptor.compatibility_proxy.max_request_bytes,
+                    "max_response_bytes": descriptor.compatibility_proxy.max_response_bytes,
+                    "max_stream_events": descriptor.compatibility_proxy.max_stream_events,
+                    "expires_after_ms": descriptor.compatibility_proxy.expires_after_ms,
+                },
+            }
+            if descriptor.compatibility_proxy is not None
+            else None
+        ),
         "isolation": {
             "profile_id": ISOLATION_PROFILE,
             "bubblewrap": "/usr/bin/bwrap",
@@ -826,7 +1284,10 @@ def _distribution_entry(
             "args": list(descriptor.fixed_argv),
             "environment": dict(descriptor.clean_environment),
             "current_dir": CURRENT_DIR,
-            "record_closures": list(record_closures),
+            "record_closures": [
+                {key: value for key, value in closure.items() if not key.startswith("_")}
+                for closure in record_closures
+            ],
             "embedded_files": embedded_files,
             "metadata_overlays": overlays,
         },
@@ -834,22 +1295,35 @@ def _distribution_entry(
     }
 
 
-def generate() -> tuple[dict[Path, bytes], bytes]:
+def generate(
+    *, nemo_root: Path, openbench_root: Path
+) -> tuple[dict[Path, bytes], bytes]:
     """Generate lock resources and the complete stock launch manifest."""
-    _verify_component_sources()
-    runtime_root = _runtime_root()
+    environments = {
+        NEMO_EVALUATOR_DISTRIBUTION.distribution_id: _provider_environment(
+            nemo_root, NEMO_ENVIRONMENT_LOCK
+        ),
+        OPENBENCH_DISTRIBUTION.distribution_id: _provider_environment(
+            openbench_root, OPENBENCH_ENVIRONMENT_LOCK
+        ),
+    }
+    runtime_root = _runtime_root(tuple(environments.values()))
     runtime_files = _runtime_files(runtime_root)
-    descriptors = (
-        (NEMO_EVALUATOR_DISTRIBUTION, NEMO_RECORD_DISTRIBUTIONS),
-        (OPENBENCH_DISTRIBUTION, OPENBENCH_RECORD_DISTRIBUTIONS),
-    )
+    descriptors = (NEMO_EVALUATOR_DISTRIBUTION, OPENBENCH_DISTRIBUTION)
     record_sets: dict[str, tuple[dict[str, Any], ...]] = {}
+    projections: dict[str, dict[str, dict[str, Any]]] = {}
     lock_bytes: dict[Path, bytes] = {}
-    for descriptor, names in descriptors:
-        closures = _record_closures(names)
+    for descriptor in descriptors:
+        environment = environments[descriptor.distribution_id]
+        projection = _verify_component_sources(descriptor, environment)
+        projections[descriptor.distribution_id] = projection
+        names = _dependency_closure(environment, (descriptor.package, "orjson"))
+        closures = _record_closures(names, environment, projection)
         record_sets[descriptor.distribution_id] = closures
         path = MANIFEST_DIR / descriptor.dependency_lock_resource
-        lock_bytes[path] = _json_bytes(_lock_value(descriptor, closures))
+        lock_bytes[path] = _json_bytes(
+            _lock_value(descriptor, closures, environment)
+        )
     worker_resources = _worker_resource_contents(lock_bytes)
     shared_closures: dict[str, dict[str, Any]] = {
         RUNTIME_CLOSURE_ID: {
@@ -868,7 +1342,7 @@ def generate() -> tuple[dict[Path, bytes], bytes]:
         }
     }
     system_ids: dict[str, str] = {}
-    for descriptor, _ in descriptors:
+    for descriptor in descriptors:
         closure_id = f"system_{PLATFORM.replace('-', '_')}_{descriptor.provider_id}"
         system_ids[descriptor.distribution_id] = closure_id
         shared_closures[closure_id] = {
@@ -878,11 +1352,12 @@ def generate() -> tuple[dict[Path, bytes], bytes]:
                     runtime_root,
                     runtime_files,
                     record_sets[descriptor.distribution_id],
+                    environments[descriptor.distribution_id],
                 )
             ),
         }
     entries = []
-    for descriptor, _ in descriptors:
+    for descriptor in descriptors:
         entries.append(
             _distribution_entry(
                 descriptor,
@@ -891,6 +1366,8 @@ def generate() -> tuple[dict[Path, bytes], bytes]:
                 (RUNTIME_CLOSURE_ID, system_ids[descriptor.distribution_id]),
                 shared_closures,
                 worker_resources,
+                environments[descriptor.distribution_id],
+                projections[descriptor.distribution_id],
             )
         )
     value = {
@@ -901,8 +1378,10 @@ def generate() -> tuple[dict[Path, bytes], bytes]:
     return lock_bytes, _json_bytes(value)
 
 
-def _write_or_check(write: bool) -> None:
-    lock_bytes, manifest = generate()
+def _write_or_check(write: bool, *, nemo_root: Path, openbench_root: Path) -> None:
+    lock_bytes, manifest = generate(
+        nemo_root=nemo_root, openbench_root=openbench_root
+    )
     outputs = {**lock_bytes, OUTPUT: manifest}
     mismatches = []
     for path, content in outputs.items():
@@ -927,9 +1406,25 @@ def _source_for_shared(
     raise ManifestGenerationError("unknown shared-closure resolver")
 
 
-def materialize(distribution_id: str, root: Path) -> None:
+def materialize(
+    distribution_id: str,
+    root: Path,
+    *,
+    nemo_root: Path,
+    openbench_root: Path,
+) -> None:
     """Materialize one generated closure for a no-host-path subprocess proof."""
-    _, manifest_bytes = generate()
+    environments = {
+        NEMO_EVALUATOR_DISTRIBUTION.distribution_id: _provider_environment(
+            nemo_root, NEMO_ENVIRONMENT_LOCK
+        ),
+        OPENBENCH_DISTRIBUTION.distribution_id: _provider_environment(
+            openbench_root, OPENBENCH_ENVIRONMENT_LOCK
+        ),
+    }
+    _, manifest_bytes = generate(
+        nemo_root=nemo_root, openbench_root=openbench_root
+    )
     manifest = json.loads(manifest_bytes)
     entry = next(
         (
@@ -942,7 +1437,8 @@ def materialize(distribution_id: str, root: Path) -> None:
     if entry is None:
         raise ManifestGenerationError(f"unknown distribution {distribution_id!r}")
     root.mkdir(parents=True, exist_ok=False)
-    runtime_root = _runtime_root()
+    runtime_root = _runtime_root(tuple(environments.values()))
+    environment = environments[distribution_id]
     sources: dict[str, tuple[bytes | Path, bool]] = {}
 
     def add(destination: str, source: bytes | Path, executable: bool) -> None:
@@ -962,7 +1458,7 @@ def materialize(distribution_id: str, root: Path) -> None:
                 item["executable"],
             )
     for closure in entry["launch"]["record_closures"]:
-        for item, source in _expand_record_closure(closure):
+        for item, source in _expand_record_closure(closure, environment):
             add(item["destination"], source, item["executable"])
     for item in entry["launch"]["embedded_files"]:
         add(
@@ -1011,13 +1507,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--materialize", type=Path)
     parser.add_argument("--distribution")
+    parser.add_argument("--nemo-root", type=Path, required=True)
+    parser.add_argument("--openbench-root", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.materialize is not None:
         if not args.distribution:
             parser.error("--materialize requires --distribution")
-        materialize(args.distribution, args.materialize)
+        materialize(
+            args.distribution,
+            args.materialize,
+            nemo_root=args.nemo_root,
+            openbench_root=args.openbench_root,
+        )
     else:
-        _write_or_check(args.write)
+        _write_or_check(
+            args.write,
+            nemo_root=args.nemo_root,
+            openbench_root=args.openbench_root,
+        )
 
 
 if __name__ == "__main__":

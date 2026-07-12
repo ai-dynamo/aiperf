@@ -24,10 +24,22 @@
   },
   "record_closures": [
     {
+      "distribution": "aioboto3",
+      "omitted_paths": [],
+      "record_sha256": "1ccddfe4412742d990f9adaa22d33747714bc03a10d8bcf2a10b965b401a4b81",
+      "version": "15.5.0"
+    },
+    {
       "distribution": "aiobotocore",
       "omitted_paths": [],
       "record_sha256": "92973c56deb808b49bf9049b03dbf6dd0a541ce2201bce0b5d67e76533aeb70f",
       "version": "2.25.1"
+    },
+    {
+      "distribution": "aiofiles",
+      "omitted_paths": [],
+      "record_sha256": "e3fa09d80891aacbff2844e3b25cafa706d5c12bfeef193c074299f6bee0c4be",
+      "version": "25.1.0"
     },
     {
       "distribution": "aiohappyeyeballs",
@@ -38,8 +50,8 @@
     {
       "distribution": "aiohttp",
       "omitted_paths": [],
-      "record_sha256": "9905471042408711dbee0b5ded921bdc4ac879cdcef31fcc8a3e61ef86caaa10",
-      "version": "3.13.5"
+      "record_sha256": "1f6d518b02061e1c23c2c067c04a107b2780d98f87166d936eee7964216f70d4",
+      "version": "3.14.1"
     },
     {
       "distribution": "aioitertools",
@@ -52,6 +64,12 @@
       "omitted_paths": [],
       "record_sha256": "b9a6cd07dac78298d856613e8140b7da26b20506ed07747802bd513bf9b3ea35",
       "version": "1.4.0"
+    },
+    {
+      "distribution": "annotated-doc",
+      "omitted_paths": [],
+      "record_sha256": "1d924fb80688852ae450acc786e6fcd63a752dd045e2f1e4ec7341367fac06a8",
+      "version": "0.0.4"
     },
     {
       "distribution": "annotated-types",
@@ -78,6 +96,12 @@
       "version": "26.1.0"
     },
     {
+      "distribution": "beautifulsoup4",
+      "omitted_paths": [],
+      "record_sha256": "d66734c0b7a8e4d1077ad38ba04541c15514f2a3ac92e39b3907483ced024c6f",
+      "version": "4.15.0"
+    },
+    {
       "distribution": "boto3",
       "omitted_paths": [],
       "record_sha256": "1de253d3da892bb9cb3688fc63c2883fb8b03cf7c460bd8105280a03d66f9b3a",
@@ -90,16 +114,22 @@
       "version": "1.40.61"
     },
     {
-      "distribution": "brotli",
-      "omitted_paths": [],
-      "record_sha256": "f67bb5f992e1041354373a93e02744e8d292a96ed020596e56c2a0436d580758",
-      "version": "1.2.0"
-    },
-    {
       "distribution": "certifi",
       "omitted_paths": [],
       "record_sha256": "f010bf8e6401172bf2ac5eb50c0a44e60d4f5917b88a8f95ac05e37633a1803b",
       "version": "2026.6.17"
+    },
+    {
+      "distribution": "cffi",
+      "omitted_paths": [],
+      "record_sha256": "085963a968f89151c8701f9fbfe227674410a9d2d0e1b2073fbb145f5ef99c95",
+      "version": "2.1.0"
+    },
+    {
+      "distribution": "charset-normalizer",
+      "omitted_paths": [],
+      "record_sha256": "1517224584059ec370835ec35487026b2e821e97b493423a810c37ed0e364b1d",
+      "version": "3.4.9"
     },
     {
       "distribution": "click",
@@ -108,9 +138,33 @@
       "version": "8.4.2"
     },
     {
+      "distribution": "cryptography",
+      "omitted_paths": [],
+      "record_sha256": "e31d1289313c152741ff7e2935fc2f61424a3fcfe9fcec7436674c1b0ff6b819",
+      "version": "49.0.0"
+    },
+    {
+      "distribution": "datasets",
+      "omitted_paths": [],
+      "record_sha256": "2c3e96ffcb05f22d67533e77091b2ed4d932129372f167133ff4bb4b71a9a2ab",
+      "version": "5.0.0"
+    },
+    {
+      "distribution": "debugpy",
+      "omitted_paths": [],
+      "record_sha256": "d6686e448c405a72c12eb823e66eafc655a4170baefc1804db243790a2967512",
+      "version": "1.8.21"
+    },
+    {
+      "distribution": "dill",
+      "omitted_paths": [],
+      "record_sha256": "636f95324c88c227d79ecd2218663578c3bb3ed5d602ff608dabf82e502b8c2c",
+      "version": "0.4.1"
+    },
+    {
       "distribution": "distro",
       "omitted_paths": [],
-      "record_sha256": "12dfd7b3f627a357c581a6d57fe9c7f4418b6f88beea1d4d13f377946af9b368",
+      "record_sha256": "2668aa3d7a040290dc8ed1560d2e69ffedf85a48c1e94c5726d10199027a7f58",
       "version": "1.9.0"
     },
     {
@@ -118,6 +172,12 @@
       "omitted_paths": [],
       "record_sha256": "ed0a3538437bb77b4efc7e9b93ed802ac99acf1dedd7b1c5b36d0b0ef0f11398",
       "version": "0.18.0"
+    },
+    {
+      "distribution": "filelock",
+      "omitted_paths": [],
+      "record_sha256": "b46a8750ee2da03f8bee878370796baced1ee08d75efc9594abf6d41a6c29771",
+      "version": "3.29.7"
     },
     {
       "distribution": "frozenlist",
@@ -132,10 +192,22 @@
       "version": "2025.9.0"
     },
     {
+      "distribution": "groq",
+      "omitted_paths": [],
+      "record_sha256": "adbcdbfa551f14027cfec95a55c39b620a60f917bb71c218f31ee633830bbed6",
+      "version": "1.5.0"
+    },
+    {
       "distribution": "h11",
       "omitted_paths": [],
       "record_sha256": "3779e13c17d8e21c769ed9ee8780af123cc3f8656185f5f8d3af258ff5639b3e",
       "version": "0.16.0"
+    },
+    {
+      "distribution": "hf-xet",
+      "omitted_paths": [],
+      "record_sha256": "5b2d1a46cda28d22b1bcbb37e9b3aa8b497e9b4dfe8a8b27b0e17d29602743db",
+      "version": "1.5.1"
     },
     {
       "distribution": "httpcore",
@@ -146,30 +218,52 @@
     {
       "distribution": "httpx",
       "omitted_paths": [],
-      "record_sha256": "bd96055a044c3bf62534a7ecd6f3311a576c104aa37e65425c85080ab5f47a98",
+      "record_sha256": "129f51e8c4aa7d41935c4880ef1fb54ff170632d80f5dea41623af5c5d8ad2ea",
       "version": "0.28.1"
+    },
+    {
+      "distribution": "httpx-sse",
+      "omitted_paths": [],
+      "record_sha256": "534a024ec59846f799fe9bae52bbf60023f625872d27466d4ab50856147657b8",
+      "version": "0.4.3"
+    },
+    {
+      "distribution": "huggingface_hub",
+      "omitted_paths": [],
+      "record_sha256": "7a12f1ed89be81d319e543fbac78fbc89b5351f5838b5e0e9ae20a1ba51085d5",
+      "version": "1.23.0"
     },
     {
       "distribution": "idna",
       "omitted_paths": [],
-      "record_sha256": "805490d66d324bb0cc6d254ef28f41adfaadad2c557ceb3ae747d1db4e6d64d3",
+      "record_sha256": "7d66598811723c263754956e3ea9d0f4afa45403fa1d88f374841d387dfe3060",
       "version": "3.18"
     },
     {
       "distribution": "ijson",
       "omitted_paths": [],
-      "record_sha256": "7fd62984041f23451892f9854c3d5f5ff9d0f92d9112e5d668ab4cb90b7b8db7",
-      "version": "3.5.0"
+      "record_sha256": "6ec8c0b26104c537e262087a0cc84b0e77c3a505954c68fc44b5542917f51750",
+      "version": "3.5.1"
     },
     {
       "distribution": "inspect_ai",
       "omitted_paths": [
         "inspect_ai-0.3.141.dist-info/METADATA",
         "inspect_ai-0.3.141.dist-info/RECORD",
-        "inspect_ai-0.3.141.dist-info/direct_url.json"
+        "inspect_ai-0.3.141.dist-info/direct_url.json",
+        "inspect_ai/_eval/task/run.py",
+        "inspect_ai/_util/entrypoints.py",
+        "inspect_ai/model/__init__.py",
+        "inspect_ai/model/_model.py"
       ],
-      "record_sha256": "1efc0c06eee6efd00ef0bda5681f4feb692de3a622ef0c713a15577d29713ae2",
+      "record_sha256": "add149d75b1930a6f9f2a5745e3965c5dcf5cb73bae34c17aa9e17725e70bc02",
       "version": "0.3.141"
+    },
+    {
+      "distribution": "inspect_swe",
+      "omitted_paths": [],
+      "record_sha256": "052ae6a4d5cd04a87eeec6c2a3bf89f36c8069722e58683e9f51f0b084c71c70",
+      "version": "0.2.26"
     },
     {
       "distribution": "jiter",
@@ -180,8 +274,8 @@
     {
       "distribution": "jmespath",
       "omitted_paths": [],
-      "record_sha256": "fb292647e33db6daecf1d0718c9021fc569d3fc6248d5348134824b734f3a449",
-      "version": "1.0.1"
+      "record_sha256": "b412d8d643b09818ca61b8ba479d0f6a376a84b1cc8dcfed298b9e72f89342c7",
+      "version": "1.1.0"
     },
     {
       "distribution": "jsonlines",
@@ -192,19 +286,31 @@
     {
       "distribution": "jsonpatch",
       "omitted_paths": [],
-      "record_sha256": "9ed5ad44b2ad6fd3877643b8c3b03bf51ec355eb195d4f87f297d9f6269612bf",
+      "record_sha256": "78c700e530ac03403699e63a50b444030a5ae42a6dcc58638a628822f3342ed5",
       "version": "1.33"
+    },
+    {
+      "distribution": "jsonpath-ng",
+      "omitted_paths": [],
+      "record_sha256": "5e8807752a095f7ed25eaace280f0f5e0e5095febc802dc20829e09ee6b07cf0",
+      "version": "1.8.0"
     },
     {
       "distribution": "jsonpointer",
       "omitted_paths": [],
-      "record_sha256": "e31bdf609ad9755c0175d2ab38c2a09c44e8ec2236f349ee101d23e76e2889f8",
+      "record_sha256": "d4f1d3fefa5936d393a3576eb6418573da7ce8c709bbcc99e7a37e1501ccc273",
       "version": "3.1.1"
+    },
+    {
+      "distribution": "jsonref",
+      "omitted_paths": [],
+      "record_sha256": "66713daf820d6d2319cf28eaa68a0eabfb865db065911c9d8c3cc3e1b9b68d46",
+      "version": "1.1.0"
     },
     {
       "distribution": "jsonschema",
       "omitted_paths": [],
-      "record_sha256": "889b8ef986d5c576905ba1992acf9743519297e205aa99328c96bdb7d815b24e",
+      "record_sha256": "abcfafb76d21582a2efcbefb4273c6c2f2692fbdc4bc34f5b48845d6b6aad62d",
       "version": "4.26.0"
     },
     {
@@ -222,8 +328,20 @@
     {
       "distribution": "markdown-it-py",
       "omitted_paths": [],
-      "record_sha256": "60949921729c7c8c9708c7ee09a4789ba806b5aa926fd99d7e68c341aef4d352",
+      "record_sha256": "c5e7fc1b27da9cb71f4f156c2185f009ed91c4e3d1a6059b5764dcfc10c07030",
       "version": "4.2.0"
+    },
+    {
+      "distribution": "mcp",
+      "omitted_paths": [],
+      "record_sha256": "ce06c2eb5b1970505f1bef71a73616cbeecfbf3b667a1ea4ac131f09c19cdb43",
+      "version": "1.28.1"
+    },
+    {
+      "distribution": "mdit-py-plugins",
+      "omitted_paths": [],
+      "record_sha256": "9a46201a1b9e3cbbb689317654398a84166cc72851e038c59d8aebc28683cd25",
+      "version": "0.6.1"
     },
     {
       "distribution": "mdurl",
@@ -244,6 +362,12 @@
       "version": "6.7.1"
     },
     {
+      "distribution": "multiprocess",
+      "omitted_paths": [],
+      "record_sha256": "cf32ca70b937ec97c365006cb6e3559faa1bdec4acbc2cdd81fe3f762325c2d2",
+      "version": "0.70.19"
+    },
+    {
       "distribution": "nest-asyncio",
       "omitted_paths": [],
       "record_sha256": "97b48ddb4cbc4cb0f2add67e0cca4425900357d4e2576a9fc0914709e0a9aa83",
@@ -252,13 +376,13 @@
     {
       "distribution": "numpy",
       "omitted_paths": [],
-      "record_sha256": "754600f40b73e4e829cf914c3170492372a909c52ce5e3f5d069416f55f91fac",
+      "record_sha256": "ab4b500af5b7892364cb2c3d3f524f24e20e3ce69636fa7547f6e7a1697e18ca",
       "version": "2.2.6"
     },
     {
       "distribution": "openai",
       "omitted_paths": [],
-      "record_sha256": "0f3310e2f54fdd69b227cccdc2076cbad9b61e1da1cf4c238d111b4df81390a6",
+      "record_sha256": "b08d14ba132f22952d3240a7541ff6813b34c45e56720ba408527edcc37239d2",
       "version": "2.30.0"
     },
     {
@@ -267,9 +391,10 @@
         "openbench-0.5.3.dist-info/METADATA",
         "openbench-0.5.3.dist-info/RECORD",
         "openbench-0.5.3.dist-info/direct_url.json",
-        "openbench-0.5.3.dist-info/entry_points.txt"
+        "openbench-0.5.3.dist-info/entry_points.txt",
+        "openbench/__init__.py"
       ],
-      "record_sha256": "ee88e747756b13cb0af47778cf4170a5dadda06f159fce7913913e38aee10bd1",
+      "record_sha256": "e1c2fc5afe8cc2d2bbf100bdbf4a36f4f3896acfb0640a71e4e99dbd01509c29",
       "version": "0.5.3"
     },
     {
@@ -277,6 +402,30 @@
       "omitted_paths": [],
       "record_sha256": "fe9d7abd99c323104d427b27b8e764657ffc9499ed806d8dfd449eda6825dbbb",
       "version": "3.11.9"
+    },
+    {
+      "distribution": "packaging",
+      "omitted_paths": [],
+      "record_sha256": "34a791dcc687723f1d7601aa68319f6d51aa00e44d85818995dd33a1b7c5a49c",
+      "version": "26.2"
+    },
+    {
+      "distribution": "pandas",
+      "omitted_paths": [],
+      "record_sha256": "65527191e4f056b2d5327782ca35558eb6ff42d2eb606b3cfcc16c8c9856f7aa",
+      "version": "3.0.3"
+    },
+    {
+      "distribution": "pathlib_abc",
+      "omitted_paths": [],
+      "record_sha256": "eebb987c1a23aef877a5a1bc7596704d00156ef0bd6b3dda603df8086c367bd5",
+      "version": "0.5.2"
+    },
+    {
+      "distribution": "pillow",
+      "omitted_paths": [],
+      "record_sha256": "e29a8853b254fcc14a7b13ab9df938bcdea09e57c5e345ad9819c611a62ac46f",
+      "version": "12.3.0"
     },
     {
       "distribution": "platformdirs",
@@ -293,14 +442,32 @@
     {
       "distribution": "psutil",
       "omitted_paths": [],
-      "record_sha256": "89d8b45910df70fcc5e6d3d90a4e80cbfd0581178772d5b6cf494c79f2c14171",
-      "version": "7.0.0"
+      "record_sha256": "2af7e87b12ad6542c1eaaf20a299c109fa09b9dc5d69faf745219bd61e8cfca6",
+      "version": "7.2.2"
+    },
+    {
+      "distribution": "pyarrow",
+      "omitted_paths": [],
+      "record_sha256": "a406f9c7e734fb047cf2f349f3e7dec35e4a1434e9b19ad33b7ae5f359bd6349",
+      "version": "25.0.0"
+    },
+    {
+      "distribution": "pycparser",
+      "omitted_paths": [],
+      "record_sha256": "e752c5c64ce06f508a80e0edeef0c165df849587b829cb9a7b7bb22ac43b0c7e",
+      "version": "3.0"
     },
     {
       "distribution": "pydantic",
       "omitted_paths": [],
       "record_sha256": "d0cbe0f34b294885175920bc8f2ece0b3ed6d9874347dc9cfb2caf4931329272",
       "version": "2.13.4"
+    },
+    {
+      "distribution": "pydantic-settings",
+      "omitted_paths": [],
+      "record_sha256": "cbb65a16388ac8010e749031b892cbc0f73d6859d43234dcfde95eadcbd1b941",
+      "version": "2.14.2"
     },
     {
       "distribution": "pydantic_core",
@@ -311,8 +478,14 @@
     {
       "distribution": "Pygments",
       "omitted_paths": [],
-      "record_sha256": "fee5473ba2a92ffae75fca302dfcb121d796adb1455891617bc86227ec5a07c7",
+      "record_sha256": "dc3b1a4954eca74e3cd8b80c5a495a99205100d24f23a0172c1e73d8221db7c1",
       "version": "2.20.0"
+    },
+    {
+      "distribution": "PyJWT",
+      "omitted_paths": [],
+      "record_sha256": "b86eb3be0a89de734598127029531ba39dcdc6962c4c996fbac48218f8a52879",
+      "version": "2.13.0"
     },
     {
       "distribution": "python-dateutil",
@@ -323,8 +496,14 @@
     {
       "distribution": "python-dotenv",
       "omitted_paths": [],
-      "record_sha256": "49c8d4c90b641242c8caeeeea6f3c2bf07db8a32391e8d1758108238a74d2458",
+      "record_sha256": "5e146ec4a937345a690fbc116f6b5698ec3772dea76319672c626474c5f60e2b",
       "version": "1.2.2"
+    },
+    {
+      "distribution": "python-multipart",
+      "omitted_paths": [],
+      "record_sha256": "5c11c391e44fdc2dbec56603265b8af273dae504ee2e6143d3b9d3bab2bc12df",
+      "version": "0.0.32"
     },
     {
       "distribution": "PyYAML",
@@ -339,10 +518,22 @@
       "version": "0.37.0"
     },
     {
+      "distribution": "regex",
+      "omitted_paths": [],
+      "record_sha256": "144c09b2262e23a09cc778f5647e4036542b099147aab9ccb08230cea5c60da5",
+      "version": "2026.7.10"
+    },
+    {
+      "distribution": "requests",
+      "omitted_paths": [],
+      "record_sha256": "fc8c5216d0e865d815bd04cc240b5adc5d56f6c3dbe9aef3b4ea3b83d735bdfe",
+      "version": "2.34.2"
+    },
+    {
       "distribution": "rich",
       "omitted_paths": [],
-      "record_sha256": "d2f604bf9734f0e060e549d2c91ed0860c46e16a89b870d046657fb66ee88cf9",
-      "version": "14.1.0"
+      "record_sha256": "1b725253b1bd316b53169a3a0b35d03d6c81bad9009ddae73d8645fb3cd3f292",
+      "version": "15.0.0"
     },
     {
       "distribution": "rpds-py",
@@ -357,21 +548,33 @@
       "version": "2025.9.0"
     },
     {
+      "distribution": "s3transfer",
+      "omitted_paths": [],
+      "record_sha256": "f0db9ae5db43cbb58d71a3fa3dafb0619532757c76a298fa56c14b853c570734",
+      "version": "0.14.0"
+    },
+    {
+      "distribution": "scipy",
+      "omitted_paths": [],
+      "record_sha256": "3f44238e1f1f7d763363bccf3e4d09e7aaa42842469bc1191bb588ccface47ab",
+      "version": "1.18.0"
+    },
+    {
       "distribution": "semver",
       "omitted_paths": [],
-      "record_sha256": "90ff2d0bd36302921c89cef88ef507ebbbc3ea46cbec35485085d28ab0292941",
+      "record_sha256": "0b2ccbefcb1019552e7e89917cdc2401d3821b9eb5ff404939b45afa589f18b6",
       "version": "3.0.4"
     },
     {
-      "distribution": "setuptools",
+      "distribution": "shellingham",
       "omitted_paths": [],
-      "record_sha256": "2fe8f339e0ea1a1762bd8b21edcc2609e36aebaf13d993f6ce9e236a0fd2ebd1",
-      "version": "83.0.0"
+      "record_sha256": "2a878ed08ec32adc6b08a9b6a83754cd7c30ffb8a67e26527292456da9ff2fee",
+      "version": "1.5.4"
     },
     {
       "distribution": "shortuuid",
       "omitted_paths": [],
-      "record_sha256": "42c2f04c495064dbd8dc7d859a14bb9fd0728dc9b8e8fe7ddd037e4bc914297a",
+      "record_sha256": "6fd138b686c8e5dab95fe06bccf1ffe20ded46d86cf9d5a803814732dc3ed5f6",
       "version": "1.0.13"
     },
     {
@@ -387,6 +590,24 @@
       "version": "1.3.1"
     },
     {
+      "distribution": "soupsieve",
+      "omitted_paths": [],
+      "record_sha256": "f55cbea6a1db79120b193c8ae711dc04ff357300b3443aa5b01433e78ef23c96",
+      "version": "2.8.4"
+    },
+    {
+      "distribution": "sse-starlette",
+      "omitted_paths": [],
+      "record_sha256": "f9e13cd172033b607cc6e3ad4a644da0a4d2f7045f4d560439dcec1d89fe6455",
+      "version": "3.4.5"
+    },
+    {
+      "distribution": "starlette",
+      "omitted_paths": [],
+      "record_sha256": "798ee94d43c1be08a0c60745972eac69ae9c8fd249cf741df98d432218d3416d",
+      "version": "1.3.1"
+    },
+    {
       "distribution": "tenacity",
       "omitted_paths": [],
       "record_sha256": "910933cf24972e4ba48ee34bc3e6cee75a847b752109cbc1e0e646ed21e449bb",
@@ -395,8 +616,8 @@
     {
       "distribution": "textual",
       "omitted_paths": [],
-      "record_sha256": "9ed0674344d02eebfba88ac509af887eda4a5535abbced9d5c278e0afb3ffa24",
-      "version": "5.3.0"
+      "record_sha256": "e943557d366413fd23ce135e43c0b051566b949a9bf4b516bc7ec9ce518c86de",
+      "version": "8.2.8"
     },
     {
       "distribution": "tiktoken",
@@ -405,10 +626,16 @@
       "version": "0.13.0"
     },
     {
-      "distribution": "tornado",
+      "distribution": "tqdm",
       "omitted_paths": [],
-      "record_sha256": "e267ef345a7aad29e83211a50f45fd55fe498338e031d41d34f21e15a09c0ec6",
-      "version": "6.5.7"
+      "record_sha256": "69c79ca4e7fac181959badf38ce2e0a3fdfeb991c9874e6ecf2b18641c18a9e8",
+      "version": "4.68.4"
+    },
+    {
+      "distribution": "typer",
+      "omitted_paths": [],
+      "record_sha256": "13e1c1fde7bae1bfd5bda07269a86b5e1b735bebe4294c0675b4d11f79e99398",
+      "version": "0.26.8"
     },
     {
       "distribution": "typing-inspection",
@@ -429,10 +656,22 @@
       "version": "2.0.0"
     },
     {
+      "distribution": "universal_pathlib",
+      "omitted_paths": [],
+      "record_sha256": "d0500b288ad81c8798c78a171c5f6838b9ed33856a2a3389aaa1d5125cd35c33",
+      "version": "0.3.10"
+    },
+    {
       "distribution": "urllib3",
       "omitted_paths": [],
       "record_sha256": "4869c7ca2082c964b4e2bb8244deda15cfa069d93e4543d3a16eca6a63cbb81f",
       "version": "2.7.0"
+    },
+    {
+      "distribution": "uvicorn",
+      "omitted_paths": [],
+      "record_sha256": "5db74c2a89a132c900dcfd45dca280a5e51aac081e4e37a9a724943bc369068c",
+      "version": "0.51.0"
     },
     {
       "distribution": "wrapt",
@@ -441,29 +680,88 @@
       "version": "1.17.3"
     },
     {
+      "distribution": "xxhash",
+      "omitted_paths": [],
+      "record_sha256": "8d6ac6e337ba917bd20cbcbeacfdae12de9cf2860347a9251e4b7b4d9d7047b7",
+      "version": "3.8.1"
+    },
+    {
       "distribution": "yarl",
       "omitted_paths": [],
       "record_sha256": "4242c6a226f35f999167cfad9c51aa11ac548b8bbcf9ee36b93b42ed232c91a7",
       "version": "1.24.2"
     },
     {
-      "distribution": "zstandard",
+      "distribution": "zipp",
       "omitted_paths": [],
-      "record_sha256": "fb9caf2d2342f45f75aed7ee9a8d17b2d2245339fc6da1c9c1c059ec770d96c6",
-      "version": "0.25.0"
+      "record_sha256": "09471a1e570a024020ae32570ac57c6e906d76a4840b93b92801ea1b6eec71a1",
+      "version": "4.1.0"
     }
   ],
+  "resolution": {
+    "artifact_content_sha256": "3fdbe2de6324883e7f9935eb71dd991a0e818cb2f73c2c506958d124deb34bc9",
+    "environment_record_set_sha256": "93b826360fd8577e7566146f65f8054e295e9494d1eb97e205f9e1bec890745b",
+    "kind": "uv-lock-v1"
+  },
   "sources": [
     {
+      "base_source_tree_sha256": "bdfcc39c2423619696d359970e75611dd0aadee6c87a383961b78ab705acf1d5",
       "commit": "3f190a835f7fee34ccd96e17242a36a29e0620a6",
+      "effective_source_tree_sha256": "068ef6bd16f51a706e11919ce5b9f00aba3549df1d6601f8a8eda52d4252998d",
+      "overlays": [
+        {
+          "artifact_content_sha256": "1cfa19b62feedfd744f890ec8c44358917c6374a0513d467b055dda8e2edcff8",
+          "overlay_id": "openbench-explicit-runtime",
+          "resource": "openbench/001-explicit-runtime.patch",
+          "targets": [
+            "__init__.py",
+            "model/_providers/aiperf_pipe.py",
+            "runtime/__init__.py",
+            "runtime/artifacts.py",
+            "runtime/host.py",
+            "runtime/inspect_session.py"
+          ]
+        }
+      ],
       "package": "openbench",
-      "source_tree_sha256": "bdfcc39c2423619696d359970e75611dd0aadee6c87a383961b78ab705acf1d5",
+      "source_tree_digest_policy": "aiperf-semantic-source-tree-sha256-v1",
       "version": "0.5.3"
     },
     {
+      "base_source_tree_sha256": "6bd6016a593ebc0e976285e6416025a0c8a123d8451b0fc180da9a6a17d9794b",
       "commit": "bb78d82dde311b68dbfd0b49f3186b9fc13a1465",
+      "effective_source_tree_sha256": "69e099965072804ba92e65c620e0f8d08c8973e728ac2a41a7d2777703d35022",
+      "overlays": [
+        {
+          "artifact_content_sha256": "8b1e68251eddd82f3336f035e5dab912439e0076c821a86121720e5f1bba2d94",
+          "overlay_id": "inspect-model-call-context",
+          "resource": "inspect_ai/001-public-model-call-context.patch",
+          "targets": [
+            "_eval/task/run.py",
+            "model/__init__.py",
+            "model/_call_context.py"
+          ]
+        },
+        {
+          "artifact_content_sha256": "3ff98d606d66e2b3db220b106b8770a5cd829283e43736095b23a2c71a616a68",
+          "overlay_id": "inspect-cache-veto",
+          "resource": "inspect_ai/002-cache-veto.patch",
+          "targets": [
+            "model/_model.py"
+          ]
+        },
+        {
+          "artifact_content_sha256": "16d97eff5ce6946a967fdeaa685e6a48e17d28eb0095d1de5d42c1e2ce3186f1",
+          "overlay_id": "inspect-entry-point-policy",
+          "resource": "inspect_ai/003-entry-point-policy.patch",
+          "targets": [
+            "_util/entrypoints.py",
+            "extensions.py"
+          ]
+        }
+      ],
       "package": "inspect-ai",
-      "source_tree_sha256": "6bd6016a593ebc0e976285e6416025a0c8a123d8451b0fc180da9a6a17d9794b",
+      "source_tree_digest_policy": "aiperf-semantic-source-tree-sha256-v1",
       "version": "0.3.141"
     }
   ]
