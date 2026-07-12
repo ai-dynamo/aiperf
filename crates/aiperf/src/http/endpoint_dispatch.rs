@@ -123,7 +123,7 @@ where
             .as_ref()
             .and_then(|parsed| parsed.data.as_ref())
             .is_some_and(|data| {
-                self.endpoint.descriptor().produces_tokens && !data.get_text().is_empty()
+                self.endpoint.descriptor().produces_tokens && data.has_token_output()
             });
         if !meaningful {
             return Ok(false);
@@ -254,6 +254,7 @@ impl TransportSink {
         } = hooks;
         let HttpRequest {
             uuid,
+            input_length,
             max_output_tokens,
             prompt_text,
             request_body,
@@ -339,7 +340,9 @@ impl TransportSink {
                     .flatten()
                     .and_then(|parsed| parsed.data)
                     .is_some_and(|data| {
-                        endpoint.descriptor().produces_tokens && !data.get_text().is_empty()
+                        endpoint.descriptor().produces_tokens
+                            && (data.raw_token_count().is_some_and(|count| count > 0)
+                                || !data.get_text().is_empty())
                     });
                 if meaningful && !first_token_released.replace(true) {
                     on_first_token(ttft_ns);
@@ -400,17 +403,36 @@ impl TransportSink {
             parsed_content = true;
             absorb_endpoint_metrics(data, &mut endpoint_metrics);
             let text = absorb_response_data(data, &mut model_response);
-            if text.is_empty() {
-                continue;
-            }
             response_text.push_str(&text);
             if endpoint.descriptor().produces_tokens {
                 let at_ns = i64::try_from(parsed.perf_ns).unwrap_or(i64::MAX);
-                if !first_token_released.replace(true) {
-                    on_first_token(at_ns.saturating_sub(record.start_ns));
+                if let ResponseData::TokenIds { token_ids } = data
+                    && !token_ids.is_empty()
+                {
+                    if !first_token_released.replace(true) {
+                        on_first_token(at_ns.saturating_sub(record.start_ns));
+                    }
+                    let timestamps = vec![self.ms(at_ns); token_ids.len()];
+                    obs.on_output_tokens(uuid, &timestamps);
+                } else if !text.is_empty() {
+                    if !first_token_released.replace(true) {
+                        on_first_token(at_ns.saturating_sub(record.start_ns));
+                    }
+                    obs.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
                 }
-                obs.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
             }
+        }
+
+        if endpoint.descriptor().requires_raw_token_ids {
+            observed_usage.prompt_tokens = Some(input_length);
+            if observed_usage.completion_tokens.is_none() {
+                observed_usage.completion_tokens =
+                    model_response.output_token_ids.as_ref().map(Vec::len);
+            }
+            observed_usage.total_tokens = observed_usage
+                .prompt_tokens
+                .zip(observed_usage.completion_tokens)
+                .and_then(|(prompt, completion)| prompt.checked_add(completion));
         }
 
         if endpoint.captures_assistant_turn() {
@@ -532,7 +554,7 @@ fn meaningful_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
         .ok()
         .flatten()
         .and_then(|parsed| parsed.data)
-        .is_some_and(|data| !data.get_text().is_empty())
+        .is_some_and(|data| data.has_token_output())
 }
 
 fn parse_endpoint_response<A: RuntimeEndpointAdapter + ?Sized>(
@@ -601,10 +623,17 @@ fn absorb_response_data(data: &ResponseData, metadata: &mut ModelResponseMetadat
             }
             append_metadata_text(&mut metadata.content, tool_call_text);
         }
+        ResponseData::TokenIds { token_ids } => {
+            metadata
+                .output_token_ids
+                .get_or_insert_with(Vec::new)
+                .extend_from_slice(token_ids);
+        }
         ResponseData::Embeddings { .. }
         | ResponseData::Rankings { .. }
         | ResponseData::ImageRetrieval { .. }
         | ResponseData::Images(_)
+        | ResponseData::Audio(_)
         | ResponseData::Video(_) => {}
     }
     data.get_text()

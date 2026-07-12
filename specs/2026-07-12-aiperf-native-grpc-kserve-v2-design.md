@@ -184,3 +184,51 @@ The implementation is guarded by:
   with `protocol_version: 2`.
 
 No test imports or invokes the PR's Python gRPC implementation.
+
+## Addendum — 2026-07-12
+
+### NVIDIA Riva expands the native gRPC endpoint family
+
+The native Rust path now also ports the complete NVIDIA Riva surface from
+reference branch `ajc/riva` at commit
+`a391cfe27a333915b0f058bd05f21c932c77a898`. This addendum supersedes the
+statements above that the built-in gRPC registry contains exactly five KServe
+bindings and that the transport supports only unary and server-streaming
+inference. The KServe decisions and behavior remain unchanged.
+
+`aiperf-endpoints` registers nine additional open, runner-protocol-v2-only
+factories without adding a closed `EndpointType` variant:
+
+- `riva_asr`, with unary `Recognize` and bidirectional `StreamingRecognize`;
+- `riva_tts`, with unary `Synthesize` and server-streaming `SynthesizeOnline`;
+  and
+- `riva_text_classify`, `riva_token_classify`, `riva_transform_text`,
+  `riva_punctuate_text`, `riva_natural_query`, `riva_analyze_intent`, and
+  `riva_analyze_entities` over unary Riva NLP RPCs.
+
+The endpoint implementations preserve the reference defaults, first-turn
+audio/text extraction, ASR audio chunking, transcript concatenation, TTS PCM
+duration calculation, compact JSON NLP results, and top-answer selection.
+`ResponseData::Audio` carries synthesized bytes, sample rate, encoding, and
+optional duration through the common prepared-endpoint seam. Riva has no model
+readiness RPC, so its dialect and wire bindings explicitly report readiness as
+unsupported instead of fabricating a probe.
+
+`aiperf-transport-grpc` adds checked-in Prost DTOs grounded in the reference
+`riva_common.proto`, `riva_audio.proto`, `riva_asr.proto`, `riva_tts.proto`, and
+`riva_nlp.proto` field numbers. The open `GrpcEndpointBinding` seam now admits
+an optional bidirectional method and an ordered config-first request-message
+encoder. `GrpcTransport` sends those messages through Tonic's raw streaming
+API, retains every unframed request message, and accounts for request message
+count and bytes in the existing Clock-derived trace. Unary, server-streaming,
+and bidirectional cardinalities remain behavior objects behind the binding
+trait rather than a closed endpoint-kind switch.
+
+The strict Rust runner advertises all nine IDs through its frozen endpoint
+registry and executes them through the existing `online_grpc + scheduled`
+protocol-v2 pair. No Python source, Python gRPC plugin, `plugins.yaml`, or
+protocol-v1 compatibility adapter is added. Conformance includes endpoint
+parity tests for all nine dialects, semantic protobuf tests for every RPC,
+exact method/cardinality checks, a real Tonic bidirectional ASR loopback, and a
+strict runner `validate`/`execute` subprocess proof using an inline Rust-side
+WAV fixture.

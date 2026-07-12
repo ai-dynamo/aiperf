@@ -376,12 +376,22 @@ impl GrpcTransportSink {
             absorb_endpoint_metrics(data, &mut endpoint_metrics);
             let text = absorb_response_data(data, &mut model_response);
             response_text.push_str(&text);
-            if endpoint.descriptor().produces_tokens && !text.is_empty() {
+            if endpoint.descriptor().produces_tokens {
                 let at_ns = i64::try_from(parsed.perf_ns).unwrap_or(i64::MAX);
-                if !first_token_released.replace(true) {
-                    on_first_token(at_ns.saturating_sub(record.start_ns));
+                if let ResponseData::TokenIds { token_ids } = data
+                    && !token_ids.is_empty()
+                {
+                    if !first_token_released.replace(true) {
+                        on_first_token(at_ns.saturating_sub(record.start_ns));
+                    }
+                    let timestamps = vec![self.ms(at_ns); token_ids.len()];
+                    observer.on_output_tokens(uuid, &timestamps);
+                } else if !text.is_empty() {
+                    if !first_token_released.replace(true) {
+                        on_first_token(at_ns.saturating_sub(record.start_ns));
+                    }
+                    observer.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
                 }
-                observer.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
             }
         }
         if endpoint.captures_assistant_turn() {
@@ -478,13 +488,18 @@ impl RequestSink<GrpcRequest> for GrpcTransportSink {
 }
 
 fn meaningful_response(endpoint: &dyn PreparedEndpoint, response: &ServerResponse) -> bool {
-    endpoint.descriptor().produces_tokens
-        && endpoint
-            .parse_response(response)
-            .ok()
-            .flatten()
-            .and_then(|parsed| parsed.data)
-            .is_some_and(|data| !data.get_text().is_empty())
+    endpoint
+        .parse_response(response)
+        .ok()
+        .flatten()
+        .and_then(|parsed| parsed.data)
+        .is_some_and(|data| match data {
+            ResponseData::Audio(audio) => !audio.audio_bytes.is_empty(),
+            ResponseData::Images(images) => !images.images.is_empty(),
+            ResponseData::TokenIds { token_ids } => !token_ids.is_empty(),
+            ResponseData::Video(_) => true,
+            other => !other.get_text().is_empty() || !endpoint.descriptor().produces_tokens,
+        })
 }
 
 fn token_kind(data: &ResponseData) -> ObservedTokenKind {
@@ -515,10 +530,17 @@ fn absorb_response_data(data: &ResponseData, metadata: &mut ModelResponseMetadat
             }
             append_text(&mut metadata.content, tool_call_text);
         }
+        ResponseData::TokenIds { token_ids } => {
+            metadata
+                .output_token_ids
+                .get_or_insert_with(Vec::new)
+                .extend_from_slice(token_ids);
+        }
         ResponseData::Embeddings { .. }
         | ResponseData::Rankings { .. }
         | ResponseData::ImageRetrieval { .. }
         | ResponseData::Images(_)
+        | ResponseData::Audio(_)
         | ResponseData::Video(_) => {}
     }
     data.get_text()
@@ -739,6 +761,7 @@ fn nonzero_usize(value: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
 
     #[test]
     fn usage_absorption_retains_extended_endpoint_facts() {
@@ -766,5 +789,30 @@ mod tests {
         assert_eq!(observed.rejected_prediction_tokens, Some(5));
         assert_eq!(observed.tool_use_prompt_tokens, Some(6));
         assert_eq!(observed.prompt_audio_seconds, Some(1.5));
+    }
+
+    #[test]
+    fn riva_tts_audio_is_meaningful_without_becoming_model_text() {
+        let endpoint = EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &EndpointId::new("riva_tts").unwrap(),
+                RawEndpointConfig {
+                    urls: vec!["grpc://127.0.0.1:50051".to_string()],
+                    ..RawEndpointConfig::default()
+                },
+            )
+            .unwrap();
+        let response = ServerResponse::from_json(1, serde_json::json!({"audio": "AQI="}));
+        assert!(meaningful_response(endpoint.as_ref(), &response));
+
+        let parsed = endpoint.parse_response(&response).unwrap().unwrap();
+        let data = parsed.data.as_ref().unwrap();
+        let mut metadata = ModelResponseMetadata::default();
+        assert_eq!(absorb_response_data(data, &mut metadata), "");
+        assert_eq!(metadata.content, None);
+
+        let empty = ServerResponse::from_json(2, serde_json::json!({"audio": ""}));
+        assert!(!meaningful_response(endpoint.as_ref(), &empty));
     }
 }
