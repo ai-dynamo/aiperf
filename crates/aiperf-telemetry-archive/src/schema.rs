@@ -144,6 +144,9 @@ impl ArchiveTableSchemaV1 {
                 .ok_or_else(|| SchemaError::EnumArrayType(path.clone()))?;
             validate_enum_array(array.as_ref(), nested, path, allowed)?;
         }
+        if self.table == TableId::Samples {
+            validate_sample_payload_branches(batch)?;
+        }
         Ok(())
     }
 
@@ -645,6 +648,80 @@ fn enum8_type() -> DataType {
     DataType::Dictionary(Box::new(DataType::Int8), Box::new(DataType::Utf8))
 }
 
+fn validate_sample_payload_branches(batch: &RecordBatch) -> Result<(), SchemaError> {
+    let semantic = batch
+        .column_by_name("semantic_type")
+        .ok_or(SchemaError::InvalidDescriptor(
+            "samples semantic_type field is absent",
+        ))?;
+    let semantic = downcast::<DictionaryArray<Int8Type>>(semantic.as_ref(), &enum8_type())?;
+    let semantic_values = downcast::<StringArray>(semantic.values().as_ref(), &DataType::Utf8)?;
+    let payload = batch
+        .column_by_name("payload")
+        .ok_or(SchemaError::InvalidDescriptor(
+            "samples payload field is absent",
+        ))?;
+    let payload_type = payload.data_type().clone();
+    let payload = downcast::<StructArray>(payload.as_ref(), &payload_type)?;
+    validate_sample_payload_arrays(semantic, semantic_values, payload, batch.num_rows())
+}
+
+fn validate_sample_payload_arrays(
+    semantic: &DictionaryArray<Int8Type>,
+    semantic_values: &StringArray,
+    payload: &StructArray,
+    row_count: usize,
+) -> Result<(), SchemaError> {
+    for row in 0..row_count {
+        let selector = if semantic.is_null(row) {
+            None
+        } else {
+            let key = usize::try_from(semantic.keys().value(row))
+                .map_err(|_| SchemaError::PhysicalArrayType(enum8_type()))?;
+            if key >= semantic_values.len() || semantic_values.is_null(key) {
+                return Err(SchemaError::PhysicalArrayType(enum8_type()));
+            }
+            Some(semantic_values.value(key))
+        };
+        let expected = selector.and_then(sample_payload_branch);
+        let present = if payload.is_null(row) {
+            Vec::new()
+        } else {
+            payload
+                .fields()
+                .iter()
+                .zip(payload.columns())
+                .filter(|(_, branch)| !branch.is_null(row))
+                .map(|(field, _)| field.name().to_string())
+                .collect::<Vec<_>>()
+        };
+        if expected.is_none()
+            || present.len() != 1
+            || present.first().map(String::as_str) != expected
+        {
+            return Err(SchemaError::SelectedStructBranchMismatch {
+                row,
+                selector: selector.map(ToOwned::to_owned),
+                expected: expected.map(ToOwned::to_owned),
+                present,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn sample_payload_branch(semantic_type: &str) -> Option<&'static str> {
+    match semantic_type {
+        "unknown" | "gauge" => Some("scalar"),
+        "counter" => Some("counter"),
+        "stateset" => Some("stateset"),
+        "info" => Some("info"),
+        "histogram" | "gauge_histogram" => Some("histogram"),
+        "summary" => Some("summary"),
+        _ => None,
+    }
+}
+
 fn logical_value(
     array: &dyn Array,
     row: usize,
@@ -850,6 +927,17 @@ pub enum SchemaError {
     LogicalRow(crate::LogicalRowError),
     /// A physical Arrow array disagrees with its exact schema data type.
     PhysicalArrayType(DataType),
+    /// A selected nullable-struct branch disagrees with its semantic selector.
+    SelectedStructBranchMismatch {
+        /// Zero-based physical row.
+        row: usize,
+        /// Selector string, absent when the non-null selector was null.
+        selector: Option<String>,
+        /// Required branch for a known selector.
+        expected: Option<String>,
+        /// Non-null branches found in physical field order.
+        present: Vec<String>,
+    },
     /// A generated Arrow type has no v1 logical-row encoding.
     UnsupportedArrowType(DataType),
 }
@@ -902,6 +990,15 @@ impl Display for SchemaError {
                     "physical Arrow array does not match {data_type:?}"
                 )
             }
+            Self::SelectedStructBranchMismatch {
+                row,
+                selector,
+                expected,
+                present,
+            } => write!(
+                formatter,
+                "selected struct branch mismatch at row {row}: selector {selector:?}, expected {expected:?}, present {present:?}"
+            ),
             Self::UnsupportedArrowType(data_type) => {
                 write!(formatter, "unsupported Arrow type {data_type:?}")
             }
@@ -1046,6 +1143,42 @@ mod tests {
         assert!(matches!(
             validate_enum_array(&array, &[], &path, &allowed),
             Err(SchemaError::InvalidEnumValue { value, .. }) if value == "invented"
+        ));
+    }
+
+    #[test]
+    fn samples_require_exactly_the_payload_branch_selected_by_semantic_type() {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let samples = schemas.table(TableId::Samples).unwrap();
+        let mut builder = arrow_array::builder::StringDictionaryBuilder::<Int8Type>::new();
+        builder.append("counter").unwrap();
+        let semantic = builder.finish();
+        let semantic_values = semantic
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let DataType::Struct(fields) = samples
+            .schema()
+            .field_with_name("payload")
+            .unwrap()
+            .data_type()
+        else {
+            panic!("payload must be a struct")
+        };
+        let branches = fields
+            .iter()
+            .map(|branch| arrow_array::new_null_array(branch.data_type(), 1))
+            .collect();
+        let payload = StructArray::new(fields.clone(), branches, None);
+        assert!(matches!(
+            validate_sample_payload_arrays(&semantic, semantic_values, &payload, 1),
+            Err(SchemaError::SelectedStructBranchMismatch {
+                row: 0,
+                selector: Some(selector),
+                expected: Some(expected),
+                present,
+            }) if selector == "counter" && expected == "counter" && present.is_empty()
         ));
     }
 }
