@@ -2073,7 +2073,7 @@ fn scale_aggregate_proxy_limit(
     label: &str,
 ) -> Result<u64> {
     ensure!(
-        ceiling % ceiling_operations == 0,
+        ceiling.is_multiple_of(ceiling_operations),
         "compatibility {label} ceiling is not an exact per-operation multiple"
     );
     ceiling
