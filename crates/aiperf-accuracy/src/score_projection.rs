@@ -6,6 +6,11 @@
 //! Provider-native score trees remain restricted. A value can enter the
 //! public native report only through a named validator registered by the
 //! selected provider factory and bound to an immutable schema fingerprint.
+//!
+//! The stock direct binary projection follows the pinned providers rather than
+//! recreating either grader: NeMo Evaluator produces its numeric reward in
+//! `nemo_evaluator/environments/custom.py:227-249`, and OpenBench returns exact
+//! `0.0`/`1.0` scores in `openbench/scorers/grade_school_math.py:11-38`.
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
@@ -24,43 +29,52 @@ pub trait PublicScoreProjectionValidator: Send + Sync {
     fn validate(&self, value: &CanonicalJson) -> Result<(), PublicScoreProjectionError>;
 }
 
-/// Stable projection ID for the reviewed object-wrapped GSM8K binary score.
-pub const GSM8K_BINARY_SCORE_PROJECTION_ID: &str = "gsm8k_binary_score_v1";
+/// Stable ID for the direct finite binary-number projection schema.
+pub const FINITE_BINARY_NUMBER_PROJECTION_ID: &str = "finite_binary_number_v1";
 
-/// SHA-256 of the canonical object-wrapped GSM8K binary JSON Schema.
-pub const GSM8K_BINARY_SCORE_SCHEMA_SHA256: &str =
-    "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5";
+/// SHA-256 of the canonical direct finite binary-number JSON Schema.
+pub const FINITE_BINARY_NUMBER_SCHEMA_SHA256: &str =
+    "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9";
 
-/// Executable validator for the stock NeMo/OpenBench binary score object.
+/// Executable validator for a direct JSON number equal to zero or one.
+///
+/// JSON numbers `0`, `1`, `0.0`, and `1.0` are accepted under canonical
+/// numeric equality. Booleans, strings, containers, fractional values, and all
+/// values outside the finite canonical JSON number domain are rejected.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Gsm8kBinaryScoreProjectionValidator;
+pub struct FiniteBinaryNumberProjectionValidator;
 
-impl PublicScoreProjectionValidator for Gsm8kBinaryScoreProjectionValidator {
+impl FiniteBinaryNumberProjectionValidator {
+    /// Construct the immutable binary-number validator.
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl PublicScoreProjectionValidator for FiniteBinaryNumberProjectionValidator {
     fn schema_sha256(&self) -> &str {
-        GSM8K_BINARY_SCORE_SCHEMA_SHA256
+        FINITE_BINARY_NUMBER_SCHEMA_SHA256
     }
 
     fn validate(&self, value: &CanonicalJson) -> Result<(), PublicScoreProjectionError> {
-        let Some(object) = value.value().as_object() else {
-            return Err(PublicScoreProjectionError::rejected(
-                "expected the reviewed GSM8K binary score object",
-            ));
-        };
-        let Some(number) = object
-            .get("value")
-            .filter(|_| object.len() == 1)
-            .and_then(serde_json::Value::as_f64)
-        else {
-            return Err(PublicScoreProjectionError::rejected(
-                "expected exactly one finite numeric value field",
-            ));
-        };
-        if number != 0.0 && number != 1.0 {
-            return Err(PublicScoreProjectionError::rejected(
-                "GSM8K public score was not exactly zero or one",
-            ));
-        }
-        Ok(())
+        finite_binary_number(value)
+            .map(|_| ())
+            .map_err(PublicScoreProjectionError::rejected)
+    }
+}
+
+/// Return the normalized binary value after exact direct-number validation.
+pub(crate) fn finite_binary_number(value: &CanonicalJson) -> Result<f64, &'static str> {
+    let serde_json::Value::Number(number) = value.value() else {
+        return Err("expected a direct finite binary JSON number");
+    };
+    let Some(value) = number.as_f64() else {
+        return Err("expected a direct finite binary JSON number");
+    };
+    if value.is_finite() && (value == 0.0 || value == 1.0) {
+        Ok(if value == 0.0 { 0.0 } else { 1.0 })
+    } else {
+        Err("expected a direct finite binary JSON number")
     }
 }
 
@@ -126,7 +140,7 @@ impl PublicScoreProjectionPolicy {
             )
         })?;
         validate_no_secret_control_value(value)
-            .map_err(|error| PublicScoreProjectionError::Projection(error.to_string()))?;
+            .map_err(|error| PublicScoreProjectionError::rejected(error.to_string()))?;
         rule.validator.validate(value)?;
         Ok(rule.validator.schema_sha256())
     }
@@ -210,7 +224,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::canonical::sha256_hex;
+    use crate::canonical::{CanonicalJsonLimits, sha256_hex};
 
     struct ZeroOrOne;
 
@@ -241,14 +255,15 @@ mod tests {
                 .is_err()
         );
         assert!(policy.validate("unknown", &zero).is_err());
-        assert!(
-            policy
-                .validate(
-                    "accuracy",
-                    &CanonicalJson::new(json!({"token": "secret"})).unwrap(),
-                )
-                .is_err()
-        );
+        let error = policy
+            .validate(
+                "accuracy",
+                &CanonicalJson::new(json!({"token": "private-value-sentinel"})).unwrap(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("token"));
+        assert!(!error.contains("private-value-sentinel"));
     }
 
     #[test]
@@ -269,45 +284,46 @@ mod tests {
     }
 
     #[test]
-    fn object_binary_validator_matches_stock_manifest_schema_exactly() {
+    fn direct_binary_validator_matches_manifest_schema_exactly() {
         let schema = CanonicalJson::new(json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "additionalProperties": false,
-            "properties": {
-                "value": {
-                    "enum": [0, 1],
-                    "type": "number",
-                },
-            },
-            "required": ["value"],
-            "type": "object",
+            "enum": [0, 1],
+            "type": "number",
         }))
         .unwrap();
         assert_eq!(
             sha256_hex(&schema.to_bytes()),
-            GSM8K_BINARY_SCORE_SCHEMA_SHA256
+            FINITE_BINARY_NUMBER_SCHEMA_SHA256
         );
 
-        let validator = Gsm8kBinaryScoreProjectionValidator;
-        assert_eq!(validator.schema_sha256(), GSM8K_BINARY_SCORE_SCHEMA_SHA256);
-        for value in [json!({"value": 0}), json!({"value": 1})] {
+        let validator = FiniteBinaryNumberProjectionValidator;
+        assert_eq!(
+            validator.schema_sha256(),
+            FINITE_BINARY_NUMBER_SCHEMA_SHA256
+        );
+        for value in [json!(0), json!(1), json!(0.0), json!(1.0), json!(-0.0)] {
             validator
                 .validate(&CanonicalJson::new(value).unwrap())
                 .unwrap();
         }
         for value in [
-            json!(1),
-            json!({"value": 0.5}),
-            json!({"value": -1}),
-            json!({"value": 2}),
-            json!({"value": true}),
-            json!({"value": 1, "answer": "hidden"}),
+            json!(-1),
+            json!(0.5),
+            json!(2),
+            json!(true),
+            json!("1"),
+            json!(null),
+            json!([]),
+            json!({}),
         ] {
             assert!(
                 validator
                     .validate(&CanonicalJson::new(value).unwrap())
                     .is_err()
             );
+        }
+        for bytes in [b"NaN".as_slice(), b"Infinity", b"1e400"] {
+            assert!(CanonicalJson::from_slice(bytes, CanonicalJsonLimits::default()).is_err());
         }
     }
 
@@ -316,7 +332,7 @@ mod tests {
         let policy = PublicScoreProjectionPolicy::restricted_only();
         let sentinel = "private-answer-score-42";
         let error = policy
-            .validate(sentinel, &CanonicalJson::new(json!({"value": 1})).unwrap())
+            .validate(sentinel, &CanonicalJson::new(json!(1)).unwrap())
             .unwrap_err()
             .to_string();
         assert!(!error.contains(sentinel));

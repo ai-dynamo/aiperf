@@ -25,7 +25,11 @@ const RAW_SSE_SENTINEL: &str = "raw-upstream-sse-must-not-cross-provider-boundar
 const HIDDEN_ANSWER_SENTINEL: &str = "#### 18";
 const HIDDEN_QUESTION_SENTINEL: &str = "Janet’s ducks lay 16 eggs per day";
 const PUBLIC_SCORE_SCHEMA_SHA256: &str =
-    "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5";
+    "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9";
+const NEMO_AGGREGATE_SCHEMA_SHA256: &str =
+    "d523fa29449c207508f94e50fbe0540d5a0b50a5ba48fe66cc6540d9086c5f4b";
+const OPENBENCH_AGGREGATE_SCHEMA_SHA256: &str =
+    "fa74629fee52533d6f210b2f2c2a4a8b7d9b48bd328b31aa90494be5d04e39d5";
 const GSM8K_SOURCE: &str = "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866";
 
 #[derive(Debug)]
@@ -347,7 +351,7 @@ fn assert_public_evaluation_result(report: &Value, provider: &str) {
     assert_eq!(case["task"], "gsm8k");
     assert_eq!(case["source"], GSM8K_SOURCE);
     assert_eq!(case["outcome"], "completed");
-    let (score_name, expected_config, definition) = match provider {
+    let (score_name, expected_config, aggregate_schema) = match provider {
         "nemo_evaluator" => (
             "reward",
             json!({
@@ -357,16 +361,12 @@ fn assert_public_evaluation_result(report: &Value, provider: &str) {
                 "solver": "chat",
                 "solver_config": {"max_tokens": 64, "temperature": 0.0},
             }),
-            json!({"exclude_cancelled": true, "exclude_infrastructure": true}),
+            NEMO_AGGREGATE_SCHEMA_SHA256,
         ),
         "openbench" => (
             "grade_school_math_scorer",
             json!({"epochs": 1, "limit": 1, "task": "gsm8k", "task_args": {}}),
-            json!({
-                "metric_params": {},
-                "params": {},
-                "score_name": "grade_school_math_scorer",
-            }),
+            OPENBENCH_AGGREGATE_SCHEMA_SHA256,
         ),
         _ => panic!("unknown stock provider"),
     };
@@ -376,9 +376,7 @@ fn assert_public_evaluation_result(report: &Value, provider: &str) {
         case["scores"][score_name]["projection_schema"],
         PUBLIC_SCORE_SCHEMA_SHA256
     );
-    let public_score = case["scores"][score_name]["value"].as_object().unwrap();
-    assert_eq!(public_score.len(), 1);
-    assert_eq!(public_score["value"].as_f64(), Some(1.0));
+    assert_eq!(case["scores"][score_name]["value"].as_f64(), Some(1.0));
     assert_eq!(case["numeric_metrics"]["accuracy"], 1.0);
     assert_eq!(case["numeric_metrics"].as_object().unwrap().len(), 1);
     let aggregates = evaluation["aggregates"].as_array().unwrap();
@@ -390,7 +388,7 @@ fn assert_public_evaluation_result(report: &Value, provider: &str) {
     assert_eq!(aggregate["value"], 1.0);
     assert_eq!(aggregate["scored_count"], 1);
     assert_eq!(aggregate["unscored_count"], 0);
-    assert_eq!(aggregate["definition"], definition);
+    assert_eq!(aggregate["projection_schema"], aggregate_schema);
 }
 
 fn assert_no_worker_root(artifact_target: &Path) {

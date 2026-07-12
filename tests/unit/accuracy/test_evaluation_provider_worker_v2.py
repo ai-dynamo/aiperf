@@ -6,20 +6,21 @@
 from __future__ import annotations
 
 import asyncio
-import builtins
+import base64
+import hashlib
 import importlib.metadata
 import os
 import re
 import select
 import socket
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from aiperf.accuracy.evaluation import resource_bootstrap
 from aiperf.accuracy.evaluation.canonical import (
     CanonicalJsonError,
     canonical_dumps,
@@ -35,10 +36,11 @@ from aiperf.accuracy.evaluation.contracts import (
     ScopedProxyBinding,
 )
 from aiperf.accuracy.evaluation.distributions import (
-    MAX_PROCESSES,
+    BOOTSTRAP_PROCESS_LIMIT_ENV,
+    CONTROL_BOOTSTRAP,
     NEMO_EVALUATOR_DISTRIBUTION,
     OPENBENCH_DISTRIBUTION,
-    RESOURCE_BOOTSTRAP,
+    STOCK_PROCESS_LIMIT,
     DistributionEvidence,
     executable_tasks,
     task_manifest,
@@ -224,14 +226,7 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         OPENBENCH_DISTRIBUTION,
     ):
         argv = descriptor.fixed_argv
-        assert argv[:4] == (
-            "-I",
-            RESOURCE_BOOTSTRAP,
-            "--max-processes",
-            str(MAX_PROCESSES),
-        )
-        assert RESOURCE_BOOTSTRAP.startswith("/runtime/libexec/")
-        assert "-m" not in argv
+        assert argv[:3] == ("-I", "-S", CONTROL_BOOTSTRAP)
         assert "--stdio" not in argv
         assert argv[argv.index("--read-fd") + 1] == "3"
         assert argv[argv.index("--write-fd") + 1] == "4"
@@ -244,77 +239,47 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         assert environment["XDG_DATA_HOME"].startswith("/staging/")
 
 
-def test_resource_bootstrap_installs_limit_before_worker_import(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[object] = []
-    limits = iter(
-        [
-            (resource_bootstrap.resource.RLIM_INFINITY,) * 2,
-            (MAX_PROCESSES, MAX_PROCESSES),
+def test_control_bootstrap_requires_isolated_no_site_safe_path() -> None:
+    bootstrap = _ROOT / "src/aiperf/accuracy/evaluation/control_bootstrap.py"
+    result = subprocess.run(
+        [sys.executable, str(bootstrap)],
+        input=b"",
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert b"requires python -I -S safe-path isolation" in result.stderr
+
+
+def test_control_bootstrap_is_embedded_and_hashed_in_every_stock_closure() -> None:
+    bootstrap = _ROOT / "src/aiperf/accuracy/evaluation/control_bootstrap.py"
+    content = bootstrap.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    stock = canonical_loads(_STOCK_MANIFEST.read_bytes(), max_bytes=8 * 1024 * 1024)
+    expected_closures = {
+        NEMO_EVALUATOR_DISTRIBUTION.distribution_id: (
+            "6e663e2e17612e015266bd7007d3b166653551ae6f60f1c3dc4768a25e51ecef"
+        ),
+        OPENBENCH_DISTRIBUTION.distribution_id: (
+            "9c5c972df2903dbf3c01a684843b8965b8adfd5b8af17461a25c7ce094cd0768"
+        ),
+    }
+    for entry in stock["distributions"]:
+        embedded = next(
+            item
+            for item in entry["launch"]["embedded_files"]
+            if item["destination"].endswith(
+                "/aiperf/accuracy/evaluation/control_bootstrap.py"
+            )
+        )
+        assert embedded["artifact_content_sha256"] == digest
+        assert base64.b64decode(embedded["content_base64"], validate=True) == content
+        assert entry["worker_source_sha256"] == (
+            "d763d412cd3150df66bc1a0c958df309848e9a4f9c3f3fb741a57ee912f671f0"
+        )
+        assert entry["launch_closure_sha256"] == expected_closures[
+            entry["distribution_id"]
         ]
-    )
-
-    def getrlimit(resource_id: int) -> tuple[int, int]:
-        assert resource_id == resource_bootstrap.resource.RLIMIT_NPROC
-        events.append("getrlimit")
-        return next(limits)
-
-    def setrlimit(resource_id: int, value: tuple[int, int]) -> None:
-        assert resource_id == resource_bootstrap.resource.RLIMIT_NPROC
-        events.append(("setrlimit", value))
-
-    worker_module = type(
-        "WorkerModule",
-        (),
-        {"main": staticmethod(lambda argv: events.append(("worker", argv)))},
-    )
-    original_import = builtins.__import__
-
-    def import_module(
-        name: str,
-        globals: dict[str, Any] | None = None,
-        locals: dict[str, Any] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> Any:
-        if name == "aiperf.accuracy.evaluation.worker":
-            events.append("worker-import")
-            return worker_module
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(resource_bootstrap.resource, "getrlimit", getrlimit)
-    monkeypatch.setattr(resource_bootstrap.resource, "setrlimit", setrlimit)
-    monkeypatch.setattr(builtins, "__import__", import_module)
-
-    worker_args = ["--provider", "nemo_evaluator"]
-    resource_bootstrap.main(["--max-processes", str(MAX_PROCESSES), *worker_args])
-
-    assert events == [
-        "getrlimit",
-        ("setrlimit", (MAX_PROCESSES, MAX_PROCESSES)),
-        "getrlimit",
-        "worker-import",
-        ("worker", worker_args),
-    ]
-
-
-@pytest.mark.parametrize("value", ["", "0", "01", "+1", "-1", "1.0", "one"])
-def test_resource_bootstrap_rejects_noncanonical_process_limits(value: str) -> None:
-    with pytest.raises(ValueError, match="canonical positive integer"):
-        resource_bootstrap._parse_max_processes(value)
-
-
-def test_resource_bootstrap_fails_when_inherited_hard_limit_is_too_small(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        resource_bootstrap.resource,
-        "getrlimit",
-        lambda _: (MAX_PROCESSES - 1, MAX_PROCESSES - 1),
-    )
-    with pytest.raises(RuntimeError, match="cannot satisfy"):
-        resource_bootstrap._install_process_limit(MAX_PROCESSES)
 
 
 def test_model_operation_schema_confines_inline_images_to_strict_raster_data() -> None:
@@ -379,10 +344,10 @@ def test_python_operation_fingerprints_match_rust_stock_registry() -> None:
         }
 
 
-def test_stock_provider_public_score_schema_is_exact_binary_object() -> None:
+def test_stock_provider_public_score_schema_is_direct_binary_number() -> None:
     for validator in (_binary_public_reward, _binary_public_score):
-        assert validator(0) == {"value": 0.0}
-        assert validator(1.0) == {"value": 1.0}
+        assert validator(0) == 0.0
+        assert validator(1.0) == 1.0
         for value in (0.5, -1, 2, True, "1", float("nan"), float("inf")):
             with pytest.raises(RuntimeError, match="binary"):
                 validator(value)
@@ -391,18 +356,19 @@ def test_stock_provider_public_score_schema_is_exact_binary_object() -> None:
         manifest = task_manifest(descriptor)
         entries = manifest.get("environments", manifest.get("tasks"))
         score = entries["gsm8k"]["public_projection"]["score_schemas"][0]
-        assert score["projection_id"] == "gsm8k_binary_score_v1"
+        assert score["projection_id"] == "finite_binary_number_v1"
         assert score["schema_sha256"] == (
-            "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5"
+            "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9"
         )
         assert canonical_sha256(score["schema"]) == score["schema_sha256"]
         assert score["schema"] == {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "additionalProperties": False,
-            "properties": {"value": {"enum": [0, 1], "type": "number"}},
-            "required": ["value"],
-            "type": "object",
+            "enum": [0, 1],
+            "type": "number",
         }
+        aggregate = entries["gsm8k"]["public_projection"]["aggregate_schemas"][0]
+        assert aggregate["projection_id"] == "accuracy_mean"
+        assert canonical_sha256(aggregate["schema"]) == aggregate["schema_sha256"]
 
 
 @pytest.mark.asyncio
@@ -512,7 +478,7 @@ def test_stock_provider_over_dedicated_fds(
     requirements: dict[str, str],
     tmp_path: Path,
 ) -> None:
-    """Run the real pinned provider lifecycle over inherited one-way pipes."""
+    """Run the real pinned provider lifecycle through production-style isolation."""
     provider_root = (
         _NEMO_PROVIDER_ROOT
         if provider == "nemo_evaluator"
@@ -541,103 +507,95 @@ def test_stock_provider_over_dedicated_fds(
         assert not tuple(mountpoint.iterdir())
     staging_root = tmp_path / "staging"
     staging_root.mkdir()
-    asset = worker_root / "assets/gsm8k_canary.jsonl"
-    assert asset.is_file()
+    assert (worker_root / "assets/gsm8k_canary.jsonl").is_file()
     request_read_fd, request_write_fd = os.pipe()
     response_read_fd, response_write_fd = os.pipe()
-    environment = dict(descriptor.clean_environment)
-    environment["PATH"] = str(worker_root / "runtime/bin")
-    for key in ("HOME", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
-        directory = staging_root / Path(environment[key]).relative_to("/staging")
-        directory.mkdir(parents=True, exist_ok=True)
-        environment[key] = str(directory)
+    for relative in ("home", "tmp", ".xdg-config", ".xdg-data", ".xdg-cache"):
+        (staging_root / relative).mkdir()
+    bubblewrap = Path("/usr/bin/bwrap")
+    if not bubblewrap.is_file():
+        _skip_optional_stock_proof("registered Bubblewrap is unavailable")
+    preflight = subprocess.run(
+        [
+            str(bubblewrap),
+            "--unshare-all",
+            "--ro-bind",
+            "/",
+            "/",
+            "--",
+            "/bin/true",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if preflight.returncode != 0:
+        _skip_optional_stock_proof(
+            "unprivileged Bubblewrap namespaces are unavailable"
+        )
     worker_command = [
-        str(worker_root / "runtime/bin/python3.12"),
-        "-I",
-        "-m",
-        "aiperf.accuracy.evaluation.worker",
-        "--provider",
-        provider,
-        "--distribution",
-        distribution,
-        "--read-fd",
-        str(request_read_fd),
-        "--write-fd",
-        str(response_write_fd),
-        "--staging-root",
+        str(bubblewrap),
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--uid",
+        "65534",
+        "--gid",
+        "65534",
+        "--cap-drop",
+        "ALL",
+        "--clearenv",
+        "--ro-bind",
+        str(worker_root),
+        "/",
+        "--dir",
+        "/staging",
+        "--bind",
         str(staging_root),
+        "/staging",
+        "--dir",
+        "/proc",
+        "--proc",
+        "/proc",
+        "--dir",
+        "/dev",
+        "--dev",
+        "/dev",
+        "--chdir",
+        "/work",
     ]
+    for key, value in descriptor.clean_environment.items():
+        worker_command.extend(("--setenv", key, value))
+    worker_command.extend(
+        ("--setenv", BOOTSTRAP_PROCESS_LIMIT_ENV, str(STOCK_PROCESS_LIMIT))
+    )
     proxy_fixture: _OpenAiUdsFixture | None = None
     if provider == "openbench":
-        bubblewrap = Path("/usr/bin/bwrap")
-        if not bubblewrap.is_file():
-            _skip_optional_stock_proof("registered Bubblewrap is unavailable")
-        preflight = subprocess.run(
-            [
-                str(bubblewrap),
-                "--unshare-all",
-                "--ro-bind",
-                "/",
-                "/",
-                "--",
-                "/bin/true",
-            ],
-            check=False,
-            capture_output=True,
-        )
-        if preflight.returncode != 0:
-            _skip_optional_stock_proof(
-                "unprivileged Bubblewrap namespaces are unavailable"
-            )
         proxy_socket = tmp_path / "evaluator-proxy.sock"
         proxy_fixture = _OpenAiUdsFixture(proxy_socket)
         proxy_fixture.start()
-        environment = dict(descriptor.clean_environment)
-        worker_command = [
-            str(bubblewrap),
-            "--die-with-parent",
-            "--new-session",
-            "--unshare-all",
-            "--ro-bind",
-            str(worker_root),
-            "/",
-            "--bind",
-            str(staging_root),
-            "/staging",
-            "--proc",
-            "/proc",
-            "--dev",
-            "/dev",
-            "--tmpfs",
-            "/run/aiperf",
-            "--ro-bind",
-            str(proxy_socket),
-            "/run/aiperf/evaluator-proxy.sock",
-            "--chdir",
-            "/work",
+        worker_command.extend(
+            (
+                "--tmpfs",
+                "/run/aiperf",
+                "--ro-bind",
+                str(proxy_socket),
+                "/run/aiperf/evaluator-proxy.sock",
+            )
+        )
+    worker_command.extend(
+        (
             "--",
             "/runtime/bin/python3.12",
-            "-I",
-            "-m",
-            "aiperf.accuracy.evaluation.worker",
-            "--provider",
-            provider,
-            "--distribution",
-            distribution,
-            "--read-fd",
-            str(request_read_fd),
-            "--write-fd",
-            str(response_write_fd),
-            "--staging-root",
-            "/staging",
-        ]
+            *descriptor.fixed_argv,
+        )
+    )
     process = subprocess.Popen(
         worker_command,
-        env=environment,
-        pass_fds=(request_read_fd, response_write_fd),
-        cwd=worker_root / "work",
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
+        env={},
+        close_fds=True,
+        cwd="/",
+        stdin=request_read_fd,
+        stdout=response_write_fd,
         stderr=subprocess.PIPE,
     )
     os.close(request_read_fd)
@@ -713,14 +671,11 @@ def test_stock_provider_over_dedicated_fds(
             },
         )
         assert plan["finite_case_count"] == 1
-        contained_asset = (
-            "/assets/gsm8k_canary.jsonl" if provider == "openbench" else str(asset)
-        )
         bind_fields: dict[str, Any] = {
             "assets": [
                 {
                     "asset_id": "openai_gsm8k_main_test_canary",
-                    "contained_path": contained_asset,
+                    "contained_path": "/assets/gsm8k_canary.jsonl",
                     "content_sha256": _ASSET_SHA256,
                     "immutable_revision": _ASSET_REVISION,
                     "media_type": "application/x-ndjson",
@@ -797,7 +752,7 @@ def test_stock_provider_over_dedicated_fds(
         )
         assert candidate["outcomes"][0]["outcome"]["completed"]["scores"][score_name][
             "public_projection"
-        ] == {"value": 1.0}
+        ] == 1.0
         assert candidate["aggregates"]
         aggregates = {item["metric"]: item for item in candidate["aggregates"]}
         if provider == "openbench":
@@ -816,10 +771,13 @@ def test_stock_provider_over_dedicated_fds(
         assert call("shutdown") == {"shutdown": True}
     finally:
         request_writer.close()
-        response_reader.close()
-    stdout, stderr = process.communicate(timeout=20)
+    process.wait(timeout=20)
+    trailing_stdout = response_reader.read()
+    response_reader.close()
+    assert process.stderr is not None
+    stderr = process.stderr.read()
     assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
-    assert stdout == b""
+    assert trailing_stdout == b"", "Bubblewrap wrote non-protocol stdout bytes"
     if proxy_fixture is not None:
         proxy_fixture.join()
         assert proxy_fixture.request is not None

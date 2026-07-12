@@ -16,6 +16,7 @@ pub mod lifecycle;
 pub mod metadata_projection;
 pub mod provider;
 pub mod provider_protocol;
+pub mod public_result;
 pub mod score_projection;
 
 pub mod protocol;
@@ -34,10 +35,9 @@ pub use canonical::{
     validate_no_secret_host_payload,
 };
 pub use isolation::{
-    AttestedProcessLimitBootstrap, AttestedWorkerLaunch, BUBBLEWRAP_PROCESS_TREE_PROFILE_V4,
-    BubblewrapEvaluatorIsolation, EvaluatorIsolation, EvaluatorIsolationEvidence,
-    EvaluatorLaunchAttestor, EvaluatorResourceLimits, IsolationQuiescenceProof, LaunchAttestation,
-    LaunchClosureFile, PreparedEvaluatorLaunch, PreparedEvaluatorStartupBarrier,
+    AttestedWorkerLaunch, BubblewrapEvaluatorIsolation, EvaluatorIsolation,
+    EvaluatorIsolationEvidence, EvaluatorLaunchAttestor, EvaluatorResourceLimits,
+    IsolationQuiescenceProof, LaunchAttestation, LaunchClosureFile, PreparedEvaluatorLaunch,
     Sha256LaunchAttestor,
 };
 pub use lifecycle::{EvaluationLifecycle, EvaluationLifecycleState};
@@ -77,9 +77,19 @@ pub use provider_protocol::{
     ScopedProxyGrant, ScopedProxySecret, SemanticAttemptId, SemanticOperationId,
     SequencedEvaluationEvent,
 };
+pub use public_result::{
+    EXACT_BINARY_MEAN_AGGREGATE_SCHEMA_V1, ExactBinaryMeanAggregateValidator,
+    NEMO_GSM8K_ACCURACY_MEAN_SCHEMA_SHA256, NEMO_GSM8K_PUBLIC_SCORE_NAME,
+    OPENBENCH_GSM8K_ACCURACY_MEAN_SCHEMA_SHA256, OPENBENCH_GSM8K_AGGREGATE_SCHEMA_V1,
+    OPENBENCH_GSM8K_MAX_MEAN_ULPS, OPENBENCH_GSM8K_PUBLIC_SCORE_NAME,
+    OpenBenchGsm8kAggregateValidator, PublicAggregateProjectionPolicy,
+    PublicAggregateProjectionValidator, PublicResultProjectionError,
+    STOCK_ACCURACY_MEAN_PROJECTION_ID, ValidatedPublicAggregateProjection,
+    ValidatedPublicCaseProjections, ValidatedPublicScoreProjection,
+};
 pub use score_projection::{
-    GSM8K_BINARY_SCORE_PROJECTION_ID, GSM8K_BINARY_SCORE_SCHEMA_SHA256,
-    Gsm8kBinaryScoreProjectionValidator, PublicScoreProjectionError, PublicScoreProjectionPolicy,
+    FINITE_BINARY_NUMBER_PROJECTION_ID, FINITE_BINARY_NUMBER_SCHEMA_SHA256,
+    FiniteBinaryNumberProjectionValidator, PublicScoreProjectionError, PublicScoreProjectionPolicy,
     PublicScoreProjectionValidator,
 };
 pub use supervisor::{

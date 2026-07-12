@@ -66,16 +66,49 @@
           {
             "score_name": "reward",
             "primary": true,
-            "projection_id": "gsm8k_binary_score_v1",
-            "schema_sha256": "d156e6577305139bac7f48946996fa35d489a381a87bce4c58d18c47d8d9eeb5",
+            "projection_id": "finite_binary_number_v1",
+            "schema_sha256": "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9",
             "schema": {
               "$schema": "https://json-schema.org/draft/2020-12/schema",
-              "additionalProperties": false,
-              "properties": {
-                "value": {"enum": [0, 1], "type": "number"}
+              "enum": [0, 1],
+              "type": "number"
+            }
+          }
+        ],
+        "aggregate_schemas": [
+          {
+            "projection_id": "accuracy_mean",
+            "schema_sha256": "d523fa29449c207508f94e50fbe0540d5a0b50a5ba48fe66cc6540d9086c5f4b",
+            "schema": {
+              "comparison": {
+                "max_ulps": 0,
+                "reference": "flat_binary_case_mean"
               },
-              "required": ["value"],
-              "type": "object"
+              "denominator": {
+                "cancelled": "unscored",
+                "completed": "scored",
+                "infrastructure_error": "unscored"
+              },
+              "empty_completed_projection": "absent",
+              "provider": {
+                "definition": {
+                  "exclude_cancelled": true,
+                  "exclude_infrastructure": true
+                },
+                "metric": "reward",
+                "reducer": "mean",
+                "scorer": "nemo_evaluator.gsm8k_scorer"
+              },
+              "public": {
+                "metric": "accuracy",
+                "reducer": "mean",
+                "scorer": "accuracy"
+              },
+              "schema": "aiperf-exact-binary-mean-aggregate-v1",
+              "source_score": {
+                "name": "reward",
+                "schema_sha256": "2f0f61bf6d8e80f0248776da43688a780e98fba16dee6a75b592894691be05b9"
+              }
             }
           }
         ],

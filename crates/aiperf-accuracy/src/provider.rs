@@ -31,6 +31,7 @@ use crate::provider_protocol::{
     EvaluationWorkerIdentity, HostOperationEvent, ResolvedEvaluationAsset, ScopedProxyBinding,
     ScopedProxyGrant, SemanticOperationId,
 };
+use crate::public_result::PublicAggregateProjectionPolicy;
 use crate::score_projection::PublicScoreProjectionPolicy;
 
 /// Process-protocol operation schema and endpoint compatibility descriptor.
@@ -335,6 +336,9 @@ pub struct EvaluationProviderDescriptor {
     /// Registered reviewed public-projection schemas by projection name.
     #[serde(default)]
     pub public_projection_schemas: BTreeMap<String, String>,
+    /// Registered reviewed public aggregate schemas by projection ID.
+    #[serde(default)]
+    pub public_aggregate_projection_schemas: BTreeMap<String, String>,
     /// Fingerprint of the executable case/numeric/aggregate metadata projector.
     pub public_metadata_schema_sha256: String,
     /// Immutable selectable worker distributions.
@@ -384,6 +388,14 @@ impl EvaluationProviderDescriptor {
             if projection.trim().is_empty() || !is_sha256(digest) {
                 return Err(ProviderRegistryError::InvalidDescriptor(format!(
                     "provider {} public projection schema was invalid",
+                    self.provider_id
+                )));
+            }
+        }
+        for (projection, digest) in &self.public_aggregate_projection_schemas {
+            if projection.trim().is_empty() || !is_sha256(digest) {
+                return Err(ProviderRegistryError::InvalidDescriptor(format!(
+                    "provider {} public aggregate projection schema was invalid",
                     self.provider_id
                 )));
             }
@@ -749,6 +761,9 @@ pub trait EvaluationProviderFactory: Send + Sync {
     /// Factory-owned executable validators for every public score schema.
     fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy;
 
+    /// Factory-owned executable validators for every public aggregate schema.
+    fn public_aggregate_projection_policy(&self) -> &PublicAggregateProjectionPolicy;
+
     /// Factory-owned executable projector for public case and aggregate metadata.
     fn public_metadata_projector(&self) -> Arc<dyn PublicEvaluationMetadataProjector>;
 
@@ -793,6 +808,7 @@ struct RegisteredProviderFactory {
     descriptor: EvaluationProviderDescriptor,
     validator: Arc<dyn ProviderConfigValidator>,
     public_score_projection_policy: PublicScoreProjectionPolicy,
+    public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
     public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     launcher: Arc<dyn EvaluationProviderLauncher>,
 }
@@ -802,12 +818,16 @@ impl RegisteredProviderFactory {
         descriptor: EvaluationProviderDescriptor,
         validator: Arc<dyn ProviderConfigValidator>,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
         public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
         launcher: Arc<dyn EvaluationProviderLauncher>,
     ) -> Result<Self, ProviderRegistryError> {
         descriptor.validate()?;
         public_score_projection_policy
             .validate_descriptor_fingerprints(&descriptor.public_projection_schemas)
+            .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
+        public_aggregate_projection_policy
+            .validate_descriptor_fingerprints(&descriptor.public_aggregate_projection_schemas)
             .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
         if public_metadata_projector.schema_sha256() != descriptor.public_metadata_schema_sha256 {
             return Err(ProviderRegistryError::InvalidDescriptor(
@@ -819,6 +839,7 @@ impl RegisteredProviderFactory {
             descriptor,
             validator,
             public_score_projection_policy,
+            public_aggregate_projection_policy,
             public_metadata_projector,
             launcher,
         })
@@ -833,6 +854,10 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
 
     fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy {
         &self.public_score_projection_policy
+    }
+
+    fn public_aggregate_projection_policy(&self) -> &PublicAggregateProjectionPolicy {
+        &self.public_aggregate_projection_policy
     }
 
     fn public_metadata_projector(&self) -> Arc<dyn PublicEvaluationMetadataProjector> {
@@ -982,6 +1007,12 @@ impl EvaluationProviderRegistryBuilder {
             .public_score_projection_policy()
             .validate_descriptor_fingerprints(&factory.descriptor().public_projection_schemas)
             .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
+        factory
+            .public_aggregate_projection_policy()
+            .validate_descriptor_fingerprints(
+                &factory.descriptor().public_aggregate_projection_schemas,
+            )
+            .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
         if factory.public_metadata_projector().schema_sha256()
             != factory.descriptor().public_metadata_schema_sha256
         {
@@ -1068,6 +1099,16 @@ impl EvaluationProviderRegistry {
         self.factories
             .get(provider_id)
             .map(|factory| factory.public_score_projection_policy())
+    }
+
+    /// Resolve the exact factory-owned aggregate validators for a provider.
+    pub fn public_aggregate_projection_policy(
+        &self,
+        provider_id: &EvaluationProviderId,
+    ) -> Option<&PublicAggregateProjectionPolicy> {
+        self.factories
+            .get(provider_id)
+            .map(|factory| factory.public_aggregate_projection_policy())
     }
 
     /// Clone the executable public metadata projector for one provider.
@@ -1199,6 +1240,7 @@ impl NemoEvaluatorProviderFactory {
             distributions,
             launcher,
             PublicScoreProjectionPolicy::restricted_only(),
+            PublicAggregateProjectionPolicy::restricted_only(),
             Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
         )
     }
@@ -1208,6 +1250,7 @@ impl NemoEvaluatorProviderFactory {
         distributions: Vec<EvaluationDistributionDescriptor>,
         launcher: Arc<dyn EvaluationProviderLauncher>,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
         public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     ) -> Result<Self, ProviderRegistryError> {
         let schema = nemo_schema();
@@ -1226,6 +1269,7 @@ impl NemoEvaluatorProviderFactory {
             ],
             PublicProjectionDescriptorSet {
                 score_schemas: public_score_projection_policy.schema_fingerprints(),
+                aggregate_schemas: public_aggregate_projection_policy.schema_fingerprints(),
                 metadata_schema_sha256: public_metadata_projector.schema_sha256().to_string(),
             },
         )?;
@@ -1233,6 +1277,7 @@ impl NemoEvaluatorProviderFactory {
             descriptor,
             Arc::new(NemoConfigValidator),
             public_score_projection_policy,
+            public_aggregate_projection_policy,
             public_metadata_projector,
             launcher,
         )?))
@@ -1252,6 +1297,7 @@ impl OpenBenchProviderFactory {
             distributions,
             launcher,
             PublicScoreProjectionPolicy::restricted_only(),
+            PublicAggregateProjectionPolicy::restricted_only(),
             Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
         )
     }
@@ -1261,6 +1307,7 @@ impl OpenBenchProviderFactory {
         distributions: Vec<EvaluationDistributionDescriptor>,
         launcher: Arc<dyn EvaluationProviderLauncher>,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
         public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     ) -> Result<Self, ProviderRegistryError> {
         let schema = openbench_schema();
@@ -1273,6 +1320,7 @@ impl OpenBenchProviderFactory {
             vec![EvaluationSchedulingMode::Finite],
             PublicProjectionDescriptorSet {
                 score_schemas: public_score_projection_policy.schema_fingerprints(),
+                aggregate_schemas: public_aggregate_projection_policy.schema_fingerprints(),
                 metadata_schema_sha256: public_metadata_projector.schema_sha256().to_string(),
             },
         )?;
@@ -1280,6 +1328,7 @@ impl OpenBenchProviderFactory {
             descriptor,
             Arc::new(OpenBenchConfigValidator),
             public_score_projection_policy,
+            public_aggregate_projection_policy,
             public_metadata_projector,
             launcher,
         )?))
@@ -1296,6 +1345,10 @@ macro_rules! delegate_factory {
 
             fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy {
                 self.0.public_score_projection_policy()
+            }
+
+            fn public_aggregate_projection_policy(&self) -> &PublicAggregateProjectionPolicy {
+                self.0.public_aggregate_projection_policy()
             }
 
             fn public_metadata_projector(&self) -> Arc<dyn PublicEvaluationMetadataProjector> {
@@ -1524,6 +1577,7 @@ fn openbench_schema() -> CanonicalJson {
 
 struct PublicProjectionDescriptorSet {
     score_schemas: BTreeMap<String, String>,
+    aggregate_schemas: BTreeMap<String, String>,
     metadata_schema_sha256: String,
 }
 
@@ -1570,6 +1624,7 @@ fn stock_descriptor(
         config_schema_version: 1,
         config_schema_sha256,
         public_projection_schemas: public_projection.score_schemas,
+        public_aggregate_projection_schemas: public_projection.aggregate_schemas,
         public_metadata_schema_sha256: public_projection.metadata_schema_sha256,
         distributions,
     };
@@ -2047,6 +2102,7 @@ mod tests {
                 descriptor,
                 Arc::new(NemoConfigValidator),
                 PublicScoreProjectionPolicy::restricted_only(),
+                PublicAggregateProjectionPolicy::restricted_only(),
                 Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
                 Arc::new(NeverLaunch),
             )
@@ -2076,6 +2132,7 @@ mod tests {
                 descriptor,
                 Arc::new(OpenBenchConfigValidator),
                 PublicScoreProjectionPolicy::restricted_only(),
+                PublicAggregateProjectionPolicy::restricted_only(),
                 Arc::new(FrozenPublicEvaluationMetadataPolicy::restricted_only()),
                 Arc::new(NeverLaunch),
             )

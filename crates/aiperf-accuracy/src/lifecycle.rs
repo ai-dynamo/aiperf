@@ -129,6 +129,8 @@ impl EvaluationLifecycle {
         plan.validate()?;
         if plan.queue_credits.host_operations > self.limits.max_idempotency_keys
             || plan.queue_credits.host_operations > self.limits.max_collection_items * 1_024
+            || plan.max_total_host_operations
+                > u64::try_from(self.limits.max_idempotency_keys).unwrap_or(u64::MAX)
         {
             return Err(EvaluationProviderError::Protocol(
                 "provider host-operation credits exceeded host safety ceilings".to_string(),
@@ -869,6 +871,20 @@ mod tests {
         lifecycle.assets_bound_and_ready().unwrap();
         assert_eq!(lifecycle.state(), EvaluationLifecycleState::Ready);
         assert!(lifecycle.finalized_candidate().is_err());
+    }
+
+    #[test]
+    fn total_host_operation_envelope_cannot_exceed_host_idempotency_capacity() {
+        let limits = EvaluatorProtocolLimits::default();
+        let mut lifecycle = EvaluationLifecycle::new(limits).unwrap();
+        lifecycle.negotiated().unwrap();
+        let mut oversized = plan(EvaluationSchedulingMode::Finite);
+        oversized.max_total_host_operations =
+            u64::try_from(limits.max_idempotency_keys).unwrap() + 1;
+
+        let error = lifecycle.planned(&oversized).unwrap_err().to_string();
+        assert!(error.contains("host-operation credits exceeded host safety ceilings"));
+        assert_eq!(lifecycle.state(), EvaluationLifecycleState::Negotiated);
     }
 
     #[test]

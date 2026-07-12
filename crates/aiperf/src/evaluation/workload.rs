@@ -22,9 +22,9 @@ use aiperf_accuracy::{
     EvaluationQueueCredits, EvaluationSchedulingMode, EvaluationStage, EvaluationUnitId,
     EvaluationUnitOccurrence, EvaluationUnitOccurrenceRequest, EvaluationUnitTemplateId,
     HostCapabilityId, HostOperationDisposition, HostOperationEvent, HostOperationId,
-    HostOperationTerminal, HostOperationUsage, HostResponseMode, PublicEvaluationMetadataProjector,
-    PublicScoreProjectionPolicy, ResolvedEvaluationAsset, ScopedProxyGrant,
-    SealedEvaluationArtifacts, SemanticAttemptId,
+    HostOperationTerminal, HostOperationUsage, HostResponseMode, PublicAggregateProjectionPolicy,
+    PublicEvaluationMetadataProjector, PublicScoreProjectionPolicy, ResolvedEvaluationAsset,
+    ScopedProxyGrant, SealedEvaluationArtifacts, SemanticAttemptId,
 };
 use aiperf_clock::Clock;
 use aiperf_metrics::EvaluationRouteSummaryReport;
@@ -589,6 +589,7 @@ pub struct EvaluationWorkload {
     asset_resolver: Rc<dyn EvaluationAssetResolver>,
     host_capabilities: EvaluationHostCapabilityInventory,
     public_score_projection_policy: PublicScoreProjectionPolicy,
+    public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
     public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     public_config: CanonicalJson,
     occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
@@ -611,6 +612,7 @@ impl EvaluationWorkload {
         asset_resolver: Rc<dyn EvaluationAssetResolver>,
         host_capabilities: EvaluationHostCapabilityInventory,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
         public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
         public_config: CanonicalJson,
         occurrence_source: Option<Box<dyn EvaluationOccurrenceSource>>,
@@ -628,6 +630,7 @@ impl EvaluationWorkload {
             asset_resolver,
             host_capabilities,
             public_score_projection_policy,
+            public_aggregate_projection_policy,
             public_metadata_projector,
             public_config,
             occurrence_source,
@@ -913,12 +916,7 @@ impl EvaluationWorkload {
 
             let mut batch = self
                 .provider
-                .poll_events(
-                    self.limits
-                        .event_batch_size
-                        .min(plan.queue_credits.stream_events),
-                    0,
-                )
+                .poll_events(self.limits.event_batch_size, 0)
                 .await
                 .map_err(provider_error)
                 .context("polling evaluator events")?;
@@ -1057,6 +1055,7 @@ impl EvaluationWorkload {
             &self.routes,
             self.public_config.value().clone(),
             self.public_score_projection_policy.clone(),
+            self.public_aggregate_projection_policy.clone(),
             Arc::clone(&self.public_metadata_projector),
         )?;
         let operations = state.ledger.operations().cloned().collect();
@@ -1762,6 +1761,7 @@ impl ExecutionState {
         routes: &EvaluationRouteTable,
         safe_config: serde_json::Value,
         public_score_projection_policy: PublicScoreProjectionPolicy,
+        public_aggregate_projection_policy: PublicAggregateProjectionPolicy,
         public_metadata_projector: Arc<dyn PublicEvaluationMetadataProjector>,
     ) -> Result<EvaluationReportFacts> {
         let templates = identity
@@ -1830,6 +1830,7 @@ impl ExecutionState {
             safe_config,
             cases,
             public_score_projection_policy,
+            public_aggregate_projection_policy,
             public_metadata_projector,
             route_summaries,
         })
@@ -2526,11 +2527,6 @@ mod tests {
             limit: usize,
             _wait_ms: u64,
         ) -> std::result::Result<EvaluationEventBatch, EvaluationProviderError> {
-            if limit == 0 || limit > self.plan.queue_credits.stream_events {
-                return Err(EvaluationProviderError::Protocol(
-                    "fixture poll limit exceeded negotiated stream-event credit".into(),
-                ));
-            }
             if self.terminal_submitted
                 && !self.case_terminal_emitted
                 && self
@@ -2998,6 +2994,7 @@ mod tests {
             Rc::new(EmptyAssetResolver),
             EvaluationHostCapabilityInventory::default(),
             PublicScoreProjectionPolicy::restricted_only(),
+            PublicAggregateProjectionPolicy::restricted_only(),
             Arc::new(aiperf_accuracy::FrozenPublicEvaluationMetadataPolicy::restricted_only()),
             public_config,
             None,

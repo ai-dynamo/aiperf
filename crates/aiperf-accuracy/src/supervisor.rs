@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::File;
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::FromRawFd;
 use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -42,8 +42,7 @@ use crate::provider_protocol::{
     ResolvedEvaluationAsset, StartedUnitsResult, SubmittedHostEventsResult,
 };
 
-const CONTROL_READ_FD: i32 = 3;
-const CONTROL_WRITE_FD: i32 = 4;
+const FIRST_UNEXPECTED_FD: i32 = 3;
 const DEFAULT_CONTROL_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_CONTROL_TIMEOUT: Duration = Duration::from_secs(300);
 const STDERR_DRAIN_CHUNK_BYTES: usize = 8_192;
@@ -109,13 +108,7 @@ async fn drain_provider_stderr<R: AsyncRead + Unpin>(
     loop {
         match stderr.read(&mut chunk).await {
             Ok(0) => break,
-            Ok(read) => {
-                eprintln!(
-                    "[temporary-provider-stderr] {}",
-                    String::from_utf8_lossy(&chunk[..read])
-                );
-                diagnostics.report_output();
-            }
+            Ok(_) => diagnostics.report_output(),
             Err(_) => {
                 diagnostics.report_failure();
                 break;
@@ -439,62 +432,6 @@ impl SupervisedProcess {
         Ok(())
     }
 
-    async fn capture_startup_barrier(
-        &mut self,
-        barrier: crate::isolation::PreparedEvaluatorStartupBarrier,
-        mut release: File,
-    ) -> Result<(), EvaluationProviderError> {
-        let deadline = Instant::now() + barrier.capture_timeout();
-        loop {
-            let observation = self.observe_process_tree();
-            if observation.is_ok()
-                && self
-                    .process_tree
-                    .as_ref()
-                    .is_some_and(IsolationProcessTreeIdentity::startup_identity_captured)
-            {
-                std::io::Write::write_all(&mut release, b"\x01").map_err(|error| {
-                    EvaluationProviderError::Io(format!(
-                        "releasing evaluator startup barrier: {error}"
-                    ))
-                })?;
-                std::io::Write::flush(&mut release).map_err(|error| {
-                    EvaluationProviderError::Io(format!(
-                        "flushing evaluator startup barrier: {error}"
-                    ))
-                })?;
-                return Ok(());
-            }
-
-            let exited = self.child.try_wait().map_err(|error| {
-                EvaluationProviderError::Io(format!(
-                    "checking evaluator isolation launcher during startup: {error}"
-                ))
-            })?;
-            if let Some(status) = exited {
-                self.join_stderr().await;
-                let error = EvaluationProviderError::Quiescence(format!(
-                    "isolation launcher exited before its private PID namespace was captured: {status}"
-                ));
-                self.quiescence_result = Some(Err(error.clone()));
-                return Err(error);
-            }
-            if Instant::now() >= deadline {
-                self.force_kill_and_wait().await;
-                self.join_stderr().await;
-                let error = observation.err().unwrap_or_else(|| {
-                    EvaluationProviderError::Quiescence(
-                        "isolation startup barrier exceeded its private PID namespace capture deadline"
-                            .to_string(),
-                    )
-                });
-                self.quiescence_result = Some(Err(error.clone()));
-                return Err(error);
-            }
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    }
-
     async fn verify_quiescent_once(
         &mut self,
     ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
@@ -506,11 +443,6 @@ impl SupervisedProcess {
                 "evaluator subtree identity was never captured".to_string(),
             )
         })?;
-        if identity.missing_required_namespace_after_root_exit()? {
-            let result = self.isolation.verify_quiescent(identity);
-            self.quiescence_result = Some(result.clone());
-            return result;
-        }
         let deadline = Instant::now() + self.shutdown_timeout;
         let result = loop {
             match self.isolation.verify_quiescent(identity) {
@@ -639,30 +571,8 @@ impl SupervisedEvaluationProvider {
         let lifecycle = EvaluationLifecycle::new(context.protocol_limits)?;
         let (request_child, request_parent) = create_control_pipe()?;
         let (response_parent, response_child) = create_control_pipe()?;
-        let startup_barrier = prepared.startup_barrier;
-        let (startup_child, startup_parent) = match startup_barrier {
-            Some(_) => {
-                let (child, parent) = create_control_pipe()?;
-                (Some(child), Some(parent))
-            }
-            None => (None, None),
-        };
 
-        let request_parent_fd = request_parent.as_raw_fd();
-        let request_child_fd = request_child.as_raw_fd();
-        let response_parent_fd = response_parent.as_raw_fd();
-        let response_child_fd = response_child.as_raw_fd();
-        let startup_child_fd = startup_child.as_ref().map(AsRawFd::as_raw_fd);
-        let startup_parent_fd = startup_parent.as_ref().map(AsRawFd::as_raw_fd);
-        let startup_target_fd = startup_barrier.map(|barrier| barrier.child_fd());
         let limits = prepared.resource_limits;
-        let launcher_process_limit = prepared.launcher_process_limit;
-        if launcher_process_limit.is_some_and(|processes| processes != limits.processes) {
-            return Err(EvaluationProviderError::Launch(
-                "outer evaluator process limit drifted from the prepared resource policy"
-                    .to_string(),
-            ));
-        }
 
         let mut command = Command::new(&prepared.program);
         command
@@ -670,44 +580,21 @@ impl SupervisedEvaluationProvider {
             .env_clear()
             .envs(&prepared.environment)
             .current_dir(&prepared.current_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdin(Stdio::from(request_child))
+            .stdout(Stdio::from(response_child))
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         // SAFETY: the closure uses only async-signal-safe libc calls between
         // fork and exec. All captured values are plain integers.
         unsafe {
             command.as_std_mut().pre_exec(move || {
-                duplicate_control_fd(request_child_fd, CONTROL_READ_FD)?;
-                duplicate_control_fd(response_child_fd, CONTROL_WRITE_FD)?;
-                for fd in [
-                    request_parent_fd,
-                    request_child_fd,
-                    response_parent_fd,
-                    response_child_fd,
-                ] {
-                    if fd > CONTROL_WRITE_FD {
-                        libc::close(fd);
-                    }
-                }
                 mark_unexpected_fds_close_on_exec()?;
-                if let (Some(source), Some(target)) = (startup_child_fd, startup_target_fd) {
-                    duplicate_control_fd(source, target)?;
-                    for fd in [startup_child_fd, startup_parent_fd].into_iter().flatten() {
-                        if fd != target && fd > CONTROL_WRITE_FD {
-                            libc::close(fd);
-                        }
-                    }
-                }
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 set_resource_limit(libc::RLIMIT_AS, limits.address_space_bytes)?;
                 set_resource_limit(libc::RLIMIT_FSIZE, limits.file_size_bytes)?;
                 set_resource_limit(libc::RLIMIT_NOFILE, limits.open_files)?;
-                if let Some(processes) = launcher_process_limit {
-                    set_resource_limit(libc::RLIMIT_NPROC, processes)?;
-                }
                 set_resource_limit(libc::RLIMIT_CPU, limits.cpu_seconds)?;
                 Ok(())
             });
@@ -715,9 +602,10 @@ impl SupervisedEvaluationProvider {
         let mut child = command.spawn().map_err(|error| {
             EvaluationProviderError::Launch(format!("isolated worker spawn failed: {error}"))
         })?;
-        drop(request_child);
-        drop(response_child);
-        drop(startup_child);
+        // `Command` retains its configured `Stdio` objects after `spawn`.
+        // Release those child-side pipe ends now so request EOF and response
+        // EOF are governed only by the supervised process tree.
+        drop(command);
         let Some(root_pid) = child.id() else {
             let _ = child.start_kill();
             let _ = tokio::time::timeout(shutdown_timeout, child.wait()).await;
@@ -740,16 +628,7 @@ impl SupervisedEvaluationProvider {
             process_tree: None,
             quiescence_result: None,
         };
-        let startup_capture = match (startup_barrier, startup_parent) {
-            (Some(barrier), Some(release)) => {
-                process.capture_startup_barrier(barrier, release).await
-            }
-            (None, None) => process.observe_process_tree(),
-            _ => Err(EvaluationProviderError::Launch(
-                "prepared evaluator startup barrier was incomplete".to_string(),
-            )),
-        };
-        if let Err(error) = startup_capture {
+        if let Err(error) = process.observe_process_tree() {
             let error = process.terminate_with_primary(error).await;
             return Err(error);
         }
@@ -1528,18 +1407,6 @@ fn placeholder_identity(
     }
 }
 
-pub(crate) unsafe fn duplicate_control_fd(source: i32, target: i32) -> std::io::Result<()> {
-    // SAFETY: caller runs between fork/exec with valid inherited descriptors.
-    if source != target && unsafe { libc::dup2(source, target) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: `target` is the newly duplicated fixed control descriptor.
-    if unsafe { libc::fcntl(target, libc::F_SETFD, 0) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
-}
-
 fn create_control_pipe() -> Result<(File, File), EvaluationProviderError> {
     let mut descriptors = [0_i32; 2];
     // SAFETY: `descriptors` has room for exactly the two descriptors returned
@@ -1568,11 +1435,13 @@ pub(crate) unsafe fn set_resource_limit(
     }
     // SAFETY: `getrlimit` succeeded.
     let current = unsafe { current.assume_init() };
+    // Never try to raise the inherited hard ceiling; an unprivileged worker
+    // launch must remain valid inside a stricter parent sandbox. Lower both
+    // values so provider code cannot raise the soft limit after startup.
+    let hard_ceiling = (value as libc::rlim_t).min(current.rlim_max);
     let limit = libc::rlimit {
-        rlim_cur: (value as libc::rlim_t).min(current.rlim_max),
-        // Never try to raise the inherited hard ceiling; an unprivileged
-        // worker launch must remain valid inside a stricter parent sandbox.
-        rlim_max: current.rlim_max,
+        rlim_cur: hard_ceiling,
+        rlim_max: hard_ceiling,
     };
     // SAFETY: `resource` is a fixed RLIMIT constant and `limit` lives through the syscall.
     if unsafe { libc::setrlimit(resource, &limit) } != 0 {
@@ -1585,12 +1454,13 @@ pub(crate) unsafe fn mark_unexpected_fds_close_on_exec() -> std::io::Result<()> 
     #[cfg(target_os = "linux")]
     {
         // SAFETY: `close_range` changes only descriptor flags in the calling
-        // child between fork and exec. Control descriptors 3 and 4 are below
-        // the selected range and remain deliberately inherited.
+        // child between fork and exec. The anonymous control pipes are bound
+        // to standard input/output by `Command`; no auxiliary descriptor is
+        // inherited through the isolation launcher.
         let result = unsafe {
             libc::syscall(
                 libc::SYS_close_range,
-                (CONTROL_WRITE_FD + 1) as libc::c_uint,
+                FIRST_UNEXPECTED_FD as libc::c_uint,
                 libc::c_uint::MAX,
                 libc::CLOSE_RANGE_CLOEXEC,
             )
@@ -1616,7 +1486,7 @@ pub(crate) unsafe fn mark_unexpected_fds_close_on_exec() -> std::io::Result<()> 
     } else {
         limit.rlim_max.min(1_048_576)
     } as i32;
-    for fd in CONTROL_WRITE_FD + 1..maximum {
+    for fd in FIRST_UNEXPECTED_FD..maximum {
         // SAFETY: `fcntl` receives one candidate descriptor and the fixed
         // close-on-exec command. EBADF merely identifies an unused slot.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
@@ -1633,6 +1503,7 @@ pub(crate) unsafe fn mark_unexpected_fds_close_on_exec() -> std::io::Result<()> 
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::sync::atomic::AtomicUsize;
@@ -1752,8 +1623,6 @@ mod tests {
                 environment: launch.environment.clone(),
                 current_dir: launch.current_dir.clone(),
                 resource_limits: EvaluatorResourceLimits::default(),
-                launcher_process_limit: Some(EvaluatorResourceLimits::default().processes),
-                startup_barrier: None,
                 evidence: EvaluatorIsolationEvidence {
                     profile_id: "fixture-isolation-v1".to_string(),
                     proof_sha256: context
@@ -1854,50 +1723,6 @@ mod tests {
         }
     }
 
-    struct PrivateNamespaceFixtureIsolation;
-
-    impl EvaluatorIsolation for PrivateNamespaceFixtureIsolation {
-        fn check_available(&self) -> Result<(), EvaluationProviderError> {
-            Ok(())
-        }
-
-        fn prepare(
-            &self,
-            _launch: &AttestedWorkerLaunch,
-            _attestation: &crate::isolation::LaunchAttestation,
-            _context: &ProviderLaunchContext,
-        ) -> Result<PreparedEvaluatorLaunch, EvaluationProviderError> {
-            Err(EvaluationProviderError::Launch(
-                "private-namespace fixture cannot prepare launches".to_string(),
-            ))
-        }
-
-        fn verify_quiescent(
-            &self,
-            identity: &IsolationProcessTreeIdentity,
-        ) -> Result<IsolationQuiescenceProof, EvaluationProviderError> {
-            if !identity.startup_identity_captured() {
-                return Err(EvaluationProviderError::Quiescence(
-                    "fixture isolation root exited before private namespace capture".to_string(),
-                ));
-            }
-            Ok(IsolationQuiescenceProof::verified(
-                identity.root_pid(),
-                sha256_hex(b"private-namespace-fixture-quiescent"),
-            ))
-        }
-
-        fn observe_process_tree(
-            &self,
-            root_pid: u32,
-            previous: Option<&IsolationProcessTreeIdentity>,
-        ) -> Result<IsolationProcessTreeIdentity, EvaluationProviderError> {
-            IsolationProcessTreeIdentity::fixture_requiring_private_pid_namespace(
-                root_pid, previous,
-            )
-        }
-    }
-
     async fn spawn_process_for_wait_test(
         script: &str,
         isolation: Arc<dyn EvaluatorIsolation>,
@@ -1993,6 +1818,53 @@ mod tests {
             overlay_policy: None,
             overlays: Vec::new(),
         }]
+    }
+
+    const FIXTURE_CONTROL_BOOTSTRAP: &str = r#"
+import fcntl, os, resource, stat, sys
+if not (sys.flags.isolated == 1 and sys.flags.no_site == 1 and sys.flags.safe_path):
+    raise RuntimeError('fixture bootstrap requires python -I -S safe-path isolation')
+raw_process_limit = os.environ.pop('AIPERF_EVALUATOR_BOOTSTRAP_PROCESS_LIMIT', None)
+if raw_process_limit is None or not raw_process_limit.isascii() or not raw_process_limit.isdecimal() or raw_process_limit != str(int(raw_process_limit)) or int(raw_process_limit) <= 0:
+    raise RuntimeError('fixture bootstrap process limit was absent or invalid')
+requested_process_limit = int(raw_process_limit)
+_, inherited_process_hard_limit = resource.getrlimit(resource.RLIMIT_NPROC)
+applied_process_limit = requested_process_limit if inherited_process_hard_limit == resource.RLIM_INFINITY else min(requested_process_limit, inherited_process_hard_limit)
+resource.setrlimit(resource.RLIMIT_NPROC, (applied_process_limit, applied_process_limit))
+if resource.getrlimit(resource.RLIMIT_NPROC) != (applied_process_limit, applied_process_limit):
+    raise RuntimeError('fixture bootstrap process hard limit was not enforced')
+for descriptor, access, label in ((0, os.O_RDONLY, 'request'), (1, os.O_WRONLY, 'response')):
+    metadata = os.fstat(descriptor)
+    flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+    if not stat.S_ISFIFO(metadata.st_mode) or flags & os.O_ACCMODE != access:
+        raise RuntimeError(label + ' control descriptor was not an anonymous one-way pipe')
+os.dup2(0, 3, inheritable=False)
+os.dup2(1, 4, inheritable=False)
+null_fd = os.open('/dev/null', os.O_RDWR | os.O_CLOEXEC)
+try:
+    os.dup2(null_fd, 0, inheritable=False)
+    os.dup2(null_fd, 1, inheritable=False)
+finally:
+    if null_fd > 4:
+        os.close(null_fd)
+os.set_inheritable(3, False)
+os.set_inheritable(4, False)
+_, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+descriptor_ceiling = 1048576 if hard_limit == resource.RLIM_INFINITY else min(hard_limit, 1048576)
+os.closerange(5, descriptor_ceiling)
+"#;
+
+    fn fixture_control_script(script: &str) -> String {
+        format!("{FIXTURE_CONTROL_BOOTSTRAP}\n{script}")
+    }
+
+    fn fixture_bootstrap_environment(
+        limits: EvaluatorResourceLimits,
+    ) -> BTreeMap<OsString, OsString> {
+        BTreeMap::from([(
+            OsString::from(crate::isolation::BOOTSTRAP_PROCESS_LIMIT_ENV),
+            OsString::from(limits.processes.to_string()),
+        )])
     }
 
     #[tokio::test]
@@ -2128,6 +2000,7 @@ mod tests {
             config_schema_version: 1,
             config_schema_sha256: "4".repeat(64),
             public_projection_schemas: BTreeMap::new(),
+            public_aggregate_projection_schemas: BTreeMap::new(),
             public_metadata_schema_sha256:
                 crate::metadata_projection::FrozenPublicEvaluationMetadataPolicy::restricted_only()
                     .schema_sha256()
@@ -2135,79 +2008,6 @@ mod tests {
             distributions: vec![distribution.clone()],
         };
         (descriptor, distribution)
-    }
-
-    #[tokio::test]
-    async fn pre_namespace_launcher_exit_is_reported_without_shutdown_timeout_masking() {
-        let (descriptor, distribution) = fixture_descriptor();
-        let base =
-            std::env::temp_dir().join(format!("aiperf-pre-namespace-exit-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
-        let context = ProviderLaunchContext {
-            session_id: EvaluationSessionId::new("pre-namespace-exit").unwrap(),
-            staging_dir: base.clone(),
-            proxy: None,
-            process_root_binder: None,
-            protocol_limits: EvaluatorProtocolLimits::default(),
-            launch_nonce: "pre-namespace-exit-nonce-0123456789abcdef".to_string(),
-        };
-        let host_binding = crate::provider_protocol::EvaluationHostBinding {
-            host: crate::provider_protocol::EvaluationHostIdentity {
-                runner_sha256: "6".repeat(64),
-                capability_inventory_sha256: "7".repeat(64),
-                schema_inventory_sha256: "8".repeat(64),
-                isolation_proof_sha256: "9".repeat(64),
-            },
-            route_map_sha256: "a".repeat(64),
-            prepared_endpoints_sha256: "b".repeat(64),
-            sandbox_sha256: None,
-        };
-        let limits = EvaluatorResourceLimits::default();
-        let prepared = PreparedEvaluatorLaunch {
-            program: find_python(),
-            args: vec!["-c".into(), "raise SystemExit(17)".into()],
-            environment: BTreeMap::new(),
-            current_dir: base.clone(),
-            resource_limits: limits,
-            launcher_process_limit: Some(limits.processes),
-            startup_barrier: Some(
-                crate::isolation::PreparedEvaluatorStartupBarrier::new(5, Duration::from_secs(5))
-                    .unwrap(),
-            ),
-            evidence: EvaluatorIsolationEvidence {
-                profile_id: "private-namespace-fixture".to_string(),
-                proof_sha256: "5".repeat(64),
-                enforced: EvaluatorIsolationRequirements::strict_process_tree(),
-            },
-        };
-        let started = Instant::now();
-        let error = match SupervisedEvaluationProvider::spawn(
-            &descriptor,
-            &distribution,
-            SupervisedSpawnInput {
-                prepared,
-                context,
-                host_binding,
-            },
-            Arc::new(PrivateNamespaceFixtureIsolation),
-            Arc::new(CapturingRestrictedLogSink::default()),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-        )
-        .await
-        {
-            Ok(_) => panic!("pre-namespace launcher exit unexpectedly negotiated"),
-            Err(error) => error,
-        };
-        assert!(started.elapsed() < Duration::from_secs(1));
-        assert!(matches!(error, EvaluationProviderError::Quiescence(_)));
-        assert!(
-            error
-                .to_string()
-                .contains("before its private PID namespace was captured")
-        );
-        let _ = std::fs::remove_dir_all(base);
     }
 
     async fn launch_fixture_script(
@@ -2244,14 +2044,18 @@ mod tests {
             prepared_endpoints_sha256: "b".repeat(64),
             sandbox_sha256: None,
         };
+        let resource_limits = EvaluatorResourceLimits::default();
         let prepared = PreparedEvaluatorLaunch {
             program: python,
-            args: vec!["-u".into(), "-c".into(), script.into()],
-            environment: BTreeMap::new(),
+            args: vec![
+                "-I".into(),
+                "-S".into(),
+                "-c".into(),
+                fixture_control_script(script).into(),
+            ],
+            environment: fixture_bootstrap_environment(resource_limits),
             current_dir: base.clone(),
-            resource_limits: EvaluatorResourceLimits::default(),
-            launcher_process_limit: Some(EvaluatorResourceLimits::default().processes),
-            startup_barrier: None,
+            resource_limits,
             evidence: EvaluatorIsolationEvidence {
                 profile_id: "test-process-tree".to_string(),
                 proof_sha256: "5".repeat(64),
@@ -2440,6 +2244,8 @@ print('EXPECTED_ANSWER_SENTINEL Bearer provider-secret', file=sys.stderr, flush=
 reader = os.fdopen(3, 'r', encoding='utf-8', closefd=False)
 writer = os.fdopen(4, 'w', encoding='utf-8', closefd=False)
 print('ordinary stdout is not protocol', flush=True)
+if os.get_inheritable(3) or os.get_inheritable(4):
+    raise RuntimeError('control descriptors remained inheritable')
 ops = ['plan_session','bind_assets','next_units','instantiate_units','start_units','poll_events','submit_host_events','cancel_units','finalize_session','shutdown']
 for line in reader:
     request = json.loads(line)
@@ -2512,14 +2318,18 @@ for line in reader:
             prepared_endpoints_sha256: "b".repeat(64),
             sandbox_sha256: None,
         };
+        let resource_limits = EvaluatorResourceLimits::default();
         let prepared = PreparedEvaluatorLaunch {
             program: python,
-            args: vec!["-u".into(), "-c".into(), SCRIPT.into()],
-            environment: BTreeMap::new(),
+            args: vec![
+                "-I".into(),
+                "-S".into(),
+                "-c".into(),
+                fixture_control_script(SCRIPT).into(),
+            ],
+            environment: fixture_bootstrap_environment(resource_limits),
             current_dir: base.clone(),
-            resource_limits: EvaluatorResourceLimits::default(),
-            launcher_process_limit: Some(EvaluatorResourceLimits::default().processes),
-            startup_barrier: None,
+            resource_limits,
             evidence: EvaluatorIsolationEvidence {
                 profile_id: "test-process-tree".to_string(),
                 proof_sha256: "5".repeat(64),
