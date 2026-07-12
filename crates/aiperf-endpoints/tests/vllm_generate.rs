@@ -93,6 +93,25 @@ fn formatting_rejects_missing_ids_and_streaming_override() {
 }
 
 #[test]
+fn preparation_rejects_malformed_endpoint_sampling_params() {
+    let registry = EndpointRegistry::builtin().unwrap();
+    let result = registry.prepare(
+        &EndpointId::new("vllm_generate").unwrap(),
+        RawEndpointConfig {
+            extra: Some(
+                json!({"sampling_params": []})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            ..RawEndpointConfig::default()
+        },
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn response_retains_exact_ids_and_counts_the_array() {
     let endpoint = prepared();
     let parsed = endpoint

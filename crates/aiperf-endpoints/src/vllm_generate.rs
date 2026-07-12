@@ -58,12 +58,15 @@ impl EndpointFactory for VllmGenerateFactory {
                 "vllm_generate does not accept template or response_field configuration".into(),
             ));
         }
-        validate_protected_extras(config.extra.as_ref(), "endpoint.extra").map_err(|error| {
-            match error {
+        validate_protected_extras(config.extra.as_ref(), "endpoint.extra")
+            .and_then(|()| {
+                let mut extra = config.extra.clone().unwrap_or_default();
+                take_sampling_params(&mut extra, "endpoint.extra").map(|_| ())
+            })
+            .map_err(|error| match error {
                 EndpointError::InvalidRequest(message) => EndpointError::InvalidConfig(message),
                 other => other,
-            }
-        })
+            })
     }
 
     fn prepare(
