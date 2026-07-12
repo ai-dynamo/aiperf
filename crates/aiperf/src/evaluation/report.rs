@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use aiperf_accuracy::{
     ArtifactVisibility, CanonicalJson, CaseOutcomeKind, EvaluationCaseId, EvaluationCaseTemplateId,
-    EvaluationFinishCandidate, PublicScoreProjectionPolicy, SealedEvaluationArtifacts, is_sha256,
-    validate_no_secret_control_value,
+    EvaluationFinishCandidate, EvaluationIdentityComponent, PublicScoreProjectionPolicy,
+    SealedEvaluationArtifacts, is_sha256, validate_no_secret_control_value,
 };
 use aiperf_metrics::{
     EvaluationAggregateMetricReport, EvaluationArtifactReport, EvaluationCaseErrorReport,
@@ -20,7 +20,7 @@ use aiperf_metrics::{
     EvaluationPublicScoreReport, EvaluationReport, EvaluationRouteReport,
     EvaluationRouteSummaryReport,
 };
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Result, anyhow, ensure};
 use serde_json::{Value, json};
 
 use super::host::EvaluationRouteTable;
@@ -67,6 +67,12 @@ pub fn build_evaluation_report(
     let route_reports = build_routes(routes, &facts.route_summaries)?;
     validate_case_fact_manifest(&candidate, &facts.cases)?;
     let sealed_by_id = validate_sealed_manifest(&candidate, sealed)?;
+    let artifact_refs_by_id = sealed
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(ordinal, artifact)| (&artifact.artifact_id, opaque_artifact_ref(ordinal)))
+        .collect::<BTreeMap<_, _>>();
 
     let templates = candidate
         .identity
@@ -74,11 +80,18 @@ pub fn build_evaluation_report(
         .iter()
         .map(|template| (&template.template_id, template))
         .collect::<BTreeMap<_, _>>();
+    let template_ordinals = candidate
+        .identity
+        .case_templates
+        .iter()
+        .enumerate()
+        .map(|(ordinal, template)| (&template.template_id, ordinal))
+        .collect::<BTreeMap<_, _>>();
     let mut completed_count = 0_usize;
     let mut infrastructure_error_count = 0_usize;
     let mut cancelled_count = 0_usize;
     let mut case_reports = Vec::with_capacity(candidate.outcomes.len());
-    for outcome in &candidate.outcomes {
+    for (case_ordinal, outcome) in candidate.outcomes.iter().enumerate() {
         let case_facts = facts.cases.get(&outcome.case_id).ok_or_else(|| {
             anyhow!(
                 "missing report identity for evaluation case {}",
@@ -98,6 +111,10 @@ pub fn build_evaluation_report(
             outcome.case_id,
             case_facts.template_id
         );
+        let template_ordinal = template_ordinals
+            .get(&case_facts.template_id)
+            .copied()
+            .ok_or_else(|| anyhow!("case report template omitted its host ordinal"))?;
         let artifact_refs = outcome
             .artifact_refs
             .iter()
@@ -115,7 +132,10 @@ pub fn build_evaluation_report(
                     outcome.case_id,
                     artifact.artifact_id
                 );
-                Ok(artifact.path.clone())
+                artifact_refs_by_id
+                    .get(&artifact.artifact_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("sealed artifact omitted its opaque report reference"))
             })
             .collect::<Result<Vec<_>>>()?;
         let (kind, scores, numeric_metrics, primary_score, error) = match &outcome.outcome {
@@ -149,14 +169,16 @@ pub fn build_evaluation_report(
                     .as_ref()
                     .filter(|name| scores.contains_key(*name))
                     .cloned();
+                let numeric_metrics = scores
+                    .iter()
+                    .filter_map(|(name, score)| {
+                        score.value.as_f64().map(|value| (name.clone(), value))
+                    })
+                    .collect();
                 (
                     EvaluationCaseOutcomeKind::Completed,
                     scores,
-                    completed
-                        .numeric_metrics
-                        .iter()
-                        .map(|(name, value)| (name.clone(), value.get()))
-                        .collect(),
+                    numeric_metrics,
                     primary_score,
                     None,
                 )
@@ -193,10 +215,10 @@ pub fn build_evaluation_report(
             }
         };
         case_reports.push(EvaluationCaseReport {
-            case_id: outcome.case_id.to_string(),
-            template_id: case_facts.template_id.to_string(),
-            task: case_facts.task.clone(),
-            source: case_facts.source.clone(),
+            case_id: format!("case-{case_ordinal:08}"),
+            template_id: format!("template-{template_ordinal:08}"),
+            task: format!("task-{template_ordinal:08}"),
+            source: format!("source-{template_ordinal:08}"),
             outcome: kind,
             scores,
             numeric_metrics,
@@ -206,28 +228,19 @@ pub fn build_evaluation_report(
         });
     }
 
-    let aggregates = candidate
-        .aggregates
-        .iter()
-        .map(|aggregate| {
-            Ok(EvaluationAggregateMetricReport {
-                scorer: aggregate.scorer.clone(),
-                reducer: aggregate.reducer.clone(),
-                metric: aggregate.metric.clone(),
-                value: aggregate.value.get(),
-                scored_count: usize::try_from(aggregate.scored_count)
-                    .context("evaluation aggregate scored_count exceeded usize")?,
-                unscored_count: usize::try_from(aggregate.unscored_count)
-                    .context("evaluation aggregate unscored_count exceeded usize")?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Provider-native aggregate definitions and their labels remain restricted
+    // until a factory-owned executable aggregate projection policy is bound.
+    let aggregates = Vec::<EvaluationAggregateMetricReport>::new();
     let artifact_reports = sealed
         .entries
         .iter()
-        .map(|artifact| EvaluationArtifactReport {
-            path: artifact.path.clone(),
-            media_type: artifact.media_type.clone(),
+        .enumerate()
+        .map(|(ordinal, artifact)| EvaluationArtifactReport {
+            artifact_ref: opaque_artifact_ref(ordinal),
+            path: (artifact.visibility == ArtifactVisibility::PublicProjection)
+                .then(|| artifact.path.clone()),
+            media_type: (artifact.visibility == ArtifactVisibility::PublicProjection)
+                .then(|| artifact.media_type.clone()),
             visibility: match artifact.visibility {
                 ArtifactVisibility::Restricted => "restricted",
                 ArtifactVisibility::PublicProjection => "public",
@@ -257,6 +270,10 @@ pub fn build_evaluation_report(
         canonical_bundle_artifact_content_sha256: sealed.provider_bundle_sha256.clone(),
         normalized_result_sha256: candidate.normalized_result_sha256,
     })
+}
+
+fn opaque_artifact_ref(ordinal: usize) -> String {
+    format!("artifact-{ordinal:08}")
 }
 
 fn build_routes(
@@ -398,27 +415,13 @@ fn build_identity(candidate: &EvaluationFinishCandidate) -> Result<EvaluationIde
     .map_err(|error| anyhow!(error.to_string()))?
     .normalized_result_sha256();
     let mut components = BTreeMap::new();
-    let dataset_value = format!(
-        "{}@{}#sha256:{}",
-        source.dataset.name, source.dataset.version, source.dataset.source_sha256
-    );
-    ensure!(
-        components
-            .insert("dataset".to_string(), dataset_value)
-            .is_none(),
-        "duplicate dataset identity"
-    );
-    for component in &source.components {
-        ensure!(
-            components
-                .insert(
-                    component.name.clone(),
-                    format!("{}#sha256:{}", component.version, component.source_sha256),
-                )
-                .is_none(),
-            "duplicate evaluation identity component {:?}",
-            component.name
-        );
+    project_identity_component("dataset", &source.dataset, &mut components)?;
+    for (ordinal, component) in source.components.iter().enumerate() {
+        project_identity_component(
+            &format!("component-{ordinal:08}"),
+            component,
+            &mut components,
+        )?;
     }
     Ok(EvaluationIdentityReport {
         evaluator_protocol: source.worker.evaluator_protocol,
@@ -437,6 +440,37 @@ fn build_identity(candidate: &EvaluationFinishCandidate) -> Result<EvaluationIde
     })
 }
 
+fn project_identity_component(
+    prefix: &str,
+    component: &EvaluationIdentityComponent,
+    output: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let mut insert = |suffix: &str, value: String| {
+        ensure!(
+            output.insert(format!("{prefix}.{suffix}"), value).is_none(),
+            "duplicate host-projected evaluation identity fact"
+        );
+        Ok(())
+    };
+    insert("effective_source_sha256", component.source_sha256.clone())?;
+    if let Some(source_commit) = &component.source_commit {
+        insert("source_commit", source_commit.clone())?;
+    }
+    if let Some(base_source_sha256) = &component.base_source_sha256 {
+        insert("base_source_sha256", base_source_sha256.clone())?;
+    }
+    if let Some(overlay_policy) = &component.overlay_policy {
+        insert("overlay_policy", overlay_policy.clone())?;
+    }
+    for (ordinal, overlay) in component.overlays.iter().enumerate() {
+        insert(
+            &format!("overlay-{ordinal:08}.artifact_content_sha256"),
+            overlay.artifact_content_sha256.clone(),
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -447,9 +481,10 @@ mod tests {
         EvaluationArtifactManifestEntry, EvaluationCaseTemplateDescriptor,
         EvaluationDistributionId, EvaluationError, EvaluationExecutionGranularity,
         EvaluationHostIdentity, EvaluationIdentity, EvaluationIdentityComponent,
-        EvaluationProviderId, EvaluationStage, EvaluationUnitTemplateDescriptor,
-        EvaluationUnitTemplateId, EvaluationWorkerIdentity, FiniteF64, ProviderScore,
-        PublicScoreProjectionError, PublicScoreProjectionValidator, SealedEvaluationArtifact,
+        EvaluationProviderId, EvaluationSourceOverlayIdentity, EvaluationStage,
+        EvaluationUnitTemplateDescriptor, EvaluationUnitTemplateId, EvaluationWorkerIdentity,
+        FiniteF64, ProviderScore, PublicScoreProjectionError, PublicScoreProjectionValidator,
+        SOURCE_OVERLAY_POLICY_V1, SealedEvaluationArtifact,
     };
 
     use super::*;
@@ -512,11 +547,11 @@ mod tests {
             .into_iter()
             .map(|name| EvaluationCaseTemplateDescriptor {
                 template_id: aiperf_accuracy::EvaluationCaseTemplateId::new(format!(
-                    "template-{name}"
+                    "hidden-template-{name}-sentinel"
                 ))
                 .unwrap(),
-                task: name.to_string(),
-                source: "fixture-source".to_string(),
+                task: format!("hidden-task-{name}-sentinel"),
+                source: "hidden-source-sentinel".to_string(),
             })
             .collect::<Vec<_>>();
         let unit_templates = case_templates
@@ -532,7 +567,7 @@ mod tests {
                 scheduling_class: "fixture".to_string(),
             })
             .collect();
-        let bundle_id = EvaluationArtifactId::new("bundle").unwrap();
+        let bundle_id = EvaluationArtifactId::new("hidden-artifact-id-sentinel").unwrap();
         EvaluationFinishCandidate {
             identity: EvaluationIdentity {
                 canonical_json_codec: aiperf_accuracy::CANONICAL_JSON_CODEC.to_string(),
@@ -540,14 +575,25 @@ mod tests {
                 config_schema_sha256: "d".repeat(64),
                 resolved_config_sha256: "e".repeat(64),
                 dataset: EvaluationIdentityComponent {
-                    name: "fixture-dataset".to_string(),
-                    version: "1".to_string(),
+                    name: "hidden-dataset-name-sentinel".to_string(),
+                    version: "hidden-dataset-version-sentinel".to_string(),
                     source_sha256: "f".repeat(64),
+                    source_commit: None,
+                    base_source_sha256: None,
+                    overlay_policy: None,
+                    overlays: Vec::new(),
                 },
                 components: vec![EvaluationIdentityComponent {
-                    name: "scorer".to_string(),
-                    version: "1".to_string(),
+                    name: "hidden-component-name-sentinel".to_string(),
+                    version: "hidden-component-version-sentinel".to_string(),
                     source_sha256: "1".repeat(64),
+                    source_commit: Some("a".repeat(40)),
+                    base_source_sha256: Some("b".repeat(64)),
+                    overlay_policy: Some(SOURCE_OVERLAY_POLICY_V1.to_string()),
+                    overlays: vec![EvaluationSourceOverlayIdentity {
+                        overlay_id: "hidden-overlay-id-sentinel".to_string(),
+                        artifact_content_sha256: "c".repeat(64),
+                    }],
                 }],
                 ordered_manifest_sha256: "2".repeat(64),
                 case_templates,
@@ -565,7 +611,7 @@ mod tests {
             },
             outcomes: vec![
                 CaseOutcome {
-                    case_id: EvaluationCaseId::new("case-completed").unwrap(),
+                    case_id: EvaluationCaseId::new("hidden-case-completed-sentinel").unwrap(),
                     outcome: CaseOutcomeKind::Completed {
                         completed: CompletedCaseOutcome {
                             scores: BTreeMap::from([(
@@ -576,17 +622,21 @@ mod tests {
                                 },
                             )]),
                             numeric_metrics: BTreeMap::from([(
-                                "accuracy".to_string(),
+                                "hidden-numeric-metric-sentinel".to_string(),
                                 FiniteF64::new(0.0).unwrap(),
                             )]),
                             primary_score: Some("accuracy".to_string()),
                             annotations: None,
                         },
                     },
-                    artifact_refs: Vec::new(),
+                    artifact_refs: vec![ArtifactRef {
+                        artifact_id: bundle_id.clone(),
+                        path: "hidden-path-sentinel.eval".to_string(),
+                        visibility: ArtifactVisibility::Restricted,
+                    }],
                 },
                 CaseOutcome {
-                    case_id: EvaluationCaseId::new("case-infra").unwrap(),
+                    case_id: EvaluationCaseId::new("hidden-case-infra-sentinel").unwrap(),
                     outcome: CaseOutcomeKind::InfrastructureError {
                         error: EvaluationError::new(
                             EvaluationStage::new("verifier").unwrap(),
@@ -599,7 +649,7 @@ mod tests {
                     artifact_refs: Vec::new(),
                 },
                 CaseOutcome {
-                    case_id: EvaluationCaseId::new("case-cancelled").unwrap(),
+                    case_id: EvaluationCaseId::new("hidden-case-cancelled-sentinel").unwrap(),
                     outcome: CaseOutcomeKind::Cancelled {
                         stage: EvaluationStage::new("solving").unwrap(),
                         reason: "HIDDEN_PRIVATE_TEST_CANCEL_SENTINEL".to_string(),
@@ -608,9 +658,9 @@ mod tests {
                 },
             ],
             aggregates: vec![AggregateMetric {
-                scorer: "fixture".to_string(),
-                reducer: "mean".to_string(),
-                metric: "accuracy".to_string(),
+                scorer: "hidden-aggregate-scorer-sentinel".to_string(),
+                reducer: "hidden-aggregate-reducer-sentinel".to_string(),
+                metric: "hidden-aggregate-metric-sentinel".to_string(),
                 value: FiniteF64::new(0.0).unwrap(),
                 scored_count: 1,
                 unscored_count: 2,
@@ -618,15 +668,15 @@ mod tests {
             }],
             artifacts: vec![EvaluationArtifactManifestEntry {
                 artifact_id: bundle_id.clone(),
-                path: "bundle.eval".to_string(),
-                media_type: "application/octet-stream".to_string(),
+                path: "hidden-path-sentinel.eval".to_string(),
+                media_type: "application/x-hidden-media-sentinel".to_string(),
                 visibility: ArtifactVisibility::Restricted,
                 size_bytes: 7,
                 artifact_content_sha256: "9".repeat(64),
             }],
             provider_bundle: ArtifactRef {
                 artifact_id: bundle_id,
-                path: "bundle.eval".to_string(),
+                path: "hidden-path-sentinel.eval".to_string(),
                 visibility: ArtifactVisibility::Restricted,
             },
             normalized_result_sha256: "0".repeat(64),
@@ -637,9 +687,9 @@ mod tests {
         SealedEvaluationArtifacts {
             root: "/tmp/sealed-fixture".into(),
             entries: vec![SealedEvaluationArtifact {
-                artifact_id: EvaluationArtifactId::new("bundle").unwrap(),
-                path: "bundle.eval".to_string(),
-                media_type: "application/octet-stream".to_string(),
+                artifact_id: EvaluationArtifactId::new("hidden-artifact-id-sentinel").unwrap(),
+                path: "hidden-path-sentinel.eval".to_string(),
+                media_type: "application/x-hidden-media-sentinel".to_string(),
                 visibility: ArtifactVisibility::Restricted,
                 size_bytes: 7,
                 artifact_content_sha256: "9".repeat(64),
@@ -673,11 +723,11 @@ mod tests {
                     outcome.case_id.clone(),
                     EvaluationCaseReportFacts {
                         template_id: aiperf_accuracy::EvaluationCaseTemplateId::new(format!(
-                            "template-{name}"
+                            "hidden-template-{name}-sentinel"
                         ))
                         .unwrap(),
-                        task: name.to_string(),
-                        source: "fixture-source".to_string(),
+                        task: format!("hidden-task-{name}-sentinel"),
+                        source: "hidden-source-sentinel".to_string(),
                     },
                 )
             })
@@ -717,6 +767,16 @@ mod tests {
             EvaluationCaseOutcomeKind::Completed
         );
         assert_eq!(report.cases[0].numeric_metrics["accuracy"], 0.0);
+        assert!(
+            !report.cases[0]
+                .numeric_metrics
+                .contains_key("hidden-numeric-metric-sentinel")
+        );
+        assert!(report.aggregates.is_empty());
+        assert_eq!(report.cases[0].case_id, "case-00000000");
+        assert_eq!(report.cases[0].template_id, "template-00000000");
+        assert_eq!(report.cases[0].task, "task-00000000");
+        assert_eq!(report.cases[0].source, "source-00000000");
         assert_eq!(report.cases[0].scores["accuracy"].value, json!(0));
         assert_eq!(report.cases[1].scores.len(), 0);
         assert_eq!(
@@ -736,9 +796,33 @@ mod tests {
             report.artifacts[0].normalized_result_sha256,
             Some("0".repeat(64))
         );
+        assert_eq!(report.artifacts[0].artifact_ref, "artifact-00000000");
+        assert_eq!(report.artifacts[0].path, None);
+        assert_eq!(report.artifacts[0].media_type, None);
+        assert_eq!(report.cases[0].artifact_refs, ["artifact-00000000"]);
         let encoded = serde_json::to_string(&report).unwrap();
         assert!(!encoded.contains("HIDDEN_EXPECTED_ANSWER_INFRA_SENTINEL"));
         assert!(!encoded.contains("HIDDEN_PRIVATE_TEST_CANCEL_SENTINEL"));
+        assert!(!encoded.contains("hidden-artifact-id-sentinel"));
+        assert!(!encoded.contains("hidden-path-sentinel"));
+        assert!(!encoded.contains("hidden-media-sentinel"));
+        assert!(!encoded.contains("hidden-case"));
+        assert!(!encoded.contains("hidden-template"));
+        assert!(!encoded.contains("hidden-task"));
+        assert!(!encoded.contains("hidden-source"));
+        assert!(!encoded.contains("hidden-dataset"));
+        assert!(!encoded.contains("hidden-component"));
+        assert!(!encoded.contains("hidden-numeric"));
+        assert!(!encoded.contains("hidden-aggregate"));
+        assert!(!encoded.contains("hidden-overlay-id-sentinel"));
+        assert_eq!(
+            report.identity.components["component-00000000.overlay-00000000.artifact_content_sha256"],
+            "c".repeat(64)
+        );
+        assert_eq!(
+            report.identity.components["component-00000000.overlay_policy"],
+            SOURCE_OVERLAY_POLICY_V1
+        );
     }
 
     #[test]

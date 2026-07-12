@@ -649,6 +649,35 @@ impl ReportDynamoRunInfo {
     }
 }
 
+/// Exact secret-free post-plan authority for a compatibility proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
+pub struct ReportEvaluationCompatibilityGrantLimits {
+    pub max_operations: u64,
+    pub max_concurrent_operations: u64,
+    pub max_request_bytes: u64,
+    pub max_response_bytes: u64,
+    pub max_stream_events: u64,
+    pub expires_after_ms: u64,
+}
+
+impl ReportEvaluationCompatibilityGrantLimits {
+    /// Reject an empty or internally inconsistent effective grant.
+    pub fn validate(self) -> Result<Self, ReportProvenanceError> {
+        if self.max_operations == 0
+            || self.max_concurrent_operations == 0
+            || self.max_concurrent_operations > self.max_operations
+            || self.max_request_bytes == 0
+            || self.max_response_bytes == 0
+            || self.expires_after_ms == 0
+        {
+            return Err(ReportProvenanceError::new(
+                "evaluation compatibility effective grant was empty or inconsistent",
+            ));
+        }
+        Ok(self)
+    }
+}
+
 /// Exact local adapter-policy identity for one proxy-enabled evaluation run.
 #[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
 pub struct ReportEvaluationCompatibilityInfo {
@@ -656,6 +685,8 @@ pub struct ReportEvaluationCompatibilityInfo {
     pub dialect_ids: Vec<String>,
     /// SHA-256 of exact dialect IDs, allowed routes, effective adapters, and grant limits.
     pub descriptor_sha256: String,
+    /// Exact post-plan authority installed in both worker binding and Rust runtime.
+    pub effective_grant: ReportEvaluationCompatibilityGrantLimits,
 }
 
 impl ReportEvaluationCompatibilityInfo {
@@ -663,6 +694,7 @@ impl ReportEvaluationCompatibilityInfo {
     pub fn new(
         mut dialect_ids: Vec<String>,
         descriptor_sha256: impl Into<String>,
+        effective_grant: ReportEvaluationCompatibilityGrantLimits,
     ) -> Result<Self, ReportProvenanceError> {
         if dialect_ids.is_empty() {
             return Err(ReportProvenanceError::new(
@@ -683,9 +715,11 @@ impl ReportEvaluationCompatibilityInfo {
             &descriptor_sha256,
             "evaluation compatibility descriptor SHA-256",
         )?;
+        let effective_grant = effective_grant.validate()?;
         Ok(Self {
             dialect_ids,
             descriptor_sha256,
+            effective_grant,
         })
     }
 }
@@ -1291,7 +1325,7 @@ pub struct EvaluationCaseReport {
     /// Redacted infrastructure or cancellation metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<EvaluationCaseErrorReport>,
-    /// Declared artifact paths; contents remain outside the public report.
+    /// Host-assigned opaque artifact references; restricted paths stay private.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub artifact_refs: Vec<String>,
 }
@@ -1347,10 +1381,14 @@ pub struct EvaluationRouteSummaryReport {
 /// Rust-verified artifact manifest entry.
 #[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
 pub struct EvaluationArtifactReport {
-    /// Contained path below the immutable promoted artifact root.
-    pub path: String,
-    /// Declared media type.
-    pub media_type: String,
+    /// Host-assigned opaque reference used by case reports.
+    pub artifact_ref: String,
+    /// Factory-reviewed public path; absent for restricted artifacts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Factory-reviewed public media type; absent for restricted artifacts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
     /// Factory-authorized visibility (`public` or `restricted`).
     pub visibility: String,
     /// Size observed from the opened file descriptor.
@@ -1993,8 +2031,9 @@ mod tests {
                 },
             )]),
             artifacts: vec![EvaluationArtifactReport {
-                path: "bundle.eval".into(),
-                media_type: "application/octet-stream".into(),
+                artifact_ref: "artifact-00000000".into(),
+                path: None,
+                media_type: None,
                 visibility: "restricted".into(),
                 size_bytes: 9,
                 artifact_content_sha256: "4".repeat(64),
@@ -2070,6 +2109,14 @@ mod tests {
                 ReportEvaluationCompatibilityInfo::new(
                     vec!["openai_chat_completions".into()],
                     "d".repeat(64),
+                    ReportEvaluationCompatibilityGrantLimits {
+                        max_operations: 1,
+                        max_concurrent_operations: 1,
+                        max_request_bytes: 1024,
+                        max_response_bytes: 2048,
+                        max_stream_events: 1,
+                        expires_after_ms: 1000,
+                    },
                 )
                 .unwrap(),
             );
@@ -2104,6 +2151,10 @@ mod tests {
         assert_eq!(
             run["evaluation_compatibility"]["descriptor_sha256"],
             "d".repeat(64)
+        );
+        assert_eq!(
+            run["evaluation_compatibility"]["effective_grant"]["max_operations"],
+            1
         );
         assert_eq!(
             report.run.provenance().unwrap().distribution_id,
@@ -2159,6 +2210,14 @@ mod tests {
 
     #[test]
     fn pair_facts_reject_non_finite_capacity_and_inconsistent_counts() {
+        let grant = || ReportEvaluationCompatibilityGrantLimits {
+            max_operations: 1,
+            max_concurrent_operations: 1,
+            max_request_bytes: 1,
+            max_response_bytes: 1,
+            max_stream_events: 1,
+            expires_after_ms: 1,
+        };
         assert!(ReportDynamoCapacityInfo::new(f64::NAN, 1.0, 1, 1, 1.0).is_err());
         assert!(ReportDynamoCapacityInfo::new(1.0, 1.0, 1, 1, f64::INFINITY).is_err());
         assert!(ReportDynamoParityInfo::new(74, 68, 5, 100).is_err());
@@ -2168,7 +2227,9 @@ mod tests {
                 .with_outcome(ReportGraphOutcomeInfo::new(1, 1, 1))
                 .is_err()
         );
-        assert!(ReportEvaluationCompatibilityInfo::new(Vec::new(), "a".repeat(64)).is_err());
+        assert!(
+            ReportEvaluationCompatibilityInfo::new(Vec::new(), "a".repeat(64), grant()).is_err()
+        );
         assert!(
             ReportEvaluationCompatibilityInfo::new(
                 vec![
@@ -2176,6 +2237,7 @@ mod tests {
                     "openai_chat_completions".into()
                 ],
                 "a".repeat(64),
+                grant(),
             )
             .is_err()
         );
@@ -2183,6 +2245,7 @@ mod tests {
             ReportEvaluationCompatibilityInfo::new(
                 vec!["openai_chat_completions".into()],
                 "not-a-digest",
+                grant(),
             )
             .is_err()
         );
