@@ -54,7 +54,9 @@ const BACKEND_ID: &str = "online_http";
 pub fn register_online_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
         Arc::new(NativeOnlineTokenizerSourceResolver::default());
-    builder.register_pair(Arc::new(OnlineGraphPairFactory { tokenizers }))
+    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
+        OnlineGraphAdapter { tokenizers },
+    ))))
 }
 
 /// Register static accuracy after sidecar parity or an exact frontend gate is
@@ -62,9 +64,11 @@ pub fn register_online_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result
 pub fn register_online_http_static_accuracy_pair(
     builder: &mut RunnerRegistryBuilder,
 ) -> Result<()> {
-    builder.register_pair(Arc::new(OnlineStaticAccuracyPairFactory {
-        tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
-    }))
+    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
+        OnlineStaticAccuracyAdapter {
+            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+        },
+    ))))
 }
 
 /// Register the scheduled adapter after the distribution also supplies a
@@ -75,165 +79,280 @@ pub fn register_online_http_static_accuracy_pair(
 /// advertise it while ordinary v1 scheduled configs could be routed to a
 /// narrower v2 surface merely because the pair ID matches.
 pub fn register_online_http_scheduled_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_pair(Arc::new(OnlineScheduledPairFactory {
-        tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
-    }))
+    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
+        OnlineScheduledAdapter {
+            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+        },
+    ))))
 }
 
 #[derive(Clone)]
-struct OnlineScheduledPairFactory {
-    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+struct OnlineHttpPairFactory {
+    adapter: Arc<dyn OnlineWorkloadAdapter>,
 }
 
-impl fmt::Debug for OnlineScheduledPairFactory {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OnlineScheduledPairFactory")
+impl OnlineHttpPairFactory {
+    fn new(adapter: Arc<dyn OnlineWorkloadAdapter>) -> Self {
+        Self { adapter }
     }
 }
 
-#[derive(Clone)]
-struct OnlineGraphPairFactory {
-    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
-}
-
-impl fmt::Debug for OnlineGraphPairFactory {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OnlineGraphPairFactory")
-    }
-}
-
-#[derive(Clone)]
-struct OnlineStaticAccuracyPairFactory {
-    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
-}
-
-impl fmt::Debug for OnlineStaticAccuracyPairFactory {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OnlineStaticAccuracyPairFactory")
-    }
-}
-
-macro_rules! impl_online_pair {
-    ($factory:ty, $workload_id:literal, $config:ty, $kind:expr) => {
-        impl RunnerPairFactory for $factory {
-            fn backend_id(&self) -> &'static str {
-                BACKEND_ID
-            }
-
-            fn workload_id(&self) -> &'static str {
-                $workload_id
-            }
-
-            fn validate_pair(
-                &self,
-                backend: &dyn ValidatedBackendConfig,
-                workload: &dyn ValidatedWorkloadConfig,
-            ) -> Result<()> {
-                online_backend(backend)?;
-                workload_config::<$config>(workload, $workload_id)?;
-                Ok(())
-            }
-
-            fn validate_run(
-                &self,
-                run: &AuthoredRunSpecV2,
-                context: &RunnerRunContext,
-                backend: &dyn ValidatedBackendConfig,
-                workload: &dyn ValidatedWorkloadConfig,
-            ) -> Result<()> {
-                self.validate_pair(backend, workload)?;
-                validate_online_run(run, context, $kind)
-            }
-
-            fn prepare(
-                &self,
-                _run: &AuthoredRunSpecV2,
-                _backend: Box<dyn ValidatedBackendConfig>,
-                _workload: Box<dyn ValidatedWorkloadConfig>,
-            ) -> Result<Box<dyn PreparedRunnerOperation>> {
-                bail!(
-                    "{BACKEND_ID} + {} preparation requires the coordinator-owned RunnerRunContext",
-                    $workload_id
-                )
-            }
-
-            fn prepare_with_context(
-                &self,
-                run: &AuthoredRunSpecV2,
-                context: &RunnerRunContext,
-                backend: Box<dyn ValidatedBackendConfig>,
-                workload: Box<dyn ValidatedWorkloadConfig>,
-            ) -> Result<Box<dyn PreparedRunnerOperation>> {
-                online_backend(backend.as_ref())?;
-                let workload = workload_config::<$config>(workload.as_ref(), $workload_id)?;
-                let plan = ($kind.lower)(run, context, workload, self.tokenizers.as_ref())?;
-                Ok(Box::new(PreparedOnlineOperation {
-                    workload_id: $workload_id,
-                    plan,
-                    product_registry: context.product_registry_handle(),
-                }))
-            }
-        }
-    };
-}
-
-#[derive(Clone, Copy)]
-struct OnlineWorkloadKind<T> {
-    lower: fn(
-        &AuthoredRunSpecV2,
-        &RunnerRunContext,
-        &T,
-        &dyn OnlineTokenizerSourceResolver,
-    ) -> Result<NativeRunPlan>,
-    graph: bool,
-    accuracy: bool,
-}
-
-impl<T> fmt::Debug for OnlineWorkloadKind<T> {
+impl fmt::Debug for OnlineHttpPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("OnlineWorkloadKind")
-            .field("graph", &self.graph)
-            .field("accuracy", &self.accuracy)
+            .debug_struct("OnlineHttpPairFactory")
+            .field("workload_id", &self.adapter.workload_id())
             .finish_non_exhaustive()
     }
 }
 
-const SCHEDULED_KIND: OnlineWorkloadKind<ScheduledWorkloadConfigV2> = OnlineWorkloadKind {
-    lower: lower_scheduled,
-    graph: false,
-    accuracy: false,
-};
-const GRAPH_KIND: OnlineWorkloadKind<GraphWorkloadConfigV2> = OnlineWorkloadKind {
-    lower: lower_graph,
-    graph: true,
-    accuracy: false,
-};
-const STATIC_ACCURACY_KIND: OnlineWorkloadKind<StaticAccuracyWorkloadConfigV2> =
-    OnlineWorkloadKind {
-        lower: lower_static_accuracy,
-        graph: false,
-        accuracy: true,
-    };
+/// Direct authored-workload adapter selected by one registered online pair.
+///
+/// Each implementation owns strict type recovery, workload validation, and
+/// its single source-to-prepared-harness transition. The generic pair and
+/// registry coordinator never branch on workload IDs or inspect workload
+/// configuration.
+trait OnlineWorkloadAdapter: fmt::Debug + Send + Sync {
+    /// Registry identity consumed by this adapter.
+    fn workload_id(&self) -> &'static str;
 
-impl_online_pair!(
-    OnlineScheduledPairFactory,
-    "scheduled",
-    ScheduledWorkloadConfigV2,
-    SCHEDULED_KIND
-);
-impl_online_pair!(
-    OnlineGraphPairFactory,
-    "graph",
-    GraphWorkloadConfigV2,
-    GRAPH_KIND
-);
-impl_online_pair!(
-    OnlineStaticAccuracyPairFactory,
-    "static_accuracy",
-    StaticAccuracyWorkloadConfigV2,
-    STATIC_ACCURACY_KIND
-);
+    /// Check that the selected workload factory returned this adapter's exact
+    /// validated configuration type.
+    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()>;
+
+    /// Check run-level invariants without acquisition, socket IO, or artifact
+    /// creation.
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()>;
+
+    /// Load the selected authored source exactly once and retain its canonical
+    /// prepared harness through execution.
+    fn prepare(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedOnlineHarness>>;
+}
+
+impl RunnerPairFactory for OnlineHttpPairFactory {
+    fn backend_id(&self) -> &'static str {
+        BACKEND_ID
+    }
+
+    fn workload_id(&self) -> &'static str {
+        self.adapter.workload_id()
+    }
+
+    fn validate_pair(
+        &self,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        online_backend(backend)?;
+        self.adapter.validate_workload(workload)
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        self.validate_pair(backend, workload)?;
+        self.adapter.validate_run(run, context, workload)
+    }
+
+    fn prepare(
+        &self,
+        _run: &AuthoredRunSpecV2,
+        _backend: Box<dyn ValidatedBackendConfig>,
+        _workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        bail!(
+            "{BACKEND_ID} + {} preparation requires the coordinator-owned RunnerRunContext",
+            self.adapter.workload_id()
+        )
+    }
+
+    fn prepare_with_context(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: Box<dyn ValidatedBackendConfig>,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        online_backend(backend.as_ref())?;
+        self.adapter.validate_workload(workload.as_ref())?;
+        let harness = self.adapter.prepare(run, context, workload)?;
+        Ok(Box::new(PreparedOnlineOperation {
+            workload_id: self.adapter.workload_id(),
+            harness,
+            product_registry: context.product_registry_handle(),
+        }))
+    }
+}
+
+/// Retained workload-specific execution harness produced by one direct adapter
+/// load. Implementations own their canonical prepared state; the registry and
+/// pair coordinator do not inspect it.
+trait PreparedOnlineHarness: fmt::Debug {
+    /// Execute through the selected backend and return the authoritative report.
+    fn execute(
+        self: Box<Self>,
+        product_registry: &aiperf_extensions::AiperfRegistry,
+    ) -> Result<PathBuf>;
+}
+
+#[derive(Clone)]
+struct OnlineScheduledAdapter {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+}
+
+impl fmt::Debug for OnlineScheduledAdapter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OnlineScheduledAdapter")
+    }
+}
+
+#[derive(Clone)]
+struct OnlineGraphAdapter {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+}
+
+impl fmt::Debug for OnlineGraphAdapter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OnlineGraphAdapter")
+    }
+}
+
+#[derive(Clone)]
+struct OnlineStaticAccuracyAdapter {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+}
+
+impl fmt::Debug for OnlineStaticAccuracyAdapter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OnlineStaticAccuracyAdapter")
+    }
+}
+
+impl OnlineWorkloadAdapter for OnlineScheduledAdapter {
+    fn workload_id(&self) -> &'static str {
+        "scheduled"
+    }
+
+    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
+        workload_config::<ScheduledWorkloadConfigV2>(workload, self.workload_id()).map(drop)
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        validate_online_run(run, context)?;
+        let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, self.workload_id())?;
+        validate_authored_tokenizer(&workload.tokenizer)
+    }
+
+    fn prepare(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedOnlineHarness>> {
+        let workload =
+            workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
+        let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
+        Ok(Box::new(NativePlanHarness { plan }))
+    }
+}
+
+impl OnlineWorkloadAdapter for OnlineGraphAdapter {
+    fn workload_id(&self) -> &'static str {
+        "graph"
+    }
+
+    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
+        workload_config::<GraphWorkloadConfigV2>(workload, self.workload_id()).map(drop)
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        validate_online_run(run, context)?;
+        ensure!(
+            run.models.items.len() == 1,
+            "online graph execution requires exactly one default model"
+        );
+        let workload = workload_config::<GraphWorkloadConfigV2>(workload, self.workload_id())?;
+        validate_authored_tokenizer(&workload.tokenizer)?;
+        DirectGraphDatasetV2::decode(&workload.dataset).map(drop)
+    }
+
+    fn prepare(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedOnlineHarness>> {
+        let workload =
+            workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
+        let plan = lower_graph(run, context, workload, self.tokenizers.as_ref())?;
+        Ok(Box::new(NativePlanHarness { plan }))
+    }
+}
+
+impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
+    fn workload_id(&self) -> &'static str {
+        "static_accuracy"
+    }
+
+    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
+        workload_config::<StaticAccuracyWorkloadConfigV2>(workload, self.workload_id()).map(drop)
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        validate_online_run(run, context)?;
+        ensure!(
+            run.models.items.len() == 1,
+            "static accuracy execution currently requires exactly one model"
+        );
+        let workload =
+            workload_config::<StaticAccuracyWorkloadConfigV2>(workload, self.workload_id())?;
+        validate_authored_tokenizer(&workload.tokenizer)?;
+        StaticAccuracyConfigV2::decode(&workload.accuracy).map(drop)
+    }
+
+    fn prepare(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedOnlineHarness>> {
+        let workload = workload_config::<StaticAccuracyWorkloadConfigV2>(
+            workload.as_ref(),
+            self.workload_id(),
+        )?;
+        let plan = lower_static_accuracy(run, context, workload, self.tokenizers.as_ref())?;
+        Ok(Box::new(NativePlanHarness { plan }))
+    }
+}
 
 fn online_backend(config: &dyn ValidatedBackendConfig) -> Result<&OnlineHttpBackendConfigV2> {
     ValidatedBackendConfig::as_any(config)
@@ -250,11 +369,7 @@ fn workload_config<'a, T: 'static>(
         .ok_or_else(|| anyhow!("online {workload_id} pair received a different config type"))
 }
 
-fn validate_online_run<T>(
-    run: &AuthoredRunSpecV2,
-    context: &RunnerRunContext,
-    kind: OnlineWorkloadKind<T>,
-) -> Result<()> {
+fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
     context.default_endpoint_profile()?;
     for (profile_id, profile) in context.endpoint_profiles() {
         ensure!(
@@ -277,18 +392,6 @@ fn validate_online_run<T>(
             && run.sidecars.live_streaming.is_none(),
         "protocol-v2 online execution has no registered sidecar adapter"
     );
-    if kind.graph {
-        ensure!(
-            run.models.items.len() == 1,
-            "online graph execution requires exactly one default model"
-        );
-    }
-    if kind.accuracy {
-        ensure!(
-            run.models.items.len() == 1,
-            "static accuracy execution currently requires exactly one model"
-        );
-    }
     Ok(())
 }
 
@@ -1000,9 +1103,38 @@ fn lower_endpoint(
     })
 }
 
+struct NativePlanHarness {
+    plan: NativeRunPlan,
+}
+
+impl fmt::Debug for NativePlanHarness {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativePlanHarness")
+            .field("benchmark_id", &self.plan.run.benchmark_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedOnlineHarness for NativePlanHarness {
+    fn execute(
+        self: Box<Self>,
+        product_registry: &aiperf_extensions::AiperfRegistry,
+    ) -> Result<PathBuf> {
+        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
+        execute_native_plan_with_factories(
+            self.plan,
+            &NativeHttpExecutionBackendFactory,
+            &graph_inputs,
+            &NativeRunnerGraphPlacementFactory,
+            product_registry,
+        )
+    }
+}
+
 struct PreparedOnlineOperation {
     workload_id: &'static str,
-    plan: NativeRunPlan,
+    harness: Box<dyn PreparedOnlineHarness>,
     product_registry: Arc<aiperf_extensions::AiperfRegistry>,
 }
 
@@ -1011,21 +1143,14 @@ impl fmt::Debug for PreparedOnlineOperation {
         formatter
             .debug_struct("PreparedOnlineOperation")
             .field("workload_id", &self.workload_id)
-            .field("benchmark_id", &self.plan.run.benchmark_id)
+            .field("harness", &self.harness)
             .finish_non_exhaustive()
     }
 }
 
 impl PreparedRunnerOperation for PreparedOnlineOperation {
     fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
-        let graph_inputs = GraphInputAdapterRegistry::with_builtin_adapters();
-        let report_path = execute_native_plan_with_factories(
-            self.plan,
-            &NativeHttpExecutionBackendFactory,
-            &graph_inputs,
-            &NativeRunnerGraphPlacementFactory,
-            self.product_registry.as_ref(),
-        )?;
+        let report_path = self.harness.execute(self.product_registry.as_ref())?;
         Ok(PreparedRunOutcome {
             report_path,
             provenance: BTreeMap::from([
