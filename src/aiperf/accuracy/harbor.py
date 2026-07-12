@@ -29,10 +29,12 @@ import asyncio
 import hashlib
 import importlib.metadata
 import math
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 from aiperf.accuracy.agentic import (
     AgenticEpisode,
@@ -51,6 +53,7 @@ _CONFIG_FIELDS = {
     "context_window",
     "enable_summarize",
     "environment",
+    "inference_gateway",
     "max_episodes",
     "max_tokens",
     "max_turns",
@@ -127,6 +130,8 @@ class HarborHarness(AgenticHarness):
         self._parser = str(config.get("parser", "json"))
         self._enable_summarize = bool(config.get("enable_summarize", True))
         self._primary_reward = config.get("primary_reward")
+        self._inference_gateway = config.get("inference_gateway")
+        self._saved_inference_environment: dict[str, str | None] = {}
         self._events = EventQueue()
         self._broker = ModelCallBroker(self._events)
         self._broker_id = register_broker(self._broker)
@@ -169,6 +174,8 @@ class HarborHarness(AgenticHarness):
             "episode_count": len(self._episodes),
             "primary_reward": self._primary_reward,
         }
+        if self._inference_gateway is not None:
+            self._install_inference_environment()
 
     @classmethod
     async def create(
@@ -292,7 +299,38 @@ class HarborHarness(AgenticHarness):
         self._broker.close()
         from aiperf.accuracy.harbor_agent import unregister_broker
 
-        unregister_broker(self._broker_id)
+        try:
+            unregister_broker(self._broker_id)
+        finally:
+            self._restore_inference_environment()
+
+    def _install_inference_environment(self) -> None:
+        assert self._inference_gateway is not None
+        values = {
+            "OPENAI_API_KEY": self._inference_gateway["api_key"],
+            "OPENAI_BASE_URL": self._inference_gateway["base_url"],
+        }
+        for name, value in values.items():
+            self._saved_inference_environment[name] = os.environ.get(name)
+            os.environ[name] = value
+
+    def _restore_inference_environment(self) -> None:
+        for name, value in self._saved_inference_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        self._saved_inference_environment.clear()
+
+    def _inference_environment(self, episode_id: str, purpose: str) -> dict[str, str]:
+        if self._inference_gateway is None:
+            return {}
+        encoded_episode = quote(episode_id, safe="")
+        base_url = self._inference_gateway["base_url"].rstrip("/")
+        return {
+            "OPENAI_API_KEY": self._inference_gateway["api_key"],
+            "OPENAI_BASE_URL": (f"{base_url}/episodes/{encoded_episode}/{purpose}/v1"),
+        }
 
     async def _run_episode(self, episode_id: str) -> None:
         episode = self._episode_by_id[episode_id]
@@ -304,6 +342,7 @@ class HarborHarness(AgenticHarness):
                 AgentConfig,
                 EnvironmentConfig,
                 TrialConfig,
+                VerifierConfig,
             )
             from harbor.trial.trial import Trial
 
@@ -319,6 +358,10 @@ class HarborHarness(AgenticHarness):
                 agent_kwargs["max_turns"] = self._max_turns
                 agent_kwargs["suppress_max_turns_warning"] = True
             trial_name = episode_id.replace(":", "-")
+            environment_inference = self._inference_environment(
+                episode_id, "environment"
+            )
+            verifier_inference = self._inference_environment(episode_id, "verifier")
             config = TrialConfig(
                 task=self._task_by_episode[episode_id],
                 trial_name=trial_name,
@@ -328,7 +371,11 @@ class HarborHarness(AgenticHarness):
                     model_name=self._model_name,
                     kwargs=agent_kwargs,
                 ),
-                environment=EnvironmentConfig(type=EnvironmentType(self._environment)),
+                environment=EnvironmentConfig(
+                    type=EnvironmentType(self._environment),
+                    env=environment_inference,
+                ),
+                verifier=VerifierConfig(env=verifier_inference),
             )
             trial = await Trial.create(config)
             trial_result = await trial.run()
@@ -505,7 +552,39 @@ def _validate_config(authored: Any) -> dict[str, Any]:
         not isinstance(output_dir, str) or not output_dir.strip()
     ):
         raise TypeError("output_dir must be a non-empty string")
+    if config.get("inference_gateway") is not None:
+        config["inference_gateway"] = _validate_inference_gateway(
+            config["inference_gateway"]
+        )
     return config
+
+
+def _validate_inference_gateway(authored: Any) -> dict[str, str]:
+    if not isinstance(authored, dict):
+        raise TypeError("inference_gateway must be an object or null")
+    unknown = sorted(set(authored) - {"base_url", "api_key"})
+    if unknown:
+        raise ValueError(
+            "inference_gateway has unknown field(s): " + ", ".join(unknown)
+        )
+    base_url = require_identifier(
+        authored.get("base_url"), "inference_gateway.base_url"
+    ).rstrip("/")
+    parsed = urlsplit(base_url)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.query
+        or parsed.fragment
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(
+            "inference_gateway.base_url must be an HTTP(S) URL without "
+            "credentials, query, or fragment"
+        )
+    api_key = require_identifier(authored.get("api_key"), "inference_gateway.api_key")
+    return {"base_url": base_url, "api_key": api_key}
 
 
 def _convert_trial_result(

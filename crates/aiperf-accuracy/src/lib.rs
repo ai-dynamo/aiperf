@@ -14,11 +14,11 @@ pub mod worker;
 pub use protocol::{
     AgenticEpisode, AgenticEpisodeOutcome, AgenticEpisodePage, AgenticEpisodeResult,
     AgenticEvaluatorEvent, AgenticEvaluatorIdentity, AgenticEvaluatorLoadConfig, AgenticEventBatch,
-    AgenticInferenceStatus, AgenticModelCall, AgenticModelResult, AgenticResultBatch,
-    EVALUATOR_PROTOCOL_VERSION, EpisodeId, EvaluatorDatasetIdentity, EvaluatorGenerationConfig,
-    EvaluatorGrade, EvaluatorGradeBatch, EvaluatorGradeItem, EvaluatorIdentity,
-    EvaluatorLoadConfig, EvaluatorLoadResult, EvaluatorMessage, EvaluatorProblem,
-    EvaluatorProblemPage, ModelCallId, ProblemId,
+    AgenticInferenceGatewayConfig, AgenticInferenceStatus, AgenticMessage, AgenticModelCall,
+    AgenticModelResult, AgenticResultBatch, EVALUATOR_PROTOCOL_VERSION, EpisodeId,
+    EvaluatorDatasetIdentity, EvaluatorGenerationConfig, EvaluatorGrade, EvaluatorGradeBatch,
+    EvaluatorGradeItem, EvaluatorIdentity, EvaluatorLoadConfig, EvaluatorLoadResult,
+    EvaluatorMessage, EvaluatorProblem, EvaluatorProblemPage, ModelCallId, ProblemId,
 };
 pub use worker::{
     AccuracyEvaluator, AgenticEvaluator, EvaluatorLogSink, EvaluatorWorkerError, PythonEvaluator,

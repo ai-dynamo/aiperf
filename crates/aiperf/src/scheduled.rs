@@ -30,6 +30,7 @@ use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use loadgen_core::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
+use serde_json::Value;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -73,6 +74,8 @@ pub struct ModelResponseMetadata {
     pub response_id: Option<String>,
     /// Endpoint-normalized finish reason, such as `stop` or `length`.
     pub finish_reason: Option<String>,
+    /// Reassembled OpenAI-compatible assistant message, including tool calls.
+    pub assistant_message: Option<Value>,
     /// Stable transport/provider failure category for non-completed requests.
     pub error_kind: Option<String>,
     /// Human-readable transport/provider failure detail.

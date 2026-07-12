@@ -413,3 +413,59 @@ tool loop, or score calls. Pinned-worker tests cover package, explicit/default
 legacy, and local resolution, and a live registry probe freezes BFCL 1.0's
 first opaque episode. A real BFCL sandbox/verifier run and the broader
 cross-family canary matrix remain required.
+
+## Addendum — 2026-07-11 (auxiliary inference and Harbor family proof)
+
+This addendum supersedes two stale caveats above: the cross-family Harbor
+matrix has now run, and packaged environments/verifiers that themselves use an
+LLM no longer require direct Python or sandbox access to the inference server.
+The ownership boundary remains strict:
+
+- Primary Terminus calls continue over the versioned JSONL
+  `AgenticEvaluator` protocol.
+- Canonical task containers and verifier processes that only know the OpenAI
+  wire format receive an episode- and purpose-scoped callback URL plus a
+  per-run bearer credential. Python only injects `OPENAI_BASE_URL` /
+  `OPENAI_API_KEY` through Harbor's `EnvironmentConfig.env` and
+  `VerifierConfig.env`; it does not send or receive the model request.
+- The authenticated Rust `AgenticInferenceGateway` is an ingress adapter, not
+  a forwarding client. It parses lossless message/tool history and generation
+  fields into an `AgenticModelCall`, sends that value over an in-process
+  channel to `AgenticWorkload`, and waits. The workload acquires the same
+  Rust-owned model `SlotPool`, calls the same `AgenticTurnBuilder`, and invokes
+  the same `ScheduledRuntime::issue_turn` used by primary agent calls. The
+  configured endpoint, `TransportSink`, SSE parser, observers, metrics, timing,
+  and report path remain the sole inference data plane.
+- Endpoint-native assistant-message reconstruction preserves tool calls and
+  tool-call arguments on the return path. Worker capability
+  `agentic_inference_gateway` gates the extension; inactive/late episodes,
+  gateway failure, transport failure, and caller disconnects fail as
+  infrastructure rather than becoming verifier zeros.
+- Rust waits for canonical `finish_agentic` results to match the terminal
+  events byte-for-byte before adding Rust-owned primary/environment/verifier
+  call and token accounting. Native v2 reports the total and each subset while
+  omitting the bearer credential.
+
+Executable proof covers each layer. A deterministic CLI test makes real
+environment and verifier HTTP calls into the Rust ingress, observes both calls
+on the ordinary outbound OpenAI/SSE server, round-trips a fragmented native
+tool call, and checks exact purpose/token/report accounting. The pinned real
+tau3 task
+`sierra-research/tau3-bench__tau3-telecom-mobile-data-issue-bad-network-preference-bad-vpn-user-abroad-roaming-disabled-on-persona-none`
+at dataset revision
+`sha256:a57304f682894ac061090769af771a3617664f3ff6e5417d4eadf8e30433e4d9`
+then invokes its packaged `start_conversation` MCP tool. The resulting
+LLM-backed user-simulator request returns through Rust and the report proves
+four normal-pipeline calls: three primary, one environment, zero verifier. The
+packaged verifier completes with canonical reward `0.0`; Rust does not improve
+or reinterpret it.
+
+The broader pinned Harbor 0.18 canary matrix has also completed real package,
+Docker, and packaged-verifier runs for SWE-bench Verified, Terminal-Bench 2.1,
+Aider Polyglot, GAIA, SkillsBench, and legacy BFCL 1.0. Each report pins the
+resolved dataset revision/task, `harbor==0.18.0`, and dependency-lock digest
+`5ab314ec28af774ed9edf4a6baf5216f8831ecf06eb9bf3b62418bef275b57ef`.
+These are generic Harbor task packages; no SWE-bench, BFCL, tau3, or other
+benchmark-specific prompt, tool loop, environment, test decoder, executor, or
+scorer exists in Rust. Harness families not present in Harbor 0.18 require a
+separate canonical adapter and may not be claimed through this implementation.

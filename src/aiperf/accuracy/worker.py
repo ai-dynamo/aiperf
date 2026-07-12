@@ -43,7 +43,7 @@ from aiperf.accuracy.agentic import (
 )
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.4.0"
+WORKER_VERSION = "1.5.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -232,7 +232,7 @@ class AccuracyWorker:
             ]
         )
         if packages["harbor"] == _AGENTIC_LOCKED_PACKAGE_VERSIONS["harbor"]:
-            capabilities.append("agentic_harbor")
+            capabilities.extend(["agentic_harbor", "agentic_inference_gateway"])
         return {
             "protocol": PROTOCOL_VERSION,
             "worker_version": WORKER_VERSION,

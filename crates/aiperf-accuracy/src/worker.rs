@@ -32,6 +32,7 @@ use crate::protocol::{
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
 const AGENTIC_CAPABILITY: &str = "agentic_harbor";
+const AGENTIC_INFERENCE_GATEWAY_CAPABILITY: &str = "agentic_inference_gateway";
 const GRADER_OVERRIDE_CAPABILITY: &str = "grader_override";
 
 /// Sink for worker stderr lines.
@@ -189,6 +190,11 @@ pub trait AccuracyEvaluator {
 pub trait AgenticEvaluator: AccuracyEvaluator {
     /// Whether the worker reported the pinned Harbor capability.
     fn supports_agentic(&self) -> bool;
+
+    /// Whether evaluator environments accept Rust callback-ingress injection.
+    fn supports_agentic_inference_gateway(&self) -> bool {
+        false
+    }
 
     /// Resolve and freeze one versioned agentic dataset.
     async fn load_agentic(
@@ -770,6 +776,13 @@ impl AgenticEvaluator for PythonEvaluator {
             .any(|capability| capability == AGENTIC_CAPABILITY)
     }
 
+    fn supports_agentic_inference_gateway(&self) -> bool {
+        self.identity
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENTIC_INFERENCE_GATEWAY_CAPABILITY)
+    }
+
     async fn load_agentic(
         &mut self,
         dataset: &str,
@@ -1131,6 +1144,7 @@ for line in sys.stdin:
                 cached_tokens: None,
                 response_id: None,
                 finish_reason: Some("stop".to_string()),
+                assistant_message: None,
                 error_kind: None,
                 error_message: None,
             }])

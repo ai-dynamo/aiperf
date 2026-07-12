@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize, de};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// Current evaluator protocol version.
 pub const EVALUATOR_PROTOCOL_VERSION: u32 = 1;
@@ -324,6 +324,9 @@ pub struct AgenticEvaluatorLoadConfig {
     /// Whether Harbor may replace a cached task package.
     #[serde(default)]
     pub overwrite: bool,
+    /// Rust-owned callback ingress for evaluator-side auxiliary model calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference_gateway: Option<AgenticInferenceGatewayConfig>,
 }
 
 impl Default for AgenticEvaluatorLoadConfig {
@@ -341,8 +344,23 @@ impl Default for AgenticEvaluatorLoadConfig {
             enable_summarize: true,
             primary_reward: None,
             overwrite: false,
+            inference_gateway: None,
         }
     }
+}
+
+/// Authenticated Rust callback ingress advertised to evaluator sandboxes.
+///
+/// Harbor environments and verifiers use this address only as an OpenAI wire
+/// adapter. The ingress enqueues each request into Rust's ordinary scheduled
+/// inference path; it never forwards directly to a model server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgenticInferenceGatewayConfig {
+    /// Base URL before the per-episode and call-purpose path components.
+    pub base_url: String,
+    /// Per-run bearer credential generated and checked by Rust.
+    pub api_key: String,
 }
 
 /// Frozen harness, dataset, agent, environment, and verifier identity.
@@ -396,6 +414,24 @@ pub struct AgenticEpisodePage {
     pub done: bool,
 }
 
+/// One OpenAI-compatible agentic message with lossless role-specific fields.
+///
+/// Unlike static evaluator prompts, agent histories may contain tool calls,
+/// tool-call IDs, names, refusal fields, or multimodal content. Those fields
+/// remain opaque to the control protocol and are replayed by the endpoint
+/// materializer without benchmark-specific interpretation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgenticMessage {
+    /// OpenAI-compatible message role.
+    pub role: String,
+    /// Text, null, or structured multimodal content.
+    #[serde(default)]
+    pub content: Value,
+    /// Role- and provider-specific message fields retained verbatim.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// One evaluator-authored inference call awaiting ordinary Rust dispatch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -406,10 +442,17 @@ pub struct AgenticModelCall {
     pub call_id: ModelCallId,
     /// Zero-based model-call index within the episode.
     pub turn_index: usize,
+    /// Model requested by the canonical agent, simulator, or verifier.
+    ///
+    /// The Rust endpoint materializer remains responsible for placing this
+    /// value on the outbound request. An absent value uses the run's primary
+    /// model, preserving compatibility with older evaluator workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// Flat prompt used by completion endpoints and token accounting.
     pub prompt: String,
     /// Full evaluator-authored message history.
-    pub messages: Vec<EvaluatorMessage>,
+    pub messages: Vec<AgenticMessage>,
     /// Canonical generation controls.
     pub generation: EvaluatorGenerationConfig,
     /// Optional OpenAI-compatible tool schemas.
@@ -421,6 +464,9 @@ pub struct AgenticModelCall {
     /// Optional OpenAI-compatible response-format value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_format: Option<Value>,
+    /// Additional OpenAI-compatible request fields retained verbatim.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extra_body: Map<String, Value>,
 }
 
 /// Rust inference terminal classification returned to the evaluator.
@@ -465,6 +511,9 @@ pub struct AgenticModelResult {
     /// Endpoint-normalized finish reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
+    /// Endpoint-reassembled assistant message, including native tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_message: Option<Value>,
     /// Infrastructure error category for non-completed calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<String>,
@@ -502,17 +551,51 @@ pub struct AgenticEpisodeResult {
     pub primary_reward: Option<String>,
     /// End-to-end harness wall time.
     pub duration_seconds: f64,
-    /// Number of Rust model calls made by the episode.
+    /// Total number of model calls dispatched by Rust for the episode.
+    ///
+    /// The evaluator initially reports its canonical agent-call count here.
+    /// Rust validates that count after `finish_agentic`, then replaces it with
+    /// the total across primary, environment, and verifier calls.
     pub model_calls: usize,
-    /// Aggregate prompt tokens reported by Rust.
+    /// Canonical agent calls emitted through the JSONL evaluator protocol.
+    #[serde(default)]
+    pub primary_model_calls: usize,
+    /// Calls requested by the evaluator environment or verifier.
+    #[serde(default)]
+    pub auxiliary_model_calls: usize,
+    /// Auxiliary calls requested while the task environment was active.
+    #[serde(default)]
+    pub environment_model_calls: usize,
+    /// Auxiliary calls requested by the canonical verifier.
+    #[serde(default)]
+    pub verifier_model_calls: usize,
+    /// Aggregate prompt tokens across all Rust-dispatched calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u64>,
-    /// Aggregate completion tokens reported by Rust.
+    /// Aggregate completion tokens across all Rust-dispatched calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_tokens: Option<u64>,
-    /// Aggregate cached prompt tokens reported by Rust.
+    /// Aggregate cached prompt tokens across all Rust-dispatched calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_tokens: Option<u64>,
+    /// Prompt tokens from canonical agent calls only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_prompt_tokens: Option<u64>,
+    /// Completion tokens from canonical agent calls only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_completion_tokens: Option<u64>,
+    /// Cached prompt tokens from canonical agent calls only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_cached_tokens: Option<u64>,
+    /// Prompt tokens from environment and verifier calls only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary_prompt_tokens: Option<u64>,
+    /// Completion tokens from environment and verifier calls only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary_completion_tokens: Option<u64>,
+    /// Cached prompt tokens from environment and verifier calls only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary_cached_tokens: Option<u64>,
     /// Infrastructure/cancellation error category.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<String>,

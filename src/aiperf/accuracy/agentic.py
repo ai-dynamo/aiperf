@@ -95,9 +95,11 @@ class AgenticModelCall:
     prompt: str
     messages: list[dict[str, Any]]
     generation: dict[str, Any]
+    model: str | None = None
     tools: list[dict[str, Any]] = field(default_factory=list)
     tool_choice: Any | None = None
     response_format: Any | None = None
+    extra_body: dict[str, Any] = field(default_factory=dict)
 
     def to_wire(self) -> dict[str, Any]:
         """Serialize only information that is safe to send to the model."""
@@ -110,10 +112,14 @@ class AgenticModelCall:
             "generation": self.generation,
             "tools": self.tools,
         }
+        if self.model is not None:
+            result["model"] = self.model
         if self.tool_choice is not None:
             result["tool_choice"] = self.tool_choice
         if self.response_format is not None:
             result["response_format"] = self.response_format
+        if self.extra_body:
+            result["extra_body"] = self.extra_body
         return result
 
 
@@ -175,6 +181,7 @@ class AgenticModelResult:
     finish_reason: str | None
     error_kind: str | None
     error_message: str | None
+    assistant_message: dict[str, Any] | None = None
 
     @classmethod
     def from_wire(cls, value: Any) -> AgenticModelResult:
@@ -194,6 +201,7 @@ class AgenticModelResult:
             "finish_reason",
             "error_kind",
             "error_message",
+            "assistant_message",
         }
         unknown = sorted(set(value) - allowed)
         if unknown:
@@ -210,6 +218,11 @@ class AgenticModelResult:
         response = value.get("response", "")
         if not isinstance(response, str):
             raise TypeError(f"model result {call_id!r} response must be a string")
+        assistant_message = value.get("assistant_message")
+        if assistant_message is not None and not isinstance(assistant_message, dict):
+            raise TypeError(
+                f"model result {call_id!r} assistant_message must be an object or null"
+            )
         optional_strings: dict[str, str | None] = {}
         for name in (
             "reasoning",
@@ -258,6 +271,7 @@ class AgenticModelResult:
             finish_reason=optional_strings["finish_reason"],
             error_kind=optional_strings["error_kind"],
             error_message=optional_strings["error_message"],
+            assistant_message=assistant_message,
         )
 
 

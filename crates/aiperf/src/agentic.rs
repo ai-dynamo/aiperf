@@ -38,9 +38,12 @@ use aiperf_timing::SlotPool;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
+use crate::agentic_gateway::{
+    AgenticAuxiliaryInferenceRequest, AgenticInferenceGateway, AgenticInferencePurpose,
+};
 use crate::multiturn::{ConversationSource, NativeDatasetConversationSource, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, TurnDispatchOutcome, Workload};
 
@@ -108,7 +111,8 @@ impl AgenticTurnBuilder for DatasetAgenticTurnBuilder {
     fn build_turn(&self, call: &AgenticModelCall) -> Result<TurnToSend> {
         let mut segments = SegmentPool::new();
         let row = agentic_call_row(call)?;
-        let config = ComposeConfig::new(self.model.as_str(), RngRoot::new(Some(0)));
+        let model = call.model.as_deref().unwrap_or(self.model.as_str());
+        let config = ComposeConfig::new(model, RngRoot::new(Some(0)));
         let conversations =
             AccuracyComposer.compose(vec![row], &config, self.tokenizer.as_ref(), &mut segments)?;
         let dataset = Dataset::new(
@@ -162,6 +166,13 @@ fn agentic_call_row(call: &AgenticModelCall) -> Result<RawRow> {
         "agentic call {:?} top_p must be in [0, 1]",
         call.call_id.as_str()
     );
+    if let Some(model) = &call.model {
+        ensure!(
+            !model.trim().is_empty(),
+            "agentic call {:?} model must not be empty",
+            call.call_id.as_str()
+        );
+    }
     let messages = serde_json::to_value(&call.messages)
         .context("serializing evaluator-authored agent messages")?;
     let prompt = if call.prompt.trim().is_empty() {
@@ -169,7 +180,27 @@ fn agentic_call_row(call: &AgenticModelCall) -> Result<RawRow> {
     } else {
         call.prompt.clone()
     };
-    let mut extra = Map::new();
+    let mut extra = call.extra_body.clone();
+    for reserved in [
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "tools",
+        "tool_choice",
+        "response_format",
+    ] {
+        ensure!(
+            !extra.contains_key(reserved),
+            "agentic call {:?} extra_body must not override reserved field {reserved:?}",
+            call.call_id.as_str()
+        );
+    }
     extra.insert("temperature".into(), json!(call.generation.temperature));
     extra.insert("top_p".into(), json!(call.generation.top_p));
     extra.insert("stop".into(), json!(call.generation.stop));
@@ -201,6 +232,96 @@ fn agentic_call_row(call: &AgenticModelCall) -> Result<RawRow> {
     })
 }
 
+#[derive(Debug, Default)]
+struct OptionalTokenTotal {
+    total: u64,
+    missing: bool,
+}
+
+impl OptionalTokenTotal {
+    fn record(&mut self, value: Option<u64>, field: &str) -> Result<()> {
+        let Some(value) = value else {
+            self.missing = true;
+            return Ok(());
+        };
+        self.total = self
+            .total
+            .checked_add(value)
+            .ok_or_else(|| anyhow!("agentic {field} token total overflowed u64"))?;
+        Ok(())
+    }
+
+    fn value(&self, calls: usize) -> Option<u64> {
+        (calls > 0 && !self.missing).then_some(self.total)
+    }
+}
+
+#[derive(Debug, Default)]
+struct InferenceClassStats {
+    calls: usize,
+    prompt_tokens: OptionalTokenTotal,
+    completion_tokens: OptionalTokenTotal,
+    cached_tokens: OptionalTokenTotal,
+}
+
+impl InferenceClassStats {
+    fn record(&mut self, result: &AgenticModelResult) -> Result<()> {
+        self.calls = self
+            .calls
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("agentic model-call count overflowed usize"))?;
+        self.prompt_tokens.record(result.prompt_tokens, "prompt")?;
+        self.completion_tokens
+            .record(result.completion_tokens, "completion")?;
+        self.cached_tokens.record(result.cached_tokens, "cached")?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct EpisodeInferenceStats {
+    primary: InferenceClassStats,
+    auxiliary: InferenceClassStats,
+    environment_calls: usize,
+    verifier_calls: usize,
+}
+
+impl EpisodeInferenceStats {
+    fn record_primary(&mut self, result: &AgenticModelResult) -> Result<()> {
+        self.primary.record(result)
+    }
+
+    fn record_auxiliary(
+        &mut self,
+        purpose: AgenticInferencePurpose,
+        result: &AgenticModelResult,
+    ) -> Result<()> {
+        self.auxiliary.record(result)?;
+        let count = match purpose {
+            AgenticInferencePurpose::Environment => &mut self.environment_calls,
+            AgenticInferencePurpose::Verifier => &mut self.verifier_calls,
+        };
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("agentic auxiliary call count overflowed usize"))?;
+        Ok(())
+    }
+}
+
+enum OutstandingAgenticCall {
+    Primary { episode_id: EpisodeId },
+    Auxiliary(Box<AgenticAuxiliaryInferenceRequest>),
+}
+
+impl OutstandingAgenticCall {
+    fn episode_id(&self) -> &EpisodeId {
+        match self {
+            Self::Primary { episode_id } => episode_id,
+            Self::Auxiliary(request) => &request.call.episode_id,
+        }
+    }
+}
+
 /// Prepared stateful evaluator workload.
 ///
 /// One instance is single-use. Task admission and inference admission are
@@ -209,10 +330,13 @@ fn agentic_call_row(call: &AgenticModelCall) -> Result<RawRow> {
 pub struct AgenticWorkload {
     evaluator: RefCell<Option<Box<dyn AgenticEvaluator>>>,
     identity: AgenticEvaluatorIdentity,
+    config: AgenticEvaluatorLoadConfig,
     episodes: Vec<AgenticEpisode>,
     task_concurrency: usize,
     model_slots: Rc<SlotPool>,
     turn_builder: Rc<dyn AgenticTurnBuilder>,
+    inference_gateway: RefCell<Option<Box<dyn AgenticInferenceGateway>>>,
+    auxiliary_requests: RefCell<Option<mpsc::UnboundedReceiver<AgenticAuxiliaryInferenceRequest>>>,
     active_episode_ids: RefCell<BTreeSet<EpisodeId>>,
     results: RefCell<Option<Vec<AgenticEpisodeResult>>>,
     executed: Cell<bool>,
@@ -222,12 +346,35 @@ impl AgenticWorkload {
     /// Resolve and freeze the canonical dataset before the measurement clock starts.
     #[allow(clippy::too_many_arguments)]
     pub async fn prepare(
+        evaluator: Box<dyn AgenticEvaluator>,
+        dataset: &str,
+        model: &str,
+        config: &AgenticEvaluatorLoadConfig,
+        model_concurrency: usize,
+        turn_builder: Rc<dyn AgenticTurnBuilder>,
+    ) -> Result<Rc<Self>> {
+        Self::prepare_with_gateway(
+            evaluator,
+            dataset,
+            model,
+            config,
+            model_concurrency,
+            turn_builder,
+            None,
+        )
+        .await
+    }
+
+    /// Resolve tasks with an optional Rust-owned auxiliary inference ingress.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_with_gateway(
         mut evaluator: Box<dyn AgenticEvaluator>,
         dataset: &str,
         model: &str,
         config: &AgenticEvaluatorLoadConfig,
         model_concurrency: usize,
         turn_builder: Rc<dyn AgenticTurnBuilder>,
+        mut inference_gateway: Option<Box<dyn AgenticInferenceGateway>>,
     ) -> Result<Rc<Self>> {
         ensure!(
             model_concurrency > 0,
@@ -237,18 +384,32 @@ impl AgenticWorkload {
             config.task_concurrency > 0,
             "agentic task concurrency must be positive"
         );
+        ensure!(
+            inference_gateway.is_none() || evaluator.supports_agentic_inference_gateway(),
+            "canonical evaluator does not advertise agentic_inference_gateway support"
+        );
+        let mut effective_config = config.clone();
+        let auxiliary_requests = if let Some(gateway) = inference_gateway.as_mut() {
+            effective_config.inference_gateway = Some(gateway.evaluator_config().clone());
+            Some(gateway.take_requests()?)
+        } else {
+            None
+        };
         let identity = evaluator
-            .load_agentic(dataset, model, config)
+            .load_agentic(dataset, model, &effective_config)
             .await
             .with_context(|| format!("canonical agentic evaluator failed to load {dataset:?}"))?;
         let episodes = load_agentic_episodes(evaluator.as_mut(), identity.episode_count).await?;
         Ok(Rc::new(Self {
             evaluator: RefCell::new(Some(evaluator)),
             identity,
+            config: effective_config,
             episodes,
             task_concurrency: config.task_concurrency,
             model_slots: Rc::new(SlotPool::new(model_concurrency)),
             turn_builder,
+            inference_gateway: RefCell::new(inference_gateway),
+            auxiliary_requests: RefCell::new(auxiliary_requests),
             active_episode_ids: RefCell::new(BTreeSet::new()),
             results: RefCell::new(None),
             executed: Cell::new(false),
@@ -258,6 +419,11 @@ impl AgenticWorkload {
     /// Frozen harness, package, dataset, agent, environment, and verifier identity.
     pub fn identity(&self) -> &AgenticEvaluatorIdentity {
         &self.identity
+    }
+
+    /// Effective evaluator configuration, including the Rust callback ingress.
+    pub fn config(&self) -> &AgenticEvaluatorLoadConfig {
+        &self.config
     }
 
     /// Frozen ordered task descriptors selected by the evaluator.
@@ -280,10 +446,15 @@ impl AgenticWorkload {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("agentic evaluator is unavailable or already shut down"))?;
-        evaluator
+        let evaluator_result = evaluator
             .shutdown()
             .await
-            .context("shutting down canonical agentic evaluator")
+            .context("shutting down canonical agentic evaluator");
+        let mut gateway = self.inference_gateway.borrow_mut().take();
+        if let Some(gateway) = gateway.as_mut() {
+            gateway.shutdown().await?;
+        }
+        evaluator_result
     }
 
     async fn execute_inner(
@@ -307,36 +478,114 @@ impl AgenticWorkload {
             .map(|episode| episode.episode_id.clone())
             .collect::<VecDeque<_>>();
         let mut results = BTreeMap::<EpisodeId, AgenticEpisodeResult>::new();
-        let mut outstanding_calls = BTreeMap::<ModelCallId, EpisodeId>::new();
+        let mut inference_stats = episode_by_id
+            .keys()
+            .cloned()
+            .map(|episode_id| (episode_id, EpisodeInferenceStats::default()))
+            .collect::<BTreeMap<_, _>>();
+        let mut outstanding_calls = BTreeMap::<ModelCallId, OutstandingAgenticCall>::new();
         let mut next_turn = BTreeMap::<EpisodeId, usize>::new();
         let mut cancelled = BTreeSet::<EpisodeId>::new();
+        let mut auxiliary_requests = self.auxiliary_requests.borrow_mut().take();
         let (completion_tx, mut completion_rx) = mpsc::unbounded_channel::<AgenticModelResult>();
 
         self.start_available(evaluator, &mut pending).await?;
         while results.len() < self.episodes.len() {
             let mut completed_calls = Vec::new();
             while let Ok(item) = completion_rx.try_recv() {
-                let expected_episode =
-                    outstanding_calls.remove(&item.call_id).ok_or_else(|| {
-                        anyhow!(
-                            "normal pipeline completed unknown agentic call {:?}",
-                            item.call_id.as_str()
-                        )
-                    })?;
+                let route = outstanding_calls.remove(&item.call_id).ok_or_else(|| {
+                    anyhow!(
+                        "normal pipeline completed unknown agentic call {:?}",
+                        item.call_id.as_str()
+                    )
+                })?;
                 ensure!(
-                    expected_episode == item.episode_id,
+                    route.episode_id() == &item.episode_id,
                     "normal pipeline call {:?} changed episode {:?} to {:?}",
                     item.call_id.as_str(),
-                    expected_episode.as_str(),
+                    route.episode_id().as_str(),
                     item.episode_id.as_str()
                 );
-                completed_calls.push(item);
+                let episode_label = item.episode_id.as_str().to_string();
+                let stats = inference_stats.get_mut(&item.episode_id).ok_or_else(|| {
+                    anyhow!(
+                        "normal pipeline completed call for unknown episode {:?}",
+                        item.episode_id.as_str()
+                    )
+                })?;
+                match route {
+                    OutstandingAgenticCall::Primary { .. } => {
+                        stats.record_primary(&item)?;
+                        completed_calls.push(item);
+                    }
+                    OutstandingAgenticCall::Auxiliary(request) => {
+                        stats.record_auxiliary(request.purpose, &item)?;
+                        (*request).respond(item).with_context(|| {
+                            format!(
+                                "returning auxiliary inference result for episode {:?}",
+                                episode_label
+                            )
+                        })?;
+                    }
+                }
             }
             if !completed_calls.is_empty() {
                 evaluator
                     .submit_model_results(&completed_calls)
                     .await
                     .context("submitting normal Rust inference results to agent harness")?;
+            }
+
+            loop {
+                let request = match auxiliary_requests.as_mut() {
+                    None => break,
+                    Some(receiver) => match receiver.try_recv() {
+                        Ok(request) => request,
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                            return Err(anyhow!(
+                                "Rust agentic inference gateway stopped during an active run"
+                            ));
+                        }
+                    },
+                };
+                ensure!(
+                    self.active_episode_ids
+                        .borrow()
+                        .contains(&request.call.episode_id),
+                    "auxiliary call {:?} belongs to inactive episode {:?}",
+                    request.call.call_id.as_str(),
+                    request.call.episode_id.as_str()
+                );
+                ensure!(
+                    !cancelled.contains(&request.call.episode_id),
+                    "cancelled episode {:?} requested auxiliary inference",
+                    request.call.episode_id.as_str()
+                );
+                let call = request.call.clone();
+                let rejected = self
+                    .issue_model_call(
+                        &runtime,
+                        &call,
+                        OutstandingAgenticCall::Auxiliary(Box::new(request)),
+                        &mut outstanding_calls,
+                        &completion_tx,
+                    )
+                    .await?;
+                if let Some(OutstandingAgenticCall::Auxiliary(request)) = rejected {
+                    let episode_id = request.call.episode_id.clone();
+                    (*request).respond(rejected_model_result(&call))?;
+                    cancelled.insert(episode_id.clone());
+                    evaluator
+                        .cancel_episodes(std::slice::from_ref(&episode_id))
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "cancelling episode {:?} after auxiliary issuance rejection",
+                                episode_id.as_str()
+                            )
+                        })?;
+                }
             }
 
             let events = evaluator
@@ -385,35 +634,18 @@ impl AgenticWorkload {
                             call.call_id.as_str()
                         );
 
-                        let model_guard = self.model_slots.acquire().await;
-                        let turn = self.turn_builder.build_turn(&call).with_context(|| {
-                            format!(
-                                "lowering evaluator model call {:?} into normal dataset turn",
-                                call.call_id.as_str()
+                        let rejected = self
+                            .issue_model_call(
+                                &runtime,
+                                &call,
+                                OutstandingAgenticCall::Primary {
+                                    episode_id: call.episode_id.clone(),
+                                },
+                                &mut outstanding_calls,
+                                &completion_tx,
                             )
-                        })?;
-                        let call_id = call.call_id.clone();
-                        let episode_id = call.episode_id.clone();
-                        outstanding_calls.insert(call_id.clone(), episode_id.clone());
-                        let completion_tx = completion_tx.clone();
-                        let issued = runtime.issue_turn(
-                            turn,
-                            runtime.now_ns(),
-                            None,
-                            Box::new(move |_credit, outcome| {
-                                Box::pin(async move {
-                                    drop(model_guard);
-                                    let item = model_result(episode_id, call_id, outcome);
-                                    if completion_tx.send(item).is_err() {
-                                        tracing::error!(
-                                            "agentic workload dropped its inference completion channel"
-                                        );
-                                    }
-                                })
-                            }),
-                        );
-                        if !issued {
-                            outstanding_calls.remove(&call.call_id);
+                            .await?;
+                        if rejected.is_some() {
                             cancelled.insert(call.episode_id.clone());
                             evaluator
                                 .cancel_episodes(std::slice::from_ref(&call.episode_id))
@@ -451,7 +683,7 @@ impl AgenticWorkload {
                         ensure!(
                             !outstanding_calls
                                 .values()
-                                .any(|episode_id| episode_id == &result.episode_id),
+                                .any(|call| call.episode_id() == &result.episode_id),
                             "agentic episode {:?} completed with an inference call outstanding",
                             result.episode_id.as_str()
                         );
@@ -478,7 +710,26 @@ impl AgenticWorkload {
             outstanding_calls.is_empty(),
             "agentic run ended with model calls outstanding"
         );
-        let ordered = self
+        if let Some(receiver) = auxiliary_requests.as_mut() {
+            match receiver.try_recv() {
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(anyhow!(
+                        "Rust agentic inference gateway stopped before run finalization"
+                    ));
+                }
+                Ok(request) => {
+                    let call_id = request.call.call_id.clone();
+                    let rejection = rejected_model_result(&request.call);
+                    request.respond(rejection)?;
+                    return Err(anyhow!(
+                        "auxiliary call {:?} arrived after all episodes completed",
+                        call_id.as_str()
+                    ));
+                }
+            }
+        }
+        let mut ordered = self
             .episodes
             .iter()
             .map(|episode| {
@@ -498,6 +749,7 @@ impl AgenticWorkload {
             finished.items == ordered,
             "finish_agentic results differed from terminal event results"
         );
+        reconcile_inference_stats(&mut ordered, &inference_stats)?;
         Ok(ordered)
     }
 
@@ -532,6 +784,62 @@ impl AgenticWorkload {
             );
         }
         Ok(())
+    }
+
+    async fn issue_model_call(
+        &self,
+        runtime: &Rc<ScheduledRuntime>,
+        call: &AgenticModelCall,
+        route: OutstandingAgenticCall,
+        outstanding: &mut BTreeMap<ModelCallId, OutstandingAgenticCall>,
+        completion_tx: &mpsc::UnboundedSender<AgenticModelResult>,
+    ) -> Result<Option<OutstandingAgenticCall>> {
+        ensure!(
+            route.episode_id() == &call.episode_id,
+            "agentic completion route changed call {:?} episode identity",
+            call.call_id.as_str()
+        );
+        ensure!(
+            !outstanding.contains_key(&call.call_id),
+            "duplicate outstanding agentic call {:?}",
+            call.call_id.as_str()
+        );
+        let model_guard = self.model_slots.acquire().await;
+        let turn = self.turn_builder.build_turn(call).with_context(|| {
+            format!(
+                "lowering evaluator model call {:?} into normal dataset turn",
+                call.call_id.as_str()
+            )
+        })?;
+        let call_id = call.call_id.clone();
+        let episode_id = call.episode_id.clone();
+        ensure!(
+            outstanding.insert(call_id.clone(), route).is_none(),
+            "duplicate outstanding agentic call {:?}",
+            call_id.as_str()
+        );
+        let completion_tx = completion_tx.clone();
+        let issued = runtime.issue_turn(
+            turn,
+            runtime.now_ns(),
+            None,
+            Box::new(move |_credit, outcome| {
+                Box::pin(async move {
+                    drop(model_guard);
+                    let item = model_result(episode_id, call_id, outcome);
+                    if completion_tx.send(item).is_err() {
+                        tracing::error!(
+                            "agentic workload dropped its inference completion channel"
+                        );
+                    }
+                })
+            }),
+        );
+        if issued {
+            Ok(None)
+        } else {
+            Ok(outstanding.remove(&call.call_id))
+        }
     }
 }
 
@@ -681,9 +989,181 @@ fn model_result(
         cached_tokens: outcome.model_response.cached_prompt_tokens,
         response_id: outcome.model_response.response_id,
         finish_reason: outcome.model_response.finish_reason,
+        assistant_message: outcome.model_response.assistant_message,
         error_kind,
         error_message,
     }
+}
+
+fn rejected_model_result(call: &AgenticModelCall) -> AgenticModelResult {
+    AgenticModelResult {
+        episode_id: call.episode_id.clone(),
+        call_id: call.call_id.clone(),
+        status: AgenticInferenceStatus::Failed,
+        response: String::new(),
+        reasoning: None,
+        prompt_tokens: None,
+        completion_tokens: None,
+        cached_tokens: None,
+        response_id: None,
+        finish_reason: None,
+        assistant_message: None,
+        error_kind: Some("dispatch_rejected".to_string()),
+        error_message: Some("Rust scheduling policy rejected the model call".to_string()),
+    }
+}
+
+fn reconcile_inference_stats(
+    results: &mut [AgenticEpisodeResult],
+    stats_by_episode: &BTreeMap<EpisodeId, EpisodeInferenceStats>,
+) -> Result<()> {
+    for result in results {
+        let stats = stats_by_episode.get(&result.episode_id).ok_or_else(|| {
+            anyhow!(
+                "missing Rust inference statistics for episode {:?}",
+                result.episode_id.as_str()
+            )
+        })?;
+        ensure!(
+            result.primary_model_calls == 0
+                && result.auxiliary_model_calls == 0
+                && result.environment_model_calls == 0
+                && result.verifier_model_calls == 0
+                && result.primary_prompt_tokens.is_none()
+                && result.primary_completion_tokens.is_none()
+                && result.primary_cached_tokens.is_none()
+                && result.auxiliary_prompt_tokens.is_none()
+                && result.auxiliary_completion_tokens.is_none()
+                && result.auxiliary_cached_tokens.is_none(),
+            "canonical evaluator attempted to author Rust-owned inference accounting for episode {:?}",
+            result.episode_id.as_str()
+        );
+        ensure!(
+            result.model_calls == stats.primary.calls,
+            "canonical evaluator reported {} primary calls for episode {:?}, but Rust dispatched {}",
+            result.model_calls,
+            result.episode_id.as_str(),
+            stats.primary.calls
+        );
+
+        let primary_prompt = stats.primary.prompt_tokens.value(stats.primary.calls);
+        let primary_completion = stats.primary.completion_tokens.value(stats.primary.calls);
+        let primary_cached = stats.primary.cached_tokens.value(stats.primary.calls);
+        validate_canonical_token_total(result, "prompt", result.prompt_tokens, primary_prompt)?;
+        validate_canonical_token_total(
+            result,
+            "completion",
+            result.completion_tokens,
+            primary_completion,
+        )?;
+        validate_canonical_token_total(result, "cached", result.cached_tokens, primary_cached)?;
+
+        let auxiliary_prompt = stats.auxiliary.prompt_tokens.value(stats.auxiliary.calls);
+        let auxiliary_completion = stats
+            .auxiliary
+            .completion_tokens
+            .value(stats.auxiliary.calls);
+        let auxiliary_cached = stats.auxiliary.cached_tokens.value(stats.auxiliary.calls);
+        ensure!(
+            stats
+                .environment_calls
+                .checked_add(stats.verifier_calls)
+                .is_some_and(|total| total == stats.auxiliary.calls),
+            "auxiliary purpose accounting diverged for episode {:?}",
+            result.episode_id.as_str()
+        );
+        let model_calls = stats
+            .primary
+            .calls
+            .checked_add(stats.auxiliary.calls)
+            .ok_or_else(|| anyhow!("agentic model-call count overflowed usize"))?;
+        result.model_calls = model_calls;
+        result.primary_model_calls = stats.primary.calls;
+        result.auxiliary_model_calls = stats.auxiliary.calls;
+        result.environment_model_calls = stats.environment_calls;
+        result.verifier_model_calls = stats.verifier_calls;
+        result.primary_prompt_tokens = primary_prompt;
+        result.primary_completion_tokens = primary_completion;
+        result.primary_cached_tokens = primary_cached;
+        result.auxiliary_prompt_tokens = auxiliary_prompt;
+        result.auxiliary_completion_tokens = auxiliary_completion;
+        result.auxiliary_cached_tokens = auxiliary_cached;
+        result.prompt_tokens = combine_token_totals(
+            stats.primary.calls,
+            primary_prompt,
+            stats.auxiliary.calls,
+            auxiliary_prompt,
+            "prompt",
+        )?;
+        result.completion_tokens = combine_token_totals(
+            stats.primary.calls,
+            primary_completion,
+            stats.auxiliary.calls,
+            auxiliary_completion,
+            "completion",
+        )?;
+        result.cached_tokens = combine_token_totals(
+            stats.primary.calls,
+            primary_cached,
+            stats.auxiliary.calls,
+            auxiliary_cached,
+            "cached",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_canonical_token_total(
+    result: &AgenticEpisodeResult,
+    name: &str,
+    canonical: Option<u64>,
+    observed: Option<u64>,
+) -> Result<()> {
+    match (canonical, observed) {
+        (None, _) | (Some(0), None) => Ok(()),
+        (Some(canonical), Some(observed)) => {
+            ensure!(
+                canonical == observed,
+                "canonical evaluator reported {canonical} primary {name} tokens for episode {:?}, but Rust observed {observed}",
+                result.episode_id.as_str()
+            );
+            Ok(())
+        }
+        (Some(canonical), None) => Err(anyhow!(
+            "canonical evaluator reported {canonical} primary {name} tokens for episode {:?}, but Rust received incomplete usage",
+            result.episode_id.as_str()
+        )),
+    }
+}
+
+fn combine_token_totals(
+    primary_calls: usize,
+    primary: Option<u64>,
+    auxiliary_calls: usize,
+    auxiliary: Option<u64>,
+    name: &str,
+) -> Result<Option<u64>> {
+    if primary_calls == 0 && auxiliary_calls == 0 {
+        return Ok(None);
+    }
+    let primary = if primary_calls == 0 {
+        0
+    } else if let Some(value) = primary {
+        value
+    } else {
+        return Ok(None);
+    };
+    let auxiliary = if auxiliary_calls == 0 {
+        0
+    } else if let Some(value) = auxiliary {
+        value
+    } else {
+        return Ok(None);
+    };
+    primary
+        .checked_add(auxiliary)
+        .map(Some)
+        .ok_or_else(|| anyhow!("agentic aggregate {name} token total overflowed u64"))
 }
 
 /// Combined performance and canonical agentic-evaluation result.
@@ -740,6 +1220,11 @@ pub fn finalize_agentic_report(
     let mut completed_count = 0usize;
     let mut infrastructure_error_count = 0usize;
     let mut cancelled_count = 0usize;
+    let mut model_calls = 0usize;
+    let mut primary_model_calls = 0usize;
+    let mut auxiliary_model_calls = 0usize;
+    let mut environment_model_calls = 0usize;
+    let mut verifier_model_calls = 0usize;
     let mut result_primary_rewards = BTreeSet::new();
     let mut report_records = Vec::with_capacity(results.len());
     for result in &results {
@@ -774,6 +1259,14 @@ pub fn finalize_agentic_report(
                 AgenticEpisodeReportOutcome::Cancelled
             }
         };
+        model_calls = checked_call_count(model_calls, result.model_calls)?;
+        primary_model_calls = checked_call_count(primary_model_calls, result.primary_model_calls)?;
+        auxiliary_model_calls =
+            checked_call_count(auxiliary_model_calls, result.auxiliary_model_calls)?;
+        environment_model_calls =
+            checked_call_count(environment_model_calls, result.environment_model_calls)?;
+        verifier_model_calls =
+            checked_call_count(verifier_model_calls, result.verifier_model_calls)?;
         report_records.push(AgenticEpisodeReport {
             episode_id: result.episode_id.as_str().to_string(),
             task: result.task.clone(),
@@ -782,9 +1275,19 @@ pub fn finalize_agentic_report(
             primary_reward: result.primary_reward.clone(),
             duration_seconds: result.duration_seconds,
             model_calls: result.model_calls,
+            primary_model_calls: result.primary_model_calls,
+            auxiliary_model_calls: result.auxiliary_model_calls,
+            environment_model_calls: result.environment_model_calls,
+            verifier_model_calls: result.verifier_model_calls,
             prompt_tokens: result.prompt_tokens,
             completion_tokens: result.completion_tokens,
             cached_tokens: result.cached_tokens,
+            primary_prompt_tokens: result.primary_prompt_tokens,
+            primary_completion_tokens: result.primary_completion_tokens,
+            primary_cached_tokens: result.primary_cached_tokens,
+            auxiliary_prompt_tokens: result.auxiliary_prompt_tokens,
+            auxiliary_completion_tokens: result.auxiliary_completion_tokens,
+            auxiliary_cached_tokens: result.auxiliary_cached_tokens,
             error_kind: result.error_kind.clone(),
             error_message: result.error_message.clone(),
             artifact_path: result.artifact_path.clone(),
@@ -819,6 +1322,72 @@ pub fn finalize_agentic_report(
             "agentic evaluator selected primary reward {configured:?} but no completed episode reported it"
         );
     }
+    ensure!(
+        primary_model_calls
+            .checked_add(auxiliary_model_calls)
+            .is_some_and(|total| total == model_calls),
+        "agentic run-level primary and auxiliary call counts diverged from the total"
+    );
+    ensure!(
+        environment_model_calls
+            .checked_add(verifier_model_calls)
+            .is_some_and(|total| total == auxiliary_model_calls),
+        "agentic run-level environment and verifier counts diverged from auxiliary calls"
+    );
+    let prompt_tokens = sum_episode_tokens(
+        &results,
+        |result| result.model_calls,
+        |result| result.prompt_tokens,
+        "prompt",
+    )?;
+    let completion_tokens = sum_episode_tokens(
+        &results,
+        |result| result.model_calls,
+        |result| result.completion_tokens,
+        "completion",
+    )?;
+    let cached_tokens = sum_episode_tokens(
+        &results,
+        |result| result.model_calls,
+        |result| result.cached_tokens,
+        "cached",
+    )?;
+    let primary_prompt_tokens = sum_episode_tokens(
+        &results,
+        |result| result.primary_model_calls,
+        |result| result.primary_prompt_tokens,
+        "primary prompt",
+    )?;
+    let primary_completion_tokens = sum_episode_tokens(
+        &results,
+        |result| result.primary_model_calls,
+        |result| result.primary_completion_tokens,
+        "primary completion",
+    )?;
+    let primary_cached_tokens = sum_episode_tokens(
+        &results,
+        |result| result.primary_model_calls,
+        |result| result.primary_cached_tokens,
+        "primary cached",
+    )?;
+    let auxiliary_prompt_tokens = sum_episode_tokens(
+        &results,
+        |result| result.auxiliary_model_calls,
+        |result| result.auxiliary_prompt_tokens,
+        "auxiliary prompt",
+    )?;
+    let auxiliary_completion_tokens = sum_episode_tokens(
+        &results,
+        |result| result.auxiliary_model_calls,
+        |result| result.auxiliary_completion_tokens,
+        "auxiliary completion",
+    )?;
+    let auxiliary_cached_tokens = sum_episode_tokens(
+        &results,
+        |result| result.auxiliary_model_calls,
+        |result| result.auxiliary_cached_tokens,
+        "auxiliary cached",
+    )?;
 
     let evaluation = AgenticEvaluationReport {
         evaluator: AgenticEvaluatorReportInfo {
@@ -844,12 +1413,30 @@ pub fn finalize_agentic_report(
             enable_summarize: config.enable_summarize,
             primary_reward: config.primary_reward.clone(),
             overwrite: config.overwrite,
+            inference_gateway_base_url: config
+                .inference_gateway
+                .as_ref()
+                .map(|gateway| gateway.base_url.clone()),
         },
         summary: AgenticEvaluationSummary {
             episode_count: results.len(),
             completed_count,
             infrastructure_error_count,
             cancelled_count,
+            model_calls,
+            primary_model_calls,
+            auxiliary_model_calls,
+            environment_model_calls,
+            verifier_model_calls,
+            prompt_tokens,
+            completion_tokens,
+            cached_tokens,
+            primary_prompt_tokens,
+            primary_completion_tokens,
+            primary_cached_tokens,
+            auxiliary_prompt_tokens,
+            auxiliary_completion_tokens,
+            auxiliary_cached_tokens,
             primary_reward,
             primary_score,
             rewards,
@@ -881,6 +1468,39 @@ pub fn finalize_agentic_report(
         native_report,
         results,
     })
+}
+
+fn checked_call_count(total: usize, value: usize) -> Result<usize> {
+    total
+        .checked_add(value)
+        .ok_or_else(|| anyhow!("agentic report model-call count overflowed usize"))
+}
+
+fn sum_episode_tokens<F, G>(
+    results: &[AgenticEpisodeResult],
+    calls: F,
+    tokens: G,
+    name: &str,
+) -> Result<Option<u64>>
+where
+    F: Fn(&AgenticEpisodeResult) -> usize,
+    G: Fn(&AgenticEpisodeResult) -> Option<u64>,
+{
+    let mut total = 0u64;
+    let mut observed = false;
+    for result in results {
+        if calls(result) == 0 {
+            continue;
+        }
+        observed = true;
+        let Some(value) = tokens(result) else {
+            return Ok(None);
+        };
+        total = total
+            .checked_add(value)
+            .ok_or_else(|| anyhow!("agentic report {name} token total overflowed u64"))?;
+    }
+    Ok(observed.then_some(total))
 }
 
 fn agentic_worker_report_info(
@@ -948,13 +1568,15 @@ mod tests {
     use std::collections::BTreeMap;
 
     use aiperf_accuracy::{
-        AccuracyEvaluator, AgenticEventBatch, AgenticResultBatch, EvaluatorDatasetIdentity,
-        EvaluatorGradeBatch, EvaluatorGradeItem, EvaluatorIdentity, EvaluatorLoadConfig,
-        EvaluatorLoadResult, EvaluatorMessage, EvaluatorProblemPage, EvaluatorWorkerError,
+        AccuracyEvaluator, AgenticEventBatch, AgenticInferenceGatewayConfig, AgenticMessage,
+        AgenticResultBatch, EvaluatorDatasetIdentity, EvaluatorGradeBatch, EvaluatorGradeItem,
+        EvaluatorIdentity, EvaluatorLoadConfig, EvaluatorLoadResult, EvaluatorProblemPage,
+        EvaluatorWorkerError,
     };
     use aiperf_clock::{Clock, RealClock};
     use aiperf_dataset::TiktokenTokenizer;
     use aiperf_timing::StopConfig;
+    use serde_json::Map;
 
     use super::*;
     use crate::http::TransportSink;
@@ -975,6 +1597,49 @@ mod tests {
         state: Rc<RefCell<FixtureState>>,
     }
 
+    struct FixtureGateway {
+        config: AgenticInferenceGatewayConfig,
+        requests: Option<mpsc::UnboundedReceiver<AgenticAuxiliaryInferenceRequest>>,
+    }
+
+    impl FixtureGateway {
+        fn new() -> (
+            Self,
+            mpsc::UnboundedSender<AgenticAuxiliaryInferenceRequest>,
+        ) {
+            let (sender, receiver) = mpsc::unbounded_channel();
+            (
+                Self {
+                    config: AgenticInferenceGatewayConfig {
+                        base_url: "http://fixture-gateway:4321".to_string(),
+                        api_key: "fixture-secret".to_string(),
+                    },
+                    requests: Some(receiver),
+                },
+                sender,
+            )
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl AgenticInferenceGateway for FixtureGateway {
+        fn evaluator_config(&self) -> &AgenticInferenceGatewayConfig {
+            &self.config
+        }
+
+        fn take_requests(
+            &mut self,
+        ) -> Result<mpsc::UnboundedReceiver<AgenticAuxiliaryInferenceRequest>> {
+            self.requests
+                .take()
+                .ok_or_else(|| anyhow!("fixture gateway receiver already taken"))
+        }
+
+        async fn shutdown(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
     impl FixtureEvaluator {
         fn new(state: Rc<RefCell<FixtureState>>) -> Self {
             let episode_id = EpisodeId::new("episode-1").unwrap();
@@ -989,9 +1654,11 @@ mod tests {
                 call_id,
                 turn_index: 0,
                 prompt: "Use the terminal".to_string(),
-                messages: vec![EvaluatorMessage {
+                model: Some("fixture-model".to_string()),
+                messages: vec![AgenticMessage {
                     role: "user".to_string(),
                     content: Value::String("Use the terminal".to_string()),
+                    extra: BTreeMap::new(),
                 }],
                 generation: aiperf_accuracy::EvaluatorGenerationConfig {
                     max_tokens: 2,
@@ -1005,6 +1672,10 @@ mod tests {
                 })],
                 tool_choice: Some(Value::String("auto".to_string())),
                 response_format: Some(json!({"type": "json_object"})),
+                extra_body: Map::from_iter([(
+                    "reasoning_effort".to_string(),
+                    Value::String("low".to_string()),
+                )]),
             };
             let result = AgenticEpisodeResult {
                 episode_id: episode_id.clone(),
@@ -1014,9 +1685,19 @@ mod tests {
                 primary_reward: Some("reward".to_string()),
                 duration_seconds: 1.0,
                 model_calls: 1,
+                primary_model_calls: 0,
+                auxiliary_model_calls: 0,
+                environment_model_calls: 0,
+                verifier_model_calls: 0,
                 prompt_tokens: Some(3),
                 completion_tokens: Some(2),
                 cached_tokens: None,
+                primary_prompt_tokens: None,
+                primary_completion_tokens: None,
+                primary_cached_tokens: None,
+                auxiliary_prompt_tokens: None,
+                auxiliary_completion_tokens: None,
+                auxiliary_cached_tokens: None,
                 error_kind: None,
                 error_message: None,
                 artifact_path: Some("fixture-artifact".to_string()),
@@ -1105,6 +1786,10 @@ mod tests {
     #[async_trait(?Send)]
     impl AgenticEvaluator for FixtureEvaluator {
         fn supports_agentic(&self) -> bool {
+            true
+        }
+
+        fn supports_agentic_inference_gateway(&self) -> bool {
             true
         }
 
@@ -1214,6 +1899,7 @@ mod tests {
         assert_eq!(body["tools"][0]["function"]["name"], "terminal");
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["response_format"]["type"], "json_object");
+        assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["stream_options"]["include_usage"], true);
     }
 
@@ -1300,6 +1986,117 @@ mod tests {
                 assert_eq!(submitted[0].prompt_tokens, Some(3));
                 assert_eq!(submitted[0].completion_tokens, Some(2));
                 assert_eq!(workload.results().unwrap()[0].rewards["reward"], 1.0);
+                workload.shutdown().await.unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn auxiliary_calls_share_normal_scheduling_transport_and_accounting() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let state = Rc::new(RefCell::new(FixtureState::default()));
+                let evaluator: Box<dyn AgenticEvaluator> =
+                    Box::new(FixtureEvaluator::new(state.clone()));
+                let (gateway, gateway_tx) = FixtureGateway::new();
+                let workload = AgenticWorkload::prepare_with_gateway(
+                    evaluator,
+                    "fixture/agentic@locked",
+                    "fixture-model",
+                    &AgenticEvaluatorLoadConfig::default(),
+                    1,
+                    builder(),
+                    Some(Box::new(gateway)),
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    workload
+                        .config()
+                        .inference_gateway
+                        .as_ref()
+                        .unwrap()
+                        .base_url,
+                    "http://fixture-gateway:4321"
+                );
+
+                let call = AgenticModelCall {
+                    episode_id: EpisodeId::new("episode-1").unwrap(),
+                    call_id: ModelCallId::new("episode-1:aux:environment:0000").unwrap(),
+                    turn_index: 0,
+                    model: Some("simulator-model".to_string()),
+                    prompt: String::new(),
+                    messages: vec![AgenticMessage {
+                        role: "user".to_string(),
+                        content: Value::String("Act as the simulated user".to_string()),
+                        extra: BTreeMap::new(),
+                    }],
+                    generation: aiperf_accuracy::EvaluatorGenerationConfig {
+                        max_tokens: 2,
+                        temperature: 0.0,
+                        top_p: 1.0,
+                        stop: Vec::new(),
+                    },
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    response_format: None,
+                    extra_body: Map::new(),
+                };
+                let (request, response_rx) = AgenticAuxiliaryInferenceRequest::new(
+                    AgenticInferencePurpose::Environment,
+                    call,
+                    false,
+                );
+                gateway_tx.send(request).unwrap();
+
+                let base_url = crate::test_util::spawn_mock().await;
+                let clock: Rc<dyn Clock> = RealClock::new();
+                let start_ns = clock.now_ns();
+                let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new(
+                    clock.clone(),
+                    start_ns,
+                    &base_url,
+                    "fixture-model",
+                    false,
+                ));
+                let report = run_scheduled_workload(
+                    workload.clone(),
+                    clock,
+                    start_ns,
+                    dispatcher,
+                    StopConfig::default(),
+                    false,
+                )
+                .await
+                .unwrap();
+
+                let auxiliary = response_rx.await.unwrap();
+                assert_eq!(auxiliary.status, AgenticInferenceStatus::Completed);
+                assert_eq!(auxiliary.response, "ab");
+                assert_eq!(
+                    auxiliary.assistant_message.as_ref().unwrap()["content"],
+                    "ab"
+                );
+                assert_eq!(report.performance.request_counts.completed_requests, 2);
+                assert_eq!(report.turns.len(), 2);
+                assert!(
+                    report
+                        .turns
+                        .iter()
+                        .all(|turn| turn.x_correlation_id == "episode-1")
+                );
+                let result = &workload.results().unwrap()[0];
+                assert_eq!(result.model_calls, 2);
+                assert_eq!(result.primary_model_calls, 1);
+                assert_eq!(result.auxiliary_model_calls, 1);
+                assert_eq!(result.environment_model_calls, 1);
+                assert_eq!(result.verifier_model_calls, 0);
+                assert_eq!(result.prompt_tokens, Some(6));
+                assert_eq!(result.completion_tokens, Some(4));
+                assert_eq!(result.primary_prompt_tokens, Some(3));
+                assert_eq!(result.auxiliary_prompt_tokens, Some(3));
+                assert_eq!(state.borrow().submitted.len(), 1);
                 workload.shutdown().await.unwrap();
             })
             .await;

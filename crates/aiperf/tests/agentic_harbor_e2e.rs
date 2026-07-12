@@ -11,6 +11,56 @@ use serde_json::Value;
 
 const AGENTIC_LOCK_SHA256: &str =
     "5ab314ec28af774ed9edf4a6baf5216f8831ecf06eb9bf3b62418bef275b57ef";
+const TAU3_START_CONVERSATION: &str = r#"python - <<'PY'
+import json
+import urllib.request
+
+url = "http://tau3-runtime:8000/mcp"
+headers = {
+    "Accept": "application/json, text/event-stream",
+    "Content-Type": "application/json",
+}
+
+def post(payload):
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        session = response.headers.get("Mcp-Session-Id")
+        text = response.read().decode()
+        content_type = response.headers.get("Content-Type", "")
+    if session:
+        headers["Mcp-Session-Id"] = session
+    if not text:
+        return None
+    if "text/event-stream" in content_type:
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                return json.loads(line.removeprefix("data:").strip())
+        raise RuntimeError("MCP response contained no data event")
+    return json.loads(text)
+
+post({
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "aiperf-canary", "version": "1.0"},
+    },
+})
+post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+print(post({
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {"name": "start_conversation", "arguments": {}},
+}))
+PY"#;
 
 #[derive(Clone, Default)]
 struct Captured(Arc<Mutex<Vec<Value>>>);
@@ -20,15 +70,37 @@ async fn terminus_completion(
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
     let request_index = captured.0.lock().unwrap().len();
+    let auxiliary_call = body["model"] != "harbor-e2e-model";
     captured.0.lock().unwrap().push(body);
     let response_id = format!("harbor-e2e-{request_index}");
-    let answer = serde_json::json!({
-        "analysis": "The acceptance model intentionally leaves the task environment unchanged.",
-        "plan": "Submit the current environment to the packaged verifier.",
-        "commands": [],
-        "task_complete": true,
-    })
-    .to_string();
+    let authored_command = std::env::var("AIPERF_AGENTIC_FIRST_COMMAND")
+        .ok()
+        .or_else(|| {
+            std::env::var_os("AIPERF_AGENTIC_EXERCISE_TAU3")
+                .is_some()
+                .then(|| TAU3_START_CONVERSATION.to_string())
+        });
+    let answer = if auxiliary_call {
+        "My mobile data is not working and I am currently abroad in France.".to_string()
+    } else if request_index == 0
+        && let Some(command) = authored_command
+    {
+        serde_json::json!({
+            "analysis": "Exercise the packaged task's canonical MCP environment.",
+            "plan": "Start the simulated-user conversation through the advertised MCP server.",
+            "commands": [{"keystrokes": format!("{command}\n"), "duration": 30}],
+            "task_complete": false,
+        })
+        .to_string()
+    } else {
+        serde_json::json!({
+            "analysis": "The acceptance model intentionally leaves the remaining task environment unchanged.",
+            "plan": "Submit the current environment to the packaged verifier.",
+            "commands": [],
+            "task_complete": true,
+        })
+        .to_string()
+    };
     let stream = format!(
         "data: {{\"id\":{response_id:?},\"object\":\"chat.completion.chunk\",\"choices\":[{{\"delta\":{{\"content\":{answer:?}}},\"finish_reason\":\"stop\"}}]}}\n\n\
          data: {{\"id\":{response_id:?},\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{{\"prompt_tokens\":37,\"completion_tokens\":17,\"prompt_tokens_details\":{{\"cached_tokens\":5}}}}}}\n\n\
@@ -48,10 +120,18 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
     let expected_revision = std::env::var("AIPERF_AGENTIC_EXPECTED_REVISION").ok();
     let expected_benchmark = std::env::var("AIPERF_AGENTIC_EXPECTED_BENCHMARK").ok();
     let expected_provider = std::env::var("AIPERF_AGENTIC_EXPECTED_PROVIDER").ok();
+    let gateway_host = std::env::var("AIPERF_AGENTIC_GATEWAY_HOST").ok();
+    let expected_auxiliary_calls = std::env::var("AIPERF_AGENTIC_EXPECTED_AUXILIARY_CALLS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
     let timeout_seconds = std::env::var("AIPERF_AGENTIC_E2E_TIMEOUT_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(900);
+    let max_turns = std::env::var("AIPERF_AGENTIC_MAX_TURNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(2);
 
     let captured = Captured::default();
     let app = Router::new()
@@ -83,7 +163,7 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
         .arg("--agentic-output-dir")
         .arg(&trials)
         .arg("--agentic-max-turns")
-        .arg("2")
+        .arg(max_turns.to_string())
         .arg("--agentic-max-tokens")
         .arg("512")
         .arg("--agentic-context-window")
@@ -97,6 +177,9 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
         .kill_on_drop(true);
     if let Some(task) = &expected_task {
         command.arg("--agentic-tasks").arg(task);
+    }
+    if let Some(host) = &gateway_host {
+        command.arg("--agentic-inference-gateway-host").arg(host);
     }
     let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
         .await
@@ -150,6 +233,14 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
         report["agentic"]["summary"]["infrastructure_error_count"],
         0
     );
+    if let Some(expected) = expected_auxiliary_calls {
+        assert!(
+            report["agentic"]["summary"]["auxiliary_model_calls"]
+                .as_u64()
+                .unwrap()
+                >= expected
+        );
+    }
     let records = report["agentic"]["records"].as_array().unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["outcome"], "completed");
@@ -184,7 +275,9 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
     assert!(
         requests
             .iter()
-            .all(|body| body["model"] == "harbor-e2e-model")
+            .filter(|body| body["model"] == "harbor-e2e-model")
+            .count() as u64
+            >= records[0]["primary_model_calls"].as_u64().unwrap()
     );
     assert!(
         requests
@@ -205,6 +298,11 @@ async fn real_harbor_package_runs_rust_inference_and_packaged_verifier() {
             "outcome": records[0]["outcome"],
             "rewards": records[0]["rewards"],
             "model_calls": model_calls,
+            "primary_model_calls": records[0]["primary_model_calls"],
+            "auxiliary_model_calls": records[0]["auxiliary_model_calls"],
+            "environment_model_calls": records[0]["environment_model_calls"],
+            "verifier_model_calls": records[0]["verifier_model_calls"],
+            "inference_gateway_base_url": report["agentic"]["config"]["inference_gateway_base_url"],
             "artifact_path": artifact_path,
             "harbor": report["evaluator"]["packages"]["harbor"],
             "dependency_lock_sha256": report["evaluator"]["dependency_lock_sha256"],

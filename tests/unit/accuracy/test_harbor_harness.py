@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +17,7 @@ pytest.importorskip("harbor", reason="requires agentic-accuracy worker lock")
 from harbor.models.job.config import DatasetConfig
 from harbor.models.trial.config import TaskConfig
 from harbor.registry.client.factory import RegistryClientFactory
+from harbor.trial.trial import Trial
 
 from aiperf.accuracy.harbor import HarborHarness
 
@@ -121,3 +123,102 @@ async def test_local_directory_records_content_digest(
 async def test_empty_authored_revision_is_rejected() -> None:
     with pytest.raises(ValueError, match="revision after '@' must not be empty"):
         await HarborHarness.create("bfcl@", "fixture-model", {})
+
+
+@pytest.mark.asyncio
+async def test_inference_gateway_is_episode_scoped_and_host_environment_restored(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def get_task_configs(self: DatasetConfig, *_args: Any) -> list[TaskConfig]:
+        self.ref = f"sha256:{'f' * 64}"
+        return [_task(tmp_path / "task-one")]
+
+    monkeypatch.setattr(DatasetConfig, "get_task_configs", get_task_configs)
+    monkeypatch.setenv("OPENAI_API_KEY", "original-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://original.invalid/v1")
+    harness = await HarborHarness.create(
+        "fixture/tasks@locked",
+        "fixture-model",
+        {
+            "inference_gateway": {
+                "base_url": "http://10.0.0.99:43123",
+                "api_key": "run-secret",
+            }
+        },
+    )
+    episode_id = harness.episodes[0].episode_id
+    try:
+        assert os.environ["OPENAI_API_KEY"] == "run-secret"
+        assert os.environ["OPENAI_BASE_URL"] == "http://10.0.0.99:43123"
+        encoded = episode_id.replace(":", "%3A")
+        assert harness._inference_environment(episode_id, "environment") == {
+            "OPENAI_API_KEY": "run-secret",
+            "OPENAI_BASE_URL": (
+                f"http://10.0.0.99:43123/episodes/{encoded}/environment/v1"
+            ),
+        }
+        assert harness._inference_environment(episode_id, "verifier")[
+            "OPENAI_BASE_URL"
+        ].endswith("/verifier/v1")
+    finally:
+        await harness.close()
+    assert os.environ["OPENAI_API_KEY"] == "original-key"
+    assert os.environ["OPENAI_BASE_URL"] == "https://original.invalid/v1"
+
+
+@pytest.mark.asyncio
+async def test_trial_environment_and_verifier_receive_distinct_callback_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def get_task_configs(self: DatasetConfig, *_args: Any) -> list[TaskConfig]:
+        self.ref = f"sha256:{'e' * 64}"
+        return [_task(tmp_path / "task-one")]
+
+    captured: list[Any] = []
+
+    class FakeTrial:
+        async def run(self) -> Any:
+            return SimpleNamespace(
+                exception_info=None,
+                verifier_result=SimpleNamespace(rewards={"reward": 1.0}),
+                compute_token_cost_totals=lambda: (0, 0, 0, 0.0),
+            )
+
+    async def create(_cls: type[Trial], config: Any) -> FakeTrial:
+        captured.append(config)
+        return FakeTrial()
+
+    monkeypatch.setattr(DatasetConfig, "get_task_configs", get_task_configs)
+    monkeypatch.setattr(Trial, "create", classmethod(create))
+    harness = await HarborHarness.create(
+        "fixture/tasks@locked",
+        "fixture-model",
+        {
+            "output_dir": tmp_path.as_posix(),
+            "inference_gateway": {
+                "base_url": "http://10.0.0.99:43123",
+                "api_key": "run-secret",
+            },
+        },
+    )
+    episode_id = harness.episodes[0].episode_id
+    encoded = episode_id.replace(":", "%3A")
+    try:
+        await harness.start_episodes([episode_id])
+        events = await harness.poll_events(1, 1_000)
+        assert events[0].episode_result is not None
+        assert events[0].episode_result.outcome == "completed"
+        assert captured[0].environment.env == {
+            "OPENAI_API_KEY": "run-secret",
+            "OPENAI_BASE_URL": (
+                f"http://10.0.0.99:43123/episodes/{encoded}/environment/v1"
+            ),
+        }
+        assert captured[0].verifier.env == {
+            "OPENAI_API_KEY": "run-secret",
+            "OPENAI_BASE_URL": (
+                f"http://10.0.0.99:43123/episodes/{encoded}/verifier/v1"
+            ),
+        }
+    finally:
+        await harness.close()

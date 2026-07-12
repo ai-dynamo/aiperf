@@ -50,12 +50,12 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic `SamplingRng` / `DistributionSampler` / `SequenceSampler` seams, cached cumulative weighted distributions, fixed-seed profile canary | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
 | `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline with exact raw/message replay, media, context, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity, never ground truth | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
 | `aiperf-metrics` | IO-free performance/accuracy engine: validated catalog, columns/ragged replay, formulas, SLO/phase/window/timeslice logic, sweeps, accuracy analysis, typed native-v2 reporter including exact static-evaluator and stateful agentic provenance/result blocks | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
-| `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. The pinned Harbor callback protocol is consumed by `aiperf::agentic`. | `src/protocol.rs`, `src/worker.rs` |
+| `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, lossless agent/tool messages, capability-gated callback configuration, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. | `src/protocol.rs`, `src/worker.rs` |
 | `aiperf-extensions` | cycle-free compile-time composition for dataset-format, sampler, and endpoint registries; accuracy is a directly injected process seam, not a Rust plugin category | `src/lib.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | Graph-IR dataflow over the unified dataset store, firing-gate executor, DES drivers, transport benches, and worker-local native metrics merged once at join | `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/static-and-agentic-accuracy, ancillary policy, and graph mode. Scheduled entry points lower through `phase_runtime` as profiling phases; typed plans expose warmup/seamless multi-phase runs with shared resources and phase-owned ramps. Accuracy keeps inference in Rust and delegates canonical scoring through the worker. `--agentic-benchmark` runs `AgenticWorkload` through the same dataset, scheduled-runtime, endpoint, and transport path and emits typed native-v2 provenance, reward summaries, episode records, and infrastructure errors. Every `--json` path emits native v2. | `src/main.rs`, `src/agentic.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
+| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/static-and-agentic-accuracy, ancillary policy, and graph mode. Scheduled entry points lower through `phase_runtime` as profiling phases; typed plans expose warmup/seamless multi-phase runs with shared resources and phase-owned ramps. Accuracy keeps inference in Rust and delegates canonical scoring through the worker. `--agentic-benchmark` routes primary agent plus callback environment/verifier calls through one `AgenticWorkload` → unified dataset → scheduled runtime → endpoint → transport path. `agentic_gateway` is an authenticated OpenAI ingress with no model client; native v2 separates primary/environment/verifier call and token accounting. Every `--json` path emits native v2. | `src/main.rs`, `src/agentic.rs`, `src/agentic_gateway.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
 `aiperf-dataset`, `aiperf-extensions`, `aiperf-graph`, `aiperf-metrics`, `aiperf-timing`,
@@ -90,7 +90,13 @@ strategies support per-turn cancellation and turn-zero sticky endpoint routing.
 AIPERF_ACCURACY_PYTHON=/path/to/python cargo run --release -p aiperf -- [BASE_URL] [MODEL] --accuracy-benchmark mmlu-pro --accuracy-max-problems 100 --json out.json
 ```
 
-Rust sends every LLM request and parses every response through its normal transport. The Python/Lighteval child prepares opaque problems and batch-grades terminal response text; it never contacts the inference server, and ground truth/private tests never cross the strict JSONL protocol. Worker failure is infrastructure error, and native v2 records exact evaluator/package/dataset identity.
+Rust sends every LLM request and parses every response through its normal
+transport. The Python/Lighteval child prepares opaque problems and batch-grades
+terminal response text; it never contacts the inference server, and ground
+truth/private tests never cross the JSONL protocol. Protocol v1 rejects unknown
+static-response fields and restricts static prompts to `{role, content}`; stateful
+agent/tool messages retain role-specific fields losslessly. The worker redirects
+ambient fd 1 output to stderr and native v2 records its source/lock identity.
 
 ## Run canonical agentic accuracy
 
@@ -99,12 +105,15 @@ AIPERF_ACCURACY_PYTHON=/path/to/pinned/agentic/python \
 cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
   --agentic-benchmark swe-bench/swe-bench-verified@REVISION \
   --agentic-task-concurrency 4 --concurrency 16 \
+  [--agentic-inference-gateway-host HOST] \
   --agentic-max-episodes 100 --json out.json
 ```
 
 Harbor owns task packages, Terminus-2, environments, trajectories, terminal
-execution, and verifier rewards. Its callback backend publishes model calls but
-contains no inference client; Rust issues every turn through the generic online
+execution, and verifier rewards. Primary calls use its queue callback. Packaged
+LLM-backed environments/verifiers receive an authenticated callback address;
+Rust's ingress converts those calls to the same scheduled workload and never
+forwards directly. Rust issues every turn through the generic online
 scheduled/transport runner. Native v2 records exact worker/lock/container,
 harness source/version, dataset revision, agent, environment, verifier, authored
 configuration, canonical rewards, episode records, and artifacts. Infrastructure
@@ -160,7 +169,9 @@ early-issue/lateness statistics.
   `aiperf/src/accuracy.rs` (normal Rust static dataset lowering, response capture,
   batched grade correlation, accumulation/reporting) or `aiperf/src/agentic.rs`
   (stateful Rust admission, normal-pipeline model-call issuance, and typed
-  native-v2 result composition). `aiperf/src/main.rs` owns the agentic CLI.
+  native-v2 result composition), plus `aiperf/src/agentic_gateway.rs` (authenticated
+  environment/verifier OpenAI ingress with no inference client). `aiperf/src/main.rs`
+  owns the agentic CLI.
 - **Where do native TTFT/ITL/e2e/throughput/goodput and sweeps come from?**
   `aiperf/src/metrics.rs` (runtime join) → `aiperf-metrics/src/{store,accumulator,sweepline}.rs`.
   `aiperf/src/http.rs` also translates the real transport trace into HTTP metric facts;
@@ -251,17 +262,16 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-10-aiperf-rust-coverage-gap-ledger.md` — research synthesis of
   unspec'd bodies; addendum notes metrics, telemetry, and RNG gaps are now covered
   by dedicated specs/addenda.
-- `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — **partly built +
+- `specs/2026-07-10-aiperf-rust-accuracy-accumulator-design.md` — **built +
   addenda**: Rust owns inference/timing/metrics/reporting and the typed
   accumulator/analyzer; supervised pinned Python workers own canonical datasets,
-  environments, hidden tests, execution, and scoring over opaque JSONL IDs. Static
-  Lighteval runs are wired. The stateful `AgenticEvaluator`, pinned Harbor 0.18
-  callback adapter, generic normal-pipeline `AgenticWorkload`, agentic CLI, and
-  typed native-v2 reporting are built with exact provenance. Loopback CLI and a
-  live Harbor registry/Docker/packaged-verifier canary are proven. Hub packages,
-  legacy registry datasets (including BFCL), and local directories resolve
-  through Harbor's own `DatasetConfig`; SWE-bench-specific and cross-family
-  canaries remain.
+  environments, hidden tests, execution, and scoring over opaque IDs. Static
+  Lighteval plus stateful Harbor are wired. Primary and LLM-backed
+  environment/verifier calls all enter the same Rust scheduled transport through
+  a capability-gated authenticated ingress with no model client. Native v2 reports
+  exact provenance and per-purpose accounting. Real packaged canaries cover
+  SWE-bench Verified, Terminal-Bench 2.1, Aider Polyglot, GAIA, SkillsBench, BFCL
+  1.0, and tau3, including an actual tau3 user-simulator callback.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,

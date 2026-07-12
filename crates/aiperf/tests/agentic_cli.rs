@@ -54,7 +54,7 @@ def complete_alpha():
         "model_calls": 2,
         "prompt_tokens": 22,
         "completion_tokens": 8,
-        "cached_tokens": 3,
+        "cached_tokens": 6,
         "artifact_path": "artifacts/alpha",
     }
 
@@ -86,7 +86,8 @@ for line in sys.stdin:
             "dependency_lock_sha256": "b" * 64,
             "container_digest": "sha256:" + "c" * 64,
             "capabilities": [
-                "load", "next_problems", "grade_batch", "shutdown", "agentic_harbor"
+                "load", "next_problems", "grade_batch", "shutdown", "agentic_harbor",
+                "agentic_inference_gateway"
             ],
         }
     elif operation == "load_agentic":
@@ -94,6 +95,8 @@ for line in sys.stdin:
         assert request["model"] == "fixture-model"
         assert request["config"]["task_concurrency"] == 2
         assert request["config"]["environment"] == "docker"
+        assert request["config"]["inference_gateway"]["base_url"].startswith("http://")
+        assert request["config"]["inference_gateway"]["api_key"].startswith("aiperf-")
         result = {
             "harness": "harbor",
             "harness_version": "0.18.0",
@@ -263,6 +266,12 @@ async fn cli_runs_stateful_harbor_calls_through_normal_rust_transport() {
     );
     assert_eq!(report["agentic"]["config"]["model_concurrency"], 1);
     assert_eq!(report["agentic"]["config"]["task_concurrency"], 2);
+    assert!(
+        report["agentic"]["config"]["inference_gateway_base_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://")
+    );
     assert_eq!(report["agentic"]["summary"]["episode_count"], 2);
     assert_eq!(report["agentic"]["summary"]["completed_count"], 1);
     assert_eq!(
@@ -270,6 +279,12 @@ async fn cli_runs_stateful_harbor_calls_through_normal_rust_transport() {
         1
     );
     assert_eq!(report["agentic"]["summary"]["cancelled_count"], 0);
+    assert_eq!(report["agentic"]["summary"]["model_calls"], 3);
+    assert_eq!(report["agentic"]["summary"]["primary_model_calls"], 3);
+    assert_eq!(report["agentic"]["summary"]["auxiliary_model_calls"], 0);
+    assert_eq!(report["agentic"]["summary"]["prompt_tokens"], 33);
+    assert_eq!(report["agentic"]["summary"]["completion_tokens"], 12);
+    assert_eq!(report["agentic"]["summary"]["cached_tokens"], 9);
     assert_eq!(report["agentic"]["summary"]["primary_reward"], "reward");
     assert_eq!(report["agentic"]["summary"]["primary_score"], 1.0);
     assert_eq!(report["agentic"]["summary"]["rewards"]["reward"]["n"], 1);

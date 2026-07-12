@@ -38,11 +38,14 @@ async def test_callback_llm_round_trips_messages_and_usage_without_http() -> Non
         llm.call(
             "inspect the repository",
             message_history=[{"role": "system", "content": "use JSON commands"}],
+            extra_body={"reasoning_effort": "low"},
         )
     )
     event = (await events.poll(1, 100))[0]
     assert event.model_call is not None
     call = event.model_call
+    assert call.model == "fixture-model"
+    assert call.extra_body == {"reasoning_effort": "low"}
     assert call.messages == [
         {"role": "system", "content": "use JSON commands"},
         {"role": "user", "content": "inspect the repository"},

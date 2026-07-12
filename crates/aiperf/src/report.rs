@@ -138,6 +138,13 @@ pub fn print_agentic_table(summary: &AgenticEvaluationSummary) {
         summary.infrastructure_error_count,
         summary.cancelled_count,
     );
+    println!(
+        "Model calls      : {} total, {} agent, {} environment, {} verifier",
+        summary.model_calls,
+        summary.primary_model_calls,
+        summary.environment_model_calls,
+        summary.verifier_model_calls,
+    );
     println!();
     println!(
         "{:<40} {:>9} {:>14} {:>14} {:>14}",

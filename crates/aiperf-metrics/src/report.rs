@@ -377,6 +377,11 @@ pub struct AgenticRunConfigReport {
     pub primary_reward: Option<String>,
     /// Whether cached task packages could be replaced.
     pub overwrite: bool,
+    /// Rust-owned callback ingress advertised to evaluator environments.
+    ///
+    /// The per-run bearer credential is intentionally never reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_gateway_base_url: Option<String>,
 }
 
 /// Generic aggregate statistics over one canonical verifier reward.
@@ -403,6 +408,43 @@ pub struct AgenticEvaluationSummary {
     pub infrastructure_error_count: usize,
     /// Episodes explicitly cancelled by Rust policy.
     pub cancelled_count: usize,
+    /// All primary, environment, and verifier calls dispatched by Rust.
+    pub model_calls: usize,
+    /// Canonical agent calls emitted through the evaluator protocol.
+    pub primary_model_calls: usize,
+    /// Calls requested by task environments and canonical verifiers.
+    pub auxiliary_model_calls: usize,
+    /// Auxiliary calls requested by task environments.
+    pub environment_model_calls: usize,
+    /// Auxiliary calls requested by canonical verifiers.
+    pub verifier_model_calls: usize,
+    /// Prompt tokens across all calls when every call reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    /// Completion tokens across all calls when every call reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    /// Cached tokens across all calls when every call reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    /// Prompt tokens from canonical agent calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_prompt_tokens: Option<u64>,
+    /// Completion tokens from canonical agent calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_completion_tokens: Option<u64>,
+    /// Cached tokens from canonical agent calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_cached_tokens: Option<u64>,
+    /// Prompt tokens from environment and verifier calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_prompt_tokens: Option<u64>,
+    /// Completion tokens from environment and verifier calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_completion_tokens: Option<u64>,
+    /// Cached tokens from environment and verifier calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_cached_tokens: Option<u64>,
     /// Uniform primary reward selected for the run, when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_reward: Option<String>,
@@ -443,6 +485,14 @@ pub struct AgenticEpisodeReport {
     pub duration_seconds: f64,
     /// Number of Rust-owned inference calls.
     pub model_calls: usize,
+    /// Canonical agent calls emitted through the evaluator protocol.
+    pub primary_model_calls: usize,
+    /// Calls requested by task environments and canonical verifiers.
+    pub auxiliary_model_calls: usize,
+    /// Auxiliary calls requested by the task environment.
+    pub environment_model_calls: usize,
+    /// Auxiliary calls requested by the canonical verifier.
+    pub verifier_model_calls: usize,
     /// Aggregate prompt tokens reported by Rust.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u64>,
@@ -452,6 +502,24 @@ pub struct AgenticEpisodeReport {
     /// Aggregate cached prompt tokens reported by Rust.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_tokens: Option<u64>,
+    /// Prompt tokens from canonical agent calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_prompt_tokens: Option<u64>,
+    /// Completion tokens from canonical agent calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_completion_tokens: Option<u64>,
+    /// Cached prompt tokens from canonical agent calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_cached_tokens: Option<u64>,
+    /// Prompt tokens from environment and verifier calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_prompt_tokens: Option<u64>,
+    /// Completion tokens from environment and verifier calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_completion_tokens: Option<u64>,
+    /// Cached prompt tokens from environment and verifier calls only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auxiliary_cached_tokens: Option<u64>,
     /// Infrastructure or cancellation category.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<String>,

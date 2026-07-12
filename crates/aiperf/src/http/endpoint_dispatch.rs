@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use aiperf_endpoints::{
     Endpoint, EndpointConfig, EndpointResult, EndpointType, ParsedResponse, RequestContentType,
-    ResponseData, ServerResponse,
+    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
 };
 use aiperf_metrics::HttpTrace;
 use aiperf_transport::models::{ErrorKind, RequestConfig, RequestRecord, Response, SseMessage};
@@ -207,6 +207,30 @@ impl TransportSink {
                     on_first_token(at_ns.saturating_sub(record.start_ns));
                 }
                 obs.on_classified_token(uuid, self.ms(at_ns), token_kind(data));
+            }
+        }
+
+        if endpoint.metadata().endpoint_type == EndpointType::Chat {
+            let endpoint_record = EndpointRequestRecord {
+                responses: record
+                    .responses
+                    .iter()
+                    .filter_map(endpoint_response)
+                    .collect(),
+            };
+            match endpoint.build_assistant_turn(&endpoint_record) {
+                Ok(Some(turn)) => {
+                    model_response.assistant_message = assistant_message(&turn);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        uuid = %uuid,
+                        error = %error,
+                        "endpoint assistant-message reconstruction failed"
+                    );
+                    parse_failed = true;
+                }
             }
         }
 
@@ -493,6 +517,28 @@ fn absorb_response_data(data: &ResponseData, metadata: &mut ModelResponseMetadat
 
 fn append_metadata_text(target: &mut Option<String>, text: &str) {
     target.get_or_insert_with(String::new).push_str(text);
+}
+
+fn assistant_message(turn: &Turn) -> Option<Value> {
+    if let Some(message) = turn
+        .raw_messages
+        .as_ref()
+        .and_then(|messages| messages.first())
+    {
+        return Some(message.clone());
+    }
+    let content = turn
+        .texts
+        .iter()
+        .flat_map(|media| &media.contents)
+        .cloned()
+        .collect::<String>();
+    (!content.is_empty()).then(|| {
+        serde_json::json!({
+            "role": turn.role.as_deref().unwrap_or("assistant"),
+            "content": content,
+        })
+    })
 }
 
 fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMetrics) {

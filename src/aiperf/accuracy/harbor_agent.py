@@ -72,12 +72,14 @@ class ModelCallBroker:
         self,
         *,
         episode_id: str,
+        model: str | None,
         prompt: str,
         messages: list[dict[str, Any]],
         generation: dict[str, Any],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
         response_format: Any | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> AgenticModelResult:
         """Publish one model request and wait until Rust submits its terminal result."""
         if self._closed:
@@ -95,12 +97,14 @@ class ModelCallBroker:
                     episode_id=episode_id,
                     call_id=call_id,
                     turn_index=turn_index,
+                    model=model,
                     prompt=prompt,
                     messages=messages,
                     generation=generation,
                     tools=list(tools or []),
                     tool_choice=tool_choice,
                     response_format=response_format,
+                    extra_body=dict(extra_body or {}),
                 )
             )
         )
@@ -197,8 +201,12 @@ class AIPerfCallbackLLM(BaseLLM):
         stop = kwargs.get("stop") or []
         if isinstance(stop, str):
             stop = [stop]
+        extra_body = kwargs.get("extra_body") or {}
+        if not isinstance(extra_body, dict):
+            raise TypeError("Harbor extra_body must be an object")
         result = await self._broker.call(
             episode_id=self._episode_id,
+            model=self._model_name,
             prompt=prompt,
             messages=messages,
             generation={
@@ -210,6 +218,7 @@ class AIPerfCallbackLLM(BaseLLM):
             tools=kwargs.get("tools"),
             tool_choice=kwargs.get("tool_choice"),
             response_format=kwargs.get("response_format"),
+            extra_body=extra_body,
         )
         if result.status != "completed":
             message = result.error_message or "Rust inference did not complete"

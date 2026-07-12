@@ -33,6 +33,7 @@ loadgen-core.workspace = true
 mimalloc = "0.1"
 anyhow.workspace = true
 async-trait.workspace = true
+axum.workspace = true
 bytes.workspace = true
 clap.workspace = true
 chrono.workspace = true
@@ -45,6 +46,3 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 url.workspace = true
-
-[dev-dependencies]
-axum.workspace = true

@@ -27,6 +27,9 @@ use aiperf::adaptive::{
     positive_seconds_to_ns,
 };
 use aiperf::agentic::{AgenticWorkload, DatasetAgenticTurnBuilder, finalize_agentic_report};
+use aiperf::agentic_gateway::{
+    AgenticInferenceGateway, HttpAgenticInferenceGateway, resolve_advertised_host,
+};
 use aiperf::ancillary::{AncillaryTimingConfig, parse_base_urls};
 use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
@@ -308,6 +311,10 @@ struct Cli {
     /// Input-accounting tokenizer for evaluator-authored model calls.
     #[arg(long)]
     agentic_tokenizer: Option<String>,
+    /// Hostname or IP that evaluator sandboxes use to reach Rust's authenticated
+    /// auxiliary-inference ingress (default: kernel-selected non-loopback IP).
+    #[arg(long)]
+    agentic_inference_gateway_host: Option<String>,
     /// Log every canonical episode result after the run.
     #[arg(long)]
     agentic_verbose: bool,
@@ -422,6 +429,7 @@ fn has_agentic_flags(cli: &Cli) -> bool {
         || cli.agentic_primary_reward.is_some()
         || cli.agentic_overwrite
         || cli.agentic_tokenizer.is_some()
+        || cli.agentic_inference_gateway_host.is_some()
         || cli.agentic_verbose
 }
 
@@ -658,6 +666,8 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
     let max_tokens = cli.agentic_max_tokens.unwrap_or(4_096);
     let context_window = cli.agentic_context_window.unwrap_or(131_072);
     let parser = cli.agentic_parser.as_deref().unwrap_or("json");
+    let inference_gateway_host =
+        resolve_advertised_host(cli.agentic_inference_gateway_host.as_deref())?;
     anyhow::ensure!(
         model_concurrency > 0,
         "--concurrency must be greater than zero"
@@ -713,6 +723,7 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
         enable_summarize: !cli.agentic_no_summarize,
         primary_reward: cli.agentic_primary_reward.clone(),
         overwrite: cli.agentic_overwrite,
+        inference_gateway: None,
     };
 
     tracing::info!(
@@ -764,13 +775,22 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
             registries.endpoint_resolver(),
         )?);
         let evaluator: Box<dyn AgenticEvaluator> = Box::new(evaluator);
-        let workload = AgenticWorkload::prepare(
+        let inference_gateway =
+            HttpAgenticInferenceGateway::bind(&inference_gateway_host, max_tokens)
+                .await
+                .context("starting Rust agentic auxiliary-inference ingress")?;
+        tracing::info!(
+            base_url = inference_gateway.evaluator_config().base_url,
+            "Rust agentic auxiliary-inference ingress initialized"
+        );
+        let workload = AgenticWorkload::prepare_with_gateway(
             evaluator,
             requested_dataset,
             &model,
             &evaluator_config,
             model_concurrency,
             turn_builder,
+            Some(Box::new(inference_gateway)),
         )
         .await?;
         let evaluator_identity = workload.identity().clone();
@@ -806,7 +826,7 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
                 scheduled,
                 worker_identity,
                 evaluator_identity,
-                &evaluator_config,
+                workload.config(),
                 results,
             )
         }
@@ -848,6 +868,9 @@ fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()
                 rewards = ?result.rewards,
                 primary_reward = ?result.primary_reward,
                 model_calls = result.model_calls,
+                primary_model_calls = result.primary_model_calls,
+                environment_model_calls = result.environment_model_calls,
+                verifier_model_calls = result.verifier_model_calls,
                 error_kind = ?result.error_kind,
                 error_message = ?result.error_message,
                 artifact_path = ?result.artifact_path,

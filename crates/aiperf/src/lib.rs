@@ -17,6 +17,7 @@
 pub mod accuracy;
 pub mod adaptive;
 pub mod agentic;
+pub mod agentic_gateway;
 pub mod ancillary;
 pub mod fixed_schedule;
 pub mod http;
