@@ -252,6 +252,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
         m.next_record = m.next_record.saturating_add(1);
         let input_tokens = self.input_tokens_by_node.get(node_id).copied();
         let record = RecordIngest {
+            request_index: usize::try_from(ordinal).ok(),
             correlation_id: format!("{}:{node_id}:{ordinal}", self.worker_id),
             session_num: ordinal,
             turn_index: node_id

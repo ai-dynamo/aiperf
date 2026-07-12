@@ -113,6 +113,8 @@ pub struct HttpTrace {
 /// One completed request record ready for metric ingestion.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordIngest {
+    /// Absolute zero-based request slot assigned by the workload.
+    pub request_index: Option<usize>,
     /// Request correlation id.
     pub correlation_id: String,
     /// Session sequence number within the run.
@@ -164,9 +166,10 @@ pub struct RecordIngest {
 }
 
 impl RecordIngest {
-    /// Builds the minimal record used by append-only store tests.
+    /// Builds the minimal record used by column-store tests.
     pub fn minimal(start_ns: i64, end_ns: i64, phase: Phase) -> Self {
         Self {
+            request_index: None,
             correlation_id: format!("record-{start_ns}-{end_ns}"),
             session_num: 0,
             turn_index: 0,

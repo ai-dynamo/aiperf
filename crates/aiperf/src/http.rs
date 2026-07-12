@@ -531,6 +531,11 @@ pub trait HttpTurnExecutionBackend {
     /// Set the shared run origin after backend startup and before dispatch.
     fn set_run_origin(&self, start_ns: i64) -> Result<()>;
 
+    /// Whether endpoint-normalized response frames can cross this placement.
+    fn supports_response_streaming(&self) -> bool {
+        false
+    }
+
     /// Resolve labels using the same endpoint/model selection as execution.
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
 
@@ -543,6 +548,20 @@ pub trait HttpTurnExecutionBackend {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult>;
+
+    /// Execute one prepared request while forwarding endpoint-normalized
+    /// response frames before terminal completion.
+    async fn execute_turn_streaming(
+        &self,
+        _turn: PreparedHttpTurn,
+        _observer: &dyn RequestObserver,
+        _on_first_token: &dyn Fn(i64),
+        _responses: &dyn TurnResponseObserver,
+    ) -> Result<HttpTurnDispatchResult> {
+        Err(anyhow::anyhow!(
+            "selected HTTP execution placement does not support response streaming"
+        ))
+    }
 
     /// Drain backend-owned execution resources after all dispatched turns have
     /// reached terminal. In-process direct execution owns no extra resources;
@@ -1243,6 +1262,10 @@ impl HttpTurnExecutionBackend for TransportSink {
         Ok(())
     }
 
+    fn supports_response_streaming(&self) -> bool {
+        true
+    }
+
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         <Self as TurnDispatcher>::inference_dimensions(self, turn)
     }
@@ -1255,6 +1278,22 @@ impl HttpTurnExecutionBackend for TransportSink {
     ) -> Result<HttpTurnDispatchResult> {
         self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
             .await
+    }
+
+    async fn execute_turn_streaming(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<HttpTurnDispatchResult> {
+        self.dispatch_prepared_turn_collect_record_streaming(
+            turn,
+            observer,
+            on_first_token,
+            responses,
+        )
+        .await
     }
 }
 
@@ -1313,6 +1352,24 @@ impl TransportSink {
         .await
     }
 
+    /// Execute an owned scheduler-free command while publishing live,
+    /// endpoint-normalized response frames.
+    pub async fn dispatch_prepared_turn_collect_record_streaming(
+        &self,
+        turn: PreparedHttpTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<HttpTurnDispatchResult> {
+        self.dispatch_prepared_turn_collect_record_with_response_observer(
+            turn,
+            observer,
+            on_first_token,
+            Some(responses),
+        )
+        .await
+    }
+
     async fn dispatch_prepared_turn_collect_record_with_response_observer(
         &self,
         turn: PreparedHttpTurn,
@@ -1322,7 +1379,7 @@ impl TransportSink {
     ) -> Result<HttpTurnDispatchResult> {
         let PreparedHttpTurn {
             request,
-            model: _,
+            model,
             endpoint,
             endpoint_aware,
         } = turn;
@@ -1357,6 +1414,7 @@ impl TransportSink {
                     self.dispatch_prepared_endpoint_collect_record_with_hooks(
                         request,
                         endpoint,
+                        &model,
                         observer,
                         on_first_token,
                         responses,
