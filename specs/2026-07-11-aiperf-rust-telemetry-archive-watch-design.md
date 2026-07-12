@@ -5,9 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # AIPerf-Rust: durable telemetry archive and `aiperf watch`
 
-**Date:** 2026-07-11  
-**Author:** Anthony Casagrande (Tech Lead) + Codex  
-**Status:** design — not built  
+**Date:** 2026-07-11
+**Author:** Anthony Casagrande (Tech Lead) + Codex
+**Status:** design — not built
 **Decision:** adopt the useful operational ideas demonstrated by Tachometer—an always-on watch
 surface, per-source cadence/failure isolation, topology enrichment, immutable columnar history,
 and periodic object-store durability—without importing Tachometer's parser, row schema, filter
