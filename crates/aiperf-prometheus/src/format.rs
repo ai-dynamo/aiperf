@@ -44,7 +44,7 @@ impl ExpositionFormat {
                 .split_once('=')
                 .ok_or_else(|| ContentTypeError::MalformedParameter(raw.trim().to_string()))?;
             let name = name.trim().to_ascii_lowercase();
-            let value = value.trim().trim_matches('"').to_ascii_lowercase();
+            let value = parse_parameter_value(value.trim())?.to_ascii_lowercase();
             if name.is_empty() || value.is_empty() {
                 return Err(ContentTypeError::MalformedParameter(raw.trim().to_string()));
             }
@@ -103,6 +103,22 @@ impl ExpositionFormat {
                 "application/openmetrics-text; version=1.0.0; charset=utf-8"
             }
         }
+    }
+}
+
+fn parse_parameter_value(value: &str) -> Result<&str, ContentTypeError> {
+    if let Some(inner) = value.strip_prefix('"') {
+        let Some(inner) = inner.strip_suffix('"') else {
+            return Err(ContentTypeError::MalformedParameter(value.to_string()));
+        };
+        if inner.contains(['"', '\\']) {
+            return Err(ContentTypeError::MalformedParameter(value.to_string()));
+        }
+        Ok(inner)
+    } else if value.contains('"') || value.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        Err(ContentTypeError::MalformedParameter(value.to_string()))
+    } else {
+        Ok(value)
     }
 }
 

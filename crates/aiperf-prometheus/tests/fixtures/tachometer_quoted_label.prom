@@ -1,0 +1,1 @@
+vllm:num_requests_running{model_name="meta-llama/Llama-3.1-8B, revision=\"prod\", path=C:\\models"} 3

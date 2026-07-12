@@ -92,6 +92,20 @@ impl ExactDecimal {
         if self.is_zero() && other.is_zero() {
             return Ordering::Equal;
         }
+        if self.is_zero() {
+            return if other.negative {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            };
+        }
+        if other.is_zero() {
+            return if self.negative {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
         if self.negative != other.negative {
             return if self.negative {
                 Ordering::Less
@@ -178,9 +192,14 @@ impl ExactDecimal {
             if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
                 return Err(NumberError::InvalidSyntax);
             }
-            let magnitude = digits
-                .parse::<i64>()
-                .map_err(|_| NumberError::ExponentOutOfRange)?;
+            let normalized_digits = digits.trim_start_matches('0');
+            let magnitude = if normalized_digits.is_empty() {
+                0
+            } else {
+                normalized_digits
+                    .parse::<i64>()
+                    .map_err(|_| NumberError::ExponentOutOfRange)?
+            };
             if negative_exponent {
                 magnitude
                     .checked_neg()
@@ -728,5 +747,9 @@ mod tests {
         assert!(left.numeric_eq(&right));
         let (small, _) = ExactDecimal::parse("0.999").unwrap();
         assert_eq!(small.numeric_cmp(&left), Ordering::Less);
+        let (zero, _) = ExactDecimal::parse("0").unwrap();
+        let (negative, _) = ExactDecimal::parse("-0.001").unwrap();
+        assert_eq!(small.numeric_cmp(&zero), Ordering::Greater);
+        assert_eq!(negative.numeric_cmp(&zero), Ordering::Less);
     }
 }

@@ -31,6 +31,7 @@ struct FamilyDraft {
     help_seen: bool,
     type_seen: bool,
     unit_seen: bool,
+    descriptor_lines: Vec<usize>,
     family_seq: u64,
     samples: Vec<WireSample>,
 }
@@ -51,6 +52,7 @@ impl FamilyDraft {
             help_seen: false,
             type_seen: false,
             unit_seen: false,
+            descriptor_lines: Vec::new(),
             family_seq: line as u64,
             samples: Vec::new(),
         }
@@ -115,6 +117,7 @@ pub(crate) fn assemble_exposition(
 
     if format == ExpositionFormat::OpenMetricsText100 {
         validate_openmetrics_family_name_collisions(&families)?;
+        validate_openmetrics_family_blocks(&families)?;
     }
     for family in &families {
         validate_family_metadata(format, family)?;
@@ -204,6 +207,7 @@ fn apply_descriptor(
     };
     let family = &mut families[family_index];
     family.family_seq = family.family_seq.min(descriptor.line as u64);
+    family.descriptor_lines.push(descriptor.line);
     match descriptor.kind {
         DescriptorKind::Help(value) => {
             if family.help_seen {
@@ -425,6 +429,42 @@ fn validate_openmetrics_family_name_collisions(families: &[FamilyDraft]) -> Resu
     Ok(())
 }
 
+fn validate_openmetrics_family_blocks(families: &[FamilyDraft]) -> Result<(), ParseError> {
+    let mut events = Vec::<(usize, usize)>::new();
+    for (family_index, family) in families.iter().enumerate() {
+        events.extend(
+            family
+                .descriptor_lines
+                .iter()
+                .map(|line| (*line, family_index)),
+        );
+        events.extend(
+            family
+                .samples
+                .iter()
+                .map(|sample| (sample.line, family_index)),
+        );
+    }
+    events.sort_unstable_by_key(|event| event.0);
+    let mut current = None::<usize>;
+    let mut closed = BTreeSet::<usize>::new();
+    for (line, family_index) in events {
+        if current == Some(family_index) {
+            continue;
+        }
+        if closed.contains(&family_index) {
+            return Err(semantic_error(
+                line,
+                "OpenMetrics family descriptors and metrics must form one contiguous block",
+            ));
+        }
+        if let Some(previous) = current.replace(family_index) {
+            closed.insert(previous);
+        }
+    }
+    Ok(())
+}
+
 fn possible_emitted_names(family: &FamilyDraft) -> Vec<String> {
     let name = &family.name;
     match family.semantic_type {
@@ -456,14 +496,7 @@ fn validate_family_metadata(
     family: &FamilyDraft,
 ) -> Result<(), ParseError> {
     if let Some(first_sample_line) = family.first_sample_line() {
-        for metadata_line in [
-            family.help.as_ref().map(|line| line.line),
-            family.type_line,
-            family.unit.as_ref().map(|line| line.line),
-        ]
-        .into_iter()
-        .flatten()
-        {
+        for metadata_line in family.descriptor_lines.iter().copied() {
             if metadata_line > first_sample_line {
                 return Err(metadata_error(
                     metadata_line,

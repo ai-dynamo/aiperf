@@ -84,18 +84,23 @@ pub(crate) fn parse_document(
         ));
     }
 
+    let physical_line_count = if body.is_empty() {
+        0
+    } else {
+        body.bytes().filter(|byte| *byte == b'\n').count() + usize::from(!body.ends_with('\n'))
+    };
+    if physical_line_count > limits.max_lines {
+        return Err(ParseError::body(
+            ParseErrorKind::LimitExceeded(LimitKind::Lines),
+            "exposition exceeds max_lines",
+        ));
+    }
     let without_optional_final_lf = body.strip_suffix('\n').unwrap_or(body);
     let lines = if without_optional_final_lf.is_empty() {
         Vec::new()
     } else {
         without_optional_final_lf.split('\n').collect::<Vec<_>>()
     };
-    if lines.len() > limits.max_lines {
-        return Err(ParseError::body(
-            ParseErrorKind::LimitExceeded(LimitKind::Lines),
-            "exposition exceeds max_lines",
-        ));
-    }
     for (index, line) in lines.iter().enumerate() {
         if line.len() > limits.max_line_bytes {
             return Err(ParseError::line(

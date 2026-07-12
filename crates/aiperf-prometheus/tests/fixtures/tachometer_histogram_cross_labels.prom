@@ -1,0 +1,10 @@
+# HELP vllm_request_queue_time_seconds Queue time by served model.
+# TYPE vllm_request_queue_time_seconds histogram
+vllm_request_queue_time_seconds_bucket{model_name="model-a",le="0.1"} 2
+vllm_request_queue_time_seconds_bucket{model_name="model-b",le="0.1"} 7
+vllm_request_queue_time_seconds_bucket{model_name="model-a",le="+Inf"} 3
+vllm_request_queue_time_seconds_count{model_name="model-a"} 3
+vllm_request_queue_time_seconds_sum{model_name="model-a"} 0.2
+vllm_request_queue_time_seconds_bucket{model_name="model-b",le="+Inf"} 11
+vllm_request_queue_time_seconds_count{model_name="model-b"} 11
+vllm_request_queue_time_seconds_sum{model_name="model-b"} 0.9
