@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
+use aiperf_graph::input::GraphInputAdapterRegistry;
 use aiperf_runner::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
@@ -196,7 +197,9 @@ fn run_v2(input: &[u8]) -> ! {
                 format!("{error:#}"),
             ),
         };
-    let run_context = match RunnerRunContext::new(product_registry, endpoint_profiles) {
+    let graph_inputs = Arc::new(GraphInputAdapterRegistry::with_builtin_adapters());
+    let run_context = match RunnerRunContext::new(product_registry, graph_inputs, endpoint_profiles)
+    {
         Ok(context) => context,
         Err(error) => write_v2_validation_failure(
             envelope.operation,

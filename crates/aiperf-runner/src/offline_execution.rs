@@ -43,9 +43,7 @@ use aiperf_dataset::{
 };
 use aiperf_endpoints::EndpointConfig;
 use aiperf_graph::bench::BenchConfig;
-use aiperf_graph::input::{
-    GraphInputAdapterRegistry, GraphInputAdapterResolver, GraphInputBundle, GraphInputConfig,
-};
+use aiperf_graph::input::{GraphInputBundle, GraphInputConfig};
 use aiperf_graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     FailFastRunFailurePolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
@@ -736,25 +734,15 @@ impl RunnerBackendFactory for DynamoOfflineBackendFactory {
     }
 }
 
-/// Add the offline backend and its executable direct-graph pair to a mutable
-/// runner registry using the stock authored-input adapters.
-pub fn register_dynamo_offline_backend(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    register_dynamo_offline_with_graph_inputs(
-        builder,
-        Arc::new(GraphInputAdapterRegistry::with_builtin_adapters()),
-    )
-}
-
-/// Register the offline backend with an injected direct graph-input universe.
+/// Add the offline backend and its executable workload pairs to a mutable
+/// runner registry.
 ///
-/// Custom statically linked runner distributions use this form so adding an
-/// authored source adapter does not require a coordinator string branch.
-pub fn register_dynamo_offline_with_graph_inputs(
-    builder: &mut RunnerRegistryBuilder,
-    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
-) -> Result<()> {
+/// Direct graph preparation resolves its authored-input adapter from the
+/// coordinator-owned [`RunnerRunContext`], so the pair never constructs or
+/// retains a private adapter universe.
+pub fn register_dynamo_offline_backend(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_backend(Arc::new(DynamoOfflineBackendFactory))?;
-    builder.register_pair(Arc::new(DynamoOfflineGraphPairFactory { graph_inputs }))?;
+    builder.register_pair(Arc::new(DynamoOfflineGraphPairFactory))?;
     builder.register_pair(Arc::new(DynamoOfflineScheduledPairFactory::default()))
 }
 
@@ -1500,9 +1488,7 @@ fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
     Ok((value * 1_000_000_000.0).round_ties_even() as i64)
 }
 
-struct DynamoOfflineGraphPairFactory {
-    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
-}
+struct DynamoOfflineGraphPairFactory;
 
 impl fmt::Debug for DynamoOfflineGraphPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1544,7 +1530,19 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
 
     fn prepare(
         &self,
+        _run: &AuthoredRunSpecV2,
+        _backend: Box<dyn ValidatedBackendConfig>,
+        _workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        Err(anyhow!(
+            "dynamo_offline + graph preparation requires the coordinator-owned RunnerRunContext"
+        ))
+    }
+
+    fn prepare_with_context(
+        &self,
         run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
         backend: Box<dyn ValidatedBackendConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
@@ -1587,8 +1585,8 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
 
         let model = run.models.items[0].name.clone();
         let tokenizer = tokenizer.load(&model)?;
-        let adapter = self
-            .graph_inputs
+        let adapter = context
+            .graph_inputs()
             .find("dag_jsonl")
             .ok_or_else(|| anyhow!("no direct graph adapter is registered for dag_jsonl"))?;
         let runtime = tokio::runtime::Builder::new_current_thread()

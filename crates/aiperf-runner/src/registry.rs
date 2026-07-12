@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
 use aiperf_extensions::AiperfRegistry;
+use aiperf_graph::input::GraphInputAdapterResolver;
 use aiperf_transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
@@ -745,6 +746,7 @@ pub struct ValidatedEndpointProfileV2 {
 #[derive(Clone)]
 pub struct RunnerRunContext {
     product_registry: Arc<AiperfRegistry>,
+    graph_inputs: Arc<dyn GraphInputAdapterResolver>,
     endpoint_profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     endpoint_profile_indexes: Arc<BTreeMap<String, usize>>,
 }
@@ -769,6 +771,7 @@ impl RunnerRunContext {
     /// Freeze one validated profile collection beside the process registry.
     pub fn new(
         product_registry: Arc<AiperfRegistry>,
+        graph_inputs: Arc<dyn GraphInputAdapterResolver>,
         profiles: Vec<ValidatedEndpointProfileV2>,
     ) -> Result<Self> {
         let mut endpoint_profile_indexes = BTreeMap::new();
@@ -787,6 +790,7 @@ impl RunnerRunContext {
         );
         Ok(Self {
             product_registry,
+            graph_inputs,
             endpoint_profiles: Arc::new(profiles),
             endpoint_profile_indexes: Arc::new(endpoint_profile_indexes),
         })
@@ -800,6 +804,16 @@ impl RunnerRunContext {
     /// Clone the cheap shared registry handle into a prepared operation.
     pub fn product_registry_handle(&self) -> Arc<AiperfRegistry> {
         self.product_registry.clone()
+    }
+
+    /// Borrow the frozen graph-input resolver composed by the coordinator.
+    pub fn graph_inputs(&self) -> &dyn GraphInputAdapterResolver {
+        self.graph_inputs.as_ref()
+    }
+
+    /// Clone the graph-input resolver handle into a prepared graph operation.
+    pub fn graph_inputs_handle(&self) -> Arc<dyn GraphInputAdapterResolver> {
+        self.graph_inputs.clone()
     }
 
     /// Resolve a run-local endpoint profile without reparsing authored JSON.
@@ -1374,6 +1388,7 @@ mod tests {
         };
         let context = RunnerRunContext::new(
             Arc::new(AiperfRegistry::builtin().unwrap()),
+            Arc::new(aiperf_graph::input::GraphInputAdapterRegistry::with_builtin_adapters()),
             vec![
                 profile("default", "chat"),
                 profile("z-last", "messages"),
