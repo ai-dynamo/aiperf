@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "pages": [
+    {
+      "id": "system-ownership",
+      "title": "System ownership",
+      "route": "/"
+    }
+  ]
+}
