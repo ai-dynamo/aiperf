@@ -63,6 +63,22 @@ fn simple_non_streaming_request_is_byte_exact_with_pr_731() {
 }
 
 #[test]
+fn extra_numeric_values_use_orjson_equivalent_wire_spelling() {
+    let mut turn = text_turn("numbers");
+    turn.extra_body = Some(Map::from_iter([(
+        "values".into(),
+        json!([0.2, 1e-7, 1e20, -0.0, 1.2345678901234567]),
+    )]));
+    let body = MessagesEndpoint
+        .format_payload(&request(vec![turn], false))
+        .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&body).unwrap(),
+        br#"{"model":"test-model","messages":[{"role":"user","content":"numbers"}],"max_tokens":1024,"values":[0.2,1e-7,1e+20,-0.0,1.2345678901234567]}"#
+    );
+}
+
+#[test]
 fn authored_empty_raw_messages_suppresses_the_synthetic_turn() {
     let mut turn = text_turn("must not be rendered");
     turn.raw_messages = Some(Vec::new());
