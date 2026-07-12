@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll, Waker};
 
 use aiperf_clock::{Clock, SimClock};
+use tokio::sync::Notify;
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::observer::CollectorObserver;
 use aiperf_dataset::{Handle, TextTokenizer, TiktokenTokenizer};
@@ -36,7 +37,9 @@ use aiperf_graph::model::{GraphTracePlan, TraceRecord};
 use aiperf_graph::policy::{
     CompositeNodeDispatchPolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
 };
-use aiperf_graph::runtime::{SimDriveError, SimEventSource, SimStep, drive_sim_with_source};
+use aiperf_graph::runtime::{
+    SimDriveError, SimEventSource, SimStep, drive_real_with_source, drive_sim_with_source,
+};
 use aiperf_graph::segment::SegmentStore;
 use aiperf_graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf_graph::transport_bench::GraphRpsReport;
@@ -889,8 +892,29 @@ impl OfflineScheduledExecution {
 }
 
 fn finish_shared_metrics(
+    aiperf: loadgen_core::collector::TraceSimulationReport,
+    dynamo: DynamoSimulationReport,
+) -> Result<(
+    loadgen_core::collector::TraceSimulationReport,
+    DynamoSimulationReport,
+    OfflineMetricParity,
+)> {
+    // Deterministic (virtual-clock) runs require byte-exact AIPerf/Dynamo parity.
+    finish_shared_metrics_enforcing(aiperf, dynamo, true)
+}
+
+/// Import backend-owned resource facts and, when `enforce_byte_parity`, prove the
+/// AIPerf and Dynamo shared-metric serializations are byte-identical.
+///
+/// The wall-clock (`drive_real_with_source`) online mode passes `false`: request
+/// and token counts still match, but latency/throughput are measured against real
+/// timers and cannot be byte-identical to the engine's internal completion times,
+/// so the proof is skipped while the same resource import and parity accounting
+/// are retained.
+fn finish_shared_metrics_enforcing(
     mut aiperf: loadgen_core::collector::TraceSimulationReport,
     dynamo: DynamoSimulationReport,
+    enforce_byte_parity: bool,
 ) -> Result<(
     loadgen_core::collector::TraceSimulationReport,
     DynamoSimulationReport,
@@ -935,7 +959,7 @@ fn finish_shared_metrics(
     let dynamo_bytes = dynamo
         .canonical_shared_metric_bytes()
         .context("failed to serialize Dynamo shared metrics")?;
-    if aiperf_bytes != dynamo_bytes {
+    if enforce_byte_parity && aiperf_bytes != dynamo_bytes {
         anyhow::bail!(
             "AIPerf/Dynamo shared metric byte mismatch: {}",
             shared_metric_diff(&aiperf_bytes, &dynamo_bytes)
@@ -1356,7 +1380,19 @@ impl PartialOrd for ScheduledCancellation {
 /// completion mailboxes. Engine steps never hold a waiter borrow while waking a
 /// task, so resumed dispatch futures can immediately remove their mailbox.
 struct EngineHost {
-    clock: Rc<SimClock>,
+    clock: Rc<dyn Clock>,
+    /// The virtual clock, present only under the DES (`drive_sim_with_source`)
+    /// driver. It is used solely to bound an engine step so it never overshoots
+    /// a pending arrival/gate — the deterministic-ordering guarantee. Under the
+    /// wall-clock (`drive_real_with_source`) driver this is `None`: arrivals
+    /// arrive in real time and the driver's producer wakeup re-evaluates the
+    /// next engine event, so no virtual look-ahead exists (or is wanted).
+    sim_clock: Option<Rc<SimClock>>,
+    /// Notified whenever a request enters the engine, so the wall-clock
+    /// (`drive_real_with_source`) driver re-evaluates the next engine event
+    /// instead of waiting out a now-stale sleep. Inert under the DES driver,
+    /// which re-checks the source every pump round.
+    submit_wakeup: Rc<Notify>,
     engine: RefCell<Box<dyn SteppableReplay>>,
     event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
     waiters: Waiters,
@@ -1408,8 +1444,35 @@ impl EngineHost {
         factory: &dyn OfflineEngineFactory,
         event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
     ) -> Result<Rc<Self>> {
+        let dyn_clock: Rc<dyn Clock> = clock.clone();
+        Self::new_over_clock(dyn_clock, Some(clock), config, factory, event_delivery)
+    }
+
+    /// Build over a wall clock (or any `Clock`) with no virtual look-ahead.
+    ///
+    /// Used by the real-time (`drive_real_with_source`) driver: the engine steps
+    /// only to the driver-supplied event time and never bounds itself by a
+    /// virtual next-event, since arrivals occur in real time.
+    fn new_real_with_factory_and_delivery(
+        clock: Rc<dyn Clock>,
+        config: &OfflineEngineConfig,
+        factory: &dyn OfflineEngineFactory,
+        event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
+    ) -> Result<Rc<Self>> {
+        Self::new_over_clock(clock, None, config, factory, event_delivery)
+    }
+
+    fn new_over_clock(
+        clock: Rc<dyn Clock>,
+        sim_clock: Option<Rc<SimClock>>,
+        config: &OfflineEngineConfig,
+        factory: &dyn OfflineEngineFactory,
+        event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
+    ) -> Result<Rc<Self>> {
         Ok(Rc::new(Self {
             clock,
+            sim_clock,
+            submit_wakeup: Rc::new(Notify::new()),
             engine: RefCell::new(factory.build(config)?),
             event_delivery,
             waiters: RefCell::new(FxHashMap::default()),
@@ -1417,6 +1480,11 @@ impl EngineHost {
             cancellations: RefCell::new(BinaryHeap::new()),
             cancellation_by_uuid: RefCell::new(FxHashMap::default()),
         }))
+    }
+
+    /// Wakeup notified on each request submission, for the wall-clock driver.
+    fn submit_wakeup(&self) -> Rc<Notify> {
+        self.submit_wakeup.clone()
     }
 
     fn submit(&self, request: DirectRequest) -> Result<(Uuid, Rc<Waiter>)> {
@@ -1441,6 +1509,8 @@ impl EngineHost {
         {
             anyhow::bail!("duplicate in-flight Dynamo request id {uuid}");
         }
+        // New work is queued: nudge the wall-clock driver to re-evaluate.
+        self.submit_wakeup.notify_one();
         Ok((uuid, waiter))
     }
 
@@ -1633,7 +1703,11 @@ impl SimEventSource for EngineHost {
             (before_ms, before_in_flight, before_event_ms)
         };
 
-        let until_ns = match (self.clock.next_event_time(), self.next_cancellation_ns()) {
+        let clock_event = self
+            .sim_clock
+            .as_ref()
+            .and_then(|sim_clock| sim_clock.next_event_time());
+        let until_ns = match (clock_event, self.next_cancellation_ns()) {
             (Some(clock), Some(cancel)) => Some(clock.min(cancel)),
             (Some(clock), None) => Some(clock),
             (None, Some(cancel)) => Some(cancel),
@@ -1869,7 +1943,7 @@ type CachedTracePrompt = (Handle, usize, Box<[u32]>);
 /// `RequestSink<HttpRequest>` and scheduled-turn adapter over one [`EngineHost`].
 struct DynamoOfflineSink {
     host: Rc<EngineHost>,
-    clock: Rc<SimClock>,
+    clock: Rc<dyn Clock>,
     start_ns: i64,
     model: String,
     request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
@@ -1879,14 +1953,14 @@ struct DynamoOfflineSink {
 }
 
 impl DynamoOfflineSink {
-    fn new(host: Rc<EngineHost>, clock: Rc<SimClock>, model: String) -> Rc<Self> {
+    fn new(host: Rc<EngineHost>, clock: Rc<dyn Clock>, model: String) -> Rc<Self> {
         let encoder = Rc::new(OpenAiRequestEncoder::default());
         Self::new_with_encoders(host, clock, model, encoder.clone(), encoder)
     }
 
     fn new_with_encoders(
         host: Rc<EngineHost>,
-        clock: Rc<SimClock>,
+        clock: Rc<dyn Clock>,
         model: String,
         request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
         graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
@@ -1903,7 +1977,7 @@ impl DynamoOfflineSink {
 
     fn new_with_all_encoders(
         host: Rc<EngineHost>,
-        clock: Rc<SimClock>,
+        clock: Rc<dyn Clock>,
         model: String,
         request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
         graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
@@ -2278,6 +2352,87 @@ pub fn run_paced_offline(
         .context("Dynamo offline driver exited without a paced result")??;
     let dynamo = host.take_report_at(aiperf.performance.throughput.wall_time_ms);
     let (performance, dynamo, parity) = finish_shared_metrics(aiperf.performance, dynamo)?;
+    aiperf.performance = performance;
+    inject_dynamo_goodput(&mut aiperf.metrics, &dynamo);
+    Ok(OfflineRunReport {
+        aiperf,
+        dynamo,
+        parity,
+    })
+}
+
+/// Run the ordinary concurrency/request-rate issuer against the in-process
+/// Dynamo engine under the **wall clock** — the real-time in-process mode.
+///
+/// Identical to [`run_paced_offline`] (same sink, `run_paced_with_backend`
+/// issuer, materializer, observer, and report) except the engine is stepped in
+/// real time by [`drive_real_with_source`] instead of fast-forwarded by the DES
+/// pump, and the AIPerf/Dynamo byte-exact parity proof is relaxed (real-timer
+/// latencies cannot match the engine's internal completion times). Request and
+/// token counts remain exact. Trace timing must already be speed-scaled or the
+/// run takes the trace's real duration.
+#[allow(clippy::too_many_arguments)]
+pub fn run_paced_online(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    workload: SkeletonWorkload,
+    pattern: ArrivalPattern,
+    rate: Option<f64>,
+    smoothness: Option<f64>,
+    concurrency: Option<usize>,
+    prefill_concurrency: Option<usize>,
+    stop: StopConfig,
+    seed: u64,
+    adaptive: Option<AdaptiveRunConfig>,
+    ancillary: AncillaryTimingConfig,
+) -> Result<OfflineRunReport> {
+    ancillary.validate()?;
+    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let host = EngineHost::new_real_with_factory_and_delivery(
+        clock.clone(),
+        &engine_config,
+        &NativeDynamoEngineFactory,
+        Rc::new(IncrementalOfflineEventDelivery),
+    )?;
+    let sink: Rc<dyn HttpRequestDispatcher> =
+        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let result = Rc::new(RefCell::new(None));
+    let result_for_body = result.clone();
+    let clock_for_body: Rc<dyn Clock> = clock.clone();
+    let start_ns = clock.now_ns();
+    let source: Rc<dyn SimEventSource> = host.clone();
+    let wakeup = host.submit_wakeup();
+    let outcome = drive_real_with_source(source, wakeup, move |_handle| async move {
+        let run = run_paced_with_backend(
+            clock_for_body,
+            start_ns,
+            sink,
+            vec!["dynamo-offline".to_string()],
+            workload,
+            pattern,
+            rate,
+            smoothness,
+            concurrency,
+            prefill_concurrency,
+            stop,
+            seed,
+            adaptive,
+            ancillary,
+        )
+        .await;
+        *result_for_body.borrow_mut() = Some(run);
+    })?;
+    anyhow::ensure!(
+        !outcome.deadlocked,
+        "Dynamo online (wall-clock in-process) run deadlocked"
+    );
+    let mut aiperf = result
+        .borrow_mut()
+        .take()
+        .context("Dynamo online driver exited without a paced result")??;
+    let dynamo = host.take_report_at(aiperf.performance.throughput.wall_time_ms);
+    let (performance, dynamo, parity) =
+        finish_shared_metrics_enforcing(aiperf.performance, dynamo, false)?;
     aiperf.performance = performance;
     inject_dynamo_goodput(&mut aiperf.metrics, &dynamo);
     Ok(OfflineRunReport {
@@ -3703,6 +3858,54 @@ pub fn run_scheduled_backend_offline(
     finish_scheduled_backend(host, execution)
 }
 
+/// Drive a scheduled runtime against the in-process Dynamo engine under the
+/// **wall clock** — the real-time in-process mode (Dynamo's `--replay-mode
+/// online`): no sockets, no HTTP, no frontend, but the engine is stepped in real
+/// time rather than fast-forwarded. It reuses the exact same `EngineHost`,
+/// `DynamoOfflineSink`, materializer, observer, and report as
+/// [`run_scheduled_backend_offline`]; only the driver differs
+/// ([`drive_real_with_source`] vs [`drive_sim_with_source`]) — the
+/// `{transport, clock}` seam varying its clock axis.
+///
+/// Unlike the offline path this is not deterministic (real timers carry jitter),
+/// and it advances in real time: trace timing must already be speed-scaled (as
+/// the offline `--speedup-ratio` does) or the run takes the trace's real
+/// duration. Use it to measure the engine/scheduler/router at its live
+/// throughput ceiling with the serving stack removed.
+pub fn run_scheduled_backend_online(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    factory: Box<dyn OfflineScheduledRunFactory>,
+) -> Result<OfflineScheduledReport> {
+    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let host = EngineHost::new_real_with_factory_and_delivery(
+        clock.clone(),
+        &engine_config,
+        &NativeDynamoEngineFactory,
+        Rc::new(IncrementalOfflineEventDelivery),
+    )?;
+    let dispatcher: Rc<dyn TurnDispatcher> =
+        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let start_ns = clock.now_ns();
+    let future = factory.create(clock.clone(), start_ns, dispatcher);
+    let result = Rc::new(RefCell::new(None));
+    let result_for_body = result.clone();
+    let source: Rc<dyn SimEventSource> = host.clone();
+    let wakeup = host.submit_wakeup();
+    let outcome = drive_real_with_source(source, wakeup, move |_handle| async move {
+        *result_for_body.borrow_mut() = Some(future.await);
+    })?;
+    anyhow::ensure!(
+        !outcome.deadlocked,
+        "Dynamo online (wall-clock in-process) scheduled run deadlocked"
+    );
+    let execution = result
+        .borrow_mut()
+        .take()
+        .context("Dynamo online driver exited without a scheduled result")??;
+    finish_scheduled_backend_online(host, execution)
+}
+
 /// Drive a scheduled runtime whose expensive report reduction is deferred
 /// until after the Tokio DES runtime has exited.
 pub fn run_scheduled_backend_offline_deferred(
@@ -3764,11 +3967,31 @@ fn finish_scheduled_backend(
     finish_scheduled_backend_with_report(execution, dynamo)
 }
 
+/// Finalize a wall-clock (online) scheduled run: identical to
+/// [`finish_scheduled_backend`] but without the byte-exact parity proof, which
+/// real-timer latencies cannot satisfy against the engine's internal report.
+fn finish_scheduled_backend_online(
+    host: Rc<EngineHost>,
+    execution: OfflineScheduledExecution,
+) -> Result<OfflineScheduledReport> {
+    let dynamo = host.take_report_at(execution.performance.throughput.wall_time_ms);
+    finish_scheduled_backend_with_report_enforcing(execution, dynamo, false)
+}
+
 fn finish_scheduled_backend_with_report(
-    mut execution: OfflineScheduledExecution,
+    execution: OfflineScheduledExecution,
     dynamo: DynamoSimulationReport,
 ) -> Result<OfflineScheduledReport> {
-    let (performance, dynamo, parity) = finish_shared_metrics(execution.performance, dynamo)?;
+    finish_scheduled_backend_with_report_enforcing(execution, dynamo, true)
+}
+
+fn finish_scheduled_backend_with_report_enforcing(
+    mut execution: OfflineScheduledExecution,
+    dynamo: DynamoSimulationReport,
+    enforce_byte_parity: bool,
+) -> Result<OfflineScheduledReport> {
+    let (performance, dynamo, parity) =
+        finish_shared_metrics_enforcing(execution.performance, dynamo, enforce_byte_parity)?;
     if execution.aggregate_is_profiling {
         execution.profiling.performance = performance.clone();
         inject_dynamo_goodput(&mut execution.profiling.native_metrics, &dynamo);
@@ -4406,6 +4629,42 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("mean_ttft_ms"));
+    }
+
+    #[test]
+    fn online_wall_clock_runs_end_to_end_in_process_without_http() {
+        // The wall-clock (drive_real_with_source) driver runs the same in-process
+        // Dynamo engine as the offline DES path — no sockets, no frontend — but in
+        // real time. Request/token counts stay exact; latencies come from real
+        // timers so byte-exact parity is (correctly) not asserted.
+        let report = run_paced_online(
+            OfflineEngineConfig::default(),
+            "model".to_string(),
+            workload(8),
+            ArrivalPattern::ConcurrencyBurst,
+            None,
+            None,
+            Some(4),
+            None,
+            StopConfig {
+                total_expected_requests: Some(8),
+                ..StopConfig::default()
+            },
+            7,
+            None,
+            AncillaryTimingConfig::default(),
+        )
+        .unwrap();
+
+        assert_eq!(report.aiperf.performance.request_counts.num_requests, 8);
+        assert_eq!(
+            report.aiperf.performance.request_counts.completed_requests,
+            8
+        );
+        assert_eq!(report.dynamo.request_counts.completed_requests, 8);
+        // Same in-process engine, real clock: it produced real, non-negative
+        // per-request timing without ever opening a socket.
+        assert!(report.aiperf.performance.latency.ttft.mean_ms >= 0.0);
     }
 
     #[test]
