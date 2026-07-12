@@ -37,9 +37,69 @@ GREEN/full verification commands and exact results:
 
 commit hash(es):
 - `6f40d5327`
+- `fa30ee23c`
 
 self-review findings and remaining concerns:
 - implemented hierarchical graph catalog primitives (tiers, parents/children, seam ports, edge ports, flow channels, scenes, audience depth/visibility, execution flavors, explicit built/planned status model).
 - implemented integrity checks for all required graph-first failure classes, including planned/built evidence policy and Dynamo-online runner planned-only enforcement.
 - concern: graph catalog content currently focuses on canonical validation coverage and scene grounding rather than full UX-oriented node granularity; follow-up Task 2+ can refine graph density and layout semantics.
-- concern: the graph catalog data module uses explicit casting to preserve compatibility with existing UI types while introducing the new canonical model; this keeps behavior stable for Task 1 but could be tightened in later tasks.
+- concern resolved by the review fix: public graph catalog facts now use compile-time `satisfies` checks and Zod-parsed exports without unsafe casts.
+
+## Review Fix — 2026-07-12
+
+status: DONE
+
+files changed:
+- `apps/architecture-atlas/src/content/scenes/graph-catalog.ts`
+- `apps/architecture-atlas/src/domain/integrity.ts`
+- `apps/architecture-atlas/src/domain/graph-catalog.test.ts`
+- `.superpowers/sdd/graph-first-task-1-report.md`
+
+fixes:
+- removed `dynamo_online` from every built Tier-0 runner journey node and edge;
+- retained only `run_scheduled_backend_online` as a built Dynamo-online library seam and kept the runner backend/pair plus its edge planned with explicit design evidence;
+- required explicit graph evidence roles, line ranges for source evidence, and rejected spec/design paths used as source for both nodes and edges;
+- enforced reciprocal parent/child declarations and populated Tier-0 child IDs;
+- added feature-gated built Dynamo-offline runner backend, SimClock, SteppableReplay, and report-gate nodes and edges;
+- replaced all `as unknown as` catalog casts with compile-time `satisfies` checks and Zod-parsed public exports;
+- required graph edge channels to match both endpoint port channels.
+
+tests added:
+- built Tier-0 journey excludes Dynamo online;
+- complete Dynamo-offline feature-gated path exists;
+- reciprocal hierarchy rejection and canonical Tier-0 child coverage;
+- missing source line ranges rejected for nodes and edges;
+- missing design role and design-as-source rejected for nodes and edges;
+- incompatible edge/port channels rejected.
+
+RED:
+- command:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run test -- src/domain/graph-catalog.test.ts`
+- observed:
+  - `1 failed test file`
+  - `11 failed, 10 passed`
+  - failures exactly covered Dynamo-online built leakage, absent Dynamo-offline entities, one-way hierarchy, missing source/design evidence enforcement, and missing channel compatibility.
+
+GREEN:
+- focused command:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run test -- src/domain/graph-catalog.test.ts`
+- focused result:
+  - `1 passed test file`
+  - `21 passed`
+- full commands:
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run validate:content`
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas run typecheck`
+  - `source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate && npm --prefix /home/anthony/nvidia/projects/aiperf/ajc/rust/apps/architecture-atlas test`
+- full results:
+  - `validate:content`: `Architecture Atlas content is valid: 25 components, 20 edges, 23 crates.`
+  - `typecheck`: success
+  - `npm test`: `12 passed test files, 110 passed tests`
+
+fix commit hash(es):
+- pending
+
+self-review:
+- every built graph node and edge now has at least one explicit, line-ranged, non-design source reference;
+- every planned graph node and edge has explicit design evidence;
+- the catalog module is compile-time checked and runtime parsed without unsafe casts;
+- no remaining Task 1 review concern identified.

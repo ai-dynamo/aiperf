@@ -199,7 +199,13 @@ function minimalGraphCatalog(): ArchitectureCatalog {
           developer: "Provides one graph node for integrity tests.",
           maintainer: "Used as the parent of node.runner in focused tests.",
         },
-        evidence: [{ path: "AGENTS.md", role: "source" }],
+        evidence: [
+          {
+            path: "AGENTS.md",
+            lines: { start: 1, end: 12 },
+            role: "source",
+          },
+        ],
         seamPorts: [{ id: "port.root.out", name: "Dispatch", channel: "control" }],
         audience: {
           visibility: ["executive", "developer", "maintainer"],
@@ -246,7 +252,13 @@ function minimalGraphCatalog(): ArchitectureCatalog {
         status: { state: "built", delivery: "unconditional" },
         flavors: ["native_http"],
         protocol: "strict JSONL validate/execute",
-        evidence: [{ path: "AGENTS.md", role: "source" }],
+        evidence: [
+          {
+            path: "AGENTS.md",
+            lines: { start: 1, end: 12 },
+            role: "source",
+          },
+        ],
       },
     ],
     graphScenes: [
@@ -339,6 +351,70 @@ describe("graph-first catalog", () => {
     expect(runnerPair?.flavors).toContain("dynamo_online");
   });
 
+  it("keeps Dynamo online out of built runner journey facts", () => {
+    const builtJourneyNodes = architectureCatalog.graphNodes.filter(
+      (node) => node.tier === 0 && node.status.state === "built",
+    );
+    const builtJourneyEdges = architectureCatalog.graphEdges.filter(
+      (edge) => edge.id.startsWith("edge.journey.") && edge.status.state === "built",
+    );
+
+    expect(
+      builtJourneyNodes.every((node) => !node.flavors.includes("dynamo_online")),
+    ).toBe(true);
+    expect(
+      builtJourneyEdges.every((edge) => !edge.flavors.includes("dynamo_online")),
+    ).toBe(true);
+  });
+
+  it("models the complete feature-gated Dynamo offline path", () => {
+    const requiredNodeIds = [
+      "node.dynamo-offline-runner-backend",
+      "node.dynamo-offline-sim-clock",
+      "node.dynamo-offline-steppable-replay",
+      "node.dynamo-offline-report-gate",
+    ];
+    const nodes = requiredNodeIds.map((id) =>
+      architectureCatalog.graphNodes.find((node) => node.id === id),
+    );
+
+    expect(nodes.every(Boolean)).toBe(true);
+    expect(
+      nodes.every(
+        (node) =>
+          node?.status.state === "built" &&
+          node.status.delivery === "feature_gated" &&
+          node.flavors.includes("dynamo_offline"),
+      ),
+    ).toBe(true);
+    expect(
+      architectureCatalog.graphEdges.filter((edge) =>
+        edge.id.startsWith("edge.dynamo.offline."),
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("requires reciprocal parent and child declarations", async () => {
+    const catalog = minimalGraphCatalog();
+    catalog.graphNodes[0].childIds = [];
+
+    await expect(
+      validateArchitectureCatalog(catalog, repositoryRoot),
+    ).rejects.toThrow(/parent.*child|child.*parent/i);
+  });
+
+  it("populates Tier-0 children for every hierarchical descendant", () => {
+    const nodesById = new Map(
+      architectureCatalog.graphNodes.map((node) => [node.id, node]),
+    );
+
+    for (const node of architectureCatalog.graphNodes) {
+      if (node.parentId) {
+        expect(nodesById.get(node.parentId)?.childIds).toContain(node.id);
+      }
+    }
+  });
+
   it("rejects dangling scene references", async () => {
     const catalog = minimalGraphCatalog();
     catalog.graphScenes[0].nodeIds.push("node.missing");
@@ -368,9 +444,70 @@ describe("graph-first catalog", () => {
     ).rejects.toThrow(/built.*design evidence/i);
   });
 
+  it.each(["node", "edge"] as const)(
+    "rejects %s source evidence without line ranges",
+    async (entityKind) => {
+      const catalog = minimalGraphCatalog();
+      const entity =
+        entityKind === "node" ? catalog.graphNodes[0] : catalog.graphEdges[0];
+      entity.evidence = [{ path: "AGENTS.md", role: "source" }];
+
+      await expect(
+        validateArchitectureCatalog(catalog, repositoryRoot),
+      ).rejects.toThrow(/source evidence.*line range/i);
+    },
+  );
+
+  it.each(["node", "edge"] as const)(
+    "rejects %s spec evidence without an explicit design role",
+    async (entityKind) => {
+      const catalog = minimalGraphCatalog();
+      const entity =
+        entityKind === "node" ? catalog.graphNodes[0] : catalog.graphEdges[0];
+      entity.evidence = [
+        {
+          path:
+            "docs/superpowers/specs/2026-07-12-architecture-atlas-graph-first-redesign.md",
+          lines: { start: 1, end: 12 },
+        },
+      ];
+
+      await expect(
+        validateArchitectureCatalog(catalog, repositoryRoot),
+      ).rejects.toThrow(/design evidence.*role/i);
+    },
+  );
+
+  it.each(["node", "edge"] as const)(
+    "rejects %s spec evidence declared as source",
+    async (entityKind) => {
+      const catalog = minimalGraphCatalog();
+      const entity =
+        entityKind === "node" ? catalog.graphNodes[0] : catalog.graphEdges[0];
+      entity.evidence = [
+        {
+          path:
+            "docs/superpowers/specs/2026-07-12-architecture-atlas-graph-first-redesign.md",
+          lines: { start: 1, end: 12 },
+          role: "source",
+        },
+      ];
+
+      await expect(
+        validateArchitectureCatalog(catalog, repositoryRoot),
+      ).rejects.toThrow(/design.*cannot.*source/i);
+    },
+  );
+
   it("rejects planned entities without design evidence", async () => {
     const catalog = minimalGraphCatalog();
-    (catalog.graphNodes[1] as GraphNode).evidence = [{ path: "AGENTS.md", role: "source" }];
+    (catalog.graphNodes[1] as GraphNode).evidence = [
+      {
+        path: "AGENTS.md",
+        lines: { start: 1, end: 12 },
+        role: "source",
+      },
+    ];
     await expect(
       validateArchitectureCatalog(catalog, repositoryRoot),
     ).rejects.toThrow(/planned.*design evidence/i);
@@ -382,7 +519,13 @@ describe("graph-first catalog", () => {
       state: "built",
       delivery: "runner_pair",
     };
-    (catalog.graphNodes[1] as GraphNode).evidence = [{ path: "AGENTS.md", role: "source" }];
+    (catalog.graphNodes[1] as GraphNode).evidence = [
+      {
+        path: "AGENTS.md",
+        lines: { start: 1, end: 12 },
+        role: "source",
+      },
+    ];
     await expect(
       validateArchitectureCatalog(catalog, repositoryRoot),
     ).rejects.toThrow(/planned.*dynamo[_ ]online.*runner/i);
@@ -395,5 +538,14 @@ describe("graph-first catalog", () => {
     await expect(
       validateArchitectureCatalog(catalog, repositoryRoot),
     ).rejects.toThrow(/cycle|parent/i);
+  });
+
+  it("rejects edge channels that differ from endpoint ports", async () => {
+    const catalog = minimalGraphCatalog();
+    catalog.graphEdges[0].channel = "telemetry";
+
+    await expect(
+      validateArchitectureCatalog(catalog, repositoryRoot),
+    ).rejects.toThrow(/channel.*port/i);
   });
 });

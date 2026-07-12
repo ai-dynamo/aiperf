@@ -147,24 +147,64 @@ function assertGraphHierarchy(nodes: ArchitectureCatalog["graphNodes"]): void {
     if (node.parentId && !byId.has(node.parentId)) {
       throw new Error(`${node.id} references missing parent ${node.parentId}`);
     }
+    if (node.parentId && !byId.get(node.parentId)?.childIds.includes(node.id)) {
+      throw new Error(
+        `${node.id} declares parent ${node.parentId}, but that parent does not declare the child`,
+      );
+    }
   }
   for (const node of nodes) {
     visit(node.id);
   }
 }
 
+function isDesignEvidencePath(path: string): boolean {
+  return path.startsWith("specs/") || path.startsWith("docs/superpowers/specs/");
+}
+
 function assertImplementationEvidence(catalog: ArchitectureCatalog): void {
-  for (const node of catalog.graphNodes) {
-    const hasSource = node.evidence.some(
-      (reference) => !reference.role || reference.role === "source",
+  for (const entity of [...catalog.graphNodes, ...catalog.graphEdges]) {
+    for (const reference of entity.evidence) {
+      const designPath = isDesignEvidencePath(reference.path);
+      if (designPath && reference.role !== "design") {
+        if (reference.role === "source") {
+          throw new Error(
+            `${entity.id} design evidence ${reference.path} cannot be declared as source`,
+          );
+        }
+        throw new Error(
+          `${entity.id} design evidence ${reference.path} requires role "design"`,
+        );
+      }
+      if (reference.role !== "design" && reference.role !== "source") {
+        throw new Error(`${entity.id} graph evidence requires an explicit role`);
+      }
+      if (reference.role === "source" && !reference.lines) {
+        throw new Error(
+          `${entity.id} source evidence ${reference.path} requires a line range`,
+        );
+      }
+    }
+
+    const hasSource = entity.evidence.some(
+      (reference) =>
+        reference.role === "source" &&
+        reference.lines !== undefined &&
+        !isDesignEvidencePath(reference.path),
     );
-    const hasDesign = node.evidence.some((reference) => reference.role === "design");
-    if (node.status.state === "built" && !hasSource) {
-      throw new Error(`${node.id} is built but has only design evidence`);
+    const hasDesign = entity.evidence.some(
+      (reference) =>
+        reference.role === "design" && isDesignEvidencePath(reference.path),
+    );
+    if (entity.status.state === "built" && !hasSource) {
+      throw new Error(`${entity.id} is built but has only design evidence`);
     }
-    if (node.status.state === "planned" && !hasDesign) {
-      throw new Error(`${node.id} is planned but has no design evidence`);
+    if (entity.status.state === "planned" && !hasDesign) {
+      throw new Error(`${entity.id} is planned but has no design evidence`);
     }
+  }
+
+  for (const node of catalog.graphNodes) {
     if (
       node.flavors.includes("dynamo_online") &&
       node.status.delivery === "runner_pair" &&
@@ -183,7 +223,7 @@ function assertGraphReferences(catalog: ArchitectureCatalog): void {
   const portsByNode = new Map(
     catalog.graphNodes.map((node) => [
       node.id,
-      new Set(node.seamPorts.map((port) => port.id)),
+      new Map(node.seamPorts.map((port) => [port.id, port.channel])),
     ]),
   );
 
@@ -194,9 +234,15 @@ function assertGraphReferences(catalog: ArchitectureCatalog): void {
         throw new Error(`${edge.id} references missing node ${endpoint.nodeId}`);
       }
       const nodePorts = portsByNode.get(endpoint.nodeId);
-      if (!nodePorts?.has(endpoint.portId)) {
+      const portChannel = nodePorts?.get(endpoint.portId);
+      if (!portChannel) {
         throw new Error(
           `${edge.id} references missing port ${endpoint.portId} on ${endpoint.nodeId}`,
+        );
+      }
+      if (portChannel !== edge.channel) {
+        throw new Error(
+          `${edge.id} channel ${edge.channel} does not match port ${endpoint.portId} channel ${portChannel}`,
         );
       }
     }
