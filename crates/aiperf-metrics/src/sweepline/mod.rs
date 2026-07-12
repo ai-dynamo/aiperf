@@ -12,6 +12,7 @@ mod kv_cache;
 mod stats;
 
 use crate::{MetricConsoleGroup, MetricValue};
+use rayon::slice::ParallelSliceMut;
 use std::cmp::Ordering;
 
 pub use kv_cache::{
@@ -25,6 +26,9 @@ pub use stats::{
 
 /// Nanoseconds per second, used to convert token/ns curves at the report boundary.
 pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
+const PARALLEL_SWEEP_MIN_ROWS: usize = 4_096;
+const PARALLEL_EVENT_SORT_MIN_EVENTS: usize = 262_144;
 
 /// One timestamped change applied by the sweep-line cumulative sum.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -122,12 +126,7 @@ impl StepFn {
         if other.is_empty() {
             return self.clone();
         }
-        let timestamps_ns = merged_timestamps(self, other);
-        let values = timestamps_ns
-            .iter()
-            .map(|timestamp| self.value_at(*timestamp) + other.value_at(*timestamp))
-            .collect();
-        Self::new(timestamps_ns, values)
+        self.combine_on_merged_grid(other, |left, right| left + right)
     }
 
     /// Divides this curve by another curve, yielding zero where the denominator is non-positive.
@@ -135,18 +134,41 @@ impl StepFn {
         if self.is_empty() || denominator.is_empty() {
             return Self::empty();
         }
-        let timestamps_ns = merged_timestamps(self, denominator);
-        let values = timestamps_ns
-            .iter()
-            .map(|timestamp| {
-                let denominator_value = denominator.value_at(*timestamp);
-                if denominator_value > 0.0 {
-                    self.value_at(*timestamp) / denominator_value
-                } else {
-                    0.0
-                }
-            })
-            .collect();
+        self.combine_on_merged_grid(denominator, |numerator, denominator| {
+            if denominator > 0.0 {
+                numerator / denominator
+            } else {
+                0.0
+            }
+        })
+    }
+
+    fn combine_on_merged_grid(
+        &self,
+        other: &Self,
+        mut combine: impl FnMut(f64, f64) -> f64,
+    ) -> Self {
+        let timestamps_ns = merged_timestamps(self, other);
+        let mut left_index = 0;
+        let mut right_index = 0;
+        let mut left_value = 0.0;
+        let mut right_value = 0.0;
+        let mut values = Vec::with_capacity(timestamps_ns.len());
+        for &timestamp in &timestamps_ns {
+            while left_index < self.len()
+                && self.timestamps_ns[left_index].total_cmp(&timestamp) != Ordering::Greater
+            {
+                left_value = self.values[left_index];
+                left_index += 1;
+            }
+            while right_index < other.len()
+                && other.timestamps_ns[right_index].total_cmp(&timestamp) != Ordering::Greater
+            {
+                right_value = other.values[right_index];
+                right_index += 1;
+            }
+            values.push(combine(left_value, right_value));
+        }
         Self::new(timestamps_ns, values)
     }
 }
@@ -157,11 +179,7 @@ impl StepFn {
 /// Residuals below `1e-9 * max_abs` are snapped to zero after the sum. These are the
 /// behavior-exact scars from `src/aiperf/analysis/sweepline.py:241-261`.
 pub fn sweep_line_cumsum(mut events: Vec<SweepEvent>) -> StepFn {
-    events.sort_by(|left, right| {
-        left.timestamp_ns
-            .total_cmp(&right.timestamp_ns)
-            .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
-    });
+    sort_sweep_events(&mut events);
 
     let mut timestamps_ns = Vec::with_capacity(events.len());
     let mut values = Vec::with_capacity(events.len());
@@ -174,14 +192,83 @@ pub fn sweep_line_cumsum(mut events: Vec<SweepEvent>) -> StepFn {
 
     let max_abs = values.iter().map(|value| value.abs()).fold(0.0, f64::max);
     if max_abs > 0.0 {
-        let threshold = 1e-9 * max_abs;
-        for value in &mut values {
-            if value.abs() < threshold {
-                *value = 0.0;
-            }
-        }
+        snap_small_residuals(&mut values, 1e-9 * max_abs);
     }
     StepFn::new(timestamps_ns, values)
+}
+
+fn sweep_line_cumsum_compact(mut events: Vec<SweepEvent>) -> StepFn {
+    sort_sweep_events(&mut events);
+    if events.is_empty() {
+        return StepFn::empty();
+    }
+
+    let mut unique_timestamps = 1_usize;
+    let mut max_abs = 0.0_f64;
+    let mut current = 0.0;
+    for (index, event) in events.iter().enumerate() {
+        current += event.delta;
+        max_abs = max_abs.max(current.abs());
+        if index > 0 && !same_timestamp(events[index - 1].timestamp_ns, event.timestamp_ns) {
+            unique_timestamps += 1;
+        }
+    }
+
+    let mut timestamps_ns = Vec::with_capacity(unique_timestamps);
+    let mut values = Vec::with_capacity(unique_timestamps);
+    current = 0.0;
+    for (index, event) in events.iter().enumerate() {
+        current += event.delta;
+        let finishes_timestamp = events
+            .get(index + 1)
+            .is_none_or(|next| !same_timestamp(event.timestamp_ns, next.timestamp_ns));
+        if finishes_timestamp {
+            timestamps_ns.push(event.timestamp_ns);
+            values.push(current);
+        }
+    }
+    if max_abs > 0.0 {
+        snap_small_residuals(&mut values, 1e-9 * max_abs);
+    }
+    StepFn::new(timestamps_ns, values)
+}
+
+fn sort_sweep_events(events: &mut [SweepEvent]) {
+    let compare = |left: &SweepEvent, right: &SweepEvent| {
+        left.timestamp_ns
+            .total_cmp(&right.timestamp_ns)
+            .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
+            .then_with(|| left.delta.total_cmp(&right.delta))
+    };
+    if events.len() >= PARALLEL_EVENT_SORT_MIN_EVENTS {
+        events.par_sort_unstable_by(compare);
+    } else {
+        events.sort_unstable_by(compare);
+    }
+}
+
+fn snap_small_residuals(values: &mut [f64], threshold: f64) {
+    let mut chunks = values.chunks_exact_mut(8);
+    for values in chunks.by_ref() {
+        values[0] = snapped_residual(values[0], threshold);
+        values[1] = snapped_residual(values[1], threshold);
+        values[2] = snapped_residual(values[2], threshold);
+        values[3] = snapped_residual(values[3], threshold);
+        values[4] = snapped_residual(values[4], threshold);
+        values[5] = snapped_residual(values[5], threshold);
+        values[6] = snapped_residual(values[6], threshold);
+        values[7] = snapped_residual(values[7], threshold);
+    }
+    for value in chunks.into_remainder() {
+        *value = snapped_residual(*value, threshold);
+    }
+}
+
+#[inline(always)]
+fn snapped_residual(value: f64, threshold: f64) -> f64 {
+    let magnitude = value.to_bits() & !(1_u64 << 63);
+    let keep = u64::from(magnitude >= threshold.to_bits());
+    f64::from_bits(value.to_bits() & 0_u64.wrapping_sub(keep))
 }
 
 /// Computes exact request concurrency from aligned start/end columns.
@@ -197,7 +284,7 @@ pub fn concurrency_sweep_line(start_ns: &[f64], end_ns: &[f64]) -> StepFn {
             events.push(SweepEvent::new(end, -1.0));
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes weighted concurrency, such as request-level tokens in flight.
@@ -217,7 +304,7 @@ pub fn weighted_concurrency_sweep_line(
             events.push(SweepEvent::new(end, -weight));
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes uniform decode throughput in tokens/ns.
@@ -243,7 +330,7 @@ pub fn throughput_sweep_line(
             events.push(SweepEvent::new(end, -rate));
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes uniform prefill throughput in tokens/ns.
@@ -271,7 +358,7 @@ pub fn prefill_throughput_sweep_line(
             events.push(SweepEvent::new(generation_start, -rate));
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes combined prefill and decode throughput in one sweep pass.
@@ -324,7 +411,7 @@ pub fn total_throughput_sweep_line(
             events.push(SweepEvent::new(end, -rate));
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes decode throughput per active generation request.
@@ -390,25 +477,11 @@ impl SweepLineCurves {
                 output_tokens.len(),
             ],
         );
-        let concurrency = concurrency_sweep_line(start_ns, end_ns);
-        let decode_concurrency = concurrency_sweep_line(generation_start_ns, end_ns);
-        let prefill_concurrency = concurrency_sweep_line(start_ns, generation_start_ns);
-        let decode_throughput = match icl.filter(|series| !series.is_empty()) {
+        let compute_decode_throughput = || match icl.filter(|series| !series.is_empty()) {
             Some(series) => throughput_sweep_line_icl(generation_start_ns, output_tokens, series),
             None => throughput_sweep_line(generation_start_ns, end_ns, output_tokens),
         };
-        let prefill_throughput =
-            prefill_throughput_sweep_line(start_ns, generation_start_ns, input_tokens);
-        let total_throughput = total_throughput_sweep_line(
-            start_ns,
-            generation_start_ns,
-            end_ns,
-            input_tokens,
-            output_tokens,
-        );
-        let decode_throughput_per_user = decode_throughput.divide(&decode_concurrency);
-        let prefill_throughput_per_user = prefill_throughput.divide(&prefill_concurrency);
-        let tokens_in_flight = match icl.filter(|series| !series.is_empty()) {
+        let compute_tokens_in_flight = || match icl.filter(|series| !series.is_empty()) {
             Some(series) => tokens_in_flight_sweep_line_icl(
                 start_ns,
                 generation_start_ns,
@@ -425,6 +498,106 @@ impl SweepLineCurves {
                 output_tokens,
             ),
         };
+        let (
+            concurrency,
+            decode_concurrency,
+            prefill_concurrency,
+            decode_throughput,
+            prefill_throughput,
+            total_throughput,
+            tokens_in_flight,
+        ) = if start_ns.len() >= PARALLEL_SWEEP_MIN_ROWS && rayon::current_num_threads() > 1 {
+            let (small_curves, (decode_throughput, tokens_in_flight)) = rayon::join(
+                || {
+                    let (concurrency, rest) = rayon::join(
+                        || concurrency_sweep_line(start_ns, end_ns),
+                        || {
+                            let (decode_concurrency, rest) = rayon::join(
+                                || concurrency_sweep_line(generation_start_ns, end_ns),
+                                || {
+                                    let (prefill_concurrency, rest) = rayon::join(
+                                        || concurrency_sweep_line(start_ns, generation_start_ns),
+                                        || {
+                                            rayon::join(
+                                                || {
+                                                    prefill_throughput_sweep_line(
+                                                        start_ns,
+                                                        generation_start_ns,
+                                                        input_tokens,
+                                                    )
+                                                },
+                                                || {
+                                                    total_throughput_sweep_line(
+                                                        start_ns,
+                                                        generation_start_ns,
+                                                        end_ns,
+                                                        input_tokens,
+                                                        output_tokens,
+                                                    )
+                                                },
+                                            )
+                                        },
+                                    );
+                                    (prefill_concurrency, rest)
+                                },
+                            );
+                            (decode_concurrency, rest)
+                        },
+                    );
+                    let (decode_concurrency, (prefill_concurrency, rest)) = rest;
+                    let (prefill_throughput, total_throughput) = rest;
+                    (
+                        concurrency,
+                        decode_concurrency,
+                        prefill_concurrency,
+                        prefill_throughput,
+                        total_throughput,
+                    )
+                },
+                || {
+                    // These ICL-aware curves own the two largest temporary event
+                    // buffers. Running them serially lets each parallel sort use
+                    // the whole pool without making both peak allocations live.
+                    let decode_throughput = compute_decode_throughput();
+                    let tokens_in_flight = compute_tokens_in_flight();
+                    (decode_throughput, tokens_in_flight)
+                },
+            );
+            let (
+                concurrency,
+                decode_concurrency,
+                prefill_concurrency,
+                prefill_throughput,
+                total_throughput,
+            ) = small_curves;
+            (
+                concurrency,
+                decode_concurrency,
+                prefill_concurrency,
+                decode_throughput,
+                prefill_throughput,
+                total_throughput,
+                tokens_in_flight,
+            )
+        } else {
+            (
+                concurrency_sweep_line(start_ns, end_ns),
+                concurrency_sweep_line(generation_start_ns, end_ns),
+                concurrency_sweep_line(start_ns, generation_start_ns),
+                compute_decode_throughput(),
+                prefill_throughput_sweep_line(start_ns, generation_start_ns, input_tokens),
+                total_throughput_sweep_line(
+                    start_ns,
+                    generation_start_ns,
+                    end_ns,
+                    input_tokens,
+                    output_tokens,
+                ),
+                compute_tokens_in_flight(),
+            )
+        };
+        let decode_throughput_per_user = decode_throughput.divide(&decode_concurrency);
+        let prefill_throughput_per_user = prefill_throughput.divide(&prefill_concurrency);
         Self {
             concurrency,
             decode_throughput,
@@ -520,14 +693,6 @@ impl SweepLineCurves {
             &self.prefill_throughput_per_user,
             &self.tokens_in_flight,
         ];
-        let mut results = Vec::with_capacity(14);
-        for (spec, curve) in effective.into_iter().zip(curves) {
-            results.push(SweepMetricResult::from_stats(
-                spec,
-                compute_time_weighted_stats(curve, window_start_ns, window_end_ns),
-            ));
-        }
-
         let active = [
             (
                 SweepMetricSpec::new(
@@ -585,6 +750,53 @@ impl SweepLineCurves {
                 &self.concurrency,
             ),
         ];
+        if self
+            .tokens_in_flight
+            .len()
+            .max(self.decode_throughput.len())
+            >= PARALLEL_SWEEP_MIN_ROWS
+            && rayon::current_num_threads() > 1
+        {
+            let (mut effective, active) = rayon::join(
+                || {
+                    effective
+                        .into_iter()
+                        .zip(curves)
+                        .map(|(spec, curve)| {
+                            SweepMetricResult::from_stats(
+                                spec,
+                                compute_time_weighted_stats(curve, window_start_ns, window_end_ns),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                },
+                || {
+                    active
+                        .into_iter()
+                        .map(|(spec, rate, mask)| {
+                            SweepMetricResult::from_stats(
+                                spec,
+                                compute_active_weighted_stats(
+                                    rate,
+                                    mask,
+                                    window_start_ns,
+                                    window_end_ns,
+                                ),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                },
+            );
+            effective.extend(active);
+            return effective;
+        }
+        let mut results = Vec::with_capacity(14);
+        for (spec, curve) in effective.into_iter().zip(curves) {
+            results.push(SweepMetricResult::from_stats(
+                spec,
+                compute_time_weighted_stats(curve, window_start_ns, window_end_ns),
+            ));
+        }
         for (spec, rate, mask) in active {
             results.push(SweepMetricResult::from_stats(
                 spec,
@@ -681,11 +893,34 @@ impl SweepMetricResult {
 
 fn merged_timestamps(left: &StepFn, right: &StepFn) -> Vec<f64> {
     let mut timestamps = Vec::with_capacity(left.len() + right.len());
-    timestamps.extend_from_slice(left.timestamps_ns());
-    timestamps.extend_from_slice(right.timestamps_ns());
-    timestamps.sort_by(f64::total_cmp);
-    timestamps.dedup_by(|left, right| *left == *right || (left.is_nan() && right.is_nan()));
+    let mut left_index = 0;
+    let mut right_index = 0;
+    while left_index < left.len() || right_index < right.len() {
+        let take_left = right_index == right.len()
+            || (left_index < left.len()
+                && left.timestamps_ns()[left_index].total_cmp(&right.timestamps_ns()[right_index])
+                    != Ordering::Greater);
+        let timestamp = if take_left {
+            let timestamp = left.timestamps_ns()[left_index];
+            left_index += 1;
+            timestamp
+        } else {
+            let timestamp = right.timestamps_ns()[right_index];
+            right_index += 1;
+            timestamp
+        };
+        if timestamps
+            .last()
+            .is_none_or(|previous| !same_timestamp(*previous, timestamp))
+        {
+            timestamps.push(timestamp);
+        }
+    }
     timestamps
+}
+
+fn same_timestamp(left: f64, right: f64) -> bool {
+    left == right || (left.is_nan() && right.is_nan())
 }
 
 pub(crate) fn lower_bound(values: &[f64], query: f64) -> usize {
@@ -714,6 +949,19 @@ mod tests {
         ]);
         assert_eq!(curve.timestamps_ns(), &[0.0, 10.0, 10.0, 20.0]);
         assert_eq!(curve.values(), &[1.0, 0.0, 1.0, 0.0]);
+        assert_eq!(curve.value_at(10.0), 1.0);
+    }
+
+    #[test]
+    fn compact_curve_keeps_the_right_continuous_same_timestamp_value() {
+        let curve = sweep_line_cumsum_compact(vec![
+            SweepEvent::new(0.0, 1.0),
+            SweepEvent::new(10.0, -1.0),
+            SweepEvent::new(10.0, 1.0),
+            SweepEvent::new(20.0, -1.0),
+        ]);
+        assert_eq!(curve.timestamps_ns(), &[0.0, 10.0, 20.0]);
+        assert_eq!(curve.values(), &[1.0, 1.0, 0.0]);
         assert_eq!(curve.value_at(10.0), 1.0);
     }
 

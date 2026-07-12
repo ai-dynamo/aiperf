@@ -275,6 +275,22 @@ pub struct ScheduledPhasePlan {
     pub runtime_extension: Option<Rc<dyn ScheduledRuntimeExtension>>,
     /// Native metric policy for this phase's owned accumulator.
     pub metrics_config: MetricsConfig,
+    /// Whether the compatibility collector retains export-only request detail.
+    pub capture_performance_records: bool,
+    /// Whether the phase-local compatibility collector observes the request stream.
+    ///
+    /// Backends that already own the canonical compatibility report may disable
+    /// this duplicate observer while retaining AIPerf's native metrics observer.
+    /// The default stays enabled for online transports and independent parity
+    /// tests.
+    pub collect_performance_summary: bool,
+    /// Whether native records retain exporter/join-only row identities.
+    pub retain_native_metric_record_dimensions: bool,
+    /// Whether full per-turn timing rows are retained in the report.
+    pub capture_timing_records: bool,
+    /// Whether post-drain compatibility and native reductions may share the
+    /// bounded reduction pool.
+    pub parallel_report_reduction: bool,
     /// Run-wide observers that receive the exact phase-local measurement
     /// stream in addition to the phase's own collector and native metrics.
     ///
@@ -303,6 +319,11 @@ impl ScheduledPhasePlan {
             sidecars: Vec::new(),
             runtime_extension: None,
             metrics_config: MetricsConfig::default(),
+            capture_performance_records: true,
+            collect_performance_summary: true,
+            retain_native_metric_record_dimensions: true,
+            capture_timing_records: true,
+            parallel_report_reduction: false,
             additional_observers: Vec::new(),
         }
     }
@@ -355,6 +376,36 @@ impl ScheduledPhasePlan {
     /// Configure the phase-local native metric accumulator.
     pub fn with_metrics_config(mut self, metrics_config: MetricsConfig) -> Self {
         self.metrics_config = metrics_config;
+        self
+    }
+
+    /// Configure compatibility-only per-request record retention.
+    pub fn with_performance_record_capture(mut self, capture: bool) -> Self {
+        self.capture_performance_records = capture;
+        self
+    }
+
+    /// Configure whether this phase independently collects compatibility metrics.
+    pub fn with_performance_summary_collection(mut self, collect: bool) -> Self {
+        self.collect_performance_summary = collect;
+        self
+    }
+
+    /// Configure retention of native exporter/join-only row identities.
+    pub fn with_native_metric_record_dimensions(mut self, retain: bool) -> Self {
+        self.retain_native_metric_record_dimensions = retain;
+        self
+    }
+
+    /// Configure retention of full per-turn timing records.
+    pub fn with_timing_record_capture(mut self, capture: bool) -> Self {
+        self.capture_timing_records = capture;
+        self
+    }
+
+    /// Allow independent report reducers to execute concurrently after drain.
+    pub fn with_parallel_report_reduction(mut self, enabled: bool) -> Self {
+        self.parallel_report_reduction = enabled;
         self
     }
 
@@ -707,14 +758,23 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         let phase_start_ns = self.clock.now_ns();
         let start_ns = plan.start_ns.unwrap_or(phase_start_ns);
         let mut controller = plan.controller.clone();
-        let collector = Rc::new(CollectorObserver::new(true));
-        let native_metrics = Rc::new(NativeMetricsObserver::new(
-            self.clock.clone(),
-            start_ns,
-            plan.metrics_config,
-        ));
-        let mut delegates: Vec<Rc<dyn RequestObserver>> =
-            vec![collector.clone(), native_metrics.clone()];
+        let collector = Rc::new(CollectorObserver::new(plan.capture_performance_records));
+        let native_metrics = Rc::new(if !plan.retain_native_metric_record_dimensions {
+            NativeMetricsObserver::new_aggregate_only(
+                self.clock.clone(),
+                start_ns,
+                plan.metrics_config,
+            )
+        } else {
+            NativeMetricsObserver::new(self.clock.clone(), start_ns, plan.metrics_config)
+        });
+        let mut delegates: Vec<Rc<dyn RequestObserver>> = Vec::with_capacity(
+            usize::from(plan.collect_performance_summary) + 1 + plan.additional_observers.len(),
+        );
+        if plan.collect_performance_summary {
+            delegates.push(collector.clone());
+        }
+        delegates.push(native_metrics.clone());
         delegates.append(&mut plan.additional_observers);
         let delegate: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
         let (observer, issuance_gate) = if let Some(extension) = plan.runtime_extension.take() {
@@ -749,6 +809,8 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             observer,
             issuance_gate,
         );
+        runtime.set_parallel_report_reduction(plan.parallel_report_reduction);
+        runtime.set_timing_record_capture(plan.capture_timing_records);
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {

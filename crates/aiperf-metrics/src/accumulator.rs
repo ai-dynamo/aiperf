@@ -21,6 +21,7 @@ use crate::value::MetricValue;
 use crate::window::ExportContext;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
@@ -28,8 +29,9 @@ const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 const DEFAULT_USAGE_DIFF_THRESHOLD_PCT: f64 = 10.0;
 const DEFAULT_OSL_MISMATCH_THRESHOLD_PCT: f64 = 5.0;
 const DEFAULT_OSL_MISMATCH_MAX_TOKENS: f64 = 50.0;
+const PARALLEL_SUMMARY_MIN_ROWS: usize = 4_096;
 
-/// Extension seam for append-only record accumulation and windowed export.
+/// Extension seam for request-index-addressed record accumulation and windowed export.
 pub trait Accumulator<Record> {
     /// Typed summary returned by this accumulator.
     type Summary;
@@ -418,14 +420,37 @@ impl MetricsAccumulator {
         &self.store
     }
 
-    /// Returns the number of append-only records.
+    /// Returns the number of populated request slots.
     pub fn record_count(&self) -> usize {
-        self.store.row_count()
+        self.store.record_count()
+    }
+
+    /// Prepares absolute request slots without marking any slot occupied.
+    pub fn prepare_request_slots(&mut self, rows: usize) {
+        self.store.prepare_request_slots(rows);
     }
 
     /// Ingests one record and computes all record/aggregate inputs available from it.
     pub fn process_record(&mut self, record: &RecordIngest) {
-        let row = self.store.push_record(record);
+        self.process_record_with_token_arrivals(record, &record.token_arrival_ns);
+    }
+
+    /// Ingests one record while borrowing token arrivals from producer-owned storage.
+    pub fn process_record_with_token_arrivals(
+        &mut self,
+        record: &RecordIngest,
+        token_arrivals_ns: &[i64],
+    ) {
+        let row = match record.request_index {
+            Some(row) => {
+                self.store
+                    .insert_record_at_with_token_arrivals(row, record, token_arrivals_ns);
+                row
+            }
+            None => self
+                .store
+                .push_record_with_token_arrivals(record, token_arrivals_ns),
+        };
         if record.errored || record.canceled {
             return;
         }
@@ -496,8 +521,8 @@ impl MetricsAccumulator {
         if !mask.iter().any(|selected| *selected) {
             return AccumulatorSummary::new();
         }
-        let mut results = self.compute_result_map(&mask, context.start_ns, context.end_ns);
-        let curves = self.compute_sweep_curves(&mask);
+        let (mut results, curves) =
+            self.compute_results_and_curves(&mask, context.start_ns, context.end_ns);
         self.inject_sweep_results(
             &mut results,
             &curves,
@@ -505,7 +530,7 @@ impl MetricsAccumulator {
             context.end_ns.map(|value| value as f64),
         );
         let timeslices = self.compute_timeslices(&mask, &curves);
-        let inference_series = self.compute_inference_series(&mask, context);
+        let inference_series = self.compute_inference_series(&mask, context, &results, &timeslices);
         AccumulatorSummary {
             results,
             timeslices,
@@ -514,10 +539,35 @@ impl MetricsAccumulator {
         }
     }
 
+    fn compute_results_and_curves(
+        &self,
+        mask: &[bool],
+        window_start_ns: Option<i64>,
+        window_end_ns: Option<i64>,
+    ) -> (BTreeMap<String, MetricResult>, SweepLineCurves) {
+        let use_parallel_reduction = self.store.record_count() >= PARALLEL_SUMMARY_MIN_ROWS
+            && rayon::current_num_threads() > 1;
+        if !use_parallel_reduction {
+            return (
+                self.compute_result_map(mask, window_start_ns, window_end_ns),
+                self.compute_sweep_curves(mask),
+            );
+        }
+
+        // Both branches read the frozen column store. Joining before any result
+        // injection preserves the same deterministic reduction and map order.
+        rayon::join(
+            || self.compute_result_map(mask, window_start_ns, window_end_ns),
+            || self.compute_sweep_curves(mask),
+        )
+    }
+
     fn compute_inference_series(
         &self,
         base_mask: &[bool],
         context: &ExportContext,
+        aggregate_results: &BTreeMap<String, MetricResult>,
+        aggregate_timeslices: &[MetricTimeslice],
     ) -> Vec<InferenceMetricSeriesSummary> {
         // Python's accumulator stores categorical metadata separately from
         // numeric metrics and exposes exact masks for grouped analysis
@@ -537,6 +587,35 @@ impl MetricsAccumulator {
             })
             .cloned()
             .collect::<BTreeSet<_>>();
+
+        if dimensions.len() == 1 {
+            let dimensions = dimensions
+                .iter()
+                .next()
+                .expect("one inference dimension was counted")
+                .clone();
+            let dimension_mask = self.store.mask_for_inference_dimensions(&dimensions);
+            if base_mask
+                .iter()
+                .zip(&dimension_mask)
+                .all(|(base, dimension)| !*base || *dimension)
+            {
+                let mut results = aggregate_results.clone();
+                self.remove_unpartitioned_results(&mut results);
+                let mut timeslices = aggregate_timeslices.to_vec();
+                for timeslice in &mut timeslices {
+                    self.remove_unpartitioned_results(&mut timeslice.metrics);
+                }
+                return (!results.is_empty())
+                    .then_some(InferenceMetricSeriesSummary {
+                        dimensions,
+                        results,
+                        timeslices,
+                    })
+                    .into_iter()
+                    .collect();
+            }
+        }
 
         dimensions
             .into_iter()
@@ -787,10 +866,14 @@ impl MetricsAccumulator {
         window_start_ns: Option<i64>,
         window_end_ns: Option<i64>,
     ) -> BTreeMap<String, MetricResult> {
-        let full_dataset = mask.iter().all(|selected| *selected);
         let mut scalars = FxHashMap::<MetricTag, f64>::default();
         let mut record_arrays = FxHashMap::<MetricTag, (Vec<f64>, f64)>::default();
         let mut results = BTreeMap::new();
+        let error_count = mask
+            .iter()
+            .zip(self.store.errored())
+            .filter(|(selected, errored)| **selected && **errored)
+            .count();
 
         for spec in CATALOG
             .iter()
@@ -806,7 +889,13 @@ impl MetricsAccumulator {
                 }
                 let sum = values.iter().sum::<f64>();
                 scalars.insert(spec.tag, sum);
-                record_arrays.insert(spec.tag, (values.clone(), sum));
+                if error_count > 0
+                    && spec
+                        .flags
+                        .contains(MetricFlags::PERCENTILE_INCLUDES_FAILED_REQUESTS)
+                {
+                    record_arrays.insert(spec.tag, (values.clone(), sum));
+                }
                 if let Some(stats) = linear_distribution(spec.tag.as_str(), values, sum, 0) {
                     let result = MetricResult::distribution_from_spec(spec, stats);
                     results.insert(result.tag.clone(), result);
@@ -823,16 +912,18 @@ impl MetricsAccumulator {
             }
             match spec.kind {
                 MetricType::Record => {
-                    let sum = if full_dataset
-                        && column.running_sum().is_finite()
-                        && column.present_count() == values.len()
-                    {
-                        column.running_sum()
-                    } else {
-                        values.iter().sum()
-                    };
+                    // `masked_values` already traverses the absolute request slots
+                    // monotonically, so this is both canonical and cheaper than
+                    // rescanning the sparse source column for a cached fast path.
+                    let sum = values.iter().sum();
                     scalars.insert(spec.tag, sum);
-                    record_arrays.insert(spec.tag, (values.clone(), sum));
+                    if error_count > 0
+                        && spec
+                            .flags
+                            .contains(MetricFlags::PERCENTILE_INCLUDES_FAILED_REQUESTS)
+                    {
+                        record_arrays.insert(spec.tag, (values.clone(), sum));
+                    }
                     if let Some(stats) = linear_distribution(spec.tag.as_str(), values, sum, 0) {
                         let result = MetricResult::distribution_from_spec(spec, stats);
                         results.insert(result.tag.clone(), result);
@@ -876,11 +967,6 @@ impl MetricsAccumulator {
             }
         }
 
-        let error_count = mask
-            .iter()
-            .zip(self.store.errored())
-            .filter(|(selected, errored)| **selected && **errored)
-            .count();
         if error_count > 0 {
             for (tag, (values, sum)) in &record_arrays {
                 let Some(spec) = spec_for(*tag) else {
@@ -949,20 +1035,14 @@ impl MetricsAccumulator {
     }
 
     fn compute_sweep_curves(&self, mask: &[bool]) -> SweepLineCurves {
-        let mask_values = |values: &[f64]| {
-            values
-                .iter()
-                .zip(mask)
-                .map(|(value, selected)| if *selected { *value } else { f64::NAN })
-                .collect::<Vec<_>>()
-        };
-        let start = mask_values(self.store.start_ns());
-        let generation_start = mask_values(self.store.generation_start_ns());
-        let end = mask_values(self.store.end_ns());
+        let all_selected = mask.iter().all(|selected| *selected);
+        let start = masked_values(self.store.start_ns(), mask, all_selected);
+        let generation_start = masked_values(self.store.generation_start_ns(), mask, all_selected);
+        let end = masked_values(self.store.end_ns(), mask, all_selected);
         let numeric = |tag| {
             self.store.numeric_column(tag).map_or_else(
-                || vec![f64::NAN; mask.len()],
-                |column| mask_values(column.values()),
+                || Cow::Owned(vec![f64::NAN; mask.len()]),
+                |column| masked_values(column.values(), mask, all_selected),
             )
         };
         let input = numeric(MetricTag::InputSequenceLength);
@@ -975,15 +1055,22 @@ impl MetricsAccumulator {
             offsets.resize(mask.len(), 0);
             let icl = IclSeries::new(replay.values, replay.record_indices, &offsets);
             return SweepLineCurves::compute(
-                &start,
-                &generation_start,
-                &end,
-                &input,
-                &output,
+                start.as_ref(),
+                generation_start.as_ref(),
+                end.as_ref(),
+                input.as_ref(),
+                output.as_ref(),
                 Some(icl),
             );
         }
-        SweepLineCurves::compute(&start, &generation_start, &end, &input, &output, None)
+        SweepLineCurves::compute(
+            start.as_ref(),
+            generation_start.as_ref(),
+            end.as_ref(),
+            input.as_ref(),
+            output.as_ref(),
+            None,
+        )
     }
 
     fn inject_sweep_results(
@@ -1073,6 +1160,43 @@ impl MetricsAccumulator {
         }
         timeslices
     }
+}
+
+fn masked_values<'a>(values: &'a [f64], mask: &[bool], all_selected: bool) -> Cow<'a, [f64]> {
+    assert_eq!(values.len(), mask.len());
+    if all_selected {
+        return Cow::Borrowed(values);
+    }
+
+    let mut output = Vec::with_capacity(values.len());
+    let mut value_chunks = values.chunks_exact(8);
+    let mut mask_chunks = mask.chunks_exact(8);
+    for (values, mask) in value_chunks.by_ref().zip(mask_chunks.by_ref()) {
+        output.extend_from_slice(&[
+            masked_value(values[0], mask[0]),
+            masked_value(values[1], mask[1]),
+            masked_value(values[2], mask[2]),
+            masked_value(values[3], mask[3]),
+            masked_value(values[4], mask[4]),
+            masked_value(values[5], mask[5]),
+            masked_value(values[6], mask[6]),
+            masked_value(values[7], mask[7]),
+        ]);
+    }
+    output.extend(
+        value_chunks
+            .remainder()
+            .iter()
+            .zip(mask_chunks.remainder())
+            .map(|(&value, &selected)| masked_value(value, selected)),
+    );
+    Cow::Owned(output)
+}
+
+#[inline(always)]
+fn masked_value(value: f64, selected: bool) -> f64 {
+    let selected_bits = 0_u64.wrapping_sub(u64::from(selected));
+    f64::from_bits((value.to_bits() & selected_bits) | (f64::NAN.to_bits() & !selected_bits))
 }
 
 impl Accumulator<RecordIngest> for MetricsAccumulator {
@@ -1365,6 +1489,24 @@ mod tests {
             latency.distribution().unwrap().avg,
             MetricValue::Finite(100.0)
         );
+    }
+
+    #[test]
+    fn request_index_is_the_absolute_column_slot_not_append_order() {
+        let mut accumulator = MetricsAccumulator::new();
+        let mut late = RecordIngest::minimal(30, 40, Phase::Profiling);
+        late.request_index = Some(2);
+        let mut early = RecordIngest::minimal(10, 20, Phase::Profiling);
+        early.request_index = Some(0);
+
+        accumulator.process_record(&late);
+        accumulator.process_record(&early);
+
+        assert_eq!(accumulator.record_count(), 2);
+        assert_eq!(accumulator.column_store().row_count(), 3);
+        assert_eq!(accumulator.column_store().start_ns()[0], 10.0);
+        assert!(accumulator.column_store().start_ns()[1].is_nan());
+        assert_eq!(accumulator.column_store().start_ns()[2], 30.0);
     }
 
     #[test]

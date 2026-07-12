@@ -87,24 +87,95 @@ struct PendingRequest {
     credit_issued_ns: i64,
     dispatch_start_ns: Option<i64>,
     terminal_ns: Option<i64>,
-    response: NativeResponseMetadata,
+    response: PendingResponseMetadata,
     input_tokens: u64,
     requested_output_tokens: u64,
-    token_arrivals_ns: Vec<i64>,
+    token_range_start: usize,
+    token_count: usize,
+    token_capacity: usize,
+    token_overflow: Option<Vec<i64>>,
     output_tokens: u64,
     reasoning_tokens: u64,
     first_output_token_ns: Option<i64>,
-    endpoint_metrics: ObservedEndpointMetrics,
-    observed_usage: ObservedUsage,
+    endpoint_metrics: Option<Box<ObservedEndpointMetrics>>,
+    observed_usage: CompactObservedUsage,
     terminal: Option<ReplayTerminalStatus>,
     metadata: RequestMetricMetadata,
 }
 
+#[derive(Clone, Debug, Default)]
+struct PendingResponseMetadata {
+    start_ns: Option<i64>,
+    end_ns: Option<i64>,
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+    http: Option<Box<HttpTrace>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CompactObservedUsage {
+    values: [usize; 7],
+    present: u8,
+}
+
+impl CompactObservedUsage {
+    fn set(&mut self, usage: ObservedUsage) {
+        for (index, value) in [
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens,
+            usage.reasoning_tokens,
+            usage.prompt_cache_read_tokens,
+            usage.prompt_cache_write_tokens,
+            usage.prompt_cache_miss_tokens,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if let Some(value) = value {
+                self.values[index] = value;
+                self.present |= 1 << index;
+            }
+        }
+    }
+
+    fn get(self, index: usize) -> Option<usize> {
+        (self.present & (1 << index) != 0).then_some(self.values[index])
+    }
+}
+
 #[derive(Debug, Default)]
 struct ObserverState {
-    requests: FxHashMap<Uuid, PendingRequest>,
-    order: Vec<Uuid>,
+    requests: Vec<Option<PendingEntry>>,
+    request_slots: FxHashMap<Uuid, usize>,
+    order: Vec<usize>,
     metadata: FxHashMap<Uuid, RequestMetricMetadata>,
+    token_arrivals_ns: Vec<i64>,
+}
+
+#[derive(Debug)]
+struct PendingEntry {
+    uuid: Uuid,
+    request: PendingRequest,
+}
+
+impl ObserverState {
+    fn request(&self, uuid: Uuid) -> Option<&PendingRequest> {
+        let slot = *self.request_slots.get(&uuid)?;
+        Some(&self.requests.get(slot)?.as_ref()?.request)
+    }
+
+    fn request_mut(&mut self, uuid: Uuid) -> Option<&mut PendingRequest> {
+        let slot = *self.request_slots.get(&uuid)?;
+        Some(&mut self.requests.get_mut(slot)?.as_mut()?.request)
+    }
+
+    fn token_values<'a>(&'a self, request: &'a PendingRequest) -> &'a [i64] {
+        request.token_overflow.as_deref().unwrap_or_else(|| {
+            &self.token_arrivals_ns
+                [request.token_range_start..request.token_range_start + request.token_count]
+        })
+    }
 }
 
 /// Observer-backed native metrics collector sharing the runtime's clock origin.
@@ -113,6 +184,7 @@ pub struct NativeMetricsObserver {
     origin_ns: i64,
     state: RefCell<ObserverState>,
     accumulator: RefCell<MetricsAccumulator>,
+    retain_record_dimensions: bool,
 }
 
 /// Final aggregate plus the exact request records that produced it.
@@ -147,13 +219,34 @@ impl NativeMetricsObserver {
             origin_ns,
             state: RefCell::new(ObserverState::default()),
             accumulator: RefCell::new(MetricsAccumulator::with_config(config)),
+            retain_record_dimensions: true,
+        }
+    }
+
+    /// Creates an aggregate-only observer without export/join-only row identities.
+    pub(crate) fn new_aggregate_only(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+    ) -> Self {
+        Self {
+            clock,
+            origin_ns,
+            state: RefCell::new(ObserverState::default()),
+            accumulator: RefCell::new(MetricsAccumulator::with_config(config)),
+            retain_record_dimensions: false,
         }
     }
 
     /// Registers workload dimensions before or after the arrival callback.
     pub fn register_metadata(&self, uuid: Uuid, mut metadata: RequestMetricMetadata) {
+        if !self.retain_record_dimensions {
+            metadata.worker_id = None;
+            metadata.conversation_id = None;
+            metadata.correlation_id = Some(String::new());
+        }
         let mut state = self.state.borrow_mut();
-        if let Some(request) = state.requests.get_mut(&uuid) {
+        if let Some(request) = state.request_mut(uuid) {
             metadata.request_index = metadata.request_index.or(request.metadata.request_index);
             request.metadata = metadata;
         } else {
@@ -169,12 +262,18 @@ impl NativeMetricsObserver {
         response.end_ns = response
             .end_ns
             .map(|timestamp| self.relative_absolute_ns(timestamp));
-        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
             response.prompt_tokens = response.prompt_tokens.or(request.response.prompt_tokens);
             response.completion_tokens = response
                 .completion_tokens
                 .or(request.response.completion_tokens);
-            request.response = response;
+            request.response = PendingResponseMetadata {
+                start_ns: response.start_ns,
+                end_ns: response.end_ns,
+                prompt_tokens: response.prompt_tokens,
+                completion_tokens: response.completion_tokens,
+                http: (response.http != HttpTrace::default()).then(|| Box::new(response.http)),
+            };
         }
     }
 
@@ -185,12 +284,10 @@ impl NativeMetricsObserver {
     /// best-effort side channel cannot alter the authoritative report.
     pub fn snapshot_record(&self, uuid: Uuid, ordinal: u64) -> Option<RecordIngest> {
         let finish_ns = self.relative_now_ns();
-        self.state
-            .borrow()
-            .requests
-            .get(&uuid)
-            .cloned()
-            .map(|request| request.into_record(uuid, ordinal, finish_ns))
+        let state = self.state.borrow();
+        let request = state.request(uuid)?.clone();
+        let token_arrivals_ns = state.token_values(&request).to_vec();
+        Some(request.into_record(uuid, ordinal, finish_ns, token_arrivals_ns))
     }
 
     /// Finalizes every retained request and returns the full native summary.
@@ -220,6 +317,11 @@ impl NativeMetricsObserver {
             state,
             accumulator,
         }
+    }
+
+    /// Whether per-record exporter and analyzer identities are retained.
+    pub(crate) fn retains_record_dimensions(&self) -> bool {
+        self.retain_record_dimensions
     }
 
     /// Finalizes every retained request while preserving its ingestion facts.
@@ -262,12 +364,22 @@ impl NativeMetricsFinalizer {
         let finish_ns = self.finish_ns;
         let mut accumulator = self.accumulator;
         let mut state = self.state;
-        for (ordinal, uuid) in state.order.into_iter().enumerate() {
-            let Some(request) = state.requests.remove(&uuid) else {
+        let order = std::mem::take(&mut state.order);
+        for (ordinal, slot) in order.into_iter().enumerate() {
+            let Some(entry) = state.requests.get_mut(slot).and_then(Option::take) else {
                 continue;
             };
-            let record = request.into_record(uuid, ordinal as u64, finish_ns);
-            accumulator.process_record(&record);
+            let mut request = entry.request;
+            let start = request.token_range_start;
+            let count = request.token_count;
+            let overflow = request.token_overflow.take();
+            let token_arrivals_ns = overflow
+                .as_deref()
+                .unwrap_or(&state.token_arrivals_ns[start..start + count]);
+            let mut record = request.into_record(entry.uuid, ordinal as u64, finish_ns, Vec::new());
+            record.first_token_ns = token_arrivals_ns.first().copied();
+            record.second_token_ns = token_arrivals_ns.get(1).copied();
+            accumulator.process_record_with_token_arrivals(&record, token_arrivals_ns);
         }
         accumulator.summarize()
     }
@@ -278,11 +390,19 @@ impl NativeMetricsFinalizer {
         let mut accumulator = self.accumulator;
         let mut state = self.state;
         let mut records = Vec::with_capacity(state.order.len());
-        for (ordinal, uuid) in state.order.into_iter().enumerate() {
-            let Some(request) = state.requests.remove(&uuid) else {
+        let order = std::mem::take(&mut state.order);
+        for (ordinal, slot) in order.into_iter().enumerate() {
+            let Some(entry) = state.requests.get_mut(slot).and_then(Option::take) else {
                 continue;
             };
-            let record = request.into_record(uuid, ordinal as u64, finish_ns);
+            let mut request = entry.request;
+            let start = request.token_range_start;
+            let count = request.token_count;
+            let overflow = request.token_overflow.take();
+            let token_arrivals_ns =
+                overflow.unwrap_or_else(|| state.token_arrivals_ns[start..start + count].to_vec());
+            let record =
+                request.into_record(entry.uuid, ordinal as u64, finish_ns, token_arrivals_ns);
             accumulator.process_record(&record);
             records.push(record);
         }
@@ -294,7 +414,13 @@ impl NativeMetricsFinalizer {
 }
 
 impl PendingRequest {
-    fn into_record(self, uuid: Uuid, ordinal: u64, finish_ns: i64) -> RecordIngest {
+    fn into_record(
+        self,
+        uuid: Uuid,
+        ordinal: u64,
+        finish_ns: i64,
+        token_arrivals_ns: Vec<i64>,
+    ) -> RecordIngest {
         let start_ns = self
             .response
             .start_ns
@@ -306,15 +432,19 @@ impl PendingRequest {
             .or(self.terminal_ns)
             .unwrap_or(finish_ns);
         let terminal = self.terminal.unwrap_or(ReplayTerminalStatus::Failed);
-        let completion_tokens = self.response.completion_tokens.or_else(|| {
-            self.observed_usage
-                .completion_tokens
-                .map(|value| value as u64)
-        });
+        let completion_tokens = self
+            .response
+            .completion_tokens
+            .or_else(|| self.observed_usage.get(1).map(|value| value as u64));
         let prompt_tokens = self
             .response
             .prompt_tokens
-            .or_else(|| self.observed_usage.prompt_tokens.map(|value| value as u64));
+            .or_else(|| self.observed_usage.get(0).map(|value| value as u64));
+        let endpoint_metrics = self
+            .endpoint_metrics
+            .as_deref()
+            .copied()
+            .unwrap_or_default();
         RecordIngest {
             request_index: self.metadata.request_index.or(Some(ordinal as usize)),
             correlation_id: self
@@ -333,10 +463,10 @@ impl PendingRequest {
                 .metadata
                 .has_credit_timestamp
                 .then_some(self.credit_issued_ns),
-            first_token_ns: self.token_arrivals_ns.first().copied(),
-            second_token_ns: self.token_arrivals_ns.get(1).copied(),
+            first_token_ns: token_arrivals_ns.first().copied(),
+            second_token_ns: token_arrivals_ns.get(1).copied(),
             first_output_token_ns: self.first_output_token_ns,
-            token_arrival_ns: self.token_arrivals_ns,
+            token_arrival_ns: token_arrivals_ns,
             errored: matches!(
                 terminal,
                 ReplayTerminalStatus::Rejected | ReplayTerminalStatus::Failed
@@ -353,36 +483,24 @@ impl PendingRequest {
                 completion_tokens,
                 total_tokens: self
                     .observed_usage
-                    .total_tokens
+                    .get(2)
                     .map(|value| value as u64)
                     .or_else(|| {
                         prompt_tokens
                             .zip(completion_tokens)
                             .map(|(prompt, completion)| prompt.saturating_add(completion))
                     }),
-                reasoning_tokens: self
-                    .observed_usage
-                    .reasoning_tokens
-                    .map(|value| value as u64),
-                prompt_cache_read_tokens: self
-                    .observed_usage
-                    .prompt_cache_read_tokens
-                    .map(|value| value as u64),
-                prompt_cache_write_tokens: self
-                    .observed_usage
-                    .prompt_cache_write_tokens
-                    .map(|value| value as u64),
-                prompt_cache_miss_tokens: self
-                    .observed_usage
-                    .prompt_cache_miss_tokens
-                    .map(|value| value as u64),
+                reasoning_tokens: self.observed_usage.get(3).map(|value| value as u64),
+                prompt_cache_read_tokens: self.observed_usage.get(4).map(|value| value as u64),
+                prompt_cache_write_tokens: self.observed_usage.get(5).map(|value| value as u64),
+                prompt_cache_miss_tokens: self.observed_usage.get(6).map(|value| value as u64),
                 ..UsageMetrics::default()
             },
-            http: self.response.http,
+            http: self.response.http.map(|http| *http).unwrap_or_default(),
             audio_duration_s: self.metadata.audio_duration_s,
-            num_images: self.endpoint_metrics.num_images.map(|value| value as u64),
-            video_inference_seconds: self.endpoint_metrics.video_inference_seconds,
-            video_peak_memory_mb: self.endpoint_metrics.video_peak_memory_mb,
+            num_images: endpoint_metrics.num_images.map(|value| value as u64),
+            video_inference_seconds: endpoint_metrics.video_inference_seconds,
+            video_peak_memory_mb: endpoint_metrics.video_peak_memory_mb,
             metric_overrides: Vec::new(),
         }
     }
@@ -398,34 +516,49 @@ impl RequestObserver for NativeMetricsObserver {
     ) {
         let mut state = self.state.borrow_mut();
         let mut metadata = state.metadata.remove(&uuid).unwrap_or_default();
-        if state.requests.contains_key(&uuid) {
+        if state.request_slots.contains_key(&uuid) {
             return;
         }
-        metadata.request_index.get_or_insert(state.order.len());
-        state.order.push(uuid);
-        state.requests.insert(
+        let slot = *metadata.request_index.get_or_insert(state.requests.len());
+        if state.requests.len() <= slot {
+            state.requests.resize_with(slot + 1, || None);
+        }
+        assert!(
+            state.requests[slot].is_none(),
+            "native metric request slot {slot} was already populated"
+        );
+        state.request_slots.insert(uuid, slot);
+        state.order.push(slot);
+        let token_range_start = state.token_arrivals_ns.len();
+        state
+            .token_arrivals_ns
+            .resize(token_range_start + requested_output_length, 0);
+        state.requests[slot] = Some(PendingEntry {
             uuid,
-            PendingRequest {
+            request: PendingRequest {
                 credit_issued_ns: self.relative_ns_from_ms(arrival_ms),
                 dispatch_start_ns: None,
                 terminal_ns: None,
-                response: NativeResponseMetadata::default(),
+                response: PendingResponseMetadata::default(),
                 input_tokens: input_length as u64,
                 requested_output_tokens: requested_output_length as u64,
-                token_arrivals_ns: Vec::with_capacity(requested_output_length),
+                token_range_start,
+                token_count: 0,
+                token_capacity: requested_output_length,
+                token_overflow: None,
                 output_tokens: 0,
                 reasoning_tokens: 0,
                 first_output_token_ns: None,
-                endpoint_metrics: ObservedEndpointMetrics::default(),
-                observed_usage: ObservedUsage::default(),
+                endpoint_metrics: None,
+                observed_usage: CompactObservedUsage::default(),
                 terminal: None,
                 metadata,
             },
-        );
+        });
     }
 
     fn on_admit(&self, uuid: Uuid, admit_ms: f64, _reused_input_tokens: usize) {
-        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
             request
                 .dispatch_start_ns
                 .get_or_insert_with(|| self.relative_ns_from_ms(admit_ms));
@@ -438,8 +571,32 @@ impl RequestObserver for NativeMetricsObserver {
 
     fn on_classified_token(&self, uuid: Uuid, at_ms: f64, kind: ObservedTokenKind) {
         let at_ns = self.relative_ns_from_ms(at_ms);
-        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
-            request.token_arrivals_ns.push(at_ns);
+        let mut state = self.state.borrow_mut();
+        let Some(slot) = state.request_slots.get(&uuid).copied() else {
+            return;
+        };
+        let ObserverState {
+            requests,
+            token_arrivals_ns,
+            ..
+        } = &mut *state;
+        if let Some(request) = requests
+            .get_mut(slot)
+            .and_then(Option::as_mut)
+            .map(|entry| &mut entry.request)
+        {
+            if let Some(overflow) = &mut request.token_overflow {
+                overflow.push(at_ns);
+            } else if request.token_count < request.token_capacity {
+                token_arrivals_ns[request.token_range_start + request.token_count] = at_ns;
+            } else {
+                let mut overflow = token_arrivals_ns
+                    [request.token_range_start..request.token_range_start + request.token_count]
+                    .to_vec();
+                overflow.push(at_ns);
+                request.token_overflow = Some(overflow);
+            }
+            request.token_count += 1;
             match kind {
                 ObservedTokenKind::Output => {
                     request.output_tokens += 1;
@@ -451,29 +608,31 @@ impl RequestObserver for NativeMetricsObserver {
     }
 
     fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
-        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
             request.response.prompt_tokens = usage.prompt_tokens.map(|value| value as u64);
             request.response.completion_tokens = usage.completion_tokens.map(|value| value as u64);
-            request.observed_usage = usage;
+            request.observed_usage.set(usage);
         }
     }
 
     fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
-        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
-            request.endpoint_metrics.num_images =
-                metrics.num_images.or(request.endpoint_metrics.num_images);
-            request.endpoint_metrics.video_inference_seconds = metrics
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+            let endpoint = request
+                .endpoint_metrics
+                .get_or_insert_with(|| Box::new(ObservedEndpointMetrics::default()));
+            endpoint.num_images = metrics.num_images.or(endpoint.num_images);
+            endpoint.video_inference_seconds = metrics
                 .video_inference_seconds
-                .or(request.endpoint_metrics.video_inference_seconds);
-            request.endpoint_metrics.video_peak_memory_mb = metrics
+                .or(endpoint.video_inference_seconds);
+            endpoint.video_peak_memory_mb = metrics
                 .video_peak_memory_mb
-                .or(request.endpoint_metrics.video_peak_memory_mb);
+                .or(endpoint.video_peak_memory_mb);
         }
     }
 
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
         let terminal_ns = self.relative_now_ns();
-        if let Some(request) = self.state.borrow_mut().requests.get_mut(&uuid) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
             request.terminal.get_or_insert(status);
             request.terminal_ns.get_or_insert(terminal_ns);
         }

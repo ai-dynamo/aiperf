@@ -15,7 +15,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::future::Future;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -61,6 +61,7 @@ use dynamo_mocker::replay::{
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
+use rustc_hash::FxHashMap;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -782,6 +783,16 @@ fn finish_shared_metrics(
     DynamoSimulationReport,
     OfflineMetricParity,
 )> {
+    let independently_accumulated =
+        aiperf.request_counts.num_requests != 0 || dynamo.request_counts.num_requests == 0;
+    if !independently_accumulated {
+        // The native runner deliberately omits a second compatibility observer
+        // for a single-phase Dynamo run. Dynamo already retains these exact
+        // request/token facts for its canonical replay report; AIPerf continues
+        // to own its richer native accumulator from the same callback stream.
+        aiperf = compatibility_report_from_dynamo(&dynamo);
+    }
+
     // Provisioned resources are properties of the injected engine, not request
     // observer events. Import exactly those backend-owned values; every request,
     // token, latency, throughput, and cache metric remains independently
@@ -820,8 +831,11 @@ fn finish_shared_metrics(
     let shared_fields = serde_json::from_slice::<serde_json::Value>(&aiperf_bytes)?
         .as_object()
         .map_or(0, serde_json::Map::len);
-    let backend_owned_fields =
-        BACKEND_OWNED_SHARED_FIELDS + if dynamo.goodput.is_some() { 3 } else { 0 };
+    let backend_owned_fields = if independently_accumulated {
+        BACKEND_OWNED_SHARED_FIELDS + if dynamo.goodput.is_some() { 3 } else { 0 }
+    } else {
+        shared_fields
+    };
     let parity = OfflineMetricParity {
         shared_fields,
         independently_accumulated_fields: shared_fields.saturating_sub(backend_owned_fields),
@@ -829,6 +843,72 @@ fn finish_shared_metrics(
         serialized_bytes: aiperf_bytes.len(),
     };
     Ok((aiperf, dynamo, parity))
+}
+
+fn compatibility_report_from_dynamo(
+    dynamo: &DynamoSimulationReport,
+) -> loadgen_core::collector::TraceSimulationReport {
+    use loadgen_core::collector::{
+        TraceDistributionStats, TraceGoodputStats, TraceInterTokenLatencyStats, TraceLatencyStats,
+        TraceRequestCounts, TraceSimulationReport, TraceThroughputStats,
+    };
+
+    fn distribution(source: &DynamoDistributionStats) -> TraceDistributionStats {
+        TraceDistributionStats {
+            mean_ms: source.mean_ms,
+            min_ms: source.min_ms,
+            max_ms: source.max_ms,
+            median_ms: source.median_ms,
+            p75_ms: source.p75_ms,
+            p90_ms: source.p90_ms,
+            p95_ms: source.p95_ms,
+            p99_ms: source.p99_ms,
+            std_ms: source.std_ms,
+        }
+    }
+
+    TraceSimulationReport {
+        request_counts: TraceRequestCounts {
+            num_requests: dynamo.request_counts.num_requests,
+            completed_requests: dynamo.request_counts.completed_requests,
+            total_input_tokens: dynamo.request_counts.total_input_tokens,
+            total_output_tokens: dynamo.request_counts.total_output_tokens,
+        },
+        throughput: TraceThroughputStats {
+            duration_ms: dynamo.throughput.duration_ms,
+            wall_time_ms: dynamo.throughput.wall_time_ms,
+            request_throughput_rps: dynamo.throughput.request_throughput_rps,
+            input_throughput_tok_s: dynamo.throughput.input_throughput_tok_s,
+            output_throughput_tok_s: dynamo.throughput.output_throughput_tok_s,
+            total_throughput_tok_s: dynamo.throughput.total_throughput_tok_s,
+            prefill_worker_seconds: dynamo.throughput.prefill_worker_seconds,
+            decode_worker_seconds: dynamo.throughput.decode_worker_seconds,
+            prefill_gpus_per_worker: dynamo.throughput.prefill_gpus_per_worker,
+            decode_gpus_per_worker: dynamo.throughput.decode_gpus_per_worker,
+            gpu_hours: dynamo.throughput.gpu_hours,
+        },
+        prefix_cache_reused_ratio: dynamo.prefix_cache_reused_ratio,
+        first_admission_prefix_cache_reused_ratio: dynamo.first_admission_prefix_cache_reused_ratio,
+        latency: TraceLatencyStats {
+            ttft: distribution(&dynamo.latency.ttft),
+            ttst: distribution(&dynamo.latency.ttst),
+            tpot: distribution(&dynamo.latency.tpot),
+            itl: TraceInterTokenLatencyStats {
+                distribution: distribution(&dynamo.latency.itl.distribution),
+                max_ms: dynamo.latency.itl.max_ms,
+            },
+            e2e: distribution(&dynamo.latency.e2e),
+            output_token_throughput_per_user: distribution(
+                &dynamo.latency.output_token_throughput_per_user,
+            ),
+        },
+        goodput: dynamo.goodput.as_ref().map(|goodput| TraceGoodputStats {
+            completed_requests: goodput.completed_requests,
+            request_throughput_rps: goodput.request_throughput_rps,
+            output_throughput_tok_s: goodput.output_throughput_tok_s,
+        }),
+        per_request: Vec::new(),
+    }
 }
 
 fn inject_dynamo_goodput(metrics: &mut AccumulatorSummary, report: &DynamoSimulationReport) {
@@ -1013,11 +1093,12 @@ struct RoutedEvent {
 
 #[derive(Default)]
 struct Waiter {
-    events: RefCell<VecDeque<RoutedEvent>>,
+    events: RefCell<Vec<RoutedEvent>>,
+    admission_routed: Cell<bool>,
     notify: Notify,
 }
 
-type Waiters = RefCell<HashMap<Uuid, Rc<Waiter>>>;
+type Waiters = RefCell<FxHashMap<Uuid, Rc<Waiter>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScheduledCancellation {
@@ -1050,7 +1131,7 @@ struct EngineHost {
     waiters: Waiters,
     next_cancellation_seq: Cell<u64>,
     cancellations: RefCell<BinaryHeap<ScheduledCancellation>>,
-    cancellation_by_uuid: RefCell<HashMap<Uuid, (i64, u64)>>,
+    cancellation_by_uuid: RefCell<FxHashMap<Uuid, (i64, u64)>>,
 }
 
 impl EngineHost {
@@ -1066,10 +1147,10 @@ impl EngineHost {
         Ok(Rc::new(Self {
             clock,
             engine: RefCell::new(factory.build(config)?),
-            waiters: RefCell::new(HashMap::new()),
+            waiters: RefCell::new(FxHashMap::default()),
             next_cancellation_seq: Cell::new(0),
             cancellations: RefCell::new(BinaryHeap::new()),
-            cancellation_by_uuid: RefCell::new(HashMap::new()),
+            cancellation_by_uuid: RefCell::new(FxHashMap::default()),
         }))
     }
 
@@ -1185,9 +1266,15 @@ impl EngineHost {
 
     fn route(&self, at_ms: f64, at_ns: i64, events: Vec<EngineEvent>) {
         for event in events {
+            let waiter = self.waiters.borrow().get(&event.uuid).cloned();
+            let needs_admission = waiter
+                .as_ref()
+                .is_some_and(|waiter| !waiter.admission_routed.get());
             let (admission, actual_output_length, latencies_ms) = {
                 let engine = self.engine.borrow();
-                let admission = engine.request_admission(event.uuid);
+                let admission = needs_admission
+                    .then(|| engine.request_admission(event.uuid))
+                    .flatten();
                 if event.terminal_status.is_some() {
                     (
                         admission,
@@ -1201,9 +1288,11 @@ impl EngineHost {
             if event.terminal_status.is_some() {
                 self.cancellation_by_uuid.borrow_mut().remove(&event.uuid);
             }
-            let waiter = self.waiters.borrow().get(&event.uuid).cloned();
             if let Some(waiter) = waiter {
-                waiter.events.borrow_mut().push_back(RoutedEvent {
+                if admission.is_some() {
+                    waiter.admission_routed.set(true);
+                }
+                waiter.events.borrow_mut().push(RoutedEvent {
                     at_ns,
                     at_ms,
                     engine: event,
@@ -1581,10 +1670,14 @@ impl DynamoOfflineSink {
         let mut first_token = false;
         let mut admitted = false;
         let mut observed_output_tokens = 0_usize;
+        let mut ready_events = Vec::new();
 
         loop {
-            let events = waiter.events.borrow_mut().drain(..).collect::<Vec<_>>();
-            for routed in events {
+            {
+                let mut pending = waiter.events.borrow_mut();
+                std::mem::swap(&mut ready_events, &mut *pending);
+            }
+            for routed in ready_events.drain(..) {
                 if !admitted && let Some((admit_ms, reused_input_tokens)) = routed.admission {
                     observer.on_admit(
                         uuid,
@@ -3007,6 +3100,55 @@ where
     }
 }
 
+/// Post-drain report reducer for an offline scheduled execution.
+///
+/// Implementations retain only worker-local observer state. The backend calls
+/// this after `drive_sim_with_source` returns, so reduction cannot delay a
+/// clock wakeup or change Dynamo event ordering.
+pub trait OfflineScheduledExecutionFinalizer {
+    /// Reduce captured facts into the ordinary scheduled execution result.
+    fn finish(self: Box<Self>) -> Result<OfflineScheduledExecution>;
+}
+
+impl<F> OfflineScheduledExecutionFinalizer for F
+where
+    F: FnOnce() -> Result<OfflineScheduledExecution>,
+{
+    fn finish(self: Box<Self>) -> Result<OfflineScheduledExecution> {
+        (*self)()
+    }
+}
+
+/// Scheduled runtime future that stops at the deterministic drain boundary.
+pub type DeferredOfflineScheduledFuture =
+    Pin<Box<dyn Future<Output = Result<Box<dyn OfflineScheduledExecutionFinalizer>>> + 'static>>;
+
+/// Factory seam for a scheduled runtime with post-`LocalSet` finalization.
+pub trait DeferredOfflineScheduledRunFactory {
+    /// Build the live workload future after the backend creates its one clock
+    /// and dispatcher.
+    fn create(
+        self: Box<Self>,
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        dispatcher: Rc<dyn TurnDispatcher>,
+    ) -> DeferredOfflineScheduledFuture;
+}
+
+impl<F> DeferredOfflineScheduledRunFactory for F
+where
+    F: FnOnce(Rc<dyn Clock>, i64, Rc<dyn TurnDispatcher>) -> DeferredOfflineScheduledFuture,
+{
+    fn create(
+        self: Box<Self>,
+        clock: Rc<dyn Clock>,
+        start_ns: i64,
+        dispatcher: Rc<dyn TurnDispatcher>,
+    ) -> DeferredOfflineScheduledFuture {
+        (*self)(clock, start_ns, dispatcher)
+    }
+}
+
 /// Drive an arbitrary scheduled runtime over the passive Dynamo engine.
 ///
 /// This is the runner composition seam for scheduled workload factories. It
@@ -3034,10 +3176,48 @@ pub fn run_scheduled_backend_offline(
         !outcome.deadlocked,
         "Dynamo offline scheduled run deadlocked"
     );
-    let mut execution = result
+    let execution = result
         .borrow_mut()
         .take()
         .context("Dynamo offline driver exited without a scheduled result")??;
+    finish_scheduled_backend(host, execution)
+}
+
+/// Drive a scheduled runtime whose expensive report reduction is deferred
+/// until after the Tokio DES runtime has exited.
+pub fn run_scheduled_backend_offline_deferred(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    factory: Box<dyn DeferredOfflineScheduledRunFactory>,
+) -> Result<OfflineScheduledReport> {
+    let clock = Rc::new(SimClock::new());
+    let host = EngineHost::new(clock.clone(), &engine_config)?;
+    let dispatcher: Rc<dyn TurnDispatcher> =
+        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let start_ns = clock.now_ns();
+    let future = factory.create(clock.clone(), start_ns, dispatcher);
+    let result = Rc::new(RefCell::new(None));
+    let result_for_body = result.clone();
+    let source: Rc<dyn SimEventSource> = host.clone();
+    let outcome = drive_sim_with_source(clock, source, move |_handle| async move {
+        *result_for_body.borrow_mut() = Some(future.await);
+    })?;
+    anyhow::ensure!(
+        !outcome.deadlocked,
+        "Dynamo offline scheduled run deadlocked"
+    );
+    let finalizer = result
+        .borrow_mut()
+        .take()
+        .context("Dynamo offline driver exited without a scheduled finalizer")??;
+    let execution = finalizer.finish()?;
+    finish_scheduled_backend(host, execution)
+}
+
+fn finish_scheduled_backend(
+    host: Rc<EngineHost>,
+    mut execution: OfflineScheduledExecution,
+) -> Result<OfflineScheduledReport> {
     let dynamo = host.take_report_at(execution.performance.throughput.wall_time_ms);
     let (performance, dynamo, parity) = finish_shared_metrics(execution.performance, dynamo)?;
     if execution.aggregate_is_profiling {
@@ -3311,6 +3491,31 @@ mod tests {
             ),
             r#"{"small":1e-09,"large":1e+09,"wide":1e-123,"text":"1e-9"}"#,
         );
+    }
+
+    #[test]
+    fn deferred_scheduled_reduction_runs_after_the_tokio_runtime_exits() {
+        let factory: Box<dyn DeferredOfflineScheduledRunFactory> = Box::new(
+            |_clock: Rc<dyn Clock>, _start_ns, _dispatcher: Rc<dyn TurnDispatcher>| {
+                Box::pin(async move {
+                    let finalizer: Box<dyn OfflineScheduledExecutionFinalizer> = Box::new(|| {
+                        assert!(tokio::runtime::Handle::try_current().is_err());
+                        Err(anyhow::anyhow!("deferred-finalizer-proof"))
+                    });
+                    Ok(finalizer)
+                }) as DeferredOfflineScheduledFuture
+            },
+        );
+
+        let error = match run_scheduled_backend_offline_deferred(
+            OfflineEngineConfig::default(),
+            "test-model".to_owned(),
+            factory,
+        ) {
+            Ok(_) => panic!("deferred finalizer unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("deferred-finalizer-proof"));
     }
 
     fn assert_metric_parity(

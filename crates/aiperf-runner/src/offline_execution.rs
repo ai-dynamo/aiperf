@@ -74,7 +74,7 @@ use serde_json::{Value, value::RawValue};
 use crate::dataset_input::{PreparedDatasetInput, RunnerDatasetInputContext};
 use crate::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
-    load_tokenizer, metrics_config, native_scheduled_resources,
+    load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
 use crate::graph_input::RunnerGraphInputContext;
 use crate::online_execution::{
@@ -1203,6 +1203,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         let mut plan = build_native_scheduled_phase_plan_with_source_factory(
                             phase_index,
                             phase,
+                            phase_seamless_to_next(&phases, phase_index),
                             &dataset,
                             &model_for_factory,
                             default_output_tokens,
@@ -1220,7 +1221,9 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                         )?
                         .with_metrics_config(metrics.clone())
                         .with_performance_record_capture(false)
-                        .with_performance_summary_collection(phase_count != 1);
+                        .with_performance_summary_collection(phase_count != 1)
+                        .with_native_metric_record_dimensions(false)
+                        .with_timing_record_capture(false);
                         if phase.common().name == "profiling"
                             && let Some(observer) = &backend_goodput
                         {

@@ -64,7 +64,7 @@ pub fn linear_distribution(
     if values.is_empty() {
         return None;
     }
-    values.sort_by(f64::total_cmp);
+    values.sort_unstable_by(f64::total_cmp);
     let count = values.len();
     let running_sum = if running_sum.is_finite() {
         running_sum
@@ -120,7 +120,7 @@ pub fn nearest_distribution(
     if values.is_empty() {
         return None;
     }
-    values.sort_by(f64::total_cmp);
+    values.sort_unstable_by(f64::total_cmp);
     let count = values.len();
     let finite: Vec<f64> = values
         .iter()

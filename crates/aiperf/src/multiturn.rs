@@ -1432,6 +1432,7 @@ impl NativeSessionBackend {
 pub struct NativeDatasetConversationSource {
     dataset: Arc<NativeDataset>,
     metadata: Vec<ConversationMetadata>,
+    metadata_by_id: HashMap<String, usize>,
     sampler: Box<dyn Sampler>,
     endpoint: NativeSessionEndpoint,
     materializer: Arc<dyn RequestMaterializer>,
@@ -1755,10 +1756,16 @@ impl NativeDatasetConversationSource {
                         .collect(),
                 }
             })
+            .collect::<Vec<_>>();
+        let metadata_by_id = metadata
+            .iter()
+            .enumerate()
+            .map(|(index, metadata)| (metadata.conversation_id.clone(), index))
             .collect();
         Ok(Self {
             dataset,
             metadata,
+            metadata_by_id,
             sampler,
             endpoint,
             materializer,
@@ -1780,6 +1787,17 @@ impl NativeDatasetConversationSource {
         self
     }
 
+    /// Replace request-body construction with an injected materialization
+    /// policy.
+    ///
+    /// Simulator adapters use this to consume segment-backed trace identities
+    /// without formatting bytes that their dispatcher will never read. Online
+    /// sources retain [`EndpointRequestMaterializer`] by default.
+    pub fn with_request_materializer(mut self, materializer: Arc<dyn RequestMaterializer>) -> Self {
+        self.materializer = materializer;
+        self
+    }
+
     fn session(
         &self,
         conversation_id: &str,
@@ -1787,14 +1805,14 @@ impl NativeDatasetConversationSource {
     ) -> Result<SampledSession> {
         let id = aiperf_dataset::SessionId::from(conversation_id);
         self.dataset.get(&id)?;
-        let metadata = self
-            .metadata
-            .iter()
-            .find(|metadata| metadata.conversation_id == conversation_id)
-            .cloned()
+        let metadata_index = self
+            .metadata_by_id
+            .get(conversation_id)
+            .copied()
             .ok_or_else(|| {
                 anyhow!("native dataset session {conversation_id:?} is not sampleable")
             })?;
+        let metadata = self.metadata[metadata_index].clone();
         let x_correlation_id = correlation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let backend = NativeSessionBackend {
             session: RefCell::new(NativeConversationSession::new(self.dataset.clone(), id)?),

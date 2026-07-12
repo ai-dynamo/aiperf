@@ -63,7 +63,7 @@ pub use prompt::{
 };
 pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,
-    MaterializedRequest, RequestMaterializer,
+    MaterializedRequest, RequestMaterializer, TraceHashAwareRequestMaterializer,
 };
 pub use sampler::{
     RandomSampler, RandomSamplerFactory, Sampler, SamplerFactory, SamplerRegistry,

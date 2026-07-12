@@ -3,7 +3,7 @@
 
 //! KV-cache tokens-in-flight and ICL-aware decode curves.
 
-use super::{StepFn, SweepEvent, assert_aligned, sweep_line_cumsum};
+use super::{StepFn, SweepEvent, assert_aligned, sweep_line_cumsum_compact};
 
 /// Borrowed CSR-style inter-chunk-latency series.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,7 +102,7 @@ pub fn tokens_in_flight_sweep_line(
             (false, false) => {}
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes ICL-aware tokens in flight, ramping output tokens at chunk boundaries.
@@ -179,7 +179,7 @@ pub fn tokens_in_flight_sweep_line_icl(
             (false, false) => {}
         }
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 /// Computes ICL-aware decode throughput at each positive-duration chunk interval.
@@ -227,7 +227,7 @@ pub fn throughput_sweep_line_icl(
         events.push(SweepEvent::new(interval_start, rate));
         events.push(SweepEvent::new(interval_end, -rate));
     }
-    sweep_line_cumsum(events)
+    sweep_line_cumsum_compact(events)
 }
 
 struct ChunkEvents {

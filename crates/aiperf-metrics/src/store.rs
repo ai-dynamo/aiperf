@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Append-only columnar storage for inference metric records.
+//! Absolute-request-index-addressed columnar storage for inference metric records.
 //!
-//! Numeric columns keep index alignment with NaN absence sentinels and O(1)
-//! running sum/count side channels. Metadata dimensions are stored separately and
-//! categorical values receive dense first-appearance codes. The sparse-column
+//! Numeric columns keep absolute request-index alignment with NaN absence sentinels.
+//! Metadata dimensions are stored separately and categorical values receive dense
+//! first-appearance codes. The sparse-column
 //! and query semantics port `src/aiperf/metrics/column_store.py:59-503`; the
 //! exact CSR list replay ports `src/aiperf/metrics/ragged_series.py:13-107`.
 
@@ -18,12 +18,10 @@ use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// A NaN-sparse numeric column with stable running aggregates.
+/// A NaN-sparse numeric column aligned by absolute request index.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct NumericColumn {
     values: Vec<f64>,
-    running_sum: f64,
-    present_count: usize,
 }
 
 impl NumericColumn {
@@ -36,18 +34,12 @@ impl NumericColumn {
     pub fn with_absent_rows(rows: usize) -> Self {
         Self {
             values: vec![f64::NAN; rows],
-            running_sum: 0.0,
-            present_count: 0,
         }
     }
 
     /// Appends a raw value; NaN denotes absence while infinity remains present.
     pub fn push_f64(&mut self, value: f64) {
         self.values.push(value);
-        if !value.is_nan() {
-            self.running_sum += value;
-            self.present_count += 1;
-        }
     }
 
     /// Appends an explicit absent value.
@@ -60,22 +52,13 @@ impl NumericColumn {
         self.push_f64(raw_metric_value(value));
     }
 
-    /// Replaces one row while preserving the running sum/count invariant.
+    /// Replaces one absolute request-index row.
     ///
     /// # Panics
     ///
     /// Panics when `row` is outside the column.
     pub fn set_f64(&mut self, row: usize, value: f64) {
-        let old = self.values[row];
-        if !old.is_nan() {
-            self.running_sum -= old;
-            self.present_count -= 1;
-        }
         self.values[row] = value;
-        if !value.is_nan() {
-            self.running_sum += value;
-            self.present_count += 1;
-        }
     }
 
     /// Replaces one row with a boundary-safe metric value.
@@ -96,14 +79,14 @@ impl NumericColumn {
         &self.values
     }
 
-    /// Returns the stable insertion-order sum of present values.
+    /// Returns the stable absolute-request-index-order sum of present values.
     pub fn running_sum(&self) -> f64 {
-        self.running_sum
+        self.values.iter().filter(|value| !value.is_nan()).sum()
     }
 
     /// Returns the number of present values.
     pub fn present_count(&self) -> usize {
-        self.present_count
+        self.values.iter().filter(|value| !value.is_nan()).count()
     }
 
     /// Returns present values selected by an index-aligned mask.
@@ -120,7 +103,7 @@ impl NumericColumn {
             .collect()
     }
 
-    /// Returns the insertion-order sum and count for selected present rows.
+    /// Returns the absolute-request-index-order sum and count for selected present rows.
     pub fn masked_sum_count(&self, mask: &[bool]) -> (f64, usize) {
         assert_eq!(self.values.len(), mask.len());
         self.values
@@ -141,6 +124,12 @@ impl NumericColumn {
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
+
+    fn resize_absent(&mut self, rows: usize) {
+        if self.values.len() < rows {
+            self.values.resize(rows, f64::NAN);
+        }
+    }
 }
 
 /// Borrowed exact replay data exposed by a list-metric backend.
@@ -156,8 +145,18 @@ pub struct RaggedReplay<'a> {
 
 /// Extension seam for exact or bounded-memory list-valued metric storage.
 pub trait ListMetricBackend: Debug + Default {
+    /// Prepares index metadata for an absolute request-slot span.
+    fn prepare_rows(&mut self, _rows: usize) {}
+
     /// Appends one record's list values.
     fn add_for_record(&mut self, row: usize, values: &[f64]);
+
+    /// Appends one record's generated list values without requiring the caller
+    /// to allocate a temporary contiguous buffer.
+    fn add_for_record_iter(&mut self, row: usize, values: &mut dyn Iterator<Item = f64>) {
+        let values = values.collect::<Vec<_>>();
+        self.add_for_record(row, &values);
+    }
 
     /// Returns all values selected by a record mask.
     fn values_for_mask(&self, record_mask: &[bool]) -> Vec<f64>;
@@ -228,6 +227,11 @@ impl RaggedSeries {
 }
 
 impl ListMetricBackend for RaggedSeries {
+    fn prepare_rows(&mut self, rows: usize) {
+        self.offsets.resize(rows, 0);
+        self.present.resize(rows, false);
+    }
+
     fn add_for_record(&mut self, row: usize, values: &[f64]) {
         if self.offsets.len() <= row {
             self.offsets.resize(row + 1, 0);
@@ -242,6 +246,23 @@ impl ListMetricBackend for RaggedSeries {
         self.values.extend_from_slice(values);
         self.record_indices
             .extend(std::iter::repeat_n(row, values.len()));
+    }
+
+    fn add_for_record_iter(&mut self, row: usize, values: &mut dyn Iterator<Item = f64>) {
+        if self.offsets.len() <= row {
+            self.offsets.resize(row + 1, 0);
+            self.present.resize(row + 1, false);
+        }
+        assert!(!self.present[row], "a ragged row may only be appended once");
+        let start = self.values.len();
+        self.values.extend(values);
+        let added = self.values.len() - start;
+        if added == 0 {
+            return;
+        }
+        self.offsets[row] = start;
+        self.present[row] = true;
+        self.record_indices.extend(std::iter::repeat_n(row, added));
     }
 
     fn values_for_mask(&self, record_mask: &[bool]) -> Vec<f64> {
@@ -345,9 +366,11 @@ where
     }
 }
 
-/// Append-only, row-aligned metric and metadata columns.
+/// Absolute-request-index-aligned metric and metadata columns.
 #[derive(Debug)]
 pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
+    occupied: Vec<bool>,
+    occupied_count: usize,
     start_ns: Vec<f64>,
     end_ns: Vec<f64>,
     generation_start_ns: Vec<f64>,
@@ -373,6 +396,8 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
 impl<B: ListMetricBackend> Default for ColumnStore<B> {
     fn default() -> Self {
         Self {
+            occupied: Vec::new(),
+            occupied_count: 0,
             start_ns: Vec::new(),
             end_ns: Vec::new(),
             generation_start_ns: Vec::new(),
@@ -403,14 +428,62 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         Self::default()
     }
 
-    /// Appends one raw record, populating directly observable catalog metrics.
+    /// Prepares every index-aligned column for an absolute request-slot span.
+    ///
+    /// Subsequent inserts still decide which slots are occupied; this only
+    /// removes per-record vector growth from known-size ingestion paths.
+    pub fn prepare_request_slots(&mut self, rows: usize) {
+        self.ensure_row_count(rows);
+        for backend in self.ragged.values_mut() {
+            backend.prepare_rows(rows);
+        }
+    }
+
+    /// Appends one raw record for producers without an authored absolute index.
     pub fn push_record(&mut self, record: &RecordIngest) -> usize {
-        let row = self.append_dimensions(record);
-        self.populate_raw_metrics(row, record);
+        let row = self.row_count();
+        self.insert_record_at(row, record);
+        row
+    }
+
+    /// Appends one record while borrowing its token-arrival storage.
+    pub fn push_record_with_token_arrivals(
+        &mut self,
+        record: &RecordIngest,
+        token_arrivals_ns: &[i64],
+    ) -> usize {
+        let row = self.row_count();
+        self.insert_record_at_with_token_arrivals(row, record, token_arrivals_ns);
+        row
+    }
+
+    /// Inserts one raw record into its absolute zero-based request slot.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the slot was already populated.
+    pub fn insert_record_at(&mut self, row: usize, record: &RecordIngest) {
+        self.insert_record_at_with_token_arrivals(row, record, &record.token_arrival_ns);
+    }
+
+    /// Inserts one raw record while borrowing its token-arrival storage.
+    pub fn insert_record_at_with_token_arrivals(
+        &mut self,
+        row: usize,
+        record: &RecordIngest,
+        token_arrivals_ns: &[i64],
+    ) {
+        self.ensure_row_count(row.saturating_add(1));
+        assert!(
+            !self.occupied[row],
+            "request slot {row} was already populated"
+        );
+        self.occupied_count += 1;
+        self.populate_dimensions(row, record);
+        self.populate_raw_metrics(row, record, token_arrivals_ns);
         for (tag, value) in &record.metric_overrides {
             self.set_metric_value(row, *tag, *value);
         }
-        row
     }
 
     /// Appends every row and allocated metric column from another worker store.
@@ -423,8 +496,14 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         if other_rows == 0 {
             return;
         }
+        assert!(
+            other.occupied.iter().all(|occupied| *occupied),
+            "worker stores must be dense before append"
+        );
+        self.occupied_count += other_rows;
 
         for row in 0..other_rows {
+            self.occupied.push(true);
             self.start_ns.push(other.start_ns[row]);
             self.end_ns.push(other.end_ns[row]);
             self.generation_start_ns
@@ -500,14 +579,19 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         }
     }
 
-    /// Returns the number of append-only rows.
+    /// Returns the absolute slot span, including any not-yet-populated holes.
     pub fn row_count(&self) -> usize {
         self.start_ns.len()
     }
 
-    /// Returns true when no record has been appended.
+    /// Returns the number of populated request slots.
+    pub fn record_count(&self) -> usize {
+        self.occupied_count
+    }
+
+    /// Returns true when no request slot has been populated.
     pub fn is_empty(&self) -> bool {
-        self.start_ns.is_empty()
+        self.occupied_count == 0
     }
 
     /// Returns request start timestamps as f64 nanoseconds.
@@ -620,7 +704,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     ///
     /// Panics when `row` does not exist.
     pub fn set_metric_f64(&mut self, row: usize, tag: MetricTag, value: f64) {
-        assert!(row < self.row_count());
+        assert!(row < self.row_count() && self.occupied[row]);
         let rows = self.row_count();
         self.numeric
             .entry(tag)
@@ -642,11 +726,36 @@ impl<B: ListMetricBackend> ColumnStore<B> {
 
     /// Appends list values for a metric on an existing row.
     pub fn set_ragged_values(&mut self, row: usize, tag: MetricTag, values: &[f64]) {
-        assert!(row < self.row_count());
+        assert!(row < self.row_count() && self.occupied[row]);
+        let rows = self.row_count();
         self.ragged
             .entry(tag)
-            .or_default()
+            .or_insert_with(|| {
+                let mut backend = B::default();
+                backend.prepare_rows(rows);
+                backend
+            })
             .add_for_record(row, values);
+    }
+
+    /// Appends generated list values for a metric on an existing row.
+    pub fn set_ragged_values_iter(
+        &mut self,
+        row: usize,
+        tag: MetricTag,
+        values: impl IntoIterator<Item = f64>,
+    ) {
+        assert!(row < self.row_count() && self.occupied[row]);
+        let rows = self.row_count();
+        let mut values = values.into_iter();
+        self.ragged
+            .entry(tag)
+            .or_insert_with(|| {
+                let mut backend = B::default();
+                backend.prepare_rows(rows);
+                backend
+            })
+            .add_for_record_iter(row, &mut values);
     }
 
     /// Builds the phase-authoritative or phase-less half-open start-time mask.
@@ -656,7 +765,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             return self
                 .phase_codes
                 .iter()
-                .map(|code| Some(*code) == expected)
+                .zip(&self.occupied)
+                .map(|(code, occupied)| *occupied && Some(*code) == expected)
                 .collect();
         }
         self.mask_started_in(context.start_ns, context.end_ns)
@@ -693,7 +803,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         let expected = self.correlation_code(correlation_id);
         self.correlation_codes
             .iter()
-            .map(|code| Some(*code) == expected)
+            .zip(&self.occupied)
+            .map(|(code, occupied)| *occupied && Some(*code) == expected)
             .collect()
     }
 
@@ -702,7 +813,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         let expected = self.dimensions.code(dimensions);
         self.dimension_codes
             .iter()
-            .map(|code| Some(*code) == expected)
+            .zip(&self.occupied)
+            .map(|(code, occupied)| *occupied && Some(*code) == expected)
             .collect()
     }
 
@@ -710,7 +822,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     pub fn mask_for_session(&self, session_num: u64) -> Vec<bool> {
         self.session_nums
             .iter()
-            .map(|value| *value == session_num)
+            .zip(&self.occupied)
+            .map(|(value, occupied)| *occupied && *value == session_num)
             .collect()
     }
 
@@ -718,7 +831,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     pub fn mask_for_turn(&self, turn_index: u32) -> Vec<bool> {
         self.turn_indices
             .iter()
-            .map(|value| *value == turn_index)
+            .zip(&self.occupied)
+            .map(|(value, occupied)| *occupied && *value == turn_index)
             .collect()
     }
 
@@ -740,47 +854,65 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             .collect()
     }
 
-    fn append_dimensions(&mut self, record: &RecordIngest) -> usize {
-        let row = self.row_count();
-        self.start_ns.push(record.start_ns as f64);
-        self.end_ns.push(record.end_ns as f64);
-        self.generation_start_ns
-            .push(record.first_token_ns.map_or(f64::NAN, |value| value as f64));
-        self.observed_output_sequence_length.push(
-            record
-                .tokens
-                .output_sequence_length()
-                .map_or(f64::NAN, |value| value as f64),
-        );
-        self.session_nums.push(record.session_num);
-        self.turn_indices.push(record.turn_index);
-        let phase = self.phases.intern(record.phase);
-        self.phase_codes.push(phase);
-        let correlation = self.correlations.intern(record.correlation_id.clone());
-        self.correlation_codes.push(correlation);
-        let dimensions = self.dimensions.intern(record.dimensions.clone());
-        self.dimension_codes.push(dimensions);
-        self.worker_codes.push(
-            record
-                .worker_id
-                .as_ref()
-                .map(|worker| self.workers.intern(worker.clone())),
-        );
-        self.conversation_codes.push(
-            record
-                .conversation_id
-                .as_ref()
-                .map(|conversation| self.conversations.intern(conversation.clone())),
-        );
-        self.errored.push(record.errored);
-        self.canceled.push(record.canceled);
-        for column in self.numeric.values_mut() {
-            column.push_absent();
+    fn ensure_row_count(&mut self, rows: usize) {
+        if self.row_count() >= rows {
+            return;
         }
-        row
+        self.occupied.resize(rows, false);
+        self.start_ns.resize(rows, f64::NAN);
+        self.end_ns.resize(rows, f64::NAN);
+        self.generation_start_ns.resize(rows, f64::NAN);
+        self.observed_output_sequence_length.resize(rows, f64::NAN);
+        self.session_nums.resize(rows, 0);
+        self.turn_indices.resize(rows, 0);
+        self.phase_codes.resize(rows, u32::MAX);
+        self.correlation_codes.resize(rows, u32::MAX);
+        self.dimension_codes.resize(rows, u32::MAX);
+        self.worker_codes.resize(rows, None);
+        self.conversation_codes.resize(rows, None);
+        self.errored.resize(rows, false);
+        self.canceled.resize(rows, false);
+        for column in self.numeric.values_mut() {
+            column.resize_absent(rows);
+        }
     }
 
-    fn populate_raw_metrics(&mut self, row: usize, record: &RecordIngest) {
+    fn populate_dimensions(&mut self, row: usize, record: &RecordIngest) {
+        self.occupied[row] = true;
+        self.start_ns[row] = record.start_ns as f64;
+        self.end_ns[row] = record.end_ns as f64;
+        self.generation_start_ns[row] =
+            record.first_token_ns.map_or(f64::NAN, |value| value as f64);
+        self.observed_output_sequence_length[row] = record
+            .tokens
+            .output_sequence_length()
+            .map_or(f64::NAN, |value| value as f64);
+        self.session_nums[row] = record.session_num;
+        self.turn_indices[row] = record.turn_index;
+        let phase = self.phases.intern(record.phase);
+        self.phase_codes[row] = phase;
+        let correlation = self.correlations.intern(record.correlation_id.clone());
+        self.correlation_codes[row] = correlation;
+        let dimensions = self.dimensions.intern(record.dimensions.clone());
+        self.dimension_codes[row] = dimensions;
+        self.worker_codes[row] = record
+            .worker_id
+            .as_ref()
+            .map(|worker| self.workers.intern(worker.clone()));
+        self.conversation_codes[row] = record
+            .conversation_id
+            .as_ref()
+            .map(|conversation| self.conversations.intern(conversation.clone()));
+        self.errored[row] = record.errored;
+        self.canceled[row] = record.canceled;
+    }
+
+    fn populate_raw_metrics(
+        &mut self,
+        row: usize,
+        record: &RecordIngest,
+        token_arrivals_ns: &[i64],
+    ) {
         let valid = !record.errored && !record.canceled;
         if valid {
             self.set_metric_f64(row, MetricTag::RequestCount, 1.0);
@@ -846,13 +978,13 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             // change OSL/TPOT/throughput but never pads this timestamp vector;
             // this preserves Python's adjacent-content-response definition at
             // `src/aiperf/metrics/types/inter_chunk_latency_metric.py:40-74`.
-            let icl = record
-                .inter_chunk_latencies_ns()
-                .into_iter()
-                .map(|value| value as f64)
-                .collect::<Vec<_>>();
-            if icl.iter().all(|value| *value >= 0.0) {
-                self.set_ragged_values(row, MetricTag::InterChunkLatency, &icl);
+            let arrivals = token_arrivals_ns;
+            if arrivals.windows(2).all(|pair| pair[1] >= pair[0]) {
+                self.set_ragged_values_iter(
+                    row,
+                    MetricTag::InterChunkLatency,
+                    arrivals.windows(2).map(|pair| (pair[1] - pair[0]) as f64),
+                );
             }
             self.populate_usage_metrics(row, record.usage);
             self.populate_http_metrics(row, record.http);
@@ -1025,7 +1157,7 @@ mod tests {
     use crate::catalog::CATALOG;
 
     #[test]
-    fn numeric_column_preserves_running_sum_in_insertion_order() {
+    fn numeric_column_preserves_running_sum_in_row_order() {
         let mut column = NumericColumn::new();
         column.push_f64(1.0);
         column.push_absent();
@@ -1103,6 +1235,25 @@ mod tests {
             vec![true, true, false]
         );
         assert_eq!(store.mask_for_worker("missing"), vec![false, false, false]);
+    }
+
+    #[test]
+    fn absolute_request_indices_select_column_slots_without_append_order() {
+        let mut store = ColumnStore::new();
+        let late = RecordIngest::minimal(30, 40, Phase::Profiling);
+        let early = RecordIngest::minimal(10, 20, Phase::Profiling);
+        store.insert_record_at(2, &late);
+        store.insert_record_at(0, &early);
+
+        assert_eq!(store.row_count(), 3);
+        assert_eq!(store.record_count(), 2);
+        assert_eq!(store.start_ns()[0], 10.0);
+        assert!(store.start_ns()[1].is_nan());
+        assert_eq!(store.start_ns()[2], 30.0);
+        assert_eq!(
+            store.mask_for(&ExportContext::phase(Phase::Profiling)),
+            vec![true, false, true]
+        );
     }
 
     #[test]

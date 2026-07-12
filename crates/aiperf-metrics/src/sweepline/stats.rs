@@ -69,30 +69,28 @@ pub fn build_clipped_segments(
     let values = curve.values();
     let lo = upper_bound(timestamps, window_start_ns).saturating_sub(1);
     let hi = (lower_bound(timestamps, window_end_ns) + 1).min(timestamps.len());
-
-    let mut starts = Vec::with_capacity(hi.saturating_sub(lo) + 1);
-    let mut segment_values = Vec::with_capacity(hi.saturating_sub(lo) + 1);
-    starts.push(window_start_ns);
-    segment_values.push(if lo > 0 { values[lo - 1] } else { 0.0 });
-    starts.extend_from_slice(&timestamps[lo..hi]);
-    segment_values.extend_from_slice(&values[lo..hi]);
-
-    let mut segments = Vec::with_capacity(starts.len());
-    for index in 0..starts.len() {
-        let start = starts[index].max(window_start_ns);
-        let end = if index + 1 < starts.len() {
-            starts[index + 1]
-        } else {
-            window_end_ns
-        }
-        .min(window_end_ns);
+    let mut segments = Vec::with_capacity(hi.saturating_sub(lo) + 1);
+    let mut segment_start = window_start_ns;
+    let mut segment_value = if lo > 0 { values[lo - 1] } else { 0.0 };
+    for (&event_start, &event_value) in timestamps[lo..hi].iter().zip(&values[lo..hi]) {
+        let start = segment_start.max(window_start_ns);
+        let end = event_start.min(window_end_ns);
         let duration_ns = (end - start).max(0.0);
         if duration_ns > 0.0 {
             segments.push(ClippedSegment {
                 duration_ns,
-                value: segment_values[index],
+                value: segment_value,
             });
         }
+        segment_start = event_start;
+        segment_value = event_value;
+    }
+    let duration_ns = (window_end_ns - segment_start.max(window_start_ns)).max(0.0);
+    if duration_ns > 0.0 {
+        segments.push(ClippedSegment {
+            duration_ns,
+            value: segment_value,
+        });
     }
     segments
 }
@@ -116,7 +114,7 @@ pub fn compute_time_weighted_stats(
     if segments.is_empty() {
         return SweepLineStats::ZERO;
     }
-    weighted_stats(&segments, total_duration)
+    weighted_stats(segments, total_duration)
 }
 
 /// Computes duration-weighted rate statistics only while `mask` is positive.
@@ -134,32 +132,27 @@ pub fn compute_active_weighted_stats(
         return SweepLineStats::ZERO;
     }
 
-    let mut grid = vec![window_start_ns, window_end_ns];
-    append_events_inside(
-        &mut grid,
+    let grid = merge_events_inside(
         rate.timestamps_ns(),
-        window_start_ns,
-        window_end_ns,
-    );
-    append_events_inside(
-        &mut grid,
         mask.timestamps_ns(),
         window_start_ns,
         window_end_ns,
     );
-    grid.sort_by(f64::total_cmp);
-    grid.dedup_by(|left, right| *left == *right || (left.is_nan() && right.is_nan()));
     if grid.len() < 2 {
         return SweepLineStats::ZERO;
     }
 
     let mut segments = Vec::with_capacity(grid.len() - 1);
+    let mut rate_cursor = StepCursor::new(rate, window_start_ns);
+    let mut mask_cursor = StepCursor::new(mask, window_start_ns);
     for pair in grid.windows(2) {
         let duration_ns = pair[1] - pair[0];
-        if duration_ns > 0.0 && mask.value_at(pair[0]) > 0.0 {
+        let rate_value = rate_cursor.value_at(pair[0]);
+        let mask_value = mask_cursor.value_at(pair[0]);
+        if duration_ns > 0.0 && mask_value > 0.0 {
             segments.push(ClippedSegment {
                 duration_ns,
-                value: rate.value_at(pair[0]),
+                value: rate_value,
             });
         }
     }
@@ -170,16 +163,79 @@ pub fn compute_active_weighted_stats(
     if active_duration <= 0.0 {
         return SweepLineStats::ZERO;
     }
-    weighted_stats(&segments, active_duration)
+    weighted_stats(segments, active_duration)
 }
 
-fn append_events_inside(grid: &mut Vec<f64>, events: &[f64], start: f64, end: f64) {
-    let lo = upper_bound(events, start);
-    let hi = lower_bound(events, end);
-    grid.extend_from_slice(&events[lo..hi]);
+fn merge_events_inside(left: &[f64], right: &[f64], start: f64, end: f64) -> Vec<f64> {
+    let left = &left[upper_bound(left, start)..lower_bound(left, end)];
+    let right = &right[upper_bound(right, start)..lower_bound(right, end)];
+    let mut grid = Vec::with_capacity(left.len() + right.len() + 2);
+    grid.push(start);
+    let mut left_index = 0;
+    let mut right_index = 0;
+    while left_index < left.len() || right_index < right.len() {
+        let take_left = right_index == right.len()
+            || (left_index < left.len()
+                && left[left_index].total_cmp(&right[right_index]) != std::cmp::Ordering::Greater);
+        let timestamp = if take_left {
+            let timestamp = left[left_index];
+            left_index += 1;
+            timestamp
+        } else {
+            let timestamp = right[right_index];
+            right_index += 1;
+            timestamp
+        };
+        if grid.last().is_none_or(|previous| {
+            *previous != timestamp && !(previous.is_nan() && timestamp.is_nan())
+        }) {
+            grid.push(timestamp);
+        }
+    }
+    if grid
+        .last()
+        .is_none_or(|previous| *previous != end && !(previous.is_nan() && end.is_nan()))
+    {
+        grid.push(end);
+    }
+    grid
 }
 
-fn weighted_stats(segments: &[ClippedSegment], denominator_duration: f64) -> SweepLineStats {
+struct StepCursor<'a> {
+    timestamps: &'a [f64],
+    values: &'a [f64],
+    next: usize,
+    current: f64,
+}
+
+impl<'a> StepCursor<'a> {
+    fn new(curve: &'a StepFn, start: f64) -> Self {
+        let next = upper_bound(curve.timestamps_ns(), start);
+        let current = next
+            .checked_sub(1)
+            .and_then(|index| curve.values().get(index))
+            .copied()
+            .unwrap_or(0.0);
+        Self {
+            timestamps: curve.timestamps_ns(),
+            values: curve.values(),
+            next,
+            current,
+        }
+    }
+
+    fn value_at(&mut self, timestamp: f64) -> f64 {
+        while self.next < self.timestamps.len()
+            && self.timestamps[self.next].total_cmp(&timestamp) != std::cmp::Ordering::Greater
+        {
+            self.current = self.values[self.next];
+            self.next += 1;
+        }
+        self.current
+    }
+}
+
+fn weighted_stats(mut segments: Vec<ClippedSegment>, denominator_duration: f64) -> SweepLineStats {
     let avg = segments
         .iter()
         .map(|segment| segment.value * segment.duration_ns)
@@ -204,21 +260,20 @@ fn weighted_stats(segments: &[ClippedSegment], denominator_duration: f64) -> Swe
         .sum::<f64>()
         / denominator_duration;
 
-    let mut by_value = segments.to_vec();
-    by_value.sort_by(|left, right| left.value.total_cmp(&right.value));
-    let percentile_duration = by_value
+    segments.sort_unstable_by(|left, right| left.value.total_cmp(&right.value));
+    let percentile_duration = segments
         .iter()
         .map(|segment| segment.duration_ns)
         .sum::<f64>();
     let percentile = |fraction: f64| {
         let mut cumulative = 0.0;
-        for segment in &by_value {
+        for segment in &segments {
             cumulative += segment.duration_ns;
             if cumulative / percentile_duration >= fraction {
                 return segment.value;
             }
         }
-        by_value.last().map(|segment| segment.value).unwrap_or(0.0)
+        segments.last().map(|segment| segment.value).unwrap_or(0.0)
     };
 
     SweepLineStats {

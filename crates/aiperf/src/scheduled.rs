@@ -264,45 +264,6 @@ pub struct ScheduleTimingAnalysis {
     pub max_ttft_ms: Option<f64>,
 }
 
-impl ScheduleTimingAnalysis {
-    fn from_records(records: &[TurnTimingRecord]) -> Self {
-        if records.is_empty() {
-            return Self::default();
-        }
-        let mut lateness_sum_ns = 0_i128;
-        let mut max_lateness_ns = 0_i64;
-        let mut early_turns = 0;
-        let mut ttft_sum_ns = 0_i128;
-        let mut max_ttft_ns = 0_i64;
-        let mut ttft_count = 0_usize;
-
-        for record in records {
-            let raw_lateness = record.issued_offset_ns - record.scheduled_offset_ns;
-            if raw_lateness < 0 {
-                early_turns += 1;
-            }
-            let lateness = raw_lateness.max(0);
-            lateness_sum_ns += i128::from(lateness);
-            max_lateness_ns = max_lateness_ns.max(lateness);
-            if let Some(ttft) = record.ttft_ns {
-                ttft_sum_ns += i128::from(ttft.max(0));
-                max_ttft_ns = max_ttft_ns.max(ttft.max(0));
-                ttft_count += 1;
-            }
-        }
-
-        Self {
-            issued_turns: records.len(),
-            early_turns,
-            mean_issue_lateness_ms: lateness_sum_ns as f64 / records.len() as f64 / 1_000_000.0,
-            max_issue_lateness_ms: max_lateness_ns as f64 / 1_000_000.0,
-            mean_ttft_ms: (ttft_count > 0)
-                .then_some(ttft_sum_ns as f64 / ttft_count as f64 / 1_000_000.0),
-            max_ttft_ms: (ttft_count > 0).then_some(max_ttft_ns as f64 / 1_000_000.0),
-        }
-    }
-}
-
 /// Adaptive user-pool snapshot included in user-centric reports.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct UserControlSnapshot {
@@ -336,9 +297,32 @@ pub struct ScheduledRunReport {
     pub user_control: Option<UserControlSnapshot>,
 }
 
-#[derive(Default)]
 struct TimingRecorder {
     records: Vec<TurnTimingRecord>,
+    capture_records: bool,
+    issued_turns: usize,
+    early_turns: usize,
+    lateness_sum_ns: i128,
+    max_lateness_ns: i64,
+    ttft_sum_ns: i128,
+    max_ttft_ns: i64,
+    ttft_count: usize,
+}
+
+impl Default for TimingRecorder {
+    fn default() -> Self {
+        Self {
+            records: Vec::new(),
+            capture_records: true,
+            issued_turns: 0,
+            early_turns: 0,
+            lateness_sum_ns: 0,
+            max_lateness_ns: 0,
+            ttft_sum_ns: 0,
+            max_ttft_ns: 0,
+            ttft_count: 0,
+        }
+    }
 }
 
 impl TimingRecorder {
@@ -350,31 +334,53 @@ impl TimingRecorder {
         scheduled_ns: i64,
         issued_ns: i64,
     ) -> usize {
-        let index = self.records.len();
-        self.records.push(TurnTimingRecord {
-            uuid: turn.uuid,
-            conversation_id: turn.conversation_id.clone(),
-            x_correlation_id: turn.x_correlation_id.clone(),
-            user_id,
-            turn_index: turn.turn_index,
-            num_turns: turn.num_turns,
-            scheduled_offset_ns: scheduled_ns.saturating_sub(start_ns),
-            issued_offset_ns: issued_ns.saturating_sub(start_ns),
-            dispatch_start_offset_ns: None,
-            first_token_offset_ns: None,
-            ttft_ns: None,
-            terminal_offset_ns: None,
-            terminal_status: None,
-        });
+        let index = self.issued_turns;
+        self.issued_turns += 1;
+        let scheduled_offset_ns = scheduled_ns.saturating_sub(start_ns);
+        let issued_offset_ns = issued_ns.saturating_sub(start_ns);
+        let raw_lateness = issued_offset_ns - scheduled_offset_ns;
+        if raw_lateness < 0 {
+            self.early_turns += 1;
+        }
+        let lateness = raw_lateness.max(0);
+        self.lateness_sum_ns += i128::from(lateness);
+        self.max_lateness_ns = self.max_lateness_ns.max(lateness);
+        if self.capture_records {
+            self.records.push(TurnTimingRecord {
+                uuid: turn.uuid,
+                conversation_id: turn.conversation_id.clone(),
+                x_correlation_id: turn.x_correlation_id.clone(),
+                user_id,
+                turn_index: turn.turn_index,
+                num_turns: turn.num_turns,
+                scheduled_offset_ns,
+                issued_offset_ns,
+                dispatch_start_offset_ns: None,
+                first_token_offset_ns: None,
+                ttft_ns: None,
+                terminal_offset_ns: None,
+                terminal_status: None,
+            });
+        }
         index
     }
 
     fn first_token(&mut self, index: usize, at_ns: i64, start_ns: i64, ttft_ns: i64) {
-        if let Some(record) = self.records.get_mut(index)
-            && record.first_token_offset_ns.is_none()
-        {
-            record.first_token_offset_ns = Some(at_ns.saturating_sub(start_ns));
-            record.ttft_ns = Some(ttft_ns);
+        let ttft_ns = ttft_ns.max(0);
+        if self.capture_records {
+            if let Some(record) = self.records.get_mut(index)
+                && record.first_token_offset_ns.is_none()
+            {
+                self.ttft_sum_ns += i128::from(ttft_ns);
+                self.max_ttft_ns = self.max_ttft_ns.max(ttft_ns);
+                self.ttft_count += 1;
+                record.first_token_offset_ns = Some(at_ns.saturating_sub(start_ns));
+                record.ttft_ns = Some(ttft_ns);
+            }
+        } else {
+            self.ttft_sum_ns += i128::from(ttft_ns);
+            self.max_ttft_ns = self.max_ttft_ns.max(ttft_ns);
+            self.ttft_count += 1;
         }
     }
 
@@ -383,6 +389,23 @@ impl TimingRecorder {
             record.dispatch_start_offset_ns = Some(outcome.start_ns.saturating_sub(start_ns));
             record.terminal_offset_ns = Some(outcome.end_ns.saturating_sub(start_ns));
             record.terminal_status = Some(outcome.terminal);
+        }
+    }
+
+    fn analysis(&self) -> ScheduleTimingAnalysis {
+        if self.issued_turns == 0 {
+            return ScheduleTimingAnalysis::default();
+        }
+        ScheduleTimingAnalysis {
+            issued_turns: self.issued_turns,
+            early_turns: self.early_turns,
+            mean_issue_lateness_ms: self.lateness_sum_ns as f64
+                / self.issued_turns as f64
+                / 1_000_000.0,
+            max_issue_lateness_ms: self.max_lateness_ns as f64 / 1_000_000.0,
+            mean_ttft_ms: (self.ttft_count > 0)
+                .then_some(self.ttft_sum_ns as f64 / self.ttft_count as f64 / 1_000_000.0),
+            max_ttft_ms: (self.ttft_count > 0).then_some(self.max_ttft_ns as f64 / 1_000_000.0),
         }
     }
 }
@@ -514,6 +537,11 @@ impl ScheduledRuntime {
     /// Configure post-drain parallel reduction of independent report planes.
     pub fn set_parallel_report_reduction(&self, enabled: bool) {
         self.parallel_report_reduction.set(enabled);
+    }
+
+    /// Configure retention of export-only per-turn timing rows.
+    pub fn set_timing_record_capture(&self, enabled: bool) {
+        self.recorder.borrow_mut().capture_records = enabled;
     }
 
     /// Attach a terminal record processor before workload execution begins.
@@ -843,8 +871,15 @@ impl ScheduledRuntime {
                 request_index: Some(record_index),
                 session_num: Some(session_num),
                 turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
-                conversation_id: Some(turn.conversation_id.clone()),
-                correlation_id: Some(turn.request_correlation_id.clone()),
+                conversation_id: self
+                    .native_metrics
+                    .retains_record_dimensions()
+                    .then(|| turn.conversation_id.clone()),
+                correlation_id: Some(if self.native_metrics.retains_record_dimensions() {
+                    turn.request_correlation_id.clone()
+                } else {
+                    String::new()
+                }),
                 audio_duration_s: turn.audio_duration_seconds,
                 has_credit_timestamp: self.credit_latency_enabled.get(),
                 dimensions: self.dispatcher.inference_dimensions(&turn),
@@ -1065,7 +1100,11 @@ impl ScheduledRuntime {
         user_control: Option<UserControlSnapshot>,
     ) -> ScheduledRunReport {
         let wall_ms = end_ns.saturating_sub(self.start_ns) as f64 / 1_000_000.0;
-        let turns = std::mem::take(&mut self.recorder.borrow_mut().records);
+        let (turns, schedule_timing) = {
+            let mut recorder = self.recorder.borrow_mut();
+            let analysis = recorder.analysis();
+            (std::mem::take(&mut recorder.records), analysis)
+        };
         let collector = self.collector.take();
         let native_metrics = self.native_metrics.take_finalizer_at(end_ns);
         let (performance, native_metrics) = if self.parallel_report_reduction.get() {
@@ -1083,7 +1122,7 @@ impl ScheduledRuntime {
             strategy: strategy.into(),
             performance,
             native_metrics,
-            schedule_timing: ScheduleTimingAnalysis::from_records(&turns),
+            schedule_timing,
             turns,
             user_control,
         }

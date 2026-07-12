@@ -458,6 +458,141 @@ impl RequestMaterializer for EndpointRequestMaterializer {
     }
 }
 
+/// Request materializer for simulator backends that consume stored trace hash
+/// identities instead of wire bytes.
+///
+/// Turns without `trace_hash_ids` delegate to [`EndpointRequestMaterializer`]
+/// unchanged. Hash-backed turns retain endpoint/model/header/query metadata but
+/// skip message reconstruction, endpoint payload formatting, and JSON
+/// serialization. A caller must pair this materializer with a dispatch adapter
+/// that resolves the stored hashes; the empty body is not a valid HTTP request.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TraceHashAwareRequestMaterializer;
+
+impl RequestMaterializer for TraceHashAwareRequestMaterializer {
+    fn materialize(
+        &self,
+        session: &ConversationSession,
+        endpoint: &dyn Endpoint,
+        model_endpoint: &ModelEndpoint,
+        phase: CreditPhase,
+        overrides: &Overrides,
+    ) -> Result<MaterializedRequest> {
+        let (conversation, current, turn_index) = session.current()?;
+        if current.trace_hash_ids.is_none() {
+            return EndpointRequestMaterializer.materialize(
+                session,
+                endpoint,
+                model_endpoint,
+                phase,
+                overrides,
+            );
+        }
+        let store = session.dataset.segments().as_ref();
+        let effective = EffectiveRequest {
+            model: effective_model(current, &model_endpoint.primary_model_name, overrides)?,
+            max_tokens: effective_max_tokens(current, overrides)?,
+            streaming: effective_streaming(
+                current,
+                model_endpoint.endpoint.streaming,
+                endpoint.metadata().supports_streaming,
+                overrides,
+            )?,
+        };
+        let endpoint_path = model_endpoint.endpoint.path.clone().or_else(|| {
+            if effective.streaming {
+                endpoint.metadata().streaming_path
+            } else {
+                None
+            }
+            .or(endpoint.metadata().endpoint_path)
+            .map(str::to_string)
+        });
+        let mut headers = endpoint.format_headers(&model_endpoint.endpoint);
+        headers.extend(raw_string_map(
+            store,
+            current.extra_headers,
+            "extra_headers",
+        )?);
+        Ok(MaterializedRequest {
+            body: Bytes::new(),
+            headers,
+            parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
+            endpoint: current.endpoint.clone(),
+            endpoint_path,
+            model: effective.model,
+            max_tokens: effective.max_tokens,
+            streaming: effective.streaming,
+            input_tokens: session.input_tokens(store)?,
+            audio_duration_seconds: current.audio_duration_seconds,
+            accuracy: conversation.accuracy.clone(),
+            turn_index,
+            is_final_turn: turn_index + 1 == conversation.turns.len(),
+        })
+    }
+
+    fn materialize_prepared(
+        &self,
+        session: &ConversationSession,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+        phase: CreditPhase,
+        overrides: &Overrides,
+    ) -> Result<MaterializedRequest> {
+        let (conversation, current, turn_index) = session.current()?;
+        if current.trace_hash_ids.is_none() {
+            return EndpointRequestMaterializer.materialize_prepared(
+                session,
+                endpoint,
+                primary_model_name,
+                phase,
+                overrides,
+            );
+        }
+        let store = session.dataset.segments().as_ref();
+        let effective = EffectiveRequest {
+            model: effective_model(current, primary_model_name, overrides)?,
+            max_tokens: effective_max_tokens(current, overrides)?,
+            streaming: effective_streaming(
+                current,
+                endpoint.config().streaming(),
+                endpoint.descriptor().supports_streaming,
+                overrides,
+            )?,
+        };
+        let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {
+            if effective.streaming {
+                endpoint.descriptor().streaming_path
+            } else {
+                None
+            }
+            .or(endpoint.descriptor().endpoint_path)
+            .map(str::to_string)
+        });
+        let mut headers = endpoint.headers().clone();
+        headers.extend(raw_string_map(
+            store,
+            current.extra_headers,
+            "extra_headers",
+        )?);
+        Ok(MaterializedRequest {
+            body: Bytes::new(),
+            headers,
+            parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
+            endpoint: current.endpoint.clone(),
+            endpoint_path,
+            model: effective.model,
+            max_tokens: effective.max_tokens,
+            streaming: effective.streaming,
+            input_tokens: session.input_tokens(store)?,
+            audio_duration_seconds: current.audio_duration_seconds,
+            accuracy: conversation.accuracy.clone(),
+            turn_index,
+            is_final_turn: turn_index + 1 == conversation.turns.len(),
+        })
+    }
+}
+
 struct EffectiveRequest {
     model: String,
     max_tokens: Option<u32>,
@@ -1182,6 +1317,48 @@ mod tests {
         assert_eq!(
             spliced.body,
             b"{ \"messages\" : [ ], \"model\":\"authored\" ,\"stream\":true}\n"[..]
+        );
+    }
+
+    #[test]
+    fn trace_hash_materializer_skips_wire_body_but_preserves_dispatch_metadata() {
+        let mut pool = SegmentPool::new();
+        let hashes = pool
+            .intern_trace_hash_ids(vec![11_i64, 12].into_boxed_slice(), 128)
+            .unwrap();
+        let data = dataset(
+            ConversationContextMode::DeltasWithResponses,
+            vec![Turn {
+                model: Some(ModelId::from("trace-model")),
+                max_tokens: Some(9),
+                streaming: Some(true),
+                input_tokens: 17,
+                trace_hash_ids: Some(hashes),
+                ..Turn::default()
+            }],
+            pool,
+        );
+        let mut session = ConversationSession::new(data, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+
+        let request = session
+            .materialize(
+                &TraceHashAwareRequestMaterializer,
+                &ChatEndpoint,
+                &model_endpoint(),
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        assert!(request.body.is_empty());
+        assert_eq!(request.model, "trace-model");
+        assert_eq!(request.max_tokens, Some(9));
+        assert!(request.streaming);
+        assert_eq!(request.input_tokens, 17);
+        assert_eq!(
+            request.endpoint_path.as_deref(),
+            Some("/v1/chat/completions")
         );
     }
 

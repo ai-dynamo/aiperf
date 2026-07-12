@@ -93,10 +93,10 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
     // AIC imports SciPy, whose OpenBLAS builds otherwise create one worker per
     // host CPU. Offline replay uses AIC's scalar Rust interpolation kernels, so
     // those pools only spin and contend with the deterministic event loop. Keep
-    // explicit operator settings authoritative, bound Rayon fan-out, and let
-    // mimalloc promptly release the large temporary sweep buffers. These defaults
-    // are installed before Python, OpenMP, or either bundled OpenBLAS library is
-    // initialized and before the offline metrics reduction allocates its buffers.
+    // explicit operator settings authoritative, keep reduction on one predictable
+    // CPU, and avoid allocator purge syscalls before immediate process exit. These
+    // defaults are installed before Python, OpenMP, or either bundled OpenBLAS
+    // library is initialized and before offline reduction allocates its buffers.
     for (name, value) in [
         ("OPENBLAS_NUM_THREADS", "1"),
         ("OMP_NUM_THREADS", "1"),
@@ -106,7 +106,7 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
         ("NUMEXPR_NUM_THREADS", "1"),
         ("VECLIB_MAXIMUM_THREADS", "1"),
         ("OMP_WAIT_POLICY", "PASSIVE"),
-        ("RAYON_NUM_THREADS", "8"),
+        ("RAYON_NUM_THREADS", "1"),
     ] {
         if std::env::var_os(name).is_none() {
             // SAFETY: this runs on the sole process thread before the runner
@@ -118,16 +118,13 @@ fn configure_dynamo_offline_process_defaults(input: &[u8]) {
     if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
         // `libmimalloc-sys` intentionally does not name experimental options;
         // mimalloc v3's public `mi_option_t` enum assigns purge-delay index 15.
+        // The runner exits immediately after committing its report, so purging
+        // temporary sweep pages during the run only adds syscalls and cannot
+        // improve a later phase's footprint.
         const MI_OPTION_PURGE_DELAY: i32 = 15;
         // SAFETY: option mutation is not thread-safe, so it is performed here on
         // the sole process thread before Rayon or any benchmark runtime exists.
-        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 50) };
-    }
-    if std::env::var_os("MIMALLOC_ARENA_PURGE_MULT").is_none() {
-        // The corresponding mimalloc v3 public option index is 24.
-        const MI_OPTION_ARENA_PURGE_MULT: i32 = 24;
-        // SAFETY: as above, no other thread exists while process defaults are set.
-        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_ARENA_PURGE_MULT, 1) };
+        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, -1) };
     }
 }
 
