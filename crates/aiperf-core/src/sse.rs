@@ -15,6 +15,9 @@ use serde::Deserialize;
 /// One `chat.completion.chunk` streamed over SSE.
 #[derive(Debug, Deserialize)]
 pub struct ChatChunk {
+    /// Provider response identifier repeated on streamed chunks.
+    #[serde(default)]
+    pub id: Option<String>,
     /// Per-choice deltas (usually one).
     #[serde(default)]
     pub choices: Vec<ChatChoice>,
@@ -99,6 +102,38 @@ pub struct Usage {
     /// Authoritative output (completion) token count.
     #[serde(default)]
     pub completion_tokens: u32,
+    /// OpenAI-compatible prompt-token detail object.
+    #[serde(default)]
+    pub prompt_tokens_details: Option<TokenDetails>,
+    /// Responses-compatible input-token detail object.
+    #[serde(default)]
+    pub input_tokens_details: Option<TokenDetails>,
+    /// Provider-specific top-level cache-read count.
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u32>,
+}
+
+impl Usage {
+    /// Return a provider cache-hit count across supported usage shapes.
+    pub fn cached_tokens(&self) -> Option<u32> {
+        self.prompt_tokens_details
+            .as_ref()
+            .and_then(|details| details.cached_tokens)
+            .or_else(|| {
+                self.input_tokens_details
+                    .as_ref()
+                    .and_then(|details| details.cached_tokens)
+            })
+            .or(self.cache_read_input_tokens)
+    }
+}
+
+/// Token-detail fields nested under prompt/input usage.
+#[derive(Debug, Deserialize)]
+pub struct TokenDetails {
+    /// Tokens served from a provider prompt cache.
+    #[serde(default)]
+    pub cached_tokens: Option<u32>,
 }
 
 #[cfg(test)]
@@ -127,9 +162,13 @@ mod tests {
 
     #[test]
     fn usage_chunk_parses_authoritative_counts() {
-        let chunk = parse(r#"{"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}"#);
+        let chunk = parse(
+            r#"{"id":"resp-1","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":5}}}"#,
+        );
+        assert_eq!(chunk.id.as_deref(), Some("resp-1"));
         let usage = chunk.usage.expect("usage present");
         assert_eq!(usage.prompt_tokens, 7);
         assert_eq!(usage.completion_tokens, 3);
+        assert_eq!(usage.cached_tokens(), Some(5));
     }
 }

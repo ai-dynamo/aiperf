@@ -54,6 +54,31 @@ pub trait IssuanceGate {
     fn can_issue(&self) -> bool;
 }
 
+/// Endpoint-normalized assistant and terminal metadata retained by the normal
+/// dispatch path.
+///
+/// Scheduled workloads that only need continuation text can keep using
+/// [`TurnDispatchOutcome::response_text`]. Stateful consumers use this richer
+/// record to preserve reasoning, truncation, provider correlation, cache usage,
+/// and infrastructure failures without reparsing transport payloads.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModelResponseMetadata {
+    /// User-visible assistant content without a separate reasoning channel.
+    pub content: Option<String>,
+    /// Provider-emitted reasoning content, when the endpoint distinguishes it.
+    pub reasoning: Option<String>,
+    /// Prompt tokens served from a provider cache.
+    pub cached_prompt_tokens: Option<u64>,
+    /// Provider response identifier used by stateful APIs and artifacts.
+    pub response_id: Option<String>,
+    /// Endpoint-normalized finish reason, such as `stop` or `length`.
+    pub finish_reason: Option<String>,
+    /// Stable transport/provider failure category for non-completed requests.
+    pub error_kind: Option<String>,
+    /// Human-readable transport/provider failure detail.
+    pub error_message: Option<String>,
+}
+
 /// Terminal result returned by a [`TurnDispatcher`].
 #[derive(Clone, Debug)]
 pub struct TurnDispatchOutcome {
@@ -65,6 +90,8 @@ pub struct TurnDispatchOutcome {
     pub terminal: ReplayTerminalStatus,
     /// Assistant text captured for the next turn's dynamic prompt splice.
     pub response_text: String,
+    /// Rich model-response metadata captured by the ordinary endpoint parser.
+    pub model_response: ModelResponseMetadata,
     /// Authoritative server prompt-token usage, when available.
     pub prompt_tokens: Option<u64>,
     /// Authoritative server completion-token usage, when available.
@@ -647,6 +674,11 @@ impl ScheduledRuntime {
                         end_ns: now,
                         terminal: ReplayTerminalStatus::Failed,
                         response_text: String::new(),
+                        model_response: ModelResponseMetadata {
+                            error_kind: Some("turn_dispatch_error".to_string()),
+                            error_message: Some(error.to_string()),
+                            ..ModelResponseMetadata::default()
+                        },
                         prompt_tokens: None,
                         completion_tokens: None,
                         http: HttpTrace::default(),

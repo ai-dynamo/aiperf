@@ -37,7 +37,12 @@ use loadgen_core::sink::{
     ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
 };
 
-use super::{HttpDispatchResult, HttpRequest, TransportSink};
+use crate::scheduled::ModelResponseMetadata;
+
+use super::{
+    HttpDispatchResult, HttpRequest, TransportSink, absorb_transport_error,
+    absorb_wire_response_metadata,
+};
 
 impl TransportSink {
     /// Dispatch a materialized request through lifecycle policy selected only by
@@ -154,12 +159,16 @@ impl TransportSink {
         let mut parsed_content = false;
         let mut parse_failed = false;
         let mut response_text = String::new();
+        let mut model_response = ModelResponseMetadata::default();
         let mut prompt_tokens = None;
         let mut completion_tokens = None;
         for response in &record.responses {
             let Some(server_response) = endpoint_response(response) else {
                 continue;
             };
+            if let Some(value) = &server_response.json {
+                absorb_wire_response_metadata(value, &mut model_response);
+            }
             let parsed = match parse_endpoint_response(endpoint, endpoint_config, &server_response)
             {
                 Ok(parsed) => parsed,
@@ -182,7 +191,7 @@ impl TransportSink {
             };
             parsed_content = true;
             absorb_endpoint_metrics(data, &mut endpoint_metrics);
-            let text = data.get_text();
+            let text = absorb_response_data(data, &mut model_response);
             if text.is_empty() {
                 continue;
             }
@@ -209,6 +218,12 @@ impl TransportSink {
             }
             None => ReplayTerminalStatus::Failed,
         };
+        absorb_transport_error(
+            record.error.as_ref(),
+            terminal,
+            record.status,
+            &mut model_response,
+        );
         tracing::debug!(
             uuid = %uuid,
             endpoint = ?endpoint.metadata().endpoint_type,
@@ -238,6 +253,7 @@ impl TransportSink {
             status: record.status,
             terminal,
             response_text,
+            model_response,
             prompt_tokens,
             completion_tokens,
             http: http_trace(&record),
@@ -433,6 +449,40 @@ fn token_kind(data: &ResponseData) -> ObservedTokenKind {
         }
         _ => ObservedTokenKind::Output,
     }
+}
+
+fn absorb_response_data(data: &ResponseData, metadata: &mut ModelResponseMetadata) -> String {
+    match data {
+        ResponseData::Text { text } => {
+            append_metadata_text(&mut metadata.content, text);
+        }
+        ResponseData::Reasoning { content, reasoning } => {
+            metadata.content.get_or_insert_with(String::new);
+            append_metadata_text(&mut metadata.reasoning, reasoning);
+            if let Some(content) = content {
+                append_metadata_text(&mut metadata.content, content);
+            }
+        }
+        ResponseData::ToolCall {
+            tool_call_text,
+            content,
+        } => {
+            if let Some(content) = content {
+                append_metadata_text(&mut metadata.content, content);
+            }
+            append_metadata_text(&mut metadata.content, tool_call_text);
+        }
+        ResponseData::Embeddings { .. }
+        | ResponseData::Rankings { .. }
+        | ResponseData::ImageRetrieval { .. }
+        | ResponseData::Images(_)
+        | ResponseData::Video(_) => {}
+    }
+    data.get_text()
+}
+
+fn append_metadata_text(target: &mut Option<String>, text: &str) {
+    target.get_or_insert_with(String::new).push_str(text);
 }
 
 fn absorb_endpoint_metrics(data: &ResponseData, metrics: &mut ObservedEndpointMetrics) {

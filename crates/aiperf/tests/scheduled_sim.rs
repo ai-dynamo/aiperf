@@ -177,6 +177,7 @@ impl TurnDispatcher for SimDispatcher {
             end_ns,
             terminal: ReplayTerminalStatus::Completed,
             response_text: format!("reply-{}", turn.turn_index),
+            model_response: aiperf::scheduled::ModelResponseMetadata::default(),
             prompt_tokens: None,
             completion_tokens: None,
             http: aiperf_metrics::HttpTrace::default(),

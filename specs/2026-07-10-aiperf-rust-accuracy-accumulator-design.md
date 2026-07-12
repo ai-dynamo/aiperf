@@ -305,3 +305,33 @@ protocol and Harbor callback adapter are built and tested. The application
 `Workload` adapter, CLI/report surface, and real task-container end-to-end proof
 remain explicitly unbuilt; the protocol alone must not be described as a
 working agentic benchmark run.
+
+## Addendum — 2026-07-11 (normal Rust agentic workload wiring)
+
+The application-workload caveat in the preceding addendum is now partly
+superseded. `aiperf::agentic::AgenticWorkload` implements the generic
+`Workload` seam: Rust pages opaque episodes, admits evaluator environments,
+polls model-call events, enforces a separate Rust model-concurrency `SlotPool`,
+and issues every call with `ScheduledRuntime::issue_turn`. Terminal callbacks
+return correlated results to the worker only after the ordinary endpoint,
+transport, observer, timing, metric, and credit path reaches terminal.
+
+`AgenticTurnBuilder` is the request-lowering extension seam. Its first
+implementation uses the unified dataset composer/materializer, preserving full
+message history, generation controls, tool schemas, tool choice, and response
+format. It assigns the opaque episode ID as the runtime session and the opaque
+call ID as request correlation; neither value is interpreted by Rust.
+
+The shared `TurnDispatchOutcome` now retains endpoint-normalized assistant
+content, reasoning, cached prompt tokens, response ID, finish reason, and typed
+transport error details in addition to the existing continuation text and
+usage. That metadata is returned verbatim to the agent harness. Failed,
+rejected, and cancelled requests remain infrastructure outcomes; they are never
+converted into verifier rewards by Rust.
+
+Executable proof includes exact request-body lowering and a real loopback
+HTTP/SSE test in which a stateful evaluator call traverses `TransportSink` and
+returns parsed content/ID/finish/usage. The CLI/native-v2 agentic report surface
+and a real Harbor task-container run remain unbuilt at this point; those are
+still required before describing SWE-bench or another Harbor package as end-to-
+end supported.

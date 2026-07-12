@@ -27,7 +27,9 @@ use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
 use aiperf_metrics::HttpTrace;
 use aiperf_transport::config::ClientConfig;
-use aiperf_transport::models::{ErrorKind, HttpVersion, RequestConfig, Response, SseMessage};
+use aiperf_transport::models::{
+    ErrorDetails, ErrorKind, HttpVersion, RequestConfig, Response, SseMessage,
+};
 use aiperf_transport::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
@@ -36,7 +38,7 @@ use loadgen_core::sink::{
 use serde_json::Value;
 
 use crate::multiturn::TurnToSend;
-use crate::scheduled::{TurnDispatchOutcome, TurnDispatcher};
+use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
 
 mod endpoint_dispatch;
 
@@ -104,6 +106,8 @@ pub struct HttpDispatchResult {
     pub terminal: ReplayTerminalStatus,
     /// Generated reasoning/content text in stream order.
     pub response_text: String,
+    /// Endpoint-normalized assistant and terminal response metadata.
+    pub model_response: ModelResponseMetadata,
     /// Authoritative prompt-token count, when the server emitted usage.
     pub prompt_tokens: Option<u32>,
     /// Authoritative completion-token count, when the server emitted usage.
@@ -306,6 +310,7 @@ impl TransportSink {
         // from the transport clock (real inter-token timing).
         let mut done = false;
         let mut response_text = String::new();
+        let mut model_response = ModelResponseMetadata::default();
         let mut prompt_tokens = None;
         let mut completion_tokens = None;
         for resp in &rec.responses {
@@ -319,9 +324,11 @@ impl TransportSink {
                     let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
                         continue;
                     };
+                    absorb_chat_chunk_metadata(&chunk, &mut model_response);
                     if let Some(usage) = &chunk.usage {
                         prompt_tokens = Some(usage.prompt_tokens);
                         completion_tokens = Some(usage.completion_tokens);
+                        model_response.cached_prompt_tokens = usage.cached_tokens().map(u64::from);
                     }
                     let delta = chunk.delta_text();
                     if !delta.is_empty() {
@@ -341,6 +348,8 @@ impl TransportSink {
                         response_text.push_str(&parsed.0);
                         prompt_tokens = parsed.1;
                         completion_tokens = parsed.2;
+                        absorb_wire_response_metadata(&value, &mut model_response);
+                        absorb_non_streaming_content(&value, &mut model_response);
                         if !response_text.is_empty() {
                             if !first_token_released.replace(true) {
                                 on_first_token(response.perf_ns.saturating_sub(rec.start_ns));
@@ -362,6 +371,12 @@ impl TransportSink {
             None if done && rec.status == Some(200) => ReplayTerminalStatus::Completed,
             None => ReplayTerminalStatus::Failed,
         };
+        absorb_transport_error(
+            rec.error.as_ref(),
+            terminal,
+            rec.status,
+            &mut model_response,
+        );
         obs.on_usage(
             uuid,
             ObservedUsage {
@@ -376,6 +391,7 @@ impl TransportSink {
             status: rec.status,
             terminal,
             response_text,
+            model_response,
             prompt_tokens,
             completion_tokens,
             http: {
@@ -454,6 +470,133 @@ fn parse_non_streaming_response(value: &Value) -> (String, Option<u32>, Option<u
     (text, prompt, completion)
 }
 
+fn absorb_chat_chunk_metadata(chunk: &ChatChunk, metadata: &mut ModelResponseMetadata) {
+    if let Some(response_id) = chunk.id.as_ref().filter(|value| !value.is_empty()) {
+        metadata.response_id = Some(response_id.clone());
+    }
+    for choice in &chunk.choices {
+        if let Some(content) = &choice.delta.content {
+            append_optional_text(&mut metadata.content, content);
+        }
+        if let Some(reasoning) = &choice.delta.reasoning_content {
+            metadata.content.get_or_insert_with(String::new);
+            append_optional_text(&mut metadata.reasoning, reasoning);
+        }
+        if let Some(finish_reason) = choice
+            .finish_reason
+            .as_ref()
+            .filter(|value| !value.is_empty())
+        {
+            metadata.finish_reason = Some(normalize_finish_reason(finish_reason));
+        }
+    }
+}
+
+fn absorb_non_streaming_content(value: &Value, metadata: &mut ModelResponseMetadata) {
+    let reasoning = value
+        .pointer("/choices/0/message/reasoning_content")
+        .or_else(|| value.pointer("/choices/0/message/reasoning"))
+        .and_then(Value::as_str);
+    if let Some(reasoning) = reasoning {
+        metadata.content.get_or_insert_with(String::new);
+        append_optional_text(&mut metadata.reasoning, reasoning);
+    }
+    let content = value
+        .pointer("/choices/0/message/content")
+        .or_else(|| value.pointer("/choices/0/text"))
+        .or_else(|| value.get("output_text"))
+        .and_then(Value::as_str);
+    if let Some(content) = content {
+        append_optional_text(&mut metadata.content, content);
+    }
+}
+
+pub(super) fn absorb_wire_response_metadata(value: &Value, metadata: &mut ModelResponseMetadata) {
+    if let Some(response_id) = value
+        .get("id")
+        .or_else(|| value.pointer("/response/id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        metadata.response_id = Some(response_id.to_string());
+    }
+    if let Some(finish_reason) = value
+        .pointer("/choices/0/finish_reason")
+        .or_else(|| value.pointer("/response/incomplete_details/reason"))
+        .or_else(|| value.pointer("/incomplete_details/reason"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        metadata.finish_reason = Some(normalize_finish_reason(finish_reason));
+    }
+    let usage = value
+        .get("usage")
+        .or_else(|| value.pointer("/response/usage"));
+    metadata.cached_prompt_tokens = usage
+        .and_then(|usage| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+                .or_else(|| usage.get("cache_read_input_tokens"))
+        })
+        .and_then(Value::as_u64)
+        .or(metadata.cached_prompt_tokens);
+}
+
+pub(super) fn absorb_transport_error(
+    error: Option<&ErrorDetails>,
+    terminal: ReplayTerminalStatus,
+    status: Option<u16>,
+    metadata: &mut ModelResponseMetadata,
+) {
+    if terminal == ReplayTerminalStatus::Completed {
+        metadata.error_kind = None;
+        metadata.error_message = None;
+        return;
+    }
+    if let Some(error) = error {
+        metadata.error_kind = Some(error_kind_name(error.kind).to_string());
+        metadata.error_message = Some(error.message.clone());
+        return;
+    }
+    metadata.error_kind = Some(
+        match terminal {
+            ReplayTerminalStatus::Canceled => "cancelled",
+            ReplayTerminalStatus::Rejected => "dispatch_rejected",
+            ReplayTerminalStatus::Failed if status.is_some() => "http_error",
+            ReplayTerminalStatus::Failed => "incomplete_response",
+            ReplayTerminalStatus::Completed => unreachable!("handled above"),
+        }
+        .to_string(),
+    );
+    metadata.error_message = Some(status.map_or_else(
+        || format!("request reached terminal status {terminal:?}"),
+        |status| format!("request reached terminal HTTP status {status}"),
+    ));
+}
+
+fn append_optional_text(target: &mut Option<String>, text: &str) {
+    target.get_or_insert_with(String::new).push_str(text);
+}
+
+fn normalize_finish_reason(value: &str) -> String {
+    match value {
+        "max_output_tokens" | "max_tokens" => "length".to_string(),
+        value => value.to_string(),
+    }
+}
+
+fn error_kind_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::Http => "http_error",
+        ErrorKind::Sse => "sse_error",
+        ErrorKind::Cancelled => "cancelled",
+        ErrorKind::Connect => "connect_error",
+        ErrorKind::Timeout => "timeout",
+        ErrorKind::Other => "transport_error",
+    }
+}
+
 #[async_trait(?Send)]
 impl RequestSink<HttpRequest> for TransportSink {
     async fn dispatch(&self, req: HttpRequest, obs: &dyn RequestObserver) -> Result<()> {
@@ -522,6 +665,7 @@ impl TurnDispatcher for TransportSink {
             end_ns: result.end_ns,
             terminal: result.terminal,
             response_text: result.response_text,
+            model_response: result.model_response,
             prompt_tokens: result.prompt_tokens.map(u64::from),
             completion_tokens: result.completion_tokens.map(u64::from),
             http: result.http,
