@@ -530,8 +530,12 @@ impl ProviderLaunchContext {
             serde_json::json!({
                 "grant_id": proxy.grant.grant_id,
                 "local_locator": proxy.local_locator,
+                "case_ids": proxy.grant.case_ids,
+                "max_concurrent_operations": proxy.grant.max_concurrent_operations,
                 "max_operations": proxy.grant.max_operations,
                 "max_request_bytes": proxy.grant.max_request_bytes,
+                "max_response_bytes": proxy.grant.max_response_bytes,
+                "max_stream_events": proxy.grant.max_stream_events,
                 "expires_after_ms": proxy.grant.expires_after_ms,
                 "process_scope_sha256": proxy.grant.process_scope_sha256,
                 "secret_sha256": sha256_hex(proxy.grant.secret.expose_secret().as_bytes()),

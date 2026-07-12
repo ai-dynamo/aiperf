@@ -1533,12 +1533,20 @@ pub struct ScopedProxyGrant {
     pub service_ids: Vec<LogicalServiceId>,
     /// Exact allowed semantic operations.
     pub semantic_operation_ids: Vec<SemanticOperationId>,
+    /// Exact allowed evaluation case occurrences.
+    pub case_ids: Vec<EvaluationCaseId>,
     /// Exact evaluator process-subtree scope digest.
     pub process_scope_sha256: String,
     /// Maximum logical operations accepted by the grant.
     pub max_operations: u64,
+    /// Maximum simultaneously active logical operations.
+    pub max_concurrent_operations: u64,
     /// Maximum aggregate local request bytes.
     pub max_request_bytes: u64,
+    /// Maximum aggregate normalized response bytes.
+    pub max_response_bytes: u64,
+    /// Maximum aggregate normalized stream events.
+    pub max_stream_events: u64,
     /// Monotonic grant lifetime after worker launch.
     pub expires_after_ms: u64,
 }
@@ -1560,10 +1568,27 @@ impl ScopedProxyBinding {
             || self.local_locator.starts_with("http://[::1]:")
             || self.local_locator.starts_with("unix:///");
         if !loopback
+            || self.grant.grant_id.trim().is_empty()
             || self.grant.service_ids.is_empty()
             || self.grant.semantic_operation_ids.is_empty()
+            || self.grant.case_ids.is_empty()
+            || self.grant.service_ids.iter().collect::<BTreeSet<_>>().len()
+                != self.grant.service_ids.len()
+            || self
+                .grant
+                .semantic_operation_ids
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.grant.semantic_operation_ids.len()
+            || self.grant.case_ids.iter().collect::<BTreeSet<_>>().len()
+                != self.grant.case_ids.len()
             || self.grant.max_operations == 0
+            || self.grant.max_concurrent_operations == 0
+            || self.grant.max_concurrent_operations > self.grant.max_operations
             || self.grant.max_request_bytes == 0
+            || self.grant.max_response_bytes == 0
+            || self.grant.max_stream_events == 0
             || self.grant.expires_after_ms == 0
             || !is_sha256(&self.grant.process_scope_sha256)
         {
@@ -1853,9 +1878,13 @@ mod tests {
                 secret: ScopedProxySecret::new("x".repeat(32)).unwrap(),
                 service_ids: vec![LogicalServiceId::new("primary").unwrap()],
                 semantic_operation_ids: vec![SemanticOperationId::new("model.generate").unwrap()],
+                case_ids: vec![EvaluationCaseId::new("case-1").unwrap()],
                 process_scope_sha256: "a".repeat(64),
                 max_operations: 1,
+                max_concurrent_operations: 1,
                 max_request_bytes: 1024,
+                max_response_bytes: 2048,
+                max_stream_events: 8,
                 expires_after_ms: 1000,
             },
         };
