@@ -599,4 +599,23 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn schema_fingerprints_and_field_counts_match_checked_in_golden() {
+        let schemas = ArchiveSchemasV1::load().unwrap();
+        let golden: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/archive-schema-v1-golden.json"
+        ))
+        .unwrap();
+        let rows = golden["schemas"].as_array().unwrap();
+        assert_eq!(rows.len(), 6);
+        for (schema, row) in schemas.iter().zip(rows) {
+            assert_eq!(row["table"], schema.table_name());
+            assert_eq!(row["fingerprint"], schema.fingerprint().to_hex());
+            assert_eq!(
+                row["field_count"].as_u64().unwrap(),
+                schema.schema().fields().len() as u64
+            );
+        }
+    }
 }
