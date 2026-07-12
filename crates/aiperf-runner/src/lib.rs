@@ -37,6 +37,7 @@ pub mod registry;
 mod server_metrics;
 pub mod sidecar_input;
 mod stock_evaluation;
+pub mod telemetry_pipeline;
 pub mod telemetry_source;
 pub mod telemetry_watch;
 pub mod turn_execution;

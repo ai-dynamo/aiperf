@@ -39,6 +39,7 @@ aiperf-gpu-telemetry = { path = "../aiperf-gpu-telemetry" }
 aiperf-graph = { path = "../aiperf-graph" }
 aiperf-metrics.workspace = true
 aiperf-network-latency.workspace = true
+aiperf-prometheus = { path = "../aiperf-prometheus" }
 aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
