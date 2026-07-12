@@ -166,6 +166,12 @@ pub struct ComposeConfig {
     pub prompt_generator: Arc<dyn PromptGeneratorFactory>,
     /// Whether hash-backed trace rows retain generated prompt text/token segments.
     pub trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
+    /// Whether the selected endpoint requires exact token IDs instead of text.
+    ///
+    /// Loaders use this only to choose the stored prompt representation. Token
+    /// validity is established before the segment pool is frozen, so endpoint
+    /// adapters never parse or verify authored integer arrays on dispatch.
+    pub requires_raw_token_ids: bool,
     /// Format-specific composition settings validated by the selected composer.
     pub format_options: Map<String, Value>,
 }
@@ -182,13 +188,14 @@ impl ComposeConfig {
             sequence_length_distribution: None,
             synthetic_config: None,
             trace_synthesis: None,
-            media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory),
+            media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
             shared_system_prompt: None,
             user_context_prompts: Vec::new(),
             default_context_mode: ConversationContextMode::DeltasWithoutResponses,
             media_resolver: Arc::new(InlineMediaResolver),
             prompt_generator: Arc::new(CorpusPromptGeneratorFactory::default()),
             trace_prompt_storage: Arc::new(MaterializedTracePromptStorage),
+            requires_raw_token_ids: false,
             format_options: Map::new(),
         }
     }
@@ -346,6 +353,7 @@ fn rebase_conversation_handles(
         }
         for handle in [
             &mut turn.raw_payload,
+            &mut turn.raw_token_ids,
             &mut turn.raw_messages,
             &mut turn.tools,
             &mut turn.raw_system,

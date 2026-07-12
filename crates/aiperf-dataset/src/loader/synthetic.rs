@@ -8,6 +8,10 @@
 //! `synthetic_rankings.py:24-114`. Prompt generation, paired ISL/OSL sampling,
 //! reusable prefixes, per-session context, multimodal batches, turn delays, and
 //! final model/max-token selection are all resolved before the pool is frozen.
+//! Token-native composition ports the no-decode branch from
+//! `src/aiperf/dataset/composer/synthetic.py:143-164` on
+//! `ajc/in-engine-transport`: exact IDs enter the segment arena directly and no
+//! temporary text payload is constructed.
 
 use aiperf_rng::{RandomGenerator, RngRoot};
 use async_trait::async_trait;
@@ -18,7 +22,7 @@ use crate::compose::{ComposeConfig, Composer, SessionIdGenerator};
 use crate::error::{DatasetError, Result};
 use crate::generator::{SyntheticDatasetConfig, SyntheticMediaGenerator, SyntheticPrefixConfig};
 use crate::loader::{DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow};
-use crate::model::{ContentGroup, Conversation, MediaKind, Turn};
+use crate::model::{ContentGroup, Conversation, ConversationContextMode, MediaKind, Turn};
 use crate::prompt::PromptGenerator;
 use crate::segment::{Handle, Role, SegmentPool};
 use crate::tokenizer::TextTokenizer;
@@ -103,6 +107,7 @@ impl Composer for SyntheticComposer {
             )
         })?;
         validate_shape(shape)?;
+        validate_raw_token_shape(config, shape)?;
 
         let mut prompt_generator = if shape.prompts.is_some() || has_prefixes(&shape.prefixes) {
             Some(config.prompt_generator.create(tokenizer, config.rng_root)?)
@@ -159,6 +164,10 @@ impl Composer for SyntheticComposer {
 
         for conversation_index in 0..shape.entries {
             let mut conversation = Conversation::new(ids.next_id());
+            if config.requires_raw_token_ids {
+                conversation.context_mode =
+                    Some(ConversationContextMode::MessageArrayWithResponses);
+            }
             let mut parent = None;
             let system = config
                 .shared_system_prompt
@@ -246,50 +255,58 @@ impl Composer for SyntheticComposer {
                     let generator = prompt_generator.as_deref_mut().ok_or_else(|| {
                         DatasetError::Validation("synthetic prompts require a tokenizer".into())
                     })?;
-                    let mut handles = SmallVec::new();
-                    for _ in 0..prompt.batch_size {
-                        let generated = generator.generate(input_tokens, &[], 1)?;
-                        let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
-                            .then(|| prefix_rng.choice(&prefix_pool).ok().cloned())
-                            .flatten();
-                        let text = selected_prefix.as_ref().map_or_else(
-                            || generated.text.clone(),
-                            |prefix| format!("{prefix} {}", generated.text),
-                        );
-                        let tokens = tokenizer.encode(&text)?;
-                        turn.input_tokens = turn
-                            .input_tokens
-                            .checked_add(tokens.len() as u64)
-                            .ok_or_else(|| {
-                                DatasetError::Validation("input token count overflow".into())
-                            })?;
-                        // The full authored text remains one endpoint value, while
-                        // the hidden prefix parent makes reuse visible in the
-                        // content-addressed chain without changing wire shape.
-                        let content_parent = if let Some(prefix) = selected_prefix {
-                            Some(segments.intern_text(
-                                parent,
-                                "user",
-                                Bytes::from(prefix.clone()),
-                                tokenizer.encode(&prefix)?.into_boxed_slice(),
-                            )?)
-                        } else {
-                            parent
-                        };
-                        let handle = segments.intern_text(
-                            content_parent,
-                            "user",
-                            Bytes::from(text),
-                            tokens.into_boxed_slice(),
-                        )?;
+                    if config.requires_raw_token_ids {
+                        let token_ids = generator.generate_token_ids(input_tokens, &[], 1)?;
+                        turn.input_tokens = token_ids.len() as u64;
+                        let handle = segments.intern_token_ids(parent, token_ids)?;
                         parent = Some(handle);
-                        handles.push(handle);
+                        turn.raw_token_ids = Some(handle);
+                    } else {
+                        let mut handles = SmallVec::new();
+                        for _ in 0..prompt.batch_size {
+                            let generated = generator.generate(input_tokens, &[], 1)?;
+                            let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
+                                .then(|| prefix_rng.choice(&prefix_pool).ok().cloned())
+                                .flatten();
+                            let text = selected_prefix.as_ref().map_or_else(
+                                || generated.text.clone(),
+                                |prefix| format!("{prefix} {}", generated.text),
+                            );
+                            let tokens = tokenizer.encode(&text)?;
+                            turn.input_tokens = turn
+                                .input_tokens
+                                .checked_add(tokens.len() as u64)
+                                .ok_or_else(|| {
+                                    DatasetError::Validation("input token count overflow".into())
+                                })?;
+                            // The full authored text remains one endpoint value, while
+                            // the hidden prefix parent makes reuse visible in the
+                            // content-addressed chain without changing wire shape.
+                            let content_parent = if let Some(prefix) = selected_prefix {
+                                Some(segments.intern_text(
+                                    parent,
+                                    "user",
+                                    Bytes::from(prefix.clone()),
+                                    tokenizer.encode(&prefix)?.into_boxed_slice(),
+                                )?)
+                            } else {
+                                parent
+                            };
+                            let handle = segments.intern_text(
+                                content_parent,
+                                "user",
+                                Bytes::from(text),
+                                tokens.into_boxed_slice(),
+                            )?;
+                            parent = Some(handle);
+                            handles.push(handle);
+                        }
+                        turn.content.push(ContentGroup {
+                            kind: MediaKind::Text,
+                            name: "text".into(),
+                            handles,
+                        });
                     }
-                    turn.content.push(ContentGroup {
-                        kind: MediaKind::Text,
-                        name: "text".into(),
-                        handles,
-                    });
                 }
 
                 if let Some(generator) = image_generator.as_mut() {
@@ -322,7 +339,7 @@ impl Composer for SyntheticComposer {
                         "video_url",
                     )?;
                 }
-                if turn.content.is_empty() {
+                if turn.content.is_empty() && turn.raw_token_ids.is_none() {
                     return Err(DatasetError::Validation(
                         "synthetic turn generated no text, image, audio, or video content".into(),
                     ));
@@ -484,6 +501,49 @@ fn validate_shape(shape: &SyntheticDatasetConfig) -> Result<()> {
         ));
     }
     validate_prefixes(&shape.prefixes)
+}
+
+fn validate_raw_token_shape(config: &ComposeConfig, shape: &SyntheticDatasetConfig) -> Result<()> {
+    if !config.requires_raw_token_ids {
+        return Ok(());
+    }
+    let prompt = shape.prompts.as_ref().ok_or_else(|| {
+        DatasetError::Validation(
+            "raw-token synthetic datasets require text prompts to be enabled".into(),
+        )
+    })?;
+    if prompt.batch_size != 1 {
+        return Err(DatasetError::Validation(
+            "raw-token synthetic datasets require prompt batch_size=1".into(),
+        ));
+    }
+    if has_prefixes(&shape.prefixes)
+        || config.shared_system_prompt.is_some()
+        || !config.user_context_prompts.is_empty()
+    {
+        return Err(DatasetError::Validation(
+            "raw-token synthetic datasets do not support prefix, system, or user-context text"
+                .into(),
+        ));
+    }
+    if shape
+        .images
+        .as_ref()
+        .is_some_and(|value| value.batch_size > 0)
+        || shape
+            .audio
+            .as_ref()
+            .is_some_and(|value| value.batch_size > 0)
+        || shape
+            .video
+            .as_ref()
+            .is_some_and(|value| value.batch_size > 0)
+    {
+        return Err(DatasetError::Validation(
+            "raw-token synthetic datasets do not support image, audio, or video inputs".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_prefixes(prefixes: &SyntheticPrefixConfig) -> Result<()> {
@@ -751,5 +811,70 @@ mod tests {
             panic!("first synthetic prompt must be text");
         };
         assert!(first_bytes.starts_with(prefix_bytes));
+    }
+
+    #[tokio::test]
+    async fn raw_token_synthetic_composition_never_decodes_text() {
+        struct NoDecodeTokenizer;
+
+        impl TextTokenizer for NoDecodeTokenizer {
+            fn encode(&self, _text: &str) -> Result<Vec<u32>> {
+                Ok(vec![9, 10, 9, 11])
+            }
+
+            fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+                panic!("raw-token synthetic composition must not decode")
+            }
+
+            fn bos_token_id(&self) -> Option<u32> {
+                None
+            }
+
+            fn eos_token_id(&self) -> Option<u32> {
+                Some(9)
+            }
+
+            fn vocab_size(&self) -> Option<u32> {
+                Some(12)
+            }
+
+            fn name(&self) -> &str {
+                "no-decode"
+            }
+        }
+
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(23)));
+        compose.requires_raw_token_ids = true;
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            turns: SamplingDistribution::fixed(2.0).unwrap(),
+            prompts: Some(crate::generator::SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(8.0).unwrap(),
+                batch_size: 1,
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &NoDecodeTokenizer)
+            .await
+            .unwrap();
+        let conversation = &dataset.conversations()[0];
+        assert_eq!(conversation.turns.len(), 2);
+        assert_eq!(
+            conversation.context_mode,
+            Some(ConversationContextMode::MessageArrayWithResponses)
+        );
+        let turn = &conversation.turns[0];
+        assert!(turn.content.is_empty());
+        assert_eq!(turn.input_tokens, 8);
+        let handle = turn.raw_token_ids.expect("raw token handle");
+        let Payload::TokenIds { token_ids } = dataset.segments().get(handle).unwrap() else {
+            panic!("raw-token synthetic prompt must be stored as token IDs");
+        };
+        assert_eq!(token_ids.len(), 8);
+        assert!(!token_ids.contains(&9));
     }
 }

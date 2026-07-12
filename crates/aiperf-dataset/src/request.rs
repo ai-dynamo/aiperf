@@ -55,6 +55,9 @@ pub struct MaterializedRequest {
     pub streaming: bool,
     /// Precomputed input-token count including selected history and captured replies.
     pub input_tokens: u64,
+    /// Segment handle for exact raw token IDs, retained for token-native
+    /// backends that bypass the serialized HTTP body.
+    pub raw_token_ids: Option<Handle>,
     /// Audio duration used by ASR metrics.
     pub audio_duration_seconds: Option<f64>,
     /// Opaque evaluator association propagated without positional matching.
@@ -364,6 +367,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             max_tokens: effective.max_tokens,
             streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
+            raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -450,6 +454,11 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             max_tokens: effective.max_tokens,
             streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
+            raw_token_ids: endpoint
+                .descriptor()
+                .requires_raw_token_ids
+                .then_some(current.raw_token_ids)
+                .flatten(),
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -459,13 +468,14 @@ impl RequestMaterializer for EndpointRequestMaterializer {
 }
 
 /// Request materializer for simulator backends that consume stored trace hash
-/// identities instead of wire bytes.
+/// identities or exact raw token IDs instead of wire bytes.
 ///
-/// Turns without `trace_hash_ids` delegate to [`EndpointRequestMaterializer`]
-/// unchanged. Hash-backed turns retain endpoint/model/header/query metadata but
-/// skip message reconstruction, endpoint payload formatting, and JSON
-/// serialization. A caller must pair this materializer with a dispatch adapter
-/// that resolves the stored hashes; the empty body is not a valid HTTP request.
+/// Turns without a trace identity or an endpoint-required raw-token handle
+/// delegate to [`EndpointRequestMaterializer`] unchanged. Native turns retain endpoint,
+/// model, header, and query metadata but skip message reconstruction, endpoint
+/// payload formatting, and JSON serialization. A caller must pair this
+/// materializer with a dispatch adapter that resolves the stored handle; the
+/// empty body is not a valid HTTP request.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TraceHashAwareRequestMaterializer;
 
@@ -524,6 +534,7 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             max_tokens: effective.max_tokens,
             streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
+            raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -540,7 +551,9 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
         overrides: &Overrides,
     ) -> Result<MaterializedRequest> {
         let (conversation, current, turn_index) = session.current()?;
-        if current.trace_hash_ids.is_none() {
+        let has_native_raw_tokens =
+            endpoint.descriptor().requires_raw_token_ids && current.raw_token_ids.is_some();
+        if current.trace_hash_ids.is_none() && !has_native_raw_tokens {
             return EndpointRequestMaterializer.materialize_prepared(
                 session,
                 endpoint,
@@ -585,6 +598,11 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             max_tokens: effective.max_tokens,
             streaming: effective.streaming,
             input_tokens: session.input_tokens(store)?,
+            raw_token_ids: endpoint
+                .descriptor()
+                .requires_raw_token_ids
+                .then_some(current.raw_token_ids)
+                .flatten(),
             audio_duration_seconds: current.audio_duration_seconds,
             accuracy: conversation.accuracy.clone(),
             turn_index,
@@ -924,7 +942,7 @@ impl ConversationSession {
 
     fn input_tokens(&self, store: &dyn SegmentStore) -> Result<u64> {
         let (conversation, current_turn, current) = self.current()?;
-        if current_turn.raw_payload.is_some() {
+        if current_turn.raw_payload.is_some() || current_turn.raw_token_ids.is_some() {
             return Ok(current_turn.input_tokens);
         }
         let mut count = match self.context_mode {
@@ -1025,6 +1043,7 @@ fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
         raw_tools: raw_array(store, turn.tools, "tools")?,
         raw_system: raw_array(store, turn.raw_system, "raw_system")?,
         extra_body: raw_object(store, turn.extra_body, "extra_body")?,
+        raw_token_ids: raw_token_ids(store, turn.raw_token_ids)?,
         ..EndpointTurn::default()
     };
     for group in &turn.content {
@@ -1045,6 +1064,20 @@ fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
         }
     }
     Ok(resolved)
+}
+
+fn raw_token_ids(store: &dyn SegmentStore, handle: Option<Handle>) -> Result<Option<Vec<u32>>> {
+    let Some(handle) = handle else {
+        return Ok(None);
+    };
+    match store.get(handle)? {
+        Payload::TokenIds { token_ids } if !token_ids.is_empty() => Ok(Some(token_ids.to_vec())),
+        payload => Err(DatasetError::PayloadKind {
+            handle,
+            expected: "non-empty token-ids",
+            actual: payload.kind_name(),
+        }),
+    }
 }
 
 fn content_string(store: &dyn SegmentStore, handle: Handle, kind: MediaKind) -> Result<String> {
@@ -1360,6 +1393,97 @@ mod tests {
             request.endpoint_path.as_deref(),
             Some("/v1/chat/completions")
         );
+    }
+
+    #[test]
+    fn raw_token_materializer_skips_endpoint_json_for_simulators() {
+        let mut pool = SegmentPool::new();
+        let raw_token_ids = pool.intern_token_ids(None, [11_u32, 22, 33]).unwrap();
+        let data = dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![Turn {
+                model: Some(ModelId::from("token-model")),
+                max_tokens: Some(9),
+                input_tokens: 3,
+                raw_token_ids: Some(raw_token_ids),
+                ..Turn::default()
+            }],
+            pool,
+        );
+        let registry = EndpointRegistry::builtin().unwrap();
+        let endpoint = registry
+            .prepare(
+                &EndpointId::new("vllm_generate").unwrap(),
+                RawEndpointConfig::default(),
+            )
+            .unwrap();
+        data.validate_for_endpoint(endpoint.descriptor()).unwrap();
+        let mut session = ConversationSession::new(data, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+
+        let request = session
+            .materialize_prepared(
+                &TraceHashAwareRequestMaterializer,
+                endpoint.as_ref(),
+                "default-model",
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        assert!(request.body.is_empty());
+        assert_eq!(request.raw_token_ids, Some(raw_token_ids));
+        assert_eq!(request.model, "token-model");
+        assert_eq!(request.max_tokens, Some(9));
+        assert!(!request.streaming);
+        assert_eq!(request.input_tokens, 3);
+        assert_eq!(
+            request.endpoint_path.as_deref(),
+            Some("/inference/v1/generate")
+        );
+    }
+
+    #[test]
+    fn token_ids_inside_an_ordinary_raw_body_do_not_select_native_dispatch() {
+        let mut pool = SegmentPool::new();
+        let wire = Bytes::from_static(br#"{"messages":[],"token_ids":[11,22,33]}"#);
+        let raw_payload = pool.intern_raw(None, wire.clone()).unwrap();
+        let raw_token_ids = pool
+            .intern_token_ids(Some(raw_payload), [11_u32, 22, 33])
+            .unwrap();
+        let data = dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![Turn {
+                input_tokens: 3,
+                raw_payload: Some(raw_payload),
+                raw_token_ids: Some(raw_token_ids),
+                ..Turn::default()
+            }],
+            pool,
+        );
+        let endpoint = EndpointRegistry::builtin()
+            .unwrap()
+            .prepare(
+                &EndpointId::new("chat").unwrap(),
+                RawEndpointConfig::default(),
+            )
+            .unwrap();
+        let mut session = ConversationSession::new(data, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+
+        let request = session
+            .materialize_prepared(
+                &TraceHashAwareRequestMaterializer,
+                endpoint.as_ref(),
+                "default-model",
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        assert_eq!(request.body, wire);
+        assert_eq!(request.raw_token_ids, None);
+        assert_eq!(request.input_tokens, 3);
     }
 
     #[test]

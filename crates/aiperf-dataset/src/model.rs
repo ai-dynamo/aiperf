@@ -238,6 +238,12 @@ pub struct Turn {
     pub content: SmallVec<[ContentGroup; 1]>,
     /// Complete prebuilt request body sent through the raw fast path.
     pub raw_payload: Option<Handle>,
+    /// Exact validated input token IDs for token-native endpoint/backends.
+    ///
+    /// The IDs remain in the shared segment arena; this handle is the native
+    /// replacement for the deprecated Python mmap-serialized list.
+    #[serde(default)]
+    pub raw_token_ids: Option<Handle>,
     /// Complete preformatted messages array.
     pub raw_messages: Option<Handle>,
     /// Preformatted tool definitions.
@@ -279,6 +285,7 @@ impl Default for Turn {
             messages: SmallVec::new(),
             content: SmallVec::new(),
             raw_payload: None,
+            raw_token_ids: None,
             raw_messages: None,
             tools: None,
             raw_system: None,

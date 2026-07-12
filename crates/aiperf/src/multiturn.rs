@@ -729,6 +729,7 @@ impl LegacySessionBackend {
             timestamp_ms: metadata.timestamp_ms,
             delay_ms: metadata.delay_ms,
             trace_hash_ids: None,
+            raw_token_ids: None,
             data_policy: TurnDataPolicy::ordinary(),
             cancel_after_ns: None,
             url_index: None,
@@ -818,6 +819,48 @@ impl fmt::Debug for StoredTraceHashIds {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StoredTraceHashIds")
+            .field("handle", &self.handle)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One handle-bound view of exact authored input token IDs.
+///
+/// Online materialization uses the same handle to build the vLLM JSON body;
+/// Dynamo-offline resolves it directly and bypasses request-body decoding.
+#[derive(Clone)]
+pub struct StoredRawTokenIds {
+    handle: Handle,
+    segments: Arc<dyn SegmentStore>,
+}
+
+impl StoredRawTokenIds {
+    fn new(handle: Handle, segments: Arc<dyn SegmentStore>) -> Self {
+        Self { handle, segments }
+    }
+
+    /// Resolve the validated, non-empty raw token sequence.
+    pub fn resolve(&self) -> Result<&[u32]> {
+        match self.segments.get(self.handle)? {
+            Payload::TokenIds { token_ids } if !token_ids.is_empty() => Ok(token_ids),
+            payload => bail!(
+                "segment {} contains {}, expected non-empty token-ids",
+                self.handle,
+                payload.kind_name()
+            ),
+        }
+    }
+
+    /// Dense segment handle retained for diagnostics and tests.
+    pub const fn handle(&self) -> Handle {
+        self.handle
+    }
+}
+
+impl fmt::Debug for StoredRawTokenIds {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoredRawTokenIds")
             .field("handle", &self.handle)
             .finish_non_exhaustive()
     }
@@ -1068,6 +1111,8 @@ pub struct TurnToSend {
     pub delay_ms: Option<f64>,
     /// Source-trace cache identities for a simulator-aware dispatch adapter.
     pub trace_hash_ids: Option<StoredTraceHashIds>,
+    /// Exact authored IDs for a token-native backend dispatch adapter.
+    pub raw_token_ids: Option<StoredRawTokenIds>,
     /// Content retention/cache/diagnostic policy fixed during materialization.
     pub data_policy: TurnDataPolicy,
     /// Fixed cancellation delay selected at issuance and armed at send-complete.
@@ -1415,7 +1460,9 @@ impl NativeSessionBackend {
             .turns
             .get(turn_index)
             .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
-        let input_tokens = if timing.trace_hash_ids.is_some() {
+        let input_tokens = if timing.trace_hash_ids.is_some()
+            || materialized.raw_token_ids.is_some()
+        {
             u64::try_from(timing.input_length)
                 .map_err(|_| anyhow!("authored trace input count exceeds u64"))?
         } else {
@@ -1472,6 +1519,9 @@ impl NativeSessionBackend {
             trace_hash_ids: timing
                 .trace_hash_ids
                 .map(|handle| StoredTraceHashIds::new(handle, self.segments.clone())),
+            raw_token_ids: materialized
+                .raw_token_ids
+                .map(|handle| StoredRawTokenIds::new(handle, self.segments.clone())),
             data_policy: TurnDataPolicy::ordinary(),
             cancel_after_ns: None,
             url_index: None,

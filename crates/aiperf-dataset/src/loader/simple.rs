@@ -89,6 +89,8 @@ struct SingleTurnRow {
     session_id: Option<String>,
     #[serde(default)]
     output_length: Option<u32>,
+    #[serde(default, alias = "token_ids")]
+    raw_token_ids: Option<Vec<u32>>,
     #[serde(default)]
     extra: Option<Map<String, Value>>,
     #[serde(default)]
@@ -107,6 +109,9 @@ impl SingleTurnRow {
     }
 
     fn validate(&self, origin: &impl std::fmt::Display) -> Result<()> {
+        let extra_has_token_ids = self.extra.as_ref().is_some_and(|extra| {
+            extra.contains_key("raw_token_ids") || extra.contains_key("token_ids")
+        });
         for (singular, plural, names) in [
             (self.text.is_some(), self.texts.is_some(), "text and texts"),
             (
@@ -139,6 +144,11 @@ impl SingleTurnRow {
         if self.output_length == Some(0) {
             return Err(DatasetError::Validation(format!(
                 "{origin}: output_length must be greater than zero"
+            )));
+        }
+        if self.raw_token_ids.as_ref().is_some_and(Vec::is_empty) {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: raw_token_ids must be a non-empty list of unsigned 32-bit integers"
             )));
         }
         for (field, value) in [("model", &self.model), ("endpoint", &self.endpoint)] {
@@ -175,6 +185,8 @@ impl SingleTurnRow {
             )));
         }
         let populated = [
+            self.raw_token_ids.is_some(),
+            extra_has_token_ids,
             self.text.as_ref().is_some_and(|value| !value.is_empty()),
             batch_has_content(self.texts.as_ref()),
             self.image.as_ref().is_some_and(|value| !value.is_empty()),
@@ -186,6 +198,42 @@ impl SingleTurnRow {
         ]
         .into_iter()
         .any(|value| value);
+        if self.raw_token_ids.is_some()
+            && [
+                self.text.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.texts.as_ref()),
+                self.image.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.images.as_ref()),
+                self.audio.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.audios.as_ref()),
+                self.video.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.videos.as_ref()),
+            ]
+            .into_iter()
+            .any(|value| value)
+        {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: raw_token_ids cannot be combined with text or media fields"
+            )));
+        }
+        if extra_has_token_ids
+            && [
+                self.text.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.texts.as_ref()),
+                self.image.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.images.as_ref()),
+                self.audio.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.audios.as_ref()),
+                self.video.as_ref().is_some_and(|value| !value.is_empty()),
+                batch_has_content(self.videos.as_ref()),
+            ]
+            .into_iter()
+            .any(|value| value)
+        {
+            return Err(DatasetError::Validation(format!(
+                "{origin}: extra token_ids cannot be combined with text or media fields"
+            )));
+        }
         if !populated {
             return Err(DatasetError::Validation(format!(
                 "{origin}: at least one modality must be provided"
@@ -375,6 +423,9 @@ fn start_conversation(
     state: &mut ComposeState<'_>,
 ) -> Result<(Conversation, Option<Handle>)> {
     let mut conversation = Conversation::new(session_id);
+    if state.config.requires_raw_token_ids {
+        conversation.context_mode = Some(ConversationContextMode::MessageArrayWithResponses);
+    }
     let mut parent = None;
     if let Some(system) = &state.config.shared_system_prompt {
         let tokens = state.tokenizer.encode(system)?;
@@ -411,17 +462,40 @@ fn start_conversation(
 }
 
 fn compose_simple_turn(
-    row: SingleTurnRow,
+    mut row: SingleTurnRow,
     parent: &mut Option<Handle>,
     state: &mut ComposeState<'_>,
 ) -> Result<Turn> {
+    let sampling_max_tokens = row
+        .extra
+        .as_ref()
+        .and_then(|extra| extra.get("sampling_params"))
+        .and_then(Value::as_object)
+        .and_then(|sampling| sampling.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0);
+    let promoted_token_ids = if state.config.requires_raw_token_ids {
+        take_extra_token_ids(row.extra.as_mut())?
+    } else {
+        None
+    };
+    let raw_token_ids = match (row.raw_token_ids.take(), promoted_token_ids) {
+        (Some(_), Some(_)) => {
+            return Err(DatasetError::Validation(
+                "raw token IDs were authored in both raw_token_ids and extra.token_ids".into(),
+            ));
+        }
+        (Some(token_ids), None) | (None, Some(token_ids)) => Some(token_ids),
+        (None, None) => None,
+    };
     let role = row.role.clone().unwrap_or_else(|| "user".to_string());
     let mut turn = Turn {
         role: row.role.map(Role::new),
         model: row.model.map(ModelId::from),
         endpoint: row.endpoint,
         streaming: row.streaming,
-        max_tokens: row.output_length,
+        max_tokens: row.output_length.or(sampling_max_tokens),
         timestamp_ms: row.timestamp,
         delay_ms: row.delay,
         ..Turn::default()
@@ -462,6 +536,20 @@ fn compose_simple_turn(
         parent,
         state,
     )?;
+    if let Some(token_ids) = raw_token_ids {
+        if !turn.content.is_empty() {
+            return Err(DatasetError::Validation(
+                "raw_token_ids cannot be combined with text or media fields".into(),
+            ));
+        }
+        turn.input_tokens = u64::try_from(token_ids.len())
+            .map_err(|_| DatasetError::Validation("raw token count exceeds u64".into()))?;
+        let handle = state
+            .segments
+            .intern_token_ids(*parent, token_ids.into_boxed_slice())?;
+        *parent = Some(handle);
+        turn.raw_token_ids = Some(handle);
+    }
     let request_parent = *parent;
     if let Some(extra) = row.extra {
         let wire = serde_json::to_vec(&Value::Object(extra))?;
@@ -485,6 +573,47 @@ fn compose_simple_turn(
     }
     state.finalize_turn(&mut turn)?;
     Ok(turn)
+}
+
+fn take_extra_token_ids(extra: Option<&mut Map<String, Value>>) -> Result<Option<Vec<u32>>> {
+    let Some(extra) = extra else {
+        return Ok(None);
+    };
+    let value = match (extra.remove("raw_token_ids"), extra.remove("token_ids")) {
+        (Some(_), Some(_)) => {
+            return Err(DatasetError::Validation(
+                "extra cannot contain both raw_token_ids and token_ids".into(),
+            ));
+        }
+        (Some(value), None) | (None, Some(value)) => value,
+        (None, None) => return Ok(None),
+    };
+    parse_token_ids(&value, "extra.token_ids").map(Some)
+}
+
+fn parse_token_ids(value: &Value, field: &str) -> Result<Vec<u32>> {
+    let values = value
+        .as_array()
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| {
+            DatasetError::Validation(format!(
+                "{field} must be a non-empty list of unsigned 32-bit integers"
+            ))
+        })?;
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    DatasetError::Validation(format!(
+                        "{field}[{index}] must be an unsigned 32-bit integer"
+                    ))
+                })
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -749,6 +878,71 @@ mod tests {
         assert!(body.get("stream").is_none());
         assert!(request.streaming);
         assert_eq!(request.endpoint_path.as_deref(), Some("/generate_stream"));
+    }
+
+    #[tokio::test]
+    async fn token_native_composition_promotes_and_validates_extra_token_ids() {
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SingleTurnDatasetLoader),
+                Arc::new(SingleTurnComposer),
+            ))
+            .unwrap();
+        let mut compose = config();
+        compose.requires_raw_token_ids = true;
+        let dataset = registry
+            .build_dataset(
+                Some("single_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([{
+                    "extra": {
+                        "token_ids": [1, 2, 3],
+                        "sampling_params": {"temperature": 0}
+                    },
+                    "output_length": 7
+                }]))),
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.input_tokens, 3);
+        let Payload::TokenIds { token_ids } = dataset
+            .segments()
+            .get(turn.raw_token_ids.expect("token handle"))
+            .unwrap()
+        else {
+            panic!("promoted token IDs must use the token segment domain")
+        };
+        assert_eq!(&**token_ids, &[1, 2, 3]);
+        let extra = turn.extra_body.expect("remaining extra body");
+        let Payload::Raw { wire } = dataset.segments().get(extra).unwrap() else {
+            panic!("remaining sampling parameters must be raw JSON")
+        };
+        let extra: Value = serde_json::from_slice(wire).unwrap();
+        assert!(extra.get("token_ids").is_none());
+        assert_eq!(extra["sampling_params"]["temperature"], 0);
+
+        for invalid in [
+            json!([]),
+            json!([true]),
+            json!([-1]),
+            json!([4_294_967_296_u64]),
+        ] {
+            let result = registry
+                .build_dataset(
+                    Some("single_turn"),
+                    &LoadConfig::new(DatasetSource::Inline(json!([{
+                        "extra": {"token_ids": invalid}
+                    }]))),
+                    &compose,
+                    &TiktokenTokenizer::builtin(),
+                )
+                .await;
+            assert!(result.is_err());
+        }
     }
 
     #[test]

@@ -6,17 +6,17 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use aiperf_rng::{RandomGenerator, RngRoot};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgb};
 
 use super::{
-    GeneratedMedia, SourceImageSampling, SyntheticImageConfig, SyntheticImageFormat,
-    SyntheticImageSource, SyntheticMediaGenerator,
+    GeneratedMedia, InlineSyntheticMediaPublisher, SourceImageSampling, SyntheticImageConfig,
+    SyntheticImageFormat, SyntheticImageSource, SyntheticMediaFormat, SyntheticMediaGenerator,
+    SyntheticMediaPublisher,
 };
 use crate::error::{DatasetError, Result};
 use crate::model::MediaKind;
@@ -53,11 +53,21 @@ pub struct NativeImageGenerator {
     available: Vec<usize>,
     shuffle_cycle: Vec<usize>,
     sequential_index: usize,
+    publisher: Arc<dyn SyntheticMediaPublisher>,
 }
 
 impl NativeImageGenerator {
     /// Validate configuration and index finite image sources without decoding them.
     pub fn new(config: SyntheticImageConfig, root: RngRoot) -> Result<Self> {
+        Self::new_with_publisher(config, root, Arc::new(InlineSyntheticMediaPublisher))
+    }
+
+    /// Validate configuration and bind an injected final publication policy.
+    pub fn new_with_publisher(
+        config: SyntheticImageConfig,
+        root: RngRoot,
+        publisher: Arc<dyn SyntheticMediaPublisher>,
+    ) -> Result<Self> {
         if config.batch_size == 0 {
             return Err(DatasetError::Validation(
                 "an image generator requires batch_size > 0".into(),
@@ -90,6 +100,7 @@ impl NativeImageGenerator {
             available,
             shuffle_cycle: Vec::new(),
             sequential_index: 0,
+            publisher,
         })
     }
 
@@ -211,17 +222,16 @@ impl SyntheticMediaGenerator for NativeImageGenerator {
         image
             .write_to(&mut encoded, format)
             .map_err(|error| DatasetError::Validation(format!("image encoding failed: {error}")))?;
-        let subtype = match format {
-            ImageFormat::Png => "png",
-            ImageFormat::Jpeg => "jpeg",
+        let media_format = match format {
+            ImageFormat::Png => SyntheticMediaFormat::ImagePng,
+            ImageFormat::Jpeg => SyntheticMediaFormat::ImageJpeg,
             _ => unreachable!("output_format returns PNG or JPEG"),
         };
         Ok(GeneratedMedia {
             kind: MediaKind::Image,
-            wire: Bytes::from(format!(
-                "data:image/{subtype};base64,{}",
-                STANDARD.encode(encoded.into_inner())
-            )),
+            wire: self
+                .publisher
+                .publish(media_format, Bytes::from(encoded.into_inner()))?,
             duration_seconds: None,
         })
     }
@@ -256,9 +266,24 @@ fn index_directory(path: &Path) -> Result<Vec<SourceImage>> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
 
     use super::*;
+
+    #[derive(Debug, Default)]
+    struct RecordingPublisher {
+        published: Mutex<Vec<(SyntheticMediaFormat, Bytes)>>,
+    }
+
+    impl SyntheticMediaPublisher for RecordingPublisher {
+        fn publish(&self, format: SyntheticMediaFormat, encoded: Bytes) -> Result<Bytes> {
+            self.published.lock().unwrap().push((format, encoded));
+            Ok(Bytes::from_static(b"http://content/image.png"))
+        }
+    }
 
     #[test]
     fn noise_image_has_sampled_geometry_and_valid_data_uri() {
@@ -275,6 +300,33 @@ mod tests {
         let decoded = STANDARD.decode(encoded).unwrap();
         let image = image::load_from_memory_with_format(&decoded, ImageFormat::Png).unwrap();
         assert_eq!((image.width(), image.height()), (7, 5));
+    }
+
+    #[test]
+    fn injected_publisher_receives_encoded_image_before_wire_representation() {
+        let publisher = Arc::new(RecordingPublisher::default());
+        let config = SyntheticImageConfig {
+            batch_size: 1,
+            width: aiperf_rng::SamplingDistribution::fixed(3.0).unwrap(),
+            height: aiperf_rng::SamplingDistribution::fixed(2.0).unwrap(),
+            format: SyntheticImageFormat::Png,
+            ..SyntheticImageConfig::default()
+        };
+        let mut generator = NativeImageGenerator::new_with_publisher(
+            config,
+            RngRoot::new(Some(9)),
+            publisher.clone(),
+        )
+        .unwrap();
+
+        let generated = generator.generate().unwrap();
+
+        assert_eq!(generated.wire, "http://content/image.png");
+        let published = publisher.published.lock().unwrap();
+        assert_eq!(published[0].0, SyntheticMediaFormat::ImagePng);
+        let decoded =
+            image::load_from_memory_with_format(&published[0].1, ImageFormat::Png).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (3, 2));
     }
 
     #[test]

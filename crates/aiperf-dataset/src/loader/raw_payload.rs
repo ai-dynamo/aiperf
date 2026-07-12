@@ -138,14 +138,47 @@ impl Composer for RawPayloadComposer {
                     position
                 }
             };
-            let wire = row.wire.ok_or_else(|| {
-                DatasetError::Validation(format!(
-                    "{}: raw payload loader did not retain exact wire bytes",
-                    row.origin
-                ))
-            })?;
-            let handle = state.segments.intern_raw(parents[position], wire)?;
-            parents[position] = Some(handle);
+            let raw_token_ids = raw_token_ids(&row.value, &row.origin)?;
+            let (raw_payload, raw_token_handle, extra_body) = if config.requires_raw_token_ids {
+                let token_ids = raw_token_ids.as_ref().ok_or_else(|| {
+                    DatasetError::Validation(format!(
+                        "{}: selected endpoint requires a non-empty token_ids array",
+                        row.origin
+                    ))
+                })?;
+                let token_handle = state
+                    .segments
+                    .intern_token_ids(parents[position], token_ids.clone())?;
+                let extra = token_native_extra_body(&row.value)?;
+                let extra_handle = (!extra.is_empty())
+                    .then(|| {
+                        serde_json::to_vec(&Value::Object(extra))
+                            .map(Bytes::from)
+                            .map_err(DatasetError::from)
+                            .and_then(|wire| state.segments.intern_raw(Some(token_handle), wire))
+                    })
+                    .transpose()?;
+                parents[position] = extra_handle.or(Some(token_handle));
+                (None, Some(token_handle), extra_handle)
+            } else {
+                let wire = row.wire.ok_or_else(|| {
+                    DatasetError::Validation(format!(
+                        "{}: raw payload loader did not retain exact wire bytes",
+                        row.origin
+                    ))
+                })?;
+                let handle = state.segments.intern_raw(parents[position], wire)?;
+                let token_handle = raw_token_ids
+                    .as_ref()
+                    .map(|token_ids| {
+                        state
+                            .segments
+                            .intern_token_ids(Some(handle), token_ids.clone())
+                    })
+                    .transpose()?;
+                parents[position] = token_handle.or(Some(handle));
+                (Some(handle), token_handle, None)
+            };
             let mut turn = Turn {
                 role: Some(Role::from("user")),
                 model: row
@@ -155,8 +188,17 @@ impl Composer for RawPayloadComposer {
                     .map(ModelId::from),
                 max_tokens: raw_max_tokens(&row.value),
                 streaming: row.value.get("stream").and_then(Value::as_bool),
-                raw_payload: Some(handle),
-                input_tokens: raw_input_tokens(&row.value, state.tokenizer)?,
+                raw_payload,
+                raw_token_ids: raw_token_handle,
+                extra_body,
+                input_tokens: raw_token_ids.as_ref().map_or_else(
+                    || raw_input_tokens(&row.value, state.tokenizer),
+                    |token_ids| {
+                        u64::try_from(token_ids.len()).map_err(|_| {
+                            DatasetError::Validation("raw token count exceeds u64".into())
+                        })
+                    },
+                )?,
                 ..Turn::default()
             };
             state.finalize_turn(&mut turn)?;
@@ -176,16 +218,17 @@ fn is_raw_payload(value: &Value) -> bool {
     if object.contains_key("question_id") && object.contains_key("category") {
         return false;
     }
-    object.get("messages").is_some_and(Value::is_array)
+    object.get("messages").is_some_and(Value::is_array) || object.contains_key("token_ids")
 }
 
 fn validate_raw_payload(value: &Value, origin: &impl std::fmt::Display) -> Result<()> {
     validate_payload_object(value, origin)?;
-    if !value.get("messages").is_some_and(Value::is_array) {
+    if !value.get("messages").is_some_and(Value::is_array) && value.get("token_ids").is_none() {
         return Err(DatasetError::Validation(format!(
-            "{origin}: raw_payload row is missing the required messages array"
+            "{origin}: raw_payload row requires either messages or token_ids"
         )));
     }
+    raw_token_ids(value, origin)?;
     Ok(())
 }
 
@@ -209,6 +252,52 @@ fn raw_input_tokens(value: &Value, tokenizer: &dyn TextTokenizer) -> Result<u64>
             })?;
     }
     Ok(count)
+}
+
+fn token_native_extra_body(value: &Value) -> Result<serde_json::Map<String, Value>> {
+    let mut extra = value.as_object().cloned().ok_or_else(|| {
+        DatasetError::Validation("token-native raw payload must be a JSON object".into())
+    })?;
+    for field in [
+        "token_ids",
+        "model",
+        "stream",
+        "max_tokens",
+        "max_completion_tokens",
+        "max_output_tokens",
+    ] {
+        extra.remove(field);
+    }
+    Ok(extra)
+}
+
+fn raw_token_ids(value: &Value, origin: &impl std::fmt::Display) -> Result<Option<Vec<u32>>> {
+    let Some(value) = value.get("token_ids") else {
+        return Ok(None);
+    };
+    let values = value
+        .as_array()
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| {
+            DatasetError::Validation(format!(
+                "{origin}: token_ids must be a non-empty list of unsigned 32-bit integers"
+            ))
+        })?;
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    DatasetError::Validation(format!(
+                        "{origin}: token_ids[{index}] must be an unsigned 32-bit integer"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
 }
 
 fn directory_has_raw_payload(directory: &Path) -> bool {
@@ -336,6 +425,13 @@ fn raw_max_tokens(value: &Value) -> Option<u32> {
     ["max_tokens", "max_completion_tokens", "max_output_tokens"]
         .into_iter()
         .find_map(|field| value.get(field).and_then(Value::as_u64))
+        .or_else(|| {
+            value
+                .get("sampling_params")
+                .and_then(Value::as_object)
+                .and_then(|sampling| sampling.get("max_tokens"))
+                .and_then(Value::as_u64)
+        })
         .and_then(|value| u32::try_from(value).ok())
 }
 
@@ -421,5 +517,55 @@ mod tests {
                 .unwrap(),
             input
         );
+    }
+
+    #[tokio::test]
+    async fn token_native_composition_frees_raw_bytes_and_retains_typed_fields() {
+        let input = Bytes::from_static(
+            br#"{"model":"authored","token_ids":[7,8,9],"sampling_params":{"temperature":0},"stream":false,"request_id":"r-1"}"#,
+        );
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(RawPayloadDatasetLoader),
+                Arc::new(RawPayloadComposer),
+            ))
+            .unwrap();
+        let mut compose = ComposeConfig::new("fallback", RngRoot::new(Some(0)));
+        compose.requires_raw_token_ids = true;
+
+        let dataset = registry
+            .build_dataset(
+                Some("raw_payload"),
+                &LoadConfig::new(DatasetSource::Bytes(input)),
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        assert!(turn.raw_payload.is_none());
+        assert_eq!(turn.input_tokens, 3);
+        let Payload::TokenIds { token_ids } = dataset
+            .segments()
+            .get(turn.raw_token_ids.expect("token handle"))
+            .unwrap()
+        else {
+            panic!("raw payload token IDs must be interned in the token domain")
+        };
+        assert_eq!(&**token_ids, &[7, 8, 9]);
+        let Payload::Raw { wire } = dataset
+            .segments()
+            .get(turn.extra_body.expect("sampling extra"))
+            .unwrap()
+        else {
+            panic!("non-canonical fields must remain available to the endpoint")
+        };
+        let extra: Value = serde_json::from_slice(wire).unwrap();
+        assert_eq!(extra["sampling_params"]["temperature"], 0);
+        assert_eq!(extra["request_id"], "r-1");
+        assert!(extra.get("token_ids").is_none());
+        assert!(extra.get("model").is_none());
+        assert!(extra.get("stream").is_none());
     }
 }

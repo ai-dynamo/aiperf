@@ -640,6 +640,17 @@ impl Composer for SpeedBenchComposer {
     }
 }
 
+/// Acquire one raw local or remote row stream without selecting a linear composer.
+///
+/// Direct Graph-IR input adapters use this source seam for URL and Hugging Face
+/// acquisition, then retain sole ownership of their format-specific validation
+/// and lowering. No [`DatasetLoader`] registry or linear [`Conversation`]
+/// representation is introduced on that path.
+pub async fn load_raw_rows(config: &LoadConfig) -> Result<Vec<RawRow>> {
+    config.validate()?;
+    load_public_rows(config).await
+}
+
 pub(crate) async fn load_public_rows(config: &LoadConfig) -> Result<Vec<RawRow>> {
     match &config.source {
         DatasetSource::Url(url) => {

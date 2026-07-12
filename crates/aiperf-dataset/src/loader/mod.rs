@@ -40,6 +40,7 @@ pub use public::{
     HfInstructionComposer, HfInstructionDatasetLoader, MmvuComposer, MmvuDatasetLoader,
     MtBenchComposer, MtBenchDatasetLoader, ShareGptComposer, ShareGptDatasetLoader,
     SpecBenchComposer, SpecBenchDatasetLoader, SpeedBenchComposer, SpeedBenchDatasetLoader,
+    load_raw_rows,
 };
 pub use random_pool::{RandomPoolComposer, RandomPoolDatasetLoader};
 pub use raw_payload::{InputsJsonPayloadLoader, RawPayloadComposer, RawPayloadDatasetLoader};

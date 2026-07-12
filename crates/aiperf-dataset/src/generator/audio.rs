@@ -5,13 +5,15 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 use aiperf_rng::{RandomGenerator, RngRoot};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 
-use super::{GeneratedMedia, SyntheticAudioConfig, SyntheticAudioFormat, SyntheticMediaGenerator};
+use super::{
+    GeneratedMedia, InlineSyntheticMediaPublisher, SyntheticAudioConfig, SyntheticAudioFormat,
+    SyntheticMediaFormat, SyntheticMediaGenerator, SyntheticMediaPublisher,
+};
 use crate::error::{DatasetError, Result};
 use crate::model::MediaKind;
 
@@ -26,17 +28,28 @@ pub struct NativeAudioGenerator {
     duration_rng: RandomGenerator,
     format_rng: RandomGenerator,
     data_rng: RandomGenerator,
+    publisher: Arc<dyn SyntheticMediaPublisher>,
 }
 
 impl NativeAudioGenerator {
     /// Validate audio geometry and initialize independent deterministic RNG streams.
     pub fn new(config: SyntheticAudioConfig, root: RngRoot) -> Result<Self> {
+        Self::new_with_publisher(config, root, Arc::new(InlineSyntheticMediaPublisher))
+    }
+
+    /// Validate audio geometry and bind an injected final publication policy.
+    pub fn new_with_publisher(
+        config: SyntheticAudioConfig,
+        root: RngRoot,
+        publisher: Arc<dyn SyntheticMediaPublisher>,
+    ) -> Result<Self> {
         validate_config(&config)?;
         Ok(Self {
             config,
             duration_rng: RandomGenerator::from_seed(root.derive_seed("dataset.audio.duration")),
             format_rng: RandomGenerator::from_seed(root.derive_seed("dataset.audio.format")),
             data_rng: RandomGenerator::from_seed(root.derive_seed("dataset.audio.data")),
+            publisher,
         })
     }
 
@@ -75,12 +88,12 @@ impl SyntheticMediaGenerator for NativeAudioGenerator {
             .map_err(|error| DatasetError::Validation(error.to_string()))?;
         let wav = self.generate_wav(duration, sample_rate_hz, bit_depth, self.config.channels)?;
         let (format, encoded) = match self.config.format {
-            SyntheticAudioFormat::Wav => ("wav", wav),
-            SyntheticAudioFormat::Mp3 => ("mp3", encode_mp3(&wav)?),
+            SyntheticAudioFormat::Wav => (SyntheticMediaFormat::AudioWav, wav),
+            SyntheticAudioFormat::Mp3 => (SyntheticMediaFormat::AudioMp3, encode_mp3(&wav)?),
         };
         Ok(GeneratedMedia {
             kind: MediaKind::Audio,
-            wire: Bytes::from(format!("{format},{}", STANDARD.encode(encoded))),
+            wire: self.publisher.publish(format, encoded)?,
             duration_seconds: Some(duration),
         })
     }
@@ -356,6 +369,9 @@ fn run_filter(program: &str, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
     use super::*;
 
     #[test]

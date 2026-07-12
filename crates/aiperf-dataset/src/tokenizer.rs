@@ -37,6 +37,14 @@ pub trait TextTokenizer: Send + Sync {
     /// Configured end-of-sequence token, if known.
     fn eos_token_id(&self) -> Option<u32>;
 
+    /// Vocabulary cardinality used to keep replacement token IDs in range.
+    ///
+    /// Implementations that cannot expose this value may return `None`; raw
+    /// prompt generation then selects a known non-EOS corpus token instead.
+    fn vocab_size(&self) -> Option<u32> {
+        None
+    }
+
     /// BOS, then EOS, used as a synthetic block separator when available.
     fn block_separation_token_id(&self) -> Option<u32> {
         self.bos_token_id().or_else(|| self.eos_token_id())
@@ -103,6 +111,17 @@ impl TiktokenEncoding {
             Self::P50kBase => p50k_base_singleton(),
             Self::P50kEdit => p50k_edit_singleton(),
             Self::R50kBase => r50k_base_singleton(),
+        }
+    }
+
+    const fn vocab_size(self) -> u32 {
+        match self {
+            Self::O200kBase => 200_019,
+            Self::O200kHarmony => 201_088,
+            Self::Cl100kBase => 100_277,
+            Self::P50kBase => 50_281,
+            Self::P50kEdit => 50_284,
+            Self::R50kBase => 50_257,
         }
     }
 }
@@ -182,6 +201,10 @@ impl TextTokenizer for TiktokenTokenizer {
 
     fn eos_token_id(&self) -> Option<u32> {
         self.eos_token_id
+    }
+
+    fn vocab_size(&self) -> Option<u32> {
+        Some(self.encoding.vocab_size())
     }
 
     fn name(&self) -> &str {
@@ -274,6 +297,10 @@ impl TextTokenizer for HuggingFaceTokenizer {
 
     fn eos_token_id(&self) -> Option<u32> {
         self.eos_token_id
+    }
+
+    fn vocab_size(&self) -> Option<u32> {
+        u32::try_from(LlmTokenizer::vocab_size(&self.tokenizer)).ok()
     }
 
     fn name(&self) -> &str {

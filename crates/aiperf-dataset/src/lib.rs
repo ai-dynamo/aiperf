@@ -33,19 +33,20 @@ pub use dataset::{Dataset, DatasetMetadata};
 pub use error::{DatasetError, Result};
 pub use fetch::{DatasetFetcher, HttpDatasetFetcher};
 pub use generator::{
-    GeneratedMedia, NativeAudioGenerator, NativeImageGenerator,
+    GeneratedMedia, InlineSyntheticMediaPublisher, NativeAudioGenerator, NativeImageGenerator,
     NativeSyntheticMediaGeneratorFactory, NativeVideoGenerator, SourceImageSampling,
     SyntheticAudioConfig, SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig,
-    SyntheticImageFormat, SyntheticImageSource, SyntheticMediaGenerator,
-    SyntheticMediaGeneratorFactory, SyntheticPrefixConfig, SyntheticPromptConfig,
-    SyntheticRankingsConfig, SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat,
-    SyntheticVideoPattern, audio_duration_seconds, transcode_audio_to_wav,
+    SyntheticImageFormat, SyntheticImageSource, SyntheticMediaFormat, SyntheticMediaGenerator,
+    SyntheticMediaGeneratorFactory, SyntheticMediaPublisher, SyntheticPrefixConfig,
+    SyntheticPromptConfig, SyntheticRankingsConfig, SyntheticVideoAudioConfig,
+    SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, audio_duration_seconds,
+    transcode_audio_to_wav,
 };
 pub use loader::{
     AccuracyComposer, AccuracyDatasetLoader, DagJsonlConversation, DagJsonlFork, DagJsonlProgram,
     DagJsonlSpawn, DagJsonlTurn, DatasetFormatRegistration, DatasetLoader, DatasetProbe,
     DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin, dag_jsonl_turn_token_counts,
-    load_dag_jsonl_program,
+    load_dag_jsonl_program, load_raw_rows,
 };
 pub use materialize::{
     AssemblyItem, MessageSpliceResolver, Overrides, SegmentItemsMaterializer,

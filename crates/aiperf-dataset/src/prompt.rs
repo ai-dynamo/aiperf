@@ -7,6 +7,10 @@
 //! `src/aiperf/dataset/generator/prompt.py:174-343`: each hash id owns one token
 //! block, the final block may be shorter, a BOS/EOS separator occupies the first
 //! token when available, and sampled corpus tokens wrap at the corpus boundary.
+//! The no-decode token path follows
+//! `src/aiperf/dataset/generator/prompt.py:152-200` on
+//! `ajc/in-engine-transport`: raw-token endpoints receive the sampled IDs
+//! directly, with EOS replaced before engine admission.
 
 use std::collections::HashMap;
 
@@ -28,6 +32,14 @@ pub struct GeneratedPrompt {
 
 /// Stateful exact-length prompt generator.
 pub trait PromptGenerator {
+    /// Generate exact raw token IDs without decoding them to text.
+    fn generate_token_ids(
+        &mut self,
+        num_tokens: usize,
+        hash_ids: &[i64],
+        block_size: usize,
+    ) -> Result<Vec<u32>>;
+
     /// Generate `num_tokens`, reusing blocks identified by `hash_ids` when
     /// supplied. `block_size` must frame those identifiers exactly.
     fn generate(
@@ -106,12 +118,67 @@ struct CorpusPromptGenerator<'a> {
 }
 
 impl PromptGenerator for CorpusPromptGenerator<'_> {
+    fn generate_token_ids(
+        &mut self,
+        num_tokens: usize,
+        hash_ids: &[i64],
+        block_size: usize,
+    ) -> Result<Vec<u32>> {
+        let mut tokens = self.build_token_ids(num_tokens, hash_ids, block_size)?;
+        if let Some(eos) = self.tokenizer.eos_token_id()
+            && tokens.contains(&eos)
+        {
+            let replacement = match self.tokenizer.vocab_size() {
+                Some(vocab_size) if vocab_size > 1 && eos < vocab_size => {
+                    Some(eos.wrapping_add(1) % vocab_size)
+                }
+                Some(vocab_size) => self
+                    .corpus_tokens
+                    .iter()
+                    .copied()
+                    .find(|token| *token != eos && *token < vocab_size),
+                None => self
+                    .corpus_tokens
+                    .iter()
+                    .copied()
+                    .find(|token| *token != eos),
+            }
+            .ok_or_else(|| {
+                DatasetError::Tokenizer(format!(
+                    "tokenizer {:?} has no valid non-EOS token for synthetic raw input",
+                    self.tokenizer.name()
+                ))
+            })?;
+            for token in &mut tokens {
+                if *token == eos {
+                    *token = replacement;
+                }
+            }
+        }
+        Ok(tokens)
+    }
+
     fn generate(
         &mut self,
         num_tokens: usize,
         hash_ids: &[i64],
         block_size: usize,
     ) -> Result<GeneratedPrompt> {
+        let tokens = self.build_token_ids(num_tokens, hash_ids, block_size)?;
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
+}
+
+impl CorpusPromptGenerator<'_> {
+    fn build_token_ids(
+        &mut self,
+        num_tokens: usize,
+        hash_ids: &[i64],
+        block_size: usize,
+    ) -> Result<Vec<u32>> {
         if num_tokens == 0 {
             return Err(DatasetError::Validation(
                 "synthetic prompt length must be greater than zero".into(),
@@ -168,14 +235,9 @@ impl PromptGenerator for CorpusPromptGenerator<'_> {
             tokens
         };
         debug_assert_eq!(tokens.len(), num_tokens);
-        Ok(GeneratedPrompt {
-            text: self.tokenizer.decode(&tokens)?,
-            tokens,
-        })
+        Ok(tokens)
     }
-}
 
-impl CorpusPromptGenerator<'_> {
     fn sample_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
         if count == 0 {
             return Ok(Vec::new());
@@ -216,5 +278,44 @@ mod tests {
         let factory = CorpusPromptGeneratorFactory::default();
         let mut generator = factory.create(&tokenizer, RngRoot::new(Some(3))).unwrap();
         assert!(generator.generate(4, &[1, 2], 4).is_err());
+    }
+
+    #[test]
+    fn raw_token_generation_skips_decode_and_replaces_eos() {
+        struct NoDecodeTokenizer;
+
+        impl TextTokenizer for NoDecodeTokenizer {
+            fn encode(&self, _text: &str) -> Result<Vec<u32>> {
+                Ok(vec![9, 10, 9, 11])
+            }
+
+            fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+                panic!("raw-token generation must not decode")
+            }
+
+            fn bos_token_id(&self) -> Option<u32> {
+                None
+            }
+
+            fn eos_token_id(&self) -> Option<u32> {
+                Some(9)
+            }
+
+            fn vocab_size(&self) -> Option<u32> {
+                Some(12)
+            }
+
+            fn name(&self) -> &str {
+                "no-decode"
+            }
+        }
+
+        let tokenizer = NoDecodeTokenizer;
+        let factory = CorpusPromptGeneratorFactory::new("fixture").unwrap();
+        let mut generator = factory.create(&tokenizer, RngRoot::new(Some(3))).unwrap();
+        let token_ids = generator.generate_token_ids(8, &[1, 2], 4).unwrap();
+
+        assert_eq!(token_ids.len(), 8);
+        assert!(!token_ids.contains(&9));
     }
 }

@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
+use aiperf_endpoints::EndpointDescriptor;
+
 use crate::error::{DatasetError, Result};
 use crate::model::{
     Conversation, ConversationBranchMode, ConversationContextMode, ConversationMetadata,
@@ -157,6 +159,68 @@ impl Dataset {
             .unwrap_or(self.metadata.default_context_mode)
     }
 
+    /// Validate endpoint-owned representation requirements after composition.
+    ///
+    /// This pass runs before scheduling, so a prepared endpoint never discovers
+    /// missing or mixed raw-token data on the dispatch path. Future endpoint
+    /// representations extend [`EndpointDescriptor`] and validate here rather
+    /// than branching on a concrete endpoint ID.
+    pub fn validate_for_endpoint(&self, descriptor: &EndpointDescriptor) -> Result<()> {
+        if !descriptor.requires_raw_token_ids {
+            return Ok(());
+        }
+        for conversation in self.conversations.iter() {
+            if conversation.system.is_some() || conversation.user_context.is_some() {
+                return Err(DatasetError::Validation(format!(
+                    "endpoint {:?} requires raw token IDs and does not accept system or user-context text in conversation {:?}",
+                    descriptor.id,
+                    conversation.session_id.as_str()
+                )));
+            }
+            if conversation.turns.len() > 1
+                && self.context_mode(conversation)
+                    != ConversationContextMode::MessageArrayWithResponses
+            {
+                return Err(DatasetError::Validation(format!(
+                    "endpoint {:?} requires independent one-turn dispatches; multi-turn conversation {:?} must use message_array_with_responses context",
+                    descriptor.id,
+                    conversation.session_id.as_str()
+                )));
+            }
+            for (turn_index, turn) in conversation.turns.iter().enumerate() {
+                if turn.raw_token_ids.is_none() {
+                    return Err(DatasetError::Validation(format!(
+                        "endpoint {:?} requires raw_token_ids, but conversation {:?} turn {turn_index} has none",
+                        descriptor.id,
+                        conversation.session_id.as_str()
+                    )));
+                }
+                if turn.raw_payload.is_some() {
+                    return Err(DatasetError::Validation(format!(
+                        "endpoint {:?} requires token-native composition, but conversation {:?} turn {turn_index} retained raw payload bytes",
+                        descriptor.id,
+                        conversation.session_id.as_str()
+                    )));
+                }
+                if !descriptor.supports_streaming && turn.streaming == Some(true) {
+                    return Err(DatasetError::Validation(format!(
+                        "endpoint {:?} does not accept streaming token-native turns (conversation {:?} turn {turn_index})",
+                        descriptor.id,
+                        conversation.session_id.as_str()
+                    )));
+                }
+                if !turn.branch_ids.is_empty() || !turn.prerequisites.is_empty() {
+                    return Err(DatasetError::Validation(format!(
+                        "endpoint {:?} token-native scheduled input cannot carry graph control on conversation {:?} turn {turn_index}",
+                        descriptor.id,
+                        conversation.session_id.as_str()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Rebuild a dataset containing roots whose first authored timestamp lies
     /// inside an inclusive millisecond window. DAG descendants of selected
     /// roots are retained as a complete lineage even when they have no own
@@ -296,6 +360,14 @@ fn validate_turn(
             context()
         )));
     }
+    if turn.raw_token_ids.is_some()
+        && (!turn.messages.is_empty() || !turn.content.is_empty() || turn.raw_messages.is_some())
+    {
+        return Err(DatasetError::Validation(format!(
+            "{} combines raw_token_ids with formatted content",
+            context()
+        )));
+    }
     if turn.raw_messages.is_some() && !turn.messages.is_empty() {
         return Err(DatasetError::Validation(format!(
             "{} combines raw_messages with message handles",
@@ -343,6 +415,22 @@ fn validate_turn(
         let payload = segments.get(handle)?;
         if !matches!(payload, Payload::Raw { .. }) {
             return payload_error(handle, "raw", payload);
+        }
+    }
+    if let Some(handle) = turn.raw_token_ids {
+        let payload = segments.get(handle)?;
+        if !matches!(payload, Payload::TokenIds { token_ids } if !token_ids.is_empty()) {
+            return payload_error(handle, "non-empty token-ids", payload);
+        }
+        let count = u64::try_from(payload.token_count().unwrap_or_default()).map_err(|_| {
+            DatasetError::Validation(format!("{} raw token count exceeds u64", context()))
+        })?;
+        if turn.input_tokens != count {
+            return Err(DatasetError::Validation(format!(
+                "{} declares input_tokens={} but raw_token_ids contains {count} IDs",
+                context(),
+                turn.input_tokens
+            )));
         }
     }
     if let Some(handle) = turn.trace_hash_ids {

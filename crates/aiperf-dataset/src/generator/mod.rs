@@ -13,9 +13,13 @@ mod audio;
 mod image;
 mod video;
 
+use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use aiperf_rng::{RngRoot, SamplingDistribution};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 
 use crate::error::Result;
@@ -30,10 +34,98 @@ pub use video::NativeVideoGenerator;
 pub struct GeneratedMedia {
     /// Content category.
     pub kind: MediaKind,
-    /// Endpoint-ready data URI or `format,base64` audio value.
+    /// Endpoint-ready URL, data URI, or `format,base64` audio value.
     pub wire: Bytes,
     /// Duration in seconds for audio-bearing values.
     pub duration_seconds: Option<f64>,
+}
+
+/// Encoded media container handed to a synthetic-media publisher.
+///
+/// Native generators own pixels, samples, frames, and codec invocation; this
+/// value leaves the final delivery representation open. The default publisher
+/// produces Python-compatible inline values, while an online content-server
+/// publisher can persist image/video bytes and return URLs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticMediaFormat {
+    /// PNG image.
+    ImagePng,
+    /// JPEG image.
+    ImageJpeg,
+    /// PCM WAV audio.
+    AudioWav,
+    /// MP3 audio.
+    AudioMp3,
+    /// MP4 video.
+    VideoMp4,
+    /// WebM video.
+    VideoWebM,
+}
+
+impl SyntheticMediaFormat {
+    /// Media category represented by this encoded container.
+    pub const fn kind(self) -> MediaKind {
+        match self {
+            Self::ImagePng | Self::ImageJpeg => MediaKind::Image,
+            Self::AudioWav | Self::AudioMp3 => MediaKind::Audio,
+            Self::VideoMp4 | Self::VideoWebM => MediaKind::Video,
+        }
+    }
+
+    /// Stable filename extension without a leading dot.
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::ImagePng => "png",
+            Self::ImageJpeg => "jpeg",
+            Self::AudioWav => "wav",
+            Self::AudioMp3 => "mp3",
+            Self::VideoMp4 => "mp4",
+            Self::VideoWebM => "webm",
+        }
+    }
+
+    /// MIME type used by inline data URIs and HTTP responses.
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            Self::ImagePng => "image/png",
+            Self::ImageJpeg => "image/jpeg",
+            Self::AudioWav => "audio/wav",
+            Self::AudioMp3 => "audio/mpeg",
+            Self::VideoMp4 => "video/mp4",
+            Self::VideoWebM => "video/webm",
+        }
+    }
+}
+
+/// Final publication policy for one encoded synthetic media value.
+///
+/// This is intentionally separate from [`SyntheticMediaGeneratorFactory`]: a
+/// distribution may replace image generation, media publication, or both.
+/// Implementations return the exact endpoint-ready bytes interned by the
+/// composer. Python source parity:
+/// `src/aiperf/dataset/generator/base.py:12-67`,
+/// `image.py:65-103`, and `video.py:75-145` on `ajc/content-server`.
+pub trait SyntheticMediaPublisher: Send + Sync {
+    /// Publish one complete encoded media object.
+    fn publish(&self, format: SyntheticMediaFormat, encoded: Bytes) -> Result<Bytes>;
+}
+
+/// Default publisher retaining image/video data URIs and `format,base64` audio.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InlineSyntheticMediaPublisher;
+
+impl SyntheticMediaPublisher for InlineSyntheticMediaPublisher {
+    fn publish(&self, format: SyntheticMediaFormat, encoded: Bytes) -> Result<Bytes> {
+        let base64 = STANDARD.encode(encoded);
+        let wire = match format.kind() {
+            MediaKind::Audio => format!("{},{base64}", format.extension()),
+            MediaKind::Image | MediaKind::Video => {
+                format!("data:{};base64,{base64}", format.mime_type())
+            }
+            MediaKind::Text => unreachable!("synthetic media formats never represent text"),
+        };
+        Ok(Bytes::from(wire))
+    }
 }
 
 /// Stateful generator for one configured media category.
@@ -67,8 +159,31 @@ pub trait SyntheticMediaGeneratorFactory: Send + Sync {
 }
 
 /// Rust-native image/audio/video generator factory.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NativeSyntheticMediaGeneratorFactory;
+#[derive(Clone)]
+pub struct NativeSyntheticMediaGeneratorFactory {
+    publisher: Arc<dyn SyntheticMediaPublisher>,
+}
+
+impl fmt::Debug for NativeSyntheticMediaGeneratorFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeSyntheticMediaGeneratorFactory")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for NativeSyntheticMediaGeneratorFactory {
+    fn default() -> Self {
+        Self::new(Arc::new(InlineSyntheticMediaPublisher))
+    }
+}
+
+impl NativeSyntheticMediaGeneratorFactory {
+    /// Bind all native generators to one final publication policy.
+    pub fn new(publisher: Arc<dyn SyntheticMediaPublisher>) -> Self {
+        Self { publisher }
+    }
+}
 
 impl SyntheticMediaGeneratorFactory for NativeSyntheticMediaGeneratorFactory {
     fn image(
@@ -76,7 +191,11 @@ impl SyntheticMediaGeneratorFactory for NativeSyntheticMediaGeneratorFactory {
         config: &SyntheticImageConfig,
         root: RngRoot,
     ) -> Result<Box<dyn SyntheticMediaGenerator>> {
-        Ok(Box::new(NativeImageGenerator::new(config.clone(), root)?))
+        Ok(Box::new(NativeImageGenerator::new_with_publisher(
+            config.clone(),
+            root,
+            self.publisher.clone(),
+        )?))
     }
 
     fn audio(
@@ -84,7 +203,11 @@ impl SyntheticMediaGeneratorFactory for NativeSyntheticMediaGeneratorFactory {
         config: &SyntheticAudioConfig,
         root: RngRoot,
     ) -> Result<Box<dyn SyntheticMediaGenerator>> {
-        Ok(Box::new(NativeAudioGenerator::new(config.clone(), root)?))
+        Ok(Box::new(NativeAudioGenerator::new_with_publisher(
+            config.clone(),
+            root,
+            self.publisher.clone(),
+        )?))
     }
 
     fn video(
@@ -92,7 +215,11 @@ impl SyntheticMediaGeneratorFactory for NativeSyntheticMediaGeneratorFactory {
         config: &SyntheticVideoConfig,
         root: RngRoot,
     ) -> Result<Box<dyn SyntheticMediaGenerator>> {
-        Ok(Box::new(NativeVideoGenerator::new(config.clone(), root)?))
+        Ok(Box::new(NativeVideoGenerator::new_with_publisher(
+            config.clone(),
+            root,
+            self.publisher.clone(),
+        )?))
     }
 }
 

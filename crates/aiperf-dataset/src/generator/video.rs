@@ -7,16 +7,15 @@ use std::f64::consts::PI;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 
 use aiperf_rng::{RandomGenerator, RngRoot};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 
 use super::audio::generate_noise_wav;
 use super::{
-    GeneratedMedia, SyntheticMediaGenerator, SyntheticVideoConfig, SyntheticVideoFormat,
-    SyntheticVideoPattern,
+    GeneratedMedia, InlineSyntheticMediaPublisher, SyntheticMediaFormat, SyntheticMediaGenerator,
+    SyntheticMediaPublisher, SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern,
 };
 use crate::error::{DatasetError, Result};
 use crate::model::MediaKind;
@@ -26,16 +25,27 @@ pub struct NativeVideoGenerator {
     config: SyntheticVideoConfig,
     noise_rng: RandomGenerator,
     audio_rng: RandomGenerator,
+    publisher: Arc<dyn SyntheticMediaPublisher>,
 }
 
 impl NativeVideoGenerator {
     /// Validate video/audio geometry and initialize deterministic RNG streams.
     pub fn new(config: SyntheticVideoConfig, root: RngRoot) -> Result<Self> {
+        Self::new_with_publisher(config, root, Arc::new(InlineSyntheticMediaPublisher))
+    }
+
+    /// Validate video/audio geometry and bind an injected final publication policy.
+    pub fn new_with_publisher(
+        config: SyntheticVideoConfig,
+        root: RngRoot,
+        publisher: Arc<dyn SyntheticMediaPublisher>,
+    ) -> Result<Self> {
         validate(&config)?;
         Ok(Self {
             config,
             noise_rng: RandomGenerator::from_seed(root.derive_seed("dataset.video.noise")),
             audio_rng: RandomGenerator::from_seed(root.derive_seed("dataset.video.audio")),
+            publisher,
         })
     }
 
@@ -170,13 +180,13 @@ impl SyntheticMediaGenerator for NativeVideoGenerator {
     fn generate(&mut self) -> Result<GeneratedMedia> {
         let frames = self.raw_frames()?;
         let encoded = self.encode(&frames)?;
+        let format = match self.config.format {
+            SyntheticVideoFormat::Mp4 => SyntheticMediaFormat::VideoMp4,
+            SyntheticVideoFormat::WebM => SyntheticMediaFormat::VideoWebM,
+        };
         Ok(GeneratedMedia {
             kind: MediaKind::Video,
-            wire: Bytes::from(format!(
-                "data:video/{};base64,{}",
-                self.config.format.extension(),
-                STANDARD.encode(encoded)
-            )),
+            wire: self.publisher.publish(format, encoded)?,
             duration_seconds: Some(self.config.duration_seconds),
         })
     }
@@ -400,6 +410,9 @@ fn put(frame: &mut [u8], width: u32, height: u32, x: i32, y: i32, color: [u8; 3]
 #[cfg(test)]
 mod tests {
     use std::process::Command;
+
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
 
     use super::*;
 

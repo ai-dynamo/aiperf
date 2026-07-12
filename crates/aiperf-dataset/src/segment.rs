@@ -3,11 +3,12 @@
 
 //! Dense, prefix-dependent content-addressed segment storage.
 //!
-//! IDs use five disjoint BLAKE3 domains (`message`, `text-only`, `raw`,
-//! `media`, and `trace-hash-ids`). A child hash includes its parent's content hash rather than the
-//! parent's insertion index, so IDs remain deterministic when unrelated rows are
-//! loaded in a different order. The public address is a dense [`Handle`]; the
-//! hash-to-handle map exists only while [`SegmentPool`] is mutable.
+//! IDs use six disjoint BLAKE3 domains (`message`, `text-only`, `raw`,
+//! `token-ids`, `media`, and `trace-hash-ids`). A child hash includes its
+//! parent's content hash rather than the parent's insertion index, so IDs
+//! remain deterministic when unrelated rows are loaded in a different order.
+//! The public address is a dense [`Handle`]; the hash-to-handle map exists only
+//! while [`SegmentPool`] is mutable.
 
 use std::collections::HashMap;
 use std::fmt::{self, Display};
@@ -135,6 +136,11 @@ pub enum Payload {
         /// Key-order-sensitive bytes; consumers interpret the field by its handle slot.
         wire: Bytes,
     },
+    /// Exact pre-tokenized input IDs retained without a text decode round trip.
+    TokenIds {
+        /// Validated non-empty token sequence.
+        token_ids: Box<[u32]>,
+    },
     /// Binary or encoded multimodal content.
     Media {
         /// Media category used by endpoint formatting and accounting.
@@ -158,6 +164,7 @@ impl Payload {
             Self::Message { .. } => "message",
             Self::Text { .. } => "text-only",
             Self::Raw { .. } => "raw",
+            Self::TokenIds { .. } => "token-ids",
             Self::Media { .. } => "media",
             Self::TraceHashIds { .. } => "trace-hash-ids",
         }
@@ -167,6 +174,7 @@ impl Payload {
     pub fn token_count(&self) -> Option<usize> {
         match self {
             Self::Message { tokens, .. } | Self::Text { tokens, .. } => Some(tokens.len()),
+            Self::TokenIds { token_ids } => Some(token_ids.len()),
             Self::Raw { .. } | Self::Media { .. } | Self::TraceHashIds { .. } => None,
         }
     }
@@ -298,6 +306,21 @@ impl SegmentPool {
         self.intern(parent, Payload::Raw { wire: wire.into() })
     }
 
+    /// Intern one validated non-empty raw token sequence.
+    pub fn intern_token_ids(
+        &mut self,
+        parent: Option<Handle>,
+        token_ids: impl Into<Box<[u32]>>,
+    ) -> Result<Handle> {
+        let token_ids = token_ids.into();
+        if token_ids.is_empty() {
+            return Err(DatasetError::Validation(
+                "raw_token_ids must contain at least one token ID".into(),
+            ));
+        }
+        self.intern(parent, Payload::TokenIds { token_ids })
+    }
+
     /// Intern media content under the disjoint `media` hash domain.
     pub fn intern_media(
         &mut self,
@@ -402,6 +425,13 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
             hash_parent(&mut hasher, parent);
             hasher.update(wire);
         }
+        Payload::TokenIds { token_ids } => {
+            hasher.update(b"token-ids\0");
+            hash_parent(&mut hasher, parent);
+            for token_id in token_ids {
+                hasher.update(&token_id.to_le_bytes());
+            }
+        }
         Payload::Media { kind, bytes } => {
             hasher.update(b"media\0");
             hash_parent(&mut hasher, parent);
@@ -489,6 +519,7 @@ mod tests {
             .intern_text(None, "user", bytes.clone(), vec![1_u32].into_boxed_slice())
             .unwrap();
         let raw = pool.intern_raw(None, bytes.clone()).unwrap();
+        let token_ids = pool.intern_token_ids(None, [1_u32]).unwrap();
         let media = pool
             .intern_media(None, MediaKind::Image, bytes.clone())
             .unwrap();
@@ -496,8 +527,8 @@ mod tests {
             .intern_trace_hash_ids(vec![1_i64].into_boxed_slice(), 1)
             .unwrap();
 
-        let ids =
-            [message, text, raw, media, trace_hash_ids].map(|handle| pool.id(handle).unwrap());
+        let ids = [message, text, raw, token_ids, media, trace_hash_ids]
+            .map(|handle| pool.id(handle).unwrap());
         for (index, id) in ids.iter().enumerate() {
             assert!(!ids[..index].contains(id));
         }
@@ -523,6 +554,23 @@ mod tests {
             Payload::TraceHashIds { hash_ids, block_size }
                 if hash_ids.as_ref() == [11, 12] && *block_size == 128
         ));
+    }
+
+    #[test]
+    fn raw_token_ids_are_counted_deduplicated_and_non_empty() {
+        let mut pool = SegmentPool::new();
+        let first = pool.intern_token_ids(None, [7_u32, 9, 11]).unwrap();
+        let duplicate = pool
+            .intern_token_ids(None, vec![7_u32, 9, 11].into_boxed_slice())
+            .unwrap();
+
+        assert_eq!(first, duplicate);
+        assert_eq!(pool.get(first).unwrap().token_count(), Some(3));
+        assert!(matches!(
+            pool.get(first).unwrap(),
+            Payload::TokenIds { token_ids } if token_ids.as_ref() == [7, 9, 11]
+        ));
+        assert!(pool.intern_token_ids(None, Vec::<u32>::new()).is_err());
     }
 
     #[test]

@@ -22,11 +22,12 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll, Waker};
 
 use aiperf_clock::{Clock, SimClock};
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::observer::CollectorObserver;
-use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
+use aiperf_dataset::{Handle, TextTokenizer, TiktokenTokenizer};
 use aiperf_graph::bench::{BenchConfig, build_workload};
 use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
 use aiperf_graph::executor::{ExecutorFlags, TraceExecutor};
@@ -65,7 +66,6 @@ use dynamo_mocker::replay::{
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use rustc_hash::FxHashMap;
-use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::adaptive::AdaptiveRunConfig;
@@ -1194,12 +1194,10 @@ fn shared_metric_diff(aiperf: &[u8], dynamo: &[u8]) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
-struct RoutedEvent {
+#[derive(Debug, Clone, Copy)]
+struct RoutedTerminalEvent {
     at_ns: i64,
-    at_ms: f64,
-    engine: EngineEvent,
-    admission: Option<(f64, usize)>,
+    status: DynamoTerminalStatus,
     actual_output_length: Option<usize>,
     latencies_ms: Option<(f64, f64)>,
 }
@@ -1244,19 +1242,88 @@ impl OfflineEventDeliveryPolicy for TerminalOfflineEventDelivery {
 }
 
 struct Waiter {
-    events: RefCell<Vec<RoutedEvent>>,
+    output_token_times_ms: RefCell<Vec<f64>>,
+    first_pending_output_token_ns: Cell<Option<i64>>,
+    admission: Cell<Option<(f64, usize)>>,
+    terminal: Cell<Option<RoutedTerminalEvent>>,
     admission_routed: Cell<bool>,
     incremental_delivery: bool,
-    notify: Notify,
+    signal: LocalSignal,
 }
 
 impl Waiter {
     fn new(incremental_delivery: bool) -> Self {
         Self {
-            events: RefCell::new(Vec::new()),
+            output_token_times_ms: RefCell::new(Vec::new()),
+            first_pending_output_token_ns: Cell::new(None),
+            admission: Cell::new(None),
+            terminal: Cell::new(None),
             admission_routed: Cell::new(false),
             incremental_delivery,
-            notify: Notify::new(),
+            signal: LocalSignal::new(),
+        }
+    }
+}
+
+/// Single-consumer wake signal for the worker-local offline executor.
+///
+/// `EngineHost` and every waiter future run on one `LocalSet`, so Tokio's
+/// thread-safe atomic notification is unnecessary. The generation recheck
+/// closes the register-versus-notify race without introducing another clock.
+struct LocalSignal {
+    generation: Cell<u64>,
+    waker: RefCell<Option<Waker>>,
+}
+
+impl LocalSignal {
+    const fn new() -> Self {
+        Self {
+            generation: Cell::new(0),
+            waker: RefCell::new(None),
+        }
+    }
+
+    fn notify(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+        let waker = self.waker.borrow_mut().take();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    fn notified(&self) -> LocalNotified<'_> {
+        LocalNotified {
+            signal: self,
+            observed_generation: self.generation.get(),
+        }
+    }
+}
+
+struct LocalNotified<'a> {
+    signal: &'a LocalSignal,
+    observed_generation: u64,
+}
+
+impl Future for LocalNotified<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, context: &mut TaskContext<'_>) -> Poll<Self::Output> {
+        if self.signal.generation.get() != self.observed_generation {
+            return Poll::Ready(());
+        }
+        let mut waker = self.signal.waker.borrow_mut();
+        if waker
+            .as_ref()
+            .is_none_or(|registered| !registered.will_wake(context.waker()))
+        {
+            *waker = Some(context.waker().clone());
+        }
+        drop(waker);
+        if self.signal.generation.get() != self.observed_generation {
+            self.signal.waker.borrow_mut().take();
+            Poll::Ready(())
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -1497,17 +1564,25 @@ impl EngineHost {
                 let terminal = event.terminal_status.is_some();
                 if admission.is_some() {
                     waiter.admission_routed.set(true);
+                    waiter.admission.set(admission);
                 }
-                waiter.events.borrow_mut().push(RoutedEvent {
-                    at_ns,
-                    at_ms,
-                    engine: event,
-                    admission,
-                    actual_output_length,
-                    latencies_ms,
-                });
+                if event.emitted_token {
+                    let mut output_token_times_ms = waiter.output_token_times_ms.borrow_mut();
+                    if output_token_times_ms.is_empty() {
+                        waiter.first_pending_output_token_ns.set(Some(at_ns));
+                    }
+                    output_token_times_ms.push(at_ms);
+                }
+                if let Some(status) = event.terminal_status {
+                    waiter.terminal.set(Some(RoutedTerminalEvent {
+                        at_ns,
+                        status,
+                        actual_output_length,
+                        latencies_ms,
+                    }));
+                }
                 if terminal || waiter.incremental_delivery {
-                    waiter.notify.notify_one();
+                    waiter.signal.notify();
                 }
             }
         }
@@ -1789,6 +1864,8 @@ impl OfflineGraphRequestEncoder for OpenAiRequestEncoder {
     }
 }
 
+type CachedTracePrompt = (Handle, usize, Box<[u32]>);
+
 /// `RequestSink<HttpRequest>` and scheduled-turn adapter over one [`EngineHost`].
 struct DynamoOfflineSink {
     host: Rc<EngineHost>,
@@ -1798,6 +1875,7 @@ struct DynamoOfflineSink {
     request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
     graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
     trace_hash_encoder: Rc<dyn OfflineTraceHashEncoder>,
+    last_trace_prompt: RefCell<Option<CachedTracePrompt>>,
 }
 
 impl DynamoOfflineSink {
@@ -1839,7 +1917,33 @@ impl DynamoOfflineSink {
             request_encoder,
             graph_encoder,
             trace_hash_encoder,
+            last_trace_prompt: RefCell::new(None),
         })
+    }
+
+    fn encode_trace_prompt(
+        &self,
+        stored_hash_ids: &crate::multiturn::StoredTraceHashIds,
+        input_length: usize,
+    ) -> Result<Vec<u32>> {
+        let handle = stored_hash_ids.handle();
+        // Trace segments are content-addressed, so adjacent repeated rows share
+        // a handle. One bounded prototype avoids rebuilding source hashes on the
+        // LocalSet without turning the segment pool into an unbounded token cache.
+        if let Some((cached_handle, cached_length, tokens)) =
+            self.last_trace_prompt.borrow().as_ref()
+            && *cached_handle == handle
+            && *cached_length == input_length
+        {
+            return Ok(tokens.to_vec());
+        }
+        let (hash_ids, block_size) = stored_hash_ids.resolve()?;
+        let tokens = self
+            .trace_hash_encoder
+            .encode(hash_ids, block_size, input_length)?;
+        *self.last_trace_prompt.borrow_mut() =
+            Some((handle, input_length, tokens.clone().into_boxed_slice()));
+        Ok(tokens)
     }
 
     fn relative_ms(&self, at_ns: i64) -> f64 {
@@ -1878,79 +1982,86 @@ impl DynamoOfflineSink {
         let mut first_token = false;
         let mut admitted = false;
         let mut observed_output_tokens = 0_usize;
-        let mut ready_events = Vec::new();
+        let mut ready_output_token_times_ms = Vec::new();
+        let observer_origin_ms = ns_to_ms(self.start_ns);
+
+        // Coalesced delivery cannot expose an admission or token before the
+        // terminal wake, so probing the empty mailbox first is pure overhead.
+        if !waiter.incremental_delivery {
+            waiter.signal.notified().await;
+        }
 
         loop {
             {
-                let mut pending = waiter.events.borrow_mut();
-                std::mem::swap(&mut ready_events, &mut *pending);
+                let mut pending = waiter.output_token_times_ms.borrow_mut();
+                std::mem::swap(&mut ready_output_token_times_ms, &mut *pending);
             }
-            for routed in ready_events.drain(..) {
-                if !admitted && let Some((admit_ms, reused_input_tokens)) = routed.admission {
-                    observer.on_admit(
-                        uuid,
-                        admit_ms - ns_to_ms(self.start_ns),
-                        reused_input_tokens,
-                    );
-                    admitted = true;
+            let first_pending_output_token_ns = waiter.first_pending_output_token_ns.take();
+            let terminal = waiter.terminal.take();
+            if !admitted && let Some((admit_ms, reused_input_tokens)) = waiter.admission.take() {
+                observer.on_admit(uuid, admit_ms - observer_origin_ms, reused_input_tokens);
+                admitted = true;
+            }
+            if !ready_output_token_times_ms.is_empty() {
+                observed_output_tokens += ready_output_token_times_ms.len();
+                for timestamp in &mut ready_output_token_times_ms {
+                    *timestamp -= observer_origin_ms;
                 }
-                if routed.engine.emitted_token {
-                    observed_output_tokens += 1;
+                observer.on_output_tokens(uuid, &ready_output_token_times_ms);
+                if !first_token {
+                    first_token = true;
+                    on_first_token(
+                        first_pending_output_token_ns
+                            .expect("buffered Dynamo tokens retain their first timestamp")
+                            .saturating_sub(start_ns),
+                    );
+                }
+                ready_output_token_times_ms.clear();
+            }
+            if let Some(routed) = terminal {
+                let terminal = map_terminal_status(routed.status);
+                if terminal == ReplayTerminalStatus::Completed
+                    && !first_token
+                    && let Some((ttft_ms, _)) = routed.latencies_ms
+                {
+                    let ttft_ns = (ttft_ms * NS_PER_MS).round() as i64;
                     observer.on_classified_token(
                         uuid,
-                        routed.at_ms - ns_to_ms(self.start_ns),
+                        ns_to_ms(start_ns) + ttft_ms - observer_origin_ms,
                         ObservedTokenKind::Output,
                     );
-                    if !first_token {
-                        first_token = true;
-                        on_first_token(routed.at_ns.saturating_sub(start_ns));
-                    }
+                    on_first_token(ttft_ns);
                 }
-                if let Some(engine_terminal) = routed.engine.terminal_status {
-                    let terminal = map_terminal_status(engine_terminal);
-                    if terminal == ReplayTerminalStatus::Completed
-                        && !first_token
-                        && let Some((ttft_ms, _)) = routed.latencies_ms
-                    {
-                        let ttft_ns = (ttft_ms * NS_PER_MS).round() as i64;
-                        observer.on_classified_token(
-                            uuid,
-                            ns_to_ms(start_ns) + ttft_ms - ns_to_ms(self.start_ns),
-                            ObservedTokenKind::Output,
-                        );
-                        on_first_token(ttft_ns);
-                    }
-                    let completion_tokens = routed
-                        .actual_output_length
-                        .unwrap_or(observed_output_tokens);
-                    observer.on_usage(
-                        uuid,
-                        ObservedUsage {
-                            prompt_tokens: Some(prompt_tokens),
-                            completion_tokens: Some(completion_tokens),
-                            ..ObservedUsage::default()
-                        },
-                    );
-                    observer.on_terminal(uuid, terminal);
-                    self.host.release(assigned_uuid);
-                    return Ok(HttpDispatchResult {
-                        start_ns,
-                        end_ns: routed.at_ns,
-                        status: None,
-                        terminal,
-                        response_text: if terminal == ReplayTerminalStatus::Completed {
-                            synthetic_reply(uuid, completion_tokens)
-                        } else {
-                            String::new()
-                        },
-                        model_response: ModelResponseMetadata::default(),
-                        prompt_tokens: u32::try_from(prompt_tokens).ok(),
-                        completion_tokens: u32::try_from(completion_tokens).ok(),
-                        http: HttpTrace::default(),
-                    });
-                }
+                let completion_tokens = routed
+                    .actual_output_length
+                    .unwrap_or(observed_output_tokens);
+                observer.on_usage(
+                    uuid,
+                    ObservedUsage {
+                        prompt_tokens: Some(prompt_tokens),
+                        completion_tokens: Some(completion_tokens),
+                        ..ObservedUsage::default()
+                    },
+                );
+                observer.on_terminal(uuid, terminal);
+                self.host.release(assigned_uuid);
+                return Ok(HttpDispatchResult {
+                    start_ns,
+                    end_ns: routed.at_ns,
+                    status: None,
+                    terminal,
+                    response_text: if terminal == ReplayTerminalStatus::Completed {
+                        synthetic_reply(uuid, completion_tokens)
+                    } else {
+                        String::new()
+                    },
+                    model_response: ModelResponseMetadata::default(),
+                    prompt_tokens: u32::try_from(prompt_tokens).ok(),
+                    completion_tokens: u32::try_from(completion_tokens).ok(),
+                    http: HttpTrace::default(),
+                });
             }
-            waiter.notify.notified().await;
+            waiter.signal.notified().await;
         }
     }
 }
@@ -2041,11 +2152,18 @@ impl TurnDispatcher for DynamoOfflineSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let is_final_turn = turn.is_final_turn();
-        let result = if let Some(stored_hash_ids) = &turn.trace_hash_ids {
-            let (hash_ids, block_size) = stored_hash_ids.resolve()?;
-            let tokens = self
-                .trace_hash_encoder
-                .encode(hash_ids, block_size, turn.input_length)?;
+        let result = if let Some(stored_token_ids) = &turn.raw_token_ids {
+            self.dispatch_tokens(
+                turn.uuid,
+                stored_token_ids.resolve()?.to_vec(),
+                turn.max_output_tokens,
+                turn.cancel_after_ns,
+                observer,
+                on_first_token,
+            )
+            .await?
+        } else if let Some(stored_hash_ids) = &turn.trace_hash_ids {
+            let tokens = self.encode_trace_prompt(stored_hash_ids, turn.input_length)?;
             self.dispatch_tokens(
                 turn.uuid,
                 tokens,
@@ -3913,6 +4031,7 @@ pub fn run_request_rate_offline_with_adaptive_and_ancillary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiperf_rng::RngRoot;
 
     #[test]
     fn python_json_exponents_have_a_sign_and_two_digits() {
@@ -3972,6 +4091,7 @@ mod tests {
         events: RefCell<Vec<&'static str>>,
         admit_ms: Cell<Option<f64>>,
         tokens: Cell<usize>,
+        output_batches: Cell<usize>,
         usage_prompt_tokens: Cell<Option<usize>>,
     }
 
@@ -3994,6 +4114,13 @@ mod tests {
         fn on_token(&self, _uuid: Uuid, _at_ms: f64) {
             self.tokens.set(self.tokens.get() + 1);
             self.events.borrow_mut().push("token");
+        }
+
+        fn on_output_tokens(&self, uuid: Uuid, at_ms: &[f64]) {
+            self.output_batches.set(self.output_batches.get() + 1);
+            for &timestamp in at_ms {
+                self.on_token(uuid, timestamp);
+            }
         }
 
         fn on_usage(&self, _uuid: Uuid, usage: ObservedUsage) {
@@ -4041,12 +4168,49 @@ mod tests {
         }
     }
 
+    struct RejectingRequestEncoder;
+
+    impl OfflineRequestEncoder<HttpRequest> for RejectingRequestEncoder {
+        fn encode(&self, _request: &HttpRequest) -> Result<Vec<u32>> {
+            panic!("raw token IDs must bypass the offline request encoder")
+        }
+    }
+
+    impl OfflineGraphRequestEncoder for RejectingRequestEncoder {
+        fn encode_graph_messages(&self, _wires: &[Bytes], _requested: usize) -> Result<Vec<u32>> {
+            panic!("raw token IDs must bypass the offline graph encoder")
+        }
+    }
+
     #[test]
     fn authored_hash_ids_use_dynamos_trace_native_prompt_conversion() {
         let tokens = DynamoTraceHashEncoder.encode(&[11, 12], 4, 6).unwrap();
         assert_eq!(tokens, vec![11, 11, 11, 11, 12, 12]);
         assert!(DynamoTraceHashEncoder.encode(&[-1], 4, 1).is_err());
         assert!(DynamoTraceHashEncoder.encode(&[11], 4, 5).is_err());
+    }
+
+    #[test]
+    fn local_signal_preserves_wakes_around_registration() {
+        let signal = LocalSignal::new();
+        let mut before_poll = Box::pin(signal.notified());
+        signal.notify();
+        let mut context = TaskContext::from_waker(Waker::noop());
+        assert!(matches!(
+            before_poll.as_mut().poll(&mut context),
+            Poll::Ready(())
+        ));
+
+        let mut after_poll = Box::pin(signal.notified());
+        assert!(matches!(
+            after_poll.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        signal.notify();
+        assert!(matches!(
+            after_poll.as_mut().poll(&mut context),
+            Poll::Ready(())
+        ));
     }
 
     #[test]
@@ -4075,6 +4239,89 @@ mod tests {
 
         let outcome = drive_sim_with_source(clock, source, move |_handle| async move {
             sink.dispatch(request, observer_for_body.as_ref())
+                .await
+                .unwrap();
+        })
+        .unwrap();
+        assert!(!outcome.deadlocked);
+        assert_eq!(observer.usage_prompt_tokens.get(), Some(3));
+    }
+
+    #[test]
+    fn authored_raw_token_ids_bypass_all_offline_encoders() {
+        use aiperf_dataset::{
+            ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
+            TraceHashAwareRequestMaterializer,
+        };
+        use aiperf_endpoints::{
+            EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(17)));
+        compose.requires_raw_token_ids = true;
+        let dataset = local
+            .block_on(&runtime, async {
+                LoaderRegistry::with_builtin_formats()
+                    .unwrap()
+                    .build_dataset(
+                        Some("single_turn"),
+                        &LoadConfig::new(DatasetSource::Inline(serde_json::json!([{
+                            "raw_token_ids": [11, 22, 33],
+                            "output_length": 2
+                        }]))),
+                        &compose,
+                        &TiktokenTokenizer::builtin(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let endpoints = EndpointRegistry::builtin().unwrap();
+        let endpoint_id = EndpointId::new("vllm_generate").unwrap();
+        let endpoint = endpoints
+            .prepare(&endpoint_id, RawEndpointConfig::default())
+            .unwrap();
+        dataset
+            .validate_for_endpoint(endpoint.descriptor())
+            .unwrap();
+        let mut table = PreparedEndpointTable::new();
+        let key = table.push(endpoint).unwrap();
+        let mut source =
+            crate::multiturn::NativeDatasetConversationSource::sequential_with_prepared_endpoint(
+                dataset,
+                "model",
+                2,
+                Rc::new(table),
+                crate::multiturn::PreparedEndpointReference { key, endpoint_id },
+            )
+            .unwrap()
+            .with_request_materializer(Arc::new(TraceHashAwareRequestMaterializer));
+        let turn = source.next(None).unwrap().build_first_turn(None).unwrap();
+        assert_eq!(
+            turn.raw_token_ids.as_ref().unwrap().resolve().unwrap(),
+            &[11, 22, 33]
+        );
+        assert!(turn.request_body.as_ref().is_some_and(Bytes::is_empty));
+
+        let clock = Rc::new(SimClock::new());
+        let host = EngineHost::new(clock.clone(), &OfflineEngineConfig::default()).unwrap();
+        let encoder = Rc::new(RejectingRequestEncoder);
+        let sink = DynamoOfflineSink::new_with_encoders(
+            host.clone(),
+            clock.clone(),
+            "model".into(),
+            encoder.clone(),
+            encoder,
+        );
+        let observer = Rc::new(RecordingObserver::default());
+        let observer_for_body = observer.clone();
+        let source: Rc<dyn SimEventSource> = host;
+        let outcome = drive_sim_with_source(clock, source, move |_handle| async move {
+            sink.dispatch_turn(turn, observer_for_body.as_ref(), &|_| {})
                 .await
                 .unwrap();
         })
@@ -4114,6 +4361,7 @@ mod tests {
         .unwrap();
         assert!(!outcome.deadlocked);
         assert_eq!(observer.tokens.get(), 4);
+        assert_eq!(observer.output_batches.get(), 1);
         assert_eq!(observer.usage_prompt_tokens.get(), Some(3));
         let events = observer.events.borrow();
         assert_eq!(events.first(), Some(&"admit"));
