@@ -20,7 +20,10 @@ pub mod identity;
 pub mod index;
 pub mod key;
 pub mod manifest;
+pub mod object_store;
+pub mod parquet;
 pub mod projection;
+pub mod query;
 pub mod receipt;
 pub mod scheduling;
 pub mod schema;
@@ -66,11 +69,27 @@ pub use manifest::{
     ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
     GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
 };
+pub use object_store::{
+    ArchiveObjectStore, ArchiveStoreCapabilities, ArchiveStoreError, CreateReceipt,
+    HeadUpdateError, MemoryArchiveObjectStore, MemoryStoreFault, NamedObjectVisibility,
+    VersionedHead, archive_object_digest,
+};
+pub use parquet::{
+    CompletedPartitionV1, FrameTableProjectionV1, ParquetPartitionBuilderV1,
+    ParquetProjectionError, ParquetRotationConfigV1, PartitionBuildOutputV1, PartitionDescriptorV1,
+    PartitionProjectionEvidenceV1, ProjectionCoverageV1, partition_logical_object_id_v1,
+};
 pub use projection::{
     ArchiveInfoLabelPartitionStatus, ArchiveSampleView, ArchiveSanitizer, AttributeMap,
     EnrichmentError, ExpositionProjectionContextV1, ExpositionProjectionError, ExpositionRowsV1,
     MetricFamilyRowV1, MetricPointRowV1, NoopEnricher, NoopSanitizer, SanitizationError,
     SanitizedSample, StaticLabelEnricher, TelemetryEnricher, project_exposition_v1,
+};
+pub use query::{
+    CompactionLogicalProofV1, MemoryPartitionObjectSourceV1, PartitionDiscoveryV1,
+    PartitionObjectReadError, PartitionObjectSourceV1, PartitionPredicateV1, QueryError,
+    SourcePredicateV1, VerifiedQueryRootV1, read_partition_v1,
+    verify_compaction_logical_equality_v1,
 };
 pub use receipt::{
     ExecutionId, ObjectVersionKind, ObservationKind, ReceiptBatchId, ReceiptBatchV1, ReceiptError,
