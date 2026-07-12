@@ -3,11 +3,11 @@
 
 //! Durable telemetry archive foundations.
 //!
-//! This crate owns the byte and durability authorities shared by future
-//! archive writers. It deliberately has no Arrow, Parquet, metrics, telemetry
-//! source, runner, or object-store SDK dependency. Physical table writers and
+//! This crate owns the byte, schema, physical partition, query, and durability
+//! authorities shared by archive writers. It deliberately has no metrics,
+//! telemetry-source, runner, or provider SDK dependency. Runtime source and
 //! provider adapters consume these types rather than defining competing frame,
-//! manifest, receipt, or content-addressing rules.
+//! manifest, receipt, schema, or content-addressing rules.
 
 pub mod attempt;
 pub mod boundary;
