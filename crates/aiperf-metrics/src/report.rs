@@ -14,8 +14,8 @@ use crate::{
     AccumulatorSummary, AccuracyAnalysis, AccuracyRecord, MetricResult, MetricResultData,
     MetricValue, SidecarMetric, SidecarStats,
 };
-use serde::Serialize as DeriveSerialize;
 use serde::ser::{Serialize, Serializer};
+use serde::{Deserialize as DeriveDeserialize, Serialize as DeriveSerialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -24,6 +24,9 @@ use std::ops::Deref;
 
 /// Native report schema identifier.
 pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
+
+/// Schema identifier for the additive native-v2 telemetry-archive block.
+pub const TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION: &str = "1.0";
 
 /// A present report value: finite numbers serialize normally; non-finite tails
 /// serialize as JSON null without colliding with structurally absent fields.
@@ -1345,6 +1348,8 @@ pub struct EvaluationAggregateMetricReport {
     pub scored_count: usize,
     /// Number of outcomes excluded or unscored by provider policy.
     pub unscored_count: usize,
+    /// Exact factory-reviewed canonical provider aggregation definition.
+    pub definition: Value,
 }
 
 /// Rust-authoritative traffic totals for one logical evaluator route.
@@ -1479,6 +1484,236 @@ pub struct EvaluationReport {
     pub normalized_result_sha256: String,
 }
 
+/// Terminal lifecycle state reported by a telemetry archive execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportTelemetryArchiveState {
+    /// Runtime inputs were validated but no durable archive exists yet.
+    Prepared,
+    /// The immutable genesis generation is durable locally.
+    GenesisDurable,
+    /// Sources and the archive writer are active.
+    Running,
+    /// Shutdown was requested and no new source work should begin.
+    StopRequested,
+    /// Accepted work is draining toward the final record fence.
+    Draining,
+    /// A final immutable local generation and head are durable.
+    LocallyFinalized,
+    /// The final generation and head are durable remotely.
+    RemotelyFinalized,
+    /// The archive operation failed.
+    Failed,
+}
+
+/// One credential-free immutable head and generation reference.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryArchiveHead {
+    /// Stable local or remote head URI; signed URLs and credentials are excluded.
+    pub head_uri: String,
+    /// Immutable generation-manifest URI.
+    pub generation_uri: String,
+    /// BLAKE3 digest of the exact generation manifest.
+    pub generation_hash: String,
+    /// BLAKE3 digest of the generation's root index page.
+    pub index_root_hash: String,
+}
+
+/// Phase-boundary role retained by an exact telemetry loss range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportTelemetryBoundaryRole {
+    /// Boundary starts phase membership for the source.
+    PhaseStart,
+    /// Boundary ends phase membership for the source.
+    PhaseEnd,
+}
+
+/// One structured phase-boundary reference associated with telemetry loss.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryBoundaryReference {
+    /// Stable transition identity.
+    pub transition_id: String,
+    /// Stable boundary identity within the transition.
+    pub boundary_id: String,
+    /// Authored phase identity.
+    pub phase_id: String,
+    /// Source expected to observe the boundary.
+    pub source_id: String,
+    /// Whether the boundary starts or ends phase membership.
+    pub role: ReportTelemetryBoundaryRole,
+    /// Optional group whose members share one atomically sealed transition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coalescing_group_id: Option<String>,
+}
+
+/// Frozen telemetry-loss class from archive schema v1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportTelemetryLossKind {
+    /// A cadence tick was skipped before issuing source work.
+    MissedCadence,
+    /// Native work completed but archive admission rejected its projection.
+    ArchiveRejected,
+    /// Accepted archive projection failed.
+    ProjectionFailed,
+    /// The archive writer failed.
+    WriterFailed,
+    /// Shutdown abandoned accepted work at its deadline.
+    ShutdownAbandoned,
+}
+
+/// Frozen telemetry-loss reason from archive schema v1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportTelemetryLossReason {
+    /// The previous scrape overran a fixed cadence deadline.
+    CadenceOverrun,
+    /// Bounded archive admission was unavailable.
+    ArchiveAdmissionRejected,
+    /// Projection of an accepted attempt failed.
+    ProjectionError,
+    /// The archive writer stopped making valid progress.
+    WriterError,
+    /// The shutdown deadline expired before accepted work completed.
+    ShutdownDeadline,
+}
+
+/// One exact, coalesced telemetry-loss range retained for report consumers.
+///
+/// Nullable range pairs preserve the distinction between missed cadence and
+/// already-issued work. Boundary overflow is explicit and content-addressed;
+/// the report never silently truncates boundary evidence.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryLossRange {
+    /// Source identity, or null for a global archive loss.
+    pub source_id: Option<String>,
+    /// Semantic loss class.
+    pub loss_kind: ReportTelemetryLossKind,
+    /// Frozen reason within the loss class.
+    pub reason: ReportTelemetryLossReason,
+    /// Number of omitted entries represented by the inclusive ranges.
+    pub count: u64,
+    /// First omitted source-local record sequence.
+    pub first_source_record_seq: Option<u64>,
+    /// Last omitted source-local record sequence.
+    pub last_source_record_seq: Option<u64>,
+    /// First omitted physical request-attempt sequence.
+    pub first_request_attempt_seq: Option<u64>,
+    /// Last omitted physical request-attempt sequence.
+    pub last_request_attempt_seq: Option<u64>,
+    /// First missed cadence tick.
+    pub first_tick: Option<u64>,
+    /// Last missed cadence tick.
+    pub last_tick: Option<u64>,
+    /// First missed absolute Clock deadline.
+    pub first_deadline_ns: Option<i64>,
+    /// Last missed absolute Clock deadline.
+    pub last_deadline_ns: Option<i64>,
+    /// Receipt Clock value at which the range was sealed.
+    pub loss_observed_ns: i64,
+    /// Exact retained phase-boundary references.
+    pub boundary_refs: Vec<ReportTelemetryBoundaryReference>,
+    /// Boundary references folded into the overflow digest.
+    pub boundary_overflow_count: u64,
+    /// Digest of overflowed canonical boundary-reference bytes.
+    pub boundary_overflow_digest: Option<String>,
+}
+
+/// Latest cumulative summary for one fixed-memory loss-saturation slot.
+///
+/// Consumers select the greatest `saturation_snapshot_seq` per stable slot and
+/// must not sum cumulative snapshots. Only that latest snapshot enters a
+/// native report.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryLossSaturationSummary {
+    /// Source identity, or null for a global archive loss.
+    pub source_id: Option<String>,
+    /// Semantic class shared by every omitted entry in this slot.
+    pub loss_kind: ReportTelemetryLossKind,
+    /// Frozen reason shared by every omitted entry in this slot.
+    pub reason: ReportTelemetryLossReason,
+    /// Stable BLAKE3 identity of the preallocated saturation slot.
+    pub saturation_slot_id: String,
+    /// Monotonic slot-local sequence of this latest cumulative snapshot.
+    pub saturation_snapshot_seq: u64,
+    /// Exact number of non-coalescible ranges omitted from enumeration.
+    pub cumulative_omitted_range_count: u64,
+    /// Exact number of omitted entries represented by those ranges.
+    pub cumulative_omitted_entry_count: u64,
+    /// Order-sensitive digest over every canonical omitted entry.
+    pub omitted_rolling_digest: String,
+    /// First omitted source-local record sequence, when applicable.
+    pub first_source_record_seq: Option<u64>,
+    /// Last omitted source-local record sequence, when applicable.
+    pub last_source_record_seq: Option<u64>,
+    /// First omitted physical request-attempt sequence, when applicable.
+    pub first_request_attempt_seq: Option<u64>,
+    /// Last omitted physical request-attempt sequence, when applicable.
+    pub last_request_attempt_seq: Option<u64>,
+    /// First missed cadence tick, when applicable.
+    pub first_tick: Option<u64>,
+    /// Last missed cadence tick, when applicable.
+    pub last_tick: Option<u64>,
+    /// First omitted absolute Clock deadline, when applicable.
+    pub first_deadline_ns: Option<i64>,
+    /// Last omitted absolute Clock deadline, when applicable.
+    pub last_deadline_ns: Option<i64>,
+    /// Receipt Clock value at which the latest snapshot was sealed.
+    pub loss_observed_ns: i64,
+}
+
+/// Bounded archive-writer and loss-ledger health reported at finalization.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryArchiveHealth {
+    /// Exact ranges that remain individually enumerable.
+    pub loss_ranges: Vec<ReportTelemetryLossRange>,
+    /// Latest cumulative snapshots for saturated fixed-memory slots.
+    pub loss_saturation_summaries: Vec<ReportTelemetryLossSaturationSummary>,
+    /// Whether every loss remains represented by an exact range.
+    pub complete_ranges: bool,
+    /// Whether the archive writer remained alive through the reported snapshot.
+    pub writer_alive: bool,
+}
+
+/// Additive telemetry-archive outcome embedded in a native-v2 report.
+///
+/// The fixed shape deliberately excludes credentials, raw labels, signed
+/// URLs, and arbitrary diagnostics. Local and remote heads are independently
+/// optional because a best-effort attachment can succeed as a benchmark even
+/// when the archive writer or remote publication fails.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize, DeriveDeserialize)]
+pub struct ReportTelemetryArchive {
+    /// Telemetry archive report-block schema version.
+    pub schema_version: String,
+    /// Stable archive UUID.
+    pub archive_id: String,
+    /// UUID of this runner execution.
+    pub execution_id: String,
+    /// BLAKE3 identity of the receipt observer Clock epoch.
+    pub receipt_observer_epoch_id: String,
+    /// Session created by this execution; null for source-free remote finalization.
+    pub collection_session_id: Option<String>,
+    /// Greatest collection session reachable from the reported generation.
+    pub latest_collection_session_id: Option<String>,
+    /// Terminal archive lifecycle state.
+    pub state: ReportTelemetryArchiveState,
+    /// Credential-free local publication-receipt head URI.
+    pub publication_receipts_uri: String,
+    /// Final local head, when one became durable.
+    pub local_head: Option<ReportTelemetryArchiveHead>,
+    /// Final remote head, when one became durable.
+    pub remote_head: Option<ReportTelemetryArchiveHead>,
+    /// Whether a final immutable local generation is authoritative.
+    pub finalized_local: bool,
+    /// Whether a final immutable remote generation is authoritative.
+    pub finalized_remote: bool,
+    /// Whether any archive evidence was lost or could not be enumerated.
+    pub lossy: bool,
+    /// Bounded writer and loss-ledger health.
+    pub health: ReportTelemetryArchiveHealth,
+}
+
 /// Runtime facts supplied to a [`Reporter`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunOutcome {
@@ -1502,8 +1737,24 @@ pub struct RunOutcome {
     pub agentic: Option<AgenticEvaluationReport>,
     /// Generic provider-neutral evaluation result block.
     pub evaluation: Option<EvaluationReport>,
+    /// Optional typed telemetry-archive outcome.
+    pub telemetry_archive: Option<ReportTelemetryArchive>,
     /// Grouped run errors.
     pub errors: Vec<ReportError>,
+}
+
+/// Borrowed inputs for one IO-free native-v2 report build.
+///
+/// Standalone telemetry watch passes `metrics: None`; ordinary benchmark runs
+/// pass their real accumulator summary through [`NativeReport::from_outcome`].
+/// This distinction prevents a telemetry-only execution from fabricating a
+/// request distribution or benchmark duration.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeReportInput<'a> {
+    /// Profiling accumulator summary, absent for telemetry-only execution.
+    pub metrics: Option<&'a AccumulatorSummary>,
+    /// Runtime facts and additive mode-specific outcomes.
+    pub outcome: &'a RunOutcome,
 }
 
 /// Summary-to-report extension seam.
@@ -1512,7 +1763,7 @@ pub trait Reporter {
     type Output;
 
     /// Builds a report without performing IO.
-    fn report(&self, summary: &AccumulatorSummary, outcome: &RunOutcome) -> Self::Output;
+    fn report(&self, input: NativeReportInput<'_>) -> Self::Output;
 }
 
 /// Native-v2 metrics-first reporter.
@@ -1522,27 +1773,30 @@ pub struct NativeReporter;
 impl Reporter for NativeReporter {
     type Output = NativeReport;
 
-    fn report(&self, summary: &AccumulatorSummary, outcome: &RunOutcome) -> Self::Output {
+    fn report(&self, input: NativeReportInput<'_>) -> Self::Output {
+        let NativeReportInput { metrics, outcome } = input;
         let mut run_summary = outcome.summary.clone();
-        if run_summary.start_time.is_none() {
-            run_summary.start_time = summary
-                .finite_value(MetricTag::MinRequestTimestamp)
-                .map(|value| value as i64);
-        }
-        if run_summary.end_time.is_none() {
-            run_summary.end_time = summary
-                .finite_value(MetricTag::MaxResponseTimestamp)
-                .map(|value| value as i64);
-        }
-        if run_summary.duration_s.is_none() {
-            run_summary.duration_s = summary.finite_value(MetricTag::BenchmarkDuration);
+        if let Some(metrics) = metrics {
+            if run_summary.start_time.is_none() {
+                run_summary.start_time = metrics
+                    .finite_value(MetricTag::MinRequestTimestamp)
+                    .map(|value| value as i64);
+            }
+            if run_summary.end_time.is_none() {
+                run_summary.end_time = metrics
+                    .finite_value(MetricTag::MaxResponseTimestamp)
+                    .map(|value| value as i64);
+            }
+            if run_summary.duration_s.is_none() {
+                run_summary.duration_s = metrics.finite_value(MetricTag::BenchmarkDuration);
+            }
         }
         NativeReport {
             schema_version: NATIVE_REPORT_SCHEMA_VERSION,
             aiperf_version: env!("CARGO_PKG_VERSION").to_string(),
             run: ReportRun::unfinalized(outcome.run.clone()),
             summary: run_summary,
-            metrics: build_metric_map(summary),
+            metrics: metrics.map_or_else(BTreeMap::new, build_metric_map),
             warmup_metrics: outcome.warmup.as_ref().map(build_metric_map),
             server_metrics: build_sidecar_map(&outcome.server_metrics),
             warmup_server_metrics: build_sidecar_map(&outcome.warmup_server_metrics),
@@ -1551,6 +1805,7 @@ impl Reporter for NativeReporter {
             evaluator: outcome.evaluator.clone(),
             agentic: outcome.agentic.clone(),
             evaluation: outcome.evaluation.clone(),
+            telemetry_archive: outcome.telemetry_archive.clone(),
             errors: outcome.errors.clone(),
         }
     }
@@ -1593,6 +1848,9 @@ pub struct NativeReport {
     /// Provider-neutral evaluator identity, results, traffic, and artifact digests.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluation: Option<EvaluationReport>,
+    /// Typed telemetry archive outcome for standalone watch or attached collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telemetry_archive: Option<ReportTelemetryArchive>,
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,
@@ -1601,18 +1859,26 @@ pub struct NativeReport {
 impl NativeReport {
     /// Builds a native report from metrics and optional accuracy analysis.
     pub fn new(metrics: &AccumulatorSummary, accuracy: Option<AccuracyAnalysis>) -> Self {
-        NativeReporter.report(
-            metrics,
-            &RunOutcome {
+        NativeReporter.report(NativeReportInput {
+            metrics: Some(metrics),
+            outcome: &RunOutcome {
                 accuracy,
                 ..RunOutcome::default()
             },
-        )
+        })
     }
 
     /// Builds a native report with explicit run metadata.
     pub fn from_outcome(metrics: &AccumulatorSummary, outcome: &RunOutcome) -> Self {
-        NativeReporter.report(metrics, outcome)
+        Self::from_input(NativeReportInput {
+            metrics: Some(metrics),
+            outcome,
+        })
+    }
+
+    /// Builds a native report from optional profiling metrics and runtime facts.
+    pub fn from_input(input: NativeReportInput<'_>) -> Self {
+        NativeReporter.report(input)
     }
 
     /// Stamp coordinator-owned provenance and pair-owned typed facts exactly
@@ -1885,6 +2151,130 @@ mod tests {
         Phase, RecordIngest, SidecarMetric, SidecarSeries, SidecarStats, Unit,
     };
 
+    fn archive_head(prefix: &str) -> ReportTelemetryArchiveHead {
+        ReportTelemetryArchiveHead {
+            head_uri: format!("{prefix}/LATEST"),
+            generation_uri: format!(
+                "{prefix}/manifests/generation-7-blake3-{}.json",
+                "b".repeat(64)
+            ),
+            generation_hash: format!("blake3:{}", "b".repeat(64)),
+            index_root_hash: format!("blake3:{}", "c".repeat(64)),
+        }
+    }
+
+    fn healthy_archive_report() -> ReportTelemetryArchive {
+        ReportTelemetryArchive {
+            schema_version: TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION.to_string(),
+            archive_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            execution_id: "22222222-2222-4222-8222-222222222222".to_string(),
+            receipt_observer_epoch_id: format!("blake3:{}", "a".repeat(64)),
+            collection_session_id: Some("33333333-3333-4333-8333-333333333333".to_string()),
+            latest_collection_session_id: Some("33333333-3333-4333-8333-333333333333".to_string()),
+            state: ReportTelemetryArchiveState::RemotelyFinalized,
+            publication_receipts_uri: "file:///var/lib/aiperf/archive/LOCAL-RECEIPTS".to_string(),
+            local_head: Some(archive_head("file:///var/lib/aiperf/archive")),
+            remote_head: Some(archive_head("s3://aiperf-telemetry/archive")),
+            finalized_local: true,
+            finalized_remote: true,
+            lossy: false,
+            health: ReportTelemetryArchiveHealth {
+                loss_ranges: Vec::new(),
+                loss_saturation_summaries: Vec::new(),
+                complete_ranges: true,
+                writer_alive: true,
+            },
+        }
+    }
+
+    fn lossy_attached_archive_report() -> ReportTelemetryArchive {
+        ReportTelemetryArchive {
+            schema_version: TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION.to_string(),
+            archive_id: "44444444-4444-4444-8444-444444444444".to_string(),
+            execution_id: "55555555-5555-4555-8555-555555555555".to_string(),
+            receipt_observer_epoch_id: format!("blake3:{}", "d".repeat(64)),
+            collection_session_id: Some("66666666-6666-4666-8666-666666666666".to_string()),
+            latest_collection_session_id: Some("66666666-6666-4666-8666-666666666666".to_string()),
+            state: ReportTelemetryArchiveState::LocallyFinalized,
+            publication_receipts_uri: "file:///var/lib/aiperf/attached/LOCAL-RECEIPTS".to_string(),
+            local_head: Some(archive_head("file:///var/lib/aiperf/attached")),
+            remote_head: None,
+            finalized_local: true,
+            finalized_remote: false,
+            lossy: true,
+            health: ReportTelemetryArchiveHealth {
+                loss_ranges: vec![ReportTelemetryLossRange {
+                    source_id: Some("server_metrics_primary".to_string()),
+                    loss_kind: ReportTelemetryLossKind::ArchiveRejected,
+                    reason: ReportTelemetryLossReason::ArchiveAdmissionRejected,
+                    count: 2,
+                    first_source_record_seq: Some(7),
+                    last_source_record_seq: Some(8),
+                    first_request_attempt_seq: Some(12),
+                    last_request_attempt_seq: Some(13),
+                    first_tick: None,
+                    last_tick: None,
+                    first_deadline_ns: None,
+                    last_deadline_ns: None,
+                    loss_observed_ns: 6_000,
+                    boundary_refs: vec![ReportTelemetryBoundaryReference {
+                        transition_id: "profiling-finish".to_string(),
+                        boundary_id: "profiling-end-server".to_string(),
+                        phase_id: "profiling".to_string(),
+                        source_id: "server_metrics_primary".to_string(),
+                        role: ReportTelemetryBoundaryRole::PhaseEnd,
+                        coalescing_group_id: None,
+                    }],
+                    boundary_overflow_count: 0,
+                    boundary_overflow_digest: None,
+                }],
+                loss_saturation_summaries: vec![ReportTelemetryLossSaturationSummary {
+                    source_id: Some("server_metrics_primary".to_string()),
+                    loss_kind: ReportTelemetryLossKind::WriterFailed,
+                    reason: ReportTelemetryLossReason::WriterError,
+                    saturation_slot_id: format!("blake3:{}", "e".repeat(64)),
+                    saturation_snapshot_seq: 3,
+                    cumulative_omitted_range_count: 4,
+                    cumulative_omitted_entry_count: 5,
+                    omitted_rolling_digest: format!("blake3:{}", "f".repeat(64)),
+                    first_source_record_seq: Some(20),
+                    last_source_record_seq: Some(24),
+                    first_request_attempt_seq: Some(30),
+                    last_request_attempt_seq: Some(34),
+                    first_tick: None,
+                    last_tick: None,
+                    first_deadline_ns: None,
+                    last_deadline_ns: None,
+                    loss_observed_ns: 8_000,
+                }],
+                complete_ranges: false,
+                writer_alive: false,
+            },
+        }
+    }
+
+    fn finalized_report(
+        report: NativeReport,
+        distribution_digit: char,
+        backend: &str,
+        workload: &str,
+        endpoint_profiles: Vec<ReportEndpointProfileIdentity>,
+    ) -> NativeReport {
+        report
+            .finalize_run(
+                ReportRunProvenance::new(
+                    format!("blake3:{}", distribution_digit.to_string().repeat(64)),
+                    backend,
+                    workload,
+                    Vec::new(),
+                    endpoint_profiles,
+                )
+                .unwrap(),
+                ReportPairRunFacts::new(),
+            )
+            .unwrap()
+    }
+
     #[test]
     fn v2_uses_type_specific_series_and_null_for_non_finite_tail() {
         let mut summary = AccumulatorSummary::new();
@@ -1944,6 +2334,121 @@ mod tests {
         assert!(value["run"].get("distribution_id").is_none());
         assert!(value["run"].get("graph").is_none());
         assert!(value["run"].get("dynamo").is_none());
+    }
+
+    #[test]
+    fn standalone_watch_report_has_archive_provenance_without_fake_metrics() {
+        let outcome = RunOutcome {
+            run: ReportRunInfo {
+                mode: Some("telemetry_watch".to_string()),
+                model: None,
+            },
+            telemetry_archive: Some(healthy_archive_report()),
+            ..RunOutcome::default()
+        };
+        let report = finalized_report(
+            NativeReport::from_input(NativeReportInput {
+                metrics: None,
+                outcome: &outcome,
+            }),
+            '1',
+            "telemetry_archive",
+            "watch",
+            Vec::new(),
+        );
+
+        assert!(report.metrics.is_empty());
+        assert_eq!(report.summary.start_time, None);
+        assert_eq!(report.summary.end_time, None);
+        assert_eq!(report.summary.duration_s, None);
+        let serialized = serde_json::to_string_pretty(&report).unwrap();
+        assert_eq!(
+            serialized,
+            include_str!("../tests/golden/native_v2_telemetry_standalone.json").trim_end()
+        );
+    }
+
+    #[test]
+    fn attached_report_keeps_real_metrics_and_structured_degradation() {
+        let mut metrics = AccumulatorSummary::new();
+        metrics.insert_finite(MetricTag::RequestCount, 3.0);
+        let outcome = RunOutcome {
+            run: ReportRunInfo {
+                mode: Some("online".to_string()),
+                model: Some("candidate-model".to_string()),
+            },
+            telemetry_archive: Some(lossy_attached_archive_report()),
+            ..RunOutcome::default()
+        };
+        let report = finalized_report(
+            NativeReport::from_input(NativeReportInput {
+                metrics: Some(&metrics),
+                outcome: &outcome,
+            }),
+            '2',
+            "online_http",
+            "scheduled",
+            vec![ReportEndpointProfileIdentity::new("primary", "chat").unwrap()],
+        );
+
+        assert!(report.metrics.contains_key("request_count"));
+        let archive = report.telemetry_archive.as_ref().unwrap();
+        assert!(archive.lossy);
+        assert!(!archive.health.writer_alive);
+        assert!(!archive.health.complete_ranges);
+        let serialized = serde_json::to_string_pretty(&report).unwrap();
+        assert_eq!(
+            serialized,
+            include_str!("../tests/golden/native_v2_telemetry_attached.json").trim_end()
+        );
+    }
+
+    #[test]
+    fn telemetry_archive_extension_is_old_and_new_reader_compatible() {
+        #[derive(DeriveDeserialize)]
+        struct LegacyNativeReport {
+            schema_version: String,
+            metrics: BTreeMap<String, Value>,
+        }
+
+        #[derive(DeriveDeserialize)]
+        struct ArchiveAwareNativeReport {
+            schema_version: String,
+            #[serde(default)]
+            telemetry_archive: Option<ReportTelemetryArchive>,
+        }
+
+        let standalone = include_str!("../tests/golden/native_v2_telemetry_standalone.json");
+        let attached = include_str!("../tests/golden/native_v2_telemetry_attached.json");
+        let absent = include_str!("../tests/golden/native_v2.json");
+
+        let legacy_standalone: LegacyNativeReport = serde_json::from_str(standalone).unwrap();
+        assert_eq!(
+            legacy_standalone.schema_version,
+            NATIVE_REPORT_SCHEMA_VERSION
+        );
+        assert!(legacy_standalone.metrics.is_empty());
+        let legacy_attached: LegacyNativeReport = serde_json::from_str(attached).unwrap();
+        assert_eq!(legacy_attached.schema_version, NATIVE_REPORT_SCHEMA_VERSION);
+        assert!(legacy_attached.metrics.contains_key("request_count"));
+
+        let new_absent: ArchiveAwareNativeReport = serde_json::from_str(absent).unwrap();
+        assert_eq!(new_absent.schema_version, NATIVE_REPORT_SCHEMA_VERSION);
+        assert!(new_absent.telemetry_archive.is_none());
+        let new_standalone: ArchiveAwareNativeReport = serde_json::from_str(standalone).unwrap();
+        let archive = new_standalone.telemetry_archive.unwrap();
+        assert_eq!(
+            archive.schema_version,
+            TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION
+        );
+        assert_eq!(
+            archive.state,
+            ReportTelemetryArchiveState::RemotelyFinalized
+        );
+        let new_attached: ArchiveAwareNativeReport = serde_json::from_str(attached).unwrap();
+        let health = new_attached.telemetry_archive.unwrap().health;
+        assert_eq!(health.loss_ranges.len(), 1);
+        assert_eq!(health.loss_saturation_summaries.len(), 1);
     }
 
     #[test]
@@ -2019,6 +2524,7 @@ mod tests {
                 value: 0.0,
                 scored_count: 1,
                 unscored_count: 1,
+                definition: serde_json::json!({"kind": "mean"}),
             }],
             route_summaries: BTreeMap::from([(
                 "primary".into(),
