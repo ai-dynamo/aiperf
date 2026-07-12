@@ -434,6 +434,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "bytes",
+ "flate2",
  "libc",
  "parquet 58.3.0",
  "rand 0.9.4",

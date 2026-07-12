@@ -11,6 +11,11 @@ use aiperf_prometheus::{
 };
 use bytes::Bytes;
 
+use crate::entity::{
+    BoundedEntityDecoder, ContentEncodingChainV1, ContentEncodingV1, DecodedHttpEntityV1,
+    EntityDecodeError, EntityDecodeErrorKind, EntityDecodeLimitsV1, EntityDecodePolicyV1,
+    IdentityGzipEntityDecoderV1,
+};
 use crate::{
     ArchiveKeyError, ArchiveKeyProvider, ArchiveSubkey, Digest, SourceOutcome, keyed_domain_digest,
 };
@@ -68,7 +73,7 @@ impl DecodeLimits {
 }
 
 /// Exact fetch disposition before any metrics grammar is selected.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum FetchDisposition {
     /// Complete HTTP response with separately retained encoded/decoded bytes.
     Response {
@@ -82,6 +87,19 @@ pub enum FetchDisposition {
         encoded_body: Bytes,
         /// Validated content-decoded entity bytes.
         decoded_body: Bytes,
+    },
+    /// Complete HTTP response whose content decoding belongs to the bounded CPU stage.
+    EncodedResponse {
+        /// HTTP status.
+        status: u16,
+        /// Exact allowlisted `Content-Type` value.
+        content_type: Option<String>,
+        /// Exact allowlisted `Content-Encoding` value.
+        content_encoding: Option<String>,
+        /// Bounded entity bytes before content decoding.
+        encoded_body: Bytes,
+        /// Validated source-specific content negotiation and byte bounds.
+        entity_policy: EntityDecodePolicyV1,
     },
     /// DNS/TCP/TLS/HTTP transport failure.
     Transport {
@@ -102,6 +120,57 @@ pub enum FetchDisposition {
     },
     /// Active or pending source work was closed by shutdown.
     Shutdown,
+}
+
+impl Debug for FetchDisposition {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Response {
+                status,
+                content_type,
+                content_encoding,
+                encoded_body,
+                decoded_body,
+            } => formatter
+                .debug_struct("Response")
+                .field("status", status)
+                .field("has_content_type", &content_type.is_some())
+                .field("has_content_encoding", &content_encoding.is_some())
+                .field("encoded_bytes", &encoded_body.len())
+                .field("decoded_bytes", &decoded_body.len())
+                .field("entity_bytes", &"<redacted>")
+                .finish(),
+            Self::EncodedResponse {
+                status,
+                content_type,
+                content_encoding,
+                encoded_body,
+                entity_policy,
+            } => formatter
+                .debug_struct("EncodedResponse")
+                .field("status", status)
+                .field("has_content_type", &content_type.is_some())
+                .field("has_content_encoding", &content_encoding.is_some())
+                .field("encoded_bytes", &encoded_body.len())
+                .field("entity_policy", entity_policy)
+                .field("entity_bytes", &"<redacted>")
+                .finish(),
+            Self::Transport { kind, message } => formatter
+                .debug_struct("Transport")
+                .field("kind", kind)
+                .field("message", message)
+                .finish(),
+            Self::Timeout { request_started } => formatter
+                .debug_struct("Timeout")
+                .field("request_started", request_started)
+                .finish(),
+            Self::Disabled { reason } => formatter
+                .debug_struct("Disabled")
+                .field("reason", reason)
+                .finish(),
+            Self::Shutdown => formatter.write_str("Shutdown"),
+        }
+    }
 }
 
 /// One transport-complete source attempt presented to the CPU decode stage.
@@ -128,15 +197,32 @@ pub struct FetchedAttempt {
 }
 
 /// Capability-scoped exact body handles reserved for raw/archive projection.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ExactEntityLease {
     encoded: Bytes,
     decoded: Bytes,
+    content_encoding: ContentEncodingChainV1,
+}
+
+impl Debug for ExactEntityLease {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExactEntityLease")
+            .field("content_encoding", &self.content_encoding)
+            .field("encoded_bytes", &self.encoded.len())
+            .field("decoded_bytes", &self.decoded.len())
+            .field("entity_bytes", &"<redacted>")
+            .finish()
+    }
 }
 
 impl ExactEntityLease {
-    fn new(encoded: Bytes, decoded: Bytes) -> Self {
-        Self { encoded, decoded }
+    fn new(encoded: Bytes, decoded: Bytes, content_encoding: ContentEncodingChainV1) -> Self {
+        Self {
+            encoded,
+            decoded,
+            content_encoding,
+        }
     }
 
     /// Encoded entity byte count without opening the content.
@@ -149,6 +235,12 @@ impl ExactEntityLease {
     #[must_use]
     pub fn decoded_len(&self) -> usize {
         self.decoded.len()
+    }
+
+    /// Validated header-presence and normalized content-coding chain.
+    #[must_use]
+    pub const fn content_encoding(&self) -> &ContentEncodingChainV1 {
+        &self.content_encoding
     }
 
     /// Computes the protected exact encoded-entity digest without exposing bytes.
@@ -356,6 +448,7 @@ pub trait AttemptDecoder<ArchiveEntity, NativeEntity>: Debug + Send + Sync {
 
 /// Strict exposition decoder composed with one native-only decoder.
 pub struct PrometheusAttemptDecoder<NativeEntity> {
+    entity: Arc<dyn BoundedEntityDecoder>,
     parser: Arc<dyn ExpositionParser>,
     native: Arc<dyn NativeEntityDecoder<NativeEntity>>,
 }
@@ -367,7 +460,21 @@ impl<NativeEntity> PrometheusAttemptDecoder<NativeEntity> {
         parser: Arc<dyn ExpositionParser>,
         native: Arc<dyn NativeEntityDecoder<NativeEntity>>,
     ) -> Self {
-        Self { parser, native }
+        Self::with_entity_decoder(Arc::new(IdentityGzipEntityDecoderV1), parser, native)
+    }
+
+    /// Composes an injected bounded content decoder with strict/native parsers.
+    #[must_use]
+    pub fn with_entity_decoder(
+        entity: Arc<dyn BoundedEntityDecoder>,
+        parser: Arc<dyn ExpositionParser>,
+        native: Arc<dyn NativeEntityDecoder<NativeEntity>>,
+    ) -> Self {
+        Self {
+            entity,
+            parser,
+            native,
+        }
     }
 }
 
@@ -375,6 +482,7 @@ impl<NativeEntity> Debug for PrometheusAttemptDecoder<NativeEntity> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PrometheusAttemptDecoder")
+            .field("entity", &self.entity)
             .field("parser", &self.parser)
             .field("native", &self.native)
             .finish()
@@ -417,14 +525,42 @@ impl<NativeEntity> AttemptDecoder<Exposition, NativeEntity>
                 error_message,
             };
 
-        let (status, content_type, encoded_body, decoded_body) = match disposition {
+        let (status, content_type, entity) = match disposition {
             FetchDisposition::Response {
                 status,
                 content_type,
-                content_encoding: _,
+                content_encoding,
                 encoded_body,
                 decoded_body,
-            } => (status, content_type, encoded_body, decoded_body),
+            } => {
+                let entity = entity_policy_from_decode_limits(limits).and_then(|policy| {
+                    self.entity
+                        .decode(content_encoding.as_deref(), encoded_body, &policy)
+                        .and_then(|entity| {
+                            if entity.decoded_body == decoded_body {
+                                Ok(entity)
+                            } else {
+                                Err(EntityDecodeError::new(
+                                    EntityDecodeErrorKind::PredecodedBodyMismatch,
+                                    "adapter-supplied decoded entity disagrees with strict content decoding",
+                                ))
+                            }
+                        })
+                });
+                (status, content_type, entity)
+            }
+            FetchDisposition::EncodedResponse {
+                status,
+                content_type,
+                content_encoding,
+                encoded_body,
+                entity_policy,
+            } => (
+                status,
+                content_type,
+                self.entity
+                    .decode(content_encoding.as_deref(), encoded_body, &entity_policy),
+            ),
             other => {
                 let (outcome, kind, message) = match other {
                     FetchDisposition::Transport { kind, message } => {
@@ -443,7 +579,8 @@ impl<NativeEntity> AttemptDecoder<Exposition, NativeEntity>
                         "shutdown".to_owned(),
                         "telemetry source stopped during shutdown".to_owned(),
                     ),
-                    FetchDisposition::Response { .. } => unreachable!(),
+                    FetchDisposition::Response { .. }
+                    | FetchDisposition::EncodedResponse { .. } => unreachable!(),
                 };
                 return DecodedAttempt {
                     facts: base(
@@ -462,9 +599,53 @@ impl<NativeEntity> AttemptDecoder<Exposition, NativeEntity>
             }
         };
 
+        let entity = match entity {
+            Ok(entity) => entity,
+            Err(_) if !(200..300).contains(&status) => {
+                return DecodedAttempt {
+                    facts: base(
+                        SourceOutcome::Http,
+                        Some(status),
+                        content_type,
+                        Some("http_status".to_owned()),
+                        Some(format!("telemetry endpoint returned HTTP {status}")),
+                    ),
+                    strict_archive_entity: None,
+                    native_entity: None,
+                    strict_parse_outcome: ParseOutcome::NotAttempted,
+                    native_compatibility: None,
+                    exact_entity: None,
+                };
+            }
+            Err(error) => {
+                return DecodedAttempt {
+                    facts: base(
+                        SourceOutcome::UnsupportedFeature,
+                        Some(status),
+                        content_type,
+                        Some(error.kind.as_str().to_owned()),
+                        Some(bounded_diagnostic(
+                            &error.message,
+                            limits.max_diagnostic_bytes,
+                        )),
+                    ),
+                    strict_archive_entity: None,
+                    native_entity: None,
+                    strict_parse_outcome: ParseOutcome::NotAttempted,
+                    native_compatibility: None,
+                    exact_entity: None,
+                };
+            }
+        };
+        let DecodedHttpEntityV1 {
+            content_encoding,
+            encoded_body,
+            decoded_body,
+        } = entity;
         let exact_entity = Some(ExactEntityLease::new(
             encoded_body.clone(),
             decoded_body.clone(),
+            content_encoding,
         ));
         if !(200..300).contains(&status) {
             return DecodedAttempt {
@@ -474,23 +655,6 @@ impl<NativeEntity> AttemptDecoder<Exposition, NativeEntity>
                     content_type,
                     Some("http_status".to_owned()),
                     Some(format!("telemetry endpoint returned HTTP {status}")),
-                ),
-                strict_archive_entity: None,
-                native_entity: None,
-                strict_parse_outcome: ParseOutcome::NotAttempted,
-                native_compatibility: None,
-                exact_entity,
-            };
-        }
-
-        if let Some(error) = check_body_limits(&encoded_body, &decoded_body, limits) {
-            return DecodedAttempt {
-                facts: base(
-                    SourceOutcome::UnsupportedFeature,
-                    Some(status),
-                    content_type,
-                    Some("decode_limit".to_owned()),
-                    Some(bounded_diagnostic(&error, limits.max_diagnostic_bytes)),
                 ),
                 strict_archive_entity: None,
                 native_entity: None,
@@ -590,33 +754,23 @@ impl<NativeEntity> AttemptDecoder<Exposition, NativeEntity>
     }
 }
 
-fn check_body_limits(encoded: &[u8], decoded: &[u8], limits: &DecodeLimits) -> Option<String> {
-    if encoded.len() > limits.max_encoded_bytes {
-        return Some(format!(
-            "encoded telemetry body has {} bytes; limit is {}",
-            encoded.len(),
-            limits.max_encoded_bytes
-        ));
-    }
-    if decoded.len() > limits.max_decoded_bytes {
-        return Some(format!(
-            "decoded telemetry body has {} bytes; limit is {}",
-            decoded.len(),
-            limits.max_decoded_bytes
-        ));
-    }
-    let base = encoded.len().max(1);
-    let allowed =
-        base.saturating_mul(usize::try_from(limits.max_expansion_ratio).unwrap_or(usize::MAX));
-    if decoded.len() > allowed {
-        return Some(format!(
-            "decoded telemetry body expansion {}:{} exceeds ratio {}",
-            decoded.len(),
-            encoded.len(),
-            limits.max_expansion_ratio
-        ));
-    }
-    None
+fn entity_policy_from_decode_limits(
+    limits: &DecodeLimits,
+) -> Result<EntityDecodePolicyV1, EntityDecodeError> {
+    EntityDecodePolicyV1::new(
+        [ContentEncodingV1::Gzip, ContentEncodingV1::Identity],
+        EntityDecodeLimitsV1 {
+            max_encoded_bytes: limits.max_encoded_bytes,
+            max_decoded_bytes: limits.max_decoded_bytes,
+            max_expansion_ratio: limits.max_expansion_ratio,
+        },
+    )
+    .map_err(|error| {
+        EntityDecodeError::new(
+            EntityDecodeErrorKind::InvalidPolicy,
+            format!("invalid fetched-entity decode policy: {error}"),
+        )
+    })
 }
 
 fn bounded_diagnostic(value: &str, max_bytes: usize) -> String {
@@ -675,9 +829,12 @@ impl std::error::Error for DecodeConfigError {}
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use aiperf_prometheus::{StrictExpositionParser, parse_number_lexeme};
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
 
     use super::*;
 
@@ -716,6 +873,46 @@ mod tests {
                 decoded_body: Bytes::from_static(body),
             },
         }
+    }
+
+    fn encoded_response(
+        status: u16,
+        content_encoding: Option<&str>,
+        encoded_body: Bytes,
+        entity_policy: EntityDecodePolicyV1,
+    ) -> FetchedAttempt {
+        FetchedAttempt {
+            source_id: "source-a".to_owned(),
+            source_record_seq: 0,
+            request_attempt_seq: Some(0),
+            scheduled_ns: Some(10),
+            request_start_ns: Some(10),
+            first_byte_ns: Some(11),
+            capture_ns: Some(12),
+            latency_ns: Some(2),
+            disposition: FetchDisposition::EncodedResponse {
+                status,
+                content_type: Some("text/plain; version=0.0.4; charset=utf-8".to_owned()),
+                content_encoding: content_encoding.map(str::to_owned),
+                encoded_body,
+                entity_policy,
+            },
+        }
+    }
+
+    fn entity_policy(max_decoded_bytes: usize, max_expansion_ratio: u64) -> EntityDecodePolicyV1 {
+        EntityDecodePolicyV1::stock(EntityDecodeLimitsV1 {
+            max_encoded_bytes: 4096,
+            max_decoded_bytes,
+            max_expansion_ratio,
+        })
+        .unwrap()
+    }
+
+    fn gzip(body: &[u8]) -> Bytes {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(body).unwrap();
+        Bytes::from(encoder.finish().unwrap())
     }
 
     #[test]
@@ -857,6 +1054,93 @@ mod tests {
         );
         assert_eq!(decoded.facts.outcome, SourceOutcome::UnsupportedFeature);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert_eq!(decoded.exact_entity.unwrap().decoded(), b"metric 1\n");
+        assert!(decoded.exact_entity.is_none());
+    }
+
+    #[test]
+    fn gzip_is_decoded_off_transport_before_one_strict_parse() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let decoder = PrometheusAttemptDecoder::new(
+            Arc::new(CountingParser {
+                calls: calls.clone(),
+            }),
+            Arc::new(NoopNativeEntityDecoder),
+        );
+        let body = b"# TYPE compressed gauge\ncompressed 42\n";
+        let encoded = gzip(body);
+        let decoded = decoder.decode(
+            encoded_response(200, Some("GZip"), encoded.clone(), entity_policy(4096, 100)),
+            &DecodeLimits::default(),
+        );
+        assert_eq!(decoded.facts.outcome, SourceOutcome::Success);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let lease = decoded.exact_entity.unwrap();
+        assert_eq!(lease.encoded(), encoded.as_ref());
+        assert_eq!(lease.decoded(), body);
+        assert!(lease.content_encoding().header_present());
+        assert_eq!(
+            lease.content_encoding().encodings(),
+            &[ContentEncodingV1::Gzip]
+        );
+    }
+
+    #[test]
+    fn content_decode_failures_never_reach_metrics_grammar() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let decoder = PrometheusAttemptDecoder::new(
+            Arc::new(CountingParser {
+                calls: calls.clone(),
+            }),
+            Arc::new(NoopNativeEntityDecoder),
+        );
+        for (header, expected_kind) in [
+            ("br", "unsupported_content_encoding"),
+            ("gzip, identity", "stacked_content_encoding"),
+            ("gzip,", "malformed_content_encoding"),
+        ] {
+            let decoded = decoder.decode(
+                encoded_response(
+                    200,
+                    Some(header),
+                    Bytes::from_static(b"metric 1\n"),
+                    entity_policy(4096, 100),
+                ),
+                &DecodeLimits::default(),
+            );
+            assert_eq!(decoded.facts.outcome, SourceOutcome::UnsupportedFeature);
+            assert_eq!(decoded.facts.error_kind.as_deref(), Some(expected_kind));
+            assert!(decoded.exact_entity.is_none());
+        }
+        let bomb = gzip(&vec![b'x'; 32 * 1024]);
+        let decoded = decoder.decode(
+            encoded_response(200, Some("gzip"), bomb, entity_policy(64 * 1024, 2)),
+            &DecodeLimits::default(),
+        );
+        assert_eq!(decoded.facts.outcome, SourceOutcome::UnsupportedFeature);
+        assert_eq!(
+            decoded.facts.error_kind.as_deref(),
+            Some("entity_expansion_ratio")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn non_success_gzip_body_is_http_failure_before_metrics_parse() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let decoder = PrometheusAttemptDecoder::new(
+            Arc::new(CountingParser {
+                calls: calls.clone(),
+            }),
+            Arc::new(NoopNativeEntityDecoder),
+        );
+        let body = b"# TYPE lie gauge\nlie 42\n";
+        let decoded = decoder.decode(
+            encoded_response(500, Some("gzip"), gzip(body), entity_policy(4096, 100)),
+            &DecodeLimits::default(),
+        );
+        assert_eq!(decoded.facts.outcome, SourceOutcome::Http);
+        assert_eq!(decoded.facts.http_status, Some(500));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(decoded.exact_entity.unwrap().decoded(), body);
     }
 }

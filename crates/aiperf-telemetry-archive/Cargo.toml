@@ -19,6 +19,7 @@ arrow-select = "58.3"
 async-trait.workspace = true
 blake3.workspace = true
 bytes.workspace = true
+flate2 = "1"
 libc.workspace = true
 parquet = { workspace = true, features = ["arrow"] }
 rand.workspace = true
