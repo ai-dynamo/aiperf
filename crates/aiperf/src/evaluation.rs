@@ -12,5 +12,6 @@
 
 pub mod arbiter;
 pub mod host;
+pub mod inference;
 pub mod ledger;
 pub mod retry;
