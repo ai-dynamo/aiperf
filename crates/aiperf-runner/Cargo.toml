@@ -58,5 +58,6 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+aiperf-test-static-extension = { path = "tests/fixtures/aiperf-test-static-extension" }
 axum.workspace = true
 tempfile = "3"

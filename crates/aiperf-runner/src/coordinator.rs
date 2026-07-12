@@ -16,6 +16,7 @@ use aiperf_graph::input::GraphInputAdapterResolver;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
+use crate::protocol::RunnerCapabilities;
 use crate::protocol_v2::{
     DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
     RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
@@ -90,6 +91,19 @@ impl RunnerV2Coordinator {
             product_registry,
             graph_inputs,
         })
+    }
+
+    /// Advertise capabilities from this coordinator's exact frozen registries.
+    ///
+    /// Custom distributions use this method for `--capabilities` so discovery,
+    /// validation, and execution observe one implementation universe. No
+    /// registry factory is invoked a second time.
+    pub fn capabilities(&self) -> RunnerCapabilities {
+        RunnerCapabilities::from_registries(
+            self.distribution_id.clone(),
+            &self.runner_registry,
+            self.product_registry.as_ref(),
+        )
     }
 
     /// Validate or execute one strict authored envelope through the frozen registries.

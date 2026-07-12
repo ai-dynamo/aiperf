@@ -258,6 +258,7 @@ dependencies = [
  "aiperf-network-latency",
  "aiperf-rng",
  "aiperf-server-metrics",
+ "aiperf-test-static-extension",
  "aiperf-timing",
  "aiperf-transport-http",
  "anyhow",
@@ -289,6 +290,15 @@ dependencies = [
  "serde",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "aiperf-test-static-extension"
+version = "0.0.0"
+dependencies = [
+ "aiperf-dataset",
+ "aiperf-extensions",
+ "aiperf-rng",
 ]
 
 [[package]]

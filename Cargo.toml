@@ -4,6 +4,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["crates/aiperf-runner/tests/fixtures/aiperf-test-static-extension"]
 
 [workspace.package]
 version = "0.0.0"
