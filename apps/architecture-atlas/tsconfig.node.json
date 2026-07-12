@@ -12,5 +12,12 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "scripts/**/*.ts",
+    "src/content/**/*.ts",
+    "src/domain/architecture.ts",
+    "src/domain/integrity.ts"
+  ]
 }

@@ -12,7 +12,7 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "lint": "oxlint .",
-    "validate:content": "node scripts/validate-content.mjs"
+    "validate:content": "tsx scripts/validate-content.ts"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.170.17",
@@ -33,6 +33,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "jsdom": "^29.1.1",
     "oxlint": "^1.73.0",
+    "tsx": "^4.23.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
     "vitest": "^4.1.10"
