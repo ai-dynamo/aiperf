@@ -5,21 +5,14 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
-use std::sync::Arc;
 
-use aiperf_runner::coordinator::RunnerV2Coordinator;
-use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
-use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runner::protocol_v2::{
     RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
     RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use aiperf_runner::redaction::redact_diagnostic;
-use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
-use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
-    RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities, execute_run,
-    native_execution_factories,
+    RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerApplication, current_distribution_id,
 };
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -30,13 +23,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn main() {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.len() == 1 && arguments[0] == "--capabilities" {
-        match RunnerCapabilities::current() {
-            Ok(capabilities) => write_json_line(&capabilities, 0),
-            Err(error) => {
-                eprintln!("failed to identify executing aiperf-runner image: {error}");
-                std::process::exit(2);
-            }
-        }
+        let application = compose_stock_application();
+        write_json_line(&application.capabilities(), 0);
     }
     if !arguments.is_empty() {
         eprintln!("usage: aiperf-runner [--capabilities]");
@@ -48,6 +36,8 @@ fn main() {
         eprintln!("failed to read runner request from stdin: {error}");
         std::process::exit(2);
     }
+    configure_dynamo_offline_process_defaults(&input);
+    let application = compose_stock_application();
     let probe = match serde_json::from_slice::<ProtocolVersionProbe>(&input) {
         Ok(probe) => probe,
         Err(error) => write_json_line(
@@ -56,8 +46,8 @@ fn main() {
         ),
     };
     match probe.protocol_version {
-        RUNNER_PROTOCOL_VERSION => run_v1(&input),
-        RUNNER_PROTOCOL_V2 => run_v2(&input),
+        RUNNER_PROTOCOL_VERSION => run_v1(&input, &application),
+        RUNNER_PROTOCOL_V2 => run_v2(&input, &application),
         version => write_json_line(
             &RunTerminal::failed(
                 None,
@@ -68,6 +58,76 @@ fn main() {
             ),
             2,
         ),
+    }
+}
+
+fn compose_stock_application() -> RunnerApplication {
+    let distribution_id = match current_distribution_id() {
+        Ok(distribution_id) => distribution_id,
+        Err(error) => {
+            eprintln!("failed to identify executing aiperf-runner image: {error}");
+            std::process::exit(2);
+        }
+    };
+    match RunnerApplication::stock(distribution_id) {
+        Ok(application) => application,
+        Err(error) => {
+            eprintln!("failed to compose executing aiperf-runner image: {error:#}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn configure_dynamo_offline_process_defaults(input: &[u8]) {
+    let Ok(envelope) = serde_json::from_slice::<Value>(input) else {
+        return;
+    };
+    if envelope
+        .pointer("/run/backend/type")
+        .and_then(Value::as_str)
+        != Some("dynamo_offline")
+    {
+        return;
+    }
+
+    // AIC imports SciPy, whose OpenBLAS builds otherwise create one worker per
+    // host CPU. Offline replay uses AIC's scalar Rust interpolation kernels, so
+    // those pools only spin and contend with the deterministic event loop. Keep
+    // explicit operator settings authoritative, bound Rayon fan-out, and let
+    // mimalloc promptly release the large temporary sweep buffers. These defaults
+    // are installed before Python, OpenMP, or either bundled OpenBLAS library is
+    // initialized and before the offline metrics reduction allocates its buffers.
+    for (name, value) in [
+        ("OPENBLAS_NUM_THREADS", "1"),
+        ("OMP_NUM_THREADS", "1"),
+        ("MKL_NUM_THREADS", "1"),
+        ("BLIS_NUM_THREADS", "1"),
+        ("GOTO_NUM_THREADS", "1"),
+        ("NUMEXPR_NUM_THREADS", "1"),
+        ("VECLIB_MAXIMUM_THREADS", "1"),
+        ("OMP_WAIT_POLICY", "PASSIVE"),
+        ("RAYON_NUM_THREADS", "8"),
+    ] {
+        if std::env::var_os(name).is_none() {
+            // SAFETY: this runs on the sole process thread before the runner
+            // constructs a runtime or initializes any native numeric library.
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
+
+    if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
+        // `libmimalloc-sys` intentionally does not name experimental options;
+        // mimalloc v3's public `mi_option_t` enum assigns purge-delay index 15.
+        const MI_OPTION_PURGE_DELAY: i32 = 15;
+        // SAFETY: option mutation is not thread-safe, so it is performed here on
+        // the sole process thread before Rayon or any benchmark runtime exists.
+        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 50) };
+    }
+    if std::env::var_os("MIMALLOC_ARENA_PURGE_MULT").is_none() {
+        // The corresponding mimalloc v3 public option index is 24.
+        const MI_OPTION_ARENA_PURGE_MULT: i32 = 24;
+        // SAFETY: as above, no other thread exists while process defaults are set.
+        unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_ARENA_PURGE_MULT, 1) };
     }
 }
 
@@ -84,11 +144,11 @@ struct EnvelopeBootstrapV2 {
     run: Box<RawValue>,
 }
 
-fn run_v1(input: &[u8]) -> ! {
+fn run_v1(input: &[u8], application: &RunnerApplication) -> ! {
     let terminal = match serde_json::from_slice::<RunRequest>(input) {
         Ok(request) if request.protocol_version == RUNNER_PROTOCOL_VERSION => {
             let run_id = request.run.benchmark_id.clone();
-            match execute_run(request) {
+            match application.execute_v1(request) {
                 Ok(result) => result,
                 Err(error) => RunTerminal::failed(Some(run_id), "execution", format!("{error:#}")),
             }
@@ -108,14 +168,8 @@ fn run_v1(input: &[u8]) -> ! {
     write_json_line(&terminal, if terminal.success { 0 } else { 1 });
 }
 
-fn run_v2(input: &[u8]) -> ! {
-    let distribution_id = match aiperf_runner::current_distribution_id() {
-        Ok(distribution_id) => distribution_id,
-        Err(error) => {
-            eprintln!("failed to identify executing aiperf-runner image: {error}");
-            std::process::exit(2);
-        }
-    };
+fn run_v2(input: &[u8], application: &RunnerApplication) -> ! {
+    let distribution_id = application.distribution_id().to_owned();
     let bootstrap = match serde_json::from_slice::<EnvelopeBootstrapV2>(input) {
         Ok(bootstrap) => bootstrap,
         Err(error) => {
@@ -160,29 +214,7 @@ fn run_v2(input: &[u8]) -> ! {
             format!("invalid protocol-v2 request: {error}"),
         ),
     };
-    let graph_inputs = Arc::new(BuiltinRunnerGraphInputAdapterResolver::new());
-    let dataset_inputs = Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new());
-    let sidecar_inputs = Arc::new(BuiltinRunnerSidecarInputAdapterResolver::new());
-    let execution_factories = native_execution_factories();
-    let coordinator = match RunnerV2Coordinator::new(
-        distribution_id.clone(),
-        &BuiltinRunnerRegistryFactory,
-        &aiperf_extensions::BuiltinAiperfRegistryFactory,
-        execution_factories,
-        graph_inputs,
-        dataset_inputs,
-        sidecar_inputs,
-    ) {
-        Ok(coordinator) => coordinator,
-        Err(error) => write_v2_validation_failure(
-            envelope.operation,
-            distribution_id,
-            Some(envelope.run.identity.benchmark_id.clone()),
-            "coordinator_initialization_failed",
-            format!("{error:#}"),
-        ),
-    };
-    let result = coordinator.handle(envelope);
+    let result = application.handle_v2(envelope);
     write_json_line(&result.response, result.exit_code);
 }
 
@@ -239,38 +271,6 @@ fn write_v2_protocol_failure(
             code,
             message,
             2,
-        ),
-    }
-}
-
-fn write_v2_validation_failure(
-    operation: RunnerOperationV2,
-    distribution_id: String,
-    benchmark_id: Option<String>,
-    code: &str,
-    message: String,
-) -> ! {
-    match operation {
-        RunnerOperationV2::Validate => write_json_line(
-            &RunValidationV2 {
-                protocol_version: RUNNER_PROTOCOL_V2,
-                event: "run_validation",
-                distribution_id,
-                benchmark_id,
-                success: false,
-                completeness: ValidationCompletenessV2::Static,
-                deferred_checks: Vec::new(),
-                errors: vec![diagnostic(code, message)],
-            },
-            1,
-        ),
-        RunnerOperationV2::Execute => write_v2_terminal_failure(
-            distribution_id,
-            benchmark_id,
-            RunnerFailureStageV2::Validation,
-            code,
-            message,
-            1,
         ),
     }
 }

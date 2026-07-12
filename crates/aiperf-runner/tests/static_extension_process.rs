@@ -3,9 +3,9 @@
 
 //! Process proof for a statically linked product-registry extension.
 //!
-//! The spawned child runs the strict protocol-v2 coordinator with an injected
-//! [`aiperf_extensions::AiperfRegistryFactory`]. The coordinator builds that factory exactly once
-//! and threads the resulting frozen registry through validation, dataset
+//! The spawned child runs the strict [`aiperf_runner::RunnerApplication`] with an
+//! injected [`aiperf_extensions::AiperfRegistryFactory`]. The application builds
+//! that factory exactly once and threads the resulting frozen registry through validation, dataset
 //! construction, scheduling, and execution. The custom sampler and prepared-only
 //! endpoint names appear only in the authored request and extension registration:
 //! runner core has no matching branch, and this test never reconstructs a
@@ -18,7 +18,9 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
+use aiperf_graph::input::GraphInputAdapterRegistry;
+use aiperf_runner::RunnerApplication;
+use aiperf_runner::coordinator::RunnerResponseV2;
 use aiperf_runner::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, PreparedDatasetInput,
     RunnerDatasetInputAdapterResolver, RunnerDatasetInputContext,
@@ -198,11 +200,12 @@ fn statically_linked_extension_child() {
     let root = PathBuf::from(std::env::var_os(CHILD_ROOT_ENV).expect("child root is configured"));
     let artifact_dir = root.join("artifacts");
     let dataset_loads = Arc::new(AtomicUsize::new(0));
-    let coordinator = RunnerV2Coordinator::new(
+    let application = RunnerApplication::new(
         DISTRIBUTION_ID,
         &BuiltinRunnerRegistryFactory,
         &StaticTestRegistryFactory,
         native_execution_factories(),
+        Arc::new(GraphInputAdapterRegistry::with_builtin_adapters()),
         Arc::new(BuiltinRunnerGraphInputAdapterResolver::new()),
         Arc::new(CountingDatasetInputs {
             inner: BuiltinRunnerDatasetInputAdapterResolver::new(),
@@ -214,7 +217,7 @@ fn statically_linked_extension_child() {
 
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(dataset_loads.load(Ordering::SeqCst), 0);
-    let capabilities = coordinator.capabilities();
+    let capabilities = application.capabilities();
     assert_eq!(capabilities.distribution_id, DISTRIBUTION_ID);
     assert_eq!(capabilities.extensions, [EXTENSION_NAME]);
     assert!(
@@ -224,13 +227,13 @@ fn statically_linked_extension_child() {
     );
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(
-        coordinator
+        application
             .product_registry()
             .extension_names()
             .collect::<Vec<_>>(),
         [EXTENSION_NAME]
     );
-    let result = coordinator.handle(envelope(&artifact_dir));
+    let result = application.handle_v2(envelope(&artifact_dir));
     let RunnerResponseV2::Terminal(terminal) = result.response else {
         panic!("execute returned a validation response")
     };

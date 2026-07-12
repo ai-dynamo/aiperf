@@ -9,6 +9,7 @@
 //! authoritative native-v2 report.
 
 pub mod agentic_execution;
+pub mod application;
 pub mod coordinator;
 pub mod dataset_input;
 pub mod distribution_identity;
@@ -33,9 +34,11 @@ pub mod redaction;
 pub mod registry;
 mod server_metrics;
 pub mod sidecar_input;
+mod stock_evaluation;
 pub mod telemetry_watch;
 pub mod turn_execution;
 
+pub use application::RunnerApplication;
 pub use distribution_identity::current_distribution_id;
 pub use execute::{execute_run, execute_run_with_all_factories, execute_run_with_backend_factory};
 pub use execution_factories::{RunnerExecutionFactories, native_execution_factories};

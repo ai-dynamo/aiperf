@@ -10,10 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::protocol_v2::RUNNER_PROTOCOL_V2;
-use crate::registry::{
-    BuiltinRunnerRegistryFactory, RunnerBackendDescriptor, RunnerRegistry, RunnerRegistryFactory,
-    RunnerWorkloadDescriptor,
-};
+use crate::registry::{RunnerBackendDescriptor, RunnerRegistry, RunnerWorkloadDescriptor};
 
 /// Current Python-orchestrator/Rust-runner protocol version.
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
@@ -69,19 +66,6 @@ pub struct RunnerCapabilities {
 }
 
 impl RunnerCapabilities {
-    /// Describe the exact process contract implemented by this binary.
-    pub fn current() -> anyhow::Result<Self> {
-        let runner_registry = BuiltinRunnerRegistryFactory.build()?;
-        let product_registry = aiperf_extensions::AiperfRegistryFactory::build(
-            &aiperf_extensions::BuiltinAiperfRegistryFactory,
-        )?;
-        Ok(Self::from_registries(
-            crate::distribution_identity::current_distribution_id()?,
-            &runner_registry,
-            &product_registry,
-        ))
-    }
-
     /// Build a deterministic capability document from already frozen registries.
     pub fn from_registries(
         distribution_id: String,
