@@ -1,0 +1,159 @@
+{
+  "audit_scope": {
+    "asset": "openai_gsm8k_main_test_canary",
+    "external_effects": [
+      "model.generate"
+    ],
+    "network": "rust_host_only",
+    "task": "gsm8k"
+  },
+  "distribution": "nvidia_nemo_evaluator_0_4_locked",
+  "format": "aiperf-evaluator-lock-v2",
+  "installation": {
+    "kind": "rust-materialized-relocatable-rootfs",
+    "reject_symlinks_and_unhashed_files": true,
+    "source_attestation_overlay": true,
+    "verify_every_record_entry": true
+  },
+  "provider": "nemo_evaluator",
+  "python_environment": {
+    "abi": "cpython-312-x86_64-linux-gnu",
+    "implementation": "cpython",
+    "platform": "linux-x86_64",
+    "version": "3.12.10"
+  },
+  "record_closures": [
+    {
+      "distribution": "aiohappyeyeballs",
+      "omitted_paths": [],
+      "record_sha256": "14263431f101aad85e690b74756640a356c3f311654f0db92305c7fd5fcfa75c",
+      "version": "2.7.1"
+    },
+    {
+      "distribution": "aiohttp",
+      "omitted_paths": [],
+      "record_sha256": "9905471042408711dbee0b5ded921bdc4ac879cdcef31fcc8a3e61ef86caaa10",
+      "version": "3.13.5"
+    },
+    {
+      "distribution": "aiosignal",
+      "omitted_paths": [],
+      "record_sha256": "b9a6cd07dac78298d856613e8140b7da26b20506ed07747802bd513bf9b3ea35",
+      "version": "1.4.0"
+    },
+    {
+      "distribution": "annotated-types",
+      "omitted_paths": [],
+      "record_sha256": "5bb4f1ca72420634ebd566dafd9d5fbce3051b0c1c1d13980f6ceeb5c4dbb843",
+      "version": "0.7.0"
+    },
+    {
+      "distribution": "attrs",
+      "omitted_paths": [],
+      "record_sha256": "6b0b326d4b4ee0fac27909ac7cbb066fc4bdf8e93d87031e27e770db059e5a04",
+      "version": "26.1.0"
+    },
+    {
+      "distribution": "brotli",
+      "omitted_paths": [],
+      "record_sha256": "f67bb5f992e1041354373a93e02744e8d292a96ed020596e56c2a0436d580758",
+      "version": "1.2.0"
+    },
+    {
+      "distribution": "frozenlist",
+      "omitted_paths": [],
+      "record_sha256": "8f934b7c96c7ba14179d87da9876b436b260e2b97200915756ed8ab880f807fe",
+      "version": "1.8.0"
+    },
+    {
+      "distribution": "idna",
+      "omitted_paths": [],
+      "record_sha256": "805490d66d324bb0cc6d254ef28f41adfaadad2c557ceb3ae747d1db4e6d64d3",
+      "version": "3.18"
+    },
+    {
+      "distribution": "multidict",
+      "omitted_paths": [],
+      "record_sha256": "00df5867e4b6ddcb88675199117a50f3784270ec62e22efc964cd091c65a2edf",
+      "version": "6.7.1"
+    },
+    {
+      "distribution": "nemo-evaluator",
+      "omitted_paths": [
+        "nemo_evaluator-0.4.0.dist-info/METADATA",
+        "nemo_evaluator-0.4.0.dist-info/RECORD",
+        "nemo_evaluator-0.4.0.dist-info/direct_url.json"
+      ],
+      "record_sha256": "f4272350dd4d90b2f829572a0960e9583387e3cfb4def3e73baff71760f1b66d",
+      "version": "0.4.0"
+    },
+    {
+      "distribution": "numpy",
+      "omitted_paths": [],
+      "record_sha256": "754600f40b73e4e829cf914c3170492372a909c52ce5e3f5d069416f55f91fac",
+      "version": "2.2.6"
+    },
+    {
+      "distribution": "orjson",
+      "omitted_paths": [],
+      "record_sha256": "fe9d7abd99c323104d427b27b8e764657ffc9499ed806d8dfd449eda6825dbbb",
+      "version": "3.11.9"
+    },
+    {
+      "distribution": "propcache",
+      "omitted_paths": [],
+      "record_sha256": "5b47b5249186957cc332c6bc948cae117846f92e3561d6a8835888d6da3ba392",
+      "version": "0.5.2"
+    },
+    {
+      "distribution": "pydantic",
+      "omitted_paths": [],
+      "record_sha256": "d0cbe0f34b294885175920bc8f2ece0b3ed6d9874347dc9cfb2caf4931329272",
+      "version": "2.13.4"
+    },
+    {
+      "distribution": "pydantic_core",
+      "omitted_paths": [],
+      "record_sha256": "3e55a95c4577dcb5dfd08cb8740db06dad7117273dd4885c090413888e606fc0",
+      "version": "2.46.4"
+    },
+    {
+      "distribution": "PyYAML",
+      "omitted_paths": [],
+      "record_sha256": "7d0856221a182f5b25fde9bb976af79b4883090f54680d86a42b35fc8d6735a2",
+      "version": "6.0.3"
+    },
+    {
+      "distribution": "setuptools",
+      "omitted_paths": [],
+      "record_sha256": "2fe8f339e0ea1a1762bd8b21edcc2609e36aebaf13d993f6ce9e236a0fd2ebd1",
+      "version": "83.0.0"
+    },
+    {
+      "distribution": "typing-inspection",
+      "omitted_paths": [],
+      "record_sha256": "96edfd27f64244b308dd9b63a60613ad2a04e5012066fdbd1aeebe85b348ba29",
+      "version": "0.4.2"
+    },
+    {
+      "distribution": "typing_extensions",
+      "omitted_paths": [],
+      "record_sha256": "9e07fea845cac76293d927afa7157a14ecba39b318bc8af236b8de530b7656c1",
+      "version": "4.16.0"
+    },
+    {
+      "distribution": "yarl",
+      "omitted_paths": [],
+      "record_sha256": "4242c6a226f35f999167cfad9c51aa11ac548b8bbcf9ee36b93b42ed232c91a7",
+      "version": "1.24.2"
+    }
+  ],
+  "sources": [
+    {
+      "commit": "a668af906b46c802984f2d471f15ca83b763092d",
+      "package": "nemo-evaluator",
+      "source_tree_sha256": "19ec02c2ab2e3e1d4fb84f65a14c970fa3b776e536f372abc4c536e0e6219a3a",
+      "version": "0.4.0"
+    }
+  ]
+}

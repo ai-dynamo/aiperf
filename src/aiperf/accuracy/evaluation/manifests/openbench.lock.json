@@ -1,0 +1,470 @@
+{
+  "audit_scope": {
+    "asset": "openai_gsm8k_main_test_canary",
+    "external_effects": [
+      "model.generate"
+    ],
+    "network": "rust_host_only",
+    "task": "gsm8k"
+  },
+  "distribution": "groq_openbench_0_5_3_inspect_0_3_141_locked",
+  "format": "aiperf-evaluator-lock-v2",
+  "installation": {
+    "kind": "rust-materialized-relocatable-rootfs",
+    "reject_symlinks_and_unhashed_files": true,
+    "source_attestation_overlay": true,
+    "verify_every_record_entry": true
+  },
+  "provider": "openbench",
+  "python_environment": {
+    "abi": "cpython-312-x86_64-linux-gnu",
+    "implementation": "cpython",
+    "platform": "linux-x86_64",
+    "version": "3.12.10"
+  },
+  "record_closures": [
+    {
+      "distribution": "aiobotocore",
+      "omitted_paths": [],
+      "record_sha256": "92973c56deb808b49bf9049b03dbf6dd0a541ce2201bce0b5d67e76533aeb70f",
+      "version": "2.25.1"
+    },
+    {
+      "distribution": "aiohappyeyeballs",
+      "omitted_paths": [],
+      "record_sha256": "14263431f101aad85e690b74756640a356c3f311654f0db92305c7fd5fcfa75c",
+      "version": "2.7.1"
+    },
+    {
+      "distribution": "aiohttp",
+      "omitted_paths": [],
+      "record_sha256": "9905471042408711dbee0b5ded921bdc4ac879cdcef31fcc8a3e61ef86caaa10",
+      "version": "3.13.5"
+    },
+    {
+      "distribution": "aioitertools",
+      "omitted_paths": [],
+      "record_sha256": "77c40ab22cc581a13a87d725bb95c909104f67d0771e8da1f83eb5a904174419",
+      "version": "0.13.0"
+    },
+    {
+      "distribution": "aiosignal",
+      "omitted_paths": [],
+      "record_sha256": "b9a6cd07dac78298d856613e8140b7da26b20506ed07747802bd513bf9b3ea35",
+      "version": "1.4.0"
+    },
+    {
+      "distribution": "annotated-types",
+      "omitted_paths": [],
+      "record_sha256": "5bb4f1ca72420634ebd566dafd9d5fbce3051b0c1c1d13980f6ceeb5c4dbb843",
+      "version": "0.7.0"
+    },
+    {
+      "distribution": "anthropic",
+      "omitted_paths": [],
+      "record_sha256": "4c6e765ca9ee7a4bc6d2e8ef2ae58e7435df4bc52f5026f6b71c1ac2e45557f0",
+      "version": "0.116.0"
+    },
+    {
+      "distribution": "anyio",
+      "omitted_paths": [],
+      "record_sha256": "9df2118ce622d52f90491f46243a2f3ea8f747109d8f47218b9606173e433207",
+      "version": "4.14.1"
+    },
+    {
+      "distribution": "attrs",
+      "omitted_paths": [],
+      "record_sha256": "6b0b326d4b4ee0fac27909ac7cbb066fc4bdf8e93d87031e27e770db059e5a04",
+      "version": "26.1.0"
+    },
+    {
+      "distribution": "boto3",
+      "omitted_paths": [],
+      "record_sha256": "1de253d3da892bb9cb3688fc63c2883fb8b03cf7c460bd8105280a03d66f9b3a",
+      "version": "1.40.61"
+    },
+    {
+      "distribution": "botocore",
+      "omitted_paths": [],
+      "record_sha256": "a3499e84d9919c05166d2fb708bc3356f7596fb02f5e58c2fb80af0ea2a09eff",
+      "version": "1.40.61"
+    },
+    {
+      "distribution": "brotli",
+      "omitted_paths": [],
+      "record_sha256": "f67bb5f992e1041354373a93e02744e8d292a96ed020596e56c2a0436d580758",
+      "version": "1.2.0"
+    },
+    {
+      "distribution": "certifi",
+      "omitted_paths": [],
+      "record_sha256": "f010bf8e6401172bf2ac5eb50c0a44e60d4f5917b88a8f95ac05e37633a1803b",
+      "version": "2026.6.17"
+    },
+    {
+      "distribution": "click",
+      "omitted_paths": [],
+      "record_sha256": "f14e3990f101ef4a1dd09903eb3f859f233ec1d9bd9a00e4470f207568804d12",
+      "version": "8.4.2"
+    },
+    {
+      "distribution": "distro",
+      "omitted_paths": [],
+      "record_sha256": "12dfd7b3f627a357c581a6d57fe9c7f4418b6f88beea1d4d13f377946af9b368",
+      "version": "1.9.0"
+    },
+    {
+      "distribution": "docstring_parser",
+      "omitted_paths": [],
+      "record_sha256": "ed0a3538437bb77b4efc7e9b93ed802ac99acf1dedd7b1c5b36d0b0ef0f11398",
+      "version": "0.18.0"
+    },
+    {
+      "distribution": "frozenlist",
+      "omitted_paths": [],
+      "record_sha256": "8f934b7c96c7ba14179d87da9876b436b260e2b97200915756ed8ab880f807fe",
+      "version": "1.8.0"
+    },
+    {
+      "distribution": "fsspec",
+      "omitted_paths": [],
+      "record_sha256": "63002c1405344865764b453dfe333d83eb5e16d1cd16e5de3bca464717ca12ba",
+      "version": "2025.9.0"
+    },
+    {
+      "distribution": "h11",
+      "omitted_paths": [],
+      "record_sha256": "3779e13c17d8e21c769ed9ee8780af123cc3f8656185f5f8d3af258ff5639b3e",
+      "version": "0.16.0"
+    },
+    {
+      "distribution": "httpcore",
+      "omitted_paths": [],
+      "record_sha256": "67cb4644d84fef1df8c5a0862c57c3380eff058a153bac7a4ba2722779982554",
+      "version": "1.0.9"
+    },
+    {
+      "distribution": "httpx",
+      "omitted_paths": [],
+      "record_sha256": "bd96055a044c3bf62534a7ecd6f3311a576c104aa37e65425c85080ab5f47a98",
+      "version": "0.28.1"
+    },
+    {
+      "distribution": "idna",
+      "omitted_paths": [],
+      "record_sha256": "805490d66d324bb0cc6d254ef28f41adfaadad2c557ceb3ae747d1db4e6d64d3",
+      "version": "3.18"
+    },
+    {
+      "distribution": "ijson",
+      "omitted_paths": [],
+      "record_sha256": "7fd62984041f23451892f9854c3d5f5ff9d0f92d9112e5d668ab4cb90b7b8db7",
+      "version": "3.5.0"
+    },
+    {
+      "distribution": "inspect_ai",
+      "omitted_paths": [
+        "inspect_ai-0.3.141.dist-info/METADATA",
+        "inspect_ai-0.3.141.dist-info/RECORD",
+        "inspect_ai-0.3.141.dist-info/direct_url.json"
+      ],
+      "record_sha256": "1efc0c06eee6efd00ef0bda5681f4feb692de3a622ef0c713a15577d29713ae2",
+      "version": "0.3.141"
+    },
+    {
+      "distribution": "jiter",
+      "omitted_paths": [],
+      "record_sha256": "414ad3e49106c41cb7d8a1ee4a220e9acce7709f733fda1ca6fa47e2d8b7d100",
+      "version": "0.16.0"
+    },
+    {
+      "distribution": "jmespath",
+      "omitted_paths": [],
+      "record_sha256": "fb292647e33db6daecf1d0718c9021fc569d3fc6248d5348134824b734f3a449",
+      "version": "1.0.1"
+    },
+    {
+      "distribution": "jsonlines",
+      "omitted_paths": [],
+      "record_sha256": "56dc9f34f0bfdc9f915356d199dffaf5ba0572b976e236e7a326366bdadfa289",
+      "version": "4.0.0"
+    },
+    {
+      "distribution": "jsonpatch",
+      "omitted_paths": [],
+      "record_sha256": "9ed5ad44b2ad6fd3877643b8c3b03bf51ec355eb195d4f87f297d9f6269612bf",
+      "version": "1.33"
+    },
+    {
+      "distribution": "jsonpointer",
+      "omitted_paths": [],
+      "record_sha256": "e31bdf609ad9755c0175d2ab38c2a09c44e8ec2236f349ee101d23e76e2889f8",
+      "version": "3.1.1"
+    },
+    {
+      "distribution": "jsonschema",
+      "omitted_paths": [],
+      "record_sha256": "889b8ef986d5c576905ba1992acf9743519297e205aa99328c96bdb7d815b24e",
+      "version": "4.26.0"
+    },
+    {
+      "distribution": "jsonschema-specifications",
+      "omitted_paths": [],
+      "record_sha256": "0b1047ee6c7d5d7c242b642d689820f4572860ecf7886b2074f821ed85cbe7b6",
+      "version": "2025.9.1"
+    },
+    {
+      "distribution": "linkify-it-py",
+      "omitted_paths": [],
+      "record_sha256": "15ff0a378b44788dd44a6fd1753c3c5895c8d60a9bfac868c86b25b10e3b6dc2",
+      "version": "2.1.0"
+    },
+    {
+      "distribution": "markdown-it-py",
+      "omitted_paths": [],
+      "record_sha256": "60949921729c7c8c9708c7ee09a4789ba806b5aa926fd99d7e68c341aef4d352",
+      "version": "4.2.0"
+    },
+    {
+      "distribution": "mdurl",
+      "omitted_paths": [],
+      "record_sha256": "9a1b05128e711beabd7684e116fcf408ce8cff7ef10e7e8b359b248924fe529c",
+      "version": "0.1.2"
+    },
+    {
+      "distribution": "mmh3",
+      "omitted_paths": [],
+      "record_sha256": "eb7228509c839a0e7c5a9128f81c3d0833ed0e715a117a5595601a8c87574b0f",
+      "version": "5.2.1"
+    },
+    {
+      "distribution": "multidict",
+      "omitted_paths": [],
+      "record_sha256": "00df5867e4b6ddcb88675199117a50f3784270ec62e22efc964cd091c65a2edf",
+      "version": "6.7.1"
+    },
+    {
+      "distribution": "nest-asyncio",
+      "omitted_paths": [],
+      "record_sha256": "97b48ddb4cbc4cb0f2add67e0cca4425900357d4e2576a9fc0914709e0a9aa83",
+      "version": "1.6.0"
+    },
+    {
+      "distribution": "numpy",
+      "omitted_paths": [],
+      "record_sha256": "754600f40b73e4e829cf914c3170492372a909c52ce5e3f5d069416f55f91fac",
+      "version": "2.2.6"
+    },
+    {
+      "distribution": "openai",
+      "omitted_paths": [],
+      "record_sha256": "0f3310e2f54fdd69b227cccdc2076cbad9b61e1da1cf4c238d111b4df81390a6",
+      "version": "2.30.0"
+    },
+    {
+      "distribution": "openbench",
+      "omitted_paths": [
+        "openbench-0.5.3.dist-info/METADATA",
+        "openbench-0.5.3.dist-info/RECORD",
+        "openbench-0.5.3.dist-info/direct_url.json",
+        "openbench-0.5.3.dist-info/entry_points.txt"
+      ],
+      "record_sha256": "ee88e747756b13cb0af47778cf4170a5dadda06f159fce7913913e38aee10bd1",
+      "version": "0.5.3"
+    },
+    {
+      "distribution": "orjson",
+      "omitted_paths": [],
+      "record_sha256": "fe9d7abd99c323104d427b27b8e764657ffc9499ed806d8dfd449eda6825dbbb",
+      "version": "3.11.9"
+    },
+    {
+      "distribution": "platformdirs",
+      "omitted_paths": [],
+      "record_sha256": "a0808e6f6e3f772ae227ceede94ddd97fd4dce499901c5bea859dd865d6cee4e",
+      "version": "4.10.0"
+    },
+    {
+      "distribution": "propcache",
+      "omitted_paths": [],
+      "record_sha256": "5b47b5249186957cc332c6bc948cae117846f92e3561d6a8835888d6da3ba392",
+      "version": "0.5.2"
+    },
+    {
+      "distribution": "psutil",
+      "omitted_paths": [],
+      "record_sha256": "89d8b45910df70fcc5e6d3d90a4e80cbfd0581178772d5b6cf494c79f2c14171",
+      "version": "7.0.0"
+    },
+    {
+      "distribution": "pydantic",
+      "omitted_paths": [],
+      "record_sha256": "d0cbe0f34b294885175920bc8f2ece0b3ed6d9874347dc9cfb2caf4931329272",
+      "version": "2.13.4"
+    },
+    {
+      "distribution": "pydantic_core",
+      "omitted_paths": [],
+      "record_sha256": "3e55a95c4577dcb5dfd08cb8740db06dad7117273dd4885c090413888e606fc0",
+      "version": "2.46.4"
+    },
+    {
+      "distribution": "Pygments",
+      "omitted_paths": [],
+      "record_sha256": "fee5473ba2a92ffae75fca302dfcb121d796adb1455891617bc86227ec5a07c7",
+      "version": "2.20.0"
+    },
+    {
+      "distribution": "python-dateutil",
+      "omitted_paths": [],
+      "record_sha256": "e15e868a50b9c4e71df17b31369843617780146ac5adb1bbfdcced0ebe501824",
+      "version": "2.9.0.post0"
+    },
+    {
+      "distribution": "python-dotenv",
+      "omitted_paths": [],
+      "record_sha256": "49c8d4c90b641242c8caeeeea6f3c2bf07db8a32391e8d1758108238a74d2458",
+      "version": "1.2.2"
+    },
+    {
+      "distribution": "PyYAML",
+      "omitted_paths": [],
+      "record_sha256": "7d0856221a182f5b25fde9bb976af79b4883090f54680d86a42b35fc8d6735a2",
+      "version": "6.0.3"
+    },
+    {
+      "distribution": "referencing",
+      "omitted_paths": [],
+      "record_sha256": "d7ecf9906a4a4ea4837d16e324e344f9f00b328570cf695a96a8de46b8766982",
+      "version": "0.37.0"
+    },
+    {
+      "distribution": "rich",
+      "omitted_paths": [],
+      "record_sha256": "d2f604bf9734f0e060e549d2c91ed0860c46e16a89b870d046657fb66ee88cf9",
+      "version": "14.1.0"
+    },
+    {
+      "distribution": "rpds-py",
+      "omitted_paths": [],
+      "record_sha256": "8e825dd83fbb7bdc9ff8941296bc53b6c0e07d0420ae28efa150830d6cf178fe",
+      "version": "2026.6.3"
+    },
+    {
+      "distribution": "s3fs",
+      "omitted_paths": [],
+      "record_sha256": "fab11eaeef7726b270a1ac4e4d4daedd0e04c8cab88a5d1ed6ae2543a2ceffd9",
+      "version": "2025.9.0"
+    },
+    {
+      "distribution": "semver",
+      "omitted_paths": [],
+      "record_sha256": "90ff2d0bd36302921c89cef88ef507ebbbc3ea46cbec35485085d28ab0292941",
+      "version": "3.0.4"
+    },
+    {
+      "distribution": "setuptools",
+      "omitted_paths": [],
+      "record_sha256": "2fe8f339e0ea1a1762bd8b21edcc2609e36aebaf13d993f6ce9e236a0fd2ebd1",
+      "version": "83.0.0"
+    },
+    {
+      "distribution": "shortuuid",
+      "omitted_paths": [],
+      "record_sha256": "42c2f04c495064dbd8dc7d859a14bb9fd0728dc9b8e8fe7ddd037e4bc914297a",
+      "version": "1.0.13"
+    },
+    {
+      "distribution": "six",
+      "omitted_paths": [],
+      "record_sha256": "d16e50f347969b1e1919fb0c88bac4b9c644f5305bcfcfb00f72b646dbd4065d",
+      "version": "1.17.0"
+    },
+    {
+      "distribution": "sniffio",
+      "omitted_paths": [],
+      "record_sha256": "e6c97953661def7ab6dac78f83c86f31e622bee38ff55ea508cb04e1a604d4ff",
+      "version": "1.3.1"
+    },
+    {
+      "distribution": "tenacity",
+      "omitted_paths": [],
+      "record_sha256": "910933cf24972e4ba48ee34bc3e6cee75a847b752109cbc1e0e646ed21e449bb",
+      "version": "9.1.4"
+    },
+    {
+      "distribution": "textual",
+      "omitted_paths": [],
+      "record_sha256": "9ed0674344d02eebfba88ac509af887eda4a5535abbced9d5c278e0afb3ffa24",
+      "version": "5.3.0"
+    },
+    {
+      "distribution": "tiktoken",
+      "omitted_paths": [],
+      "record_sha256": "f84ea16165064b385d0944e174d1aa76bed07e57abed4c48444a7adaf2fb944b",
+      "version": "0.13.0"
+    },
+    {
+      "distribution": "tornado",
+      "omitted_paths": [],
+      "record_sha256": "e267ef345a7aad29e83211a50f45fd55fe498338e031d41d34f21e15a09c0ec6",
+      "version": "6.5.7"
+    },
+    {
+      "distribution": "typing-inspection",
+      "omitted_paths": [],
+      "record_sha256": "96edfd27f64244b308dd9b63a60613ad2a04e5012066fdbd1aeebe85b348ba29",
+      "version": "0.4.2"
+    },
+    {
+      "distribution": "typing_extensions",
+      "omitted_paths": [],
+      "record_sha256": "9e07fea845cac76293d927afa7157a14ecba39b318bc8af236b8de530b7656c1",
+      "version": "4.16.0"
+    },
+    {
+      "distribution": "uc-micro-py",
+      "omitted_paths": [],
+      "record_sha256": "5b1e1c4c011e70170e984d0a5153b4cbda067daa2b50a535fe8d1ebb2e8fe6a3",
+      "version": "2.0.0"
+    },
+    {
+      "distribution": "urllib3",
+      "omitted_paths": [],
+      "record_sha256": "4869c7ca2082c964b4e2bb8244deda15cfa069d93e4543d3a16eca6a63cbb81f",
+      "version": "2.7.0"
+    },
+    {
+      "distribution": "wrapt",
+      "omitted_paths": [],
+      "record_sha256": "ddda0b65ecfc861537dad8cba90b6a7c033b2b182367309b523fd1ea198e7255",
+      "version": "1.17.3"
+    },
+    {
+      "distribution": "yarl",
+      "omitted_paths": [],
+      "record_sha256": "4242c6a226f35f999167cfad9c51aa11ac548b8bbcf9ee36b93b42ed232c91a7",
+      "version": "1.24.2"
+    },
+    {
+      "distribution": "zstandard",
+      "omitted_paths": [],
+      "record_sha256": "fb9caf2d2342f45f75aed7ee9a8d17b2d2245339fc6da1c9c1c059ec770d96c6",
+      "version": "0.25.0"
+    }
+  ],
+  "sources": [
+    {
+      "commit": "3f190a835f7fee34ccd96e17242a36a29e0620a6",
+      "package": "openbench",
+      "source_tree_sha256": "bdfcc39c2423619696d359970e75611dd0aadee6c87a383961b78ab705acf1d5",
+      "version": "0.5.3"
+    },
+    {
+      "commit": "bb78d82dde311b68dbfd0b49f3186b9fc13a1465",
+      "package": "inspect-ai",
+      "source_tree_sha256": "6bd6016a593ebc0e976285e6416025a0c8a123d8451b0fc180da9a6a17d9794b",
+      "version": "0.3.141"
+    }
+  ]
+}

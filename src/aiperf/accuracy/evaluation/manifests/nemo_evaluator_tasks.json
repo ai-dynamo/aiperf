@@ -1,0 +1,40 @@
+{
+  "format": "aiperf-evaluator-task-manifest-v1",
+  "provider": "nemo_evaluator",
+  "provider_commit": "a668af906b46c802984f2d471f15ca83b763092d",
+  "environments": {
+    "gsm8k": {
+      "module": "nemo_evaluator.benchmarks.gsm8k",
+      "overlay": "aiperf.asset_bound_byob_environment.v1",
+      "solver_kinds": ["chat"],
+      "execution_granularity": "case",
+      "scheduling_mode": "finite",
+      "logical_services": [
+        {
+          "service_id": "candidate",
+          "purpose": "primary",
+          "operations": ["model.generate"],
+          "allows_restricted_payload": false
+        }
+      ],
+      "operation_schemas": {
+        "model.generate": {
+          "request_sha256": "c2f30f5396f4af6e44025d80294b2685916492c23dd730cd1e2a6ebdb6ae5d21",
+          "response_sha256": "6c8d726e5a0c05a22de946ce2495d6a4bcf3b3b7bb7a48e5c39bad07ff954ca0",
+          "stream_sha256": "84a861ea0a983368cd48e6db2fa4ac71b8219d7685065718859f0bfc4ea49206"
+        }
+      },
+      "assets": [
+        {
+          "asset_id": "openai_gsm8k_main_test_canary",
+          "source_kind": "task_package",
+          "immutable_revision": "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5",
+          "content_sha256": "fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398a",
+          "media_type": "application/x-ndjson"
+        }
+      ],
+      "selection_count": 5,
+      "executable": true
+    }
+  }
+}

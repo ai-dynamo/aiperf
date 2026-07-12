@@ -1,0 +1,205 @@
+{
+  "agentic_providers": [
+    {
+      "capability": "agentic_browsergym",
+      "deletion_gate": "An exact stock evaluator distribution must prove AgentLab/BrowserGym task selection, browser environment semantics, model-call routing, rewards, artifacts, cancellation, cleanup, and failure classification before this provider path can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_AGENTIC_HARNESS_PROVIDERS",
+      "legacy_execution_path": "aiperf.accuracy.browsergym:create_browsergym_harness",
+      "namespace_prefix": "browsergym/",
+      "required_versions": {
+        "agentlab": "0.4.2",
+        "browsergym-core": "0.14.3",
+        "browsergym-experiments": "0.14.3"
+      },
+      "retention_reason": "No external evaluator-provider pair has an exact BrowserGym environment and reward parity proof.",
+      "status": "legacy_retained"
+    },
+    {
+      "capability": "agentic_harbor",
+      "deletion_gate": "An exact stock evaluator distribution must prove Harbor Hub, legacy-registry, and local task resolution plus Terminus-2 calls, environment/verifier callbacks, rewards, artifacts, cancellation, cleanup, and infrastructure classification before this fallback provider can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_AGENTIC_HARNESS_PROVIDERS",
+      "legacy_execution_path": "aiperf.accuracy.harbor:create_harbor_harness",
+      "namespace_prefix": null,
+      "required_versions": {
+        "harbor": "0.18.0"
+      },
+      "retention_reason": "No external evaluator-provider pair has an exact Harbor task, agent, environment, and verifier parity proof.",
+      "status": "legacy_retained"
+    },
+    {
+      "capability": "agentic_mcpmark",
+      "deletion_gate": "An exact stock evaluator distribution must prove MCPMark registry selection, its 100-turn tool loop, real MCP servers, state managers, task-local verifiers, rewards, artifacts, cancellation, and cleanup before this provider path can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_AGENTIC_HARNESS_PROVIDERS",
+      "legacy_execution_path": "aiperf.accuracy.mcpmark:create_mcpmark_harness",
+      "namespace_prefix": "mcpmark/",
+      "required_versions": {
+        "MCPMark": "0.0.1",
+        "litellm": "1.80.0"
+      },
+      "retention_reason": "No external evaluator-provider pair has an exact MCPMark tool-loop, server-state, and verifier parity proof.",
+      "status": "legacy_retained"
+    }
+  ],
+  "claim_policy": "Only the finite cases named in migrated_canary_proofs are migrated. Every complete static benchmark and every agentic provider remains on the explicitly named legacy path until its deletion gate is satisfied.",
+  "migrated_canary_proofs": [
+    {
+      "asset_content_sha256": "fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398a",
+      "asset_id": "openai_gsm8k_main_test_canary",
+      "asset_record_count": 5,
+      "asset_revision": "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5",
+      "benchmark_registry_id": "gsm8k",
+      "coverage_id": "gsm8k_canary/nemo_evaluator",
+      "distribution_id": "nvidia_nemo_evaluator_0_4_locked",
+      "executed_case_count": 1,
+      "operation_id": "model.generate",
+      "parity_semantics": "Pinned NeMo Evaluator GSM8K prompt preparation, ChatSolver host call, native scorer, reducer, provider bundle, isolated relocatable rootfs, and dedicated control descriptors.",
+      "proof_test": "tests/unit/accuracy/test_evaluation_provider_worker_v2.py::test_stock_provider_over_dedicated_fds[nemo_evaluator_gsm8k_canary]",
+      "provider_id": "nemo_evaluator",
+      "status": "migrated_canary",
+      "task_id": "gsm8k"
+    },
+    {
+      "asset_content_sha256": "fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398a",
+      "asset_id": "openai_gsm8k_main_test_canary",
+      "asset_record_count": 5,
+      "asset_revision": "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5",
+      "benchmark_registry_id": "gsm8k",
+      "coverage_id": "gsm8k_canary/openbench",
+      "distribution_id": "groq_openbench_0_5_3_inspect_0_3_141_locked",
+      "executed_case_count": 1,
+      "operation_id": "model.generate",
+      "parity_semantics": "Pinned OpenBench record conversion, public Inspect Task/ModelAPI/Solver execution, native scorer and EvalLog artifact, provider bundle, isolated relocatable rootfs, and dedicated control descriptors.",
+      "proof_test": "tests/unit/accuracy/test_evaluation_provider_worker_v2.py::test_stock_provider_over_dedicated_fds[openbench_gsm8k_canary]",
+      "provider_id": "openbench",
+      "status": "migrated_canary",
+      "task_id": "gsm8k"
+    }
+  ],
+  "schema_version": "aiperf-evaluator-provider-coverage-v1",
+  "static_benchmarks": [
+    {
+      "canonical_registry_id": "aime",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned dataset revision, prompt/config matrix, per-case grading, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.aime:AIMEBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.math:MathGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "aime",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for the AIME benchmark.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "aime24",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned dataset revision, Lighteval expression extraction, per-case scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.aime24:AIME24Benchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "aime24",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for AIME 2024.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "aime25",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned dataset revision, Lighteval expression extraction, per-case scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.aime25:AIME25Benchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "aime25",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for AIME 2025.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "bigbench",
+      "deletion_gate": "A stock evaluator pair must reproduce all registered BigBench-Hard subtasks, bundled few-shot prompts, chain-of-thought controls, exact-match scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.bigbench:BigBenchBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.exact_match:ExactMatchGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "bigbench",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for BigBench-Hard.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "gpqa-diamond",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned GPQA Diamond subset, deterministic choice shuffling, prompt, Lighteval extraction, scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.gpqa_diamond:GPQADiamondBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.lighteval_grader:LightevalGPQAGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "gpqa_diamond",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for GPQA Diamond.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "gsm8k",
+      "deletion_gate": "A stock evaluator pair must prove the full pinned GSM8K split and complete supported configuration matrix, not only the five-record asset and one executed case, before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.gsm8k:GSM8KBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.gsm8k_grader:LightevalGSM8KGrader",
+      "migrated_canary_coverage_ids": [
+        "gsm8k_canary/nemo_evaluator",
+        "gsm8k_canary/openbench"
+      ],
+      "plugin_registry_id": "gsm8k",
+      "retention_reason": "NeMo Evaluator and OpenBench/Inspect prove only the frozen GSM8K canary; the complete legacy GSM8K surface remains authoritative.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "hellaswag",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned splits, activity-label few-shot sampling, DeepEval prompt bytes, strict exact-match scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.hellaswag:HellaSwagBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.exact_match:ExactMatchGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "hellaswag",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for HellaSwag.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "lcb-codegeneration",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned LiveCodeBench release policy, prompts, public and private test handling, sandboxed execution, pass@1 scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.lcb_codegeneration:LCBCodeGenerationBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.code_execution:CodeExecutionGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "lcb_codegeneration",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for LiveCodeBench code generation.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "math-500",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned MATH-500 split, prompts, LaTeX extraction, per-case scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.math_500:Math500Benchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.lighteval_grader:LightevalLatexGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "math_500",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for MATH-500.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "mmlu",
+      "deletion_gate": "A stock evaluator pair must reproduce all 57 registered subjects, pinned dev/test splits, five-shot prompts, multiple-choice scores, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.mmlu:MMLUBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.multiple_choice:MultipleChoiceGrader",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": "mmlu",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for MMLU.",
+      "status": "legacy_retained"
+    },
+    {
+      "canonical_registry_id": "mmlu-pro",
+      "deletion_gate": "A stock evaluator pair must reproduce the pinned Lighteval MMLU-Pro registry task, subject filtering, few-shot prompts, task-native metrics, aggregates, and artifacts before this special legacy path can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:AccuracyWorker._load_mmlu_pro",
+      "legacy_execution_path": "aiperf.accuracy.worker:AccuracyWorker._load_mmlu_pro",
+      "legacy_grading_path": "lighteval.tasks.lighteval_task:LightevalTask.metrics",
+      "migrated_canary_coverage_ids": [],
+      "plugin_registry_id": null,
+      "retention_reason": "No exact external evaluator-provider parity proof exists for the worker's special MMLU-Pro registry path.",
+      "status": "legacy_retained"
+    }
+  ]
+}
