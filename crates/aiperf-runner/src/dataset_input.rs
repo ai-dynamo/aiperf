@@ -20,7 +20,7 @@ use aiperf_extensions::AiperfRegistry;
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::execute::{
@@ -397,8 +397,7 @@ pub struct SyntheticRankingsSpec {
 }
 
 /// Config-v2 sampling distribution after Pydantic normalization.
-#[derive(Clone, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone)]
 pub enum DistributionSpec {
     /// Deterministic value.
     Fixed(FixedDistributionSpec),
@@ -410,6 +409,62 @@ pub enum DistributionSpec {
     Multimodal(MultimodalDistributionSpec),
     /// Discrete weighted values.
     Empirical(EmpiricalDistributionSpec),
+}
+
+impl<'de> Deserialize<'de> for DistributionSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // `serde_json`'s `arbitrary_precision` feature is enabled workspace-wide
+        // (aiperf-graph needs it to carry >u64 recorded-trace hash ids losslessly
+        // into `BigInt` via `Number::to_string`). Feature unification turns it on
+        // for this crate too, and it is incompatible with `#[serde(untagged)]`
+        // over numeric fields: the derived content buffer represents each number
+        // as an internal map and fails with "invalid type: map, expected f64".
+        // Route through `serde_json::Value` and dispatch on the discriminating
+        // keys, then decode each concrete variant directly — a path that is
+        // agnostic to the number representation.
+        let value = Value::deserialize(deserializer)?;
+        let (has_peaks, has_points, has_median, has_stddev, has_value) = {
+            let object = value.as_object().ok_or_else(|| {
+                D::Error::custom("distribution must be a JSON object")
+            })?;
+            (
+                object.contains_key("peaks"),
+                object.contains_key("points"),
+                object.contains_key("median"),
+                object.contains_key("stddev"),
+                object.contains_key("value"),
+            )
+        };
+        let decoded = if has_peaks {
+            DistributionSpec::Multimodal(from_value_variant(value)?)
+        } else if has_points {
+            DistributionSpec::Empirical(from_value_variant(value)?)
+        } else if has_median {
+            DistributionSpec::LogNormal(from_value_variant(value)?)
+        } else if has_stddev {
+            DistributionSpec::Normal(from_value_variant(value)?)
+        } else if has_value {
+            DistributionSpec::Fixed(from_value_variant(value)?)
+        } else {
+            return Err(D::Error::custom(
+                "distribution object must contain one of: value, mean+stddev, mean+median, peaks, points",
+            ));
+        };
+        Ok(decoded)
+    }
+}
+
+/// Decode one concrete distribution variant from a buffered [`Value`], mapping
+/// the `serde_json` error into the caller's deserializer error type.
+fn from_value_variant<'de, T, E>(value: Value) -> Result<T, E>
+where
+    T: serde::de::DeserializeOwned,
+    E: serde::de::Error,
+{
+    serde_json::from_value(value).map_err(E::custom)
 }
 
 /// Deterministic distribution configuration.
@@ -851,6 +906,31 @@ fn checked_default_output_tokens(expected: f64) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distribution_spec_decodes_under_arbitrary_precision() {
+        // Reproduces the workspace-wide `arbitrary_precision` feature (enabled by
+        // aiperf-graph) that previously broke the derived untagged decoder for
+        // every numeric distribution shape with "invalid type: map, expected f64".
+        let fixed: DistributionSpec = serde_json::from_str(r#"{"value":256.0}"#).unwrap();
+        assert!(matches!(fixed, DistributionSpec::Fixed(spec) if spec.value == 256.0));
+        let normal: DistributionSpec =
+            serde_json::from_str(r#"{"mean":256.0,"stddev":0.0}"#).unwrap();
+        assert!(matches!(normal, DistributionSpec::Normal(_)));
+        let lognormal: DistributionSpec =
+            serde_json::from_str(r#"{"mean":2.0,"median":1.5}"#).unwrap();
+        assert!(matches!(lognormal, DistributionSpec::LogNormal(_)));
+
+        // A whole synthetic dataset source with numeric distributions must decode.
+        let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_str(
+            r#"{"type":"synthetic","entries":1,"sampling":"sequential",
+                "prompts":{"isl":{"mean":256.0,"stddev":0.0},"osl":{"value":8.0}},
+                "turns":{"value":1.0},"turn_delay_ms":{"value":0.0}}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.entries, 1);
+        assert!(matches!(spec.turns, DistributionSpec::Fixed(_)));
+    }
 
     #[test]
     fn discriminator_decode_skips_adapter_fields_without_retaining_them() {
