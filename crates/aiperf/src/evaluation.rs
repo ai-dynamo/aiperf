@@ -14,6 +14,7 @@ pub mod arbiter;
 pub mod host;
 pub mod inference;
 pub mod ledger;
+pub mod proxy;
 pub mod report;
 pub mod retry;
 pub mod workload;

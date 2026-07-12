@@ -33,11 +33,15 @@ use tokio::sync::mpsc;
 
 use super::arbiter::{FairOperationArbiter, FairQueueLimits};
 use super::host::{
-    EvaluationRouteTable, HostExecutionDelta, HostExecutionEventSink, HostExecutionTerminal,
-    HostExecutorRegistry, HostExecutorRuntime, HostOperationEnvelope, RegisteredOperationId,
+    CompatibilityProxyIngress, EvaluationRouteTable, HostExecutionDelta, HostExecutionEventSink,
+    HostExecutionTerminal, HostExecutorRegistry, HostExecutorRuntime, HostOperationEnvelope,
+    RegisteredOperationId,
 };
 use super::ledger::{
     HostTerminalClass, OperationLedger, OperationRecord, OperationRegistration, OperationState,
+};
+use super::proxy::{
+    EvaluatorCompatibilityProxy, ProxyOperationReceiver, ProxyOperationResponder, ProxyRejection,
 };
 use super::report::{EvaluationCaseReportFacts, EvaluationReportFacts};
 use super::retry::OperationCancellation;
@@ -521,6 +525,8 @@ pub struct EvaluationWorkload {
     finalizer: Rc<dyn EvaluationArtifactFinalizer>,
     limits: EvaluationWorkloadLimits,
     cancellation: OperationCancellation,
+    compatibility_proxy: Option<ProxyOperationReceiver>,
+    compatibility_proxy_server: Option<EvaluatorCompatibilityProxy>,
 }
 
 impl EvaluationWorkload {
@@ -554,7 +560,28 @@ impl EvaluationWorkload {
             finalizer,
             limits,
             cancellation,
+            compatibility_proxy: None,
+            compatibility_proxy_server: None,
         })
+    }
+
+    /// Attach the sole scoped compatibility-proxy ingress for this run.
+    pub fn with_compatibility_proxy(
+        mut self,
+        server: EvaluatorCompatibilityProxy,
+        proxy: ProxyOperationReceiver,
+    ) -> Result<Self> {
+        ensure!(
+            self.compatibility_proxy.is_none() && self.compatibility_proxy_server.is_none(),
+            "evaluation workload received more than one compatibility proxy"
+        );
+        ensure!(
+            server.owns_receiver(&proxy),
+            "evaluation workload received mismatched proxy server/receiver authority"
+        );
+        self.compatibility_proxy = Some(proxy);
+        self.compatibility_proxy_server = Some(server);
+        Ok(self)
     }
 
     /// Plan, bind, execute, drain, finalize, quiesce, and seal one evaluation.
@@ -625,6 +652,14 @@ impl EvaluationWorkload {
         let mut state = ExecutionState::new(&plan)?;
         for unit in &pending_units {
             state.register_unit(unit)?;
+            if let Some(proxy) = &self.compatibility_proxy {
+                proxy
+                    .activate_case_scope(
+                        unit.unit_id.clone(),
+                        unit.cases.iter().map(|case| case.case_id.clone()),
+                    )
+                    .map_err(proxy_rejection_error)?;
+            }
         }
         let stream_capacity = plan.queue_credits.stream_events;
         let (host_tx, mut host_rx) = mpsc::channel(stream_capacity);
@@ -643,6 +678,24 @@ impl EvaluationWorkload {
                 occurrence_rx = None;
                 occurrence_done = true;
                 progressed = true;
+            }
+
+            progressed |= self.drain_proxy_submissions(&plan, &mut state, &clock)?;
+            let disconnected = self
+                .compatibility_proxy
+                .as_ref()
+                .map(ProxyOperationReceiver::disconnected_operation_ids)
+                .unwrap_or_default();
+            for operation_id in disconnected {
+                if state
+                    .ledger
+                    .operation(&operation_id)
+                    .is_ok_and(|record| record.state != OperationState::Terminal)
+                {
+                    self.cancel_host_operation(&mut state, &operation_id, "proxy_disconnected")
+                        .await?;
+                    progressed = true;
+                }
             }
 
             if !state.run_cancellation_started
@@ -664,6 +717,14 @@ impl EvaluationWorkload {
                             );
                             let unit = units.into_iter().next().expect("length checked");
                             state.register_unit(&unit)?;
+                            if let Some(proxy) = &self.compatibility_proxy {
+                                proxy
+                                    .activate_case_scope(
+                                        unit.unit_id.clone(),
+                                        unit.cases.iter().map(|case| case.case_id.clone()),
+                                    )
+                                    .map_err(proxy_rejection_error)?;
+                            }
                             pending_units.push_back(unit);
                             progressed = true;
                         }
@@ -775,6 +836,7 @@ impl EvaluationWorkload {
                         .operation_usage
                         .insert(operation_id, HostOperationUsage::default());
                     self.submit_terminal(
+                        &queued.reply,
                         queued.operation_id,
                         queued.semantic_attempt_id,
                         cancelled_terminal_payload("queued", "run_cancelled")?,
@@ -798,7 +860,11 @@ impl EvaluationWorkload {
                 progressed = true;
             }
 
-            if drained {
+            let proxy_pending = self
+                .compatibility_proxy
+                .as_ref()
+                .is_some_and(|proxy| !proxy.is_empty());
+            if drained && !proxy_pending {
                 ensure!(
                     occurrence_done,
                     "provider drained before Rust occurrence source ended"
@@ -832,6 +898,17 @@ impl EvaluationWorkload {
                     });
                 clock.clone().sleep(wait_ns).await;
             }
+        }
+
+        if let Some(proxy) = &self.compatibility_proxy {
+            proxy.revoke();
+        }
+
+        if let Some(proxy) = self.compatibility_proxy_server.take() {
+            proxy
+                .shutdown()
+                .await
+                .context("shutting down evaluator compatibility proxy")?;
         }
 
         state.arbiter.validate()?;
@@ -883,77 +960,13 @@ impl EvaluationWorkload {
     ) -> Result<()> {
         match event {
             EvaluationEvent::HostOperationRequested { request } => {
-                request
-                    .validate()
-                    .map_err(|error| anyhow!(error.to_string()))?;
-                ensure!(
-                    request.context.session_id == self.plan_request.session_id,
-                    "host operation referenced a different evaluation session"
-                );
-                ensure!(
-                    state.active_units.contains(&request.context.unit_id),
-                    "host operation referenced an inactive unit"
-                );
-                ensure!(
-                    state
-                        .unit_cases
-                        .get(&request.context.unit_id)
-                        .is_some_and(|cases| cases.contains(&request.context.case_id)),
-                    "host operation referenced a case outside its unit"
-                );
-                ensure!(
-                    state.arbiter.len() + state.active_operations.len()
-                        < plan.queue_credits.host_operations,
-                    "provider exceeded accepted global host-operation credits"
-                );
-                let envelope = operation_envelope(plan, request.as_ref(), &self.routes)?;
-                let prepared =
-                    self.host_executors
-                        .prepare(&envelope, &self.routes, &self.host_runtime)?;
-                state.ledger.register(OperationRegistration {
-                    operation_id: envelope.operation_id.clone(),
-                    unit_id: envelope.unit_id.clone(),
-                    case_id: envelope.case_id.clone(),
-                    semantic_attempt_id: envelope.semantic_attempt_id.clone(),
-                    logical_call_id: envelope.logical_call_id.clone(),
-                    idempotency_key: request.idempotency_key.clone(),
-                    service_id: envelope.service_id.clone(),
-                    semantic_operation_id: envelope.semantic_operation_id.to_string(),
-                    replay_safe_after_output: false,
-                })?;
-                if let Some(deadline_ms) = request.deadline_ms {
-                    let duration_ns = i64::try_from(deadline_ms)
-                        .ok()
-                        .and_then(|milliseconds| milliseconds.checked_mul(1_000_000))
-                        .ok_or_else(|| {
-                            anyhow!("host operation deadline exceeds i64 nanoseconds")
-                        })?;
-                    let deadline_ns = clock
-                        .now_ns()
-                        .checked_add(duration_ns)
-                        .ok_or_else(|| anyhow!("host operation deadline overflow"))?;
-                    ensure!(
-                        state
-                            .operation_deadlines
-                            .insert(request.operation_id.to_string(), deadline_ns)
-                            .is_none(),
-                        "duplicate host operation deadline identity"
-                    );
-                }
-                state
-                    .arbiter
-                    .push(
-                        request.context.unit_id.clone(),
-                        QueuedOperation {
-                            envelope,
-                            executor: prepared,
-                            operation_id: request.operation_id.clone(),
-                            semantic_attempt_id: request.context.semantic_attempt_id.clone(),
-                        },
-                    )
-                    .map_err(|rejection| {
-                        anyhow!("provider exceeded accepted fair queue credits: {rejection:?}")
-                    })?;
+                self.admit_host_operation(
+                    plan,
+                    state,
+                    request.as_ref(),
+                    clock,
+                    OperationReply::Provider,
+                )?;
             }
             EvaluationEvent::HostOperationCancelRequested { request } => {
                 let operation_id = request.operation_id.as_str();
@@ -998,6 +1011,7 @@ impl EvaluationWorkload {
                             .operation_usage
                             .insert(operation_id.to_string(), HostOperationUsage::default());
                         self.submit_terminal(
+                            &queued.reply,
                             queued.operation_id,
                             queued.semantic_attempt_id,
                             cancelled_terminal_payload("queued", &request.reason)?,
@@ -1019,6 +1033,18 @@ impl EvaluationWorkload {
             EvaluationEvent::CaseTerminal { outcome } => {
                 let case_id = outcome.case_id.clone();
                 ensure!(
+                    state.ledger.operations().all(|operation| {
+                        operation.registration.case_id != case_id.as_str()
+                            || operation.state == OperationState::Terminal
+                    }),
+                    "provider terminalled a case with outstanding host operations"
+                );
+                if let Some(proxy) = &self.compatibility_proxy {
+                    proxy
+                        .deactivate_case_scope(&case_id)
+                        .map_err(proxy_rejection_error)?;
+                }
+                ensure!(
                     state.terminal_cases.insert(case_id.clone()),
                     "provider emitted a duplicate case terminal"
                 );
@@ -1036,6 +1062,175 @@ impl EvaluationWorkload {
             }
             EvaluationEvent::Progress { .. } | EvaluationEvent::Diagnostic { .. } => {}
         }
+        Ok(())
+    }
+
+    fn drain_proxy_submissions(
+        &mut self,
+        plan: &EvaluationPlan,
+        state: &mut ExecutionState,
+        clock: &Rc<dyn Clock>,
+    ) -> Result<bool> {
+        if self.compatibility_proxy.is_none() {
+            return Ok(false);
+        }
+        let mut progressed = false;
+        loop {
+            let submission = match self
+                .compatibility_proxy
+                .as_mut()
+                .expect("proxy presence checked")
+                .try_recv()
+            {
+                Ok(submission) => submission,
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(anyhow!(
+                        "evaluator compatibility proxy disconnected from its shared host authority"
+                    ));
+                }
+            };
+            progressed = true;
+            if !submission.is_connected() {
+                continue;
+            }
+            if state.run_cancellation_started {
+                let _ = submission.resolve(Err(ProxyRejection::Unavailable));
+                continue;
+            }
+            let responder = match self
+                .compatibility_proxy
+                .as_ref()
+                .expect("proxy presence checked")
+                .authorize(&submission, clock.now_ns())
+            {
+                Ok(responder) => responder,
+                Err(rejection) => {
+                    let _ = submission.resolve(Err(rejection));
+                    continue;
+                }
+            };
+            let admission = self.admit_host_operation(
+                plan,
+                state,
+                submission.request(),
+                clock,
+                OperationReply::Proxy(responder.clone()),
+            );
+            match admission {
+                Ok(()) => {
+                    responder.activate().map_err(proxy_rejection_error)?;
+                    let _ = submission.resolve(Ok(()));
+                }
+                Err(error) => {
+                    responder.reject();
+                    let rejection = if error.to_string().contains("duplicate evaluator") {
+                        ProxyRejection::Duplicate
+                    } else {
+                        ProxyRejection::Admission
+                    };
+                    let _ = submission.resolve(Err(rejection));
+                }
+            }
+        }
+        Ok(progressed)
+    }
+
+    fn admit_host_operation(
+        &self,
+        plan: &EvaluationPlan,
+        state: &mut ExecutionState,
+        request: &aiperf_accuracy::HostOperationRequest,
+        clock: &Rc<dyn Clock>,
+        reply: OperationReply,
+    ) -> Result<()> {
+        request
+            .validate()
+            .map_err(|error| anyhow!(error.to_string()))?;
+        ensure!(
+            request.context.session_id == self.plan_request.session_id,
+            "host operation referenced a different evaluation session"
+        );
+        ensure!(
+            state.active_units.contains(&request.context.unit_id),
+            "host operation referenced an inactive unit"
+        );
+        ensure!(
+            !state.terminal_cases.contains(&request.context.case_id),
+            "host operation referenced an already-terminal case"
+        );
+        ensure!(
+            state
+                .unit_cases
+                .get(&request.context.unit_id)
+                .is_some_and(|cases| cases.contains(&request.context.case_id)),
+            "host operation referenced a case outside its unit"
+        );
+        ensure!(
+            state.arbiter.len() + state.active_operations.len()
+                < plan.queue_credits.host_operations,
+            "provider exceeded accepted global host-operation credits"
+        );
+        let envelope = operation_envelope(plan, request, &self.routes)?;
+        let registration = OperationRegistration {
+            operation_id: envelope.operation_id.clone(),
+            unit_id: envelope.unit_id.clone(),
+            case_id: envelope.case_id.clone(),
+            semantic_attempt_id: envelope.semantic_attempt_id.clone(),
+            logical_call_id: envelope.logical_call_id.clone(),
+            idempotency_key: request.idempotency_key.clone(),
+            service_id: envelope.service_id.clone(),
+            semantic_operation_id: envelope.semantic_operation_id.to_string(),
+            replay_safe_after_output: false,
+        };
+        state.ledger.check_registration(&registration)?;
+        state
+            .arbiter
+            .check_push(&request.context.unit_id)
+            .map_err(|rejection| {
+                anyhow!("provider exceeded accepted fair queue credits: {rejection:?}")
+            })?;
+        let deadline_ns = request
+            .deadline_ms
+            .map(|deadline_ms| {
+                let duration_ns = i64::try_from(deadline_ms)
+                    .ok()
+                    .and_then(|milliseconds| milliseconds.checked_mul(1_000_000))
+                    .ok_or_else(|| anyhow!("host operation deadline exceeds i64 nanoseconds"))?;
+                clock
+                    .now_ns()
+                    .checked_add(duration_ns)
+                    .ok_or_else(|| anyhow!("host operation deadline overflow"))
+            })
+            .transpose()?;
+        let prepared = self
+            .host_executors
+            .prepare(&envelope, &self.routes, &self.host_runtime)?;
+        state.ledger.register(registration)?;
+        if let Some(deadline_ns) = deadline_ns {
+            ensure!(
+                state
+                    .operation_deadlines
+                    .insert(request.operation_id.to_string(), deadline_ns)
+                    .is_none(),
+                "duplicate host operation deadline identity"
+            );
+        }
+        state
+            .arbiter
+            .push(
+                request.context.unit_id.clone(),
+                QueuedOperation {
+                    envelope,
+                    executor: prepared,
+                    operation_id: request.operation_id.clone(),
+                    semantic_attempt_id: request.context.semantic_attempt_id.clone(),
+                    reply,
+                },
+            )
+            .map_err(|rejection| {
+                anyhow!("preflighted fair queue admission changed: {rejection:?}")
+            })?;
         Ok(())
     }
 
@@ -1068,6 +1263,7 @@ impl EvaluationWorkload {
                     .operation_usage
                     .insert(operation_id.to_string(), HostOperationUsage::default());
                 self.submit_terminal(
+                    &queued.reply,
                     queued.operation_id,
                     queued.semantic_attempt_id,
                     cancelled_terminal_payload("queued", reason)?,
@@ -1099,6 +1295,7 @@ impl EvaluationWorkload {
             cancellation: cancellation.clone(),
             semantic_attempt_id: queued.semantic_attempt_id.clone(),
             semantic_operation_id: queued.envelope.semantic_operation_id.clone(),
+            reply: queued.reply.clone(),
         };
         ensure!(
             state
@@ -1136,23 +1333,30 @@ impl EvaluationWorkload {
                 operation_id,
                 delta,
             } => {
-                let active = state
-                    .active_operations
-                    .get(operation_id.as_str())
-                    .ok_or_else(|| anyhow!("stream delta referenced an inactive operation"))?;
+                let (semantic_operation_id, reply, cancellation) = {
+                    let active = state
+                        .active_operations
+                        .get(operation_id.as_str())
+                        .ok_or_else(|| anyhow!("stream delta referenced an inactive operation"))?;
+                    (
+                        active.semantic_operation_id.clone(),
+                        active.reply.clone(),
+                        active.cancellation.clone(),
+                    )
+                };
                 self.host_executors
-                    .validate_stream(&active.semantic_operation_id, &delta.payload)?;
+                    .validate_stream(&semantic_operation_id, &delta.payload)?;
                 let stream_sequence = u64::try_from(delta.ordinal)
                     .map_err(|_| anyhow!("stream sequence exceeds u64"))?;
-                self.provider
-                    .submit_host_events(&[HostOperationEvent::StreamDelta {
-                        operation_id,
-                        stream_sequence,
-                        delta: CanonicalJson::new(delta.payload)
-                            .map_err(|error| anyhow!(error.to_string()))?,
-                    }])
-                    .await
-                    .map_err(provider_error)?;
+                let event = HostOperationEvent::StreamDelta {
+                    operation_id,
+                    stream_sequence,
+                    delta: CanonicalJson::new(delta.payload)
+                        .map_err(|error| anyhow!(error.to_string()))?,
+                };
+                if !self.submit_operation_event(&reply, event).await? {
+                    cancellation.cancel();
+                }
             }
             RuntimeHostMessage::Terminal {
                 operation_id,
@@ -1221,8 +1425,14 @@ impl EvaluationWorkload {
                 state
                     .operation_usage
                     .insert(operation_id.to_string(), terminal.usage);
-                self.submit_terminal(operation_id, semantic_attempt_id, terminal, observed_output)
-                    .await?;
+                self.submit_terminal(
+                    &active.reply,
+                    operation_id,
+                    semantic_attempt_id,
+                    terminal,
+                    observed_output,
+                )
+                .await?;
             }
         }
         Ok(())
@@ -1230,6 +1440,7 @@ impl EvaluationWorkload {
 
     async fn submit_terminal(
         &mut self,
+        reply: &OperationReply,
         operation_id: HostOperationId,
         semantic_attempt_id: SemanticAttemptId,
         terminal: HostExecutionTerminal,
@@ -1277,21 +1488,43 @@ impl EvaluationWorkload {
                 ),
             ),
         };
-        self.provider
-            .submit_host_events(&[HostOperationEvent::Terminal {
-                terminal: HostOperationTerminal {
-                    operation_id,
-                    semantic_attempt_id,
-                    disposition,
-                    result,
-                    error,
-                    usage: terminal.usage,
-                    observed_output,
-                },
-            }])
-            .await
-            .map_err(provider_error)?;
+        let event = HostOperationEvent::Terminal {
+            terminal: HostOperationTerminal {
+                operation_id,
+                semantic_attempt_id,
+                disposition,
+                result,
+                error,
+                usage: terminal.usage,
+                observed_output,
+            },
+        };
+        let _ = self.submit_operation_event(reply, event).await?;
         Ok(())
+    }
+
+    async fn submit_operation_event(
+        &mut self,
+        reply: &OperationReply,
+        event: HostOperationEvent,
+    ) -> Result<bool> {
+        match reply {
+            OperationReply::Provider => {
+                self.provider
+                    .submit_host_events(&[event])
+                    .await
+                    .map_err(provider_error)?;
+                Ok(true)
+            }
+            OperationReply::Proxy(responder) => {
+                let terminal = event.is_terminal();
+                let delivered = responder.publish(event).is_ok();
+                if terminal && !delivered {
+                    responder.complete_without_delivery();
+                }
+                Ok(delivered)
+            }
+        }
     }
 }
 
@@ -1451,12 +1684,20 @@ struct QueuedOperation {
     executor: Rc<dyn super::host::HostOperationExecutor>,
     operation_id: HostOperationId,
     semantic_attempt_id: SemanticAttemptId,
+    reply: OperationReply,
 }
 
 struct ActiveOperation {
     cancellation: OperationCancellation,
     semantic_attempt_id: SemanticAttemptId,
     semantic_operation_id: RegisteredOperationId,
+    reply: OperationReply,
+}
+
+#[derive(Clone)]
+enum OperationReply {
+    Provider,
+    Proxy(ProxyOperationResponder),
 }
 
 enum RuntimeHostMessage {
@@ -1684,6 +1925,10 @@ fn cancelled_terminal_payload(stage: &str, reason: &str) -> Result<HostExecution
 
 fn provider_error(error: aiperf_accuracy::EvaluationProviderError) -> anyhow::Error {
     anyhow!(error.to_string())
+}
+
+fn proxy_rejection_error(_rejection: ProxyRejection) -> anyhow::Error {
+    anyhow!("evaluator compatibility proxy grant/runtime rejected Rust host admission")
 }
 
 fn is_sha256(value: &str) -> bool {
