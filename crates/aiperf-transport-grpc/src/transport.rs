@@ -903,6 +903,12 @@ fn finish_error(record: &mut GrpcRequestRecord, end_ns: i64, error: GrpcTranspor
         GrpcErrorKind::RequestCancellation => "CANCELLED".to_string(),
         GrpcErrorKind::RequestTimeout => "DEADLINE_EXCEEDED".to_string(),
         GrpcErrorKind::RequestSendTimeout => "CHANNEL_NOT_READY".to_string(),
+        GrpcErrorKind::Rpc => error
+            .details
+            .grpc_status_code
+            .map(grpc_code_name)
+            .unwrap_or("UNKNOWN")
+            .to_string(),
         GrpcErrorKind::Stream => "STREAM_ERROR".to_string(),
         _ => "ERROR".to_string(),
     });
@@ -1018,5 +1024,28 @@ const fn code_to_i32(code: Code) -> i32 {
         Code::Unavailable => 14,
         Code::DataLoss => 15,
         Code::Unauthenticated => 16,
+    }
+}
+
+const fn grpc_code_name(code: i32) -> &'static str {
+    match code {
+        0 => "OK",
+        1 => "CANCELLED",
+        2 => "UNKNOWN",
+        3 => "INVALID_ARGUMENT",
+        4 => "DEADLINE_EXCEEDED",
+        5 => "NOT_FOUND",
+        6 => "ALREADY_EXISTS",
+        7 => "PERMISSION_DENIED",
+        8 => "RESOURCE_EXHAUSTED",
+        9 => "FAILED_PRECONDITION",
+        10 => "ABORTED",
+        11 => "OUT_OF_RANGE",
+        12 => "UNIMPLEMENTED",
+        13 => "INTERNAL",
+        14 => "UNAVAILABLE",
+        15 => "DATA_LOSS",
+        16 => "UNAUTHENTICATED",
+        _ => "UNKNOWN",
     }
 }

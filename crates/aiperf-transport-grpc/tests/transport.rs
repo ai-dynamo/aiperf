@@ -343,6 +343,10 @@ async fn native_tonic_transport_covers_unary_streaming_reuse_metadata_readiness_
         .await;
     assert_eq!(rpc_error.status, Some(429));
     assert_eq!(rpc_error.trace.grpc_status_code, Some(8));
+    assert_eq!(
+        rpc_error.trace.response_reason.as_deref(),
+        Some("RESOURCE_EXHAUSTED")
+    );
     assert_eq!(rpc_error.error.as_ref().unwrap().kind, GrpcErrorKind::Rpc);
 
     let cancelled = transport

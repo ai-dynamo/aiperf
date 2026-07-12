@@ -31,7 +31,13 @@ fn canonical_json_encodes_every_typed_tensor_and_parameter_variant() {
             "string": "value",
         },
         "inputs": [
-            {"name": "bytes", "shape": [2], "datatype": "BYTES", "data": ["a", "b"]},
+            {
+                "name": "bytes",
+                "shape": [2],
+                "datatype": "BYTES",
+                "data": ["a", "b"],
+                "parameters": {"binary_data_size": 2}
+            },
             {"name": "i8", "shape": [2], "datatype": "INT8", "data": [-1, 2]},
             {"name": "i64", "shape": [1], "datatype": "INT64", "data": [3]},
             {"name": "u32", "shape": [1], "datatype": "UINT32", "data": [4]},
@@ -66,6 +72,10 @@ fn canonical_json_encodes_every_typed_tensor_and_parameter_variant() {
     assert_eq!(
         request.inputs[0].contents.as_ref().unwrap().bytes_contents,
         vec![b"a".to_vec(), b"b".to_vec()]
+    );
+    assert_eq!(
+        request.inputs[0].parameters["binary_data_size"].parameter_choice,
+        Some(ParameterChoice::Int64Param(2))
     );
     assert_eq!(
         request.inputs[1].contents.as_ref().unwrap().int_contents,
