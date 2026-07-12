@@ -18,9 +18,9 @@ use aiperf_prometheus::{Exposition, ExpositionFormat};
 use crate::{
     ArchiveId, ArchiveKeyProvider, ArchiveSanitizer, ArchiveScrapeFrameV1, ArchiveScrapeRecordV1,
     AttributeMap, DecodedAttempt, Digest, EpochAnchor, ExpositionProjectionContextV1,
-    ExpositionRowsV1, FrameIdentityV1, NoopSanitizer, ParseOutcome, ProjectionReservationId,
-    ReservationKind, ScrapeReasonV1, SessionId, SourceOutcome, StaticLabelEnricher,
-    TelemetryEnricher, TerminalKind, domain_digest, project_exposition_v1,
+    ExpositionRowsV1, FrameIdentityV1, NoopEnricher, NoopSanitizer, ParseOutcome,
+    ProjectionReservationId, ReservationKind, ScrapeReasonV1, SessionId, SourceOutcome,
+    StaticLabelEnricher, TelemetryEnricher, TerminalKind, domain_digest, project_exposition_v1,
 };
 
 /// LocalSet timestamps observed around one completed decode/archive handoff.
@@ -76,6 +76,7 @@ pub struct ArchiveFrameSequencerV1 {
     session_id: SessionId,
     epoch_anchor: Option<EpochAnchor>,
     archive_key: Arc<dyn ArchiveKeyProvider>,
+    global_enricher: Arc<dyn TelemetryEnricher>,
     sanitizer: Arc<dyn ArchiveSanitizer>,
     sources: BTreeMap<String, SourceProjectionState>,
     next_record_seq: u64,
@@ -90,12 +91,13 @@ impl ArchiveFrameSequencerV1 {
         archive_key: Arc<dyn ArchiveKeyProvider>,
         source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
     ) -> Result<Self, FrameSequencingError> {
-        Self::with_sanitizer_at_record_seq(
+        Self::with_projection_policies_at_record_seq(
             archive_id,
             session_id,
             epoch_anchor,
             archive_key,
             source_policies,
+            Arc::new(NoopEnricher),
             Arc::new(NoopSanitizer),
             0,
         )
@@ -114,12 +116,13 @@ impl ArchiveFrameSequencerV1 {
         source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
         first_record_seq: u64,
     ) -> Result<Self, FrameSequencingError> {
-        Self::with_sanitizer_at_record_seq(
+        Self::with_projection_policies_at_record_seq(
             archive_id,
             session_id,
             epoch_anchor,
             archive_key,
             source_policies,
+            Arc::new(NoopEnricher),
             Arc::new(NoopSanitizer),
             first_record_seq,
         )
@@ -134,12 +137,13 @@ impl ArchiveFrameSequencerV1 {
         source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
         sanitizer: Arc<dyn ArchiveSanitizer>,
     ) -> Result<Self, FrameSequencingError> {
-        Self::with_sanitizer_at_record_seq(
+        Self::with_projection_policies_at_record_seq(
             archive_id,
             session_id,
             epoch_anchor,
             archive_key,
             source_policies,
+            Arc::new(NoopEnricher),
             sanitizer,
             0,
         )
@@ -152,6 +156,30 @@ impl ArchiveFrameSequencerV1 {
         epoch_anchor: Option<EpochAnchor>,
         archive_key: Arc<dyn ArchiveKeyProvider>,
         source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
+        sanitizer: Arc<dyn ArchiveSanitizer>,
+        first_record_seq: u64,
+    ) -> Result<Self, FrameSequencingError> {
+        Self::with_projection_policies_at_record_seq(
+            archive_id,
+            session_id,
+            epoch_anchor,
+            archive_key,
+            source_policies,
+            Arc::new(NoopEnricher),
+            sanitizer,
+            first_record_seq,
+        )
+    }
+
+    /// Freeze all registered projection policies and a global starting sequence.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_projection_policies_at_record_seq(
+        archive_id: ArchiveId,
+        session_id: SessionId,
+        epoch_anchor: Option<EpochAnchor>,
+        archive_key: Arc<dyn ArchiveKeyProvider>,
+        source_policies: BTreeMap<String, SourceProjectionPolicyV1>,
+        global_enricher: Arc<dyn TelemetryEnricher>,
         sanitizer: Arc<dyn ArchiveSanitizer>,
         first_record_seq: u64,
     ) -> Result<Self, FrameSequencingError> {
@@ -179,6 +207,7 @@ impl ArchiveFrameSequencerV1 {
             session_id,
             epoch_anchor,
             archive_key,
+            global_enricher,
             sanitizer,
             sources,
             next_record_seq: first_record_seq,
@@ -189,6 +218,19 @@ impl ArchiveFrameSequencerV1 {
     #[must_use]
     pub const fn next_record_seq(&self) -> u64 {
         self.next_record_seq
+    }
+
+    /// Assign the next sequence to one owner-only lifecycle or loss control frame.
+    ///
+    /// A caller must fail-stop if terminal control-frame construction or append
+    /// fails after assignment; a live owner may never skip the assigned value.
+    pub fn assign_control_record_seq(&mut self) -> Result<u64, FrameSequencingError> {
+        let assigned = self.next_record_seq;
+        self.next_record_seq = self
+            .next_record_seq
+            .checked_add(1)
+            .ok_or(FrameSequencingError::CountOverflow)?;
+        Ok(assigned)
     }
 
     /// Atomically project one decoded source event or leave all state unchanged.
@@ -293,7 +335,8 @@ impl ArchiveFrameSequencerV1 {
 
         let exposition = match (&decoded.strict_archive_entity, decoded.facts.outcome) {
             (Some(exposition), SourceOutcome::Success) => {
-                let enrichers: [&dyn TelemetryEnricher; 1] = [&source.enricher];
+                let enrichers: [&dyn TelemetryEnricher; 2] =
+                    [&source.enricher, self.global_enricher.as_ref()];
                 project_exposition_v1(
                     exposition,
                     &ExpositionProjectionContextV1 {
@@ -413,6 +456,7 @@ impl Debug for ArchiveFrameSequencerV1 {
             .field("session_id", &self.session_id)
             .field("epoch_anchor", &self.epoch_anchor)
             .field("archive_key", &self.archive_key.provider_id())
+            .field("global_enricher", &self.global_enricher)
             .field("sanitizer", &self.sanitizer)
             .field("sources", &self.sources)
             .field("next_record_seq", &self.next_record_seq)
@@ -667,6 +711,24 @@ mod tests {
         assert_eq!(resumed.frame.attempt.source_record_seq, 0);
         assert!(!resumed.frame.attempt.body_unchanged);
         assert_eq!(sequencer.next_record_seq(), 42);
+    }
+
+    #[test]
+    fn control_and_source_frames_share_one_global_sequence_authority() {
+        let mut sequencer = sequencer();
+        assert_eq!(sequencer.assign_control_record_seq().unwrap(), 0);
+        let source = sequencer
+            .project_attempt(
+                decode(0, b"metric 1\n"),
+                ArchiveFrameTimingV1 {
+                    parse_done_ns: 2,
+                    archive_enqueue_ns: 3,
+                },
+            )
+            .unwrap();
+        assert_eq!(source.frame.attempt.record_seq, 1);
+        assert_eq!(sequencer.assign_control_record_seq().unwrap(), 2);
+        assert_eq!(sequencer.next_record_seq(), 3);
     }
 
     #[test]

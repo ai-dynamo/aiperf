@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug, Display, Formatter};
+use std::sync::Arc;
 
 use aiperf_prometheus::{
     Exposition, InfoLabelPartitionStatus, LabelSet, MetricValue, PointTimeStatus, SemanticType,
@@ -36,6 +37,54 @@ pub struct ArchiveSampleView<'a> {
 pub trait TelemetryEnricher: Debug + Send + Sync {
     /// Produces attributes without changing source labels or numeric values.
     fn attributes(&self, sample: ArchiveSampleView<'_>) -> Result<AttributeMap, EnrichmentError>;
+}
+
+/// Ordered additive composition of independently registered enrichers.
+///
+/// Each policy observes attributes emitted by earlier policies. Duplicate
+/// ownership is rejected rather than relying on order to overwrite identity.
+pub struct TelemetryEnricherChain {
+    policies: Vec<Arc<dyn TelemetryEnricher>>,
+}
+
+impl TelemetryEnricherChain {
+    /// Freeze one authored-order enrichment chain.
+    #[must_use]
+    pub fn new(policies: Vec<Arc<dyn TelemetryEnricher>>) -> Self {
+        Self { policies }
+    }
+}
+
+impl Debug for TelemetryEnricherChain {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TelemetryEnricherChain")
+            .field("policies", &self.policies)
+            .finish()
+    }
+}
+
+impl TelemetryEnricher for TelemetryEnricherChain {
+    fn attributes(&self, sample: ArchiveSampleView<'_>) -> Result<AttributeMap, EnrichmentError> {
+        let mut visible = sample.attributes.clone();
+        let mut emitted = AttributeMap::new();
+        for policy in &self.policies {
+            let patch = policy.attributes(ArchiveSampleView {
+                source_id: sample.source_id,
+                metric_family: sample.metric_family,
+                semantic_type: sample.semantic_type,
+                labels: sample.labels,
+                attributes: &visible,
+            })?;
+            for (key, value) in patch {
+                if visible.insert(key.clone(), value.clone()).is_some() {
+                    return Err(EnrichmentError::DuplicateAttribute(key));
+                }
+                emitted.insert(key, value);
+            }
+        }
+        Ok(emitted)
+    }
 }
 
 /// Structured content policy applied only after protected source identity.
@@ -796,6 +845,54 @@ mod tests {
             left_rows.samples[0].attributes,
             right_rows.samples[0].attributes
         );
+    }
+
+    #[test]
+    fn enrichment_chain_preserves_order_and_rejects_duplicate_ownership() {
+        let exposition = parse("metric 1\n");
+        let key = Blake3ArchiveKeyProvider::new("fixture_key", [9; 32]).unwrap();
+        let chain = TelemetryEnricherChain::new(vec![
+            Arc::new(
+                StaticLabelEnricher::new(BTreeMap::from([(
+                    "cluster".to_owned(),
+                    "left".to_owned(),
+                )]))
+                .unwrap(),
+            ),
+            Arc::new(
+                StaticLabelEnricher::new(BTreeMap::from([(
+                    "role".to_owned(),
+                    "worker".to_owned(),
+                )]))
+                .unwrap(),
+            ),
+        ]);
+        let rows = project_with(&exposition, &key, &[&chain], &NoopSanitizer).unwrap();
+        assert_eq!(rows.samples[0].attributes["cluster"], "left");
+        assert_eq!(rows.samples[0].attributes["role"], "worker");
+
+        let duplicate = TelemetryEnricherChain::new(vec![
+            Arc::new(
+                StaticLabelEnricher::new(BTreeMap::from([(
+                    "cluster".to_owned(),
+                    "left".to_owned(),
+                )]))
+                .unwrap(),
+            ),
+            Arc::new(
+                StaticLabelEnricher::new(BTreeMap::from([(
+                    "cluster".to_owned(),
+                    "right".to_owned(),
+                )]))
+                .unwrap(),
+            ),
+        ]);
+        let error = project_with(&exposition, &key, &[&duplicate], &NoopSanitizer).unwrap_err();
+        assert!(matches!(
+            error,
+            ExpositionProjectionError::Enrichment(EnrichmentError::DuplicateAttribute(ref key))
+                if key == "cluster"
+        ));
     }
 
     #[derive(Debug)]
