@@ -68,6 +68,8 @@ navigation:
       path: tutorials/sharegpt.md
     - page: Synthetic Dataset Generation
       path: tutorials/synthetic-dataset.md
+    - page: Serve Synthetic Multimodal Content over HTTP
+      path: tutorials/content-server.md
     - page: Profile with InstructCoder Dataset
       path: tutorials/instruct-coder.md
     - page: Profile with AIMO Dataset
@@ -269,6 +271,8 @@ navigation:
     path: dev/sweep-orchestrator.md
   - page: YAML Config Future Goals
     path: dev/yaml-config-future-goals.md
+  - page: Dynamo Online Replay Parity
+    path: dev/dynamo-online-replay-parity.md
 
 - section: Troubleshooting
   collapsed: true
