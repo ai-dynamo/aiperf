@@ -78,6 +78,7 @@ pub use parquet::{
     CompletedPartitionV1, FrameTableProjectionV1, ParquetPartitionBuilderV1,
     ParquetProjectionError, ParquetRotationConfigV1, PartitionBuildOutputV1, PartitionDescriptorV1,
     PartitionProjectionEvidenceV1, ProjectionCoverageV1, partition_logical_object_id_v1,
+    partition_object_key_v1,
 };
 pub use projection::{
     ArchiveInfoLabelPartitionStatus, ArchiveSampleView, ArchiveSanitizer, AttributeMap,

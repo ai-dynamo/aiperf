@@ -761,6 +761,7 @@ mod tests {
         ArchiveState, CanonicalJsonValue, CanonicalLogicalRow, EpochAnchor, FrameTableProjectionV1,
         GenerationTransactionKind, GenerationV1, GenesisV1, IndexMutationSetV1, LogicalValue,
         MutationMode, ParquetPartitionBuilderV1, ParquetRotationConfigV1, TimeDomain,
+        partition_object_key_v1,
     };
 
     fn archive() -> ArchiveId {
@@ -881,6 +882,16 @@ mod tests {
 
         let mut forged_identity = partition.descriptor.clone();
         forged_identity.source_id = Some("source-b".to_string());
+        forged_identity.physical_object_key = partition_object_key_v1(
+            forged_identity.table,
+            forged_identity.session_id,
+            forged_identity.source_id.as_deref(),
+            forged_identity.time_bucket,
+            forged_identity.physical_content_hash,
+        );
+        source
+            .put(&forged_identity, &partition.parquet_bytes)
+            .unwrap();
         assert!(matches!(
             read_partition_v1(&source, &forged_identity, &schemas),
             Err(QueryError::ReaderIdentityMismatch(name)) if name == "source_id"
@@ -926,10 +937,12 @@ mod tests {
             time_bucket: minimum_clock_ns.div_euclid(100),
             schema_fingerprint,
             physical_content_hash: content,
-            physical_object_key: format!(
-                "partitions/{}/part-{}.parquet",
-                crate::table_name(table),
-                content.to_hex()
+            physical_object_key: partition_object_key_v1(
+                table,
+                session(),
+                Some(source),
+                minimum_clock_ns.div_euclid(100),
+                content,
             ),
             physical_byte_length: 100,
             row_count: 1,

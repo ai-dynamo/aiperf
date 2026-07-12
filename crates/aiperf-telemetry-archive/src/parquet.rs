@@ -237,17 +237,16 @@ impl PartitionDescriptorV1 {
                 projections: rows,
             });
         }
-        if !self.physical_object_key.ends_with(&format!(
-            "part-{}.parquet",
-            self.physical_content_hash.to_hex()
-        )) {
-            return Err(ParquetProjectionError::ObjectKeyHashMismatch);
-        }
-        if !self
-            .physical_object_key
-            .starts_with(&format!("partitions/{}/", table_name(self.table)))
+        if self.physical_object_key
+            != partition_object_key_v1(
+                self.table,
+                self.session_id,
+                self.source_id.as_deref(),
+                self.time_bucket,
+                self.physical_content_hash,
+            )
         {
-            return Err(ParquetProjectionError::ObjectKeyTableMismatch);
+            return Err(ParquetProjectionError::ObjectKeyDescriptorMismatch);
         }
         if partition_logical_object_id_v1(
             self.table,
@@ -688,21 +687,12 @@ fn seal_projection_refs(
         physical_content_hash,
         &projections,
     );
-    let source_component = key.source_id.as_deref().map_or_else(
-        || "global".to_string(),
-        |source| {
-            format!(
-                "source-{}",
-                domain_digest("aiperf.archive.partition-source.v1", &[source.as_bytes()]).to_hex()
-            )
-        },
-    );
-    let physical_object_key = format!(
-        "partitions/{}/session-{}/{source_component}/bucket-{}/part-{}.parquet",
-        table_name(key.table),
-        hex(key.session_id.as_bytes()),
+    let physical_object_key = partition_object_key_v1(
+        key.table,
+        key.session_id,
+        key.source_id.as_deref(),
         key.time_bucket,
-        physical_content_hash.to_hex(),
+        physical_content_hash,
     );
     let descriptor = PartitionDescriptorV1 {
         archive_id: key.archive_id,
@@ -761,6 +751,32 @@ pub fn partition_logical_object_id_v1(
             physical_content_hash.as_bytes(),
             &projection_bytes,
         ],
+    )
+}
+
+/// Derives the exact non-secret physical object key from partition dimensions.
+#[must_use]
+pub fn partition_object_key_v1(
+    table: TableId,
+    session_id: SessionId,
+    source_id: Option<&str>,
+    time_bucket: i64,
+    physical_content_hash: Digest,
+) -> String {
+    let source_component = source_id.map_or_else(
+        || "global".to_string(),
+        |source| {
+            format!(
+                "source-{}",
+                domain_digest("aiperf.archive.partition-source.v1", &[source.as_bytes()]).to_hex()
+            )
+        },
+    );
+    format!(
+        "partitions/{}/session-{}/{source_component}/bucket-{time_bucket}/part-{}.parquet",
+        table_name(table),
+        hex(session_id.as_bytes()),
+        physical_content_hash.to_hex(),
     )
 }
 
@@ -1259,10 +1275,8 @@ pub enum ParquetProjectionError {
     },
     /// Descriptor Clock range is reversed.
     ClockRange,
-    /// Object key does not end in its exact content hash.
-    ObjectKeyHashMismatch,
-    /// Object key is outside its exact table prefix.
-    ObjectKeyTableMismatch,
+    /// Object key does not equal the exact table/session/source/bucket/hash path.
+    ObjectKeyDescriptorMismatch,
     /// Descriptor logical ID is not derived from its exact contents.
     LogicalObjectIdMismatch,
     /// Numeric conversion or addition overflowed.
@@ -1370,11 +1384,8 @@ impl Display for ParquetProjectionError {
                 "partition row count {descriptor} differs from projection sum {projections}"
             ),
             Self::ClockRange => formatter.write_str("partition Clock range is reversed"),
-            Self::ObjectKeyHashMismatch => {
-                formatter.write_str("partition object key/content hash mismatch")
-            }
-            Self::ObjectKeyTableMismatch => {
-                formatter.write_str("partition object key/table mismatch")
+            Self::ObjectKeyDescriptorMismatch => {
+                formatter.write_str("partition object key/descriptor mismatch")
             }
             Self::LogicalObjectIdMismatch => {
                 formatter.write_str("partition logical object ID mismatch")
@@ -1524,6 +1535,16 @@ mod tests {
             partition.descriptor.index_key().unwrap()
         );
         assert_eq!(decoded.index_entry().unwrap().descriptor_bytes(), bytes);
+    }
+
+    #[test]
+    fn partition_object_key_binds_every_descriptor_path_dimension() {
+        let mut descriptor = build_family_partition().descriptor;
+        descriptor.source_id = Some("source-b".to_string());
+        assert!(matches!(
+            descriptor.validate(),
+            Err(ParquetProjectionError::ObjectKeyDescriptorMismatch)
+        ));
     }
 
     #[test]
