@@ -15,6 +15,7 @@ pub mod digest;
 pub mod evidence;
 pub mod identity;
 pub mod time;
+pub mod wal;
 
 pub use canonical_json::{CanonicalJsonError, CanonicalJsonValue};
 pub use descriptor::{CanonicalDescriptor, DescriptorError};
@@ -29,3 +30,7 @@ pub use identity::{
     SourceOutcome, TerminalKind,
 };
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
+pub use wal::{
+    Crc32c, RecoveredWal, SealedWalSegment, WalError, WalFrame, WalFrameHeaderV1,
+    WalSegmentBuilder, WalSegmentHeaderV1,
+};
