@@ -34,7 +34,6 @@ use crate::sidecar_input::{
 pub struct RunnerApplication {
     distribution_id: String,
     coordinator: RunnerV2Coordinator,
-    execution_factories: RunnerExecutionFactories,
 }
 
 impl RunnerApplication {
@@ -54,7 +53,7 @@ impl RunnerApplication {
             distribution_id.clone(),
             runner_registry_factory,
             product_registry_factory,
-            execution_factories.clone(),
+            execution_factories,
             graph_inputs,
             dataset_inputs,
             sidecar_inputs,
@@ -62,7 +61,6 @@ impl RunnerApplication {
         Ok(Self {
             distribution_id,
             coordinator,
-            execution_factories,
         })
     }
 

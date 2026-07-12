@@ -25,16 +25,14 @@ use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConf
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
     AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
-    IssuedCredit,
-    NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
-    PreparedTurnEndpointResolver, TurnToSend,
+    IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
+    PreparedEndpointTableResolver, PreparedTurnEndpointResolver, TurnToSend,
 };
 use aiperf::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
     ScheduledPhaseResources, ScheduledRuntimeExtension, ScheduledRuntimeExtensionParts,
     SlotPoolPhaseResources, run_scheduled_phases,
 };
-use aiperf::report::write_native_report_json;
 use aiperf::request_rate::RequestRateWorkload;
 use aiperf::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
@@ -51,9 +49,8 @@ use aiperf_content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
 };
 use aiperf_dataset::{
-    ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig,
-    MaterializedTracePromptStorage, ModelId, ModelSelector, ModelSelectorFactory,
-    NativeSyntheticMediaGeneratorFactory, RandomModelSelectorFactory,
+    ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
+    ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
     SyntheticAudioFormat, SyntheticDatasetConfig, SyntheticImageConfig, SyntheticImageFormat,
     SyntheticImageSource, SyntheticMediaGeneratorFactory, SyntheticPrefixConfig,
@@ -61,10 +58,8 @@ use aiperf_dataset::{
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
-use aiperf_endpoints::{
-    EndpointConfig, EndpointKey, EndpointRegistry, EndpointType, PreparedEndpointTable,
-};
-use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use aiperf_endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
+use aiperf_extensions::AiperfRegistry;
 use aiperf_graph::input::GraphInputBundle;
 use aiperf_metrics::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
@@ -80,8 +75,6 @@ use aiperf_timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::HttpVersion;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -92,14 +85,9 @@ use crate::dataset_input::PreparedDatasetInput;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::graph_execution::{
-    LegacyRunnerGraphEndpointRuntimeFactory, NativeRunnerGraphPlacementFactory,
     PreparedRunnerGraphEndpointRuntimeFactory, RunnerGraphBackendFactory,
     RunnerGraphBackendFactoryConfig, RunnerGraphEndpointRuntimeFactory,
     RunnerGraphPlacementFactory,
-};
-use crate::graph_input::{
-    BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver,
-    RunnerGraphInputContext,
 };
 use crate::graph_phase_runtime::{
     GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
@@ -108,13 +96,13 @@ use crate::graph_phase_runtime::{
 use crate::live_streaming::{LiveResultsSink, PythonLiveStreamingRun, live_phase_observer};
 use crate::network_latency::NetworkLatencyRun;
 use crate::protocol::{
-    AccuracySpec, AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec,
-    DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
-    ModelSelectionStrategy, ModelsSpec, PhaseSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
-    RampSpec, RampStrategySpec, RunRequest, RunTerminal, SequenceDistributionEntrySpec,
-    SourceImageSamplingSpec, SyntheticAudioFormatSpec, SyntheticAudioSpec, SyntheticDatasetSpec,
-    SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
-    SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
+    AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DistributionSpec,
+    FileDatasetSpec, MetricsSpec, ModelSelectionStrategy, ModelsSpec, PhaseSpec,
+    PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
+    SequenceDistributionEntrySpec, SourceImageSamplingSpec, SyntheticAudioFormatSpec,
+    SyntheticAudioSpec, SyntheticDatasetSpec, SyntheticImageFormatSpec, SyntheticImageSpec,
+    SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec, SyntheticVideoPatternSpec,
+    SyntheticVideoSpec,
 };
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::records::{
@@ -130,7 +118,6 @@ use crate::sidecar_input::{
 };
 use crate::turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
-    NativeHttpExecutionBackendFactory,
 };
 
 type PhaseRuntimeParts = (
@@ -235,66 +222,39 @@ pub(crate) struct NativeRunSpec {
 /// the exact adapter-produced bundle from [`RunnerRunContext`](crate::registry::RunnerRunContext)
 /// without projecting through v1 or decoding any body a second time.
 pub(crate) enum NativeSidecarPlan {
-    /// Protocol-v1 compatibility values decoded by its outer request.
-    Legacy(Box<LegacyNativeSidecarInputs>),
     /// Protocol-v2 direct adapter outputs retained through execution.
     Prepared(Arc<PreparedSidecarInputs>),
 }
 
-/// Protocol-v1 compatibility sidecar values kept behind one cold-path box.
-pub(crate) struct LegacyNativeSidecarInputs {
-    gpu_telemetry: Option<GpuTelemetrySpec>,
-    network_latency: Option<NetworkLatencySpec>,
-    server_metrics: Option<ServerMetricsSpec>,
-    live_streaming: Option<LiveStreamingSpec>,
-}
-
 impl NativeSidecarPlan {
     fn content_server(&self) -> Result<Option<&ContentServerSpec>> {
-        match self {
-            Self::Legacy(_) => Ok(None),
-            Self::Prepared(inputs) => inputs.get(CONTENT_SERVER_SIDECAR_ID),
-        }
+        let Self::Prepared(inputs) = self;
+        inputs.get(CONTENT_SERVER_SIDECAR_ID)
     }
 
     fn gpu_telemetry(&self) -> Result<Option<&GpuTelemetrySpec>> {
-        match self {
-            Self::Legacy(inputs) => Ok(inputs.gpu_telemetry.as_ref()),
-            Self::Prepared(inputs) => inputs.get(GPU_TELEMETRY_SIDECAR_ID),
-        }
+        let Self::Prepared(inputs) = self;
+        inputs.get(GPU_TELEMETRY_SIDECAR_ID)
     }
 
     fn network_latency(&self) -> Result<Option<&NetworkLatencySpec>> {
-        match self {
-            Self::Legacy(inputs) => Ok(inputs.network_latency.as_ref()),
-            Self::Prepared(inputs) => inputs.get(NETWORK_LATENCY_SIDECAR_ID),
-        }
+        let Self::Prepared(inputs) = self;
+        inputs.get(NETWORK_LATENCY_SIDECAR_ID)
     }
 
     fn server_metrics(&self) -> Result<Option<&ServerMetricsSpec>> {
-        match self {
-            Self::Legacy(inputs) => Ok(inputs.server_metrics.as_ref()),
-            Self::Prepared(inputs) => inputs.get(SERVER_METRICS_SIDECAR_ID),
-        }
+        let Self::Prepared(inputs) = self;
+        inputs.get(SERVER_METRICS_SIDECAR_ID)
     }
 
     pub(crate) fn live_streaming(&self) -> Result<Option<&LiveStreamingSpec>> {
-        match self {
-            Self::Legacy(inputs) => Ok(inputs.live_streaming.as_ref()),
-            Self::Prepared(inputs) => inputs.get(LIVE_STREAMING_SIDECAR_ID),
-        }
+        let Self::Prepared(inputs) = self;
+        inputs.get(LIVE_STREAMING_SIDECAR_ID)
     }
 
     fn contains_only_content_server(&self) -> bool {
-        match self {
-            Self::Legacy(inputs) => {
-                inputs.gpu_telemetry.is_none()
-                    && inputs.network_latency.is_none()
-                    && inputs.server_metrics.is_none()
-                    && inputs.live_streaming.is_none()
-            }
-            Self::Prepared(inputs) => inputs.contains_only(&[CONTENT_SERVER_SIDECAR_ID]),
-        }
+        let Self::Prepared(inputs) = self;
+        inputs.contains_only(&[CONTENT_SERVER_SIDECAR_ID])
     }
 }
 
@@ -305,29 +265,14 @@ impl NativeSidecarPlan {
 /// it is never projected through [`EndpointSpec`] or an [`EndpointType`].
 #[derive(Clone)]
 pub(crate) enum NativeEndpointPlan {
-    /// Protocol-v1 compatibility policy.
-    Legacy(Box<EndpointSpec>),
     /// Protocol-v2 open endpoint profiles.
     Prepared(Arc<Vec<ValidatedEndpointProfileV2>>),
 }
 
 impl NativeEndpointPlan {
-    pub(crate) fn legacy(&self) -> Result<&EndpointSpec> {
-        match self {
-            Self::Legacy(spec) => Ok(spec),
-            Self::Prepared(_) => {
-                bail!("this workload has not converged on worker-local prepared endpoint bindings")
-            }
-        }
-    }
-
     fn default_urls(&self) -> Result<&[String]> {
-        match self {
-            Self::Legacy(spec) => Ok(&spec.urls),
-            Self::Prepared(profiles) => {
-                Ok(&default_prepared_endpoint_profile(profiles)?.config.urls)
-            }
-        }
+        let Self::Prepared(profiles) = self;
+        Ok(&default_prepared_endpoint_profile(profiles)?.config.urls)
     }
 
     /// Server-token-count policy of the primary (default) endpoint, used for
@@ -335,12 +280,10 @@ impl NativeEndpointPlan {
     /// `cfg.endpoint.use_server_token_count`; falls back to `false` when no
     /// default profile resolves.
     pub(crate) fn use_server_token_count(&self) -> bool {
-        match self {
-            Self::Legacy(spec) => spec.use_server_token_count,
-            Self::Prepared(profiles) => default_prepared_endpoint_profile(profiles)
-                .map(|profile| profile.config.use_server_token_count)
-                .unwrap_or(false),
-        }
+        let Self::Prepared(profiles) = self;
+        default_prepared_endpoint_profile(profiles)
+            .map(|profile| profile.config.use_server_token_count)
+            .unwrap_or(false)
     }
 }
 
@@ -418,20 +361,12 @@ impl HttpPreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
 
 /// Protocol-neutral dataset selection.
 pub(crate) enum NativeDatasetPlan {
-    /// Ordinary linear dataset composition.
-    Linear(DatasetSpec),
     /// Canonical linear dataset loaded once during protocol-v2 preparation.
     PreparedLinear(PreparedDatasetInput),
     /// Canonical evaluator selection and dataset-load policy.
     StaticAccuracy(NativeStaticAccuracyPlan),
     /// Canonical Graph-IR bundle returned directly by the selected adapter.
     Graph(Box<NativeGraphDatasetPlan>),
-    /// Protocol-v1 compatibility source awaiting its direct adapter load.
-    ///
-    /// Protocol v2 never constructs this value. Keeping the compatibility
-    /// source outside [`NativeGraphDatasetPlan`] makes the prepared execution
-    /// contract structurally incapable of carrying a half-lowered graph.
-    AuthoredGraph(Box<AuthoredGraphDatasetPlan>),
 }
 
 /// Process coordinates selected for one static-accuracy evaluator.
@@ -527,218 +462,6 @@ pub(crate) struct NativeGraphDatasetPlan {
     pub(crate) allow_dataset_wrap: bool,
 }
 
-/// Deprecated protocol-v1 graph source kept outside the prepared run shape.
-pub(crate) struct AuthoredGraphDatasetPlan {
-    dataset: Option<DatasetSpec>,
-}
-
-impl TryFrom<RunRequest> for NativeRunPlan {
-    type Error = anyhow::Error;
-
-    fn try_from(request: RunRequest) -> Result<Self> {
-        let run = request.run;
-        let mut dataset = lower_v1_dataset(run.dataset)?;
-        if let Some(accuracy) = run.accuracy {
-            ensure!(
-                !matches!(
-                    dataset,
-                    NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_)
-                ),
-                "authored Graph-IR datasets cannot be combined with an accuracy evaluator"
-            );
-            dataset = NativeDatasetPlan::StaticAccuracy(lower_v1_static_accuracy(accuracy));
-        }
-        Ok(Self {
-            run: NativeRunSpec {
-                benchmark_id: run.benchmark_id,
-                random_seed: run.random_seed,
-                workers: run.workers,
-                artifact_dir: run.artifact_dir,
-                models: run.models,
-                endpoint: NativeEndpointPlan::Legacy(Box::new(run.endpoint)),
-                dataset,
-                tokenizer: run.tokenizer,
-                phases: run.phases,
-                metrics: run.metrics,
-                artifacts: run.artifacts,
-                sidecars: NativeSidecarPlan::Legacy(Box::new(LegacyNativeSidecarInputs {
-                    gpu_telemetry: run.gpu_telemetry,
-                    network_latency: run.network_latency,
-                    server_metrics: run.server_metrics,
-                    live_streaming: run.live_streaming,
-                })),
-                user_files: Vec::new(),
-            },
-        })
-    }
-}
-
-fn lower_v1_static_accuracy(spec: AccuracySpec) -> NativeStaticAccuracyPlan {
-    NativeStaticAccuracyPlan {
-        benchmark: spec.benchmark,
-        tasks: spec.tasks,
-        n_shots: spec.n_shots,
-        enable_cot: spec.enable_cot,
-        grader: spec.grader,
-        system_prompt: spec.system_prompt,
-        process: StaticAccuracyEvaluatorProcessSpec {
-            python_executable: spec.python_executable,
-            worker_module: spec.worker_module,
-        },
-        evaluator_factory: Arc::new(NativeStaticAccuracyEvaluatorFactory),
-    }
-}
-
-fn lower_v1_dataset(dataset: DatasetSpec) -> Result<NativeDatasetPlan> {
-    let is_graph = match &dataset {
-        DatasetSpec::File(spec) => spec.format == "dag_jsonl",
-        DatasetSpec::Public(spec) => spec.format == "dag_jsonl",
-        DatasetSpec::Synthetic(_) => false,
-    };
-    if !is_graph {
-        return Ok(NativeDatasetPlan::Linear(dataset));
-    }
-    Ok(NativeDatasetPlan::AuthoredGraph(Box::new(
-        AuthoredGraphDatasetPlan {
-            dataset: Some(dataset),
-        },
-    )))
-}
-
-/// Execute exactly one request with the native local execution backend.
-pub fn execute_run(request: RunRequest) -> Result<RunTerminal> {
-    let graph_inputs = BuiltinRunnerGraphInputAdapterResolver::new();
-    execute_run_with_all_factories(
-        request,
-        &NativeHttpExecutionBackendFactory,
-        &graph_inputs,
-        &NativeRunnerGraphPlacementFactory,
-        &BuiltinAiperfRegistryFactory,
-    )
-}
-
-/// Execute one request with an injected HTTP execution-placement factory.
-///
-/// The benchmark scheduler and logical dispatcher are unchanged by this
-/// choice. Distributions that need a remote data plane can inject a ZMQ, RPC,
-/// or other backend here while retaining the Config-v2 wire, phases, admission,
-/// adaptive control, capture, and report pipeline.
-pub fn execute_run_with_backend_factory(
-    request: RunRequest,
-    backend_factory: &dyn HttpExecutionBackendFactory,
-) -> Result<RunTerminal> {
-    let graph_inputs = BuiltinRunnerGraphInputAdapterResolver::new();
-    execute_run_with_all_factories(
-        request,
-        backend_factory,
-        &graph_inputs,
-        &NativeRunnerGraphPlacementFactory,
-        &BuiltinAiperfRegistryFactory,
-    )
-}
-
-/// Execute one request with injected HTTP placement and graph-input adapters.
-pub fn execute_run_with_factories(
-    request: RunRequest,
-    backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
-) -> Result<RunTerminal> {
-    execute_run_with_all_factories(
-        request,
-        backend_factory,
-        graph_inputs,
-        &NativeRunnerGraphPlacementFactory,
-        &BuiltinAiperfRegistryFactory,
-    )
-}
-
-/// Execute one request with every runner composition choice injected.
-///
-/// Scheduling, admission, dispatch, observation, and reporting remain inside
-/// the single coordinator path. Factories choose only HTTP placement, direct
-/// graph-input adapters, whole-trace placement, and the statically linked
-/// registry universe.
-pub fn execute_run_with_all_factories(
-    request: RunRequest,
-    backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry_factory: &dyn AiperfRegistryFactory,
-) -> Result<RunTerminal> {
-    let benchmark_id = request.run.benchmark_id.clone();
-    let plan = NativeRunPlan::try_from(request)?;
-    let registry = registry_factory
-        .build()
-        .context("constructing frozen runner registry")?;
-    let report_path = execute_native_plan_with_factories(
-        plan,
-        backend_factory,
-        graph_inputs,
-        graph_placement,
-        &registry,
-    )?;
-    Ok(RunTerminal::succeeded(benchmark_id, report_path))
-}
-
-/// Execute one protocol-neutral plan through the single native coordinator.
-///
-/// The caller supplies the already frozen product registry used while
-/// preparing protocol-v2 endpoint profiles. This prevents execution from
-/// silently composing a second registry universe after validation.
-pub(crate) fn execute_native_plan_with_factories(
-    plan: NativeRunPlan,
-    backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
-) -> Result<PathBuf> {
-    let artifact_dir = plan.run.artifact_dir.clone();
-    let native = execute_native_plan_uncommitted_with_factories(
-        plan,
-        backend_factory,
-        graph_inputs,
-        graph_placement,
-        registry,
-    )?;
-    let report_path = artifact_dir.join("native-v2.json");
-    write_native_report_json(&native, &report_path)?;
-    Ok(report_path)
-}
-
-/// Execute one native plan and return its in-memory report without serializing it.
-///
-/// Protocol v2 uses this entry point so the process coordinator can stamp its
-/// frozen registry identity and perform the sole authoritative report write.
-/// Protocol v1 retains [`execute_native_plan_with_factories`] as a compatibility
-/// wrapper around this same execution path.
-pub(crate) fn execute_native_plan_uncommitted_with_factories(
-    plan: NativeRunPlan,
-    backend_factory: &dyn HttpExecutionBackendFactory,
-    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
-    graph_placement: &dyn RunnerGraphPlacementFactory,
-    registry: &AiperfRegistry,
-) -> Result<NativeReport> {
-    validate_plan(&plan)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("creating native single-run Tokio runtime")?;
-    let local = tokio::task::LocalSet::new();
-    let sidecar_factory = BuiltinNativeSidecarResourceFactory;
-    local.block_on(&runtime, async move {
-        let plan = prepare_protocol_v1_graph(plan, graph_inputs).await?;
-        prepare_and_execute_native(
-            plan,
-            backend_factory,
-            graph_placement,
-            registry,
-            &sidecar_factory,
-            None,
-        )
-        .await
-    })
-}
-
 /// Execute a plan whose graph input, if present, is already fully prepared.
 ///
 /// Protocol-v2 pair preparation uses this entry point. Its signature omits a
@@ -810,10 +533,6 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
         &dyn ReadinessTransportFactory,
     )>,
 ) -> Result<NativeReport> {
-    ensure!(
-        !matches!(plan.run.dataset, NativeDatasetPlan::AuthoredGraph(_)),
-        "prepared native execution cannot accept an authored Graph-IR source"
-    );
     validate_plan(&plan)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -831,37 +550,6 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
             readiness,
         ),
     )
-}
-
-async fn prepare_protocol_v1_graph(
-    mut plan: NativeRunPlan,
-    graph_inputs: &dyn RunnerGraphInputAdapterResolver,
-) -> Result<NativeRunPlan> {
-    let NativeDatasetPlan::AuthoredGraph(source) = &mut plan.run.dataset else {
-        return Ok(plan);
-    };
-    let dataset = source
-        .dataset
-        .take()
-        .ok_or_else(|| anyhow!("protocol-v1 graph source was already consumed"))?;
-    let tokenizer = load_tokenizer(Some(&plan.run.tokenizer.name))?;
-    let prepared = graph_inputs
-        .load_protocol_v1(
-            dataset,
-            &RunnerGraphInputContext {
-                tokenizer: tokenizer.as_ref(),
-                run_random_seed: plan.run.random_seed,
-            },
-        )
-        .await
-        .context("loading protocol-v1 graph source through the direct authored adapter")?;
-    plan.run.dataset = NativeDatasetPlan::Graph(Box::new(NativeGraphDatasetPlan {
-        input: Arc::new(prepared.bundle),
-        random_seed: prepared.random_seed,
-        default_output_tokens: prepared.default_output_tokens,
-        allow_dataset_wrap: prepared.allow_dataset_wrap,
-    }));
-    Ok(plan)
 }
 
 fn materialize_user_files(
@@ -1436,10 +1124,7 @@ async fn execute_graph_native(
 ) -> Result<NativeReport> {
     let graph = match &request.run.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
-        NativeDatasetPlan::Linear(_)
-        | NativeDatasetPlan::PreparedLinear(_)
-        | NativeDatasetPlan::StaticAccuracy(_)
-        | NativeDatasetPlan::AuthoredGraph(_) => {
+        NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::StaticAccuracy(_) => {
             bail!("graph execution received a non-graph dataset plan")
         }
     };
@@ -1460,48 +1145,21 @@ async fn execute_graph_native(
     );
     let primary_model = request.run.models.items[0].name.clone();
     let default_output_tokens = graph_default_output_tokens;
-    let endpoints_configured = match &request.run.endpoint {
-        NativeEndpointPlan::Legacy(spec) => spec.urls.clone(),
-        NativeEndpointPlan::Prepared(profiles) => profiles
-            .iter()
-            .flat_map(|profile| profile.config.urls.iter().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect(),
+    let NativeEndpointPlan::Prepared(configured_profiles) = &request.run.endpoint;
+    let endpoints_configured = configured_profiles
+        .iter()
+        .flat_map(|profile| profile.config.urls.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory> = {
+        let NativeEndpointPlan::Prepared(profiles) = &request.run.endpoint;
+        Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
+            registry.endpoints().clone(),
+            profiles.clone(),
+            input_token_counter.clone(),
+        )?)
     };
-    let endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory> =
-        match &request.run.endpoint {
-            NativeEndpointPlan::Legacy(spec) => {
-                let request_timeout_ns = seconds_to_ns(spec.timeout_seconds)?;
-                Arc::new(LegacyRunnerGraphEndpointRuntimeFactory::new(
-                    spec.urls.clone(),
-                    TransportSinkConfig {
-                        client: ClientConfig {
-                            http_version: if spec.http2 {
-                                HttpVersion::Http2PriorKnowledge
-                            } else {
-                                HttpVersion::Auto
-                            },
-                            total_timeout_ns: (request_timeout_ns > 0)
-                                .then_some(request_timeout_ns),
-                            ..ClientConfig::default()
-                        },
-                        connection_reuse: spec.connection_reuse,
-                        session_header: spec.session_header.clone(),
-                    },
-                    endpoint_config(spec)?,
-                    registry.endpoint_resolver(),
-                    input_token_counter.clone(),
-                ))
-            }
-            NativeEndpointPlan::Prepared(profiles) => {
-                Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
-                    registry.endpoints().clone(),
-                    profiles.clone(),
-                    input_token_counter.clone(),
-                )?)
-            }
-        };
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
     let start_ns = clock.now_ns();
@@ -1702,22 +1360,15 @@ async fn execute_native_inner(
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
     let rng_root = RngRoot::new(request.run.random_seed);
-    let dataset_spec = match &request.run.dataset {
-        NativeDatasetPlan::Linear(dataset) => Some(dataset),
-        NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::StaticAccuracy(_) => None,
-        NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_) => {
-            bail!("scheduled execution received a direct graph dataset plan")
-        }
-    };
+    if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
+        bail!("scheduled execution received a direct graph dataset plan");
+    }
     let dataset_rng_root = match &request.run.dataset {
-        NativeDatasetPlan::Linear(dataset) => dataset_rng_root(dataset, rng_root),
         NativeDatasetPlan::PreparedLinear(dataset) => dataset
             .random_seed
             .map_or(rng_root, |seed| RngRoot::new(Some(seed))),
         NativeDatasetPlan::StaticAccuracy(_) => rng_root,
-        NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_) => {
-            unreachable!("graph rejected above")
-        }
+        NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
     };
     let metrics_config = metrics_config(
         &request.run.metrics,
@@ -1740,88 +1391,37 @@ async fn execute_native_inner(
     };
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
-    let (
-        endpoint_urls,
-        transport_config,
-        prepared_endpoints,
-        source_factory,
-        legacy_endpoint_type,
-    ): NativeEndpointExecutionParts<'_> = match &request.run.endpoint {
-        NativeEndpointPlan::Legacy(spec) => {
-            let endpoint = endpoint_config(spec)?;
-            let request_timeout_ns = seconds_to_ns(spec.timeout_seconds)?;
-            (
-                spec.urls.clone(),
-                TransportSinkConfig {
-                    client: ClientConfig {
-                        http_version: if spec.http2 {
-                            HttpVersion::Http2PriorKnowledge
-                        } else {
-                            HttpVersion::Auto
-                        },
-                        total_timeout_ns: (request_timeout_ns > 0)
-                            .then_some(request_timeout_ns),
-                        ..ClientConfig::default()
-                    },
-                    connection_reuse: spec.connection_reuse,
-                    session_header: spec.session_header.clone(),
-                },
-                None,
-                Box::new(LegacyNativeConversationSourceFactory {
-                    endpoint,
-                    registry,
-                }),
-                Some(spec.endpoint_type),
-            )
-        }
-        NativeEndpointPlan::Prepared(profiles) => {
-            let profile = default_prepared_endpoint_profile(profiles)?;
-            let table_factory = Arc::new(NativePreparedEndpointTableFactory::new(
-                registry.endpoints().clone(),
-                profiles.clone(),
-            ));
-            let endpoint_resolver = table_factory.coordinator_resolver()?;
-            (
-                profile.config.urls.clone(),
-                TransportSinkConfig {
-                    client: profile.client.clone(),
-                    connection_reuse: profile.connection_reuse,
-                    session_header: profile.session_header.clone(),
-                },
-                Some(table_factory),
-                Box::new(PreparedNativeConversationSourceFactory {
-                    endpoint_resolver,
-                    samplers: registry.samplers(),
-                }),
-                None,
-            )
-        }
+    let (endpoint_urls, transport_config, prepared_endpoints, source_factory): NativeEndpointExecutionParts<'_> = {
+        let NativeEndpointPlan::Prepared(profiles) = &request.run.endpoint;
+        let profile = default_prepared_endpoint_profile(profiles)?;
+        let table_factory = Arc::new(NativePreparedEndpointTableFactory::new(
+            registry.endpoints().clone(),
+            profiles.clone(),
+        ));
+        let endpoint_resolver = table_factory.coordinator_resolver()?;
+        (
+            profile.config.urls.clone(),
+            TransportSinkConfig {
+                client: profile.client.clone(),
+                connection_reuse: profile.connection_reuse,
+                session_header: profile.session_header.clone(),
+            },
+            Some(table_factory),
+            Box::new(PreparedNativeConversationSourceFactory {
+                endpoint_resolver,
+                samplers: registry.samplers(),
+            }),
+        )
     };
     let dataset = if let Some(accuracy) = accuracy.as_ref() {
         accuracy.dataset.dataset().as_ref().clone()
     } else {
         match &request.run.dataset {
-            NativeDatasetPlan::Linear(dataset) => {
-                let endpoint_type = legacy_endpoint_type.ok_or_else(|| {
-                    anyhow!(
-                        "protocol-v2 prepared endpoints require a directly prepared linear dataset"
-                    )
-                })?;
-                build_dataset(
-                    registry,
-                    dataset,
-                    &request.run.models,
-                    dataset_rng_root,
-                    tokenizer.as_ref(),
-                    endpoint_type,
-                )
-                .await?
-            }
             NativeDatasetPlan::PreparedLinear(dataset) => dataset.dataset.clone(),
             NativeDatasetPlan::StaticAccuracy(_) => {
                 bail!("evaluator dataset plan requires an accuracy evaluator")
             }
-            NativeDatasetPlan::Graph(_) | NativeDatasetPlan::AuthoredGraph(_) => {
+            NativeDatasetPlan::Graph(_) => {
                 unreachable!("graph rejected above")
             }
         }
@@ -1829,13 +1429,12 @@ async fn execute_native_inner(
     let default_output_tokens = if accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
-        match (&request.run.dataset, dataset_spec) {
-            (NativeDatasetPlan::Linear(_), Some(dataset)) => default_output_tokens(dataset)?,
-            (NativeDatasetPlan::PreparedLinear(dataset), None) => dataset.default_output_tokens,
-            (NativeDatasetPlan::StaticAccuracy(_), None) => {
+        match &request.run.dataset {
+            NativeDatasetPlan::PreparedLinear(dataset) => dataset.default_output_tokens,
+            NativeDatasetPlan::StaticAccuracy(_) => {
                 unreachable!("evaluator without accuracy rejected above")
             }
-            _ => unreachable!("dataset plan/spec pairing is exhaustive"),
+            NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
         }
     };
 
@@ -2083,44 +1682,6 @@ fn dataset_default_output_tokens(dataset: &Dataset) -> Result<usize> {
         .ok_or_else(|| anyhow!("accuracy evaluator dataset has no output-token limit"))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn native_conversation_source(
-    dataset: Dataset,
-    model: String,
-    default_output_tokens: usize,
-    rng_root: RngRoot,
-    endpoint: EndpointConfig,
-    registry: &AiperfRegistry,
-    tokenizer: Arc<dyn TextTokenizer>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
-    sequential: bool,
-) -> Result<Box<dyn ConversationSource>> {
-    let source = if sequential {
-        NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
-            dataset,
-            model,
-            default_output_tokens,
-            endpoint,
-            registry.endpoint_resolver(),
-        )?
-    } else {
-        NativeDatasetConversationSource::preferred_with_endpoint_config_and_registries(
-            dataset,
-            model,
-            default_output_tokens,
-            rng_root,
-            endpoint,
-            registry.samplers(),
-            registry.endpoint_resolver(),
-        )?
-    };
-    Ok(Box::new(
-        source
-            .with_response_tokenizer(tokenizer)
-            .with_input_token_counter(input_token_counter),
-    ))
-}
-
 /// Prepared conversation-source construction behind the shared scheduled
 /// workload. Legacy protocol-v1 and open protocol-v2 endpoint bindings
 /// implement this seam without branching inside phase/scheduler policy.
@@ -2143,38 +1704,7 @@ type NativeEndpointExecutionParts<'a> = (
     TransportSinkConfig,
     Option<Arc<dyn HttpPreparedEndpointTableFactory>>,
     Box<dyn NativeConversationSourceFactory + 'a>,
-    Option<EndpointType>,
 );
-
-struct LegacyNativeConversationSourceFactory<'a> {
-    endpoint: EndpointConfig,
-    registry: &'a AiperfRegistry,
-}
-
-impl NativeConversationSourceFactory for LegacyNativeConversationSourceFactory<'_> {
-    fn build(
-        &self,
-        dataset: Dataset,
-        model: String,
-        default_output_tokens: usize,
-        rng_root: RngRoot,
-        tokenizer: Arc<dyn TextTokenizer>,
-        input_token_counter: Arc<dyn InputTokenCounter>,
-        sequential: bool,
-    ) -> Result<Box<dyn ConversationSource>> {
-        native_conversation_source(
-            dataset,
-            model,
-            default_output_tokens,
-            rng_root,
-            self.endpoint.clone(),
-            self.registry,
-            tokenizer,
-            input_token_counter,
-            sequential,
-        )
-    }
-}
 
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
@@ -2441,46 +1971,6 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     Ok(plan)
 }
 
-pub(crate) async fn build_dataset(
-    registry: &AiperfRegistry,
-    dataset: &DatasetSpec,
-    models: &ModelsSpec,
-    rng_root: RngRoot,
-    tokenizer: &dyn TextTokenizer,
-    endpoint_type: EndpointType,
-) -> Result<Dataset> {
-    match dataset {
-        DatasetSpec::Synthetic(spec) => {
-            build_synthetic_dataset(
-                registry,
-                spec,
-                models,
-                rng_root,
-                tokenizer,
-                is_rankings_endpoint(endpoint_type),
-                Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
-                false,
-            )
-            .await
-        }
-        DatasetSpec::File(spec) => {
-            build_file_dataset(
-                registry,
-                spec,
-                models,
-                rng_root,
-                tokenizer,
-                Arc::new(MaterializedTracePromptStorage),
-                false,
-            )
-            .await
-        }
-        DatasetSpec::Public(spec) => {
-            build_public_dataset(registry, spec, models, rng_root, tokenizer, false).await
-        }
-    }
-}
-
 pub(crate) async fn build_synthetic_dataset(
     registry: &AiperfRegistry,
     spec: &SyntheticDatasetSpec,
@@ -2528,25 +2018,6 @@ pub(crate) async fn build_synthetic_dataset(
         )
         .await
         .map_err(Into::into)
-}
-
-pub(crate) fn dataset_rng_root(dataset: &DatasetSpec, run_rng_root: RngRoot) -> RngRoot {
-    dataset_random_seed(dataset).map_or(run_rng_root, |seed| RngRoot::new(Some(seed)))
-}
-
-fn dataset_random_seed(dataset: &DatasetSpec) -> Option<u64> {
-    match dataset {
-        DatasetSpec::Synthetic(spec) => spec.random_seed,
-        DatasetSpec::File(spec) => spec.random_seed,
-        DatasetSpec::Public(spec) => spec.random_seed,
-    }
-}
-
-const fn is_rankings_endpoint(endpoint_type: EndpointType) -> bool {
-    matches!(
-        endpoint_type,
-        EndpointType::CohereRankings | EndpointType::HfTeiRankings | EndpointType::NimRankings
-    )
 }
 
 fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<ComposeConfig> {
@@ -2901,36 +2372,6 @@ const fn distribution_normal_stddev(spec: &DistributionSpec) -> f64 {
     }
 }
 
-pub(crate) fn default_output_tokens(dataset: &DatasetSpec) -> Result<usize> {
-    let expected = match dataset {
-        DatasetSpec::Synthetic(spec) => spec
-            .prompts
-            .as_ref()
-            .and_then(|prompts| prompts.osl.as_ref())
-            .map(distribution)
-            .transpose()?
-            .map(|distribution| distribution.expected_value().ceil())
-            .filter(|value| *value > 0.0)
-            .unwrap_or(1.0),
-        DatasetSpec::File(spec) => spec
-            .osl
-            .as_ref()
-            .map(distribution)
-            .transpose()?
-            .map(|distribution| distribution.expected_value().ceil())
-            // The materialized request body preserves an absent max-token
-            // field. This fallback exists only for the observer's requested
-            // OSL dimension when a file row omits it.
-            .unwrap_or(1.0),
-        DatasetSpec::Public(_) => 1.0,
-    };
-    ensure!(
-        expected.is_finite() && expected > 0.0 && expected <= usize::MAX as f64,
-        "default OSL expected value is outside the native usize range"
-    );
-    Ok(expected as usize)
-}
-
 pub(crate) fn distribution(spec: &DistributionSpec) -> Result<SamplingDistribution> {
     let (distribution, min, max) = match spec {
         DistributionSpec::Fixed(value) => (
@@ -2977,28 +2418,6 @@ pub(crate) fn distribution(spec: &DistributionSpec) -> Result<SamplingDistributi
         ),
     };
     distribution.with_bounds(min, max).map_err(Into::into)
-}
-
-fn endpoint_config(spec: &EndpointSpec) -> Result<EndpointConfig> {
-    EndpointConfig {
-        endpoint_type: spec.endpoint_type,
-        urls: spec.urls.clone(),
-        path: spec.path.clone(),
-        streaming: spec.streaming,
-        template: spec.template.clone(),
-        response_field: spec.response_field.clone(),
-        request_content_type: spec.request_content_type,
-        timeout_seconds: spec.timeout_seconds,
-        download_video_content: spec.download_video_content,
-        use_legacy_max_tokens: spec.use_legacy_max_tokens,
-        use_server_token_count: spec.use_server_token_count,
-        headers: spec.headers.clone(),
-        api_key: spec.api_key.clone(),
-        extra: (!spec.extra.is_empty()).then(|| spec.extra.clone()),
-        ..EndpointConfig::default()
-    }
-    .validate()
-    .map_err(Into::into)
 }
 
 pub(crate) fn metrics_config(

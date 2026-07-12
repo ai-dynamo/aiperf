@@ -20,12 +20,11 @@ use aiperf::http::{
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::InputTokenCounter;
-use aiperf::multiturn::LegacyTurnEndpointBinding;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_dataset::{EndpointResolver, Handle, Payload, SegmentStore};
+use aiperf_dataset::{Handle, Payload, SegmentStore};
 use aiperf_endpoints::{
-    CreditPhase, EndpointConfig, EndpointId, EndpointKey, EndpointRegistry, ModelEndpoint,
-    PreparedEndpointTable, PreparedRequest, RequestInfo, Turn,
+    CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
+    Turn,
 };
 use aiperf_graph::errors::TraceError;
 use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
@@ -244,132 +243,6 @@ pub(crate) struct GraphEndpointDispatch {
     request: HttpRequest,
     endpoint: PreparedHttpEndpoint,
     input_tokens: u64,
-}
-
-/// Protocol-v1 compatibility factory for graph endpoint dispatch.
-pub(crate) struct LegacyRunnerGraphEndpointRuntimeFactory {
-    base_urls: Vec<String>,
-    transport: TransportSinkConfig,
-    endpoint: EndpointConfig,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
-}
-
-impl LegacyRunnerGraphEndpointRuntimeFactory {
-    /// Retain the historical dialect-selection behavior for protocol v1.
-    pub(crate) fn new(
-        base_urls: Vec<String>,
-        transport: TransportSinkConfig,
-        endpoint: EndpointConfig,
-        endpoint_resolver: Arc<dyn EndpointResolver>,
-        input_token_counter: Arc<dyn InputTokenCounter>,
-    ) -> Self {
-        Self {
-            base_urls,
-            transport,
-            endpoint,
-            endpoint_resolver,
-            input_token_counter,
-        }
-    }
-}
-
-impl RunnerGraphEndpointRuntimeFactory for LegacyRunnerGraphEndpointRuntimeFactory {
-    fn prepare_worker(
-        &self,
-        clock: Rc<dyn Clock>,
-        run_origin_ns: i64,
-        model: &str,
-    ) -> Result<Rc<dyn RunnerGraphEndpointRuntime>> {
-        let transport = TransportSink::new_multi_configured(
-            clock,
-            run_origin_ns,
-            &self.base_urls,
-            model,
-            self.transport.clone(),
-        )?;
-        Ok(Rc::new(LegacyRunnerGraphEndpointRuntime {
-            transport: Rc::new(transport),
-            base_url_count: self.base_urls.len(),
-            endpoint: self.endpoint.clone(),
-            endpoint_resolver: self.endpoint_resolver.clone(),
-            input_token_counter: self.input_token_counter.clone(),
-        }))
-    }
-}
-
-struct LegacyRunnerGraphEndpointRuntime {
-    transport: Rc<TransportSink>,
-    base_url_count: usize,
-    endpoint: EndpointConfig,
-    endpoint_resolver: Arc<dyn EndpointResolver>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
-}
-
-impl RunnerGraphEndpointRuntime for LegacyRunnerGraphEndpointRuntime {
-    fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
-        let endpoint = self.endpoint_resolver.resolve(input.selector.as_deref())?;
-        let mut endpoint_config = self.endpoint.clone();
-        endpoint_config.endpoint_type = endpoint.metadata().endpoint_type;
-        endpoint_config.streaming = input.streaming && endpoint.metadata().supports_streaming;
-        let request_info = RequestInfo {
-            model_endpoint: ModelEndpoint {
-                primary_model_name: input.model.clone(),
-                endpoint: endpoint_config.clone(),
-            },
-            turns: vec![input.turn],
-            system_message: None,
-            user_context_message: None,
-            credit_phase: credit_phase(input.phase),
-            x_request_id: None,
-            x_correlation_id: Some(input.trace_id.clone()),
-            conversation_id: Some(input.trace_id.clone()),
-        };
-        let payload = Bytes::from(serde_json::to_vec(
-            &endpoint.format_payload(&request_info)?,
-        )?);
-        let input_tokens = self.input_token_counter.count_input_tokens(
-            endpoint.as_ref(),
-            &payload,
-            input.authored_input_tokens,
-        )?;
-        let mut headers = endpoint.format_headers(&endpoint_config);
-        headers.extend(input.extra_headers);
-        let endpoint_path = endpoint_config.path.clone().or_else(|| {
-            if endpoint_config.streaming {
-                endpoint.metadata().streaming_path
-            } else {
-                None
-            }
-            .or(endpoint.metadata().endpoint_path)
-            .map(str::to_string)
-        });
-        let request = HttpRequest {
-            uuid: Uuid::new_v4(),
-            input_length: usize::try_from(input_tokens).unwrap_or(usize::MAX),
-            max_output_tokens: input.max_output_tokens,
-            prompt_text: None,
-            request_body: None,
-            request_body_bytes: Some(payload),
-            headers,
-            parameters: input.parameters,
-            endpoint_path,
-            streaming: endpoint_config.streaming,
-            x_correlation_id: Some(input.trace_id),
-            is_final_turn: input.is_final_turn,
-            cancel_after_ns: input.cancel_after_ns,
-            url_index: Some(session_url_index(input.session_num, self.base_url_count)),
-        };
-        Ok(GraphEndpointDispatch {
-            transport: self.transport.clone(),
-            request,
-            endpoint: PreparedHttpEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
-                endpoint,
-                config: endpoint_config,
-            })),
-            input_tokens,
-        })
-    }
 }
 
 /// Protocol-v2 factory that prepares open endpoint profiles directly through

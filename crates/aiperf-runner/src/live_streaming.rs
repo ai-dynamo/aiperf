@@ -361,24 +361,13 @@ struct LiveEndpointConfig<'a> {
 }
 
 fn live_endpoint_config(endpoint: &NativeEndpointPlan) -> Result<LiveEndpointConfig<'_>> {
-    match endpoint {
-        NativeEndpointPlan::Legacy(_) => {
-            let spec = endpoint.legacy()?;
-            Ok(LiveEndpointConfig {
-                endpoint_id: spec.endpoint_type.canonical_id(),
-                urls: &spec.urls,
-                streaming: spec.streaming,
-            })
-        }
-        NativeEndpointPlan::Prepared(profiles) => {
-            let profile = crate::execute::default_prepared_endpoint_profile(profiles)?;
-            Ok(LiveEndpointConfig {
-                endpoint_id: profile.endpoint_id.as_str(),
-                urls: &profile.config.urls,
-                streaming: profile.config.streaming,
-            })
-        }
-    }
+    let NativeEndpointPlan::Prepared(profiles) = endpoint;
+    let profile = crate::execute::default_prepared_endpoint_profile(profiles)?;
+    Ok(LiveEndpointConfig {
+        endpoint_id: profile.endpoint_id.as_str(),
+        urls: &profile.config.urls,
+        streaming: profile.config.streaming,
+    })
 }
 
 /// Build a phase observer over an injected live-results sink and Clock.
