@@ -1381,10 +1381,13 @@ impl ScheduledInferenceHostExecutor {
                 issued,
                 "Rust scheduling policy rejected evaluator inference"
             );
-            let outcome = terminal_rx
-                .await
-                .context("scheduled evaluator inference lost its terminal callback")?;
-            return Ok((normalized_terminal(outcome, &self.operation_id)?, false));
+            let outcome = match terminal_rx.await {
+                Ok(outcome) => outcome,
+                Err(_) => return Ok((failed_post_dispatch_terminal(None), false)),
+            };
+            let terminal = normalized_terminal(&outcome, &self.operation_id)
+                .unwrap_or_else(|_| failed_post_dispatch_terminal(Some(&outcome)));
+            return Ok((terminal, false));
         }
 
         ensure!(
@@ -1411,42 +1414,56 @@ impl ScheduledInferenceHostExecutor {
             "Rust scheduling policy rejected evaluator inference"
         );
         let mut ordinal = 0usize;
+        let mut post_dispatch_failure = false;
         tokio::pin!(terminal_rx);
         let outcome = loop {
             tokio::select! {
                 terminal = &mut terminal_rx => {
-                    let outcome = terminal.context("scheduled evaluator inference lost its terminal callback")?;
+                    let outcome = match terminal {
+                        Ok(outcome) => outcome,
+                        Err(_) => return Ok((failed_post_dispatch_terminal(None), ordinal > 0)),
+                    };
                     while let Ok(response) = response_rx.try_recv() {
-                        publish_stream_response_or_cancel(
-                            self.operation_id.as_str(),
-                            response,
-                            events,
-                            &mut ordinal,
-                            &cancellation,
-                        ).await?;
+                        if !post_dispatch_failure
+                            && publish_stream_response_or_cancel(
+                                self.operation_id.as_str(),
+                                response,
+                                events,
+                                &mut ordinal,
+                                &cancellation,
+                            ).await.is_err()
+                        {
+                            post_dispatch_failure = true;
+                        }
                     }
                     break outcome;
                 }
                 response = response_rx.recv() => {
-                    if let Some(response) = response {
-                        publish_stream_response_or_cancel(
+                    if let Some(response) = response
+                        && !post_dispatch_failure
+                        && publish_stream_response_or_cancel(
                             self.operation_id.as_str(),
                             response,
                             events,
                             &mut ordinal,
                             &cancellation,
-                        ).await?;
+                        ).await.is_err()
+                    {
+                        post_dispatch_failure = true;
                     }
                 }
             }
         };
-        if let Some(failure) = response_failure.borrow_mut().take() {
-            return Err(anyhow!(failure));
+        if response_failure.borrow_mut().take().is_some() {
+            post_dispatch_failure = true;
         }
-        Ok((
-            normalized_terminal(outcome, &self.operation_id)?,
-            ordinal > 0,
-        ))
+        let terminal = if post_dispatch_failure {
+            failed_post_dispatch_terminal(Some(&outcome))
+        } else {
+            normalized_terminal(&outcome, &self.operation_id)
+                .unwrap_or_else(|_| failed_post_dispatch_terminal(Some(&outcome)))
+        };
+        Ok((terminal, ordinal > 0))
     }
 }
 
@@ -1641,7 +1658,7 @@ fn normalize_stream_response(
 }
 
 fn normalized_terminal(
-    outcome: TurnDispatchOutcome,
+    outcome: &TurnDispatchOutcome,
     operation_id: &RegisteredOperationId,
 ) -> Result<HostExecutionTerminal> {
     let class = match outcome.terminal {
@@ -1651,7 +1668,7 @@ fn normalized_terminal(
         ReplayTerminalStatus::Failed => HostTerminalClass::Failed,
     };
     let payload = if class == HostTerminalClass::Completed {
-        normalize_completed_response(operation_id.as_str(), &outcome)?
+        normalize_completed_response(operation_id.as_str(), outcome)?
     } else {
         json!({
             "status": match class {
@@ -1669,15 +1686,41 @@ fn normalized_terminal(
     Ok(HostExecutionTerminal {
         class,
         payload,
-        usage: HostOperationUsage {
-            prompt_tokens: outcome.prompt_tokens,
-            completion_tokens: outcome.completion_tokens,
-            reasoning_tokens: None,
-            cached_tokens: outcome.model_response.cached_prompt_tokens,
-        },
+        usage: dispatch_outcome_usage(outcome),
         retryable: class == HostTerminalClass::Failed,
         transport_attempts: Vec::new(),
     })
+}
+
+fn failed_post_dispatch_terminal(outcome: Option<&TurnDispatchOutcome>) -> HostExecutionTerminal {
+    HostExecutionTerminal {
+        class: HostTerminalClass::Failed,
+        payload: json!({"status":"failed","error":{"kind":"executor_error"}}),
+        usage: outcome.map(dispatch_outcome_usage).unwrap_or_default(),
+        retryable: false,
+        transport_attempts: Vec::new(),
+    }
+}
+
+fn dispatch_outcome_usage(outcome: &TurnDispatchOutcome) -> HostOperationUsage {
+    let reasoning_tokens = outcome
+        .model_response
+        .wire_responses
+        .iter()
+        .rev()
+        .find_map(|value| {
+            value
+                .pointer("/usage/completion_tokens_details/reasoning_tokens")
+                .or_else(|| value.pointer("/usage/output_tokens_details/reasoning_tokens"))
+                .or_else(|| value.pointer("/usage/reasoning_tokens"))
+                .and_then(Value::as_u64)
+        });
+    HostOperationUsage {
+        prompt_tokens: outcome.prompt_tokens,
+        completion_tokens: outcome.completion_tokens,
+        reasoning_tokens,
+        cached_tokens: outcome.model_response.cached_prompt_tokens,
+    }
 }
 
 fn normalize_completed_response(
@@ -2275,6 +2318,110 @@ mod tests {
         }
     }
 
+    struct PostDispatchFailureDispatcher;
+
+    #[async_trait(?Send)]
+    impl crate::scheduled::TurnDispatcher for PostDispatchFailureDispatcher {
+        async fn dispatch_turn(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            observer.on_admit(turn.uuid, 0.0, 0);
+            Err(anyhow!("fixture failed after transport dispatch"))
+        }
+    }
+
+    struct MalformedTerminalDispatcher;
+
+    #[async_trait(?Send)]
+    impl crate::scheduled::TurnDispatcher for MalformedTerminalDispatcher {
+        async fn dispatch_turn(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            observer.on_admit(turn.uuid, 0.0, 0);
+            observer.on_usage(
+                turn.uuid,
+                ObservedUsage {
+                    prompt_tokens: Some(11),
+                    completion_tokens: Some(7),
+                    ..ObservedUsage::default()
+                },
+            );
+            observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
+            Ok(TurnDispatchOutcome {
+                start_ns: 0,
+                end_ns: 1,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: "restricted-upstream-content".into(),
+                model_response: crate::scheduled::ModelResponseMetadata {
+                    wire_responses: vec![json!({
+                        "choices":[{
+                            "message":"not-an-object",
+                            "finish_reason":"stop"
+                        }],
+                        "usage":{
+                            "completion_tokens_details":{"reasoning_tokens":3}
+                        }
+                    })],
+                    cached_prompt_tokens: Some(2),
+                    ..Default::default()
+                },
+                prompt_tokens: Some(11),
+                completion_tokens: Some(7),
+                http: aiperf_metrics::HttpTrace::default(),
+            })
+        }
+    }
+
+    struct InvalidStreamDispatcher {
+        dropped: Rc<Cell<bool>>,
+    }
+
+    #[async_trait(?Send)]
+    impl crate::scheduled::TurnDispatcher for InvalidStreamDispatcher {
+        fn supports_response_streaming(&self) -> bool {
+            true
+        }
+
+        async fn dispatch_turn(
+            &self,
+            _turn: TurnToSend,
+            _observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            Err(anyhow!(
+                "invalid-stream fixture requires streaming dispatch"
+            ))
+        }
+
+        async fn dispatch_turn_streaming(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+            responses: &dyn TurnResponseObserver,
+        ) -> Result<TurnDispatchOutcome> {
+            let _drop_signal = DispatchDropSignal(self.dropped.clone());
+            observer.on_admit(turn.uuid, 0.0, 0);
+            poll_fn(|context| responses.poll_ready(context)).await?;
+            responses.start_send(ParsedResponse {
+                perf_ns: 0,
+                data: Some(ResponseData::Embeddings {
+                    embeddings: vec![vec![0.5]],
+                }),
+                usage: None,
+                sources: None,
+            })?;
+            std::future::pending::<()>().await;
+            unreachable!("invalid-stream fixture resumed without cancellation")
+        }
+    }
+
     #[derive(Default)]
     struct CollectedDeltas(RefCell<Vec<HostExecutionDelta>>);
 
@@ -2293,6 +2440,162 @@ mod tests {
         async fn publish(&self, _delta: HostExecutionDelta) -> Result<()> {
             Err(anyhow!("fixture event consumer failed"))
         }
+    }
+
+    fn executor_with_one_attempt(
+        dispatcher: Rc<dyn crate::scheduled::TurnDispatcher>,
+    ) -> ScheduledInferenceHostExecutor {
+        let clock = Rc::new(SimClock::new());
+        let runtime = ScheduledRuntime::new(
+            clock.clone(),
+            0,
+            dispatcher,
+            aiperf_timing::StopConfig::default(),
+            false,
+        );
+        let retry_policy = Rc::new(
+            ExponentialTransportRetryPolicy::new(1, 0, 0, [HostTerminalClass::Failed]).unwrap(),
+        );
+        let attempt_executor = Rc::new(ClockedInferenceAttemptExecutor::new(clock, retry_policy));
+        ScheduledInferenceHostExecutor::new_for_operation_with_attempt_executor(
+            runtime,
+            Rc::new(materializer()),
+            RegisteredOperationId::new("model.generate").unwrap(),
+            attempt_executor,
+        )
+    }
+
+    fn non_streaming_generate_operation() -> HostOperationEnvelope {
+        let mut operation = operation(
+            "primary",
+            "model.generate",
+            json!({
+                "messages":[{"role":"user","content":"hello"}],
+                "generation":{"max_tokens":4}
+            }),
+        );
+        operation.stream = false;
+        operation
+    }
+
+    fn assert_one_failed_attempt(terminal: &HostExecutionTerminal, output_observed: bool) {
+        assert_eq!(terminal.class, HostTerminalClass::Failed);
+        assert_eq!(terminal.transport_attempts.len(), 1);
+        let attempt = &terminal.transport_attempts[0];
+        assert_eq!(attempt.attempt_id, "operation-primary:transport:0");
+        assert_eq!(attempt.ordinal, 0);
+        assert_eq!(attempt.terminal, HostTerminalClass::Failed);
+        assert_eq!(attempt.output_observed, output_observed);
+        assert_eq!(attempt.usage, terminal.usage);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn post_dispatch_executor_error_preserves_real_attempt_lineage() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let executor = executor_with_one_attempt(Rc::new(PostDispatchFailureDispatcher));
+                let terminal = executor
+                    .execute(
+                        &non_streaming_generate_operation(),
+                        &CollectedDeltas::default(),
+                        OperationCancellation::default(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_one_failed_attempt(&terminal, false);
+                assert_eq!(terminal.usage, HostOperationUsage::default());
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminal_normalization_error_preserves_attempt_usage_and_hides_content() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let executor = executor_with_one_attempt(Rc::new(MalformedTerminalDispatcher));
+                let terminal = executor
+                    .execute(
+                        &non_streaming_generate_operation(),
+                        &CollectedDeltas::default(),
+                        OperationCancellation::default(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_one_failed_attempt(&terminal, false);
+                assert_eq!(terminal.usage.prompt_tokens, Some(11));
+                assert_eq!(terminal.usage.completion_tokens, Some(7));
+                assert_eq!(terminal.usage.reasoning_tokens, Some(3));
+                assert_eq!(terminal.usage.cached_tokens, Some(2));
+                assert!(
+                    !terminal
+                        .payload
+                        .to_string()
+                        .contains("restricted-upstream-content")
+                );
+                assert_eq!(terminal.payload["error"]["kind"], "executor_error");
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_normalization_error_cancels_dispatch_and_preserves_attempt() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dropped = Rc::new(Cell::new(false));
+                let executor = executor_with_one_attempt(Rc::new(InvalidStreamDispatcher {
+                    dropped: dropped.clone(),
+                }));
+                let cancellation = OperationCancellation::default();
+                let terminal = executor
+                    .execute(
+                        &operation(
+                            "primary",
+                            "model.generate",
+                            json!({
+                                "messages":[{"role":"user","content":"hello"}],
+                                "generation":{"max_tokens":4}
+                            }),
+                        ),
+                        &CollectedDeltas::default(),
+                        cancellation.clone(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_one_failed_attempt(&terminal, false);
+                assert!(cancellation.is_cancelled());
+                assert!(dropped.get());
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn response_observer_error_cancels_its_owning_dispatch() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let cancellation = OperationCancellation::default();
+                let failure = Rc::new(RefCell::new(None));
+                let (sender, receiver) = mpsc::channel(1);
+                let observer = InferenceResponseObserver {
+                    sender: RefCell::new(PollSender::new(sender)),
+                    cancellation: cancellation.clone(),
+                    failure: failure.clone(),
+                };
+                drop(receiver);
+                assert!(
+                    poll_fn(|context| observer.poll_ready(context))
+                        .await
+                        .is_err()
+                );
+                assert!(cancellation.is_cancelled());
+                assert_eq!(
+                    failure.borrow().as_deref(),
+                    Some("evaluator streaming response consumer closed")
+                );
+            })
+            .await;
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2355,7 +2658,7 @@ mod tests {
                 let executor =
                     ScheduledInferenceHostExecutor::new(runtime, Rc::new(materializer()));
                 let cancellation = OperationCancellation::default();
-                let result = executor
+                let terminal = executor
                     .execute(
                         &operation(
                             "primary",
@@ -2368,14 +2671,10 @@ mod tests {
                         &FailingEventSink,
                         cancellation.clone(),
                     )
-                    .await;
+                    .await
+                    .unwrap();
 
-                assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("fixture event consumer failed")
-                );
+                assert_one_failed_attempt(&terminal, false);
                 assert!(cancellation.is_cancelled());
                 for _ in 0..100 {
                     if dropped.get() {
@@ -2672,7 +2971,7 @@ mod tests {
     #[test]
     fn terminal_normalizers_preserve_choices_logprobs_embeddings_and_usage() {
         let generated = normalized_terminal(
-            TurnDispatchOutcome {
+            &TurnDispatchOutcome {
                 start_ns: 1,
                 end_ns: 2,
                 terminal: ReplayTerminalStatus::Completed,
@@ -2704,7 +3003,7 @@ mod tests {
         assert_eq!(generated.payload["usage"]["reasoning_tokens"], 2);
 
         let embedded = normalized_terminal(
-            TurnDispatchOutcome {
+            &TurnDispatchOutcome {
                 start_ns: 1,
                 end_ns: 2,
                 terminal: ReplayTerminalStatus::Completed,

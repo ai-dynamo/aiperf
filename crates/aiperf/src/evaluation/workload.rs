@@ -1529,20 +1529,22 @@ impl EvaluationWorkload {
                     active.semantic_attempt_id == semantic_attempt_id,
                     "host terminal changed semantic attempt"
                 );
-                let terminal = match result {
-                    Ok(terminal) => terminal,
-                    Err(_message) => HostExecutionTerminal {
-                        class: HostTerminalClass::Failed,
-                        payload: serde_json::json!({"error_kind":"executor_error"}),
-                        usage: HostOperationUsage::default(),
-                        retryable: false,
-                        transport_attempts: Vec::new(),
-                    },
-                };
+                let mut terminal = result.map_err(|_| {
+                    anyhow!("host executor failed before returning a transport-reconciled terminal")
+                })?;
+                ensure!(
+                    !terminal.transport_attempts.is_empty()
+                        || terminal.class == HostTerminalClass::Cancelled,
+                    "only pre-dispatch cancellation may return a zero-attempt host terminal"
+                );
                 state.operation_deadlines.remove(operation_id.as_str());
-                if terminal.class == HostTerminalClass::Completed {
-                    self.host_executors
-                        .validate_response(&active.semantic_operation_id, &terminal.payload)?;
+                if terminal.class == HostTerminalClass::Completed
+                    && self
+                        .host_executors
+                        .validate_response(&active.semantic_operation_id, &terminal.payload)
+                        .is_err()
+                {
+                    fail_terminal_after_dispatch(&mut terminal)?;
                 }
                 let observed_output = terminal
                     .transport_attempts
@@ -2181,6 +2183,18 @@ fn cancelled_terminal_payload(stage: &str, reason: &str) -> Result<HostExecution
     })
 }
 
+fn fail_terminal_after_dispatch(terminal: &mut HostExecutionTerminal) -> Result<()> {
+    let attempt = terminal
+        .transport_attempts
+        .last_mut()
+        .ok_or_else(|| anyhow!("post-dispatch failure omitted its transport attempt"))?;
+    attempt.terminal = HostTerminalClass::Failed;
+    terminal.class = HostTerminalClass::Failed;
+    terminal.payload = serde_json::json!({"status":"failed","error":{"kind":"executor_error"}});
+    terminal.retryable = false;
+    Ok(())
+}
+
 fn provider_error(error: aiperf_accuracy::EvaluationProviderError) -> anyhow::Error {
     anyhow!(error.to_string())
 }
@@ -2782,6 +2796,76 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum AdversarialHostMode {
+        PreDispatchError,
+        InvalidPostDispatchTerminal,
+    }
+
+    struct AdversarialHostExecutor {
+        mode: AdversarialHostMode,
+    }
+
+    #[async_trait(?Send)]
+    impl HostOperationExecutor for AdversarialHostExecutor {
+        async fn execute(
+            &self,
+            operation: &HostOperationEnvelope,
+            _events: &dyn HostExecutionEventSink,
+            _cancellation: OperationCancellation,
+        ) -> Result<HostExecutionTerminal> {
+            match self.mode {
+                AdversarialHostMode::PreDispatchError => {
+                    Err(anyhow!("fixture rejected before transport dispatch"))
+                }
+                AdversarialHostMode::InvalidPostDispatchTerminal => {
+                    let usage = HostOperationUsage {
+                        prompt_tokens: Some(13),
+                        completion_tokens: Some(5),
+                        reasoning_tokens: Some(2),
+                        cached_tokens: Some(1),
+                    };
+                    Ok(HostExecutionTerminal {
+                        class: HostTerminalClass::Completed,
+                        payload: json!("not-the-registered-response-schema"),
+                        usage,
+                        retryable: false,
+                        transport_attempts: vec![InferenceTransportAttempt {
+                            attempt_id: format!("{}:transport:0", operation.operation_id),
+                            ordinal: 0,
+                            terminal: HostTerminalClass::Completed,
+                            output_observed: false,
+                            usage,
+                        }],
+                    })
+                }
+            }
+        }
+    }
+
+    struct AdversarialHostFactory {
+        descriptor: HostOperationDescriptor,
+        mode: AdversarialHostMode,
+    }
+
+    impl HostOperationExecutorFactory for AdversarialHostFactory {
+        fn descriptor(&self) -> &HostOperationDescriptor {
+            &self.descriptor
+        }
+
+        fn validator(&self) -> &dyn HostOperationSchemaValidator {
+            &ObjectSchema
+        }
+
+        fn prepare(
+            &self,
+            _runtime: &HostExecutorRuntime,
+            _route: &EvaluationRoute,
+        ) -> Result<Rc<dyn HostOperationExecutor>> {
+            Ok(Rc::new(AdversarialHostExecutor { mode: self.mode }))
+        }
+    }
+
     struct UnusedDispatcher;
 
     #[async_trait(?Send)]
@@ -3011,6 +3095,27 @@ mod tests {
         .unwrap()
     }
 
+    fn replace_proof_host_executor(workload: &mut EvaluationWorkload, mode: AdversarialHostMode) {
+        let mut host_builder = HostExecutorRegistryBuilder::default();
+        host_builder
+            .register(Rc::new(AdversarialHostFactory {
+                descriptor: HostOperationDescriptor {
+                    operation_id: RegisteredOperationId::new("model.generate").unwrap(),
+                    family: HostOperationFamily::new("inference").unwrap(),
+                    request_schema_fingerprint: "1".repeat(64),
+                    response_schema_fingerprint: "2".repeat(64),
+                    stream_schema_fingerprint: Some("3".repeat(64)),
+                    true_streaming: true,
+                    max_request_bytes: 1024,
+                    max_response_bytes: 4096,
+                    endpoint_capabilities: BTreeSet::from(["chat".into()]),
+                },
+                mode,
+            }))
+            .unwrap();
+        workload.host_executors = host_builder.freeze().unwrap();
+    }
+
     #[test]
     fn provider_unit_capacity_may_exceed_authored_admission_concurrency() {
         let state = Rc::new(RefCell::new(ProviderProofState::default()));
@@ -3055,6 +3160,11 @@ mod tests {
             result.report_facts.route_summaries["primary"].prompt_tokens,
             Some(3)
         );
+        assert_eq!(
+            result.report_facts.route_summaries["primary"].transport_attempts,
+            1
+        );
+        assert_eq!(result.report_facts.route_summaries["primary"].retries, 0);
         assert!(state.borrow().shutdown);
         assert!(state.borrow().sealed);
         assert!(!state.borrow().committed);
@@ -3067,6 +3177,88 @@ mod tests {
         ));
         result.report_commit.commit().unwrap();
         assert!(state.borrow().committed);
+    }
+
+    #[test]
+    fn post_dispatch_validation_failure_keeps_attempt_and_report_reconciled() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, plan_request) = provider_proof_fixture(state.clone());
+        let clock = Rc::new(SimClock::new());
+        let mut workload = proof_workload(
+            provider,
+            plan_request,
+            clock.clone(),
+            OperationCancellation::default(),
+        );
+        replace_proof_host_executor(
+            &mut workload,
+            AdversarialHostMode::InvalidPostDispatchTerminal,
+        );
+        let result = Rc::new(RefCell::new(None));
+        let result_for_run = result.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            *result_for_run.borrow_mut() = Some(workload.execute().await.unwrap());
+        });
+        assert!(!outcome.deadlocked);
+        let result = result.borrow_mut().take().unwrap();
+        let operation = &result.operations[0];
+        assert_eq!(operation.terminal, Some(HostTerminalClass::Failed));
+        assert_eq!(operation.attempts.len(), 1);
+        assert_eq!(operation.attempts[0].attempt_id, "operation-1:transport:0");
+        assert_eq!(operation.attempts[0].ordinal, 0);
+        assert_eq!(
+            operation.attempts[0].terminal,
+            Some(HostTerminalClass::Failed)
+        );
+        let summary = &result.report_facts.route_summaries["primary"];
+        assert_eq!(summary.logical_operations, 1);
+        assert_eq!(summary.transport_attempts, 1);
+        assert_eq!(summary.retries, 0);
+        assert_eq!(summary.completed, 0);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.prompt_tokens, Some(13));
+        assert_eq!(summary.completion_tokens, Some(5));
+        assert_eq!(summary.reasoning_tokens, Some(2));
+        assert_eq!(summary.cached_tokens, Some(1));
+        assert!(matches!(
+            state.borrow().submitted.as_slice(),
+            [HostOperationEvent::Terminal {
+                terminal: HostOperationTerminal {
+                    disposition: HostOperationDisposition::InfrastructureError,
+                    ..
+                }
+            }]
+        ));
+    }
+
+    #[test]
+    fn pre_dispatch_executor_error_aborts_without_fabricating_attempt_terminal() {
+        let state = Rc::new(RefCell::new(ProviderProofState::default()));
+        let (provider, plan_request) = provider_proof_fixture(state.clone());
+        let clock = Rc::new(SimClock::new());
+        let mut workload = proof_workload(
+            provider,
+            plan_request,
+            clock.clone(),
+            OperationCancellation::default(),
+        );
+        replace_proof_host_executor(&mut workload, AdversarialHostMode::PreDispatchError);
+        let error = Rc::new(RefCell::new(None));
+        let error_for_run = error.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            *error_for_run.borrow_mut() = Some(workload.execute().await.unwrap_err());
+        });
+        assert!(!outcome.deadlocked);
+        assert!(
+            error
+                .borrow()
+                .as_ref()
+                .is_some_and(|error| error.to_string().contains("transport-reconciled terminal"))
+        );
+        assert!(state.borrow().submitted.is_empty());
+        assert!(state.borrow().shutdown);
+        assert!(!state.borrow().sealed);
+        assert!(!state.borrow().committed);
     }
 
     #[test]
