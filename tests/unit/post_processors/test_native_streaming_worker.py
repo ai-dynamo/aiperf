@@ -3,13 +3,18 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
+import orjson
 import pytest
 from pydantic import ValidationError
 
 from aiperf.post_processors.native_streaming_worker import (
+    _ACTIVATION_CONTROL_ADAPTER,
     _WORKER_EVENT_ADAPTER,
+    ActivateEvent,
     InitializeEvent,
     PhaseStatsEvent,
     _build_run,
@@ -133,3 +138,69 @@ def test_worker_event_contract_rejects_unknown_fields() -> None:
                 "silently_ignored": True,
             }
         )
+
+
+def test_activation_is_a_distinct_strict_control_barrier() -> None:
+    activation = _ACTIVATION_CONTROL_ADAPTER.validate_python(
+        {"protocol_version": 1, "event": "activate"}
+    )
+    assert isinstance(activation, ActivateEvent)
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        _ACTIVATION_CONTROL_ADAPTER.validate_python(
+            {
+                "protocol_version": 1,
+                "event": "activate",
+                "artifact_created": True,
+            }
+        )
+
+
+def test_worker_prepares_before_artifact_creation_and_activates_afterward(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    initialize = _initialize(artifact_dir).model_dump(mode="json")
+    initialize["config"]["otel"]["metrics_url"] = None
+    initialize["config"]["mlflow"]["tracking_uri"] = None
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-m",
+            "aiperf.post_processors.native_streaming_worker",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    def exchange(event: dict[str, object]) -> dict[str, object]:
+        process.stdin.write(orjson.dumps(event) + b"\n")
+        process.stdin.flush()
+        response = process.stdout.readline()
+        assert response, process.stderr.read().decode(errors="replace")
+        parsed = orjson.loads(response)
+        assert isinstance(parsed, dict)
+        return parsed
+
+    prepared = exchange(initialize)
+    assert prepared["event"] == "prepared"
+    assert prepared["active"] is False
+    assert not artifact_dir.exists()
+
+    artifact_dir.mkdir()
+    ready = exchange({"protocol_version": 1, "event": "activate"})
+    assert ready["event"] == "ready"
+    assert ready["active"] is False
+    terminal = exchange(
+        {"protocol_version": 1, "event": "shutdown", "dropped_events": 0}
+    )
+    assert terminal["event"] == "terminal"
+    assert terminal["success"] is True
+
+    process.stdin.close()
+    assert process.wait(timeout=10) == 0, process.stderr.read().decode(errors="replace")

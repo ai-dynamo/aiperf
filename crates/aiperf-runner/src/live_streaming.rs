@@ -8,7 +8,7 @@
 //! the existing extension libraries. Queue overflow drops the oldest telemetry
 //! event and can never backpressure request dispatch.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
@@ -27,10 +27,10 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::execute::{NativeEndpointPlan, NativeRunSpec};
-use crate::protocol::RUNNER_PROTOCOL_VERSION;
 use crate::records::{CapturedRecord, record_json_value};
 
 const WORKER_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
+const LIVE_STREAMING_PROTOCOL_VERSION: u32 = 1;
 
 /// Terminal/progress consumer seam for optional live result extensions.
 pub(crate) trait LiveResultsSink {
@@ -48,7 +48,7 @@ struct QueueState {
 }
 
 struct PythonLiveResultsSink {
-    active: bool,
+    active: Cell<bool>,
     capacity: usize,
     metrics_config: MetricsConfig,
     queue: Rc<RefCell<QueueState>>,
@@ -57,7 +57,7 @@ struct PythonLiveResultsSink {
 
 impl PythonLiveResultsSink {
     fn enqueue(&self, value: &impl Serialize) {
-        if !self.active {
+        if !self.active.get() {
             return;
         }
         let mut line = match serde_json::to_vec(value) {
@@ -93,7 +93,7 @@ impl LiveResultsSink for PythonLiveResultsSink {
     fn emit_record(&self, record: &CapturedRecord) {
         match record_json_value(record, &self.metrics_config, false) {
             Ok(record) => self.enqueue(&MetricRecordEvent {
-                protocol_version: RUNNER_PROTOCOL_VERSION,
+                protocol_version: LIVE_STREAMING_PROTOCOL_VERSION,
                 event: "metric_record",
                 record,
             }),
@@ -106,7 +106,7 @@ impl LiveResultsSink for PythonLiveResultsSink {
 
     fn emit_phase(&self, stats: &PhaseStats, observed_at_ns: i64) {
         self.enqueue(&PhaseStatsEvent {
-            protocol_version: RUNNER_PROTOCOL_VERSION,
+            protocol_version: LIVE_STREAMING_PROTOCOL_VERSION,
             event: "phase_stats",
             observed_at_ns,
             stats,
@@ -119,11 +119,16 @@ pub(crate) struct PythonLiveStreamingRun {
     sink: Rc<PythonLiveResultsSink>,
     child: Child,
     stdout: BufReader<ChildStdout>,
-    writer: JoinHandle<Result<u64>>,
+    stdin: Option<tokio::process::ChildStdin>,
+    writer: Option<JoinHandle<Result<u64>>>,
 }
 
 impl PythonLiveStreamingRun {
-    /// Spawn, initialize, and negotiate the strict extension worker.
+    /// Spawn and side-effect-free prepare the strict extension worker.
+    ///
+    /// Preparation may validate imports and construct the Python processor, but
+    /// the worker cannot start an exporter process or touch the artifact target
+    /// until [`Self::activate`] sends the explicit post-commit barrier.
     pub(crate) async fn spawn(run: &NativeRunSpec, metrics_config: MetricsConfig) -> Result<Self> {
         let spec = run
             .sidecars
@@ -170,7 +175,7 @@ impl PythonLiveStreamingRun {
         let mut stdout = BufReader::new(stdout);
 
         let initialize = InitializeEvent {
-            protocol_version: RUNNER_PROTOCOL_VERSION,
+            protocol_version: LIVE_STREAMING_PROTOCOL_VERSION,
             event: "initialize",
             benchmark_id: &run.benchmark_id,
             config: WorkerConfig {
@@ -191,17 +196,18 @@ impl PythonLiveStreamingRun {
         write_json_line(&mut stdin, &initialize)
             .await
             .context("initializing live telemetry worker")?;
-        let ready_value = read_json_value(&mut stdout, "ready").await?;
-        let ready: WorkerReady = serde_json::from_value(ready_value)
-            .context("validating live telemetry worker ready response")?;
+        let prepared_value = read_json_value(&mut stdout, "prepared").await?;
+        let prepared: WorkerPrepared = serde_json::from_value(prepared_value)
+            .context("validating live telemetry worker prepared response")?;
         ensure!(
-            ready.protocol_version == RUNNER_PROTOCOL_VERSION && ready.event == "ready",
-            "live telemetry worker returned an incompatible ready response"
+            prepared.protocol_version == LIVE_STREAMING_PROTOCOL_VERSION
+                && prepared.event == "prepared",
+            "live telemetry worker returned an incompatible prepared response"
         );
-        if !ready.active {
+        if !prepared.active {
             eprintln!(
                 "live telemetry extension disabled itself: {}",
-                ready
+                prepared
                     .disabled_reason
                     .as_deref()
                     .unwrap_or("no reason supplied")
@@ -214,10 +220,8 @@ impl PythonLiveStreamingRun {
             dropped_events: 0,
         }));
         let wake = Rc::new(Notify::new());
-        let writer =
-            tokio::task::spawn_local(pump_worker_stdin(stdin, queue.clone(), wake.clone()));
         let sink = Rc::new(PythonLiveResultsSink {
-            active: ready.active,
+            active: Cell::new(false),
             capacity: spec.buffer_capacity,
             metrics_config,
             queue,
@@ -227,8 +231,53 @@ impl PythonLiveStreamingRun {
             sink,
             child,
             stdout,
-            writer,
+            stdin: Some(stdin),
+            writer: None,
         })
+    }
+
+    /// Cross the artifact-ownership barrier and start optional exporters.
+    pub(crate) async fn activate(&mut self) -> Result<()> {
+        ensure!(
+            self.writer.is_none(),
+            "live telemetry worker activated twice"
+        );
+        let mut stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("live telemetry worker activation stdin is unavailable"))?;
+        write_json_line(
+            &mut stdin,
+            &ActivateEvent {
+                protocol_version: LIVE_STREAMING_PROTOCOL_VERSION,
+                event: "activate",
+            },
+        )
+        .await
+        .context("activating live telemetry worker")?;
+        let ready_value = read_json_value(&mut self.stdout, "ready").await?;
+        let ready: WorkerReady = serde_json::from_value(ready_value)
+            .context("validating live telemetry worker ready response")?;
+        ensure!(
+            ready.protocol_version == LIVE_STREAMING_PROTOCOL_VERSION && ready.event == "ready",
+            "live telemetry worker returned an incompatible ready response"
+        );
+        self.sink.active.set(ready.active);
+        if !ready.active {
+            eprintln!(
+                "live telemetry extension did not activate: {}",
+                ready
+                    .disabled_reason
+                    .as_deref()
+                    .unwrap_or("no reason supplied")
+            );
+        }
+        self.writer = Some(tokio::task::spawn_local(pump_worker_stdin(
+            stdin,
+            self.sink.queue.clone(),
+            self.sink.wake.clone(),
+        )));
+        Ok(())
     }
 
     /// Clone the local nonblocking event sink.
@@ -239,15 +288,38 @@ impl PythonLiveStreamingRun {
     /// Drain queued facts, flush the canonical processor, and reap the child.
     pub(crate) async fn shutdown(mut self) -> Result<()> {
         self.sink.close();
-        let dropped_events = tokio::time::timeout(WORKER_CONTROL_TIMEOUT, self.writer)
-            .await
-            .context("live telemetry stdin drain timed out")?
-            .context("live telemetry stdin pump task failed")??;
+        let dropped_events = match self.writer.take() {
+            Some(writer) => tokio::time::timeout(WORKER_CONTROL_TIMEOUT, writer)
+                .await
+                .context("live telemetry stdin drain timed out")?
+                .context("live telemetry stdin pump task failed")??,
+            None => {
+                let mut stdin = self.stdin.take().ok_or_else(|| {
+                    anyhow!("live telemetry worker shutdown stdin is unavailable")
+                })?;
+                write_json_line(
+                    &mut stdin,
+                    &ShutdownEvent {
+                        protocol_version: LIVE_STREAMING_PROTOCOL_VERSION,
+                        event: "shutdown",
+                        dropped_events: 0,
+                    },
+                )
+                .await
+                .context("shutting down prepared live telemetry worker")?;
+                stdin
+                    .shutdown()
+                    .await
+                    .context("closing prepared live telemetry stdin")?;
+                0
+            }
+        };
         let terminal_value = read_json_value(&mut self.stdout, "terminal").await?;
         let terminal: WorkerTerminal = serde_json::from_value(terminal_value)
             .context("validating live telemetry worker terminal response")?;
         ensure!(
-            terminal.protocol_version == RUNNER_PROTOCOL_VERSION && terminal.event == "terminal",
+            terminal.protocol_version == LIVE_STREAMING_PROTOCOL_VERSION
+                && terminal.event == "terminal",
             "live telemetry worker returned an incompatible terminal response"
         );
         ensure!(
@@ -372,7 +444,7 @@ async fn pump_worker_stdin(
     write_json_line(
         &mut stdin,
         &ShutdownEvent {
-            protocol_version: RUNNER_PROTOCOL_VERSION,
+            protocol_version: LIVE_STREAMING_PROTOCOL_VERSION,
             event: "shutdown",
             dropped_events,
         },
@@ -433,6 +505,12 @@ struct WorkerConfig<'a> {
 }
 
 #[derive(Serialize)]
+struct ActivateEvent {
+    protocol_version: u32,
+    event: &'static str,
+}
+
+#[derive(Serialize)]
 struct MetricRecordEvent {
     protocol_version: u32,
     event: &'static str,
@@ -452,6 +530,16 @@ struct ShutdownEvent {
     protocol_version: u32,
     event: &'static str,
     dropped_events: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerPrepared {
+    protocol_version: u32,
+    event: String,
+    active: bool,
+    #[serde(default)]
+    disabled_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -495,7 +583,7 @@ mod tests {
             dropped_events: 0,
         }));
         let sink = PythonLiveResultsSink {
-            active: true,
+            active: Cell::new(true),
             capacity: 2,
             metrics_config: MetricsConfig::default(),
             queue: queue.clone(),

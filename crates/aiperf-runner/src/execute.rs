@@ -1245,6 +1245,17 @@ impl PreparedNativeSidecarResources {
             .map(PythonLiveStreamingRun::sink)
     }
 
+    async fn activate_live_streaming(&mut self) {
+        let activation = match self.live_streaming.as_mut() {
+            Some(worker) => worker.activate().await,
+            None => return,
+        };
+        if let Err(error) = activation {
+            eprintln!("live telemetry extension failed to activate: {error:#}");
+            self.live_streaming.take();
+        }
+    }
+
     async fn shutdown_run_resources(&mut self) {
         if let Some(worker) = self.live_streaming.take()
             && let Err(error) = worker.shutdown().await
@@ -1305,7 +1316,7 @@ async fn prepare_and_execute_native(
     let result = execute_native(
         request,
         accuracy.as_mut(),
-        &sidecars,
+        &mut sidecars,
         backend_factory,
         graph_placement,
         registry,
@@ -1328,7 +1339,7 @@ fn create_run_artifacts(run: &NativeRunSpec) -> Result<()> {
 async fn execute_native(
     request: NativeRunPlan,
     accuracy: Option<&mut PreparedAccuracy>,
-    sidecars: &PreparedNativeSidecarResources,
+    sidecars: &mut PreparedNativeSidecarResources,
     backend_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
@@ -1346,7 +1357,7 @@ async fn execute_native(
 async fn execute_scheduled_native(
     request: NativeRunPlan,
     accuracy: Option<&mut PreparedAccuracy>,
-    sidecars: &PreparedNativeSidecarResources,
+    sidecars: &mut PreparedNativeSidecarResources,
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1892,7 +1903,7 @@ fn finish_execution_backend_shutdown<T>(result: Result<T>, shutdown: Result<()>)
 async fn execute_native_inner(
     request: NativeRunPlan,
     mut accuracy: Option<&mut PreparedAccuracy>,
-    sidecars: &PreparedNativeSidecarResources,
+    sidecars: &mut PreparedNativeSidecarResources,
     backend_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -2046,13 +2057,6 @@ async fn execute_native_inner(
 
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
-    let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
-    let network_latency = sidecars.network_latency.as_ref();
-    let server_metrics = sidecars.server_metrics.as_ref();
-    let gpu_records_path = sidecars.gpu_records_path.as_ref();
-    let network_latency_records_path = sidecars.network_latency_records_path.as_ref();
-    let server_metrics_jsonl_path = sidecars.server_metrics_jsonl_path.as_ref();
-    let server_metrics_parquet_wire_path = sidecars.server_metrics_parquet_wire_path.as_ref();
     let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
         workers: request.run.workers,
         coordinator_clock: clock.clone(),
@@ -2113,27 +2117,28 @@ async fn execute_native_inner(
                 record_processors.push(processor);
             }
             plan = plan.with_record_processors(record_processors);
-            let mut sidecars = Vec::new();
-            if let Some(server_metrics) = server_metrics {
-                sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
+            let mut phase_sidecars = Vec::new();
+            if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
+                phase_sidecars.push(server_metrics.sidecar(metrics_phase(phase)?));
             }
             if phase.common().name == "profiling" {
-                if let Some(gpu_telemetry) = gpu_telemetry {
-                    sidecars.push(gpu_telemetry.sidecar());
+                if let Some(gpu_telemetry) = sidecars.gpu_telemetry.as_ref() {
+                    phase_sidecars.push(gpu_telemetry.sidecar());
                 }
-                if let Some(network_latency) = network_latency
+                if let Some(network_latency) = sidecars.network_latency.as_ref()
                     && let Some(sidecar) = network_latency.sidecar()
                 {
-                    sidecars.push(sidecar);
+                    phase_sidecars.push(sidecar);
                 }
             }
-            if !sidecars.is_empty() {
-                plan = plan.with_sidecars(sidecars);
+            if !phase_sidecars.is_empty() {
+                plan = plan.with_sidecars(phase_sidecars);
             }
             plans.push(plan);
         }
 
         create_run_artifacts(&request.run)?;
+        sidecars.activate_live_streaming().await;
 
         let observer: Rc<dyn PhaseObserver> = if let Some(sink) = live_sink {
             live_phase_observer(sink, clock.clone())
@@ -2158,6 +2163,13 @@ async fn execute_native_inner(
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
     let captured = capture.finish(&issued_times)?;
+    let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
+    let network_latency = sidecars.network_latency.as_ref();
+    let server_metrics = sidecars.server_metrics.as_ref();
+    let gpu_records_path = sidecars.gpu_records_path.as_ref();
+    let network_latency_records_path = sidecars.network_latency_records_path.as_ref();
+    let server_metrics_jsonl_path = sidecars.server_metrics_jsonl_path.as_ref();
+    let server_metrics_parquet_wire_path = sidecars.server_metrics_parquet_wire_path.as_ref();
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
     for record in &captured {
         accumulator.process_record(&record.ingest);

@@ -63,12 +63,19 @@ class StreamingWorkerConfig(_StrictModel):
 
 
 class InitializeEvent(_StrictModel):
-    """First and only initialization event."""
+    """Side-effect-free preparation event sent before artifact ownership."""
 
     protocol_version: Literal[PROTOCOL_VERSION]
     event: Literal["initialize"]
     benchmark_id: str = Field(min_length=1)
     config: StreamingWorkerConfig
+
+
+class ActivateEvent(_StrictModel):
+    """Post-artifact-commit barrier that permits exporter startup."""
+
+    protocol_version: Literal[PROTOCOL_VERSION]
+    event: Literal["activate"]
 
 
 class MetricRecordEvent(_StrictModel):
@@ -160,6 +167,13 @@ class ShutdownEvent(_StrictModel):
     protocol_version: Literal[PROTOCOL_VERSION]
     event: Literal["shutdown"]
     dropped_events: int = Field(default=0, ge=0)
+
+
+ActivationControl = Annotated[
+    ActivateEvent | ShutdownEvent,
+    Field(discriminator="event"),
+]
+_ACTIVATION_CONTROL_ADAPTER = TypeAdapter(ActivationControl)
 
 
 WorkerEvent = Annotated[
@@ -305,7 +319,6 @@ async def _serve() -> int:
     disabled_reason: str | None = None
     try:
         processor = OTelMetricsResultsProcessor("aiperf-runner", run)
-        await processor.initialize_and_start()
     except PostProcessorDisabled as error:
         processor = None
         disabled_reason = str(error)
@@ -313,17 +326,48 @@ async def _serve() -> int:
     _write_protocol(
         {
             "protocol_version": PROTOCOL_VERSION,
-            "event": "ready",
+            "event": "prepared",
             "active": processor is not None,
             "disabled_reason": disabled_reason,
         }
     )
 
+    activation_line = await _readline()
+    if not activation_line:
+        raise ValueError("native streaming worker received EOF before activation")
+    activation = _ACTIVATION_CONTROL_ADAPTER.validate_json(activation_line)
+    if isinstance(activation, ShutdownEvent):
+        _write_protocol(
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "event": "terminal",
+                "success": True,
+                "metric_records": 0,
+                "phase_events": 0,
+                "processing_errors": 0,
+                "dropped_events": activation.dropped_events,
+            }
+        )
+        return 0
+
     metric_records = 0
     phase_events = 0
     processing_errors = 0
     dropped_events = 0
+    processor_started = False
     try:
+        if processor is not None:
+            processor_started = True
+            await processor.initialize_and_start()
+        _write_protocol(
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "event": "ready",
+                "active": processor is not None,
+                "disabled_reason": disabled_reason,
+            }
+        )
+
         while True:
             line = await _readline()
             if not line:
@@ -349,7 +393,7 @@ async def _serve() -> int:
                     flush=True,
                 )
     finally:
-        if processor is not None:
+        if processor is not None and processor_started:
             await processor.stop()
 
     _write_protocol(
