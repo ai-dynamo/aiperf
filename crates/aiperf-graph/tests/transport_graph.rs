@@ -19,6 +19,7 @@ use aiperf_dataset::loader::{
 };
 use aiperf_dataset::{ComposeConfig, TiktokenTokenizer};
 use aiperf_graph::dataset_lowering::lower_dataset;
+use aiperf_graph::execution::LocalGraphTraceExecutionBackend;
 use aiperf_graph::materialize::SegmentItemsMaterializer;
 use aiperf_graph::model::{GraphRecord, TraceRecord};
 use aiperf_graph::policy::{
@@ -392,7 +393,7 @@ fn graph_policy_cancels_real_http_after_send_and_fail_fast_observes_it() {
     }))
     .unwrap();
     let source: Rc<dyn GraphTraceSource> = Rc::new(VecGraphTraceSource::new([GraphTracePlan {
-        graph: Rc::new(graph),
+        graph,
         trace: TraceRecord {
             id: "cancel-real".into(),
             graph_ref: None,
@@ -414,9 +415,10 @@ fn graph_policy_cancels_real_http_after_send_and_fail_fast_observes_it() {
         Box::new(BernoulliFixedDelay::new(Some(100.0), 0.001, RngRoot::new(Some(11))).unwrap()),
         Phase::Profiling,
     ));
-    let workload = GraphWorkload::new(clock, source, materializer, sink)
+    let backend = LocalGraphTraceExecutionBackend::new(clock.clone(), materializer, sink)
         .with_node_policy(cancellation)
-        .with_node_failure(Rc::new(AbortTraceNodeFailurePolicy))
+        .with_node_failure(Rc::new(AbortTraceNodeFailurePolicy));
+    let workload = GraphWorkload::new(clock, source, Rc::new(backend))
         .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
     let report = Rc::new(std::cell::RefCell::new(None));
     let report_slot = report.clone();

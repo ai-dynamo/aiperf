@@ -8,7 +8,7 @@
 //! omits defaulted fields still decodes.
 
 use aiperf_dataset::Handle;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Reserved virtual entry node id (valid edge source only).
@@ -16,7 +16,7 @@ pub const START_NODE_ID: &str = "START";
 /// Reserved virtual exit node id (valid edge target only).
 pub const END_NODE_ID: &str = "END";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ChannelType {
     #[serde(rename = "text")]
     #[default]
@@ -25,7 +25,7 @@ pub enum ChannelType {
     Messages,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ReducerName {
     #[serde(rename = "overwrite")]
     #[default]
@@ -35,7 +35,7 @@ pub enum ReducerName {
 }
 
 /// A state-channel declaration (`ChannelSpec`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelSpec {
     #[serde(rename = "type", default)]
     pub channel_type: ChannelType,
@@ -53,7 +53,7 @@ impl Default for ChannelSpec {
 }
 
 /// Required arrival count on a channel input: `count: int` or `count: "all"`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Count {
     N(i64),
@@ -82,7 +82,7 @@ impl Default for Count {
 }
 
 /// AND-fan-in input requirement on a node (`ChannelRequirement`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelRequirement {
     pub channel: String,
     #[serde(default)]
@@ -90,7 +90,7 @@ pub struct ChannelRequirement {
 }
 
 /// Unconditional edge (`StaticEdge`). The `edge_type` tag is ignored on decode.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StaticEdge {
     pub source: String,
     pub target: String,
@@ -105,7 +105,7 @@ pub struct StaticEdge {
 }
 
 /// LLM node (`LlmNode`). Prompt/materialization fields are skipped on decode.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmNode {
     pub output: String,
     #[serde(default = "default_true")]
@@ -126,7 +126,7 @@ pub struct LlmNode {
 }
 
 /// One step of a node's prompt-assembly program.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PromptItem {
     /// A static, dense segment handle (resolved through the shared SegmentStore).
@@ -159,7 +159,7 @@ impl LlmNode {
 }
 
 /// Topology record (`GraphRecord`).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GraphRecord {
     #[serde(default)]
     pub version: Option<String>,
@@ -174,7 +174,7 @@ pub struct GraphRecord {
 }
 
 /// Per-trace data (`TraceRecord`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceRecord {
     pub id: String,
     #[serde(default)]
@@ -183,8 +183,27 @@ pub struct TraceRecord {
     pub initial_state: BTreeMap<String, serde_json::Value>,
 }
 
+/// Complete data-plane command for one root trace.
+///
+/// Placement boundaries move this value as one unit. They never distribute
+/// individual node turns, because fan-out, joins, firing gates, and dynamic
+/// reply splices are trace-local state owned by one executor. Dense segment
+/// handles refer to the immutable segment catalog installed in the selected
+/// backend; a remote implementation can provision that catalog once and send
+/// this serde-ready command for every trace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphTracePlan {
+    /// Resolved graph for this trace instance.
+    pub graph: GraphRecord,
+    /// Per-trace identity and initial channel state.
+    pub trace: TraceRecord,
+    /// Optional arrival offset from workload start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arrival_offset_ns: Option<i64>,
+}
+
 /// Parsed graph workload (`ParsedGraph`).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ParsedGraph {
     #[serde(default)]
     pub graph: GraphRecord,

@@ -19,37 +19,9 @@ use aiperf_timing::{IntervalGenerator, SlotGuard, SlotPool};
 use async_trait::async_trait;
 
 use crate::errors::TraceError;
-use crate::executor::{ExecutorFlags, TraceExecutor};
-use crate::materialize::PromptMaterializer;
-use crate::model::{GraphRecord, TraceRecord};
-use crate::policy::{
-    ContinueRunFailurePolicy, NodeDispatchPolicy, NodeFailurePolicy, NoopNodeDispatchPolicy,
-    ResilientNodeFailurePolicy, RunFailurePolicy,
-};
-use crate::runtime::Handle;
-use crate::sink::GraphSink;
-use crate::wire::WireMessage;
-
-/// One root trace selected by a source.
-#[derive(Clone)]
-pub struct GraphTracePlan {
-    /// Resolved graph for this trace instance.
-    pub graph: Rc<GraphRecord>,
-    /// Per-trace identity and initial channel state.
-    pub trace: TraceRecord,
-    /// Optional arrival offset from workload start.
-    pub arrival_offset_ns: Option<i64>,
-}
-
-impl fmt::Debug for GraphTracePlan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GraphTracePlan")
-            .field("trace", &self.trace.id)
-            .field("nodes", &self.graph.nodes.len())
-            .field("arrival_offset_ns", &self.arrival_offset_ns)
-            .finish()
-    }
-}
+use crate::execution::GraphTraceExecutionBackend;
+pub use crate::model::GraphTracePlan;
+use crate::policy::{ContinueRunFailurePolicy, RunFailurePolicy};
 
 /// Stateful root-trace selection seam.
 pub trait GraphTraceSource {
@@ -82,7 +54,7 @@ pub fn lowered_trace_source(
     lowered: &crate::dataset_lowering::LoweredDatasetGraph,
 ) -> VecGraphTraceSource {
     VecGraphTraceSource::new(lowered.parsed.traces.iter().map(|trace| GraphTracePlan {
-        graph: Rc::new(lowered.parsed.resolve_trace_graph(trace).clone()),
+        graph: lowered.parsed.resolve_trace_graph(trace).clone(),
         trace: trace.clone(),
         arrival_offset_ns: None,
     }))
@@ -309,42 +281,33 @@ pub struct GraphWorkloadReport {
     pub traces: Vec<GraphTraceRunResult>,
 }
 
-/// Policy-composed graph workload using the canonical trace executor.
-pub struct GraphWorkload<M: WireMessage> {
+/// Policy-composed coordinator delegating complete traces to one backend.
+pub struct GraphWorkload {
     clock: Rc<dyn Clock>,
     source: Rc<dyn GraphTraceSource>,
     arrival: Rc<dyn GraphArrivalPolicy>,
     admission: Rc<dyn TraceAdmissionPolicy>,
-    materializer: Rc<dyn PromptMaterializer>,
-    sink: Rc<dyn GraphSink<M>>,
-    node_policy: Rc<dyn NodeDispatchPolicy>,
-    node_failure: Rc<dyn NodeFailurePolicy>,
+    backend: Rc<dyn GraphTraceExecutionBackend>,
     run_failure: Rc<dyn RunFailurePolicy>,
     observer: Rc<dyn GraphWorkloadObserver>,
-    flags: ExecutorFlags,
     cancelled: Rc<Cell<bool>>,
 }
 
-impl<M: WireMessage> GraphWorkload<M> {
+impl GraphWorkload {
     /// Construct the default immediate/unlimited/resilient workload.
     pub fn new(
         clock: Rc<dyn Clock>,
         source: Rc<dyn GraphTraceSource>,
-        materializer: Rc<dyn PromptMaterializer>,
-        sink: Rc<dyn GraphSink<M>>,
+        backend: Rc<dyn GraphTraceExecutionBackend>,
     ) -> Self {
         Self {
             clock,
             source,
             arrival: Rc::new(ImmediateGraphArrival),
             admission: Rc::new(UnlimitedTraceAdmission),
-            materializer,
-            sink,
-            node_policy: Rc::new(NoopNodeDispatchPolicy),
-            node_failure: Rc::new(ResilientNodeFailurePolicy),
+            backend,
             run_failure: Rc::new(ContinueRunFailurePolicy),
             observer: Rc::new(NoopGraphWorkloadObserver),
-            flags: ExecutorFlags::default(),
             cancelled: Rc::new(Cell::new(false)),
         }
     }
@@ -361,18 +324,6 @@ impl<M: WireMessage> GraphWorkload<M> {
         self
     }
 
-    /// Inject node prefill/cancellation policy.
-    pub fn with_node_policy(mut self, policy: Rc<dyn NodeDispatchPolicy>) -> Self {
-        self.node_policy = policy;
-        self
-    }
-
-    /// Inject node failure handling.
-    pub fn with_node_failure(mut self, policy: Rc<dyn NodeFailurePolicy>) -> Self {
-        self.node_failure = policy;
-        self
-    }
-
     /// Inject run-level admission-after-failure behavior.
     pub fn with_run_failure(mut self, policy: Rc<dyn RunFailurePolicy>) -> Self {
         self.run_failure = policy;
@@ -382,12 +333,6 @@ impl<M: WireMessage> GraphWorkload<M> {
     /// Inject phase/report observation.
     pub fn with_observer(mut self, observer: Rc<dyn GraphWorkloadObserver>) -> Self {
         self.observer = observer;
-        self
-    }
-
-    /// Inject edge-timing flags.
-    pub fn with_executor_flags(mut self, flags: ExecutorFlags) -> Self {
-        self.flags = flags;
         self
     }
 
@@ -444,32 +389,12 @@ impl<M: WireMessage> GraphWorkload<M> {
             active = active.saturating_add(1);
 
             let trace_id = plan.trace.id.clone();
-            let handle = Handle::new(self.clock.clone());
-            let construction = TraceExecutor::new_with_policies(
-                plan.graph,
-                self.materializer.clone(),
-                self.sink.clone(),
-                self.node_policy.clone(),
-                self.node_failure.clone(),
-                handle.clone(),
-                self.flags,
-            )
-            .and_then(|executor| {
-                let context = executor.build_context(plan.trace)?;
-                Ok((executor, context))
-            });
+            let backend = self.backend.clone();
             let observer = self.observer.clone();
             let run_failure = self.run_failure.clone();
             let completed_tx = completed_tx.clone();
             tokio::task::spawn_local(async move {
-                let result = match construction {
-                    Ok((executor, context)) => {
-                        executor.schedule_entries(&context);
-                        handle.wait_idle().await;
-                        context.abort.borrow().clone().map_or_else(|| Ok(()), Err)
-                    }
-                    Err(error) => Err(error),
-                };
+                let result = backend.execute_trace(plan).await;
                 run_failure.on_trace_result(&trace_id, &result);
                 let outcome = GraphTraceRunResult { trace_id, result };
                 observer.on_trace_complete(&outcome);
@@ -536,8 +461,11 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::materialize::SegmentItemsMaterializer;
-    use crate::model::{ChannelSpec, ChannelType, LlmNode, PromptItem, ReducerName, StaticEdge};
+    use crate::materialize::{PromptMaterializer, SegmentItemsMaterializer};
+    use crate::model::{
+        ChannelSpec, ChannelType, GraphRecord, LlmNode, PromptItem, ReducerName, StaticEdge,
+        TraceRecord,
+    };
     use crate::policy::{AbortTraceNodeFailurePolicy, FailFastRunFailurePolicy};
     use crate::segment::{SegmentPool, intern_message};
     use crate::sink::{GraphReply, GraphSink};
@@ -576,7 +504,7 @@ mod tests {
             delay_after_predecessor_first_token_us: None,
         });
         GraphTracePlan {
-            graph: Rc::new(graph),
+            graph,
             trace: TraceRecord {
                 id: id.into(),
                 graph_ref: None,
@@ -605,6 +533,84 @@ mod tests {
         }
     }
 
+    struct RecordingBackend {
+        plans: Rc<RefCell<Vec<GraphTracePlan>>>,
+    }
+
+    #[async_trait(?Send)]
+    impl crate::execution::GraphTraceExecutionBackend for RecordingBackend {
+        async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+            self.plans.borrow_mut().push(plan);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn coordinator_delegates_a_complete_trace_through_the_backend_trait() {
+        let clock = Rc::new(SimClock::new());
+        let mut graph = GraphRecord::default();
+        graph.nodes.insert(
+            "left".into(),
+            LlmNode {
+                output: "left-output".into(),
+                streaming: true,
+                inputs: Vec::new(),
+                min_start_delay_us: None,
+                max_tokens: Some(7),
+                items: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        );
+        graph.nodes.insert(
+            "right".into(),
+            LlmNode {
+                output: "right-output".into(),
+                streaming: true,
+                inputs: Vec::new(),
+                min_start_delay_us: None,
+                max_tokens: Some(11),
+                items: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+        );
+        let source: Rc<dyn GraphTraceSource> =
+            Rc::new(VecGraphTraceSource::new([GraphTracePlan {
+                graph,
+                trace: TraceRecord {
+                    id: "whole-trace".into(),
+                    graph_ref: Some("resolved-before-placement".into()),
+                    initial_state: BTreeMap::from([(
+                        "seed".into(),
+                        serde_json::Value::String("value".into()),
+                    )]),
+                },
+                arrival_offset_ns: Some(123),
+            }]));
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let backend: Rc<dyn crate::execution::GraphTraceExecutionBackend> =
+            Rc::new(RecordingBackend {
+                plans: received.clone(),
+            });
+        let workload = GraphWorkload::new(clock.clone(), source, backend);
+        let report = Rc::new(RefCell::new(None));
+        let report_slot = report.clone();
+        let outcome = crate::runtime::drive_sim(clock, move |_handle| async move {
+            *report_slot.borrow_mut() = Some(workload.execute().await.unwrap());
+        });
+
+        assert!(!outcome.deadlocked);
+        assert_eq!(report.borrow().as_ref().unwrap().completed, 1);
+        let received = received.borrow();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].trace.id, "whole-trace");
+        assert_eq!(received[0].trace.initial_state["seed"], "value");
+        assert_eq!(received[0].arrival_offset_ns, Some(123));
+        assert_eq!(
+            received[0].graph.nodes.keys().cloned().collect::<Vec<_>>(),
+            vec!["left", "right"]
+        );
+    }
+
     #[test]
     fn fail_fast_stops_new_trace_admission_while_resilient_runs_all() {
         fn run(fail_fast: bool) -> GraphWorkloadReport {
@@ -626,12 +632,18 @@ mod tests {
                 Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
             let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(SelectiveSink);
             let slots = Rc::new(SlotPool::new(1));
-            let mut workload = GraphWorkload::new(clock.clone(), source, materializer, sink)
+            let mut backend = crate::execution::LocalGraphTraceExecutionBackend::new(
+                clock.clone(),
+                materializer,
+                sink,
+            );
+            if fail_fast {
+                backend = backend.with_node_failure(Rc::new(AbortTraceNodeFailurePolicy));
+            }
+            let mut workload = GraphWorkload::new(clock.clone(), source, Rc::new(backend))
                 .with_admission(Rc::new(SlotPoolTraceAdmission::new(slots)));
             if fail_fast {
-                workload = workload
-                    .with_node_failure(Rc::new(AbortTraceNodeFailurePolicy))
-                    .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
+                workload = workload.with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
             }
             let result = Rc::new(RefCell::new(None));
             let result_slot = result.clone();
@@ -662,7 +674,7 @@ mod tests {
         )));
         let arrival = IntervalGraphArrival::new(generator.clone());
         let plan = GraphTracePlan {
-            graph: Rc::new(GraphRecord::default()),
+            graph: GraphRecord::default(),
             trace: TraceRecord {
                 id: "t".into(),
                 graph_ref: None,
@@ -700,7 +712,7 @@ mod tests {
     fn scheduled_arrival_honors_exact_virtual_offset() {
         let clock = Rc::new(SimClock::new());
         let plan = GraphTracePlan {
-            graph: Rc::new(GraphRecord::default()),
+            graph: GraphRecord::default(),
             trace: TraceRecord {
                 id: "scheduled".into(),
                 graph_ref: None,
@@ -839,7 +851,7 @@ mod tests {
         ]);
         let source: Rc<dyn GraphTraceSource> =
             Rc::new(VecGraphTraceSource::new([GraphTracePlan {
-                graph: Rc::new(graph),
+                graph,
                 trace: TraceRecord {
                     id: "stranded".into(),
                     graph_ref: None,
@@ -849,10 +861,14 @@ mod tests {
             }]));
         let materializer: Rc<dyn PromptMaterializer> =
             Rc::new(SegmentItemsMaterializer::new(Arc::new(pool.freeze())));
-        let workload =
-            GraphWorkload::new(clock.clone(), source, materializer, Rc::new(SelectiveSink))
-                .with_node_failure(Rc::new(AbortTraceNodeFailurePolicy))
-                .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
+        let backend = crate::execution::LocalGraphTraceExecutionBackend::new(
+            clock.clone(),
+            materializer,
+            Rc::new(SelectiveSink),
+        )
+        .with_node_failure(Rc::new(AbortTraceNodeFailurePolicy));
+        let workload = GraphWorkload::new(clock.clone(), source, Rc::new(backend))
+            .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
         let report = Rc::new(RefCell::new(None));
         let report_slot = report.clone();
         let outcome = crate::runtime::drive_sim(clock, move |_handle| async move {
