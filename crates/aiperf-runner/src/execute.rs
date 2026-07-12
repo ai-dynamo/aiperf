@@ -3825,48 +3825,6 @@ impl TurnRecordProcessor for CapturePhaseProcessor {
     }
 }
 
-struct DualObserver<'a> {
-    runtime: &'a dyn RequestObserver,
-    capture: &'a dyn RequestObserver,
-}
-
-impl RequestObserver for DualObserver<'_> {
-    fn on_arrival(&self, uuid: Uuid, at_ms: f64, input: usize, output: usize) {
-        self.runtime.on_arrival(uuid, at_ms, input, output);
-        self.capture.on_arrival(uuid, at_ms, input, output);
-    }
-
-    fn on_admit(&self, uuid: Uuid, at_ms: f64, reused_input_tokens: usize) {
-        self.runtime.on_admit(uuid, at_ms, reused_input_tokens);
-        self.capture.on_admit(uuid, at_ms, reused_input_tokens);
-    }
-
-    fn on_token(&self, uuid: Uuid, at_ms: f64) {
-        self.runtime.on_token(uuid, at_ms);
-        self.capture.on_token(uuid, at_ms);
-    }
-
-    fn on_classified_token(&self, uuid: Uuid, at_ms: f64, kind: ObservedTokenKind) {
-        self.runtime.on_classified_token(uuid, at_ms, kind);
-        self.capture.on_classified_token(uuid, at_ms, kind);
-    }
-
-    fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
-        self.runtime.on_usage(uuid, usage);
-        self.capture.on_usage(uuid, usage);
-    }
-
-    fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
-        self.runtime.on_endpoint_metrics(uuid, metrics);
-        self.capture.on_endpoint_metrics(uuid, metrics);
-    }
-
-    fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
-        self.runtime.on_terminal(uuid, status);
-        self.capture.on_terminal(uuid, status);
-    }
-}
-
 struct ConfiguredDispatcher {
     execution_backend: Rc<dyn HttpTurnExecutionBackend>,
     model: String,
@@ -3882,19 +3840,22 @@ impl TurnDispatcher for ConfiguredDispatcher {
     async fn dispatch_turn(
         &self,
         turn: TurnToSend,
-        observer: &dyn RequestObserver,
+        _observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let uuid = turn.uuid;
         self.capture.begin(&turn);
-        let tee = DualObserver {
-            runtime: observer,
-            capture: self.capture.observer.as_ref(),
-        };
+        // The runner's native-v2 report is produced entirely from RunCapture's
+        // observer (`self.capture`); the ScheduledRuntime's runtime observer
+        // (CollectorObserver + NativeMetricsObserver) is computed and then
+        // discarded (the runner consumes only `report.turns` from the recorder,
+        // and TTFT/slot release use the separate `on_first_token`). Feed only the
+        // capture observer so the single dispatch thread does not replay every
+        // token into a discarded accumulator, and its finalization is skipped.
         let turn = PreparedHttpTurn::from_turn(turn, &self.model);
         let collected = self
             .execution_backend
-            .execute_turn(turn, &tee, on_first_token)
+            .execute_turn(turn, self.capture.observer.as_ref(), on_first_token)
             .await;
         match collected {
             Ok(collected) => {
