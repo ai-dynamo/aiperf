@@ -154,7 +154,7 @@ impl CompactObservedUsage {
 struct ObserverState {
     requests: Vec<Option<PendingEntry>>,
     request_slots: FxHashMap<Uuid, usize>,
-    order: Vec<usize>,
+    arrival_count: usize,
     metadata: FxHashMap<Uuid, RequestMetricMetadata>,
 }
 
@@ -267,7 +267,8 @@ impl NativeMetricsObserver {
         response.end_ns = response
             .end_ns
             .map(|timestamp| self.relative_absolute_ns(timestamp));
-        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+        let mut state = self.state.borrow_mut();
+        let release_lookup = if let Some(request) = state.request_mut(uuid) {
             response.prompt_tokens = response.prompt_tokens.or(request.response.prompt_tokens);
             response.completion_tokens = response
                 .completion_tokens
@@ -279,6 +280,12 @@ impl NativeMetricsObserver {
                 completion_tokens: response.completion_tokens,
                 http: (response.http != HttpTrace::default()).then(|| Box::new(response.http)),
             };
+            !self.retain_record_dimensions && request.terminal.is_some()
+        } else {
+            false
+        };
+        if release_lookup {
+            state.request_slots.remove(&uuid);
         }
     }
 
@@ -313,13 +320,13 @@ impl NativeMetricsObserver {
     /// Total arrivals and terminal records still retained by this observer.
     pub fn record_counts(&self) -> (usize, usize) {
         let state = self.state.borrow();
-        (state.order.len(), state.request_slots.len())
+        (state.arrival_count, state.request_slots.len())
     }
 
     /// Finalizes every retained request and returns the full native summary.
     ///
-    /// Requests are visited in arrival order, but every metric column is written
-    /// to the absolute slot carried by [`RequestMetricMetadata::request_index`].
+    /// Requests are visited in ascending absolute request-slot order, and every
+    /// metric column is written to that same indexed slot.
     pub fn finish(&self) -> AccumulatorSummary {
         self.finish_at(self.clock.now_ns())
     }
@@ -352,9 +359,9 @@ impl NativeMetricsObserver {
 
     /// Finalizes every retained request while preserving its ingestion facts.
     ///
-    /// The records and summary are created by one pass in arrival order. This
-    /// method consumes the observer state just like [`Self::finish`]; calling
-    /// either finalizer again returns an empty collection.
+    /// The records and summary are created by one pass over absolute request
+    /// slots. This method consumes the observer state just like [`Self::finish`];
+    /// calling either finalizer again returns an empty collection.
     pub fn finish_with_records(&self) -> NativeMetricsCollection {
         self.take_finalizer_at(self.clock.now_ns())
             .finish_with_records()
@@ -389,18 +396,16 @@ impl NativeMetricsFinalizer {
     pub fn finish(self) -> AccumulatorSummary {
         let finish_ns = self.finish_ns;
         let mut accumulator = self.accumulator;
-        let mut state = self.state;
-        let order = std::mem::take(&mut state.order);
-        for (ordinal, slot) in order.into_iter().enumerate() {
-            let Some(entry) = state.requests.get_mut(slot).and_then(Option::take) else {
+        let state = self.state;
+        for (slot, entry) in state.requests.into_iter().enumerate() {
+            let Some(entry) = entry else {
                 continue;
             };
             let record = entry
                 .request
-                .into_record(entry.uuid, ordinal as u64, finish_ns);
+                .into_record(entry.uuid, slot as u64, finish_ns);
             accumulator.process_record(&record);
         }
-        drop(state);
         accumulator.summarize()
     }
 
@@ -408,20 +413,18 @@ impl NativeMetricsFinalizer {
     pub fn finish_with_records(self) -> NativeMetricsCollection {
         let finish_ns = self.finish_ns;
         let mut accumulator = self.accumulator;
-        let mut state = self.state;
-        let mut records = Vec::with_capacity(state.order.len());
-        let order = std::mem::take(&mut state.order);
-        for (ordinal, slot) in order.into_iter().enumerate() {
-            let Some(entry) = state.requests.get_mut(slot).and_then(Option::take) else {
+        let state = self.state;
+        let mut records = Vec::with_capacity(state.arrival_count);
+        for (slot, entry) in state.requests.into_iter().enumerate() {
+            let Some(entry) = entry else {
                 continue;
             };
             let record = entry
                 .request
-                .into_record(entry.uuid, ordinal as u64, finish_ns);
+                .into_record(entry.uuid, slot as u64, finish_ns);
             accumulator.process_record(&record);
             records.push(record);
         }
-        drop(state);
         NativeMetricsCollection {
             summary: accumulator.summarize(),
             records,
@@ -543,7 +546,7 @@ impl RequestObserver for NativeMetricsObserver {
             "native metric request slot {slot} was already populated"
         );
         state.request_slots.insert(uuid, slot);
-        state.order.push(slot);
+        state.arrival_count += 1;
         state.requests[slot] = Some(PendingEntry {
             uuid,
             request: PendingRequest {
@@ -616,9 +619,16 @@ impl RequestObserver for NativeMetricsObserver {
 
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
         let terminal_ns = self.relative_now_ns();
-        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+        let mut state = self.state.borrow_mut();
+        let release_lookup = if let Some(request) = state.request_mut(uuid) {
             request.terminal.get_or_insert(status);
             request.terminal_ns.get_or_insert(terminal_ns);
+            !self.retain_record_dimensions && request.response.end_ns.is_some()
+        } else {
+            false
+        };
+        if release_lookup {
+            state.request_slots.remove(&uuid);
         }
     }
 }
@@ -929,6 +939,61 @@ mod tests {
             collection.summary.finite_value(MetricTag::RequestCount),
             None
         );
+    }
+
+    #[test]
+    fn finalizer_visits_absolute_request_slots_not_arrival_order() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let slot_two = Uuid::from_u128(20);
+        let slot_zero = Uuid::from_u128(21);
+        for (uuid, request_index, correlation_id) in
+            [(slot_two, 2, "slot-two"), (slot_zero, 0, "slot-zero")]
+        {
+            observer.register_metadata(
+                uuid,
+                RequestMetricMetadata {
+                    request_index: Some(request_index),
+                    correlation_id: Some(correlation_id.to_owned()),
+                    ..RequestMetricMetadata::default()
+                },
+            );
+            observer.on_arrival(uuid, request_index as f64, 4, 1);
+            observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+        }
+
+        let collection = observer.finish_with_records();
+        assert_eq!(
+            collection
+                .records
+                .iter()
+                .map(|record| (record.request_index, record.correlation_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(Some(0), "slot-zero"), (Some(2), "slot-two")]
+        );
+    }
+
+    #[test]
+    fn aggregate_only_observer_releases_completed_uuid_lookup() {
+        let clock = Rc::new(SimClock::new());
+        let observer =
+            NativeMetricsObserver::new_aggregate_only(clock.clone(), 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(22);
+        observer.on_arrival(uuid, 0.0, 4, 1);
+        clock.advance_to(2_000_000);
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+        assert_eq!(observer.record_counts(), (1, 1));
+        observer.record_response(
+            uuid,
+            NativeResponseMetadata {
+                end_ns: Some(2_000_000),
+                ..NativeResponseMetadata::default()
+            },
+        );
+
+        assert_eq!(observer.record_counts(), (1, 0));
+        let summary = observer.finish();
+        assert_eq!(summary.finite_value(MetricTag::RequestCount), Some(1.0));
     }
 
     #[test]
