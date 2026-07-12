@@ -42,6 +42,14 @@ def test_endpoint_config_timeout_uses_endpoint_default() -> None:
     assert endpoint.timeout == EndpointDefaults.TIMEOUT
 
 
+def test_endpoint_config_native_http_policy_defaults() -> None:
+    endpoint = EndpointConfig(urls=["http://localhost:8000"])
+    assert endpoint.http2 is EndpointDefaults.HTTP2
+    assert endpoint.ssl_verify is EndpointDefaults.SSL_VERIFY
+    assert endpoint.connection_limit == EndpointDefaults.CONNECTION_LIMIT
+    assert endpoint.keepalive_timeout == EndpointDefaults.KEEPALIVE_TIMEOUT
+
+
 def _make_model_endpoint(
     base_url: str, transport: TransportType | None = None
 ) -> ModelEndpointInfo:

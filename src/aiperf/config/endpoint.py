@@ -70,6 +70,10 @@ class EndpointDefaults:
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
+    HTTP2 = False
+    SSL_VERIFY = True
+    CONNECTION_LIMIT = 2500
+    KEEPALIVE_TIMEOUT = 300.0
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
     # Readiness probe defaults. Timeout 0 disables the probe (the default);
@@ -227,6 +231,48 @@ class EndpointConfig(BaseConfig):
             "pooled: shared connection pool (fastest), "
             "never: new connection per request (includes TCP overhead), "
             "sticky-user-sessions: dedicated connection per user session.",
+        ),
+    ]
+
+    http2: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.HTTP2,
+            description="Force HTTP/2 for this endpoint profile. Cleartext HTTP "
+            "uses h2c prior knowledge; HTTPS requires HTTP/2 over TLS.",
+        ),
+    ]
+
+    ssl_verify: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.SSL_VERIFY,
+            description="Verify HTTPS certificate chains and hostnames. Disabling "
+            "verification is insecure and intended only for explicitly trusted "
+            "test environments.",
+        ),
+    ]
+
+    connection_limit: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=65000,
+            default=EndpointDefaults.CONNECTION_LIMIT,
+            description="Maximum simultaneous HTTP/1 connections per origin and "
+            "runner worker. HTTP/2 multiplexes concurrent streams over one "
+            "connection.",
+        ),
+    ]
+
+    keepalive_timeout: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=10000.0,
+            default=EndpointDefaults.KEEPALIVE_TIMEOUT,
+            description="Maximum seconds an idle pooled connection remains "
+            "eligible for reuse. Zero disables idle connection reuse.",
         ),
     ]
 

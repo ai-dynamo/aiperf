@@ -166,10 +166,13 @@ def _authored_endpoint(
         "use_server_token_count": endpoint.use_server_token_count,
         "timeout_seconds": endpoint.timeout,
         "connection_reuse": str(endpoint.connection_reuse),
+        "ssl_verify": endpoint.ssl_verify,
+        "connection_limit": endpoint.connection_limit,
+        "keepalive_timeout": endpoint.keepalive_timeout,
         "download_video_content": endpoint.download_video_content,
         "extra": copy.deepcopy(endpoint.extra),
         "headers": dict(endpoint.headers),
-        "http2": False,
+        "http2": endpoint.http2,
     }
     _set_optional(result, "path", endpoint.path)
     _set_optional(result, "api_key", endpoint.api_key)

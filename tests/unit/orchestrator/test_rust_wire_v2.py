@@ -127,6 +127,43 @@ def test_v2_envelope_and_default_scheduled_projection(
     assert (
         authored["resources"]["endpoints"]["profiles"][0]["type"] == "future_endpoint"
     )
+    profile = authored["resources"]["endpoints"]["profiles"][0]
+    assert {
+        key: profile[key]
+        for key in (
+            "http2",
+            "ssl_verify",
+            "connection_limit",
+            "keepalive_timeout",
+        )
+    } == {
+        "http2": False,
+        "ssl_verify": True,
+        "connection_limit": 2500,
+        "keepalive_timeout": 300.0,
+    }
+
+
+def test_v2_projects_authored_http_policy_without_legacy_conversion(
+    tmp_path: Path,
+) -> None:
+    run = _run(tmp_path / "http-policy")
+    run.cfg.endpoint.http2 = True
+    run.cfg.endpoint.ssl_verify = False
+    run.cfg.endpoint.connection_limit = 7
+    run.cfg.endpoint.keepalive_timeout = 0.25
+
+    profile = build_authored_run_request(
+        run,
+        operation="execute",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["resources"]["endpoints"]["profiles"][0]
+
+    assert profile["http2"] is True
+    assert profile["ssl_verify"] is False
+    assert profile["connection_limit"] == 7
+    assert profile["keepalive_timeout"] == 0.25
+    assert "endpoint" not in profile
 
 
 def test_normalized_unauthored_tokenizer_uses_builtin_for_placeholder_model(

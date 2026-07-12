@@ -9173,6 +9173,70 @@
           "default": "pooled",
           "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky-user-sessions: dedicated connection per user session."
         },
+        "http2": {
+          "default": false,
+          "description": "Force HTTP/2 for this endpoint profile. Cleartext HTTP uses h2c prior knowledge; HTTPS requires HTTP/2 over TLS.",
+          "title": "Http2",
+          "type": "boolean"
+        },
+        "sslVerify": {
+          "default": true,
+          "description": "Verify HTTPS certificate chains and hostnames. Disabling verification is insecure and intended only for explicitly trusted test environments.",
+          "title": "Sslverify",
+          "type": "boolean"
+        },
+        "connectionLimit": {
+          "default": 2500,
+          "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
+          "title": "Connectionlimit",
+          "oneOf": [
+            {
+              "default": 2500,
+              "description": "Maximum simultaneous HTTP/1 connections per origin and runner worker. HTTP/2 multiplexes concurrent streams over one connection.",
+              "maximum": 65000,
+              "minimum": 1,
+              "title": "Connectionlimit",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "keepaliveTimeout": {
+          "default": 300.0,
+          "description": "Maximum seconds an idle pooled connection remains eligible for reuse. Zero disables idle connection reuse.",
+          "title": "Keepalivetimeout",
+          "oneOf": [
+            {
+              "default": 300.0,
+              "description": "Maximum seconds an idle pooled connection remains eligible for reuse. Zero disables idle connection reuse.",
+              "maximum": 10000.0,
+              "minimum": 0.0,
+              "title": "Keepalivetimeout",
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
         "useLegacyMaxTokens": {
           "default": false,
           "description": "Use 'max_tokens' field instead of 'max_completion_tokens'. Enable for compatibility with older OpenAI API versions.",
@@ -9403,6 +9467,13 @@
           "description": "Run-local endpoint profile reference.",
           "minLength": 1,
           "title": "Endpointprofile",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "primary",
+          "description": "Provider-plan purpose that this logical service is allowed to serve. Auxiliary routes must set this explicitly.",
+          "minLength": 1,
+          "title": "Purpose",
           "type": "string"
         }
       },
