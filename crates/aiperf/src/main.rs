@@ -16,6 +16,8 @@
 //! ```
 
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use aiperf::accuracy::{
     AccuracyDataset, grade_and_finalize_accuracy_report, load_evaluator_problems,
@@ -24,23 +26,25 @@ use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, parse_sla_filter,
     positive_seconds_to_ns,
 };
+use aiperf::agentic::{AgenticWorkload, DatasetAgenticTurnBuilder, finalize_agentic_report};
 use aiperf::ancillary::{AncillaryTimingConfig, parse_base_urls};
 use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
 use aiperf::report::{
-    print_accuracy_table, print_report_table, write_accuracy_summary_csv, write_native_report_json,
-    write_scheduled_report_json,
+    print_accuracy_table, print_agentic_table, print_report_table, write_accuracy_summary_csv,
+    write_native_report_json, write_scheduled_report_json,
 };
 use aiperf::run::{
     run_fixed_schedule_online_with_ancillary, run_paced_adaptive_with_metrics_and_ancillary,
-    run_single_turn_dataset_online, run_user_centric_adaptive_online_with_ancillary,
-    run_user_centric_online_with_ancillary,
+    run_scheduled_online, run_single_turn_dataset_online,
+    run_user_centric_adaptive_online_with_ancillary, run_user_centric_online_with_ancillary,
 };
-use aiperf::scheduled::{ScheduledRunReport, TurnRecordProcessor};
+use aiperf::scheduled::{ScheduledRunReport, TurnRecordProcessor, Workload};
 use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
 use aiperf_accuracy::{
-    AccuracyEvaluator, EvaluatorLoadConfig, PythonEvaluator, WorkerProcessConfig,
+    AccuracyEvaluator, AgenticEvaluator, AgenticEvaluatorLoadConfig, EvaluatorLoadConfig,
+    PythonEvaluator, WorkerProcessConfig,
 };
 use aiperf_adaptive::CorrelationContext;
 use aiperf_dataset::{
@@ -261,6 +265,53 @@ struct Cli {
     #[arg(long)]
     accuracy_csv: Option<PathBuf>,
 
+    // --- stateful agentic accuracy flags (online HTTP path) ---
+    /// Run a canonical Harbor package `org/name[@revision]` or local task directory.
+    #[arg(long)]
+    agentic_benchmark: Option<String>,
+    /// Exact Harbor task names/globs; comma-separated or repeated.
+    #[arg(long, value_delimiter = ',')]
+    agentic_tasks: Vec<String>,
+    /// Deterministically evaluate only the first N selected task episodes.
+    #[arg(long)]
+    agentic_max_episodes: Option<usize>,
+    /// Maximum Harbor task environments active at once.
+    #[arg(long)]
+    agentic_task_concurrency: Option<usize>,
+    /// Harbor environment provider, for example docker or daytona.
+    #[arg(long)]
+    agentic_environment: Option<String>,
+    /// Directory for canonical Harbor trials and trajectories.
+    #[arg(long)]
+    agentic_output_dir: Option<PathBuf>,
+    /// Maximum Terminus-2 model calls per episode.
+    #[arg(long)]
+    agentic_max_turns: Option<usize>,
+    /// Maximum generated tokens for each Rust-owned inference call.
+    #[arg(long)]
+    agentic_max_tokens: Option<usize>,
+    /// Model context-window size exposed to the canonical agent scaffold.
+    #[arg(long)]
+    agentic_context_window: Option<usize>,
+    /// Canonical Terminus command parser: json or xml.
+    #[arg(long)]
+    agentic_parser: Option<String>,
+    /// Disable canonical Terminus context summarization.
+    #[arg(long)]
+    agentic_no_summarize: bool,
+    /// Verifier reward to report as the primary score.
+    #[arg(long)]
+    agentic_primary_reward: Option<String>,
+    /// Allow Harbor to replace a cached task package.
+    #[arg(long)]
+    agentic_overwrite: bool,
+    /// Input-accounting tokenizer for evaluator-authored model calls.
+    #[arg(long)]
+    agentic_tokenizer: Option<String>,
+    /// Log every canonical episode result after the run.
+    #[arg(long)]
+    agentic_verbose: bool,
+
     // --- graph-only flags ---
     /// Conversation turns per instance (graph default 4; online synthetic default 1).
     #[arg(long)]
@@ -298,6 +349,7 @@ fn main() -> anyhow::Result<()> {
     match cli.mode.as_str() {
         "graph" => run_graph_mode(&cli),
         "online" if cli.accuracy_benchmark.is_some() => run_accuracy_mode(&cli, &registry),
+        "online" if cli.agentic_benchmark.is_some() => run_agentic_mode(&cli, &registry),
         "online" => run_online_mode(&cli, &registry),
         other => anyhow::bail!("unknown --mode '{other}' (expected online|graph)"),
     }
@@ -307,6 +359,10 @@ fn ensure_accuracy_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
     anyhow::ensure!(
         !(cli.accuracy_enable_cot && cli.accuracy_no_cot),
         "--accuracy-enable-cot conflicts with --accuracy-no-cot"
+    );
+    anyhow::ensure!(
+        !(cli.accuracy_benchmark.is_some() && cli.agentic_benchmark.is_some()),
+        "--accuracy-benchmark conflicts with --agentic-benchmark"
     );
     if cli.accuracy_benchmark.is_none() {
         anyhow::ensure!(
@@ -323,7 +379,50 @@ fn ensure_accuracy_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
             "accuracy options require --accuracy-benchmark"
         );
     }
+    if cli.accuracy_benchmark.is_some() {
+        anyhow::ensure!(
+            !has_agentic_flags(cli),
+            "agentic options require --agentic-benchmark and conflict with --accuracy-benchmark"
+        );
+    }
+    if cli.agentic_benchmark.is_none() {
+        anyhow::ensure!(
+            !has_agentic_flags(cli),
+            "agentic options require --agentic-benchmark"
+        );
+    } else {
+        anyhow::ensure!(
+            cli.accuracy_tasks.is_empty()
+                && cli.accuracy_n_shots.is_none()
+                && !cli.accuracy_no_cot
+                && !cli.accuracy_enable_cot
+                && cli.accuracy_system_prompt.is_none()
+                && !cli.accuracy_verbose
+                && cli.accuracy_max_problems.is_none()
+                && cli.accuracy_max_tokens.is_none()
+                && cli.accuracy_tokenizer.is_none()
+                && cli.accuracy_csv.is_none(),
+            "static accuracy options require --accuracy-benchmark and conflict with --agentic-benchmark"
+        );
+    }
     Ok(())
+}
+
+fn has_agentic_flags(cli: &Cli) -> bool {
+    !cli.agentic_tasks.is_empty()
+        || cli.agentic_max_episodes.is_some()
+        || cli.agentic_task_concurrency.is_some()
+        || cli.agentic_environment.is_some()
+        || cli.agentic_output_dir.is_some()
+        || cli.agentic_max_turns.is_some()
+        || cli.agentic_max_tokens.is_some()
+        || cli.agentic_context_window.is_some()
+        || cli.agentic_parser.is_some()
+        || cli.agentic_no_summarize
+        || cli.agentic_primary_reward.is_some()
+        || cli.agentic_overwrite
+        || cli.agentic_tokenizer.is_some()
+        || cli.agentic_verbose
 }
 
 fn ensure_adaptive_flag_envelope(cli: &Cli) -> anyhow::Result<()> {
@@ -521,6 +620,243 @@ fn run_accuracy_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<(
     }
     if let Some(path) = &cli.accuracy_csv {
         write_accuracy_summary_csv(&report.accuracy, path)?;
+    }
+    Ok(())
+}
+
+fn run_agentic_mode(cli: &Cli, registries: &AiperfRegistry) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !cli.adaptive_scale,
+        "--adaptive-scale is not supported with --agentic-benchmark"
+    );
+    anyhow::ensure!(
+        !has_ancillary_timing_flags(cli),
+        "ancillary timing-policy flags are not supported with --agentic-benchmark"
+    );
+    anyhow::ensure!(
+        cli.request_rate.is_none()
+            && cli.user_centric_rate.is_none()
+            && !cli.fixed_schedule
+            && cli.input_file.is_none()
+            && cli.requests.is_none()
+            && cli.duration.is_none()
+            && cli.sessions.is_none()
+            && cli.prefill_concurrency.is_none(),
+        "--agentic-benchmark owns its task schedule and conflicts with ordinary workload/stop flags"
+    );
+    let base_url = cli
+        .base_url
+        .clone()
+        .unwrap_or_else(|| "http://localhost:8000".to_string());
+    let model = cli.model.clone().unwrap_or_else(|| "model".to_string());
+    let requested_dataset = cli
+        .agentic_benchmark
+        .as_deref()
+        .expect("caller checked agentic benchmark");
+    let model_concurrency = cli.concurrency.unwrap_or(16);
+    let task_concurrency = cli.agentic_task_concurrency.unwrap_or(1);
+    let max_tokens = cli.agentic_max_tokens.unwrap_or(4_096);
+    let context_window = cli.agentic_context_window.unwrap_or(131_072);
+    let parser = cli.agentic_parser.as_deref().unwrap_or("json");
+    anyhow::ensure!(
+        model_concurrency > 0,
+        "--concurrency must be greater than zero"
+    );
+    anyhow::ensure!(
+        task_concurrency > 0,
+        "--agentic-task-concurrency must be greater than zero"
+    );
+    anyhow::ensure!(
+        max_tokens > 0,
+        "--agentic-max-tokens must be greater than zero"
+    );
+    anyhow::ensure!(
+        context_window > 0,
+        "--agentic-context-window must be greater than zero"
+    );
+    anyhow::ensure!(
+        max_tokens <= context_window,
+        "--agentic-max-tokens must not exceed --agentic-context-window"
+    );
+    anyhow::ensure!(
+        matches!(parser, "json" | "xml"),
+        "--agentic-parser must be json or xml"
+    );
+    for (name, value) in [
+        ("--agentic-max-episodes", cli.agentic_max_episodes),
+        ("--agentic-max-turns", cli.agentic_max_turns),
+    ] {
+        if let Some(value) = value {
+            anyhow::ensure!(value > 0, "{name} must be greater than zero");
+        }
+    }
+    let output_dir = cli
+        .agentic_output_dir
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("artifacts/agentic"))
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("--agentic-output-dir must be valid UTF-8"))?
+        .to_string();
+    let evaluator_config = AgenticEvaluatorLoadConfig {
+        task_names: (!cli.agentic_tasks.is_empty()).then(|| cli.agentic_tasks.clone()),
+        max_episodes: cli.agentic_max_episodes,
+        task_concurrency,
+        environment: cli
+            .agentic_environment
+            .clone()
+            .unwrap_or_else(|| "docker".to_string()),
+        output_dir,
+        max_turns: cli.agentic_max_turns,
+        max_tokens,
+        context_window,
+        parser: parser.to_string(),
+        enable_summarize: !cli.agentic_no_summarize,
+        primary_reward: cli.agentic_primary_reward.clone(),
+        overwrite: cli.agentic_overwrite,
+    };
+
+    tracing::info!(
+        dataset = requested_dataset,
+        base = %base_url,
+        model = %model,
+        model_concurrency,
+        task_concurrency,
+        environment = evaluator_config.environment,
+        max_episodes = ?evaluator_config.max_episodes,
+        max_turns = ?evaluator_config.max_turns,
+        "starting canonical agentic accuracy benchmark"
+    );
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let local = tokio::task::LocalSet::new();
+    let report = local.block_on(&rt, async {
+        let evaluator = PythonEvaluator::spawn(WorkerProcessConfig::python_module())
+            .await
+            .context("starting canonical Python agentic evaluator")?;
+        anyhow::ensure!(
+            evaluator.supports_agentic(),
+            "canonical evaluator worker does not advertise agentic_harbor support"
+        );
+        let worker_identity = evaluator.identity().clone();
+        tracing::info!(
+            protocol = worker_identity.protocol,
+            worker_version = worker_identity.worker_version,
+            python_version = worker_identity.python_version,
+            python_executable = worker_identity.python_executable,
+            packages = ?worker_identity.packages,
+            dependency_lock_sha256 = ?worker_identity.dependency_lock_sha256,
+            container_digest = ?worker_identity.container_digest,
+            "canonical agentic evaluator initialized"
+        );
+        let tokenizer: Arc<dyn TextTokenizer> =
+            Arc::from(load_tokenizer(cli.agentic_tokenizer.as_deref())?);
+        let turn_builder = Rc::new(DatasetAgenticTurnBuilder::new(
+            model.clone(),
+            tokenizer.clone(),
+            EndpointConfig {
+                streaming: true,
+                use_legacy_max_tokens: true,
+                use_server_token_count: true,
+                ..EndpointConfig::default()
+            },
+            registries.endpoint_resolver(),
+        )?);
+        let evaluator: Box<dyn AgenticEvaluator> = Box::new(evaluator);
+        let workload = AgenticWorkload::prepare(
+            evaluator,
+            requested_dataset,
+            &model,
+            &evaluator_config,
+            model_concurrency,
+            turn_builder,
+        )
+        .await?;
+        let evaluator_identity = workload.identity().clone();
+        tracing::info!(
+            harness = evaluator_identity.harness,
+            harness_version = evaluator_identity.harness_version,
+            harness_source_sha256 = evaluator_identity.harness_source_sha256,
+            dataset = ?evaluator_identity.dataset,
+            agent = evaluator_identity.agent,
+            agent_version = evaluator_identity.agent_version,
+            environment = evaluator_identity.environment,
+            verifier = evaluator_identity.verifier,
+            episodes = evaluator_identity.episode_count,
+            primary_reward = ?evaluator_identity.primary_reward,
+            tokenizer = tokenizer.name(),
+            "canonical agentic tasks frozen before measurement"
+        );
+        let result = async {
+            let scheduled_workload: Rc<dyn Workload> = workload.clone();
+            let scheduled = run_scheduled_online(
+                base_url.clone(),
+                model.clone(),
+                scheduled_workload,
+                cli.http2,
+                Vec::new(),
+            )
+            .await?;
+            let results = workload.results()?;
+            finalize_agentic_report(
+                requested_dataset,
+                &model,
+                model_concurrency,
+                scheduled,
+                worker_identity,
+                evaluator_identity,
+                &evaluator_config,
+                results,
+            )
+        }
+        .await;
+        match result {
+            Ok(report) => {
+                workload.shutdown().await?;
+                Ok(report)
+            }
+            Err(error) => {
+                if let Err(shutdown_error) = workload.shutdown().await {
+                    tracing::warn!(
+                        error = %shutdown_error,
+                        "agentic evaluator also failed during error-path shutdown"
+                    );
+                }
+                Err(error)
+            }
+        }
+    })?;
+
+    print_report_table(&report.performance);
+    print_agentic_table(&report.evaluation.summary);
+    if report.evaluation.summary.infrastructure_error_count > 0
+        || report.evaluation.summary.cancelled_count > 0
+    {
+        tracing::warn!(
+            infrastructure_errors = report.evaluation.summary.infrastructure_error_count,
+            cancelled = report.evaluation.summary.cancelled_count,
+            "non-scored agentic episodes are reported as infrastructure/cancellation, not incorrect answers"
+        );
+    }
+    if cli.agentic_verbose {
+        for result in &report.results {
+            tracing::info!(
+                episode_id = result.episode_id.as_str(),
+                task = result.task,
+                outcome = ?result.outcome,
+                rewards = ?result.rewards,
+                primary_reward = ?result.primary_reward,
+                model_calls = result.model_calls,
+                error_kind = ?result.error_kind,
+                error_message = ?result.error_message,
+                artifact_path = ?result.artifact_path,
+                "agentic canonical episode result"
+            );
+        }
+    }
+    if let Some(path) = &cli.json {
+        write_native_report_json(&report.native_report, path)?;
     }
     Ok(())
 }

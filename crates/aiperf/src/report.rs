@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use aiperf_metrics::{AccuracyAnalysis, NativeReport};
+use aiperf_metrics::{AccuracyAnalysis, AgenticEvaluationSummary, NativeReport};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
@@ -125,6 +125,37 @@ pub fn print_accuracy_table(analysis: &AccuracyAnalysis) {
         eprintln!(
             "warning: every accuracy response was unparsed; verify the target returns valid completions before trusting this score"
         );
+    }
+}
+
+/// Print canonical agentic verifier rewards and explicit terminal classes.
+pub fn print_agentic_table(summary: &AgenticEvaluationSummary) {
+    println!();
+    println!(
+        "Agentic episodes : {} total, {} verified, {} infrastructure errors, {} cancelled",
+        summary.episode_count,
+        summary.completed_count,
+        summary.infrastructure_error_count,
+        summary.cancelled_count,
+    );
+    println!();
+    println!(
+        "{:<40} {:>9} {:>14} {:>14} {:>14}",
+        "Canonical verifier reward", "n", "avg", "min", "max"
+    );
+    println!("{}", "-".repeat(96));
+    for (name, reward) in &summary.rewards {
+        println!(
+            "{:<40} {:>9} {:>14.6} {:>14.6} {:>14.6}",
+            name, reward.n, reward.avg, reward.min, reward.max,
+        );
+    }
+    if summary.rewards.is_empty() {
+        println!("{:<40} {:>9}", "(no completed verifier results)", 0);
+    }
+    if let (Some(name), Some(score)) = (&summary.primary_reward, summary.primary_score) {
+        println!("{}", "-".repeat(96));
+        println!("Primary reward  : {name} = {score:.6}");
     }
 }
 

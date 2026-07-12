@@ -27,11 +27,17 @@ use aiperf_dataset::{
     Dataset, EndpointResolver, RawRow, RowOrigin, SegmentPool, TextTokenizer,
 };
 use aiperf_endpoints::EndpointConfig;
+use aiperf_metrics::{
+    AgenticEpisodeReport, AgenticEpisodeReportOutcome, AgenticEvaluationReport,
+    AgenticEvaluationSummary, AgenticEvaluatorReportInfo, AgenticRewardSummary,
+    AgenticRunConfigReport, EvaluatorDatasetReportInfo, EvaluatorReportInfo, NativeReport,
+    ReportError, ReportRunInfo, RunOutcome,
+};
 use aiperf_rng::RngRoot;
 use aiperf_timing::SlotPool;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
-use loadgen_core::collector::ReplayTerminalStatus;
+use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 
@@ -678,6 +684,263 @@ fn model_result(
         error_kind,
         error_message,
     }
+}
+
+/// Combined performance and canonical agentic-evaluation result.
+#[derive(Debug)]
+pub struct AgenticRunReport {
+    /// Requested Harbor package or local task directory.
+    pub dataset: String,
+    /// Target model name.
+    pub model: String,
+    /// Exact Python worker and dependency identity.
+    pub worker: aiperf_accuracy::EvaluatorIdentity,
+    /// Frozen Harbor, dataset, agent, environment, and verifier identity.
+    pub evaluator: AgenticEvaluatorIdentity,
+    /// Standard performance report over every Rust-owned model call.
+    pub performance: TraceSimulationReport,
+    /// Typed agentic identity, configuration, aggregates, and episode records.
+    pub evaluation: AgenticEvaluationReport,
+    /// Unified native-v2 report.
+    pub native_report: NativeReport,
+    /// Canonical episode results in frozen evaluator order.
+    pub results: Vec<AgenticEpisodeResult>,
+}
+
+/// Join a drained normal-pipeline run with canonical harness results.
+///
+/// Rust only aggregates finite verifier-owned reward values. It never decides
+/// benchmark correctness, and infrastructure/cancelled episodes are reported
+/// separately rather than converted into zero-valued model scores.
+#[allow(clippy::too_many_arguments)]
+pub fn finalize_agentic_report(
+    requested_dataset: &str,
+    model: &str,
+    model_concurrency: usize,
+    scheduled: crate::scheduled::ScheduledRunReport,
+    worker: aiperf_accuracy::EvaluatorIdentity,
+    evaluator: AgenticEvaluatorIdentity,
+    config: &AgenticEvaluatorLoadConfig,
+    results: Vec<AgenticEpisodeResult>,
+) -> Result<AgenticRunReport> {
+    ensure!(
+        evaluator.episode_count == results.len(),
+        "agentic evaluator declared {} episodes but finalized {}",
+        evaluator.episode_count,
+        results.len()
+    );
+    ensure!(
+        evaluator.environment == config.environment,
+        "agentic evaluator changed environment {:?} to {:?}",
+        config.environment,
+        evaluator.environment
+    );
+
+    let mut reward_values = BTreeMap::<String, Vec<f64>>::new();
+    let mut completed_count = 0usize;
+    let mut infrastructure_error_count = 0usize;
+    let mut cancelled_count = 0usize;
+    let mut result_primary_rewards = BTreeSet::new();
+    let mut report_records = Vec::with_capacity(results.len());
+    for result in &results {
+        ensure!(
+            result.duration_seconds.is_finite() && result.duration_seconds >= 0.0,
+            "agentic episode {:?} has invalid duration {}",
+            result.episode_id.as_str(),
+            result.duration_seconds
+        );
+        let outcome = match result.outcome {
+            aiperf_accuracy::AgenticEpisodeOutcome::Completed => {
+                completed_count += 1;
+                for (name, value) in &result.rewards {
+                    ensure!(
+                        value.is_finite(),
+                        "agentic episode {:?} has non-finite reward {name:?}",
+                        result.episode_id.as_str()
+                    );
+                    reward_values.entry(name.clone()).or_default().push(*value);
+                }
+                if let Some(primary) = &result.primary_reward {
+                    result_primary_rewards.insert(primary.clone());
+                }
+                AgenticEpisodeReportOutcome::Completed
+            }
+            aiperf_accuracy::AgenticEpisodeOutcome::InfrastructureError => {
+                infrastructure_error_count += 1;
+                AgenticEpisodeReportOutcome::InfrastructureError
+            }
+            aiperf_accuracy::AgenticEpisodeOutcome::Cancelled => {
+                cancelled_count += 1;
+                AgenticEpisodeReportOutcome::Cancelled
+            }
+        };
+        report_records.push(AgenticEpisodeReport {
+            episode_id: result.episode_id.as_str().to_string(),
+            task: result.task.clone(),
+            outcome,
+            rewards: result.rewards.clone(),
+            primary_reward: result.primary_reward.clone(),
+            duration_seconds: result.duration_seconds,
+            model_calls: result.model_calls,
+            prompt_tokens: result.prompt_tokens,
+            completion_tokens: result.completion_tokens,
+            cached_tokens: result.cached_tokens,
+            error_kind: result.error_kind.clone(),
+            error_message: result.error_message.clone(),
+            artifact_path: result.artifact_path.clone(),
+        });
+    }
+
+    let mut rewards = BTreeMap::new();
+    for (name, values) in reward_values {
+        let n = values.len();
+        let sum = values.iter().sum::<f64>();
+        let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let avg = sum / n as f64;
+        ensure!(
+            avg.is_finite() && min.is_finite() && max.is_finite(),
+            "canonical reward {name:?} overflowed finite report aggregation"
+        );
+        rewards.insert(name, AgenticRewardSummary { n, avg, min, max });
+    }
+    let primary_reward = evaluator.primary_reward.clone().or_else(|| {
+        (result_primary_rewards.len() == 1)
+            .then(|| result_primary_rewards.iter().next().cloned())
+            .flatten()
+    });
+    let primary_score = primary_reward
+        .as_ref()
+        .and_then(|reward| rewards.get(reward))
+        .map(|summary| summary.avg);
+    if let Some(configured) = &evaluator.primary_reward {
+        ensure!(
+            primary_score.is_some(),
+            "agentic evaluator selected primary reward {configured:?} but no completed episode reported it"
+        );
+    }
+
+    let evaluation = AgenticEvaluationReport {
+        evaluator: AgenticEvaluatorReportInfo {
+            harness: evaluator.harness.clone(),
+            harness_version: evaluator.harness_version.clone(),
+            harness_source_sha256: evaluator.harness_source_sha256.clone(),
+            agent: evaluator.agent.clone(),
+            agent_version: evaluator.agent_version.clone(),
+            environment: evaluator.environment.clone(),
+            verifier: evaluator.verifier.clone(),
+        },
+        config: AgenticRunConfigReport {
+            dataset: requested_dataset.to_string(),
+            task_names: config.task_names.clone(),
+            max_episodes: config.max_episodes,
+            task_concurrency: config.task_concurrency,
+            model_concurrency,
+            output_dir: config.output_dir.clone(),
+            max_turns: config.max_turns,
+            max_tokens: config.max_tokens,
+            context_window: config.context_window,
+            parser: config.parser.clone(),
+            enable_summarize: config.enable_summarize,
+            primary_reward: config.primary_reward.clone(),
+            overwrite: config.overwrite,
+        },
+        summary: AgenticEvaluationSummary {
+            episode_count: results.len(),
+            completed_count,
+            infrastructure_error_count,
+            cancelled_count,
+            primary_reward,
+            primary_score,
+            rewards,
+        },
+        records: report_records,
+    };
+    let evaluator_report = agentic_worker_report_info(&worker, requested_dataset, &evaluator);
+    let errors = agentic_report_errors(&results);
+    let native_report = NativeReport::from_outcome(
+        &scheduled.native_metrics,
+        &RunOutcome {
+            run: ReportRunInfo {
+                mode: Some("agentic_accuracy".to_string()),
+                model: Some(model.to_string()),
+            },
+            evaluator: Some(evaluator_report),
+            agentic: Some(evaluation.clone()),
+            errors,
+            ..RunOutcome::default()
+        },
+    );
+    Ok(AgenticRunReport {
+        dataset: requested_dataset.to_string(),
+        model: model.to_string(),
+        worker,
+        evaluator,
+        performance: scheduled.performance,
+        evaluation,
+        native_report,
+        results,
+    })
+}
+
+fn agentic_worker_report_info(
+    worker: &aiperf_accuracy::EvaluatorIdentity,
+    requested_dataset: &str,
+    evaluator: &AgenticEvaluatorIdentity,
+) -> EvaluatorReportInfo {
+    EvaluatorReportInfo {
+        protocol: worker.protocol,
+        worker_version: worker.worker_version.clone(),
+        python_version: worker.python_version.clone(),
+        python_executable: worker.python_executable.clone(),
+        packages: worker.packages.clone(),
+        worker_source_sha256: worker.worker_source_sha256.clone(),
+        dependency_lock_sha256: worker.dependency_lock_sha256.clone(),
+        container_digest: worker.container_digest.clone(),
+        capabilities: worker.capabilities.clone(),
+        benchmark: evaluator
+            .dataset
+            .benchmark
+            .clone()
+            .unwrap_or_else(|| requested_dataset.to_string()),
+        grader: evaluator.verifier.clone(),
+        dataset: EvaluatorDatasetReportInfo {
+            provider: evaluator.dataset.provider.clone(),
+            benchmark: evaluator.dataset.benchmark.clone(),
+            repository: evaluator.dataset.repository.clone(),
+            subset: evaluator.dataset.subset.clone(),
+            revision: evaluator.dataset.revision.clone(),
+            evaluation_splits: evaluator.dataset.evaluation_splits.clone(),
+            task_version: evaluator.dataset.task_version,
+        },
+    }
+}
+
+fn agentic_report_errors(results: &[AgenticEpisodeResult]) -> Vec<ReportError> {
+    let mut groups = BTreeMap::<(String, String), usize>::new();
+    for result in results {
+        let prefix = match result.outcome {
+            aiperf_accuracy::AgenticEpisodeOutcome::Completed => continue,
+            aiperf_accuracy::AgenticEpisodeOutcome::InfrastructureError => "AgenticInfrastructure",
+            aiperf_accuracy::AgenticEpisodeOutcome::Cancelled => "AgenticCancelled",
+        };
+        let kind = result.error_kind.as_deref().unwrap_or("Unknown");
+        let error_type = format!("{prefix}:{kind}");
+        let message = result
+            .error_message
+            .clone()
+            .unwrap_or_else(|| format!("agentic episode ended {prefix}"));
+        *groups.entry((error_type, message)).or_default() += 1;
+    }
+    groups
+        .into_iter()
+        .map(|((error_type, message), count)| ReportError {
+            code: None,
+            error_type,
+            message,
+            count,
+        })
+        .collect()
 }
 
 #[cfg(test)]

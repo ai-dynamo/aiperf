@@ -266,6 +266,157 @@ pub struct EvaluatorReportInfo {
     pub dataset: EvaluatorDatasetReportInfo,
 }
 
+/// Exact stateful harness identity retained beside the generic worker identity.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct AgenticEvaluatorReportInfo {
+    /// Canonical harness name.
+    pub harness: String,
+    /// Exact harness package version.
+    pub harness_version: String,
+    /// SHA-256 over the installed harness sources.
+    pub harness_source_sha256: String,
+    /// Agent scaffold name.
+    pub agent: String,
+    /// Exact adapter and inherited scaffold version.
+    pub agent_version: String,
+    /// Environment provider used for task sandboxes.
+    pub environment: String,
+    /// Canonical verifier implementation description.
+    pub verifier: String,
+}
+
+/// Reproducibility-relevant configuration for one agentic evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct AgenticRunConfigReport {
+    /// Requested immutable Harbor package or local dataset path.
+    pub dataset: String,
+    /// Optional exact task names selected from the package.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_names: Option<Vec<String>>,
+    /// Optional deterministic episode cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_episodes: Option<usize>,
+    /// Maximum simultaneously active task environments.
+    pub task_concurrency: usize,
+    /// Maximum simultaneously active model calls.
+    pub model_concurrency: usize,
+    /// Harness artifact root.
+    pub output_dir: String,
+    /// Optional model-call limit per episode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<usize>,
+    /// Maximum generated tokens per model call.
+    pub max_tokens: usize,
+    /// Explicit context-window limit used by the agent scaffold.
+    pub context_window: usize,
+    /// Canonical agent command parser.
+    pub parser: String,
+    /// Whether canonical context summarization was enabled.
+    pub enable_summarize: bool,
+    /// Optional explicitly selected primary verifier reward.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reward: Option<String>,
+    /// Whether cached task packages could be replaced.
+    pub overwrite: bool,
+}
+
+/// Generic aggregate statistics over one canonical verifier reward.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct AgenticRewardSummary {
+    /// Number of completed episodes reporting this reward.
+    pub n: usize,
+    /// Arithmetic mean over canonical verifier values.
+    pub avg: f64,
+    /// Minimum canonical verifier value.
+    pub min: f64,
+    /// Maximum canonical verifier value.
+    pub max: f64,
+}
+
+/// Run-level agentic result summary.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct AgenticEvaluationSummary {
+    /// Every selected episode, regardless of terminal class.
+    pub episode_count: usize,
+    /// Episodes that reached canonical verification.
+    pub completed_count: usize,
+    /// Episodes that failed in inference, environment, harness, or verification infrastructure.
+    pub infrastructure_error_count: usize,
+    /// Episodes explicitly cancelled by Rust policy.
+    pub cancelled_count: usize,
+    /// Uniform primary reward selected for the run, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reward: Option<String>,
+    /// Mean primary reward over completed episodes only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_score: Option<f64>,
+    /// Canonical reward aggregates keyed by verifier-owned name.
+    pub rewards: BTreeMap<String, AgenticRewardSummary>,
+}
+
+/// Terminal class for one report-safe agentic episode record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgenticEpisodeReportOutcome {
+    /// The canonical verifier returned rewards.
+    Completed,
+    /// Inference, environment, harness, or verifier infrastructure failed.
+    InfrastructureError,
+    /// Rust policy cancelled the episode.
+    Cancelled,
+}
+
+/// Full canonical result for one opaque agentic episode.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct AgenticEpisodeReport {
+    /// Opaque evaluator-owned episode identifier.
+    pub episode_id: String,
+    /// Canonical task label.
+    pub task: String,
+    /// Explicit terminal classification.
+    pub outcome: AgenticEpisodeReportOutcome,
+    /// Finite verifier rewards, empty for non-completed episodes.
+    pub rewards: BTreeMap<String, f64>,
+    /// Per-episode selected primary reward.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_reward: Option<String>,
+    /// End-to-end harness wall time.
+    pub duration_seconds: f64,
+    /// Number of Rust-owned inference calls.
+    pub model_calls: usize,
+    /// Aggregate prompt tokens reported by Rust.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    /// Aggregate completion tokens reported by Rust.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    /// Aggregate cached prompt tokens reported by Rust.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    /// Infrastructure or cancellation category.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    /// Infrastructure or cancellation detail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    /// Canonical harness artifact path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+}
+
+/// Typed native-v2 agentic evaluation block.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct AgenticEvaluationReport {
+    /// Exact harness, agent, environment, and verifier identity.
+    pub evaluator: AgenticEvaluatorReportInfo,
+    /// Reproducibility-relevant authored configuration.
+    pub config: AgenticRunConfigReport,
+    /// Generic aggregates over canonical verifier outputs.
+    pub summary: AgenticEvaluationSummary,
+    /// Complete results in frozen evaluator order.
+    pub records: Vec<AgenticEpisodeReport>,
+}
+
 /// Runtime facts supplied to a [`Reporter`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunOutcome {
@@ -281,6 +432,8 @@ pub struct RunOutcome {
     pub accuracy_records: Vec<AccuracyRecord>,
     /// Exact external evaluator identity for accuracy runs.
     pub evaluator: Option<EvaluatorReportInfo>,
+    /// Optional stateful agentic evaluator result block.
+    pub agentic: Option<AgenticEvaluationReport>,
     /// Grouped run errors.
     pub errors: Vec<ReportError>,
 }
@@ -326,6 +479,7 @@ impl Reporter for NativeReporter {
             accuracy: outcome.accuracy.clone(),
             accuracy_records: outcome.accuracy_records.clone(),
             evaluator: outcome.evaluator.clone(),
+            agentic: outcome.agentic.clone(),
             errors: outcome.errors.clone(),
         }
     }
@@ -356,6 +510,9 @@ pub struct NativeReport {
     /// Exact canonical evaluator identity. Absent outside accuracy mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluator: Option<EvaluatorReportInfo>,
+    /// Stateful harness identity, configuration, summary, and episode records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agentic: Option<AgenticEvaluationReport>,
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,

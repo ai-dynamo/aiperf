@@ -43,8 +43,10 @@ pub use derived::{delta_ms, error_adjusted_result, network_adjusted_ms};
 pub use ingest::{HttpTrace, RecordIngest, TokenCounts, UsageMetrics};
 pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_distribution};
 pub use report::{
-    EvaluatorDatasetReportInfo, EvaluatorReportInfo, MetricEntry, MetricSeries,
-    NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReporter, ReportCounterStats,
+    AgenticEpisodeReport, AgenticEpisodeReportOutcome, AgenticEvaluationReport,
+    AgenticEvaluationSummary, AgenticEvaluatorReportInfo, AgenticRewardSummary,
+    AgenticRunConfigReport, EvaluatorDatasetReportInfo, EvaluatorReportInfo, MetricEntry,
+    MetricSeries, NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReporter, ReportCounterStats,
     ReportDistributionStats, ReportError, ReportRunInfo, ReportScalarStats, ReportStats,
     ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };

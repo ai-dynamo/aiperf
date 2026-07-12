@@ -335,3 +335,31 @@ returns parsed content/ID/finish/usage. The CLI/native-v2 agentic report surface
 and a real Harbor task-container run remain unbuilt at this point; those are
 still required before describing SWE-bench or another Harbor package as end-to-
 end supported.
+
+## Addendum — 2026-07-11 (agentic CLI and native-v2 reporting)
+
+The CLI/report caveat in the preceding addendum is now superseded.
+`--agentic-benchmark` launches the supervised worker, resolves and freezes an
+immutable Harbor package or local task directory before measurement, and runs
+the resulting `AgenticWorkload` through the generic `run_scheduled_online`
+composition boundary. Accuracy code still does not create or call an HTTP
+client: that runner assembles the same `TransportSink`, phase runner, observers,
+credits, timing, metrics, and endpoint path used by ordinary scheduled runs.
+
+The native-v2 report now carries both layers of provenance: the generic worker
+block records protocol, Python, package, worker-source, dependency-lock, and
+container identities plus the resolved dataset revision; the typed `agentic`
+block records exact harness source/version, agent scaffold, environment,
+verifier, authored run configuration, reward aggregates, and every opaque
+episode result/artifact path. Rust only aggregates finite canonical verifier
+values. Completed episodes form reward denominators; environment, harness,
+verifier, inference, and cancellation outcomes are counted and emitted as
+explicit report errors, never rewritten as zero or incorrect scores.
+
+CLI acceptance proof uses a supervised stateful JSONL worker and a real
+loopback OpenAI SSE endpoint. One episode makes multiple correlated turns, all
+requests preserve evaluator-authored messages/generation/tools through the
+ordinary Rust transport, exact response metadata returns to the worker, and a
+second sandbox failure remains outside the primary-score denominator. A real
+Harbor task-container run is still required before claiming SWE-bench or any
+other packaged benchmark has been proven end to end in this environment.

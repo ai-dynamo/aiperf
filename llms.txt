@@ -49,13 +49,13 @@ fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-co
 | `aiperf-adaptive` | transport-neutral adaptive-control leaf: live concurrency/prefill/rate/users actuators, tumbling windows joining arrival/admit/token/usage/terminal observations, authoritative completion-token OSL/ITL reconciliation, SLA evaluation, step policies, `ramp_until_fail` controller, Clock-paced runtime, schema-v2 artifacts | `src/actuator.rs`, `src/window.rs`, `src/sla.rs`, `src/step.rs`, `src/controller.rs`, `src/runtime.rs`, `src/artifacts.rs` |
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic `SamplingRng` / `DistributionSampler` / `SequenceSampler` seams, cached cumulative weighted distributions, fixed-seed profile canary | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
 | `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline with exact raw/message replay, media, context, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity, never ground truth | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
-| `aiperf-metrics` | IO-free performance/accuracy engine: validated catalog, columns/ragged replay, formulas, SLO/phase/window/timeslice logic, sweeps, accuracy analysis, typed native-v2 reporter including exact evaluator identity | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
+| `aiperf-metrics` | IO-free performance/accuracy engine: validated catalog, columns/ragged replay, formulas, SLO/phase/window/timeslice logic, sweeps, accuracy analysis, typed native-v2 reporter including exact static-evaluator and stateful agentic provenance/result blocks | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
 | `aiperf-accuracy` | versioned JSONL control plane: static `AccuracyEvaluator` plus stateful `AgenticEvaluator`, opaque problem/episode/call IDs, and supervised long-lived `PythonEvaluator`; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. The pinned Harbor callback protocol is consumed by `aiperf::agentic`. | `src/protocol.rs`, `src/worker.rs` |
 | `aiperf-extensions` | cycle-free compile-time composition for dataset-format, sampler, and endpoint registries; accuracy is a directly injected process seam, not a Rust plugin category | `src/lib.rs` |
 | `aiperf-core` | shared measurement helpers: OpenAI SSE chunk types, chat request-body builder, and `CollectorObserver` recorder; no HTTP client or clock of its own | `src/sse.rs`, `src/chat.rs`, `src/observer.rs` |
 | `aiperf-transport` | the Clock-injected hyper transport (h1/h2c/UDS, rustls, fine-grained trace timing, meaningful-SSE first-token filtering, captured full-body send completion, post-send HTTP 499 cancellation, reuse strategies) | `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-graph` | Graph-IR dataflow over the unified dataset store, firing-gate executor, DES drivers, transport benches, and worker-local native metrics merged once at join | `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/static-accuracy, ancillary policy, and graph mode. Scheduled entry points lower through `phase_runtime` as profiling phases; typed plans expose warmup/seamless multi-phase runs with shared resources and phase-owned ramps. Accuracy keeps inference in Rust and batch-grades through the canonical worker. `AgenticWorkload` routes stateful evaluator calls through the same dataset, scheduled-runtime, endpoint, and transport path; its CLI/report composition remains unbuilt. Every `--json` path emits native v2. | `src/main.rs`, `src/agentic.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
+| `aiperf` | CLI/runtime composition: online paced/scheduled/adaptive/static-and-agentic-accuracy, ancillary policy, and graph mode. Scheduled entry points lower through `phase_runtime` as profiling phases; typed plans expose warmup/seamless multi-phase runs with shared resources and phase-owned ramps. Accuracy keeps inference in Rust and delegates canonical scoring through the worker. `--agentic-benchmark` runs `AgenticWorkload` through the same dataset, scheduled-runtime, endpoint, and transport path and emits typed native-v2 provenance, reward summaries, episode records, and infrastructure errors. Every `--json` path emits native v2. | `src/main.rs`, `src/agentic.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/adaptive.rs`, `src/run.rs`, `src/scheduled.rs`, `src/scheduler.rs`, `src/user_centric.rs`, `src/fixed_schedule.rs`, `src/report.rs` |
 
 Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`, `aiperf-core`,
 `aiperf-dataset`, `aiperf-extensions`, `aiperf-graph`, `aiperf-metrics`, `aiperf-timing`,
@@ -91,6 +91,24 @@ AIPERF_ACCURACY_PYTHON=/path/to/python cargo run --release -p aiperf -- [BASE_UR
 ```
 
 Rust sends every LLM request and parses every response through its normal transport. The Python/Lighteval child prepares opaque problems and batch-grades terminal response text; it never contacts the inference server, and ground truth/private tests never cross the strict JSONL protocol. Worker failure is infrastructure error, and native v2 records exact evaluator/package/dataset identity.
+
+## Run canonical agentic accuracy
+
+```bash
+AIPERF_ACCURACY_PYTHON=/path/to/pinned/agentic/python \
+cargo run --release -p aiperf -- [BASE_URL] [MODEL] \
+  --agentic-benchmark harbor/swebench@REVISION \
+  --agentic-task-concurrency 4 --concurrency 16 \
+  --agentic-max-episodes 100 --json out.json
+```
+
+Harbor owns task packages, Terminus-2, environments, trajectories, terminal
+execution, and verifier rewards. Its callback backend publishes model calls but
+contains no inference client; Rust issues every turn through the generic online
+scheduled/transport runner. Native v2 records exact worker/lock/container,
+harness source/version, dataset revision, agent, environment, verifier, authored
+configuration, canonical rewards, episode records, and artifacts. Infrastructure
+and cancellation records are never converted into zero/incorrect scores.
 
 ## Run the scheduled workloads
 
@@ -130,8 +148,8 @@ early-issue/lateness statistics.
   (canonical Python task/agent/environment/verifier ownership) and
   `aiperf/src/accuracy.rs` (normal Rust static dataset lowering, response capture,
   batched grade correlation, accumulation/reporting) or `aiperf/src/agentic.rs`
-  (stateful Rust admission and normal-pipeline model-call issuance). Agentic CLI
-  and native-v2 result composition are not yet built.
+  (stateful Rust admission, normal-pipeline model-call issuance, and typed
+  native-v2 result composition). `aiperf/src/main.rs` owns the agentic CLI.
 - **Where do native TTFT/ITL/e2e/throughput/goodput and sweeps come from?**
   `aiperf/src/metrics.rs` (runtime join) → `aiperf-metrics/src/{store,accumulator,sweepline}.rs`.
   `aiperf/src/http.rs` also translates the real transport trace into HTTP metric facts;
@@ -227,8 +245,9 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   accumulator/analyzer; supervised pinned Python workers own canonical datasets,
   environments, hidden tests, execution, and scoring over opaque JSONL IDs. Static
   Lighteval runs are wired. The stateful `AgenticEvaluator`, pinned Harbor 0.18
-  callback adapter, and generic normal-pipeline `AgenticWorkload` are built with
-  exact provenance. CLI/reporting and real task-container E2E remain.
+  callback adapter, generic normal-pipeline `AgenticWorkload`, agentic CLI, and
+  typed native-v2 reporting are built with exact provenance; loopback CLI E2E is
+  proven. Real Harbor task-container E2E remains.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,

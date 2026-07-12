@@ -667,9 +667,25 @@ pub async fn run_single_turn_dataset_online(
     http2: bool,
     record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
 ) -> anyhow::Result<ScheduledRunReport> {
-    let base_urls = parse_base_urls(&base_url)?;
     let workload: Rc<dyn Workload> =
         Rc::new(SingleTurnDatasetWorkload::new(conversations, concurrency)?);
+    run_scheduled_online(base_url, model, workload, http2, record_processors).await
+}
+
+/// Run any prepared [`Workload`] through the standard online transport path.
+///
+/// This is the application composition boundary for dynamic workloads such as
+/// agentic evaluation. The workload owns scheduling decisions only; inference
+/// still traverses the shared `TransportSink`, observers, credits, metrics, and
+/// phase runner assembled here.
+pub async fn run_scheduled_online(
+    base_url: String,
+    model: String,
+    workload: Rc<dyn Workload>,
+    http2: bool,
+    record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
+) -> anyhow::Result<ScheduledRunReport> {
+    let base_urls = parse_base_urls(&base_url)?;
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(TransportSink::new_multi(
