@@ -560,8 +560,26 @@ handshake, or credit-router wire type was reintroduced.
   proves profiling starts before warmup's delayed HTTP return. Thus virtual and wall-clock
   modes use the same phase driver and stats schema.
 
-The generic Graph-IR phase consumer and a native CLI syntax for authoring an arbitrary phase
-list remain separate composition work; neither changes the built runner/orchestrator policy.
-Graph mode still consumes only its existing duration gate. The scheduled CLI paths already use
-the direct phase driver as one profiling phase, while warmup/multi-phase composition is exposed
-through the typed `ScheduledPhasePlan` API.
+## Graph-IR convergence addendum (2026-07-12)
+
+**Status: built.** `aiperf-runner/src/graph_phase_runtime.rs` is the one
+backend-neutral Graph-IR phase adapter. It owns root source/arrival/admission
+composition, `ClockPhaseOrchestrator`, exact node and first-token progress,
+duration/grace/drain/force escalation, seamless handoff, ramps, adaptive
+concurrency/prefill/request-rate control, and phase-tagged record capture.
+
+`RunnerGraphPhaseBackendFactory` is the only mode seam beneath that policy.
+The online implementation constructs the existing thread-per-core HTTP
+placement; the Dynamo implementation returns phase-local execution backends
+over one run-scoped `SimClock`, engine, compatibility observer, native-metrics
+observer, segment store, and UUID stream. Both therefore execute the same
+already-lowered `GraphInputBundle`; neither reparses the authored DAG nor
+converts it through `Dataset`, `Conversation`, protocol v1, or another Graph-IR
+representation.
+
+The process tests in `aiperf-runner/tests/{online_v2_stdio,offline_stdio}.rs`
+and `tests/integration/test_rust_v2_offline_reachability.py` prove direct pair
+loading. The offline proof authors warmup plus profiling in one protocol-v2
+request and observes both phases on the same Dynamo engine/clock, including
+warmup metrics and six node terminals from two executions of one three-node
+trace.
