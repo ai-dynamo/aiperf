@@ -190,13 +190,31 @@ class RunnerInstallation:
 
     def execute(self, request: dict[str, Any]) -> subprocess.CompletedProcess[bytes]:
         """Run one request with the same binary whose catalog was negotiated."""
+        child = self.spawn(request)
+        stdout, stderr = child.communicate(orjson.dumps(request))
+        return subprocess.CompletedProcess(
+            child.args,
+            child.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    def spawn(self, request: dict[str, Any]) -> subprocess.Popen[bytes]:
+        """Start one verified request so a lifecycle owner can forward signals.
+
+        The returned child has private stdin/stdout/stderr pipes. Callers must
+        send exactly ``orjson.dumps(request)`` to ``communicate`` and must not
+        launch a second executable after this method re-verifies distribution
+        identity. Standalone ``aiperf watch`` uses this seam to forward the
+        first SIGINT/SIGTERM for native graceful archive finalization.
+        """
         self.preflight_request(request)
         self.verify_distribution_identity()
-        return subprocess.run(
+        return subprocess.Popen(
             [str(self.binary)],
-            input=orjson.dumps(request),
-            capture_output=True,
-            check=False,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=_runner_subprocess_environment(self.provider_roots),
         )
 
