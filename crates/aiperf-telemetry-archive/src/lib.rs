@@ -9,6 +9,7 @@
 //! provider adapters consume these types rather than defining competing frame,
 //! manifest, receipt, or content-addressing rules.
 
+pub mod boundary;
 pub mod canonical_json;
 pub mod descriptor;
 pub mod digest;
@@ -16,9 +17,14 @@ pub mod evidence;
 pub mod identity;
 pub mod index;
 pub mod manifest;
+pub mod scheduling;
 pub mod time;
 pub mod wal;
 
+pub use boundary::{
+    BoundaryCapturePlan, BoundaryPlanError, BoundaryPlanRegistry, BoundaryReference,
+    BoundaryReferenceKey, BoundaryRole, SealedBoundaryCapturePlan, SourceBoundarySnapshotCommand,
+};
 pub use canonical_json::{CanonicalJsonError, CanonicalJsonValue};
 pub use descriptor::{CanonicalDescriptor, DescriptorError};
 pub use digest::{Digest, DigestError, domain_digest};
@@ -39,6 +45,10 @@ pub use index::{
 pub use manifest::{
     ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
     GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
+};
+pub use scheduling::{
+    AbsoluteCallDeadline, CadenceAdvance, CadenceDeadline, FixedDeadlineCadence,
+    IssuedSourceAttempt, MissedCadenceRange, SchedulingError, SourceAttemptGate, SourceAttemptKind,
 };
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
 pub use wal::{
