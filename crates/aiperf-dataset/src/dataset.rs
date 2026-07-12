@@ -345,6 +345,12 @@ fn validate_turn(
             return payload_error(handle, "raw", payload);
         }
     }
+    if let Some(handle) = turn.trace_hash_ids {
+        let payload = segments.get(handle)?;
+        if !matches!(payload, Payload::TraceHashIds { .. }) {
+            return payload_error(handle, "trace-hash-ids", payload);
+        }
+    }
     for prerequisite in &turn.prerequisites {
         match prerequisite.kind {
             PrerequisiteKind::SpawnJoin if prerequisite.branch_id.is_none() => {

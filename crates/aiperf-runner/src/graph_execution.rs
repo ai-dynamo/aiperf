@@ -20,6 +20,7 @@ use aiperf::http::{
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::InputTokenCounter;
+use aiperf::multiturn::LegacyTurnEndpointBinding;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_dataset::{EndpointResolver, Handle, Payload, SegmentStore};
 use aiperf_endpoints::{
@@ -246,10 +247,10 @@ impl RunnerGraphEndpointRuntime for LegacyRunnerGraphEndpointRuntime {
         Ok(GraphEndpointDispatch {
             transport: self.transport.clone(),
             request,
-            endpoint: PreparedHttpEndpoint::Legacy {
+            endpoint: PreparedHttpEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
                 endpoint,
-                config: Box::new(endpoint_config),
-            },
+                config: endpoint_config,
+            })),
             input_tokens,
         })
     }

@@ -27,8 +27,8 @@ use aiperf_dataset::{
     SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
 use aiperf_endpoints::{
-    ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, Media as EndpointMedia, ModelEndpoint,
-    PreparedEndpoint, Turn as EndpointTurn,
+    ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointId, EndpointKey,
+    Media as EndpointMedia, ModelEndpoint, PreparedEndpoint, Turn as EndpointTurn,
 };
 use aiperf_graph::segment::intern_message;
 use aiperf_graph::wire::OpenAiChatMessage;
@@ -201,6 +201,9 @@ pub struct TurnMetadata {
     pub timestamp_ms: Option<f64>,
     /// Relative think time after the previous response, in milliseconds.
     pub delay_ms: Option<f64>,
+    /// Source-trace cache identities retained for offline simulator adapters.
+    #[serde(default)]
+    pub trace_hash_ids: Option<Handle>,
     /// User message placed on the wire for this turn.
     pub prompt_text: String,
     /// Input-token accounting for this static user message.
@@ -219,6 +222,7 @@ impl TurnMetadata {
         Self {
             timestamp_ms: None,
             delay_ms: None,
+            trace_hash_ids: None,
             prompt_text: prompt_text.into(),
             input_length,
             max_output_tokens,
@@ -545,6 +549,7 @@ fn parse_turn(
     Ok(TurnMetadata {
         timestamp_ms: number_field(object, &["timestamp_ms", "timestamp"]),
         delay_ms: number_field(object, &["delay_ms", "delay"]),
+        trace_hash_ids: None,
         prompt_text,
         input_length,
         max_output_tokens,
@@ -710,16 +715,19 @@ impl LegacySessionBackend {
             request_headers: BTreeMap::new(),
             request_parameters: BTreeMap::new(),
             endpoint_path: None,
-            endpoint: Arc::new(ChatEndpoint),
-            endpoint_config: EndpointConfig {
-                streaming: true,
-                use_server_token_count: true,
-                ..EndpointConfig::default()
-            },
+            endpoint: TurnEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
+                endpoint: Arc::new(ChatEndpoint),
+                config: EndpointConfig {
+                    streaming: true,
+                    use_server_token_count: true,
+                    ..EndpointConfig::default()
+                },
+            })),
             streaming: true,
             audio_duration_seconds: None,
             timestamp_ms: metadata.timestamp_ms,
             delay_ms: metadata.delay_ms,
+            trace_hash_ids: None,
             cancel_after_ns: None,
             url_index: None,
             session: owner.clone(),
@@ -767,6 +775,107 @@ impl SampledSession {
     }
 }
 
+/// One handle-bound view of authored trace block identities.
+///
+/// The hash vector stays in the unified segment pool. Simulator-aware
+/// dispatchers resolve it only when they need a backend-specific prompt
+/// representation; ordinary transports never copy or inspect it.
+#[derive(Clone)]
+pub struct StoredTraceHashIds {
+    handle: Handle,
+    segments: Arc<dyn SegmentStore>,
+}
+
+impl StoredTraceHashIds {
+    fn new(handle: Handle, segments: Arc<dyn SegmentStore>) -> Self {
+        Self { handle, segments }
+    }
+
+    /// Resolve the authored block identities and source block size.
+    pub fn resolve(&self) -> Result<(&[i64], usize)> {
+        match self.segments.get(self.handle)? {
+            Payload::TraceHashIds {
+                hash_ids,
+                block_size,
+            } => Ok((hash_ids, *block_size)),
+            payload => bail!(
+                "segment {} contains {}, expected trace-hash-ids",
+                self.handle,
+                payload.kind_name()
+            ),
+        }
+    }
+
+    /// Dense segment handle retained for diagnostics and tests.
+    pub const fn handle(&self) -> Handle {
+        self.handle
+    }
+}
+
+impl fmt::Debug for StoredTraceHashIds {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StoredTraceHashIds")
+            .field("handle", &self.handle)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Copyable open endpoint identity carried from scheduling to execution.
+///
+/// Every execution worker prepares profiles in the same deterministic order.
+/// The dense key selects the hot-path binding, while the canonical ID detects
+/// a mismatched local or remote registry before any request is sent.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PreparedEndpointReference {
+    /// Worker-local dense table key.
+    pub key: EndpointKey,
+    /// Canonical open endpoint identity expected at that key.
+    pub endpoint_id: EndpointId,
+}
+
+/// Endpoint selection retained by one schedulable turn.
+#[derive(Clone)]
+pub enum TurnEndpoint {
+    /// Protocol-v1 compatibility adapter and closed configuration.
+    Legacy(Arc<LegacyTurnEndpointBinding>),
+    /// Protocol-v2 open prepared binding selected only by stable key and ID.
+    Prepared(PreparedEndpointReference),
+}
+
+/// Shared legacy adapter/configuration retained by compatibility turns.
+///
+/// Indirection keeps [`TurnEndpoint`] cheap to clone without boxing or copying
+/// the comparatively large closed [`EndpointConfig`] on the scheduler path.
+pub struct LegacyTurnEndpointBinding {
+    /// Stateless legacy endpoint implementation.
+    pub endpoint: Arc<dyn Endpoint>,
+    /// Effective closed compatibility configuration.
+    pub config: EndpointConfig,
+}
+
+impl fmt::Debug for LegacyTurnEndpointBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LegacyTurnEndpointBinding")
+            .field("endpoint", &self.endpoint.metadata().endpoint_type)
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl fmt::Debug for TurnEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Legacy(binding) => fmt::Debug::fmt(binding, formatter),
+            Self::Prepared(reference) => formatter
+                .debug_tuple("PreparedEndpoint")
+                .field(reference)
+                .finish(),
+        }
+    }
+}
+
 /// A turn awaiting issuance by a timing workload.
 #[derive(Clone, Debug)]
 pub struct TurnToSend {
@@ -799,10 +908,8 @@ pub struct TurnToSend {
     pub request_parameters: BTreeMap<String, String>,
     /// Endpoint path selected by the endpoint resolver.
     pub endpoint_path: Option<String>,
-    /// Endpoint adapter that formatted the request and parses its response.
-    pub endpoint: Arc<dyn Endpoint>,
-    /// Effective endpoint configuration for response parsing and wire lifecycle policy.
-    pub endpoint_config: EndpointConfig,
+    /// Legacy adapter or open prepared endpoint identity used for execution.
+    pub endpoint: TurnEndpoint,
     /// Whether this endpoint returns an SSE stream.
     pub streaming: bool,
     /// Audio duration propagated into ASR metrics.
@@ -811,6 +918,8 @@ pub struct TurnToSend {
     pub timestamp_ms: Option<f64>,
     /// Relative delay for this turn, if any.
     pub delay_ms: Option<f64>,
+    /// Source-trace cache identities for a simulator-aware dispatch adapter.
+    pub trace_hash_ids: Option<StoredTraceHashIds>,
     /// Fixed cancellation delay selected at issuance and armed at send-complete.
     pub cancel_after_ns: Option<i64>,
     /// Effective endpoint index, including a continuation's session pin.
@@ -983,6 +1092,7 @@ struct NativeSessionBackend {
     materializer: Arc<dyn RequestMaterializer>,
     response_tokenizer: Arc<dyn TextTokenizer>,
     input_token_counter: Arc<dyn InputTokenCounter>,
+    segments: Arc<dyn SegmentStore>,
     default_output_tokens: usize,
 }
 
@@ -1087,11 +1197,21 @@ impl NativeSessionBackend {
             CreditPhase::Profiling,
             &Overrides::new(),
         )?;
-        let input_tokens = self.input_token_counter.count_input_tokens(
-            endpoint.as_ref(),
-            &materialized.body,
-            materialized.input_tokens,
-        )?;
+        let timing = self
+            .metadata
+            .turns
+            .get(turn_index)
+            .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
+        let input_tokens = if timing.trace_hash_ids.is_some() {
+            u64::try_from(timing.input_length)
+                .map_err(|_| anyhow!("authored trace input count exceeds u64"))?
+        } else {
+            self.input_token_counter.count_input_tokens(
+                endpoint.as_ref(),
+                &materialized.body,
+                materialized.input_tokens,
+            )?
+        };
         let input_length = usize::try_from(input_tokens)
             .map_err(|_| anyhow!("materialized input token count exceeds usize"))?;
         let max_output_tokens = materialized
@@ -1104,11 +1224,6 @@ impl NativeSessionBackend {
             .map(|accuracy| accuracy.correlation_id.as_str().to_string())
             .unwrap_or_else(|| owner.x_correlation_id.clone());
         let endpoint_path = materialized.endpoint_path;
-        let timing = self
-            .metadata
-            .turns
-            .get(turn_index)
-            .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
         Ok(TurnToSend {
             uuid: Uuid::new_v4(),
             effective_model: Some(materialized.model),
@@ -1124,12 +1239,17 @@ impl NativeSessionBackend {
             request_headers: materialized.headers,
             request_parameters: materialized.parameters,
             endpoint_path,
-            endpoint,
-            endpoint_config: model_endpoint.endpoint,
+            endpoint: TurnEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
+                endpoint,
+                config: model_endpoint.endpoint,
+            })),
             streaming: materialized.streaming,
             audio_duration_seconds: materialized.audio_duration_seconds,
             timestamp_ms: timing.timestamp_ms,
             delay_ms: timing.delay_ms,
+            trace_hash_ids: timing
+                .trace_hash_ids
+                .map(|handle| StoredTraceHashIds::new(handle, self.segments.clone())),
             cancel_after_ns: None,
             url_index: None,
             session: owner.clone(),
@@ -1338,6 +1458,7 @@ impl NativeDatasetConversationSource {
                         .map(|(index, turn)| TurnMetadata {
                             timestamp_ms: turn.timestamp_ms,
                             delay_ms: turn.delay_ms,
+                            trace_hash_ids: turn.trace_hash_ids,
                             prompt_text: String::new(),
                             input_length: usize::try_from(turn.input_tokens)
                                 .unwrap_or(usize::MAX)
@@ -1400,6 +1521,7 @@ impl NativeDatasetConversationSource {
             materializer: self.materializer.clone(),
             response_tokenizer: self.response_tokenizer.clone(),
             input_token_counter: self.input_token_counter.clone(),
+            segments: self.dataset.segments().clone(),
             default_output_tokens: self.default_output_tokens,
         };
         Ok(SampledSession {
@@ -1442,6 +1564,7 @@ impl SyntheticConversationSource {
                 timestamp_ms: None,
                 delay_ms: (turn_index > 0)
                     .then_some(workload.think_time_ms.unwrap_or_default() as f64),
+                trace_hash_ids: None,
                 prompt_text: format!(
                     "turn {turn_index}: {}",
                     vec!["lorem"; workload.input_tokens].join(" ")

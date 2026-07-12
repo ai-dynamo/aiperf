@@ -229,6 +229,9 @@ pub struct Turn {
     pub timestamp_ms: Option<f64>,
     /// Relative authored delay in milliseconds.
     pub delay_ms: Option<f64>,
+    /// Source-trace cache identities, when the loader received `hash_ids`.
+    #[serde(default)]
+    pub trace_hash_ids: Option<Handle>,
     /// Ordered pre-serialized message handles for message-array inputs.
     pub messages: SmallVec<[Handle; 1]>,
     /// Named text and multimodal groups for endpoint formatting.
@@ -272,6 +275,7 @@ impl Default for Turn {
             tool_tokens: 0,
             timestamp_ms: None,
             delay_ms: None,
+            trace_hash_ids: None,
             messages: SmallVec::new(),
             content: SmallVec::new(),
             raw_payload: None,
@@ -296,6 +300,9 @@ pub struct TurnMetadata {
     pub timestamp_ms: Option<f64>,
     /// Relative authored delay in milliseconds.
     pub delay_ms: Option<f64>,
+    /// Source-trace cache identities retained without resolving prompt bytes.
+    #[serde(default)]
+    pub trace_hash_ids: Option<Handle>,
     /// Load-time token count for authored request content.
     pub input_tokens: u64,
     /// Declared branch identifiers.
@@ -370,6 +377,7 @@ impl Conversation {
             .map(|turn| TurnMetadata {
                 timestamp_ms: turn.timestamp_ms,
                 delay_ms: turn.delay_ms,
+                trace_hash_ids: turn.trace_hash_ids,
                 input_tokens: turn.input_tokens,
                 has_forks: branch_modes.as_ref().is_some_and(|modes| {
                     turn.branch_ids

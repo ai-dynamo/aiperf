@@ -3,8 +3,8 @@
 
 //! Dense, prefix-dependent content-addressed segment storage.
 //!
-//! IDs use four disjoint BLAKE3 domains (`message`, `text-only`, `raw`, and
-//! `media`). A child hash includes its parent's content hash rather than the
+//! IDs use five disjoint BLAKE3 domains (`message`, `text-only`, `raw`,
+//! `media`, and `trace-hash-ids`). A child hash includes its parent's content hash rather than the
 //! parent's insertion index, so IDs remain deterministic when unrelated rows are
 //! loaded in a different order. The public address is a dense [`Handle`]; the
 //! hash-to-handle map exists only while [`SegmentPool`] is mutable.
@@ -142,6 +142,13 @@ pub enum Payload {
         /// Exact content bytes, stored once even when referenced by many turns.
         bytes: Bytes,
     },
+    /// Authored trace block identities retained for simulator-aware adapters.
+    TraceHashIds {
+        /// Ordered source-trace block identities.
+        hash_ids: Box<[i64]>,
+        /// Number of prompt tokens represented by each source-trace block.
+        block_size: usize,
+    },
 }
 
 impl Payload {
@@ -152,6 +159,7 @@ impl Payload {
             Self::Text { .. } => "text-only",
             Self::Raw { .. } => "raw",
             Self::Media { .. } => "media",
+            Self::TraceHashIds { .. } => "trace-hash-ids",
         }
     }
 
@@ -159,7 +167,7 @@ impl Payload {
     pub fn token_count(&self) -> Option<usize> {
         match self {
             Self::Message { tokens, .. } | Self::Text { tokens, .. } => Some(tokens.len()),
-            Self::Raw { .. } | Self::Media { .. } => None,
+            Self::Raw { .. } | Self::Media { .. } | Self::TraceHashIds { .. } => None,
         }
     }
 }
@@ -306,6 +314,26 @@ impl SegmentPool {
         )
     }
 
+    /// Intern source-trace block identities under their own hash domain.
+    pub fn intern_trace_hash_ids(
+        &mut self,
+        hash_ids: impl Into<Box<[i64]>>,
+        block_size: usize,
+    ) -> Result<Handle> {
+        if block_size == 0 {
+            return Err(DatasetError::Validation(
+                "trace hash block_size must be positive".into(),
+            ));
+        }
+        self.intern(
+            None,
+            Payload::TraceHashIds {
+                hash_ids: hash_ids.into(),
+                block_size,
+            },
+        )
+    }
+
     /// Freeze the arena and discard the write-only hash map.
     pub fn freeze(self) -> InMemorySegmentStore {
         InMemorySegmentStore {
@@ -381,6 +409,17 @@ fn payload_id(parent: Option<SegmentId>, payload: &Payload) -> SegmentId {
             hasher.update(b"\0");
             hasher.update(bytes);
         }
+        Payload::TraceHashIds {
+            hash_ids,
+            block_size,
+        } => {
+            hasher.update(b"trace-hash-ids\0");
+            hash_parent(&mut hasher, parent);
+            hasher.update(&block_size.to_le_bytes());
+            for hash_id in hash_ids {
+                hasher.update(&hash_id.to_le_bytes());
+            }
+        }
     }
     SegmentId(*hasher.finalize().as_bytes())
 }
@@ -453,11 +492,37 @@ mod tests {
         let media = pool
             .intern_media(None, MediaKind::Image, bytes.clone())
             .unwrap();
+        let trace_hash_ids = pool
+            .intern_trace_hash_ids(vec![1_i64].into_boxed_slice(), 1)
+            .unwrap();
 
-        let ids = [message, text, raw, media].map(|handle| pool.id(handle).unwrap());
+        let ids =
+            [message, text, raw, media, trace_hash_ids].map(|handle| pool.id(handle).unwrap());
         for (index, id) in ids.iter().enumerate() {
             assert!(!ids[..index].contains(id));
         }
+    }
+
+    #[test]
+    fn trace_hash_ids_deduplicate_with_block_size_in_the_identity() {
+        let mut pool = SegmentPool::new();
+        let first = pool
+            .intern_trace_hash_ids(vec![11_i64, 12].into_boxed_slice(), 128)
+            .unwrap();
+        let duplicate = pool
+            .intern_trace_hash_ids(vec![11_i64, 12].into_boxed_slice(), 128)
+            .unwrap();
+        let different_block_size = pool
+            .intern_trace_hash_ids(vec![11_i64, 12].into_boxed_slice(), 64)
+            .unwrap();
+
+        assert_eq!(first, duplicate);
+        assert_ne!(first, different_block_size);
+        assert!(matches!(
+            pool.get(first).unwrap(),
+            Payload::TraceHashIds { hash_ids, block_size }
+                if hash_ids.as_ref() == [11, 12] && *block_size == 128
+        ));
     }
 
     #[test]

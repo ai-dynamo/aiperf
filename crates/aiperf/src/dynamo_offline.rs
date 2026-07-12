@@ -49,7 +49,7 @@ use bytes::Bytes;
 use dynamo_mocker::common::protocols::{DirectRequest, MockEngineArgs, WorkerType};
 use dynamo_mocker::loadgen::{
     AgenticTrace, DynamoRequestTrace, EngineEvent, SteppableAgg, SteppableDisagg, SteppableReplay,
-    Trace, TraceFileFormat, WorkloadDriver,
+    Trace, TraceFileFormat, TurnTrace, WorkloadDriver,
 };
 use dynamo_mocker::replay::{
     OfflineDisaggReplayConfig, OfflineTraceReplayConfig as DynamoTraceReplayConfig,
@@ -1325,6 +1325,46 @@ pub trait OfflineRequestEncoder<R> {
     fn encode(&self, request: &R) -> Result<Vec<u32>>;
 }
 
+/// Source-trace hash conversion seam for offline simulator requests.
+///
+/// The unified dataset retains backend-neutral authored block identities. A
+/// simulator adapter implements this trait to lower those identities into its
+/// request representation without inferring them from materialized text.
+pub trait OfflineTraceHashEncoder {
+    /// Convert one authored hash sequence into the exact prompt tokens consumed
+    /// by the simulator.
+    fn encode(&self, hash_ids: &[i64], block_size: usize, input_length: usize) -> Result<Vec<u32>>;
+}
+
+/// Dynamo-native source-trace hash conversion.
+///
+/// This delegates to Dynamo's public [`TurnTrace::synthesize_tokens`] method,
+/// which is the same conversion used by official Mooncake replay before the
+/// engine derives router block hashes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DynamoTraceHashEncoder;
+
+impl OfflineTraceHashEncoder for DynamoTraceHashEncoder {
+    fn encode(&self, hash_ids: &[i64], block_size: usize, input_length: usize) -> Result<Vec<u32>> {
+        let hash_ids = hash_ids
+            .iter()
+            .copied()
+            .map(|hash_id| {
+                u64::try_from(hash_id).with_context(|| {
+                    format!("trace hash_id {hash_id} cannot be represented as u64")
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        TurnTrace {
+            input_length,
+            hash_ids,
+            ..TurnTrace::default()
+        }
+        .synthesize_tokens(block_size)
+        .context("converting authored hash_ids through Dynamo's trace prompt representation")
+    }
+}
+
 /// Graph-message tokenization seam for an offline engine adapter.
 pub trait OfflineGraphRequestEncoder {
     /// Convert already-materialized graph message wires to an exact input size.
@@ -1460,6 +1500,7 @@ struct DynamoOfflineSink {
     model: String,
     request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
     graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
+    trace_hash_encoder: Rc<dyn OfflineTraceHashEncoder>,
 }
 
 impl DynamoOfflineSink {
@@ -1475,6 +1516,24 @@ impl DynamoOfflineSink {
         request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
         graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
     ) -> Rc<Self> {
+        Self::new_with_all_encoders(
+            host,
+            clock,
+            model,
+            request_encoder,
+            graph_encoder,
+            Rc::new(DynamoTraceHashEncoder),
+        )
+    }
+
+    fn new_with_all_encoders(
+        host: Rc<EngineHost>,
+        clock: Rc<SimClock>,
+        model: String,
+        request_encoder: Rc<dyn OfflineRequestEncoder<HttpRequest>>,
+        graph_encoder: Rc<dyn OfflineGraphRequestEncoder>,
+        trace_hash_encoder: Rc<dyn OfflineTraceHashEncoder>,
+    ) -> Rc<Self> {
         Rc::new(Self {
             host,
             start_ns: clock.now_ns(),
@@ -1482,6 +1541,7 @@ impl DynamoOfflineSink {
             model,
             request_encoder,
             graph_encoder,
+            trace_hash_encoder,
         })
     }
 
@@ -1680,22 +1740,36 @@ impl TurnDispatcher for DynamoOfflineSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let is_final_turn = turn.is_final_turn();
-        let request_body = if turn.request_body.is_none() {
-            let messages = turn
-                .messages
-                .iter()
-                .map(|message| (message.role.as_str(), message.content.as_str()))
-                .collect::<Vec<_>>();
-            Some(chat_request_body(
-                &self.model,
-                &messages,
+        let result = if let Some(stored_hash_ids) = &turn.trace_hash_ids {
+            let (hash_ids, block_size) = stored_hash_ids.resolve()?;
+            let tokens = self
+                .trace_hash_encoder
+                .encode(hash_ids, block_size, turn.input_length)?;
+            self.dispatch_tokens(
+                turn.uuid,
+                tokens,
                 turn.max_output_tokens,
-            ))
+                turn.cancel_after_ns,
+                observer,
+                on_first_token,
+            )
+            .await?
         } else {
-            None
-        };
-        let result = self
-            .dispatch_collect(
+            let request_body = if turn.request_body.is_none() {
+                let messages = turn
+                    .messages
+                    .iter()
+                    .map(|message| (message.role.as_str(), message.content.as_str()))
+                    .collect::<Vec<_>>();
+                Some(chat_request_body(
+                    &self.model,
+                    &messages,
+                    turn.max_output_tokens,
+                ))
+            } else {
+                None
+            };
+            self.dispatch_collect(
                 &HttpRequest {
                     uuid: turn.uuid,
                     input_length: turn.input_length,
@@ -1715,7 +1789,8 @@ impl TurnDispatcher for DynamoOfflineSink {
                 observer,
                 on_first_token,
             )
-            .await?;
+            .await?
+        };
         Ok(TurnDispatchOutcome {
             start_ns: result.start_ns,
             end_ns: result.end_ns,
@@ -3328,6 +3403,14 @@ mod tests {
         fn encode_graph_messages(&self, _wires: &[Bytes], requested: usize) -> Result<Vec<u32>> {
             Ok(vec![7; requested])
         }
+    }
+
+    #[test]
+    fn authored_hash_ids_use_dynamos_trace_native_prompt_conversion() {
+        let tokens = DynamoTraceHashEncoder.encode(&[11, 12], 4, 6).unwrap();
+        assert_eq!(tokens, vec![11, 11, 11, 11, 12, 12]);
+        assert!(DynamoTraceHashEncoder.encode(&[-1], 4, 1).is_err());
+        assert!(DynamoTraceHashEncoder.encode(&[11], 4, 5).is_err());
     }
 
     #[test]

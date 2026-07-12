@@ -265,10 +265,20 @@ impl Composer for MooncakeTraceComposer {
                 )));
             }
             modes[position] = Some(mode);
+            let trace_hash_ids = parsed
+                .input_length
+                .map(|_| {
+                    segments.intern_trace_hash_ids(
+                        parsed.hash_ids.clone().into_boxed_slice(),
+                        block_size,
+                    )
+                })
+                .transpose()?;
             let mut turn = Turn {
                 timestamp_ms: parsed.timestamp,
                 delay_ms: parsed.delay,
                 max_tokens: cap_output(parsed.output_length, config.max_output_tokens),
+                trace_hash_ids,
                 ..Turn::default()
             };
             match mode {
@@ -470,10 +480,13 @@ impl Composer for BailianTraceComposer {
                     prompt.tokens.into_boxed_slice(),
                 )?;
                 parent = Some(handle);
+                let trace_hash_ids = segments
+                    .intern_trace_hash_ids(row.hash_ids.clone().into_boxed_slice(), block_size)?;
                 let mut turn = Turn {
                     timestamp_ms: Some(row.timestamp * 1000.0),
                     max_tokens: cap_output(Some(row.output_length), config.max_output_tokens),
                     input_tokens: row.input_length,
+                    trace_hash_ids: Some(trace_hash_ids),
                     content: smallvec![crate::model::ContentGroup {
                         kind: crate::model::MediaKind::Text,
                         name: "text".into(),
@@ -1356,7 +1369,16 @@ mod tests {
             synthetic.segments().id(first).unwrap(),
             synthetic.segments().id(second).unwrap()
         );
-        assert_eq!(synthetic.conversations()[0].turns[0].input_tokens, 1023);
+        let first_turn = &synthetic.conversations()[0].turns[0];
+        assert_eq!(first_turn.input_tokens, 1023);
+        assert!(matches!(
+            synthetic
+                .segments()
+                .get(first_turn.trace_hash_ids.unwrap())
+                .unwrap(),
+            crate::Payload::TraceHashIds { hash_ids, block_size }
+                if hash_ids.as_ref() == [1, 2] && *block_size == 512
+        ));
     }
 
     #[tokio::test]
@@ -1404,6 +1426,13 @@ mod tests {
         assert_eq!(second.timestamp_ms, Some(100.0));
         assert_eq!(first.max_tokens, Some(3));
         assert_eq!(second.max_tokens, Some(4));
+        assert!(matches!(
+            dataset
+                .segments()
+                .get(first.trace_hash_ids.unwrap())
+                .unwrap(),
+            crate::Payload::TraceHashIds { block_size: 4, .. }
+        ));
     }
 
     #[tokio::test]

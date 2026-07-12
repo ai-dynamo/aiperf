@@ -28,7 +28,7 @@ use aiperf_clock::Clock;
 use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
 use aiperf_dataset::EndpointResolver;
-use aiperf_endpoints::{Endpoint, EndpointConfig, EndpointId, EndpointKey, PreparedEndpointTable};
+use aiperf_endpoints::{EndpointConfig, PreparedEndpointTable};
 use aiperf_metrics::{HttpTrace, InferenceDimensions};
 use aiperf_transport_http::config::ClientConfig;
 use aiperf_transport_http::models::{
@@ -43,7 +43,8 @@ use loadgen_core::sink::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::multiturn::TurnToSend;
+pub use crate::multiturn::PreparedEndpointReference;
+use crate::multiturn::{LegacyTurnEndpointBinding, TurnEndpoint, TurnToSend};
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
 
 mod endpoint_dispatch;
@@ -311,29 +312,11 @@ impl fmt::Debug for PreparedHttpTurn {
     }
 }
 
-/// Copyable open endpoint identity carried from the coordinator to a worker.
-///
-/// Every worker prepares profiles in the same deterministic order. The dense
-/// key selects the hot-path binding, while the canonical ID detects a mismatched
-/// remote registry before any request is sent.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PreparedEndpointReference {
-    /// Worker-local dense table key.
-    pub key: EndpointKey,
-    /// Canonical open endpoint identity expected at that key.
-    pub endpoint_id: EndpointId,
-}
-
 /// Endpoint selection retained by one scheduler-free HTTP command.
 #[derive(Clone)]
 pub enum PreparedHttpEndpoint {
-    /// Protocol-v1 compatibility adapter.
-    Legacy {
-        /// Stateless legacy endpoint implementation.
-        endpoint: Arc<dyn Endpoint>,
-        /// Closed compatibility configuration.
-        config: Box<EndpointConfig>,
-    },
+    /// Protocol-v1 shared compatibility adapter/configuration.
+    Legacy(Arc<LegacyTurnEndpointBinding>),
     /// Protocol-v2 worker-local prepared binding.
     Prepared(PreparedEndpointReference),
 }
@@ -341,11 +324,7 @@ pub enum PreparedHttpEndpoint {
 impl fmt::Debug for PreparedHttpEndpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Legacy { endpoint, config } => formatter
-                .debug_struct("LegacyEndpoint")
-                .field("endpoint", &endpoint.metadata().endpoint_type)
-                .field("config", config)
-                .finish(),
+            Self::Legacy(binding) => fmt::Debug::fmt(binding, formatter),
             Self::Prepared(reference) => formatter
                 .debug_tuple("PreparedEndpoint")
                 .field(reference)
@@ -412,8 +391,21 @@ impl PreparedHttpTurn {
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
         let endpoint_aware = turn.request_body.is_some();
-        let mut endpoint_config = turn.endpoint_config;
-        endpoint_config.streaming = turn.streaming;
+        let endpoint = match turn.endpoint {
+            TurnEndpoint::Legacy(binding) => {
+                if binding.config.streaming == turn.streaming {
+                    PreparedHttpEndpoint::Legacy(binding)
+                } else {
+                    let mut config = binding.config.clone();
+                    config.streaming = turn.streaming;
+                    PreparedHttpEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
+                        endpoint: binding.endpoint.clone(),
+                        config,
+                    }))
+                }
+            }
+            TurnEndpoint::Prepared(reference) => PreparedHttpEndpoint::Prepared(reference),
+        };
         let request_body = if turn.request_body.is_none() {
             let messages = turn
                 .messages
@@ -441,10 +433,7 @@ impl PreparedHttpTurn {
                 cancel_after_ns: turn.cancel_after_ns,
                 url_index: turn.url_index,
             },
-            endpoint: PreparedHttpEndpoint::Legacy {
-                endpoint: turn.endpoint,
-                config: Box::new(endpoint_config),
-            },
+            endpoint,
             endpoint_aware,
         }
     }
@@ -452,13 +441,14 @@ impl PreparedHttpTurn {
     /// Project this local command into the stable data-only execution wire.
     pub fn into_wire(self) -> PreparedHttpTurnWire {
         let (endpoint, endpoint_headers, endpoint_api_key) = match self.endpoint {
-            PreparedHttpEndpoint::Legacy {
-                endpoint: _,
-                config,
-            } => {
-                let headers = config.headers.clone();
-                let api_key = config.api_key.clone();
-                (PreparedHttpEndpointWire::Legacy(config), headers, api_key)
+            PreparedHttpEndpoint::Legacy(binding) => {
+                let headers = binding.config.headers.clone();
+                let api_key = binding.config.api_key.clone();
+                (
+                    PreparedHttpEndpointWire::Legacy(Box::new(binding.config.clone())),
+                    headers,
+                    api_key,
+                )
             }
             PreparedHttpEndpoint::Prepared(reference) => (
                 PreparedHttpEndpointWire::Prepared(reference),
@@ -494,7 +484,10 @@ impl PreparedHttpTurnWire {
                 config.headers = self.endpoint_headers;
                 config.api_key = self.endpoint_api_key;
                 let endpoint = endpoint_resolver.resolve_type(config.endpoint_type)?;
-                PreparedHttpEndpoint::Legacy { endpoint, config }
+                PreparedHttpEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
+                    endpoint,
+                    config: *config,
+                }))
             }
             PreparedHttpEndpointWire::Prepared(reference) => {
                 anyhow::ensure!(
@@ -1249,11 +1242,11 @@ impl TransportSink {
         } = turn;
         let collected = if endpoint_aware {
             match endpoint {
-                PreparedHttpEndpoint::Legacy { endpoint, config } => {
+                PreparedHttpEndpoint::Legacy(binding) => {
                     self.dispatch_endpoint_collect_record_with_hooks(
                         request,
-                        endpoint.as_ref(),
-                        &config,
+                        binding.endpoint.as_ref(),
+                        &binding.config,
                         observer,
                         on_first_token,
                     )
@@ -1327,7 +1320,7 @@ mod tests {
     use super::*;
     use aiperf_clock::RealClock;
     use aiperf_dataset::BuiltinEndpointResolver;
-    use aiperf_endpoints::EndpointType;
+    use aiperf_endpoints::{EndpointId, EndpointKey, EndpointType};
 
     #[derive(Default)]
     struct RecordingObserver {
@@ -1409,12 +1402,12 @@ mod tests {
                 cancel_after_ns: Some(9),
                 url_index: Some(2),
             },
-            endpoint: PreparedHttpEndpoint::Legacy {
+            endpoint: PreparedHttpEndpoint::Legacy(Arc::new(LegacyTurnEndpointBinding {
                 endpoint: BuiltinEndpointResolver::default()
                     .resolve_type(EndpointType::Messages)
                     .unwrap(),
-                config: Box::new(endpoint_config),
-            },
+                config: endpoint_config,
+            })),
             endpoint_aware: true,
         };
 
@@ -1435,12 +1428,15 @@ mod tests {
             Some(br#"{"messages":[]}"#.as_slice())
         );
         assert_eq!(rehydrated.request.headers["x-api-key"], request_secret);
-        let PreparedHttpEndpoint::Legacy { endpoint, config } = rehydrated.endpoint else {
+        let PreparedHttpEndpoint::Legacy(binding) = rehydrated.endpoint else {
             panic!("legacy wire must rehydrate a legacy endpoint")
         };
-        assert_eq!(config.api_key.as_deref(), Some(endpoint_secret));
-        assert_eq!(config.headers["anthropic-beta"], "secret-beta");
-        assert_eq!(endpoint.metadata().endpoint_type, EndpointType::Messages);
+        assert_eq!(binding.config.api_key.as_deref(), Some(endpoint_secret));
+        assert_eq!(binding.config.headers["anthropic-beta"], "secret-beta");
+        assert_eq!(
+            binding.endpoint.metadata().endpoint_type,
+            EndpointType::Messages
+        );
         assert!(rehydrated.endpoint_aware);
     }
 
@@ -1464,7 +1460,7 @@ mod tests {
                 cancel_after_ns: None,
                 url_index: None,
             },
-            endpoint: PreparedHttpEndpointWire::Legacy(Box::new(EndpointConfig::default())),
+            endpoint: PreparedHttpEndpointWire::Legacy(Box::default()),
             endpoint_headers: BTreeMap::new(),
             endpoint_api_key: None,
             endpoint_aware: false,
