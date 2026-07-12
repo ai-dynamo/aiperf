@@ -28,7 +28,7 @@ use aiperf_dataset::{
     SegmentPool, TextTokenizer,
 };
 use aiperf_metrics::{
-    AccumulatorType, AccuracyAccumulator, AccuracyAnalysis, AccuracyRecord,
+    AccumulatorSummary, AccumulatorType, AccuracyAccumulator, AccuracyAnalysis, AccuracyRecord,
     AccuracyResultsAnalyzer, AnalyzerRunner, AnalyzerType, CorrelationId,
     EvaluatorDatasetReportInfo, EvaluatorReportInfo, ExportContext, GradingResult, NativeReport,
     Phase, ReportError, ReportRunInfo, RunOutcome, SummaryContext, TaskId,
@@ -48,7 +48,6 @@ const GRADE_BATCH_SIZE: usize = 128;
 
 #[derive(Debug, Clone)]
 struct ProblemAssociation {
-    index: usize,
     problem_id: ProblemId,
     correlation_id: CorrelationId,
     task: TaskId,
@@ -56,6 +55,10 @@ struct ProblemAssociation {
 
 #[derive(Debug, Clone)]
 struct CapturedResponse {
+    sequence: u64,
+    problem_id: ProblemId,
+    correlation_id: CorrelationId,
+    task: TaskId,
     start_ns: i64,
     end_ns: i64,
     terminal: ReplayTerminalStatus,
@@ -129,7 +132,7 @@ impl AccuracyDataset {
         let mut associations = Vec::with_capacity(dataset.conversations().len());
         let mut problem_ids = BTreeSet::new();
         let mut correlation_ids = BTreeSet::new();
-        for (index, conversation) in dataset.conversations().iter().enumerate() {
+        for conversation in dataset.conversations() {
             anyhow::ensure!(
                 conversation.turns.len() == 1,
                 "accuracy conversation {:?} must contain exactly one turn, found {}",
@@ -170,7 +173,6 @@ impl AccuracyDataset {
                 association.correlation_id.as_str()
             );
             associations.push(ProblemAssociation {
-                index,
                 problem_id,
                 correlation_id: CorrelationId::new(association.correlation_id.as_str()),
                 task: TaskId::new(association.task.clone()),
@@ -380,34 +382,43 @@ fn validate_evaluator_load_identity(loaded: &EvaluatorLoadResult) -> anyhow::Res
 /// in batches only after the Rust scheduler and transport have drained.
 pub struct AccuracyRecordProcessor {
     associations: BTreeMap<String, ProblemAssociation>,
-    captures: RefCell<Vec<Option<CapturedResponse>>>,
+    captures: RefCell<Vec<CapturedResponse>>,
 }
 
 impl AccuracyRecordProcessor {
     fn new(associations: Arc<[ProblemAssociation]>) -> Self {
-        let record_count = associations.len();
         Self {
             associations: associations
                 .iter()
                 .cloned()
                 .map(|association| (association.correlation_id.as_str().to_string(), association))
                 .collect(),
-            captures: RefCell::new(vec![None; record_count]),
+            captures: RefCell::new(Vec::new()),
         }
     }
 
     fn finish(&self) -> anyhow::Result<Vec<CapturedResponse>> {
-        let captures = self.captures.borrow();
-        let missing = captures
-            .iter()
-            .enumerate()
-            .filter_map(|(index, capture)| capture.is_none().then_some(index))
-            .collect::<Vec<_>>();
+        let mut captures = self.captures.borrow().clone();
         anyhow::ensure!(
-            missing.is_empty(),
-            "accuracy record pipeline omitted dataset indices {missing:?}"
+            !captures.is_empty(),
+            "accuracy record pipeline captured no profiling responses"
         );
-        Ok(captures.iter().flatten().cloned().collect())
+        captures.sort_by_key(|capture| capture.sequence);
+        let mut sequences = BTreeSet::new();
+        let mut correlations = BTreeSet::new();
+        for capture in &captures {
+            anyhow::ensure!(
+                sequences.insert(capture.sequence),
+                "accuracy record pipeline captured duplicate issue sequence {}",
+                capture.sequence
+            );
+            anyhow::ensure!(
+                correlations.insert(capture.correlation_id.as_str().to_string()),
+                "accuracy record pipeline captured duplicate request correlation {:?}",
+                capture.correlation_id.as_str()
+            );
+        }
+        Ok(captures)
     }
 }
 
@@ -425,16 +436,16 @@ impl TurnRecordProcessor for AccuracyRecordProcessor {
             )
         })?;
         let capture = CapturedResponse {
+            sequence: credit.id,
+            problem_id: association.problem_id.clone(),
+            correlation_id: CorrelationId::new(credit.turn.uuid.to_string()),
+            task: association.task.clone(),
             start_ns: outcome.start_ns,
             end_ns: outcome.end_ns,
             terminal: outcome.terminal,
             response_text: outcome.response_text.clone(),
         };
-        let previous = self.captures.borrow_mut()[association.index].replace(capture);
-        anyhow::ensure!(
-            previous.is_none(),
-            "accuracy association {correlation_id:?} was processed more than once"
-        );
+        self.captures.borrow_mut().push(capture);
         Ok(())
     }
 }
@@ -448,6 +459,23 @@ pub struct AccuracyFailure {
     pub correlation_id: String,
     /// Diagnostic suitable for logs and JSON reports.
     pub message: String,
+}
+
+/// Canonical grades and report metadata joined to an existing native metric summary.
+#[derive(Debug)]
+pub struct AccuracyEvaluation {
+    /// Exact evaluator runtime identity from the initialization handshake.
+    pub evaluator: EvaluatorIdentity,
+    /// Canonical benchmark, dataset, and grader identity from load.
+    pub evaluator_load: EvaluatorLoadResult,
+    /// Typed overall and per-task analysis.
+    pub accuracy: AccuracyAnalysis,
+    /// Full per-request grades in native issue order.
+    pub records: Vec<AccuracyRecord>,
+    /// Transport/provider failures retained in the grading denominator.
+    pub failures: Vec<AccuracyFailure>,
+    /// Native-v2 evaluator provenance block.
+    pub evaluator_report: EvaluatorReportInfo,
 }
 
 /// Combined native report for one externally evaluated accuracy run.
@@ -481,28 +509,64 @@ pub struct AccuracyRunReport {
 pub async fn grade_and_finalize_accuracy_report(
     model: &str,
     scheduled: ScheduledRunReport,
-    dataset: &AccuracyDataset,
+    _dataset: &AccuracyDataset,
     processor: &AccuracyRecordProcessor,
     evaluator: &mut dyn AccuracyEvaluator,
     loaded: &EvaluatorLoadResult,
 ) -> anyhow::Result<AccuracyRunReport> {
-    let captures = processor.finish()?;
-    anyhow::ensure!(
-        captures.len() == dataset.associations.len(),
-        "captured {} responses for {} evaluator problems",
-        captures.len(),
-        dataset.associations.len()
+    let evaluation =
+        grade_accuracy_responses(processor, evaluator, loaded, &scheduled.native_metrics).await?;
+    let native_report = NativeReport::from_outcome(
+        &scheduled.native_metrics,
+        &RunOutcome {
+            run: ReportRunInfo {
+                mode: Some("accuracy".to_string()),
+                model: Some(model.to_string()),
+            },
+            accuracy: Some(evaluation.accuracy.clone()),
+            accuracy_records: evaluation.records.clone(),
+            evaluator: Some(evaluation.evaluator_report.clone()),
+            errors: accuracy_report_errors(&evaluation.failures),
+            ..RunOutcome::default()
+        },
     );
+    Ok(AccuracyRunReport {
+        benchmark: loaded.benchmark.clone(),
+        model: model.to_string(),
+        evaluator: evaluation.evaluator,
+        evaluator_load: evaluation.evaluator_load,
+        performance: scheduled.performance,
+        accuracy: evaluation.accuracy,
+        native_report,
+        records: evaluation.records,
+        failures: evaluation.failures,
+    })
+}
+
+/// Grade every profiling response captured by the ordinary scheduled runtime.
+///
+/// The processor records one row per issued request rather than one row per
+/// dataset problem. Sequential cycling therefore preserves Python's
+/// `session_num % len(conversations)` multi-pass behavior from
+/// `src/aiperf/accuracy/accuracy_record_processor.py:70-93` while retaining a
+/// unique request correlation ID for every native accuracy record.
+pub async fn grade_accuracy_responses(
+    processor: &AccuracyRecordProcessor,
+    evaluator: &mut dyn AccuracyEvaluator,
+    loaded: &EvaluatorLoadResult,
+    native_summary: &AccumulatorSummary,
+) -> anyhow::Result<AccuracyEvaluation> {
+    let captures = processor.finish()?;
 
     let mut grades: Vec<Option<EvaluatorGrade>> = vec![None; captures.len()];
     let submitted = captures
         .iter()
-        .zip(dataset.associations.iter())
-        .map(|(capture, association)| {
+        .enumerate()
+        .map(|(index, capture)| {
             (
-                association.index,
+                index,
                 EvaluatorGradeItem {
-                    problem_id: association.problem_id.clone(),
+                    problem_id: capture.problem_id.clone(),
                     response: capture.response_text.clone(),
                 },
             )
@@ -531,13 +595,13 @@ pub async fn grade_and_finalize_accuracy_report(
                 grade.problem_id.as_str(),
                 submitted.problem_id.as_str()
             );
-            let association = &dataset.associations[*index];
+            let capture = &captures[*index];
             anyhow::ensure!(
-                grade.task == association.task.as_str(),
+                grade.task == capture.task.as_str(),
                 "canonical evaluator returned task {:?} for problem {:?}, expected {:?}",
                 grade.task,
                 grade.problem_id.as_str(),
-                association.task.as_str()
+                capture.task.as_str()
             );
             anyhow::ensure!(
                 grade.confidence.is_finite() && (0.0..=1.0).contains(&grade.confidence),
@@ -554,24 +618,24 @@ pub async fn grade_and_finalize_accuracy_report(
 
     let mut records = Vec::with_capacity(captures.len());
     let mut failures = Vec::new();
-    for (association, capture) in dataset.associations.iter().zip(captures) {
+    for (index, capture) in captures.into_iter().enumerate() {
         if capture.terminal != ReplayTerminalStatus::Completed {
             let message = format!("inference request ended {:?}", capture.terminal);
             failures.push(AccuracyFailure {
-                problem_id: association.problem_id.as_str().to_string(),
-                correlation_id: association.correlation_id.as_str().to_string(),
+                problem_id: capture.problem_id.as_str().to_string(),
+                correlation_id: capture.correlation_id.as_str().to_string(),
                 message,
             });
         }
-        let grade = grades[association.index].take().ok_or_else(|| {
+        let grade = grades[index].take().ok_or_else(|| {
             anyhow::anyhow!(
                 "canonical evaluator omitted grade for problem {:?}",
-                association.problem_id.as_str()
+                capture.problem_id.as_str()
             )
         })?;
         records.push(AccuracyRecord {
-            correlation_id: association.correlation_id.clone(),
-            task: association.task.clone(),
+            correlation_id: capture.correlation_id,
+            task: capture.task,
             phase: Phase::Profiling,
             start_ns: capture.start_ns,
             end_ns: capture.end_ns,
@@ -583,7 +647,6 @@ pub async fn grade_and_finalize_accuracy_report(
     for record in records.iter().cloned() {
         accumulator.process_record(record)?;
     }
-    let native_summary = scheduled.native_metrics;
     let accuracy_summary = accumulator.export_results(ExportContext::phase(Phase::Profiling));
     let mut summary_context = SummaryContext::new();
     summary_context.insert_accumulator(AccumulatorType::Accuracy, accuracy_summary);
@@ -597,40 +660,27 @@ pub async fn grade_and_finalize_accuracy_report(
         .ok_or_else(|| anyhow::anyhow!("accuracy analyzer produced no output"))?;
     let evaluator_identity = evaluator.identity().clone();
     let evaluator_report = evaluator_report_info(&evaluator_identity, loaded);
-    let native_report = NativeReport::from_outcome(
-        &native_summary,
-        &RunOutcome {
-            run: ReportRunInfo {
-                mode: Some("accuracy".to_string()),
-                model: Some(model.to_string()),
-            },
-            accuracy: Some(accuracy.clone()),
-            accuracy_records: records.clone(),
-            evaluator: Some(evaluator_report),
-            errors: failures
-                .iter()
-                .map(|failure| ReportError {
-                    code: None,
-                    error_type: "InferenceTransport".to_string(),
-                    message: failure.message.clone(),
-                    count: 1,
-                })
-                .collect(),
-            ..RunOutcome::default()
-        },
-    );
-
-    Ok(AccuracyRunReport {
-        benchmark: loaded.benchmark.clone(),
-        model: model.to_string(),
+    Ok(AccuracyEvaluation {
         evaluator: evaluator_identity,
         evaluator_load: loaded.clone(),
-        performance: scheduled.performance,
         accuracy,
-        native_report,
         records,
         failures,
+        evaluator_report,
     })
+}
+
+/// Convert per-request inference failures into native-v2 report errors.
+pub fn accuracy_report_errors(failures: &[AccuracyFailure]) -> Vec<ReportError> {
+    failures
+        .iter()
+        .map(|failure| ReportError {
+            code: None,
+            error_type: "InferenceTransport".to_string(),
+            message: failure.message.clone(),
+            count: 1,
+        })
+        .collect()
 }
 
 fn grading_result(grade: EvaluatorGrade) -> GradingResult {

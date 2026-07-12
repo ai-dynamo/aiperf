@@ -9,6 +9,10 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aiperf::accuracy::{
+    AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
+    load_evaluator_problems,
+};
 use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
     positive_seconds_to_ns,
@@ -35,6 +39,10 @@ use aiperf::scheduled::{
     TurnRecordProcessor, Workload,
 };
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
+use aiperf_accuracy::{
+    AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
+    WorkerProcessConfig,
+};
 use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
 use aiperf_clock::{Clock, RealClock};
 use aiperf_dataset::{
@@ -71,13 +79,13 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::protocol::{
-    AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec, DatasetSpec,
-    DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec, ModelSelectionStrategy,
-    ModelsSpec, PhaseSpec, PublicDatasetSourceSpec, PublicDatasetSpec, RampSpec, RampStrategySpec,
-    RunRequest, RunTerminal, SequenceDistributionEntrySpec, SourceImageSamplingSpec,
-    SyntheticAudioFormatSpec, SyntheticAudioSpec, SyntheticDatasetSpec, SyntheticImageFormatSpec,
-    SyntheticImageSpec, SyntheticPrefixPromptsSpec, SyntheticVideoFormatSpec,
-    SyntheticVideoPatternSpec, SyntheticVideoSpec,
+    AccuracySpec, AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec,
+    DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
+    ModelSelectionStrategy, ModelsSpec, PhaseSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
+    RampSpec, RampStrategySpec, RunRequest, RunTerminal, SequenceDistributionEntrySpec,
+    SourceImageSamplingSpec, SyntheticAudioFormatSpec, SyntheticAudioSpec, SyntheticDatasetSpec,
+    SyntheticImageFormatSpec, SyntheticImageSpec, SyntheticPrefixPromptsSpec,
+    SyntheticVideoFormatSpec, SyntheticVideoPatternSpec, SyntheticVideoSpec,
 };
 use crate::records::{CapturedRecord, write_records_jsonl};
 
@@ -149,7 +157,64 @@ fn validate_request(request: &RunRequest) -> Result<()> {
     Ok(())
 }
 
+struct AccuracyWorkerRun<'a> {
+    evaluator: &'a mut dyn AccuracyEvaluator,
+    spec: AccuracySpec,
+}
+
+struct PreparedAccuracy<'a> {
+    evaluator: &'a mut dyn AccuracyEvaluator,
+    loaded: EvaluatorLoadResult,
+    dataset: AccuracyDataset,
+    processor: Rc<AccuracyRecordProcessor>,
+}
+
 async fn execute_native(request: RunRequest) -> Result<NativeReport> {
+    let Some(spec) = request.run.accuracy.clone() else {
+        return execute_native_inner(request, None).await;
+    };
+    ensure!(
+        spec.python_executable.is_absolute(),
+        "accuracy python_executable must be an absolute path"
+    );
+    ensure!(
+        !spec.worker_module.trim().is_empty(),
+        "accuracy worker_module cannot be empty"
+    );
+    ensure!(
+        spec.grader.is_none(),
+        "accuracy grader overrides are not canonical; select the benchmark's pinned Python grader"
+    );
+    let worker = WorkerProcessConfig::new(spec.python_executable.as_os_str())
+        .arg("-u")
+        .arg("-m")
+        .arg(&spec.worker_module);
+    let mut evaluator = PythonEvaluator::spawn(worker)
+        .await
+        .context("starting canonical Python accuracy evaluator")?;
+    let result = execute_native_inner(
+        request,
+        Some(AccuracyWorkerRun {
+            evaluator: &mut evaluator,
+            spec,
+        }),
+    )
+    .await;
+    let shutdown = evaluator.shutdown().await;
+    match (result, shutdown) {
+        (Ok(report), Ok(())) => Ok(report),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(anyhow!(error).context("shutting down accuracy evaluator")),
+        (Err(error), Err(shutdown)) => Err(error.context(format!(
+            "accuracy evaluator also failed during shutdown: {shutdown}"
+        ))),
+    }
+}
+
+async fn execute_native_inner(
+    request: RunRequest,
+    accuracy: Option<AccuracyWorkerRun<'_>>,
+) -> Result<NativeReport> {
     let registry = AiperfRegistry::builtin()?;
     let rng_root = RngRoot::new(request.run.random_seed);
     let dataset_rng_root = dataset_rng_root(&request.run.dataset, rng_root);
@@ -170,17 +235,64 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         tokenizer.clone(),
         request.run.tokenizer.apply_chat_template,
     ));
-    let dataset = build_dataset(
-        &registry,
-        &request.run.dataset,
-        &request.run.models,
-        dataset_rng_root,
-        tokenizer.as_ref(),
-        request.run.endpoint.endpoint_type,
-    )
-    .await?;
+    let mut prepared_accuracy = if let Some(accuracy) = accuracy {
+        let evaluator_config = EvaluatorLoadConfig {
+            tasks: accuracy.spec.tasks.clone(),
+            n_shots: accuracy.spec.n_shots,
+            enable_cot: accuracy.spec.enable_cot,
+            system_prompt: accuracy.spec.system_prompt.clone(),
+            max_problems: None,
+            max_tokens: None,
+            seed: request.run.random_seed.unwrap_or(0),
+        };
+        let (loaded, problems) = load_evaluator_problems(
+            accuracy.evaluator,
+            &accuracy.spec.benchmark,
+            &evaluator_config,
+        )
+        .await?;
+        let dataset =
+            AccuracyDataset::from_evaluator_problems(&primary_model, problems, tokenizer.as_ref())?;
+        let processor = Rc::new(dataset.record_processor());
+        Some(PreparedAccuracy {
+            evaluator: accuracy.evaluator,
+            loaded,
+            dataset,
+            processor,
+        })
+    } else {
+        None
+    };
+    let dataset = if let Some(accuracy) = &prepared_accuracy {
+        accuracy.dataset.dataset().as_ref().clone()
+    } else {
+        build_dataset(
+            &registry,
+            &request.run.dataset,
+            &request.run.models,
+            dataset_rng_root,
+            tokenizer.as_ref(),
+            request.run.endpoint.endpoint_type,
+        )
+        .await?
+    };
     let endpoint = endpoint_config(&request.run.endpoint)?;
-    let default_output_tokens = default_output_tokens(&request.run.dataset)?;
+    let default_output_tokens = if prepared_accuracy.is_some() {
+        dataset_default_output_tokens(&dataset)?
+    } else {
+        default_output_tokens(&request.run.dataset)?
+    };
+    if prepared_accuracy.is_some() {
+        for phase in &request.run.phases {
+            ensure!(
+                !matches!(
+                    phase,
+                    PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
+                ),
+                "accuracy evaluator datasets are single-turn and require a concurrency or request-rate phase"
+            );
+        }
+    }
 
     let clock: Rc<dyn Clock> = RealClock::new();
     let start_ns = clock.now_ns();
@@ -443,11 +555,18 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
             phase: metrics_phase(phase)?,
             has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
         });
+        let mut record_processors = vec![record_processor];
+        if phase.common().name == "profiling"
+            && let Some(accuracy) = &prepared_accuracy
+        {
+            let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
+            record_processors.push(processor);
+        }
         let mut plan = ScheduledPhasePlan::new(phase_config, workload, policies)
             .with_enforce_stop(enforce_stop)
             .with_start_ns(start_ns)
             .with_resources(resources)
-            .with_record_processors(vec![record_processor])
+            .with_record_processors(record_processors)
             .with_controller(controller);
         if let Some(extension) = runtime_extension {
             plan = plan.with_runtime_extension(extension);
@@ -489,7 +608,7 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
             request.run.artifacts.trace,
         )?;
     }
-    let outcome = RunOutcome {
+    let mut outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
             model: Some(primary_model),
@@ -501,7 +620,34 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         warmup,
         ..RunOutcome::default()
     };
+    if let Some(accuracy) = prepared_accuracy.take() {
+        let evaluation = grade_accuracy_responses(
+            accuracy.processor.as_ref(),
+            accuracy.evaluator,
+            &accuracy.loaded,
+            &profiling_metrics,
+        )
+        .await?;
+        outcome.run.mode = Some("accuracy".to_string());
+        outcome.accuracy = Some(evaluation.accuracy);
+        outcome.accuracy_records = evaluation.records;
+        outcome.evaluator = Some(evaluation.evaluator_report);
+        outcome.errors = accuracy_report_errors(&evaluation.failures);
+    }
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
+}
+
+fn dataset_default_output_tokens(dataset: &Dataset) -> Result<usize> {
+    dataset
+        .conversations()
+        .iter()
+        .flat_map(|conversation| conversation.turns.iter())
+        .filter_map(|turn| turn.max_tokens)
+        .map(|value| usize::try_from(value).map_err(Into::into))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .max()
+        .ok_or_else(|| anyhow!("accuracy evaluator dataset has no output-token limit"))
 }
 
 #[allow(clippy::too_many_arguments)]

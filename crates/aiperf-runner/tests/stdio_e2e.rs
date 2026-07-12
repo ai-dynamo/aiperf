@@ -441,3 +441,181 @@ async fn stdio_child_drives_every_adaptive_actuator() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_child_uses_python_grading_but_rust_dispatches_every_accuracy_request() {
+    let app = Router::new().route("/v1/chat/completions", post(chat_handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let worker_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        worker_dir.path().join("fixture_accuracy_worker.py"),
+        r#"
+import json
+import sys
+
+PROBLEMS = [
+    {
+        "problem_id": "fixture-0",
+        "task": "task-a",
+        "prompt": "first fixture",
+        "messages": [{"role": "user", "content": "first fixture"}],
+        "generation": {"max_tokens": 1, "temperature": 0.0, "top_p": 1.0, "stop": []},
+    },
+    {
+        "problem_id": "fixture-1",
+        "task": "task-b",
+        "prompt": "second fixture",
+        "messages": [{"role": "user", "content": "second fixture"}],
+        "generation": {"max_tokens": 1, "temperature": 0.0, "top_p": 1.0, "stop": []},
+    },
+]
+
+for line in sys.stdin:
+    request = json.loads(line)
+    op = request["op"]
+    if op == "hello":
+        result = {
+            "protocol": 1,
+            "worker_version": "fixture-1",
+            "python_version": sys.version.split()[0],
+            "python_executable": sys.executable,
+            "packages": {"fixture-evaluator": "1"},
+            "worker_source_sha256": "a" * 64,
+            "dependency_lock_sha256": "b" * 64,
+            "container_digest": None,
+            "capabilities": ["load", "next_problems", "grade_batch", "shutdown"],
+        }
+    elif op == "load":
+        result = {
+            "benchmark": request["benchmark"],
+            "problem_count": len(PROBLEMS),
+            "dataset": {
+                "provider": "fixture",
+                "benchmark": request["benchmark"],
+                "repository": "fixture/repository",
+                "subset": "default",
+                "revision": "fixture-revision",
+                "evaluation_splits": ["test"],
+                "task_version": 1,
+            },
+            "grader": "fixture-python-grader",
+        }
+    elif op == "next_problems":
+        start = request["offset"]
+        end = min(start + request["limit"], len(PROBLEMS))
+        result = {"items": PROBLEMS[start:end], "next_offset": end, "done": end == len(PROBLEMS)}
+    elif op == "grade_batch":
+        result = {"items": [
+            {
+                "problem_id": item["problem_id"],
+                "task": "task-a" if item["problem_id"] == "fixture-0" else "task-b",
+                "correct": item["problem_id"] == "fixture-0",
+                "unparsed": False,
+                "confidence": 1.0 if item["problem_id"] == "fixture-0" else 0.0,
+                "reasoning": "graded in fixture Python worker",
+                "extracted_answer": item["response"],
+            }
+            for item in request["items"]
+        ]}
+    elif op == "shutdown":
+        result = {"shutdown": True}
+    else:
+        raise RuntimeError(op)
+    print(json.dumps({"id": request["id"], "ok": True, "result": result}), flush=True)
+    if op == "shutdown":
+        break
+"#,
+    )
+    .unwrap();
+    let python = Command::new("python3")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+        .unwrap();
+    assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap().trim().to_string();
+    assert!(std::path::Path::new(&python).is_absolute());
+
+    let artifacts = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "accuracy-stdio-e2e",
+            "random_seed": 17,
+            "artifact_dir": artifacts.path(),
+            "models": {"items": [{"name": "mock-model"}]},
+            "endpoint": {
+                "urls": [format!("http://{address}/v1/chat/completions")],
+                "type": "chat",
+                "streaming": true,
+                "use_server_token_count": true
+            },
+            "dataset": {
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": {"value": 1.0}, "osl": {"value": 1.0}}
+            },
+            "phases": [{
+                "type": "concurrency",
+                "name": "profiling",
+                "exclude_from_results": false,
+                "requests": 4,
+                "concurrency": 2
+            }],
+            "accuracy": {
+                "benchmark": "fixture-benchmark",
+                "python_executable": python,
+                "worker_module": "fixture_accuracy_worker"
+            }
+        }
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
+    let python_path = worker_dir.path().to_path_buf();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(binary)
+            .env("PYTHONPATH", python_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        output.status.success(),
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(artifacts.path().join("native-v2.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["run"]["mode"], "accuracy");
+    assert_eq!(
+        report["metrics"]["request_count"]["series"][0]["stats"]["total"],
+        4.0
+    );
+    assert_eq!(report["accuracy"]["summary"]["overall"]["n"], 4);
+    assert_eq!(report["accuracy"]["summary"]["overall"]["correct_count"], 2);
+    assert_eq!(report["accuracy"]["summary"]["overall"]["accuracy"], 0.5);
+    assert_eq!(report["accuracy_records"].as_array().unwrap().len(), 4);
+    let correlations = report["accuracy_records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["correlation_id"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(correlations.len(), 4);
+    assert_eq!(report["evaluator"]["grader"], "fixture-python-grader");
+    assert_eq!(
+        report["evaluator"]["dataset"]["revision"],
+        "fixture-revision"
+    );
+}

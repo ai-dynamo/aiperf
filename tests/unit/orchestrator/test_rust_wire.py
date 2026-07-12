@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 
 from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.config.accuracy import AccuracyConfig
 from aiperf.orchestrator.rust_wire import RustWireError, build_run_request
 
 
@@ -198,6 +200,30 @@ def test_rejects_adaptive_sla_without_adaptive_controller(tmp_path) -> None:
 
     with pytest.raises(RustWireError, match="without enabling adaptive_scale"):
         build_run_request(run)
+
+
+def test_projects_accuracy_to_the_canonical_python_worker(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.accuracy = AccuracyConfig(
+        benchmark="mmlu",
+        tasks=["abstract_algebra"],
+        n_shots=3,
+        enable_cot=False,
+        system_prompt="Answer with one letter.",
+        verbose=True,
+    )
+
+    accuracy = build_run_request(run)["run"]["accuracy"]
+
+    assert accuracy == {
+        "benchmark": "mmlu",
+        "tasks": ["abstract_algebra"],
+        "n_shots": 3,
+        "enable_cot": False,
+        "system_prompt": "Answer with one letter.",
+        "python_executable": str(Path(sys.executable).resolve()),
+        "worker_module": "aiperf.accuracy.worker",
+    }
 
 
 def test_projects_user_centric_and_fixed_schedule_variants(tmp_path) -> None:

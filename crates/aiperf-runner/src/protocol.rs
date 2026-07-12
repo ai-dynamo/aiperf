@@ -27,6 +27,8 @@ pub struct RunnerCapabilities {
     pub phase_types: &'static [&'static str],
     /// Optional policies accepted inside a phase.
     pub phase_features: &'static [&'static str],
+    /// Optional single-run subsystems accepted by the runner.
+    pub run_features: &'static [&'static str],
     /// Rust runner package version.
     pub runner_version: &'static str,
 }
@@ -48,6 +50,7 @@ impl RunnerCapabilities {
                 "fixed_schedule",
             ],
             phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
+            run_features: &["python_accuracy_evaluator"],
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -103,6 +106,45 @@ pub struct RunSpec {
     /// Per-run artifact outputs written by Rust.
     #[serde(default)]
     pub artifacts: ArtifactSpec,
+    /// Optional canonical Python-evaluated accuracy run.
+    #[serde(default)]
+    pub accuracy: Option<AccuracySpec>,
+}
+
+/// Canonical evaluator configuration for an accuracy-enabled native run.
+///
+/// Python Config v2 selects the benchmark and the exact Python interpreter;
+/// Rust retains ownership of every inference request and sends only completed
+/// response text back to this supervised worker for grading.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccuracySpec {
+    /// Config-v2 benchmark name or stable alias.
+    pub benchmark: String,
+    /// Optional task/category subset.
+    #[serde(default)]
+    pub tasks: Option<Vec<String>>,
+    /// Optional few-shot count; absent selects the benchmark default.
+    #[serde(default)]
+    pub n_shots: Option<usize>,
+    /// Optional chain-of-thought selection; absent selects the benchmark default.
+    #[serde(default)]
+    pub enable_cot: Option<bool>,
+    /// Optional legacy grader override. Canonical workers may reject overrides.
+    #[serde(default)]
+    pub grader: Option<String>,
+    /// Optional benchmark system prompt override.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// Absolute Python interpreter selected by the parent orchestrator.
+    pub python_executable: PathBuf,
+    /// Importable stdio worker module; defaults to the canonical AIPerf worker.
+    #[serde(default = "default_accuracy_worker_module")]
+    pub worker_module: String,
+}
+
+fn default_accuracy_worker_module() -> String {
+    "aiperf.accuracy.worker".to_string()
 }
 
 /// Tokenizer source understood by the native dataset composer.

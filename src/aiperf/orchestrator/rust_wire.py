@@ -11,6 +11,7 @@ process boundary.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -119,6 +120,22 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
             "label": variation.label,
             "values": dict(variation.values),
         }
+    if cfg.accuracy is not None and cfg.accuracy.enabled:
+        accuracy: dict[str, Any] = {
+            "benchmark": str(cfg.accuracy.benchmark),
+            "python_executable": str(Path(sys.executable).resolve()),
+            "worker_module": "aiperf.accuracy.worker",
+        }
+        _set_optional(accuracy, "tasks", cfg.accuracy.tasks)
+        _set_optional(accuracy, "n_shots", cfg.accuracy.n_shots)
+        _set_optional(accuracy, "enable_cot", cfg.accuracy.enable_cot)
+        _set_optional(
+            accuracy,
+            "grader",
+            str(cfg.accuracy.grader) if cfg.accuracy.grader is not None else None,
+        )
+        _set_optional(accuracy, "system_prompt", cfg.accuracy.system_prompt)
+        run_wire["accuracy"] = accuracy
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
 
 

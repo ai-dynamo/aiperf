@@ -77,7 +77,77 @@ def project_native_summary(payload: Any) -> dict[str, JsonMetricResult]:
             raise NativeReportError(f"metric {name!r} unit must be a string")
         values = _legacy_stats(metric_type, stats, name)
         projected[name] = JsonMetricResult(unit=unit, **values)
+    _project_accuracy(root.get("accuracy"), projected)
     return projected
+
+
+def _project_accuracy(authored: Any, projected: dict[str, JsonMetricResult]) -> None:
+    """Expose native accuracy analysis to sweep/search metric consumers."""
+    if authored is None:
+        return
+    accuracy = _mapping(authored, "native report accuracy")
+    summary = _mapping(accuracy.get("summary"), "native report accuracy summary")
+    overall = _mapping(summary.get("overall"), "accuracy overall")
+    projected["accuracy.overall"] = _accuracy_rollup(overall, "accuracy overall")
+
+    per_task = _mapping(summary.get("per_task"), "accuracy per_task")
+    for task, value in per_task.items():
+        if not isinstance(task, str) or not task:
+            raise NativeReportError("accuracy task names must be non-empty strings")
+        rollup = _mapping(value, f"accuracy task {task!r}")
+        projected[f"accuracy.task.{task}"] = _accuracy_rollup(
+            rollup, f"accuracy task {task!r}"
+        )
+        projected[f"accuracy.unparsed.task.{task}"] = _unparsed_rollup(
+            rollup, f"accuracy task {task!r}"
+        )
+    projected["accuracy.unparsed"] = _unparsed_rollup(overall, "accuracy overall")
+
+    at_load = accuracy.get("accuracy_at_load")
+    if at_load is not None:
+        joined = _mapping(at_load, "accuracy_at_load")
+        value = joined.get("correct_answers_per_second")
+        if value is not None:
+            number = _required_number(
+                value, "accuracy.correct_answers_per_second", "value"
+            )
+            projected["accuracy.correct_answers_per_second"] = JsonMetricResult(
+                unit="answers/sec", avg=number, min=number, max=number
+            )
+    value = accuracy.get("correct_answers_per_kwh")
+    if value is not None:
+        number = _required_number(value, "accuracy.correct_answers_per_kwh", "value")
+        projected["accuracy.correct_answers_per_kwh"] = JsonMetricResult(
+            unit="answers/kWh", avg=number, min=number, max=number
+        )
+
+
+def _accuracy_rollup(rollup: dict[str, Any], label: str) -> JsonMetricResult:
+    count = _required_int(rollup.get("n"), label, "n")
+    correct = _required_int(rollup.get("correct_count"), label, "correct_count")
+    value = _optional_number(rollup.get("accuracy"), label, "accuracy")
+    return JsonMetricResult(
+        unit="ratio",
+        count=count,
+        sum=correct,
+        avg=value,
+        min=value,
+        max=value,
+    )
+
+
+def _unparsed_rollup(rollup: dict[str, Any], label: str) -> JsonMetricResult:
+    count = _required_int(rollup.get("n"), label, "n")
+    unparsed = _required_int(rollup.get("unparsed_count"), label, "unparsed_count")
+    value = _optional_number(rollup.get("unparsed_rate"), label, "unparsed_rate")
+    return JsonMetricResult(
+        unit="ratio",
+        count=count,
+        sum=unparsed,
+        avg=value,
+        min=value,
+        max=value,
+    )
 
 
 def _summary_series(entry: dict[str, Any], name: str) -> dict[str, Any] | None:

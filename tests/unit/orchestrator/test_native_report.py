@@ -106,6 +106,56 @@ def test_omits_multi_series_metric_without_flat_aggregate() -> None:
     )
 
 
+def test_projects_accuracy_analysis_for_sweeps_and_search() -> None:
+    report = {
+        "schema_version": "2.0",
+        "metrics": {"request_count": _entry("counter", "requests", {"total": 4.0})},
+        "accuracy": {
+            "summary": {
+                "overall": {
+                    "n": 4,
+                    "correct_count": 2,
+                    "unparsed_count": 1,
+                    "accuracy": 0.5,
+                    "unparsed_rate": 0.25,
+                    "mean_confidence": 0.5,
+                    "ci": {"low": 0.15, "high": 0.85},
+                },
+                "per_task": {
+                    "math": {
+                        "n": 2,
+                        "correct_count": 2,
+                        "unparsed_count": 0,
+                        "accuracy": 1.0,
+                        "unparsed_rate": 0.0,
+                        "mean_confidence": 1.0,
+                        "ci": {"low": 0.34, "high": 1.0},
+                    }
+                },
+            },
+            "accuracy_at_load": {
+                "accuracy": 0.5,
+                "goodput": 10.0,
+                "request_throughput": 12.0,
+                "correct_answers_per_second": 5.0,
+            },
+            "correct_answers_per_kwh": 720.0,
+        },
+    }
+
+    projected = project_native_summary(report)
+
+    assert projected["accuracy.overall"].avg == 0.5
+    assert projected["accuracy.overall"].count == 4
+    assert projected["accuracy.overall"].sum == 2
+    assert projected["accuracy.task.math"].avg == 1.0
+    assert projected["accuracy.unparsed"].avg == 0.25
+    assert projected["accuracy.unparsed"].sum == 1
+    assert projected["accuracy.unparsed.task.math"].avg == 0.0
+    assert projected["accuracy.correct_answers_per_second"].avg == 5.0
+    assert projected["accuracy.correct_answers_per_kwh"].avg == 720.0
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
