@@ -12,6 +12,7 @@ description = "Graph-IR async-dataflow workload driver for AIPerf — online (li
 aiperf-core = { path = "../aiperf-core" }
 aiperf-dataset.workspace = true
 aiperf-metrics.workspace = true
+aiperf-rng.workspace = true
 aiperf-clock.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
 aiperf-transport-http = { path = "../aiperf-transport-http" }
@@ -22,13 +23,12 @@ anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
+flate2 = "1"
+num-bigint = "0.4.8"
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
-aiperf-rng.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true

@@ -42,7 +42,6 @@ async-stream = "0.3"
 dashmap = "6"
 socket2 = { version = "0.5", features = ["all"] }
 num_cpus = "1"
-itoa.workspace = true
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "stream"] }
