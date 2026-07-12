@@ -601,11 +601,11 @@ impl BuiltinRunnerDatasetInputAdapterResolver {
 }
 
 #[derive(Deserialize)]
+// Keeping only the discriminator makes Serde skip unknown fields through
+// `IgnoredAny` instead of allocating an adapter-owned `Value` tree.
 struct DatasetInputIdentity {
     #[serde(rename = "type")]
     source_type: String,
-    #[serde(flatten)]
-    _remainder: Map<String, Value>,
 }
 
 #[async_trait(?Send)]
@@ -805,11 +805,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discriminator_decode_accepts_fields_owned_by_the_selected_adapter() {
+    fn discriminator_decode_skips_adapter_fields_without_retaining_them() {
+        assert_eq!(
+            std::mem::size_of::<DatasetInputIdentity>(),
+            std::mem::size_of::<String>(),
+            "the selector DTO must retain only its discriminator"
+        );
         let identity: DatasetInputIdentity = serde_json::from_value(serde_json::json!({
             "type": "synthetic",
             "entries": 1,
-            "prompts": {"isl": {"value": 8.0}}
+            "prompts": {
+                "opaque": "x".repeat(1 << 20),
+                "isl": {"value": 8.0}
+            }
         }))
         .unwrap();
 

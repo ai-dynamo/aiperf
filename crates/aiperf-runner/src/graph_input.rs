@@ -145,10 +145,10 @@ impl RunnerGraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver 
 }
 
 #[derive(Deserialize)]
+// Keeping only the discriminator makes Serde skip unknown fields through
+// `IgnoredAny` instead of allocating an adapter-owned `Value` tree.
 struct GraphInputIdentity {
     format: String,
-    #[serde(flatten)]
-    _adapter_owned: Map<String, Value>,
 }
 
 /// Built-in `dag_jsonl` authored wrapper plus canonical lowering adapter.
@@ -335,13 +335,21 @@ mod tests {
     }
 
     #[test]
-    fn identity_decode_leaves_adapter_owned_fields_untouched() {
+    fn identity_decode_skips_adapter_owned_fields_without_retaining_them() {
+        assert_eq!(
+            std::mem::size_of::<GraphInputIdentity>(),
+            std::mem::size_of::<String>(),
+            "the selector DTO must retain only its discriminator"
+        );
         let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
         resolver
             .validate_identity(&raw(json!({
                 "type": "file",
                 "format": "dag_jsonl",
-                "future_adapter_field": {"opaque": true}
+                "future_adapter_field": {
+                    "opaque": "x".repeat(1 << 20),
+                    "nested": [{"owned_by": "selected adapter"}]
+                }
             })))
             .unwrap();
     }
