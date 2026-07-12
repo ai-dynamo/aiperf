@@ -1,0 +1,173 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Native Runner
+
+on:
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**
+      - tools/runner_release_input.py
+      - packaging/aiperf-runner/**
+      - .github/workflows/native-runner.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dynamo_revision:
+        description: Exact 40-digit dynamo-aiperf-native revision to build
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-publish:
+    name: Native runner (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: prod-aiperf-builder-amd-v1
+          - arch: arm64
+            runner: prod-aiperf-builder-arm-v1
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    concurrency:
+      group: native-runner-${{ github.ref }}-${{ matrix.arch }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout AIPerf
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # Cargo intentionally consumes the sibling as a path dependency. Release
+      # CI therefore requires a clean, pre-provisioned checkout at the exact
+      # path Cargo resolves and a separately configured immutable source pin.
+      # It never clones a branch tip or manufactures a local substitute.
+      - name: Verify pinned Dynamo source
+        id: dynamo
+        env:
+          EXPECTED_REVISION: ${{ inputs.dynamo_revision || vars.DYNAMO_AIPERF_NATIVE_REVISION }}
+        run: |
+          set -euo pipefail
+          DYNAMO_ROOT=$(realpath -m crates/aiperf/../../../../../dynamo-aiperf-native)
+          if [ ! -f "${DYNAMO_ROOT}/lib/mocker/Cargo.toml" ]; then
+            echo "::error::Missing trusted dynamo-aiperf-native checkout at ${DYNAMO_ROOT}; offline artifacts cannot be synthesized or downgraded to online."
+            exit 1
+          fi
+          if [ -z "${EXPECTED_REVISION}" ] || [[ ! "${EXPECTED_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Configure vars.DYNAMO_AIPERF_NATIVE_REVISION (or the manual input) to one exact 40-digit lowercase revision."
+            exit 1
+          fi
+          ACTUAL_REVISION=$(git -C "${DYNAMO_ROOT}" rev-parse HEAD)
+          if [ "${ACTUAL_REVISION}" != "${EXPECTED_REVISION}" ]; then
+            echo "::error::dynamo-aiperf-native is ${ACTUAL_REVISION}; expected ${EXPECTED_REVISION}."
+            exit 1
+          fi
+          if [ -n "$(git -C "${DYNAMO_ROOT}" status --porcelain --untracked-files=all)" ]; then
+            echo "::error::dynamo-aiperf-native has uncommitted or untracked inputs; refusing an unprovenanced offline binary."
+            exit 1
+          fi
+          echo "revision=${ACTUAL_REVISION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run default workspace and online process tests
+        run: |
+          set -euo pipefail
+          env -u RUSTC_WRAPPER cargo test --locked --workspace
+          env -u RUSTC_WRAPPER cargo test --locked -p aiperf-runner \
+            --test stdio_e2e \
+            --test dag_stdio_e2e \
+            --test protocol_v2_stdio \
+            --test online_v2_stdio \
+            --test redaction_stdio
+
+      - name: Run offline process tests
+        run: |
+          set -euo pipefail
+          env -u RUSTC_WRAPPER cargo test --locked -p aiperf-runner \
+            --features dynamo-offline \
+            --test offline_stdio \
+            --test offline_scheduled_stdio
+
+      - name: Build and bind exact release images
+        env:
+          AIPERF_REVISION: ${{ github.sha }}
+          DYNAMO_REVISION: ${{ steps.dynamo.outputs.revision }}
+        run: |
+          set -euo pipefail
+          RELEASE_ROOT=".runner-release/linux-${{ matrix.arch }}"
+          rm -rf "${RELEASE_ROOT}" target/release-online target/release-offline
+          mkdir -p "${RELEASE_ROOT}/online" "${RELEASE_ROOT}/offline"
+
+          env -u RUSTC_WRAPPER CARGO_TARGET_DIR=target/release-online \
+            cargo build --locked --release -p aiperf-runner
+          install -m 755 target/release-online/release/aiperf-runner \
+            "${RELEASE_ROOT}/online/aiperf-runner"
+          uv run --no-project --with blake3 python tools/runner_release_input.py create \
+            --binary "${RELEASE_ROOT}/online/aiperf-runner" \
+            --cargo-lock Cargo.lock \
+            --source-revision "${AIPERF_REVISION}" \
+            --output "${RELEASE_ROOT}/online/runner-build.json"
+
+          env -u RUSTC_WRAPPER CARGO_TARGET_DIR=target/release-offline \
+            cargo build --locked --release -p aiperf-runner \
+            --features dynamo-offline
+          install -m 755 target/release-offline/release/aiperf-runner \
+            "${RELEASE_ROOT}/offline/aiperf-runner"
+          uv run --no-project --with blake3 python tools/runner_release_input.py create \
+            --binary "${RELEASE_ROOT}/offline/aiperf-runner" \
+            --cargo-lock Cargo.lock \
+            --source-revision "${AIPERF_REVISION}" \
+            --feature dynamo-offline \
+            --dependency-revision "dynamo-aiperf-native=${DYNAMO_REVISION}" \
+            --output "${RELEASE_ROOT}/offline/runner-build.json"
+
+          for PROFILE in online offline; do
+            uv run --no-project --with blake3 python tools/runner_release_input.py verify \
+              --binary "${RELEASE_ROOT}/${PROFILE}/aiperf-runner" \
+              --manifest "${RELEASE_ROOT}/${PROFILE}/runner-build.json" \
+              --cargo-lock Cargo.lock \
+              --source-revision "${AIPERF_REVISION}" \
+              --profile "${PROFILE}"
+          done
+
+      - name: Archive exact release inputs
+        uses: actions/upload-artifact@v5
+        with:
+          name: aiperf-runner-${{ github.sha }}-linux-${{ matrix.arch }}
+          path: .runner-release/linux-${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish immutable native inputs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
+        run: |
+          set -euo pipefail
+          ROOT=".runner-release/linux-${{ matrix.arch }}"
+          PREFIX="aiperf/runner-inputs/${GITHUB_SHA}/linux-${{ matrix.arch }}"
+          for PROFILE in online offline; do
+            for NAME in aiperf-runner runner-build.json; do
+              SOURCE="${ROOT}/${PROFILE}/${NAME}"
+              DESTINATION="s3://${S3_BUCKET}/${PREFIX}/${PROFILE}/${NAME}"
+              EXISTING=$(mktemp)
+              if aws s3 cp "${DESTINATION}" "${EXISTING}" >/dev/null 2>&1; then
+                if ! cmp -s "${SOURCE}" "${EXISTING}"; then
+                  echo "::error::Immutable runner input already exists with different bytes: ${DESTINATION}"
+                  exit 1
+                fi
+                echo "Verified existing immutable input ${DESTINATION}"
+              else
+                aws s3 cp "${SOURCE}" "${DESTINATION}" --sse AES256
+              fi
+              rm -f "${EXISTING}"
+            done
+          done

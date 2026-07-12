@@ -479,67 +479,85 @@ jobs:
           print(f"Repository URL: {url}")
           PYEOF
 
-      # The native build is a separate trusted release input because the
-      # default Cargo graph still names the pinned, locally developed sibling
-      # dynamo-aiperf-native path. This job must never synthesize a stub
-      # manifest, rewrite Cargo metadata, or silently build a different online
-      # graph. The native pipeline publishes the exact binary and its
-      # source/lock/features manifest under this immutable commit+arch key.
-      - name: Fetch native runner release input
+      # The native build is a separate trusted release input because the Cargo
+      # graph names the pinned dynamo-aiperf-native sibling path. This job must
+      # never synthesize a manifest, rewrite Cargo metadata, or silently use an
+      # online image for offline. Native CI publishes both exact images under
+      # immutable commit+arch+profile keys; the release companion uses offline
+      # while both profiles pass fresh-install gates below.
+      - name: Fetch and verify native runner release inputs
         env:
           S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
           RESOLVED_SHA: ${{ needs.prepare-nightly.outputs.resolved_sha }}
         run: |
           set -euo pipefail
-          INPUT_DIR=packaging/aiperf-runner/bin
-          INPUT_PREFIX="s3://${S3_BUCKET}/aiperf/runner-inputs/${RESOLVED_SHA}/linux-${{ matrix.arch }}"
-          mkdir -p "${INPUT_DIR}"
-          if ! aws s3 cp "${INPUT_PREFIX}/aiperf-runner" "${INPUT_DIR}/aiperf-runner"; then
-            echo "::error::Missing prebuilt aiperf-runner release input. The release job refuses to synthesize Cargo metadata for the external dynamo-aiperf-native path dependency."
-            exit 1
-          fi
-          if ! aws s3 cp "${INPUT_PREFIX}/runner-build.json" "${INPUT_DIR}/runner-build.json"; then
-            echo "::error::Missing runner-build.json source/lock/features manifest; refusing an unprovenanced native artifact."
-            exit 1
-          fi
-          chmod 755 "${INPUT_DIR}/aiperf-runner"
+          INPUT_ROOT=.runner-inputs
+          rm -rf "${INPUT_ROOT}" packaging/aiperf-runner/bin
+          for PROFILE in online offline; do
+            INPUT_DIR="${INPUT_ROOT}/${PROFILE}"
+            INPUT_PREFIX="s3://${S3_BUCKET}/aiperf/runner-inputs/${RESOLVED_SHA}/linux-${{ matrix.arch }}/${PROFILE}"
+            mkdir -p "${INPUT_DIR}"
+            if ! aws s3 cp "${INPUT_PREFIX}/aiperf-runner" "${INPUT_DIR}/aiperf-runner"; then
+              echo "::error::Missing ${PROFILE} aiperf-runner input. Release refuses to synthesize Cargo metadata or substitute another profile for the external dynamo-aiperf-native path dependency."
+              exit 1
+            fi
+            if ! aws s3 cp "${INPUT_PREFIX}/runner-build.json" "${INPUT_DIR}/runner-build.json"; then
+              echo "::error::Missing ${PROFILE} runner-build.json; refusing an unprovenanced native artifact."
+              exit 1
+            fi
+            chmod 755 "${INPUT_DIR}/aiperf-runner"
+            uv run --no-project --with blake3 python tools/runner_release_input.py verify \
+              --binary "${INPUT_DIR}/aiperf-runner" \
+              --manifest "${INPUT_DIR}/runner-build.json" \
+              --cargo-lock Cargo.lock \
+              --source-revision "${RESOLVED_SHA}" \
+              --profile "${PROFILE}"
+          done
 
-          INPUT_DIR="${INPUT_DIR}" RESOLVED_SHA="${RESOLVED_SHA}" python3 - <<'PYEOF'
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
+          mkdir -p packaging/aiperf-runner/bin
+          cp "${INPUT_ROOT}/offline/aiperf-runner" packaging/aiperf-runner/bin/
+          cp "${INPUT_ROOT}/offline/runner-build.json" packaging/aiperf-runner/bin/
 
-          root = Path(os.environ["INPUT_DIR"])
-          manifest = json.loads((root / "runner-build.json").read_text())
-          if manifest.get("source_revision") != os.environ["RESOLVED_SHA"]:
-              raise SystemExit("::error::Runner source revision does not match resolved nightly SHA")
-          if manifest.get("features") != []:
-              raise SystemExit("::error::Stock online runner input must have an empty Cargo feature list")
-          completed = subprocess.run(
-              [root / "aiperf-runner", "--capabilities"],
-              check=True,
-              capture_output=True,
-          )
-          lines = [line for line in completed.stdout.splitlines() if line.strip()]
-          if len(lines) != 1:
-              raise SystemExit("::error::Runner capabilities must contain exactly one JSON line")
-          capabilities = json.loads(lines[0])
-          if capabilities.get("distribution_id") != manifest.get("distribution_id"):
-              raise SystemExit("::error::Runner capabilities disagree with manifest distribution_id")
-          print(f"Verified native release input {capabilities['distribution_id']}")
-          PYEOF
-
-      - name: Build and validate runner companion wheel
+      - name: Fresh-install online and offline runner companions
         run: |
           set -euo pipefail
-          uv build --wheel --out-dir .runner-wheel-check/ packaging/aiperf-runner
-          RUNNER_WHEEL=$(find .runner-wheel-check/ -maxdepth 1 -name "aiperf_runner-*.whl" -type f | head -1)
-          if [ -z "${RUNNER_WHEEL}" ]; then
-            echo "::error::Companion build produced no aiperf_runner wheel"
+          rm -rf .runner-wheel-check
+          mkdir -p .runner-wheel-check/frontend packaging/aiperf-runner/bin
+          uv build --wheel --out-dir .runner-wheel-check/frontend
+          FRONTEND_WHEEL=$(find .runner-wheel-check/frontend -maxdepth 1 -name "aiperf-*.whl" -type f | head -1)
+          if [ -z "${FRONTEND_WHEEL}" ]; then
+            echo "::error::Fresh-install gate produced no frontend wheel"
             exit 1
           fi
-          uvx twine check "${RUNNER_WHEEL}"
+
+          for PROFILE in online offline; do
+            rm -rf packaging/aiperf-runner/bin
+            mkdir -p packaging/aiperf-runner/bin ".runner-wheel-check/${PROFILE}"
+            cp ".runner-inputs/${PROFILE}/aiperf-runner" packaging/aiperf-runner/bin/
+            cp ".runner-inputs/${PROFILE}/runner-build.json" packaging/aiperf-runner/bin/
+            uv build --wheel \
+              --out-dir ".runner-wheel-check/${PROFILE}" \
+              packaging/aiperf-runner
+            RUNNER_WHEEL=$(find ".runner-wheel-check/${PROFILE}" -maxdepth 1 -name "aiperf_runner-*.whl" -type f | head -1)
+            if [ -z "${RUNNER_WHEEL}" ]; then
+              echo "::error::${PROFILE} companion build produced no aiperf_runner wheel"
+              exit 1
+            fi
+            uvx twine check "${RUNNER_WHEEL}"
+            uv venv ".runner-wheel-check/venv-${PROFILE}"
+            uv pip install \
+              --python ".runner-wheel-check/venv-${PROFILE}/bin/python" \
+              "${FRONTEND_WHEEL}" "${RUNNER_WHEEL}"
+            ".runner-wheel-check/venv-${PROFILE}/bin/python" \
+              tools/verify_runner_companion.py --profile "${PROFILE}"
+          done
+
+          # The official Linux release companion and container are the
+          # offline-capable superset. Restore it after the stock-online gate.
+          rm -rf packaging/aiperf-runner/bin
+          mkdir -p packaging/aiperf-runner/bin
+          cp .runner-inputs/offline/aiperf-runner packaging/aiperf-runner/bin/
+          cp .runner-inputs/offline/runner-build.json packaging/aiperf-runner/bin/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -740,6 +758,7 @@ jobs:
           docker buildx build \
             --platform "${{ matrix.platform }}" \
             --target   runtime \
+            --build-arg AIPERF_RUNNER_PROFILE=offline \
             --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
             --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
             --push \
@@ -774,6 +793,7 @@ jobs:
           docker buildx build \
             --platform linux/amd64 \
             --target   licenses-artifact \
+            --build-arg AIPERF_RUNNER_PROFILE=offline \
             --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
             --output     "type=local,dest=./license-raw" \
             .

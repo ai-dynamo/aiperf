@@ -94,6 +94,11 @@ FROM base AS env-builder
 
 WORKDIR /workspace
 
+# Release containers are offline-capable by contract. The argument remains
+# explicit so a stock-online companion can be exercised in a dedicated image
+# gate without weakening the default release profile.
+ARG AIPERF_RUNNER_PROFILE=offline
+
 # Install build dependencies. The dpkg-installed.txt snapshot was dropped:
 # nothing downstream consumes it, and shipping it alongside runtime-pkgs.txt
 # in the artifact was misleading (build-only packages that never ship).
@@ -182,12 +187,15 @@ COPY --from=wheel-builder /dist /dist
 RUN uv pip install /dist/aiperf-*.whl /dist/aiperf_runner-*.whl \
     && rm -rf /dist /workspace/pyproject.toml
 
-# Capability negotiation recomputes the executable content identity. The smoke
-# also clears PATH to prove Python discovers the companion through installed
-# wheel metadata, then exercises the strict stdin bootstrap contract.
+# Capability negotiation recomputes executable content identity. The verifier
+# clears PATH to prove wheel-metadata discovery, runs Python -> runner -> a
+# loopback SSE mock, and either executes offline in process or proves a stock
+# online image rejects it before artifact creation.
 COPY tools/verify_runner_companion.py /tmp/verify_runner_companion.py
 RUN /opt/aiperf/venv/bin/python /tmp/verify_runner_companion.py \
-    && rm /tmp/verify_runner_companion.py
+        --profile "${AIPERF_RUNNER_PROFILE}" \
+    && /opt/aiperf/venv/bin/python -c \
+        'from pathlib import Path; Path("/tmp/verify_runner_companion.py").unlink()'
 
 # Remove setuptools as it is not needed for the runtime image
 RUN uv pip uninstall setuptools
@@ -273,6 +281,8 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 FROM nvcr.io/nvidia/distroless/python:3.13-v4.0.8-dev AS runtime
 
+ARG AIPERF_RUNNER_PROFILE=offline
+
 # Include project license and asset attributions
 COPY LICENSE ATTRIBUTIONS.md /legal/
 
@@ -303,9 +313,15 @@ ENV VIRTUAL_ENV=/opt/aiperf/venv \
     PATH="/opt/aiperf/venv/bin:${PATH}" \
     TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
 
-# Re-run the native process from the final distroless filesystem rather than
-# assuming the copied venv preserved its executable/runtime dependencies.
-RUN /opt/aiperf/venv/bin/aiperf-runner --capabilities
+# Re-run the complete installed-product gate from the final distroless
+# filesystem rather than assuming the copied venv preserved executable/runtime
+# dependencies. The offline profile exercises both loopback HTTP and in-process
+# Dynamo; the online profile proves offline fails without fallback.
+COPY tools/verify_runner_companion.py /tmp/verify_runner_companion.py
+RUN /opt/aiperf/venv/bin/python /tmp/verify_runner_companion.py \
+        --profile "${AIPERF_RUNNER_PROFILE}" \
+    && /opt/aiperf/venv/bin/python -c \
+        'from pathlib import Path; Path("/tmp/verify_runner_companion.py").unlink()'
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]

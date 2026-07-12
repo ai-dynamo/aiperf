@@ -40,6 +40,31 @@ def test_container_and_release_require_verified_companion_inputs() -> None:
 
     assert "/dist/aiperf_runner-*.whl" in dockerfile
     assert "verify_runner_companion.py" in dockerfile
+    assert '--profile "${AIPERF_RUNNER_PROFILE}"' in dockerfile
+    assert "AIPERF_RUNNER_PROFILE=offline" in dockerfile
     assert "runner-build.json" in nightly
-    assert "refuses to synthesize Cargo metadata" in nightly
-    assert "aiperf/runner-inputs/${RESOLVED_SHA}/linux-${{ matrix.arch }}" in nightly
+    assert "refuses to synthesize Cargo metadata or substitute" in nightly
+    assert (
+        "aiperf/runner-inputs/${RESOLVED_SHA}/linux-${{ matrix.arch }}/${PROFILE}"
+        in nightly
+    )
+    assert "for PROFILE in online offline" in nightly
+    assert 'verify_runner_companion.py --profile "${PROFILE}"' in nightly
+    assert "--build-arg AIPERF_RUNNER_PROFILE=offline" in nightly
+
+
+def test_platform_ci_builds_and_executes_both_native_profiles() -> None:
+    workflow = (_ROOT / ".github/workflows/native-runner.yml").read_text()
+
+    assert "prod-aiperf-builder-amd-v1" in workflow
+    assert "prod-aiperf-builder-arm-v1" in workflow
+    assert "cargo test --locked --workspace" in workflow
+    assert "--test stdio_e2e" in workflow
+    assert "--test offline_stdio" in workflow
+    assert "--test offline_scheduled_stdio" in workflow
+    assert "cargo build --locked --release -p aiperf-runner" in workflow
+    assert "--features dynamo-offline" in workflow
+    assert "tools/runner_release_input.py create" in workflow
+    assert "tools/runner_release_input.py verify" in workflow
+    assert "dynamo-aiperf-native=${DYNAMO_REVISION}" in workflow
+    assert "aiperf/runner-inputs/${GITHUB_SHA}/linux-${{ matrix.arch }}" in workflow
