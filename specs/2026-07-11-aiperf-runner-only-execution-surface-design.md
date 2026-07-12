@@ -829,3 +829,48 @@ capabilities advertise only the registered pair, and the v1 projector rejects
 the backend. This addendum supersedes the earlier “pair execution pending” and
 empty-`supported_pairs` implementation-status statements; unregistered pairs
 and uncomposed sidecar/readiness lifecycles still fail closed.
+
+## Addendum — 2026-07-12 (direct pair adapters and completed canonical matrix)
+
+The canonical Python product path is now protocol-v2-only. It projects one
+authored request, verifies the exact runner image, and preflights one registered
+pair. It contains no Config-v1 resolver call, protocol-v1 request builder, or
+fallback branch. Protocol v1 remains accepted by the Rust executable only as
+an isolated compatibility decoder and is not selected by `aiperf profile`.
+
+Runner composition implements the double-dispatch structure designed here:
+open backend and workload factories validate their own raw configuration, an
+explicit `RunnerPairFactory` owns cross-component compatibility, and
+preparation returns one `PreparedRunnerOperation`. Online execution further
+uses a direct `OnlineWorkloadAdapter -> PreparedOnlineHarness` transition. The
+coordinator does not match on workload strings or convert v2 values through a
+v1 DTO. Startup-only typed lowering into shared runtime values is the single
+adapter load, not a second wire conversion.
+
+The executable pair matrix is now:
+
+| Runner distribution | Executable protocol-v2 pairs |
+|---|---|
+| Base | `online_http + scheduled`, `online_http + graph`, `online_http + static_accuracy`, `online_http + agentic`, `online_grpc + scheduled` |
+| `dynamo-offline` feature | every base pair plus `dynamo_offline + scheduled` and `dynamo_offline + graph` |
+
+`supported_pairs` is still derived from registered executable adapters, so a
+base image never claims the optional offline pairs. The scheduled offline
+adapter loads the authored dataset once into the unified store before running
+all phases on one simulator engine. The graph adapters pass authored
+`dag_jsonl` directly to the registered graph-input adapter, producing
+`GraphTracePlan`s and one frozen segment store without a `Dataset`,
+`Conversation`, `DagMetadata`, Python resolver, or protocol-v1 intermediate.
+
+The stateful agentic pair supervises the canonical Python evaluator over JSONL,
+starts the authenticated Rust inference gateway, and routes primary and
+auxiliary calls through the ordinary prepared endpoint, scheduling, transport,
+metrics, and report path. Python Config-v2 subprocess coverage now complements
+the existing runner process proof, so the mode is product-reachable without
+restoring a native CLI or giving Python model-server coordinates.
+
+This addendum supersedes Sections 1.1–1.3's implementation snapshot, the
+migration plan's pending increments 3–5, and the completion criterion that
+allowed a Python fallback until protocol-v1 retirement. Remaining unregistered
+combinations and unsupported per-workload lifecycle fields continue to fail
+closed; capability truth remains exact-image-specific.

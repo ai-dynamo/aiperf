@@ -237,3 +237,42 @@ Runner subprocess tests prove both paths and native-v2 reporting. This
 supersedes this spec's earlier “authored v2 static validation only” status for
 those registered pairs; the compatibility sequence remains only for exact
 pairs not yet advertised by the selected runner.
+
+## Addendum — 2026-07-12 (protocol-v2-only product execution)
+
+The Python product executor no longer selects between protocol generations.
+`RustSubprocessExecutor` always projects exactly one authored protocol-v2
+request, binds it to the selected runner's executable-content identity, and
+requires that exact image to advertise the requested backend/workload pair.
+An absent pair is a preflight error. Python does not invoke the resolver chain,
+construct a protocol-v1 request, or reinterpret the run through a fallback.
+Runner discovery consequently requires protocol v2 and accepts a v2-only
+runner image. The Rust protocol-v1 decoder may remain as an isolated
+compatibility surface, but it is not reachable from the canonical Python
+executor.
+
+The pair adapter is the single preparation boundary. Authored backend and
+workload objects remain factory-owned until their registered pair strictly
+validates and prepares a typed harness; no request is serialized or converted
+through a second protocol shape. In particular, `dag_jsonl` remains authored
+graph input until the selected `GraphInputAdapter` parses it once and returns
+canonical `GraphTracePlan`s plus one frozen segment store. It never passes
+through Python dataset resolution or a linear Rust `Dataset` intermediate.
+
+Explicit open workloads also own their phase stop semantics. Python retains
+the generic request/duration/session requirement when it implicitly selects a
+built-in workload, but does not force an extension workload to author an inert
+second scheduling contract before its Rust factory can validate the phase.
+This is required for the harness-owned agentic lifecycle.
+
+The base runner advertises direct protocol-v2 execution for online HTTP
+scheduled, graph, static-accuracy, and agentic workloads plus native gRPC
+scheduled execution. A runner built with `dynamo-offline` additionally
+advertises scheduled and graph execution over the in-process simulator. Python
+Config-v2 subprocess proofs cover every one of those canonical mode families,
+including exact unsupported-pair rejection with no legacy resolution.
+
+This addendum supersedes this spec's protocol-v1 process sequence, its
+conditional v2 selection/fallback language, and the final sentence of the
+native-gRPC addendum that retained compatibility execution for unadvertised
+pairs. Unadvertised pairs now fail closed; they do not select another protocol.
