@@ -87,6 +87,14 @@ impl RequestObserver for AdaptiveObserver {
             .on_token(uuid, self.absolute_ns(at_ms));
     }
 
+    fn on_output_tokens(&self, uuid: Uuid, at_ms: &[f64]) {
+        self.delegate.on_output_tokens(uuid, at_ms);
+        let mut sampler = self.sampler.borrow_mut();
+        for &timestamp in at_ms {
+            sampler.on_token(uuid, self.absolute_ns(timestamp));
+        }
+    }
+
     fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
         self.delegate.on_usage(uuid, usage);
         self.sampler.borrow_mut().on_usage(uuid, usage);

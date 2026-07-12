@@ -56,6 +56,12 @@ impl RequestObserver for CollectorObserver {
     fn on_token(&self, u: Uuid, at: f64) {
         self.inner.borrow_mut().on_token(u, at);
     }
+    fn on_output_tokens(&self, u: Uuid, at_ms: &[f64]) {
+        let mut collector = self.inner.borrow_mut();
+        for &at in at_ms {
+            collector.on_token(u, at);
+        }
+    }
     fn on_terminal(&self, u: Uuid, s: ReplayTerminalStatus) {
         self.inner.borrow_mut().on_terminal(u, s);
     }

@@ -27,6 +27,7 @@ use aiperf_timing::{
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
+use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -776,7 +777,13 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         }
         delegates.push(native_metrics.clone());
         delegates.append(&mut plan.additional_observers);
-        let delegate: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
+        // The common offline phase has only native metrics. Avoid routing every
+        // callback through a fan-out allocation and loop when there is no fan-out.
+        let delegate: Rc<dyn RequestObserver> = if delegates.len() == 1 {
+            delegates.pop().expect("one observer delegate was counted")
+        } else {
+            Rc::new(ObserverTee::new(delegates))
+        };
         let (observer, issuance_gate) = if let Some(extension) = plan.runtime_extension.take() {
             let extension = match extension.build(
                 self.clock.clone(),
@@ -1042,7 +1049,9 @@ struct ActiveTurn {
 
 struct PhaseDispatchTracker {
     context: PhaseContext,
-    active: RefCell<BTreeMap<Uuid, ActiveTurn>>,
+    // Lifecycle updates address requests by UUID and cancellation only reduces
+    // counts, so maintaining key order adds work without observable ordering.
+    active: RefCell<FxHashMap<Uuid, ActiveTurn>>,
 }
 
 impl TurnLifecycleObserver for PhaseDispatchTracker {
@@ -1064,7 +1073,7 @@ impl PhaseDispatchTracker {
     fn new(context: PhaseContext) -> Self {
         Self {
             context,
-            active: RefCell::new(BTreeMap::new()),
+            active: RefCell::new(FxHashMap::default()),
         }
     }
 

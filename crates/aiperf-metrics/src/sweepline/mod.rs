@@ -50,6 +50,27 @@ impl SweepEvent {
     }
 }
 
+/// One sweep event shared by adjacent bit-identical request trajectories.
+///
+/// Reduction replays `delta` instead of multiplying it so compression cannot
+/// change floating-point accumulation order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct RepeatedSweepEvent {
+    timestamp_ns: f64,
+    delta: f64,
+    repetitions: usize,
+}
+
+impl RepeatedSweepEvent {
+    pub(super) const fn new(timestamp_ns: f64, delta: f64, repetitions: usize) -> Self {
+        Self {
+            timestamp_ns,
+            delta,
+            repetitions,
+        }
+    }
+}
+
 /// A right-continuous step function stored at its event boundaries.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StepFn {
@@ -234,8 +255,62 @@ fn sweep_line_cumsum_compact(mut events: Vec<SweepEvent>) -> StepFn {
     StepFn::new(timestamps_ns, values)
 }
 
+pub(super) fn sweep_line_cumsum_repeated(mut events: Vec<RepeatedSweepEvent>) -> StepFn {
+    sort_repeated_sweep_events(&mut events);
+    if events.is_empty() {
+        return StepFn::empty();
+    }
+
+    let mut unique_timestamps = 1_usize;
+    let mut max_abs = 0.0_f64;
+    let mut current = 0.0;
+    for (index, event) in events.iter().enumerate() {
+        for _ in 0..event.repetitions {
+            current += event.delta;
+            max_abs = max_abs.max(current.abs());
+        }
+        if index > 0 && !same_timestamp(events[index - 1].timestamp_ns, event.timestamp_ns) {
+            unique_timestamps += 1;
+        }
+    }
+
+    let mut timestamps_ns = Vec::with_capacity(unique_timestamps);
+    let mut values = Vec::with_capacity(unique_timestamps);
+    current = 0.0;
+    for (index, event) in events.iter().enumerate() {
+        for _ in 0..event.repetitions {
+            current += event.delta;
+        }
+        let finishes_timestamp = events
+            .get(index + 1)
+            .is_none_or(|next| !same_timestamp(event.timestamp_ns, next.timestamp_ns));
+        if finishes_timestamp {
+            timestamps_ns.push(event.timestamp_ns);
+            values.push(current);
+        }
+    }
+    if max_abs > 0.0 {
+        snap_small_residuals(&mut values, 1e-9 * max_abs);
+    }
+    StepFn::new(timestamps_ns, values)
+}
+
 fn sort_sweep_events(events: &mut [SweepEvent]) {
     let compare = |left: &SweepEvent, right: &SweepEvent| {
+        left.timestamp_ns
+            .total_cmp(&right.timestamp_ns)
+            .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
+            .then_with(|| left.delta.total_cmp(&right.delta))
+    };
+    if events.len() >= PARALLEL_EVENT_SORT_MIN_EVENTS && rayon::current_num_threads() > 1 {
+        events.par_sort_unstable_by(compare);
+    } else {
+        events.sort_unstable_by(compare);
+    }
+}
+
+fn sort_repeated_sweep_events(events: &mut [RepeatedSweepEvent]) {
+    let compare = |left: &RepeatedSweepEvent, right: &RepeatedSweepEvent| {
         left.timestamp_ns
             .total_cmp(&right.timestamp_ns)
             .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))

@@ -594,6 +594,26 @@ impl RequestObserver for NativeMetricsObserver {
         }
     }
 
+    fn on_output_tokens(&self, uuid: Uuid, at_ms: &[f64]) {
+        if at_ms.is_empty() {
+            return;
+        }
+        let mut state = self.state.borrow_mut();
+        let Some(request) = state.request_mut(uuid) else {
+            return;
+        };
+        request.token_arrivals_ns.reserve(at_ms.len());
+        for &timestamp in at_ms {
+            request
+                .token_arrivals_ns
+                .push(self.relative_ns_from_ms(timestamp));
+        }
+        request.output_tokens += at_ms.len() as u64;
+        request.first_output_token_ns.get_or_insert(
+            request.token_arrivals_ns[request.token_arrivals_ns.len() - at_ms.len()],
+        );
+    }
+
     fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
         if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
             request.response.prompt_tokens = usage.prompt_tokens.map(|value| value as u64);
@@ -670,6 +690,12 @@ impl RequestObserver for ObserverTee {
         }
     }
 
+    fn on_output_tokens(&self, uuid: Uuid, at_ms: &[f64]) {
+        for delegate in &self.delegates {
+            delegate.on_output_tokens(uuid, at_ms);
+        }
+    }
+
     fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
         for delegate in &self.delegates {
             delegate.on_usage(uuid, usage);
@@ -694,6 +720,21 @@ mod tests {
     use super::*;
     use aiperf_clock::SimClock;
     use aiperf_metrics::{MetricTag, MetricValue};
+
+    #[test]
+    fn output_token_batch_preserves_absolute_order_with_one_request_lookup() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(99);
+        observer.on_arrival(uuid, 0.0, 4, 3);
+        observer.on_output_tokens(uuid, &[1.0, 2.5, 4.0]);
+
+        let state = observer.state.borrow();
+        let request = state.request(uuid).unwrap();
+        assert_eq!(request.token_arrivals_ns, [1_000_000, 2_500_000, 4_000_000]);
+        assert_eq!(request.output_tokens, 3);
+        assert_eq!(request.first_output_token_ns, Some(1_000_000));
+    }
 
     #[test]
     fn classified_events_produce_ttfo_reasoning_and_usage_metrics() {

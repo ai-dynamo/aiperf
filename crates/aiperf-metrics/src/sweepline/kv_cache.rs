@@ -3,7 +3,10 @@
 
 //! KV-cache tokens-in-flight and ICL-aware decode curves.
 
-use super::{StepFn, SweepEvent, assert_aligned, sweep_line_cumsum_compact};
+use super::{
+    RepeatedSweepEvent, StepFn, SweepEvent, assert_aligned, sweep_line_cumsum_compact,
+    sweep_line_cumsum_repeated,
+};
 
 /// Borrowed CSR-style inter-chunk-latency series.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,45 +164,81 @@ pub fn tokens_in_flight_sweep_line_icl(
         );
     }
 
-    let mut events = Vec::with_capacity(start_ns.len() * 3 + icl.values_ns.len());
-    let has_valid_chunks =
-        append_chunk_events(&mut events, generation_start_ns, end_ns, output_tokens, icl);
-    for (record, has_chunks) in has_valid_chunks.iter().copied().enumerate() {
-        if has_chunks
-            && !generation_start_ns[record].is_nan()
-            && !output_tokens[record].is_nan()
-            && output_tokens[record] >= 1.0
-        {
-            events.push(SweepEvent::new(generation_start_ns[record], 1.0));
+    validate_record_slices(icl, output_tokens.len());
+    let initial_capacity = icl
+        .values_ns
+        .len()
+        .min(icl.append_order.len().saturating_mul(8));
+    let mut events = Vec::with_capacity(initial_capacity);
+    let mut position = 0;
+    while position < icl.append_order.len() {
+        let record = icl.append_order[position];
+        let repetitions = repeated_record_count(
+            icl,
+            position,
+            &[
+                start_ns,
+                generation_start_ns,
+                end_ns,
+                input_tokens,
+                output_tokens,
+            ],
+        );
+        let values = icl.values_for_record(record);
+        let count = values.len();
+        let mut cumulative = 0.0;
+        let mut has_valid_chunks = false;
+        for &value in values {
+            cumulative += value;
+            let generation_start = generation_start_ns[record];
+            let tokens = output_tokens[record];
+            if generation_start.is_nan() || value < 0.0 || tokens.is_nan() || tokens < 1.0 {
+                continue;
+            }
+            let mut timestamp = generation_start + cumulative;
+            if !end_ns[record].is_nan() && timestamp >= end_ns[record] {
+                timestamp = next_down(end_ns[record]);
+            }
+            events.push(RepeatedSweepEvent::new(
+                timestamp,
+                (tokens - 1.0) / count as f64,
+                repetitions,
+            ));
+            has_valid_chunks = true;
         }
-    }
-    for record in 0..start_ns.len() {
+        if has_valid_chunks {
+            events.push(RepeatedSweepEvent::new(
+                generation_start_ns[record],
+                1.0,
+                repetitions,
+            ));
+        }
+
         let prefill_valid = !start_ns[record].is_nan()
             && !input_tokens[record].is_nan()
             && !generation_start_ns[record].is_nan()
             && generation_start_ns[record] > start_ns[record];
         if prefill_valid {
-            events.push(SweepEvent::new(start_ns[record], input_tokens[record]));
+            events.push(RepeatedSweepEvent::new(
+                start_ns[record],
+                input_tokens[record],
+                repetitions,
+            ));
         }
-
-        if end_ns[record].is_nan() {
-            continue;
-        }
-        match (prefill_valid, has_valid_chunks[record]) {
-            (true, true) => events.push(SweepEvent::new(
-                end_ns[record],
-                -(input_tokens[record] + output_tokens[record]),
-            )),
-            (true, false) => {
-                events.push(SweepEvent::new(end_ns[record], -input_tokens[record]));
+        if !end_ns[record].is_nan() {
+            let delta = match (prefill_valid, has_valid_chunks) {
+                (true, true) => Some(-(input_tokens[record] + output_tokens[record])),
+                (true, false) => Some(-input_tokens[record]),
+                (false, true) => Some(-output_tokens[record]),
+                (false, false) => None,
+            };
+            if let Some(delta) = delta {
+                events.push(RepeatedSweepEvent::new(end_ns[record], delta, repetitions));
             }
-            (false, true) => {
-                events.push(SweepEvent::new(end_ns[record], -output_tokens[record]));
-            }
-            (false, false) => {}
         }
+        position += repetitions;
     }
-    sweep_line_cumsum_compact(events)
+    sweep_line_cumsum_repeated(events)
 }
 
 /// Computes ICL-aware decode throughput at each positive-duration chunk interval.
@@ -221,87 +260,60 @@ pub fn throughput_sweep_line_icl(
     }
     validate_record_slices(icl, output_tokens.len());
 
-    let mut positive_counts = vec![0_usize; output_tokens.len()];
-    for &record in icl.append_order {
-        for &value in icl.values_for_record(record) {
-            if value > 0.0 {
-                positive_counts[record] += 1;
-            }
-        }
-    }
-    let relative_cumsum = relative_cumsums(icl);
-    let mut events = Vec::with_capacity(icl.values_ns.len() * 2);
-    for &record in icl.append_order {
-        let start = icl.offsets[record];
-        for (within, &value) in icl.values_for_record(record).iter().enumerate() {
-            let relative_end = relative_cumsum[start + within];
+    let initial_capacity = icl
+        .values_ns
+        .len()
+        .saturating_mul(2)
+        .min(icl.append_order.len().saturating_mul(8));
+    let mut events = Vec::with_capacity(initial_capacity);
+    let mut position = 0;
+    while position < icl.append_order.len() {
+        let record = icl.append_order[position];
+        let repetitions =
+            repeated_record_count(icl, position, &[generation_start_ns, output_tokens]);
+        let values = icl.values_for_record(record);
+        let count = values.iter().filter(|value| **value > 0.0).count();
+        let mut relative_end = 0.0;
+        for &value in values {
+            relative_end += value;
             let generation_start = generation_start_ns[record];
             let tokens = output_tokens[record];
             if generation_start.is_nan() || value <= 0.0 || tokens.is_nan() || tokens < 1.0 {
                 continue;
             }
-            let count = positive_counts[record];
             if count == 0 {
                 continue;
             }
             let interval_end = generation_start + relative_end;
             let interval_start = interval_end - value;
             let rate = ((tokens - 1.0) / count as f64) / value;
-            events.push(SweepEvent::new(interval_start, rate));
-            events.push(SweepEvent::new(interval_end, -rate));
+            events.push(RepeatedSweepEvent::new(interval_start, rate, repetitions));
+            events.push(RepeatedSweepEvent::new(interval_end, -rate, repetitions));
         }
+        position += repetitions;
     }
-    sweep_line_cumsum_compact(events)
+    sweep_line_cumsum_repeated(events)
 }
 
-fn append_chunk_events(
-    events: &mut Vec<SweepEvent>,
-    generation_start_ns: &[f64],
-    end_ns: &[f64],
-    output_tokens: &[f64],
-    icl: IclSeries<'_>,
-) -> Vec<bool> {
-    validate_record_slices(icl, output_tokens.len());
-    let mut counts = vec![0_usize; output_tokens.len()];
-    for &record in icl.append_order {
-        counts[record] = icl.lengths[record];
-    }
-    let relative_cumsum = relative_cumsums(icl);
-    let mut has_valid_chunks = vec![false; output_tokens.len()];
-    for &record in icl.append_order {
-        let start = icl.offsets[record];
-        for (within, &value) in icl.values_for_record(record).iter().enumerate() {
-            let relative_end = relative_cumsum[start + within];
-            let generation_start = generation_start_ns[record];
-            let tokens = output_tokens[record];
-            if generation_start.is_nan() || value < 0.0 || tokens.is_nan() || tokens < 1.0 {
-                continue;
-            }
-            let count = counts[record];
-            if count == 0 {
-                continue;
-            }
-            let mut timestamp = generation_start + relative_end;
-            if !end_ns[record].is_nan() && timestamp >= end_ns[record] {
-                timestamp = next_down(end_ns[record]);
-            }
-            events.push(SweepEvent::new(timestamp, (tokens - 1.0) / count as f64));
-            has_valid_chunks[record] = true;
+fn repeated_record_count(icl: IclSeries<'_>, position: usize, columns: &[&[f64]]) -> usize {
+    let record = icl.append_order[position];
+    let values = icl.values_for_record(record);
+    let mut repetitions = 1;
+    for &candidate in &icl.append_order[position + 1..] {
+        if columns
+            .iter()
+            .any(|column| column[record].to_bits() != column[candidate].to_bits())
+            || values.len() != icl.lengths[candidate]
+            || !values
+                .iter()
+                .zip(icl.values_for_record(candidate))
+                .all(|(left, right)| left.to_bits() == right.to_bits())
+        {
+            break;
         }
+        repetitions += 1;
     }
-    has_valid_chunks
-}
-
-fn relative_cumsums(icl: IclSeries<'_>) -> Vec<f64> {
-    let mut relative = Vec::with_capacity(icl.values_ns.len());
-    for &record in icl.append_order {
-        let mut cumulative = 0.0;
-        for &value in icl.values_for_record(record) {
-            cumulative += value;
-            relative.push(cumulative);
-        }
-    }
-    relative
+    repetitions
 }
 
 fn validate_record_slices(icl: IclSeries<'_>, record_count: usize) {
@@ -563,6 +575,56 @@ mod tests {
         let canonical_throughput = throughput_sweep_line_icl(&generation_start, &output, canonical);
         let reordered_throughput = throughput_sweep_line_icl(&generation_start, &output, reordered);
         assert_eq!(canonical_throughput, reordered_throughput);
+    }
+
+    #[test]
+    fn adjacent_identical_icl_trajectories_match_uncompressed_order_bit_exactly() {
+        let start = [0.0, 0.0, 50.0];
+        let generation_start = [10.0, 10.0, 60.0];
+        let end = [40.0, 40.0, 100.0];
+        let input = [100.0, 100.0, 80.0];
+        let output = [3.0, 3.0, 3.0];
+        let lengths = [2, 2, 2];
+
+        let grouped_values = [10.0, 20.0, 10.0, 20.0, 15.0, 25.0];
+        let grouped_offsets = [0, 2, 4];
+        let grouped_order = [0, 1, 2];
+        let grouped = IclSeries::new(&grouped_values, &grouped_offsets, &lengths, &grouped_order);
+
+        // Separating the identical rows prevents run compression while
+        // retaining the same request facts and final sweep-event multiset.
+        let ungrouped_values = [10.0, 20.0, 15.0, 25.0, 10.0, 20.0];
+        let ungrouped_offsets = [0, 4, 2];
+        let ungrouped_order = [0, 2, 1];
+        let ungrouped = IclSeries::new(
+            &ungrouped_values,
+            &ungrouped_offsets,
+            &lengths,
+            &ungrouped_order,
+        );
+
+        assert_eq!(
+            tokens_in_flight_sweep_line_icl(
+                &start,
+                &generation_start,
+                &end,
+                &input,
+                &output,
+                grouped,
+            ),
+            tokens_in_flight_sweep_line_icl(
+                &start,
+                &generation_start,
+                &end,
+                &input,
+                &output,
+                ungrouped,
+            )
+        );
+        assert_eq!(
+            throughput_sweep_line_icl(&generation_start, &output, grouped),
+            throughput_sweep_line_icl(&generation_start, &output, ungrouped)
+        );
     }
 
     #[allow(clippy::too_many_arguments)]

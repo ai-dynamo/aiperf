@@ -79,8 +79,9 @@ pub struct ObservedEndpointMetrics {
 /// threads can still provide a thread-safe implementation.
 ///
 /// TTFT is derived by the collector as the first
-/// [`on_token`](RequestObserver::on_token) or classified-token callback for a
-/// request, so sinks do not emit a separate first-token event.
+/// [`on_token`](RequestObserver::on_token), classified-token, or output-token
+/// batch callback for a request, so sinks do not emit a separate first-token
+/// event.
 pub trait RequestObserver {
     /// Record request arrival with its input length and requested output length.
     fn on_arrival(
@@ -101,6 +102,17 @@ pub trait RequestObserver {
     /// call site, while observer tees forward the classification unchanged.
     fn on_classified_token(&self, uuid: Uuid, at_ms: f64, _kind: ObservedTokenKind) {
         self.on_token(uuid, at_ms);
+    }
+    /// Record an ordered batch of user-visible output-token timestamps.
+    ///
+    /// Coalescing transports can override this hook downstream to amortize
+    /// correlation and mutable-state access without changing the semantic
+    /// callback sequence. The default deliberately replays the ordinary
+    /// classified-token callback so every existing observer remains correct.
+    fn on_output_tokens(&self, uuid: Uuid, at_ms: &[f64]) {
+        for &timestamp in at_ms {
+            self.on_classified_token(uuid, timestamp, ObservedTokenKind::Output);
+        }
     }
     /// Record the terminal server-usage observation.
     ///
@@ -211,5 +223,16 @@ mod tests {
         };
         EchoSink.dispatch(req, &obs).await.unwrap();
         assert_eq!(obs.tokens.lock().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn output_token_batch_defaults_to_ordered_token_callbacks() {
+        let obs = RecordingObserver::default();
+        let uuid = Uuid::from_u128(7);
+        obs.on_output_tokens(uuid, &[1.0, 2.5, 4.0]);
+        assert_eq!(
+            *obs.tokens.lock().unwrap(),
+            vec![(uuid, 1.0), (uuid, 2.5), (uuid, 4.0)]
+        );
     }
 }
