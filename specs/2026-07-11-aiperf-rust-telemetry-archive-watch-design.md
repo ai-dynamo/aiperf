@@ -278,14 +278,17 @@ endpoint facts deduplicate by physical attempt ID, so seamless overlap neither l
 counts two fetches. Archive-off versus archive-on parity on the run-owned driver is exact; comparison
 to the former completion-paced loop separates formula parity from intentional cadence differences.
 
-Boundary coalescing never uses timestamp proximity. The phase orchestrator assigns a typed
-`coalescing_group_id` to exactly those transition subscribers that share one physical snapshot and
-atomically seals all of them in one `BoundarySnapshotCommand` before fetch; their lifecycle markers
-remain distinct. Late membership and reuse of a sealed group are errors. Exact
-phase lifecycle markers come from a `PhaseObserver` tee and persist the matching structured
-boundary reference, while boundary scrape capture time remains
-a separate fact. Archive availability cannot change request timings or metric formulas. The
-terminal report records archive completeness separately.
+Boundary coalescing never uses timestamp proximity. The phase orchestrator first allocates one
+`transition_id`, then atomically seals a source-cardinal `BoundaryCapturePlan` before any driver
+fetches. The plan contains one command per expected physical source. A command's typed
+`coalescing_group_id` is unique to that source/driver and covers exactly the adjacent transition
+subscribers sharing that one physical snapshot; group IDs never span drivers. Late membership and
+reuse of a sealed transition/group are errors. Exact phase lifecycle markers come from a
+`PhaseObserver` tee and persist one source-scoped structured boundary reference per expected
+capture, while scrape capture time remains a separate fact. Every planned reference terminally
+joins to exactly one physical attempt or one explicit loss result. Archive availability cannot
+change request timings or metric formulas. The terminal report records archive completeness
+separately.
 
 ### 3.4 Why Rust owns this IO
 
@@ -488,6 +491,32 @@ pub trait ArchiveRecoveryPolicy: Debug + Send {
         -> Result<RecoveryPlan, ArchiveRecoveryError>;
 }
 
+pub trait ArchiveWriterFactory: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static ArchiveWriterDescriptor;
+    fn validate(&self, config: &RawValue)
+        -> Result<ValidatedArchiveWriterConfig, ArchiveWriterConfigError>;
+    fn persistent_identity(
+        &self,
+        config: &ValidatedArchiveWriterConfig,
+    ) -> CanonicalPersistentWriterIdentity;
+    fn prepare(
+        &self,
+        config: ValidatedArchiveWriterConfig,
+        store: Box<dyn ArchiveObjectStore>,
+    ) -> Result<Box<dyn ArchiveSink>, ArchiveWriterPrepareError>;
+}
+
+pub trait ArchiveStoreAccessFactory: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static ArchiveStoreAccessDescriptor;
+    fn validate(&self, config: &RawValue)
+        -> Result<ValidatedArchiveStoreAccess, ArchiveStoreAccessConfigError>;
+    fn prepare(
+        &self,
+        config: ValidatedArchiveStoreAccess,
+        secrets: &dyn SecretProviderResolver,
+    ) -> Result<Box<dyn ArchiveObjectStore>, ArchiveStoreAccessPrepareError>;
+}
+
 #[async_trait]
 pub trait ArchiveSink: Send {
     async fn recover(&mut self) -> Result<RecoveredArchive, ArchiveSinkError>;
@@ -504,6 +533,16 @@ pub trait EpochAnchorProvider {
     fn anchor(&self, clock: &dyn Clock) -> Result<EpochAnchor, EpochAnchorError>;
 }
 ```
+
+`ArchiveWriterFactory` owns byte/layout-affecting persistent policy: schema/wire compatibility,
+Parquet encoding/compression, partition/index layout, WAL profile, and writer compatibility. Its
+strict config is secret-free, and `persistent_identity` is canonical genesis input.
+`ArchiveStoreAccessFactory` owns only invocation access: object-store adapter, endpoints,
+credential-provider references, retry/timeouts, and currently proved capabilities. Its strict
+config enters the invocation digest but may not select serialized bytes, naming, layout,
+compression, or logical identity. Preparation composes the genesis-selected writer with the
+current access handle. This factory-owned partition—not a field-name allowlist—decides what may be
+re-authored during source-free sync.
 
 `ArchiveSourceFactory::prepare` constructs a concrete
 `TypedTelemetryDriver<Fetcher, Decoder, ArchiveEntity, NativeEntity, Record, NativeProjection,
@@ -546,9 +585,15 @@ Each source has a bounded FIFO projection strand with at most one active job; st
 parallel across sources. The permit covers both its queued slot and active footprint. The owner
 starts source record N+1 only after N returns and updates the epoch chain, and commits returned jobs
 through a bounded global `record_seq` reorder buffer. If a sequenced projection fails, its success
-candidate ID is discarded and the owner derives/hashes a terminal loss `frame_id` from the same
-reserved sequence plus loss kind. Thus there is no epoch fork, reordered
-topology marker, missing global sequence, or pre-stamp coverage digest.
+candidate ID is discarded. The owner sends a tracked `ProjectionFailureTerminalization` containing
+the reservation and typed failure to the originating driver LocalSet. That LocalSet stamps
+`loss_observed_ns = Clock::now_ns()` only after receiving the failure and returns an immutable
+terminal-loss draft. The owner then derives/hashes the loss `frame_id` from the reserved sequence
+plus terminal loss kind. A worker timestamp, maintenance tick, wall clock, enqueue time, or earlier
+attempt fact may not substitute for this observation. The per-driver drain tracker covers both
+legs of the round trip, and the source strand/global reorder slot remain occupied until it
+resolves. Thus there is no epoch fork, reordered topology marker, missing global sequence,
+Clock-less failure, or pre-stamp coverage digest.
 
 A per-driver drain tracker owns every outstanding reservation/job/permit; owner completion resolves
 it. Finalization closes reservations and waits until each becomes a final draft or explicit loss
@@ -564,10 +609,10 @@ uses that same receipt handshake; a local generation/head installation returns i
 verified fsynced `CheckpointCompletion`/`FinalizeCompletion` without fabricating a publication
 receipt or observation time.
 
-Every wire-selected family—source, sink, rotation, admission, recovery, enrichment, sanitizer,
-raw-body retention, and archive-key provider—has its own frozen descriptor/strict-validate/prepare
-factory registry. Thread bounds follow the two explicit execution strategies above rather than a
-blanket rule. Stable IDs never select a core string branch.
+Every wire-selected family—source, writer, store access, rotation, admission, recovery,
+enrichment, sanitizer, raw-body retention, and archive-key provider—has its own frozen descriptor/
+strict-validate/prepare factory registry. Thread bounds follow the two explicit execution
+strategies above rather than a blanket rule. Stable IDs never select a core string branch.
 
 At least these concrete implementations ship:
 
@@ -653,21 +698,42 @@ slow. `SimClock` tests pin same-instant ordering and overrun arithmetic.
 
 ### 6.3 Boundary priority
 
-The phase orchestrator constructs the adjacent-phase transition plan before either sidecar barrier
-runs and submits exactly one atomic
-`BoundarySnapshotCommand { coalescing_group_id, subscribers: NonEmptyVec<BoundaryReference>,
-absolute_deadline_ns }`. A single-subscriber command has no group; a coalesced command contains the
-complete sealed start/end membership and one identical non-null group ID on every reference. The
-driver rejects duplicate group IDs, duplicate references, empty membership, inconsistent embedded
-groups, or any attempt to add a late subscriber. It cannot launch the physical fetch until the
-whole command is accepted. Timestamp proximity and races between separate commands are irrelevant.
+The phase orchestrator constructs the adjacent-phase transition plan before any sidecar barrier
+runs and submits exactly one atomic source-cardinal command:
 
-The command preempts the next continuous deadline but never interrupts an already issued HTTP
-request. All structured boundary references are recorded on the attempt and receive the same
-snapshot, while their lifecycle markers remain distinct. Each subscribing phase waits for its view of the forced result
-under the same Clock deadline. Shared decode feeds native delivery first; archive projection uses
-its independent permit. Continuous scheduling re-anchors from the original cadence, not the
-boundary completion time.
+```text
+BoundaryCapturePlan {
+  transition_id,
+  commands: NonEmptyVec<SourceBoundarySnapshotCommand {
+    source_id,
+    coalescing_group_id,
+    subscribers: NonEmptyVec<BoundaryReference>,
+    absolute_deadline_ns,
+  }>,
+}
+```
+
+There is exactly one command for every expected physical source. All references in one command
+carry that command's source and transition. A single-subscriber command has no group; a coalesced
+command has one non-null group ID copied onto every member. That group ID is unique within the
+archive and may occur only on this one source command; different drivers never pretend to share a
+physical snapshot. The orchestrator/driver registry rejects duplicate transition/source pairs,
+duplicate group IDs, duplicate references, empty membership, inconsistent embedded identities, or
+late subscribers. It registers the complete plan before routing each command to its owning driver,
+and no driver may launch until registration succeeds. Timestamp proximity and races between
+separate driver channels are irrelevant.
+
+Each source command preempts that driver's next continuous deadline but never interrupts an already
+issued HTTP request. Its structured references are recorded on the source attempt and receive the
+same snapshot, while lifecycle markers remain distinct. A command that produces no durable attempt
+closes every one of its references through one exact source-scoped loss row instead; a successfully
+finalized archive requires each planned `(transition_id, source_id, boundary_id)` to occur in
+exactly one attempt or loss and never both. The validated exact-boundary reserve is at least the
+maximum command membership, so saturation summaries may not replace those join keys. If the writer
+cannot persist the exact result, the archive/required phase fails rather than claiming boundary
+completeness. Each subscribing phase waits for its source-cardinal result set under the same Clock
+deadline. Shared decode feeds native delivery first; archive projection uses its independent
+permit. Continuous scheduling re-anchors from the original cadence, not boundary completion time.
 
 ### 6.4 Failure classification
 
@@ -781,14 +847,17 @@ Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.projection-reservatio
 `.receipt-range-coverage.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`.
 Canonical maps sort by UTF-8 key bytes and reject duplicate
 keys. Genesis stores an `archive_identity_digest` over the fully validated secret-free persistent
-collection config: every source/policy/writer factory ID plus normalized config, accepted-format/
-role-validity matrix, source descriptors, schema/index fingerprints, writer compatibility ID, and
-archive-key provider ID. Invocation-only recovery action, shutdown budget, credential material, and
-artifact path are excluded and instead enter a non-authoritative `invocation_digest`. Exact collect-
-resume verifies the archive identity digest; source-free `finalize_remote` reads the persistent
-identity from genesis and verifies only its authored archive/spool/target/key/sink selectors against
-that state. Changing `create_new` to `finalize_remote` therefore cannot manufacture an identity
-mismatch or weaken stored source checks.
+collection config: every source/policy/writer factory ID plus its factory-produced canonical
+persistent identity, accepted-format/role-validity matrix, source descriptors, schema/index
+fingerprints, writer compatibility ID, and archive-key provider ID. Invocation-only store-access
+factory/config, recovery action, shutdown budget, credential material, and artifact path are
+excluded and instead enter a non-authoritative `invocation_digest`. Exact collect-resume verifies
+the archive identity digest. Source-free `finalize_remote` reads writer identity from genesis,
+verifies its authored archive/spool/target/key selectors against that state, and prepares only its
+invocation-authored store-access handle. Access validation must prove the capabilities needed by
+the stored writer but cannot change its bytes. Changing `create_new` to `finalize_remote` or
+rotating access credentials therefore cannot manufacture an identity mismatch or weaken stored
+source/writer checks.
 
 Two series identities prevent redaction from silently merging source series:
 
@@ -851,7 +920,7 @@ V1 uses these exact aliases:
 | `SourceTimestamp` | non-null `Struct<lexeme: Utf8 nullable, normalized_unix_ns: EpochNs, status: Enum8>` |
 | `CreatedTimestamp` | non-null `Struct<lexeme: Utf8 nullable, normalized_unix_ns: EpochNs, status: Enum8>` |
 | `Exemplar` | nullable `Struct<labels: StringMap, value: ArchiveNumber, timestamp: SourceTimestamp>` |
-| `BoundaryReference` | non-null `Struct<boundary_id: Utf8 non-null, phase_id: Utf8 non-null, role: Enum8 non-null, coalescing_group_id: Utf8 nullable>` |
+| `BoundaryReference` | non-null `Struct<transition_id: Utf8 non-null, boundary_id: Utf8 non-null, phase_id: Utf8 non-null, source_id: Utf8 non-null, role: Enum8 non-null, coalescing_group_id: Utf8 nullable>` |
 
 `ArchiveNumber.kind` is `finite`, `pos_inf`, `neg_inf`, `nan`, or `absent`. Source tokens always
 retain their exact lexeme; only synthetic `absent` has a null lexeme. `finite_value` is the
@@ -1227,7 +1296,7 @@ Markers connect history to runner facts without pretending they are samples. The
 | `clock_ns`, `unix_epoch_ns` | `Int64`, `EpochNs` | no / yes |
 | `run_id`, `phase_id`, `source_id` | `Utf8` | yes |
 | `phase_state`, `completion_reason` | `Enum8` | yes |
-| `boundary_id`, `coalescing_group_id` | `Utf8` | yes |
+| `transition_id`, `boundary_id`, `coalescing_group_id` | `Utf8` | yes |
 | `boundary_role` | `Enum8` | yes |
 | `phase_start_ns`, `sent_end_ns`, `requests_end_ns` | `Int64` | yes |
 | `attribute_epoch_id` | `Digest` | yes |
@@ -1236,11 +1305,15 @@ Markers connect history to runner facts without pretending they are samples. The
 Kinds cover session/run lifecycle, exact phase `STARTED`/`SENDING_COMPLETE`/`COMPLETE`, source
 state, topology change, and archive degradation/recovery. A marker never claims successful
 durability/publication of the generation containing itself. Those later facts use §8.9 receipts and
-head state. Phase fields and optional boundary reference are copied from one `PhaseObserver`
-snapshot. `boundary_id`, `phase_id`, `boundary_role`, and `coalescing_group_id` must equal the
-corresponding attempt `BoundaryReference`; lifecycle transitions with no forced snapshot leave all
-three boundary fields null. Capture completion of a forced scrape is a separate attempt timestamp. A topology marker and the first point/family rows for
-its epoch share one frame, with marker logical row order first.
+head state. Phase fields and the optional source-scoped boundary reference are copied from one
+`PhaseObserver` snapshot. A forced transition writes one lifecycle marker per planned source and
+phase role. Its `transition_id`, `boundary_id`, `phase_id`, `source_id`, `boundary_role`, and
+`coalescing_group_id` equal the complete `BoundaryReference`; lifecycle transitions with no forced
+snapshot write one ordinary marker and leave all boundary fields and `source_id` null. Every
+boundary marker joins through its complete structured reference to exactly one attempt
+`boundary_refs` member or one exact loss `boundary_refs` member. Capture completion remains a
+separate attempt fact. A topology marker and the first point/family rows for its epoch share one
+frame, with marker logical row order first.
 
 ### 8.8 Loss-range table
 
@@ -1506,14 +1579,16 @@ LocalSet native delivery + nonblocking ArchiveProjectionPermit
               | ProjectionReservation (entity/lease/permit)
               v
 single mutable archive-state owner
-    +-- assign record_seq/frame_id
+    +-- assign record_seq/projection_reservation_id
     `-- schedule bounded per-source FIFO strands
               | SequencedProjectionJob
               v
 bounded archive-projection CPU pool (one active job/source)
-              | SequencedArchiveFrameDraft or typed failure
+              | success: derive frame_id and return SequencedArchiveFrameDraft
+              | failure: return typed failure without a frame_id
               v
 same archive owner: ordered result/failure commit
+    +-- failure -> origin LocalSet Clock stamp -> derive loss frame_id
     +-- WAL and open-partition builders
     +-- immutable manifest/index pages and LOCAL-LATEST
     `-- bounded asynchronous immutable-object upload futures
@@ -1810,6 +1885,11 @@ visibility lag separately from corruption.
 
 Periodic sync drives bounded asynchronous uploads while the sole owner continues local WAL work:
 
+This section's head-CAS authorization is `active_collection_claim`: the expected head must carry
+the exact current writer claim. The only other v1 authorization is
+`finalized_logical_equivalence_compaction` in §11.5, whose expected and replacement heads both have
+an absent claim. Adapters reject every other claim-state transition.
+
 1. create-if-absent every newly referenced partition and manifest-index page;
 2. create-if-absent every required encrypted raw object and verify its ciphertext bytes;
 3. verify exact bytes by the §11.1 integrity contract;
@@ -1837,10 +1917,14 @@ An archive ID has one writer. Genesis binds a random `canonical_spool_id`. Sourc
 requires that exact spool identity and its qualified open-descriptor lock; copying only the remote
 head to a different spool cannot reopen collection. Before a remote-backed resumed session activates
 sources, it conditionally installs `WriterClaim { claim_epoch, writer_session_id,
-canonical_spool_id, session_started_generation_hash }` in `LATEST`. Every later head update is
-conditioned on that claim. Clean remote finalization clears it atomically in the same terminal head
-CAS; a second release write is forbidden. The durable publication receipt binds the resulting
-object version, terminal head hash, and absent-claim state. A claim left by a crash has no
+canonical_spool_id, session_started_generation_hash }` in `LATEST`. Every open collection or
+publication head update is conditioned on that active claim. Clean remote finalization clears it
+atomically in the same terminal head CAS; a second release write is forbidden. A later
+logical-equivalence compaction update is the distinct §11.5 authorization mode: it requires the
+canonical-spool lock plus the exact remotely finalized parent version/hash and absent claim, and it
+must install another finalized absent-claim head. It neither requires nor may invent a maintenance
+claim. The durable publication receipt binds the resulting object version, terminal head hash, and
+absent-claim state. A claim left by a crash has no
 wall-clock expiry: takeover requires the canonical spool/lock plus an explicitly authored prior-
 claim ID, or a separate operator-mediated fencing action. A different host/spool may run sync-only
 but cannot acknowledge new collection. Distributed merge is out of scope.
@@ -2056,14 +2140,17 @@ not used for markers. Warmup/profiling names and run identity are typed fields. 
 request/capture timestamps remain attempt facts, so a query can distinguish transition from sample
 availability without post-hoc inference.
 
-The observer contract is extended with `PhaseTransitionContext { boundary:
-Option<BoundaryReference> }`. The orchestrator allocates that reference before issuing a forced
-snapshot, seals it with every adjacent subscriber in the one atomic command, and passes the same
-value to both the driver command and the lifecycle transition; it is not reconstructed by a
-sidecar. Coalesced phase-A-end/phase-B-start transitions therefore produce
-two marker rows with distinct boundary/phase/role values and one shared group, while the physical
-attempt carries both references. `SENDING_COMPLETE` or any transition without a forced snapshot
-uses `None`. Exact joins use the structured IDs, never timestamp proximity.
+The observer contract is extended with `PhaseTransitionContext { transition_id: Utf8,
+boundaries: Vec<BoundaryReference> }`. Before a forced snapshot, the orchestrator allocates one
+reference per `(source, adjacent phase role)`, atomically seals the complete source-cardinal plan,
+and passes the relevant immutable set to both driver commands and lifecycle transition; a sidecar
+never reconstructs it. For one physical source, a coalesced phase-A-end/phase-B-start command
+therefore produces two marker rows with distinct boundary/phase/role values and one source-local
+group while its physical attempt or exact loss carries both references. With N sources the same
+transition produces N independent commands/groups and 2N marker rows, all tied by
+`transition_id`. `SENDING_COMPLETE` or a transition without a forced snapshot uses an empty set.
+Exact joins use complete structured IDs and the attempt-or-loss cardinality invariant, never
+timestamp proximity.
 
 ---
 
@@ -2117,7 +2204,8 @@ pub struct TelemetryArchiveSpecV2 {
     pub spool_quota_bytes: u64,
     pub spool_quota_files: u64,
     pub required: bool,
-    pub sink: NamedRunnerComponentSpecV2,
+    pub writer: NamedRunnerComponentSpecV2,
+    pub store_access: NamedRunnerComponentSpecV2,
     pub rotation: NamedRunnerComponentSpecV2,
     pub admission: NamedRunnerComponentSpecV2,
     pub recovery: NamedRunnerComponentSpecV2,
@@ -2150,7 +2238,7 @@ pub struct TelemetryArchiveSyncSpecV2 {
     pub archive_id: Uuid,
     pub target: NormalizedArchiveUri,
     pub local_spool: PathBuf,
-    pub sink: NamedRunnerComponentSpecV2,
+    pub store_access: NamedRunnerComponentSpecV2,
     pub recovery: NamedRunnerComponentSpecV2,
     pub archive_key: NamedRunnerComponentSpecV2,
 }
@@ -2160,8 +2248,10 @@ Every named component strictly decodes its own `config`; the reusable DTO does n
 untyped option bag. `TelemetryWatchConfigV2.archive` and the attached resource below both use these
 exact bytes and validation rules.
 `TelemetryArchiveSyncSpecV2.recovery` must select `finalize_remote`; persistent source, parser,
-rotation, admission, enrichment, sanitization, raw-retention, schema, and writer identity come from
-the verified genesis rather than being re-authored.
+writer, rotation, admission, enrichment, sanitization, raw-retention, schema, and writer identity
+come from verified genesis rather than being re-authored. `store_access` is the only sink-side
+invocation configuration it authors, and its factory is prohibited from contributing persistent
+writer identity.
 
 The complete authored projection below is deserializable by that revised DTO; omitted resource
 fields are forbidden/unused rather than filled with dummy inference values:
@@ -2210,7 +2300,11 @@ fields are forbidden/unused rather than filled with dummy inference values:
           "spool_quota_bytes": 107374182400,
           "spool_quota_files": 100000,
           "required": true,
-          "sink": {"type": "parquet_object_store", "config": {}},
+          "writer": {"type": "parquet_archive_v1", "config": {}},
+          "store_access": {
+            "type": "object_store",
+            "config": {"credential_provider": "archive-store"}
+          },
           "rotation": {"type": "rows_bytes_age", "config": {}},
           "admission": {"type": "primary_durable", "config": {}},
           "recovery": {"type": "create_new", "config": {}},
@@ -2246,8 +2340,8 @@ The complete source-free sync-only projection is:
           "archive_id": "018f84a7-1f3c-7c21-8be2-7e8dbf9536b1",
           "target": "s3://benchmarks/watch/archive-id/",
           "local_spool": "/var/tmp/aiperf/archive-id",
-          "sink": {
-            "type": "parquet_object_store",
+          "store_access": {
+            "type": "object_store",
             "config": {"credential_provider": "archive-store"}
           },
           "recovery": {"type": "finalize_remote", "config": {}},
@@ -2262,7 +2356,7 @@ The complete source-free sync-only projection is:
 
 For this variant `ResourceRequirementsV2` forbids models/endpoints/metrics/sidecars and does not ask
 the backend for `ControlPlaneHttpProvider`. Preparation resolves only the canonical spool/lock,
-archive identity/key provider, selected object-store sink credentials/capabilities, and receipt-
+archive identity/key provider, selected object-store access credentials/capabilities, and receipt-
 observer epoch. It verifies stored source/config/schema/writer identities from genesis and never
 prepares source factories, endpoint credentials, transport profiles, decode/projection workers, or
 source tasks. `online_http` remains the envelope backend for v1 distribution compatibility, but no
@@ -2379,7 +2473,8 @@ ellipsis:
             "spool_quota_bytes": 10737418240,
             "spool_quota_files": 10000,
             "required": false,
-            "sink": {"type": "parquet_local", "config": {}},
+            "writer": {"type": "parquet_archive_v1", "config": {}},
+            "store_access": {"type": "local_filesystem", "config": {}},
             "rotation": {"type": "rows_bytes_age", "config": {}},
             "admission": {"type": "attached_best_effort", "config": {}},
             "recovery": {"type": "create_new", "config": {}},
@@ -2404,8 +2499,9 @@ Static validation covers:
   `ControlPlaneHttpProvider`, while `finalize_remote` forbids it;
 - for `collect`, unique/valid source IDs/types, positive intervals/bounds, and credential/TLS/proxy/
   redirect/content-negotiation/compression policy without resolving secrets;
-- for `finalize_remote`, strict archive ID/spool/target/sink/key selectors and no source fields;
-- target scheme/sink compatibility;
+- for `finalize_remote`, strict archive ID/spool/target/store-access/key selectors and no source or
+  persistent-writer fields;
+- target scheme/store-access compatibility and stored-writer capability satisfaction;
 - local spool path safety, quota/transaction reserve, and artifact-target non-aliasing;
 - policy IDs/configs and raw-retention acknowledgment;
 - watch/backend compatibility;
@@ -2458,12 +2554,23 @@ Option<&AccumulatorSummary>, outcome }`; its existing accumulator-based helper d
 summary times rather than constructing a fake accumulator. Common provenance and the typed mode
 block remain required.
 
+`execution_id` identifies this runner execution and `receipt_observer_epoch_id` identifies the
+receipt Clock/epoch it registered. `collection_session_id` is the session created by this execution
+and is null for `finalize_remote`. `latest_collection_session_id` is the greatest collection
+session reachable from the reported generation (including the current one for collect) and is
+nullable only for an archive that has never collected. Sync-only never copies that historical
+value into `collection_session_id`. Collect-resume and source-free-sync report goldens pin these
+semantics.
+
 ```jsonc
 {
   "telemetry_archive": {
     "schema_version": "1.0",
     "archive_id": "uuid",
-    "session_id": "uuid",
+    "execution_id": "uuid",
+    "receipt_observer_epoch_id": "blake3:...",
+    "collection_session_id": null,
+    "latest_collection_session_id": "uuid",
     "state": "remotely_finalized",
     "publication_receipts_uri": "file:///.../LOCAL-RECEIPTS",
     "local_head": {
@@ -2679,10 +2786,10 @@ version or material schema/writer change invalidates the profile until rerun.
 4. one source never has two scrapes in flight;
 5. absolute Clock timeout and a dynamically earlier shutdown latch cancel/reclaim active transport,
    yield one terminal attempt, and join before the final fence;
-6. only one atomically sealed orchestrator command containing every subscriber reuses a boundary
-   attempt; duplicate/late/inconsistent group membership is rejected while exact phase
-   markers remain distinct; structured boundary references join every marker to that physical
-   attempt without timestamps, including coalesced end/start transitions;
+6. one atomically sealed source-cardinal plan contains exactly one command per expected driver;
+   duplicate/late/inconsistent transition, source, or group membership is rejected; groups never
+   cross drivers; and every structured marker reference joins without timestamps to exactly one
+   same-source attempt or exact loss, including coalesced end/start transitions;
 7. one physical attempt with multi-phase membership preserves phase and run-level native parity
    across seamless overlap;
 8. virtual inline capture/post-simulation persistence cannot advance virtual time; a future external
@@ -2969,8 +3076,8 @@ This design is complete only when:
 - the exact runner derives and validates `online_http + telemetry_watch` from frozen factories and
   requires the typed `ControlPlaneHttpProvider` capability only for collection;
 - every physical source uses the injected Clock/native transport, one run-owned fixed-deadline
-  driver, dynamically tightened shutdown deadline/cancellation join, atomically sealed boundary
-  groups, and bounded ordered decode path;
+  driver, dynamically tightened shutdown deadline/cancellation join, one command in an atomically
+  sealed source-cardinal boundary plan, and a bounded ordered decode path;
 - Prometheus text 0.0.4/OpenMetrics text 1.0.0 parsing preserves strict grammar, every valid role,
   zero-point families, repeated MetricPoints, numeric/timestamp lexemes, exemplars, and a separately
   named native fallback without changing benchmark semantics;
@@ -2996,7 +3103,8 @@ This design is complete only when:
 - enrichment is API-limited to attributes, sanitization covers every structured surface, source
   identity survives redaction, and raw retention is separately protected;
 - attached mode reuses one source attempt across continuous phase membership and explicit boundary
-  subscribers, emits exactly joined `PhaseObserver` markers,
+  subscribers, closes each planned source capture as exactly one attempt or loss, emits exactly
+  joined source-scoped `PhaseObserver` markers,
   produces byte-identical archive-off/archive-on `NativeMeasurementParityV1` bytes from one
   captured/deterministic event stream, preserves real-run formula/order invariants, emits the archive
   block only when enabled, and passes the numeric §17 regression profile;
