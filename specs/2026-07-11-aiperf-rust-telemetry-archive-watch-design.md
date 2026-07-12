@@ -277,7 +277,8 @@ to the former completion-paced loop separates formula parity from intentional ca
 Boundary coalescing never uses timestamp proximity. The phase orchestrator assigns a typed
 `coalescing_group_id` to exactly those transition subscribers that share one physical snapshot;
 their lifecycle markers remain distinct. Commands without the same group never coalesce. Exact
-phase lifecycle markers come from a `PhaseObserver` tee, while boundary scrape capture time remains
+phase lifecycle markers come from a `PhaseObserver` tee and persist the matching structured
+boundary reference, while boundary scrape capture time remains
 a separate fact. Archive availability cannot change request timings or metric formulas. The
 terminal report records archive completeness separately.
 
@@ -439,8 +440,8 @@ pub trait ArchiveProjection<ArchiveEntity, NativeEntity>: Debug + Send + Sync {
         &self,
         attempt: &DecodedAttempt<ArchiveEntity, NativeEntity>,
         permit: ArchiveProjectionPermit,
-        context: &ArchiveProjectionContext,
-    ) -> Result<ArchiveFrameDraft, ArchiveProjectionError>;
+        context: &SequencedArchiveProjectionContext,
+    ) -> Result<SequencedArchiveFrameDraft, ArchiveProjectionError>;
 }
 
 pub trait TelemetryEnricher: Debug + Send + Sync {
@@ -479,10 +480,12 @@ pub trait ArchiveRecoveryPolicy: Debug + Send {
 pub trait ArchiveSink: Send {
     async fn recover(&mut self) -> Result<RecoveredArchive, ArchiveSinkError>;
     async fn append_frame(&mut self, frame: ArchiveWalFrame)
+        -> Result<DurabilityCompletion, ArchiveSinkError>;
+    async fn record_receipt(&mut self, event: ReceiptEventDraft)
         -> Result<AppendReceipt, ArchiveSinkError>;
-    async fn checkpoint(&mut self) -> Result<CheckpointReceipt, ArchiveSinkError>;
+    async fn checkpoint(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError>;
     async fn finalize(&mut self, reason: TerminationReason)
-        -> Result<FinalizedArchive, ArchiveSinkError>;
+        -> Result<FinalizeCompletion, ArchiveSinkError>;
 }
 
 pub trait EpochAnchorProvider {
@@ -513,23 +516,35 @@ sends exact owned bytes/facts to the ordered CPU pool, receives the decoded nati
 the native accumulator even when archive admission is unavailable. Only then does it
 nonblockingly acquire `ArchiveProjectionPermit` from a validated worst-case footprint. The permit
 owns byte/frame/WAL quota and is `Send`; the driver moves it, the decoded archive entity, and exact-
-entity lease into a second bounded archive-projection CPU job. That job performs family/point
-construction, enrichment, sanitization, logical hashing, and draft allocation off the LocalSet,
-consumes the permit, and refunds unused capacity. Denial records a loss range without repeating
-parse or delaying native delivery. Primary watch may wait/fail before fetch according to its
-durable admission policy because the archive is its product.
+entity lease into a nonblocking `ProjectionReservation` sent to the archive owner. Denial records a
+loss range without repeating parse or delaying native delivery. Primary watch may wait/fail before
+fetch according to its durable admission policy because the archive is its product.
 
-The projection CPU stage returns `ArchiveFrameDraft` without a global accepted sequence to the
-source LocalSet. That loop resolves the drain tracker and forwards the unchanged draft to the
-archive owner; projection-worker wall time is not recorded. A per-driver drain tracker owns every
-outstanding projection job/permit; finalization closes reservations
-and waits until each becomes a draft or explicit loss before the frame fence. The single archive
-owner assigns the inclusive global `record_seq`, computes the final frame ID, and writes the
-`ArchiveWalFrame`. The frame is a versioned persisted sum of attempt/family/sample batch,
+The single owner assigns the next inclusive global `record_seq` and final `frame_id` before any
+authoritative row digest exists, then dispatches a `SequencedProjectionJob` carrying those values,
+the permit, entity, lease, and the source's preceding attribute-epoch state to the second bounded
+CPU pool. That job performs family/point construction, enrichment, sanitization, attribute-epoch
+transition/marker insertion, canonical logical-row hashing, and final draft allocation off the
+LocalSet. Hashes produced by decode or pre-reservation normalization are explicitly provisional and
+cannot enter WAL coverage. The job returns `SequencedArchiveFrameDraft` plus the next epoch state.
+
+Each source has a bounded FIFO projection strand with at most one active job; strands run in
+parallel across sources. The permit covers both its queued slot and active footprint. The owner
+starts source record N+1 only after N returns and updates the epoch chain, and commits returned jobs
+through a bounded global `record_seq` reorder buffer. If a sequenced projection fails, the owner
+persists a loss frame under that already reserved sequence. Thus there is no epoch fork, reordered
+topology marker, missing global sequence, or pre-stamp coverage digest.
+
+A per-driver drain tracker owns every outstanding reservation/job/permit; owner completion resolves
+it. Finalization closes reservations and waits until each becomes a final draft or explicit loss
+before the frame fence. The owner writes the resulting `ArchiveWalFrame`, a versioned persisted sum
+of attempt/family/sample batch,
 lifecycle, raw-object material/reference, and coalesced loss-range payloads. Receipt events use
 their separately indexed journal and are never self-attesting WAL payloads. The frame is a closed
 wire schema, not a source extension point. Every frame has stable source/control identity and CRC,
-and every successful `append_frame` has the same local-durable meaning.
+and every successful `append_frame` completion token has the same local-durable meaning. The token
+travels through the LocalSet Clock bridge and `record_receipt` before the caller receives an
+`AppendReceipt`; checkpoint/finalize publication completions use the same handshake.
 
 Every wire-selected family—source, sink, rotation, admission, recovery, enrichment, sanitizer,
 raw-body retention, and archive-key provider—has its own frozen descriptor/strict-validate/prepare
@@ -611,11 +626,12 @@ slow. `SimClock` tests pin same-instant ordering and overrun arithmetic.
 
 ### 6.3 Boundary priority
 
-Attached phase barriers submit a forced `BoundaryStart` or `BoundaryEnd` command with phase ID,
-boundary identity, orchestrator-issued optional `coalescing_group_id`, and absolute deadline. It
+Attached phase barriers submit a forced `BoundaryStart` or `BoundaryEnd` command with one typed
+`BoundaryReference` (phase ID, boundary identity, start/end role, orchestrator-issued optional
+`coalescing_group_id`) and absolute deadline. It
 preempts the next continuous deadline but never interrupts an already issued HTTP request. Only
 commands carrying the identical non-null coalescing group share a physical attempt; timestamp
-proximity is irrelevant. All requesting boundaries are recorded on the attempt and receive the
+proximity is irrelevant. All requesting structured boundary references are recorded on the attempt and receive the
 same snapshot, while their lifecycle markers remain distinct. The phase waits for the forced result
 under the same Clock deadline. Shared decode feeds native delivery first; archive projection uses
 its independent permit. Continuous scheduling re-anchors from the original cadence, not the
@@ -792,6 +808,7 @@ V1 uses these exact aliases:
 | `SourceTimestamp` | non-null `Struct<lexeme: Utf8 nullable, normalized_unix_ns: EpochNs, status: Enum8>` |
 | `CreatedTimestamp` | non-null `Struct<lexeme: Utf8 nullable, normalized_unix_ns: EpochNs, status: Enum8>` |
 | `Exemplar` | nullable `Struct<labels: StringMap, value: ArchiveNumber, timestamp: SourceTimestamp>` |
+| `BoundaryReference` | non-null `Struct<boundary_id: Utf8 non-null, phase_id: Utf8 non-null, role: Enum8 non-null, coalescing_group_id: Utf8 nullable>` |
 
 `ArchiveNumber.kind` is `finite`, `pos_inf`, `neg_inf`, `nan`, or `absent`. Source tokens always
 retain their exact lexeme; only synthetic `absent` has a null lexeme. `finite_value` is the
@@ -939,7 +956,7 @@ of impersonating requests. Field order and nullability are normative:
 | `request_attempt_seq` | `UInt64` | yes |
 | `frame_id`, `batch_id` | `Digest` | no |
 | `reason`, `outcome` | `Enum8` | no |
-| `boundary_ids` | `List<Utf8 non-null>` | no |
+| `boundary_refs` | `List<BoundaryReference non-null>` | no |
 | `declared_media_type`, `strict_parser_format`, `native_compatibility_format` | `Utf8` | yes |
 | `native_compatibility_fallback` | `Boolean` | no |
 | `scheduled_ns`, `request_start_ns`, `first_byte_ns`, `capture_ns`, `parse_done_ns`, `archive_enqueue_ns` | `Int64` | yes |
@@ -1060,6 +1077,8 @@ Markers connect history to runner facts without pretending they are samples. The
 | `clock_ns`, `unix_epoch_ns` | `Int64`, `EpochNs` | no / yes |
 | `run_id`, `phase_id`, `source_id` | `Utf8` | yes |
 | `phase_state`, `completion_reason` | `Enum8` | yes |
+| `boundary_id`, `coalescing_group_id` | `Utf8` | yes |
+| `boundary_role` | `Enum8` | yes |
 | `phase_start_ns`, `sent_end_ns`, `requests_end_ns` | `Int64` | yes |
 | `attribute_epoch_id` | `Digest` | yes |
 | `attributes` | `StringMap` | no |
@@ -1067,8 +1086,10 @@ Markers connect history to runner facts without pretending they are samples. The
 Kinds cover session/run lifecycle, exact phase `STARTED`/`SENDING_COMPLETE`/`COMPLETE`, source
 state, topology change, and archive degradation/recovery. A marker never claims successful
 durability/publication of the generation containing itself. Those later facts use §8.9 receipts and
-head state. Phase fields are copied from one `PhaseObserver` snapshot; capture completion of a
-forced scrape is a separate attempt timestamp. A topology marker and the first point/family rows for
+head state. Phase fields and optional boundary reference are copied from one `PhaseObserver`
+snapshot. `boundary_id`, `phase_id`, `boundary_role`, and `coalescing_group_id` must equal the
+corresponding attempt `BoundaryReference`; lifecycle transitions with no forced snapshot leave all
+three boundary fields null. Capture completion of a forced scrape is a separate attempt timestamp. A topology marker and the first point/family rows for
 its epoch share one frame, with marker logical row order first.
 
 ### 8.8 Loss-range table
@@ -1087,7 +1108,7 @@ columns. The exact loss schema is:
 | `first_request_attempt_seq`, `last_request_attempt_seq` | `UInt64` | yes |
 | `first_tick`, `last_tick` | `UInt64` | yes |
 | `first_deadline_ns`, `last_deadline_ns` | `Int64` | yes |
-| `boundary_ids` | `List<Utf8 non-null>` | no |
+| `boundary_refs` | `List<BoundaryReference non-null>` | no |
 | `boundary_overflow_count` | `UInt64` | no |
 | `boundary_overflow_digest` | `Digest` | yes |
 
@@ -1096,8 +1117,9 @@ work issued/delivered but archive projection denied), `projection_failed`, `writ
 `shutdown_abandoned`. The role-validity matrix fixes which range pairs are required or forbidden:
 missed cadence uses tick/deadline ranges and has no source/request range; issued-work loss uses its
 source sequence and optional request sequence. Ranges coalesce only when kind/reason/source and all
-present identities are contiguous. Boundary IDs are retained up to a validated bound; overflow is
-counted and digested, never silently truncated. The reserved control lane persists loss frames even
+present identities are contiguous. Boundary references are retained up to a validated bound;
+overflow is counted and digested over canonical `BoundaryReference` bytes, never silently
+truncated. The reserved control lane persists loss frames even
 when ordinary archive admission is exhausted.
 
 ### 8.9 Non-self-referential durability receipts
@@ -1221,15 +1243,17 @@ bounded ordered decode CPU pool
               | native result, decoded archive entity, exact-entity lease
               v
 LocalSet native delivery + nonblocking ArchiveProjectionPermit
-              | permitted archive entity/lease
-              v
-bounded archive-projection CPU pool
-              | ArchiveFrameDraft (unsequenced)
-              v
-source LocalSet: drain resolution
-              | ArchiveFrameDraft
+              | ProjectionReservation (entity/lease/permit)
               v
 single mutable archive-state owner
+    +-- assign record_seq/frame_id
+    `-- schedule bounded per-source FIFO strands
+              | SequencedProjectionJob
+              v
+bounded archive-projection CPU pool (one active job/source)
+              | SequencedArchiveFrameDraft or typed failure
+              v
+same archive owner: ordered result/failure commit
     +-- WAL and open-partition builders
     +-- immutable manifest/index pages and LOCAL-LATEST
     `-- bounded asynchronous immutable-object upload futures
@@ -1283,9 +1307,10 @@ Boundary scrapes always reach their native accumulator even if archive admission
 
 `batch_id` uses the domain-separated, length-prefixed digest rule from §8.1 over archive/session/
 source, source-record sequence, outcome, and the configured decoded-entity unchanged digest when
-present. The archive owner stamps global `record_seq`; `frame_id` then includes frame schema/kind,
-source/control identity, and that sequence. Marker and loss frames therefore share the same
-persistence identity discipline as attempt/sample batches.
+present. On accepting a projection reservation, the archive owner stamps global `record_seq`;
+`frame_id` then includes frame schema/kind, source/control identity, and that sequence. Both enter
+the immutable sequenced projection context before canonical row hashing. Marker and loss frames
+therefore share the same persistence identity discipline as attempt/sample batches.
 
 Retries of persistence retain `batch_id`/`frame_id`. Every issued source event gets a new source-
 record sequence; compact loss ranges use their independent `loss_seq`. A persistence retry advances
@@ -1664,10 +1689,18 @@ vLLM/SGLang atlas, GPU scaling, energy joins, and RTT delivery do not change. Th
 gains physical attempt identity plus a phase-membership set. A phase-projection adapter presents the
 record once to every active phase-local view; run-level source/endpoint fetch and update metadata is
 ingested once per attempt ID. Duplicate attempt IDs are rejected. Exact parity tests pin every old
-formula and boundary result over identical input records. After archive-off and archive-on both use
-the run-owned driver, their native reports are byte-for-byte equal. Comparison with the former
-completion-paced loop explicitly permits and characterizes time-series differences caused solely
-by fixed-deadline sample instants.
+formula and boundary result over identical input records.
+
+Byte parity uses a frozen typed `NativeMeasurementParityV1` projection constructed before mode-
+specific archive reporting. It contains every authoritative request, phase, server/GPU/network,
+accuracy/adaptive, and native metric value plus their measurement provenance/order, while excluding
+`ReportTelemetryArchive`, archive configuration/capabilities, archive health, receipt/head IDs,
+archive artifact paths/hashes, and other archive-only provenance. It is not an ad hoc JSON field-
+deletion helper; a canonical descriptor and golden serialization define it. After archive-off and
+archive-on both use the run-owned driver, this projection is byte-for-byte equal. Their complete
+native-v2 reports are intentionally different because only archive-on carries the additive archive
+block. Comparison with the former completion-paced loop explicitly permits and characterizes time-
+series differences caused solely by fixed-deadline sample instants.
 
 The archive exposition projection may preserve families (for example summaries or `_created`)
 that benchmark projection intentionally excludes. That is expected. One bounded decode job can
@@ -1718,6 +1751,14 @@ facts delivered at the authoritative transition. Independently sampled
 not used for markers. Warmup/profiling names and run identity are typed fields. Forced-scrape
 request/capture timestamps remain attempt facts, so a query can distinguish transition from sample
 availability without post-hoc inference.
+
+The observer contract is extended with `PhaseTransitionContext { boundary:
+Option<BoundaryReference> }`. The orchestrator allocates that reference before issuing a forced
+snapshot and passes the same value to both the driver command and the lifecycle transition; it is
+not reconstructed by a sidecar. Coalesced phase-A-end/phase-B-start transitions therefore produce
+two marker rows with distinct boundary/phase/role values and one shared group, while the physical
+attempt carries both references. `SENDING_COMPLETE` or any transition without a forced snapshot
+uses `None`. Exact joins use the structured IDs, never timestamp proximity.
 
 ---
 
@@ -2240,7 +2281,8 @@ version or material schema/writer change invalidates the profile until rerun.
 4. one source never has two scrapes in flight;
 5. absolute Clock timeout cancels/reclaims transport and yields one timeout attempt;
 6. only an orchestrator-issued shared coalescing group reuses a boundary attempt while exact phase
-   markers remain distinct;
+   markers remain distinct; structured boundary references join every marker to that physical
+   attempt without timestamps, including coalesced end/start transitions;
 7. one physical attempt with multi-phase membership preserves phase and run-level native parity
    across seamless overlap;
 8. virtual inline capture/post-simulation persistence cannot advance virtual time; a future external
@@ -2248,12 +2290,15 @@ version or material schema/writer change invalidates the profile until rerun.
 9. bounded worst-case decode cannot stall unrelated source/request LocalSet work at the qualified
    profile, and archive family/point construction runs only on the second bounded CPU stage after a
    nonblocking permit;
-10. failed/empty/unchanged attempt outcomes and missed/rejected loss ranges have exact counters/
+10. deliberately inverted worker latency preserves source-record FIFO attribute epochs/markers,
+    while distinct source strands still run in parallel and final WAL order follows global
+    `record_seq`;
+11. failed/empty/unchanged attempt outcomes and missed/rejected loss ranges have exact counters/
    records, and unchanged success retains full family/MetricPoint rows;
-11. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
+12. graceful signal resolves permits/terminal frames, closes frame admission, and fixes the final
     owner-assigned record-sequence watermark before drain;
-12. archive-off/archive-on runs over the run-owned fixed-deadline driver have byte-exact native
-    reports; comparison with the retired completion-paced loop pins formula/boundary parity while
+13. archive-off/archive-on runs over the run-owned fixed-deadline driver have byte-exact
+    `NativeMeasurementParityV1` bytes while their archive blocks differ as expected; comparison with the retired completion-paced loop pins formula/boundary parity while
     explicitly characterizing cadence-caused sample-time differences.
 
 ### 18.3 Durability/recovery gates
@@ -2322,7 +2367,8 @@ version or material schema/writer change invalidates the profile until rerun.
 6. object-store emulator visibility lag, outage, conflicting CAS, restart, and finalization;
 7. ordinary scheduled benchmark with attached server/GPU archive proves one physical run-owned
    driver/source feeds report and archive across seamless phases, `PhaseObserver` markers align
-   exactly, and archive-off/archive-on native reports are byte-exact on the new cadence;
+   exactly, and archive-off/archive-on `NativeMeasurementParityV1` bytes are equal on the new
+   cadence while only archive-on has the typed archive block;
 8. required attached archive failure yields failed reporting terminal, no `report_path`, and only a
    typed diagnostic artifact; best-effort yields a successful typed archive block;
 9. online-only runner capability advertises watch only after qualified profiles; unsupported
@@ -2519,9 +2565,10 @@ This design is complete only when:
   remote publication are observable;
 - enrichment is API-limited to attributes, sanitization covers every structured surface, source
   identity survives redaction, and raw retention is separately protected;
-- attached mode reuses one source attempt across active phases, emits exact `PhaseObserver` markers,
-  produces byte-identical archive-off/archive-on native results on the run-owned cadence, and passes
-  the numeric §17 regression profile;
+- attached mode reuses one source attempt across continuous phase membership and explicit boundary
+  subscribers, emits exactly joined `PhaseObserver` markers,
+  produces byte-identical archive-off/archive-on `NativeMeasurementParityV1` bytes on the run-owned
+  cadence, emits the archive block only when enabled, and passes the numeric §17 regression profile;
 - primary watch and attached modes have real Python-to-runner subprocess proofs;
 - the five reproduced Tachometer defects are permanent regression tests;
 - native-v2 2.0 additively identifies archive provenance/completeness without treating archived
