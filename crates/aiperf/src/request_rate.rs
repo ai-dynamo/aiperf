@@ -310,6 +310,22 @@ impl RequestRateWorkload {
         *self.next_new_turn.borrow_mut() = Some(next);
         Ok(NewSessionOutcome::Issued)
     }
+
+    async fn wait_for_closed_loop_capacity(&self) {
+        if let Some(pool) = &self.session_slots
+            && pool.locked()
+        {
+            drop(pool.acquire().await);
+            return;
+        }
+        if let Some(pool) = &self.prefill_slots
+            && pool.locked()
+        {
+            drop(pool.acquire().await);
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
 }
 
 enum NewSessionOutcome {
@@ -371,7 +387,20 @@ impl Workload for RequestRateWorkload {
             if runtime.can_issue(true) {
                 match self.try_issue_new_session(runtime.clone(), scheduled_ns) {
                     Ok(NewSessionOutcome::Issued) => {}
-                    Ok(NewSessionOutcome::NoSlot) => tokio::task::yield_now().await,
+                    Ok(NewSessionOutcome::NoSlot) => {
+                        if next_target_ns <= runtime.now_ns() {
+                            // A zero-interval closed loop must become pending
+                            // until a completion releases capacity. Repeated
+                            // `yield_now` keeps the LocalSet runnable forever
+                            // and prevents a virtual-clock driver from
+                            // advancing to that completion event.
+                            self.wait_for_closed_loop_capacity().await;
+                        } else {
+                            // Paced modes preserve the nonblocking skipped-tick
+                            // behavior and retry at the next authored arrival.
+                            tokio::task::yield_now().await;
+                        }
+                    }
                     Ok(NewSessionOutcome::Stopped) => {
                         if !runtime.can_issue(false) {
                             break;

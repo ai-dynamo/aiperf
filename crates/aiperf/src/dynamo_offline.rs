@@ -28,14 +28,17 @@ use aiperf_core::chat::chat_request_body;
 use aiperf_core::observer::CollectorObserver;
 use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
 use aiperf_graph::bench::{BenchConfig, build_workload};
+use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
 use aiperf_graph::executor::{ExecutorFlags, TraceExecutor};
 use aiperf_graph::materialize::SegmentItemsMaterializer;
-use aiperf_graph::model::TraceRecord;
+use aiperf_graph::model::{GraphTracePlan, TraceRecord};
+use aiperf_graph::policy::{NodeDispatchPolicy, NodeFailurePolicy};
 use aiperf_graph::runtime::{SimDriveError, SimEventSource, SimStep, drive_sim_with_source};
 use aiperf_graph::segment::SegmentStore;
-use aiperf_graph::sink::{GraphReply, GraphSink};
+use aiperf_graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf_graph::transport_bench::GraphRpsReport;
 use aiperf_graph::wire::OpenAiChatMessage as GraphMessage;
+use aiperf_graph::workload::{GraphWorkload, GraphWorkloadReport};
 use aiperf_metrics::{
     AccumulatorSummary, HttpTrace, InferenceDimensions, MetricTag, MetricsConfig,
 };
@@ -71,6 +74,7 @@ use crate::metrics::{
     NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
 };
 use crate::multiturn::{ConversationSource, TurnToSend};
+use crate::phase_runtime::{PhasedScheduledRunReport, ScheduledPhaseReport};
 use crate::request_rate::RequestRateConfig;
 use crate::run::{
     OnlineRunReport, run_paced_with_backend, run_request_rate_with_backend,
@@ -343,6 +347,34 @@ impl Default for OfflineEngineConfig {
 }
 
 impl OfflineEngineConfig {
+    /// Set the canonical Dynamo goodput thresholds without exposing the
+    /// optional backend crate's concrete DTO to embedding applications.
+    ///
+    /// The runner uses this narrow constructor so `aiperf` remains the only
+    /// crate that directly depends on `dynamo-mocker`. Threshold validation is
+    /// completed before an engine is initialized.
+    pub fn with_sla_thresholds(
+        mut self,
+        ttft_ms: Option<f64>,
+        itl_ms: Option<f64>,
+        e2e_ms: Option<f64>,
+    ) -> Result<Self> {
+        for (name, value) in [("ttft_ms", ttft_ms), ("itl_ms", itl_ms), ("e2e_ms", e2e_ms)] {
+            if let Some(value) = value {
+                anyhow::ensure!(
+                    value.is_finite() && value >= 0.0,
+                    "offline SLA {name} must be finite and non-negative, got {value}"
+                );
+            }
+        }
+        self.sla = DynamoSlaThresholds {
+            ttft_ms,
+            itl_ms,
+            e2e_ms,
+        };
+        Ok(self)
+    }
+
     fn trace_engine_block_size(&self) -> Result<usize> {
         match self.topology {
             OfflineTopology::Disaggregated => {
@@ -649,14 +681,97 @@ pub struct OfflineGraphReport {
     pub parity: OfflineMetricParity,
 }
 
-/// Scheduled-workload AIPerf report plus Dynamo's native report.
-pub struct OfflineScheduledReport {
-    /// User-centric, fixed-schedule, or one-pass dataset result.
-    pub aiperf: ScheduledRunReport,
+/// Direct Graph-IR workload result over the same offline engine composition.
+pub struct OfflineDirectGraphReport {
+    /// Whole-root admission and trace completion outcomes.
+    pub workload: GraphWorkloadReport,
+    /// Full compatibility summary accumulated from node request events.
+    pub performance: loadgen_core::collector::TraceSimulationReport,
+    /// Native-v2 metric accumulator output from the same observations.
+    pub native_metrics: AccumulatorSummary,
     /// Dynamo-native scheduler/KV report.
     pub dynamo: DynamoSimulationReport,
     /// Whole-summary byte-parity evidence produced before returning the run.
     pub parity: OfflineMetricParity,
+}
+
+/// Scheduled-workload AIPerf report plus Dynamo's native report.
+pub struct OfflineScheduledReport {
+    /// Authoritative profiling-phase result.
+    pub aiperf: ScheduledRunReport,
+    /// Run-wide compatibility report accumulated from the live observer stream
+    /// across every warmup and profiling phase.
+    pub performance: loadgen_core::collector::TraceSimulationReport,
+    /// Final lifecycle snapshots in authored phase order.
+    pub phases: Vec<aiperf_timing::PhaseStats>,
+    /// Non-profiling phase reports retained without merging finalized summaries.
+    pub auxiliary_phase_reports: Vec<ScheduledPhaseReport>,
+    /// Dynamo-native scheduler/KV report.
+    pub dynamo: DynamoSimulationReport,
+    /// Whole-summary byte-parity evidence produced before returning the run.
+    pub parity: OfflineMetricParity,
+}
+
+/// Typed output produced by one scheduled runtime factory before the backend
+/// finalizes its engine-owned report.
+///
+/// `performance` is accumulated by one observer that spans the complete
+/// engine/clock lifecycle. `profiling` remains the authoritative native report
+/// source, while warmup reports stay independently inspectable rather than
+/// being reconstructed through summary merging.
+pub struct OfflineScheduledExecution {
+    /// The one profiling-phase report.
+    pub profiling: ScheduledRunReport,
+    /// Whole-run compatibility metrics from the live cross-phase observer.
+    pub performance: loadgen_core::collector::TraceSimulationReport,
+    /// Final lifecycle snapshots in authored order.
+    pub phases: Vec<aiperf_timing::PhaseStats>,
+    /// Warmup or otherwise excluded phase reports.
+    pub auxiliary_phase_reports: Vec<ScheduledPhaseReport>,
+    aggregate_is_profiling: bool,
+}
+
+impl OfflineScheduledExecution {
+    /// Adapt one legacy single-phase runtime without copying or merging any
+    /// finalized metric summary.
+    pub fn single(profiling: ScheduledRunReport) -> Self {
+        Self {
+            performance: profiling.performance.clone(),
+            profiling,
+            phases: Vec::new(),
+            auxiliary_phase_reports: Vec::new(),
+            aggregate_is_profiling: true,
+        }
+    }
+
+    /// Select the unique profiling result from a shared phase-orchestrator run.
+    pub fn phased(
+        mut phased: PhasedScheduledRunReport,
+        performance: loadgen_core::collector::TraceSimulationReport,
+    ) -> Result<Self> {
+        let profiling_indices = phased
+            .reports
+            .iter()
+            .enumerate()
+            .filter_map(|(index, report)| {
+                (report.kind == aiperf_timing::PhaseKind::Profiling).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            profiling_indices.len() == 1,
+            "offline scheduled execution requires exactly one profiling phase, got {}",
+            profiling_indices.len()
+        );
+        let profiling = phased.reports.remove(profiling_indices[0]).report;
+        let aggregate_is_profiling = phased.reports.is_empty();
+        Ok(Self {
+            profiling,
+            performance,
+            phases: phased.phases,
+            auxiliary_phase_reports: phased.reports,
+            aggregate_is_profiling,
+        })
+    }
 }
 
 fn finish_shared_metrics(
@@ -1214,6 +1329,13 @@ pub trait OfflineRequestEncoder<R> {
 pub trait OfflineGraphRequestEncoder {
     /// Convert already-materialized graph message wires to an exact input size.
     fn encode_graph_messages(&self, wires: &[Bytes], requested: usize) -> Result<Vec<u32>>;
+
+    /// Encode authored graph wires without an externally supplied synthetic
+    /// length. Direct Graph-IR adapters use this path; benchmark fixtures may
+    /// continue to request an exact synthetic input size above.
+    fn encode_graph_messages_exact(&self, wires: &[Bytes]) -> Result<Vec<u32>> {
+        self.encode_graph_messages(wires, wires.len().max(1))
+    }
 }
 
 /// Tiktoken-backed encoder for OpenAI-compatible request and graph wires.
@@ -1314,6 +1436,19 @@ impl OfflineRequestEncoder<HttpRequest> for OpenAiRequestEncoder {
 impl OfflineGraphRequestEncoder for OpenAiRequestEncoder {
     fn encode_graph_messages(&self, wires: &[Bytes], requested: usize) -> Result<Vec<u32>> {
         self.encode_wires(wires, requested)
+    }
+
+    fn encode_graph_messages_exact(&self, wires: &[Bytes]) -> Result<Vec<u32>> {
+        let mut values = Vec::with_capacity(wires.len());
+        for wire in wires {
+            values.push(serde_json::from_slice(wire).with_context(|| {
+                format!(
+                    "graph message is not valid JSON: {}",
+                    String::from_utf8_lossy(wire)
+                )
+            })?);
+        }
+        self.encode_message_values(&values)
     }
 }
 
@@ -2261,38 +2396,58 @@ struct DynamoGraphSink {
     backend: Rc<DynamoOfflineSink>,
     observer: Rc<dyn RequestObserver>,
     native_metrics: Rc<NativeMetricsObserver>,
-    input_tokens_by_node: Arc<HashMap<String, usize>>,
+    input_tokens_by_node: Option<Arc<HashMap<String, usize>>>,
+    trace_id: Option<String>,
     max_tokens: usize,
-    next_uuid: Cell<u128>,
+    next_uuid: Rc<Cell<u128>>,
 }
 
-#[async_trait(?Send)]
-impl GraphSink<GraphMessage> for DynamoGraphSink {
-    async fn dispatch(
+impl DynamoGraphSink {
+    async fn dispatch_node(
         &self,
         node_id: &str,
         messages: Vec<Bytes>,
         max_tokens: Option<usize>,
+        cancel_after_ns: Option<i64>,
         on_first_token: &dyn Fn(),
     ) -> Result<GraphReply<GraphMessage>> {
         let uuid = Uuid::from_u128(self.next_uuid.get());
         self.next_uuid.set(self.next_uuid.get().saturating_add(1));
-        let input_tokens = self
+        let (mut tokens, input_tokens) = match self
             .input_tokens_by_node
-            .get(node_id)
+            .as_ref()
+            .and_then(|tokens| tokens.get(node_id))
             .copied()
-            .unwrap_or_else(|| messages.len().max(1));
-        let tokens = self
-            .backend
-            .graph_encoder
-            .encode_graph_messages(&messages, input_tokens)?;
+        {
+            Some(input_tokens) => (
+                self.backend
+                    .graph_encoder
+                    .encode_graph_messages(&messages, input_tokens)?,
+                input_tokens,
+            ),
+            None => {
+                let tokens = self
+                    .backend
+                    .graph_encoder
+                    .encode_graph_messages_exact(&messages)?;
+                let input_tokens = tokens.len().max(1);
+                (tokens, input_tokens)
+            }
+        };
+        if tokens.is_empty() {
+            tokens.push(0);
+        }
         let output_tokens = max_tokens.unwrap_or(self.max_tokens).max(1);
         let now_ns = self.backend.clock.now_ns();
+        let (correlation_id, conversation_id) = self.trace_id.as_ref().map_or_else(
+            || (uuid.to_string(), node_id.to_string()),
+            |trace_id| (format!("{trace_id}/{node_id}/{uuid}"), trace_id.to_string()),
+        );
         self.native_metrics.register_metadata(
             uuid,
             RequestMetricMetadata {
-                correlation_id: Some(uuid.to_string()),
-                conversation_id: Some(node_id.to_string()),
+                correlation_id: Some(correlation_id),
+                conversation_id: Some(conversation_id),
                 dimensions: InferenceDimensions {
                     endpoint_url: Some("dynamo://offline".to_string()),
                     model: Some(self.backend.model.clone()),
@@ -2319,7 +2474,7 @@ impl GraphSink<GraphMessage> for DynamoGraphSink {
                 uuid,
                 tokens,
                 output_tokens,
-                None,
+                cancel_after_ns,
                 self.observer.as_ref(),
                 &first_token,
             )
@@ -2344,11 +2499,43 @@ impl GraphSink<GraphMessage> for DynamoGraphSink {
                 http: result.http,
             },
         );
-        Ok(if result.terminal == ReplayTerminalStatus::Completed {
-            GraphReply::from_text(result.response_text)
-        } else {
-            GraphReply::failed()
+        Ok(match result.terminal {
+            ReplayTerminalStatus::Completed => GraphReply::from_text(result.response_text),
+            ReplayTerminalStatus::Canceled => GraphReply::cancelled(),
+            ReplayTerminalStatus::Rejected | ReplayTerminalStatus::Failed => GraphReply::failed(),
         })
+    }
+}
+
+#[async_trait(?Send)]
+impl GraphSink<GraphMessage> for DynamoGraphSink {
+    async fn dispatch(
+        &self,
+        node_id: &str,
+        messages: Vec<Bytes>,
+        max_tokens: Option<usize>,
+        on_first_token: &dyn Fn(),
+    ) -> Result<GraphReply<GraphMessage>> {
+        self.dispatch_node(node_id, messages, max_tokens, None, on_first_token)
+            .await
+    }
+
+    async fn dispatch_with_options(
+        &self,
+        node_id: &str,
+        messages: Vec<Bytes>,
+        max_tokens: Option<usize>,
+        options: GraphDispatchOptions,
+        on_first_token: &dyn Fn(),
+    ) -> Result<GraphReply<GraphMessage>> {
+        self.dispatch_node(
+            node_id,
+            messages,
+            max_tokens,
+            options.cancel_after_ns,
+            on_first_token,
+        )
+        .await
     }
 }
 
@@ -2384,9 +2571,10 @@ pub fn run_graph_offline(
         backend,
         observer,
         native_metrics: native_metrics.clone(),
-        input_tokens_by_node: Arc::new(input_tokens_by_node),
+        input_tokens_by_node: Some(Arc::new(input_tokens_by_node)),
+        trace_id: None,
         max_tokens: config.max_tokens.max(1),
-        next_uuid: Cell::new(1),
+        next_uuid: Rc::new(Cell::new(1)),
     });
 
     let next_trace = Rc::new(Cell::new(0_usize));
@@ -2486,6 +2674,174 @@ pub fn run_graph_offline(
     })
 }
 
+struct DynamoDirectGraphBackend {
+    backend: Rc<DynamoOfflineSink>,
+    observer: Rc<dyn RequestObserver>,
+    native_metrics: Rc<NativeMetricsObserver>,
+    materializer: Rc<SegmentItemsMaterializer>,
+    node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
+    node_failure: Rc<dyn NodeFailurePolicy>,
+    max_tokens: usize,
+    next_uuid: Rc<Cell<u128>>,
+}
+
+#[async_trait(?Send)]
+impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
+    async fn execute_trace(
+        &self,
+        plan: GraphTracePlan,
+    ) -> Result<(), aiperf_graph::errors::TraceError> {
+        let trace_id = plan.trace.id.clone();
+        let input_tokens_by_node = plan
+            .graph
+            .nodes
+            .iter()
+            .filter_map(|(node_id, node)| {
+                node.metadata
+                    .get("input_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|tokens| {
+                        usize::try_from(tokens)
+                            .map(|tokens| (node_id.clone(), tokens))
+                            .map_err(|_| {
+                                aiperf_graph::errors::TraceError::Other(format!(
+                                    "graph node {node_id:?} input_tokens exceeds usize"
+                                ))
+                            })
+                    })
+            })
+            .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+        let sink: Rc<dyn GraphSink<GraphMessage>> = Rc::new(DynamoGraphSink {
+            backend: self.backend.clone(),
+            observer: self.observer.clone(),
+            native_metrics: self.native_metrics.clone(),
+            input_tokens_by_node: Some(Arc::new(input_tokens_by_node)),
+            trace_id: Some(trace_id),
+            max_tokens: self.max_tokens,
+            next_uuid: self.next_uuid.clone(),
+        });
+        let mut local = LocalGraphTraceExecutionBackend::new(
+            self.backend.clock.clone(),
+            self.materializer.clone(),
+            sink,
+        )
+        .with_node_failure(self.node_failure.clone());
+        if let Some(policy) = &self.node_policy {
+            local = local.with_node_policy(policy.clone());
+        }
+        local.execute_trace(plan).await
+    }
+}
+
+/// Factory seam for direct Graph-IR workload policy that needs the exact
+/// virtual clock and node-execution backend before construction.
+pub trait OfflineGraphRunFactory {
+    /// Create one policy-composed graph workload. The returned coordinator
+    /// owns root selection/admission/arrival/failure policy while `backend`
+    /// remains the sole node execution path.
+    fn create(
+        self: Box<Self>,
+        clock: Rc<dyn Clock>,
+        backend: Rc<dyn GraphTraceExecutionBackend>,
+    ) -> Result<GraphWorkload>;
+}
+
+impl<F> OfflineGraphRunFactory for F
+where
+    F: FnOnce(Rc<dyn Clock>, Rc<dyn GraphTraceExecutionBackend>) -> Result<GraphWorkload>,
+{
+    fn create(
+        self: Box<Self>,
+        clock: Rc<dyn Clock>,
+        backend: Rc<dyn GraphTraceExecutionBackend>,
+    ) -> Result<GraphWorkload> {
+        (*self)(clock, backend)
+    }
+}
+
+/// Execute direct authored Graph-IR plans against the in-process engine.
+///
+/// The caller injects the ordinary graph root/arrival/admission/failure traits
+/// through [`OfflineGraphRunFactory`]. This function supplies the one shared
+/// [`SimClock`], steppable engine event source, immutable segment store, node
+/// sink, observers, and exact common-summary parity proof. It therefore avoids
+/// both the generated benchmark graph and any Dataset/Conversation conversion.
+#[allow(clippy::too_many_arguments)]
+pub fn run_graph_workload_offline(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    segments: Arc<dyn SegmentStore>,
+    default_max_tokens: usize,
+    metrics_config: MetricsConfig,
+    node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
+    node_failure: Rc<dyn NodeFailurePolicy>,
+    factory: Box<dyn OfflineGraphRunFactory>,
+) -> Result<OfflineDirectGraphReport> {
+    anyhow::ensure!(
+        !model.trim().is_empty(),
+        "offline graph model cannot be empty"
+    );
+    anyhow::ensure!(
+        default_max_tokens > 0,
+        "offline graph default_max_tokens must be positive"
+    );
+
+    let clock = Rc::new(SimClock::new());
+    let clock_trait: Rc<dyn Clock> = clock.clone();
+    let start_ns = clock.now_ns();
+    let host = EngineHost::new(clock.clone(), &engine_config)?;
+    let sink = DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let native_metrics = Rc::new(NativeMetricsObserver::new(
+        clock_trait.clone(),
+        start_ns,
+        metrics_config,
+    ));
+    let collector = Rc::new(CollectorObserver::new(false));
+    let observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(vec![
+        collector.clone(),
+        native_metrics.clone(),
+    ]));
+    let backend: Rc<dyn GraphTraceExecutionBackend> = Rc::new(DynamoDirectGraphBackend {
+        backend: sink,
+        observer,
+        native_metrics: native_metrics.clone(),
+        materializer: Rc::new(SegmentItemsMaterializer::new(segments)),
+        node_policy,
+        node_failure,
+        max_tokens: default_max_tokens,
+        next_uuid: Rc::new(Cell::new(1)),
+    });
+    let workload = factory.create(clock_trait, backend)?;
+    let result = Rc::new(RefCell::new(None));
+    let result_for_body = result.clone();
+    let source: Rc<dyn SimEventSource> = host.clone();
+    let outcome = drive_sim_with_source(clock.clone(), source, move |_handle| async move {
+        *result_for_body.borrow_mut() = Some(workload.execute().await);
+    })?;
+    anyhow::ensure!(
+        !outcome.deadlocked,
+        "Dynamo offline direct graph run deadlocked"
+    );
+    let workload = result
+        .borrow_mut()
+        .take()
+        .context("Dynamo offline driver exited without a graph workload result")?
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let wall_ms = clock.now_ns().saturating_sub(start_ns) as f64 / NS_PER_MS;
+    let dynamo = host.take_report_at(wall_ms);
+    let performance = collector.finish(wall_ms);
+    let (performance, dynamo, parity) = finish_shared_metrics(performance, dynamo)?;
+    let mut native_metrics = native_metrics.finish();
+    inject_dynamo_goodput(&mut native_metrics, &dynamo);
+    Ok(OfflineDirectGraphReport {
+        workload,
+        performance,
+        native_metrics,
+        dynamo,
+        parity,
+    })
+}
+
 fn run_scheduled_offline(
     engine_config: OfflineEngineConfig,
     model: String,
@@ -2533,20 +2889,27 @@ fn run_scheduled_offline(
         .context("Dynamo offline driver exited without a scheduled result")??;
     let dynamo = host.take_report_at(aiperf.performance.throughput.wall_time_ms);
     let (performance, dynamo, parity) = finish_shared_metrics(aiperf.performance, dynamo)?;
-    aiperf.performance = performance;
+    aiperf.performance = performance.clone();
     inject_dynamo_goodput(&mut aiperf.native_metrics, &dynamo);
     Ok(OfflineScheduledReport {
         aiperf,
+        performance,
+        phases: Vec::new(),
+        auxiliary_phase_reports: Vec::new(),
         dynamo,
         parity,
     })
 }
 
-type OfflineScheduledFuture = Pin<Box<dyn Future<Output = Result<ScheduledRunReport>> + 'static>>;
+/// One scheduled runtime future driven by the offline engine/Clock pump.
+pub type OfflineScheduledFuture =
+    Pin<Box<dyn Future<Output = Result<OfflineScheduledExecution>> + 'static>>;
 
 /// Factory seam for scheduled runtimes that need the exact offline clock and
 /// dispatcher before constructing adaptive observers or Clock-native ramps.
-trait OfflineScheduledRunFactory {
+pub trait OfflineScheduledRunFactory {
+    /// Build the workload future after the backend has created its one
+    /// authoritative virtual clock and dispatcher.
     fn create(
         self: Box<Self>,
         clock: Rc<dyn Clock>,
@@ -2569,7 +2932,13 @@ where
     }
 }
 
-fn run_scheduled_backend_offline(
+/// Drive an arbitrary scheduled runtime over the passive Dynamo engine.
+///
+/// This is the runner composition seam for scheduled workload factories. It
+/// deliberately accepts a trait object rather than a workload-kind enum so a
+/// newly linked scheduler can reuse the same engine, clock, parity proof, and
+/// report finalization without modifying this module.
+pub fn run_scheduled_backend_offline(
     engine_config: OfflineEngineConfig,
     model: String,
     factory: Box<dyn OfflineScheduledRunFactory>,
@@ -2590,16 +2959,21 @@ fn run_scheduled_backend_offline(
         !outcome.deadlocked,
         "Dynamo offline scheduled run deadlocked"
     );
-    let mut aiperf = result
+    let mut execution = result
         .borrow_mut()
         .take()
         .context("Dynamo offline driver exited without a scheduled result")??;
-    let dynamo = host.take_report_at(aiperf.performance.throughput.wall_time_ms);
-    let (performance, dynamo, parity) = finish_shared_metrics(aiperf.performance, dynamo)?;
-    aiperf.performance = performance;
-    inject_dynamo_goodput(&mut aiperf.native_metrics, &dynamo);
+    let dynamo = host.take_report_at(execution.performance.throughput.wall_time_ms);
+    let (performance, dynamo, parity) = finish_shared_metrics(execution.performance, dynamo)?;
+    if execution.aggregate_is_profiling {
+        execution.profiling.performance = performance.clone();
+        inject_dynamo_goodput(&mut execution.profiling.native_metrics, &dynamo);
+    }
     Ok(OfflineScheduledReport {
-        aiperf,
+        aiperf: execution.profiling,
+        performance,
+        phases: execution.phases,
+        auxiliary_phase_reports: execution.auxiliary_phase_reports,
         dynamo,
         parity,
     })
@@ -2739,7 +3113,7 @@ pub fn run_user_centric_offline_with_adaptive_and_ancillary(
     let factory: Box<dyn OfflineScheduledRunFactory> = Box::new(
         move |clock: Rc<dyn Clock>, start_ns, dispatcher: Rc<dyn TurnDispatcher>| {
             Box::pin(async move {
-                match adaptive {
+                let report = match adaptive {
                     Some(adaptive) => {
                         run_user_centric_adaptive_with_backend(
                             clock,
@@ -2769,7 +3143,8 @@ pub fn run_user_centric_offline_with_adaptive_and_ancillary(
                         )
                         .await
                     }
-                }
+                }?;
+                Ok(OfflineScheduledExecution::single(report))
             }) as OfflineScheduledFuture
         },
     );
@@ -2829,17 +3204,21 @@ pub fn run_request_rate_offline_with_adaptive_and_ancillary(
 ) -> Result<OfflineScheduledReport> {
     let factory: Box<dyn OfflineScheduledRunFactory> = Box::new(
         move |clock: Rc<dyn Clock>, start_ns, dispatcher: Rc<dyn TurnDispatcher>| {
-            Box::pin(run_request_rate_with_backend(
-                clock,
-                start_ns,
-                dispatcher,
-                vec!["dynamo-offline".to_string()],
-                conversations,
-                config,
-                stop,
-                adaptive,
-                ancillary,
-            )) as OfflineScheduledFuture
+            Box::pin(async move {
+                let report = run_request_rate_with_backend(
+                    clock,
+                    start_ns,
+                    dispatcher,
+                    vec!["dynamo-offline".to_string()],
+                    conversations,
+                    config,
+                    stop,
+                    adaptive,
+                    ancillary,
+                )
+                .await?;
+                Ok(OfflineScheduledExecution::single(report))
+            }) as OfflineScheduledFuture
         },
     );
     run_scheduled_backend_offline(engine_config, model, factory)

@@ -272,6 +272,15 @@ pub struct ScheduledPhasePlan {
     pub sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     /// Optional phase-local observer/gate/controller decorator.
     pub runtime_extension: Option<Rc<dyn ScheduledRuntimeExtension>>,
+    /// Native metric policy for this phase's owned accumulator.
+    pub metrics_config: MetricsConfig,
+    /// Run-wide observers that receive the exact phase-local measurement
+    /// stream in addition to the phase's own collector and native metrics.
+    ///
+    /// This is the aggregation seam for a backend that owns one engine across
+    /// multiple phases. It avoids reconstructing a whole-run report by merging
+    /// already-finalized phase summaries.
+    pub additional_observers: Vec<Rc<dyn RequestObserver>>,
 }
 
 impl ScheduledPhasePlan {
@@ -292,6 +301,8 @@ impl ScheduledPhasePlan {
             resources: Rc::new(NoopScheduledPhaseResources),
             sidecars: Vec::new(),
             runtime_extension: None,
+            metrics_config: MetricsConfig::default(),
+            additional_observers: Vec::new(),
         }
     }
 
@@ -339,6 +350,19 @@ impl ScheduledPhasePlan {
         self.runtime_extension = Some(extension);
         self
     }
+
+    /// Configure the phase-local native metric accumulator.
+    pub fn with_metrics_config(mut self, metrics_config: MetricsConfig) -> Self {
+        self.metrics_config = metrics_config;
+        self
+    }
+
+    /// Attach observers that span phase boundaries on the shared dispatcher
+    /// timeline.
+    pub fn with_additional_observers(mut self, observers: Vec<Rc<dyn RequestObserver>>) -> Self {
+        self.additional_observers = observers;
+        self
+    }
 }
 
 /// Scheduled performance report tagged with its phase identity.
@@ -359,6 +383,42 @@ pub struct PhasedScheduledRunReport {
     pub phases: Vec<PhaseStats>,
     /// Performance reports in configured order.
     pub reports: Vec<ScheduledPhaseReport>,
+}
+
+/// Phased result plus one compatibility report accumulated directly from the
+/// live observer stream across the complete shared clock/dispatcher lifecycle.
+#[derive(Debug, Serialize)]
+pub struct AggregatedPhasedScheduledRunReport {
+    /// Independently finalized phase lifecycle and performance reports.
+    pub phased: PhasedScheduledRunReport,
+    /// Whole-run compatibility metrics observed before phase finalization.
+    pub performance: loadgen_core::collector::TraceSimulationReport,
+}
+
+/// Run scheduled phases while one collector observes every phase on the
+/// caller-supplied timeline.
+///
+/// This is the backend-neutral contract for a single engine that spans warmup
+/// and profiling. It accumulates original callbacks and never merges already
+/// finalized phase summaries.
+pub async fn run_scheduled_phases_with_aggregate(
+    mut plans: Vec<ScheduledPhasePlan>,
+    clock: Rc<dyn aiperf_clock::Clock>,
+    start_ns: i64,
+    dispatcher: Rc<dyn TurnDispatcher>,
+    observer: Rc<dyn PhaseObserver>,
+) -> Result<AggregatedPhasedScheduledRunReport> {
+    let collector = Rc::new(CollectorObserver::new(true));
+    let aggregate_observer: Rc<dyn RequestObserver> = collector.clone();
+    for plan in &mut plans {
+        plan.additional_observers.push(aggregate_observer.clone());
+    }
+    let phased = run_scheduled_phases(plans, clock.clone(), dispatcher, observer).await?;
+    let wall_ms = clock.now_ns().saturating_sub(start_ns) as f64 / 1_000_000.0;
+    Ok(AggregatedPhasedScheduledRunReport {
+        phased,
+        performance: collector.finish(wall_ms),
+    })
 }
 
 /// Run prepared scheduled workloads through the shared phase orchestrator.
@@ -465,16 +525,17 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         let phase_start_ns = self.clock.now_ns();
         let start_ns = plan.start_ns.unwrap_or(phase_start_ns);
         let mut controller = plan.controller.clone();
-        let runtime = if let Some(extension) = plan.runtime_extension.take() {
-            let collector = Rc::new(CollectorObserver::new(true));
-            let native_metrics = Rc::new(NativeMetricsObserver::new(
-                self.clock.clone(),
-                start_ns,
-                MetricsConfig::default(),
-            ));
-            let delegates: Vec<Rc<dyn RequestObserver>> =
-                vec![collector.clone(), native_metrics.clone()];
-            let delegate: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
+        let collector = Rc::new(CollectorObserver::new(true));
+        let native_metrics = Rc::new(NativeMetricsObserver::new(
+            self.clock.clone(),
+            start_ns,
+            plan.metrics_config,
+        ));
+        let mut delegates: Vec<Rc<dyn RequestObserver>> =
+            vec![collector.clone(), native_metrics.clone()];
+        delegates.append(&mut plan.additional_observers);
+        let delegate: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
+        let (observer, issuance_gate) = if let Some(extension) = plan.runtime_extension.take() {
             let extension = match extension.build(
                 self.clock.clone(),
                 start_ns,
@@ -491,26 +552,21 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
                 }
             };
             controller = extension.controller;
-            ScheduledRuntime::new_with_observer(
-                self.clock.clone(),
-                start_ns,
-                self.dispatcher.clone(),
-                config.stop,
-                plan.enforce_stop,
-                collector,
-                native_metrics,
-                extension.observer,
-                extension.issuance_gate,
-            )
+            (extension.observer, extension.issuance_gate)
         } else {
-            ScheduledRuntime::new(
-                self.clock.clone(),
-                start_ns,
-                self.dispatcher.clone(),
-                config.stop,
-                plan.enforce_stop,
-            )
+            (delegate, None)
         };
+        let runtime = ScheduledRuntime::new_with_observer(
+            self.clock.clone(),
+            start_ns,
+            self.dispatcher.clone(),
+            config.stop,
+            plan.enforce_stop,
+            collector,
+            native_metrics,
+            observer,
+            issuance_gate,
+        );
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {
