@@ -168,7 +168,9 @@ construction.
 6. **One mutable owner.** One archive IO worker owns WAL, partition builders, and manifests; no
    shared writer mutex exists.
 7. **Structured identity.** Metric family, semantic type, source, and labels are separate fields.
-8. **Float64 preservation.** Every finite source number remains `f64` through Parquet.
+8. **Exact numeric-token preservation.** Every accepted source number retains its exact source
+   lexeme. A finite analytical `f64` is stored when representable, with an explicit exact/rounded/
+   unavailable status; eligible integer tokens may additionally retain an exact `u64`.
 9. **Non-finite values are explicit.** NaN/±Inf never cross a serialization boundary as an
    unclassified JSON/Parquet number.
 10. **No silent loss.** Failed, empty, unchanged, missed, backpressured, and dropped observations
@@ -264,10 +266,13 @@ one physical source attempt
   `-- archive attempt/exposition projection (every outcome)
 ```
 
-Every physical attempt has a stable source-attempt ID and the active phase-membership set captured
-at its snapshot instant. Native phase-local projections consume that membership; run-level source/
+Every physical attempt has a stable source-attempt ID and the continuous active-phase-membership
+set captured at its snapshot instant. Native phase-local projections consume that membership;
+explicit boundary subscribers carried by `BoundaryStart`/`BoundaryEnd` commands receive the
+snapshot regardless of whether their phase is currently active. Run-level source/
 endpoint facts deduplicate by physical attempt ID, so seamless overlap neither loses one phase nor
-counts two fetches. Exact old/new summary parity is a shipping gate.
+counts two fetches. Archive-off versus archive-on parity on the run-owned driver is exact; comparison
+to the former completion-paced loop separates formula parity from intentional cadence differences.
 
 Boundary coalescing never uses timestamp proximity. The phase orchestrator assigns a typed
 `coalescing_group_id` to exactly those transition subscribers that share one physical snapshot;
@@ -507,11 +512,21 @@ is independently bounded and guaranteed for an accepted attached telemetry attem
 sends exact owned bytes/facts to the ordered CPU pool, receives the decoded native result, and feeds
 the native accumulator even when archive admission is unavailable. Only then does it
 nonblockingly acquire `ArchiveProjectionPermit` from a validated worst-case footprint. The permit
-owns byte/frame/WAL quota, is consumed by one draft, and refunds unused capacity. Denial records a
-loss range without repeating parse or delaying native delivery. Primary watch may wait/fail before
-fetch according to its durable admission policy because the archive is its product.
+owns byte/frame/WAL quota and is `Send`; the driver moves it, the decoded archive entity, and exact-
+entity lease into a second bounded archive-projection CPU job. That job performs family/point
+construction, enrichment, sanitization, logical hashing, and draft allocation off the LocalSet,
+consumes the permit, and refunds unused capacity. Denial records a loss range without repeating
+parse or delaying native delivery. Primary watch may wait/fail before fetch according to its
+durable admission policy because the archive is its product.
 
-The CPU pool returns `ArchiveFrameDraft` without a global accepted sequence. The single archive
+The projection CPU stage returns `ArchiveFrameDraft` without a global accepted sequence. Worker
+completion first returns to the source LocalSet, which stamps `projection_observed_ns` through its
+injected `Clock`, resolves the drain tracker, and forwards a `ReceiptDraft` containing the frame
+draft plus that observation to the archive owner. Worker wall time is never a timestamp authority.
+A crash after durable owner work but before a LocalSet receipt observation leaves the response time
+absent; recovery may later record a distinct recovery-verification time. A per-
+driver drain tracker owns every outstanding projection job/permit; finalization closes reservations
+and waits until each becomes a draft or explicit loss before the frame fence. The single archive
 owner assigns the inclusive global `record_seq`, computes the final frame ID, and writes the
 `ArchiveWalFrame`. The frame is a versioned persisted sum of attempt/family/sample batch,
 lifecycle, receipt-range, raw-object descriptor, and coalesced loss-range payloads. It is a closed
@@ -1051,7 +1066,13 @@ bounded ordered decode CPU pool
               | native result, decoded archive entity, exact-entity lease
               v
 LocalSet native delivery + nonblocking ArchiveProjectionPermit
+              | permitted archive entity/lease
+              v
+bounded archive-projection CPU pool
               | ArchiveFrameDraft (unsequenced)
+              v
+source LocalSet: Clock stamp + drain resolution
+              | ReceiptDraft
               v
 single mutable archive-state owner
     +-- WAL and open-partition builders
@@ -1469,7 +1490,10 @@ vLLM/SGLang atlas, GPU scaling, energy joins, and RTT delivery do not change. Th
 gains physical attempt identity plus a phase-membership set. A phase-projection adapter presents the
 record once to every active phase-local view; run-level source/endpoint fetch and update metadata is
 ingested once per attempt ID. Duplicate attempt IDs are rejected. Exact parity tests pin every old
-native summary across ordinary and seamless overlap before replacing phase-owned cadence loops.
+formula and boundary result over identical input records. After archive-off and archive-on both use
+the run-owned driver, their native reports are byte-for-byte equal. Comparison with the former
+completion-paced loop explicitly permits and characterizes time-series differences caused solely
+by fixed-deadline sample instants.
 
 The archive exposition projection may preserve families (for example summaries or `_created`)
 that benchmark projection intentionally excludes. That is expected. One bounded decode job can
@@ -1478,8 +1502,8 @@ archive completeness must not broaden benchmark metrics.
 
 ### 13.2 Attempt observation hook
 
-Run-owned source composition gains an all-outcome observer before lossy domain projection rather
-than file-writing branches on `ServerMetricsRecord`/`GpuScrape`:
+Run-owned source composition gains a post-native all-outcome observer rather than file-writing
+branches on `ServerMetricsRecord`/`GpuScrape`:
 
 ```rust
 pub trait TelemetryAttemptObserver<Record> {
@@ -1493,7 +1517,8 @@ pub trait TelemetryAttemptObserver<Record> {
 
 `AttemptObservation` exposes attempt facts, strict/native parse dispositions, phase membership,
 optional native record, and archive admission outcome—but neither decoded archive entity nor exact
-bytes. Concrete consumers include native phase/run delivery, report health, and test recorders;
+bytes. Authoritative native delivery is a direct prepared-driver callback that occurs exactly once
+before archive reservation. Observer consumers are report health and test recorders;
 archive projection is already encapsulated inside the prepared driver. The runner assembles a small
 generic/static tee at preparation. Every transport/parse/unsupported/success outcome is observed
 once. Observation never occurs per token.
@@ -1502,9 +1527,10 @@ Boundary order remains:
 
 1. submit a typed boundary command with an absolute Clock deadline;
 2. fetch once and run one bounded decode job (strict plus named native fallback when applicable);
-3. feed the supported native projection/boundary snapshot synchronously;
-4. nonblockingly reserve/project/submit the archive frame draft or record an archive loss range;
-5. return the phase barrier result or typed timeout/failure according to required-sidecar policy.
+3. deliver the supported native projection/boundary snapshot directly and synchronously exactly once;
+4. nonblockingly reserve and enqueue archive projection, or record an archive loss range;
+5. emit one post-native factual observation containing the admission outcome;
+6. return the phase barrier result or typed timeout/failure according to required-sidecar policy.
 
 Archive remote durability is not awaited at a phase boundary.
 
@@ -1558,6 +1584,35 @@ factory strictly validates its raw config and requirements, then resource valida
 required and present forbidden blocks before backend validation. Scheduled/graph retain required
 models/endpoints; standalone watch forbids models/endpoints/metrics/sidecars and allows optional
 generic artifact policy. An empty resource block is therefore intentional, not permissive.
+
+The `archive` object is one reusable strict DTO rather than two nearly equivalent configuration
+shapes:
+
+```rust
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TelemetryArchiveSpecV2 {
+    pub target: NormalizedArchiveUri,
+    pub local_spool: PathBuf,
+    pub spool_quota_bytes: u64,
+    pub spool_quota_files: u64,
+    pub required: bool,
+    pub sink: NamedRunnerComponentSpecV2,
+    pub rotation: NamedRunnerComponentSpecV2,
+    pub admission: NamedRunnerComponentSpecV2,
+    pub recovery: NamedRunnerComponentSpecV2,
+    pub archive_key: NamedRunnerComponentSpecV2,
+    #[serde(default)]
+    pub enrichers: Vec<NamedRunnerComponentSpecV2>,
+    #[serde(default)]
+    pub sanitizers: Vec<NamedRunnerComponentSpecV2>,
+    pub raw_body: NamedRunnerComponentSpecV2,
+}
+```
+
+Every named component strictly decodes its own `config`; the reusable DTO does not accept an
+untyped option bag. `TelemetryWatchConfigV2.archive` and the attached resource below both use these
+exact bytes and validation rules.
 
 The complete authored projection below is deserializable by that revised DTO; omitted resource
 fields are forbidden/unused rather than filled with dummy inference values:
@@ -1624,7 +1679,131 @@ fields are forbidden/unused rather than filled with dummy inference values:
 Python may accept friendly durations/paths; the runner wire uses normalized integer ns, absolute
 local paths, and normalized target URIs. Unknown fields and unknown factory IDs fail validation.
 
-### 14.2 Validation before side effects
+### 14.2 Attached scheduled resource
+
+`SidecarSpecV2` gains one optional resource that attaches an archive to already-authored telemetry
+sources without duplicating their URL, credentials, transport, cadence, or failure policy:
+
+```rust
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TelemetryArchiveAttachmentSpecV2 {
+    pub source_ids: Vec<TelemetrySourceId>,
+    pub archive: TelemetryArchiveSpecV2,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SidecarSpecV2 {
+    // Existing strict source resources remain here.
+    pub gpu_telemetry: Option<Box<RawValue>>,
+    pub network_latency: Option<Box<RawValue>>,
+    pub server_metrics: Option<Box<RawValue>>,
+    pub live_streaming: Option<Box<RawValue>>,
+    pub telemetry_archive: Option<TelemetryArchiveAttachmentSpecV2>,
+}
+```
+
+Each selected server/GPU/network sidecar factory must expose stable prepared source IDs before the
+attachment prepares. `source_ids` is non-empty and unique; every ID must resolve to exactly one
+prepared physical telemetry source in the same run. An omitted source is still available to its
+native accumulator but is not archived. Unknown IDs, duplicate IDs, source configuration repeated
+inside the attachment, `primary_durable` admission on an attached archive, or an attachment without
+at least one prepared source fail validation. V1 allows attachment only to `online_http +
+scheduled`; `graph` and `dynamo_offline` reject it before backend/source preparation until their
+deferred lifecycle integrations are built.
+
+This normalized envelope is a complete attached-run example; no field below is an illustrative
+ellipsis:
+
+```jsonc
+{
+  "protocol_version": 2,
+  "operation": "execute",
+  "expected_distribution_id": "blake3:<exact-runner>",
+  "run": {
+    "identity": {"benchmark_id": "scheduled-archive-20260711-a", "random_seed": 7},
+    "artifact_target": "/var/lib/aiperf/runs/scheduled-archive-20260711-a",
+    "backend": {"type": "online_http", "config": {}},
+    "workload": {
+      "type": "scheduled",
+      "config": {
+        "worker_count": 1,
+        "dataset": {"type": "synthetic", "entries": 100},
+        "tokenizer": {"name": "builtin"},
+        "phases": [
+          {
+            "name": "profiling",
+            "type": "concurrency",
+            "exclude_from_results": false,
+            "concurrency": 1,
+            "requests": 100
+          }
+        ]
+      }
+    },
+    "resources": {
+      "models": {"strategy": "round_robin", "items": [{"name": "model"}]},
+      "endpoints": {
+        "profiles": [
+          {
+            "id": "default",
+            "type": "chat",
+            "urls": ["http://127.0.0.1:8000"],
+            "streaming": true,
+            "use_server_token_count": true,
+            "wait_for_model_timeout": 0.0,
+            "wait_for_model_interval": 5.0,
+            "wait_for_model_mode": "inference"
+          }
+        ]
+      },
+      "metrics": {},
+      "artifacts": {},
+      "sidecars": {
+        "server_metrics": {
+          "sources": [
+            {
+              "id": "server-primary",
+              "type": "prometheus_http",
+              "interval_ns": 1000000000,
+              "request_timeout_ns": 5000000000,
+              "config": {
+                "url": "http://127.0.0.1:8000/metrics",
+                "redirects": "disabled",
+                "proxy": "disabled",
+                "accepted_formats": ["prometheus_text_0_0_4", "openmetrics_text_1_0_0"],
+                "max_compressed_bytes": 8388608,
+                "max_decompressed_bytes": 33554432
+              }
+            }
+          ]
+        },
+        "telemetry_archive": {
+          "source_ids": ["server-primary"],
+          "archive": {
+            "target": "file:///var/lib/aiperf/archives/scheduled-archive-20260711-a",
+            "local_spool": "/var/lib/aiperf/spool/scheduled-archive-20260711-a",
+            "spool_quota_bytes": 10737418240,
+            "spool_quota_files": 10000,
+            "required": false,
+            "sink": {"type": "parquet_local", "config": {}},
+            "rotation": {"type": "rows_bytes_age", "config": {}},
+            "admission": {"type": "attached_best_effort", "config": {}},
+            "recovery": {"type": "create_new", "config": {}},
+            "archive_key": {"type": "secret_provider", "config": {"id": "archive-identity"}},
+            "enrichers": [],
+            "sanitizers": [],
+            "raw_body": {"type": "none", "config": {}}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 14.3 Validation before side effects
 
 Static validation covers:
 
@@ -1637,6 +1816,7 @@ Static validation covers:
 - local spool path safety, quota/transaction reserve, and artifact-target non-aliasing;
 - policy IDs/configs and raw-retention acknowledgment;
 - watch/backend compatibility;
+- attached source-reference resolution and `online_http + scheduled` compatibility;
 - no benchmark-only fields/models/datasets/phases that would be inert.
 
 Execution preparation then checks source-specific configuration, local target/spool path candidate,
@@ -1649,7 +1829,7 @@ claim before sources; create-new follows the unique-ID first-publication rule in
 the applicable transactions does it start IO/decode workers and Clock maintenance and activate
 sources.
 
-### 14.3 Signals and stdout
+### 14.4 Signals and stdout
 
 Runner stdout retains exactly one terminal JSON line. Progress is structured stderr and/or an
 optional local status artifact. Python forwards SIGINT/SIGTERM as a graceful stop request:
