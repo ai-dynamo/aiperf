@@ -28,6 +28,11 @@ semantics, checkpoint algorithm, or metric authority.
   Python wrapper, configuration, tests, and compaction path;
 - validated comparison and runtime receipts:
   `artifacts/code-review.md` and `artifacts/repro-runtime-20260711/`.
+- accepted wire-format authorities: Prometheus
+  [text exposition 0.0.4](https://prometheus.io/docs/instrumenting/exposition_formats/) and
+  [OpenMetrics text 1.0.0](https://github.com/prometheus/OpenMetrics/blob/main/specification/OpenMetrics.md).
+  OpenMetrics 2.0 remains draft/out of scope until a separately versioned parser factory is
+  implemented and advertised.
 
 ---
 
@@ -149,26 +154,30 @@ construction.
 
 1. **One native executable.** Python `aiperf watch` launches `aiperf-runner`.
 2. **One measurement authority.** The native live accumulators and reporter remain authoritative.
-3. **One scrape per source event.** Accumulator and archive projections fan out from the same
-   successful scrape; enabling archival never doubles source traffic.
+3. **One scrape per source event.** Accumulator and archive projections fan out from one
+   pre-projection attempt envelope, including failures; enabling archival never doubles source
+   traffic.
 4. **All sampling time through `Clock`.** No `Instant`, `SystemTime`, or `tokio::time` in the
    clock-aware source/scheduler path.
-5. **No request-path backpressure.** Archive serialization, compression, and upload never run on
-   or block the per-request/per-token local loop.
+5. **No request-path backpressure.** Archive-only decode/projection, serialization, compression,
+   filesystem, and upload work never run on or block the per-request/per-token local loop.
 6. **One mutable owner.** One archive IO worker owns WAL, partition builders, and manifests; no
    shared writer mutex exists.
 7. **Structured identity.** Metric family, semantic type, source, and labels are separate fields.
 8. **Float64 preservation.** Every finite source number remains `f64` through Parquet.
 9. **Non-finite values are explicit.** NaN/±Inf never cross a serialization boundary as an
    unclassified JSON/Parquet number.
-10. **No silent loss.** Failed, empty, duplicate, missed, backpressured, and dropped observations
+10. **No silent loss.** Failed, empty, unchanged, missed, backpressured, and dropped observations
     are counted and surfaced in scrape records/manifest health.
-11. **Exactly-once logical commit.** Every durably acknowledged batch has one logical identity and
-    appears at most once in the manifest's referenced partitions after any recovery.
-12. **Immutable remote history.** Sync uploads content-addressed partitions; it never rewrites the
-    whole archive.
+11. **Exactly-once logical commit.** Every frame for which a caller observed a local-durable
+    receipt has one logical identity and is recovered exactly once. A crash may also recover a
+    complete durable frame whose receipt was not observed; persistence retry keeps its identity.
+12. **Immutable incremental history.** Sync uploads content-addressed partitions and bounded
+    manifest metadata; it never rewrites the whole archive or a flat full-history list per commit.
 13. **Fail closed on identity.** Resume requires matching schema, archive ID, configuration digest,
-    source descriptors, and runner distribution compatibility.
+    source descriptors, identity-key digest, and archive-writer compatibility ID. The exact runner
+    distribution remains recorded provenance but may change only through an explicitly compatible
+    writer implementation.
 14. **Secrets never become archive dimensions.** URLs are credential-free; credentials remain in
     environment/secret providers; diagnostics and manifests are redacted.
 15. **Compile-time extensibility.** Source, enrichment, redaction, rotation, admission, recovery,
@@ -205,9 +214,19 @@ RunnerEnvelopeV2 { operation: validate|execute }
 ```
 
 `telemetry_watch` requires a real clock and a control-plane HTTP transport but no inference model,
-semantic response, dataset, phase list, or `RequestSink`. The `online_http` prepared backend must
-expose its injected `Clock` and reusable control transport through a trait-backed preparation
-capability. This is not a special `reqwest` path.
+semantic response, dataset, phase list, or `RequestSink`. The preimplementation runner-v2 design's
+outer DTO is therefore revised here: shared resource blocks are workload-scoped, not globally
+required. Every workload factory declares each resource block as `required`, `optional`, or
+`forbidden`; missing required or present forbidden resources fail before backend preparation.
+This does not make validation permissive.
+
+The `online_http` prepared backend exposes a LocalSet-compatible `ControlPlaneHttp` capability
+over its injected `Clock` and native transport. It accepts an owned request plus an absolute
+Clock deadline and returns exact entity bytes, response status/headers, and native transport
+timings. Per-call deadlines override only request/total lifetime; connection/TLS/reuse policy
+remains backend-owned. A workload requirement asks for this typed capability, so the compatibility
+matrix is derived rather than special-casing the `telemetry_watch` ID. This is not a second HTTP
+client or a special `reqwest` path.
 
 The computed capability matrix adds:
 
@@ -223,17 +242,22 @@ through the attachment seam; that does not make standalone HTTP watch an offline
 ### 3.3 Attached benchmark mode
 
 An ordinary scheduled/graph run may request an archive target in addition to existing telemetry
-summaries. Existing sidecars retain ownership of source activation and boundary scrapes. Each
-decoded source record is projected twice:
+summaries. The run owns exactly one fixed-deadline driver per physical telemetry source across all
+phases. Phase sidecars subscribe to that driver and submit typed boundary commands; they do not own
+cadence loops. Each all-outcome attempt envelope is projected twice where applicable:
 
 ```text
-one source scrape
-  +-- native accumulator (authoritative for this run)
-  `-- archive ingress (forensic, bounded, independently fallible)
+one physical source attempt
+  +-- native domain projection/accumulator (when successful and supported)
+  `-- archive attempt/exposition projection (every outcome)
 ```
 
-Phase start/end callbacks also emit archive lifecycle markers. Archive availability cannot change
-request timings or metric formulas. The terminal report records archive completeness separately.
+Continuous samples are attributed to every active phase window by marker-time joins; a seamless
+phase overlap never causes a second source request. Coincident boundary commands coalesce into one
+physical scrape whose envelope names every requesting boundary. Exact phase lifecycle markers come
+from a `PhaseObserver` tee, while boundary scrape capture time remains a separate fact. Archive
+availability cannot change request timings or metric formulas. The terminal report records archive
+completeness separately.
 
 ### 3.4 Why Rust owns this IO
 
@@ -250,20 +274,33 @@ post-run analysis.
 
 ### 4.1 New crates
 
-`aiperf-prometheus` is an IO-free leaf containing a standards-correct exposition model and parser
-seam. It extracts the lexical/state-machine core currently embedded in server/GPU parsers:
+`aiperf-prometheus` is an IO-free leaf containing an exposition model and bounded parser seam for
+exactly two advertised formats: Prometheus text 0.0.4 and OpenMetrics text 1.0.0. Content type
+selects the parser; a body is never silently reinterpreted under a different format after a parse
+failure. It extracts and replaces—not merely wraps—the narrower lexical/state-machine core
+currently embedded in server metrics:
 
 ```rust
-pub trait ExpositionParser {
-    fn parse_classic(&self, body: &str) -> Result<Exposition, ParseError>;
-    fn parse_openmetrics(&self, body: &str) -> Result<Exposition, ParseError>;
+pub trait ExpositionParser: Debug + Send + Sync {
+    fn parse(
+        &self,
+        format: ExpositionFormat,
+        exact_body: &[u8],
+        limits: &ParseLimits,
+    ) -> Result<Exposition, ParseError>;
 }
 ```
 
-`Exposition` preserves HELP/TYPE/UNIT metadata, structured escaped labels, counters, gauges,
-untyped samples, summaries, histograms grouped by the complete base label set, and supported
-OpenMetrics exemplars/timestamps. Projection policies—not the lexer—decide whether benchmark
-accumulation excludes summaries, `_created`, or uptime families.
+The parser validates UTF-8 and enforces line, label, family, sample, bucket, and decoded-byte limits
+while consuming the body. `Exposition` preserves HELP/TYPE/UNIT metadata, source family and emitted
+sample names/roles, structured escaped labels, source numeric/timestamp lexemes, counter-created
+facts, unknown/untyped, gauge, counter, info, stateset, histogram, gauge-histogram, summary,
+per-point timestamps, and scalar/bucket exemplars with their label sets, values, and optional
+timestamps. Prometheus `untyped` and OpenMetrics `unknown` remain distinguishable source tokens even
+though they share the archive `unknown` semantic branch. Projection policies—not the lexer—decide
+whether benchmark accumulation excludes summaries, `_created`, uptime, or unsupported domain
+families. An accepted wire feature is never silently dropped or normalized into another semantic
+type.
 
 `aiperf-telemetry-archive` owns domain-neutral archive DTOs, ingress/sink/policy traits, WAL,
 Parquet partition writing, manifests, recovery, and object-store synchronization. It depends on
@@ -284,9 +321,11 @@ aiperf-runner
 aiperf-metrics remains IO-free and has no archive dependency.
 ```
 
-Runner-local adapters map existing `ServerMetricsRecord`, `GpuScrape`, and network samples into
-archive batches. A later second consumer may justify extracting those adapters, but no cycle or
-heavy Parquet dependency is pushed into the domain accumulators.
+Runner-local prepared source adapters own pure decoders plus two projections. They create a native
+`ServerMetricsRecord`, `GpuScrape`, or network record only from a successful supported decoded
+entity and create an archive attempt from every fetch outcome. Existing lossy domain records are
+never treated as raw archive inputs. No cycle or heavy Parquet dependency is pushed into the
+domain accumulators.
 
 ### 4.3 No hot-path dynamic dispatch
 
@@ -299,9 +338,19 @@ batch-local. There is no registry lookup, allocation policy, lock, or archive ca
 ## 5. Core trait seams
 
 The signatures below are design-level; concrete error DTOs remain plain hand-written library
-error enums.
+error enums. Generic `Entity`/`Record` types are monomorphized inside each prepared source factory;
+the registry erases only startup construction and does not require a closed enum of source kinds.
 
 ```rust
+#[async_trait(?Send)]
+pub trait ControlPlaneHttp {
+    async fn execute(
+        &self,
+        request: ControlPlaneRequest,
+        absolute_deadline_ns: i64,
+    ) -> Result<ControlPlaneResponse, ControlPlaneHttpError>;
+}
+
 pub trait ArchiveSourceFactory: Debug + Send + Sync {
     fn descriptor(&self) -> &'static ArchiveSourceDescriptor;
     fn validate(&self, config: &RawValue) -> Result<ValidatedSourceConfig, SourceConfigError>;
@@ -315,25 +364,52 @@ pub trait ArchiveSourceFactory: Debug + Send + Sync {
 #[async_trait(?Send)]
 pub trait ArchiveSource {
     fn source_id(&self) -> &str;
-    async fn scrape(&self, reason: ScrapeReason) -> ArchiveScrapeOutcome;
+    async fn fetch(&self, reason: ScrapeReason, deadline_ns: i64) -> FetchedAttempt;
     async fn shutdown(&self) -> Result<(), ArchiveSourceError>;
 }
 
-pub trait ArchiveEncoder<Record> {
-    fn encode(&self, record: &Record, context: &EncodeContext)
-        -> Result<ArchiveBatch, ArchiveEncodeError>;
+pub trait AttemptDecoder<Entity>: Debug + Send + Sync {
+    fn decode(
+        &self,
+        fetched: FetchedAttempt,
+        limits: &DecodeLimits,
+    ) -> DecodedAttempt<Entity>;
+}
+
+pub struct DecodedAttempt<Entity> {
+    pub facts: AttemptFacts,
+    pub entity: Option<Entity>,
+    pub parse_outcome: ParseOutcome,
+}
+
+pub trait NativeProjection<Entity, Record>: Debug + Send + Sync {
+    fn project(&self, entity: &Entity) -> Result<Option<Record>, NativeProjectionError>;
+}
+
+pub trait ArchiveProjection<Entity>: Debug + Send + Sync {
+    fn project(
+        &self,
+        attempt: &DecodedAttempt<Entity>,
+        context: &ArchiveProjectionContext,
+    ) -> Result<ArchiveBatch, ArchiveProjectionError>;
 }
 
 pub trait TelemetryEnricher {
-    fn enrich(&self, sample: &mut ArchiveSample, source: &ArchiveSourceIdentity);
+    fn attributes(
+        &self,
+        sample: &ArchiveSampleView<'_>,
+        source: &ArchiveSourceIdentity,
+    ) -> Result<AttributePatch, EnrichmentError>;
 }
 
-pub trait TelemetryRedactor {
-    fn redact(&self, sample: &mut ArchiveSample, source: &ArchiveSourceIdentity);
-    fn redact_error(&self, error: &ArchiveDiagnostic) -> ArchiveDiagnostic;
+pub trait ArchiveSanitizer {
+    fn sanitize_source(&self, source: SourceDescriptorView<'_>) -> SanitizedSourceDescriptor;
+    fn sanitize_sample(&self, sample: ArchiveSampleView<'_>) -> SanitizedSample;
+    fn sanitize_marker(&self, marker: ArchiveMarkerView<'_>) -> SanitizedMarker;
+    fn sanitize_diagnostic(&self, diagnostic: &ArchiveDiagnostic) -> ArchiveDiagnostic;
 }
 
-pub trait SegmentRotationPolicy {
+pub trait SegmentRotationPolicy: Debug + Send {
     fn should_rotate(&self, state: &OpenSegmentState, now_ns: i64) -> bool;
 }
 
@@ -341,7 +417,7 @@ pub trait ArchiveAdmissionPolicy {
     fn admit(&self, state: ArchiveIngressState, batch: &ArchiveBatch) -> AdmissionDecision;
 }
 
-pub trait ArchiveRecoveryPolicy {
+pub trait ArchiveRecoveryPolicy: Debug + Send {
     fn recover(&self, local: &LocalArchiveState, remote: Option<&RemoteArchiveState>)
         -> Result<RecoveryPlan, ArchiveRecoveryError>;
 }
@@ -349,8 +425,8 @@ pub trait ArchiveRecoveryPolicy {
 #[async_trait]
 pub trait ArchiveSink: Send {
     async fn recover(&mut self) -> Result<RecoveredArchive, ArchiveSinkError>;
-    async fn append_batch(&mut self, batch: ArchiveBatch) -> Result<AppendReceipt, ArchiveSinkError>;
-    async fn append_marker(&mut self, marker: ArchiveMarker) -> Result<(), ArchiveSinkError>;
+    async fn append_frame(&mut self, frame: ArchiveWalFrame)
+        -> Result<AppendReceipt, ArchiveSinkError>;
     async fn checkpoint(&mut self) -> Result<CheckpointReceipt, ArchiveSinkError>;
     async fn finalize(&mut self, reason: TerminationReason)
         -> Result<FinalizedArchive, ArchiveSinkError>;
@@ -361,15 +437,35 @@ pub trait EpochAnchorProvider {
 }
 ```
 
+`FetchedAttempt` owns bounded exact entity bytes plus transport status/headers/timestamps and never
+contains credentials. `ArchiveWalFrame` is a versioned persisted sum of attempt/sample batch,
+lifecycle marker, and coalesced loss-range frames. It is a closed wire schema, not a source
+extension point. Every frame has a stable frame ID, source/control sequence, and CRC, and every
+successful `append_frame` has the same local-durable meaning.
+
+Source fetch and Clock/lifecycle ownership stay on the LocalSet. After a driver reserves bounded
+decode and archive-ingress credits, it sends owned bytes/facts to an ordered bounded CPU pool. The
+pure decoder creates one `DecodedAttempt`; native and archive projections consume that same value.
+Results return in source-attempt order so a boundary can synchronously feed its native accumulator
+before the phase barrier returns. A factory may keep decode on the LocalSet only when its advertised
+maximum body/CPU budget passes the attached regression profile; the generic Prometheus path uses
+the pool.
+
+Every wire-selected family—source, sink, rotation, admission, recovery, enrichment, sanitizer,
+raw-body retention, and identity-key provider—has its own frozen descriptor/strict-validate/prepare
+factory registry. Only sink-owned objects crossing to the IO worker require `Send`; LocalSet-owned
+sources, admission, and observation graphs remain `?Send`. Stable IDs never select a core string
+branch.
+
 At least these concrete implementations ship:
 
 - `PrometheusArchiveSource` and replay/fault-injection sources;
 - `StaticLabelEnricher` and `NoopEnricher`;
-- allow/deny-key redactors and `NoopRedactor`;
+- allow/deny-key structured sanitizers and `NoopSanitizer`;
 - row/byte/Clock-age segment rotation policies composed by `AnyRotationPolicy`;
 - primary-watch and attached-best-effort admission policies;
 - create-new and exact-resume recovery policies;
-- `ParquetArchiveSink` over a local spool plus optional `dyn ObjectStore`;
+- `ParquetArchiveSink` over a local spool plus optional `dyn ArchiveObjectStore`;
 - `MemoryArchiveSink` for deterministic tests.
 
 Stable wire IDs select factories/policies through frozen registries. A core string `match` does not
@@ -381,9 +477,11 @@ select implementations.
 
 ### 6.1 One driver per source, one scrape in flight
 
-Each source has one local driver task. Drivers are independent, so a slow endpoint cannot delay a
-different endpoint. A driver serializes continuous and forced-boundary commands for its own
-source; two requests to the same endpoint never overlap.
+Each physical source has one run-owned local driver task in standalone and attached modes. Drivers
+await network operations independently; a slow endpoint cannot consume another endpoint's
+in-flight slot. Bounded archive decode runs off-loop as specified in §5. A driver serializes
+continuous and forced-boundary commands for its own source; two requests to the same endpoint never
+overlap, even across seamless phases.
 
 The driver owns:
 
@@ -393,6 +491,12 @@ The driver owns:
 - consecutive/total failure counters;
 - current source state (`active`, `degraded`, `disabled`, `stopped`);
 - a command channel with reserved capacity for boundary/shutdown commands.
+
+Each request has `deadline_ns = min(scheduled_or_boundary_budget, shutdown_budget)` and passes that
+absolute value through `ControlPlaneHttp`. Deadline cancellation must release the transport body/
+connection state and returns one timeout attempt; it never detaches an unobserved request. Source
+policy declares whether a boundary timeout merely degrades telemetry or fails a phase when the
+sidecar is required.
 
 Cross-source result ordering is never completion-order authority. Archive identity includes source
 and sequence; reports/manifests sort by stable source ID.
@@ -414,25 +518,31 @@ slow. `SimClock` tests pin same-instant ordering and overrun arithmetic.
 
 ### 6.3 Boundary priority
 
-Attached phase barriers submit a forced `BoundaryStart` or `BoundaryEnd` command. It preempts the
-next continuous deadline but never interrupts an already issued HTTP request. The phase waits for
-the forced result under its configured Clock deadline. The same decoded record feeds accumulator
-and archive projection. Continuous scheduling re-anchors from the original cadence, not the
-boundary completion time.
+Attached phase barriers submit a forced `BoundaryStart` or `BoundaryEnd` command with phase ID,
+boundary identity, and absolute deadline. It preempts the next continuous deadline but never
+interrupts an already issued HTTP request. Coincident commands coalesce and all requesting
+boundaries are recorded on the one attempt. The phase waits for the forced result under the same
+Clock deadline. The same `DecodedAttempt` feeds the supported native projection and archive
+projection. Continuous scheduling re-anchors from the original cadence, not the boundary
+completion time.
 
 ### 6.4 Failure classification
 
-Every attempt becomes one `ArchiveScrapeRecord`, including:
+Every attempt becomes one `ArchiveScrapeRecord`. `outcome` describes transport/parse disposition;
+`body_unchanged` is an orthogonal success fact. V1 writes full sample rows for every successful
+unchanged scrape rather than requiring readers to chase a prior sample batch. Outcomes include:
 
 - success with samples;
 - success with an empty exposition;
-- unchanged body/duplicate;
 - HTTP status failure;
 - transport/timeout failure;
 - parse failure with line/category and a redacted bounded diagnostic;
 - source-incompatible terminal disable;
 - missed tick or admission skip;
 - source shutdown failure.
+
+Successful rows may carry `body_unchanged=true` and `same_body_as_attempt_seq`; health counts those
+observations separately without classifying them as failures or empty scrapes.
 
 The existing server `/prometheus/metrics` fallback and terminal-incompatible behavior remain
 source semantics. Generic watch sources may use a separately configured failure policy, but they
@@ -457,9 +567,15 @@ time would contaminate the scheduling seam, so watch prepares an independent anc
 pub struct EpochAnchor {
     pub clock_ns: i64,
     pub unix_epoch_ns: i128,
-    pub uncertainty_ns: u64,
+    pub capture_uncertainty_ns: u64,
 }
 ```
+
+The system provider captures `clock_before_ns`, reads wall time once, then captures
+`clock_after_ns`. It rejects a reversed/overflowing bracket, chooses the monotonic midpoint as
+`clock_ns`, and sets `capture_uncertainty_ns` to at least half the bracket span plus the declared
+wall/monotonic clock-resolution allowance. Tests inject all three reads. The field measures anchor
+acquisition uncertainty, not oscillator drift or later NTP steps.
 
 For a real-clock session:
 
@@ -468,9 +584,11 @@ unix_ns(t) = anchor.unix_epoch_ns + (clock_ns(t) - anchor.clock_ns)
 ```
 
 The concrete system provider reads wall time only while creating the injected anchor. Every later
-timestamp derives from the monotonic `Clock`, so NTP steps cannot reorder a session. Tests inject a
-fixed provider. Each restart creates a new `archive_session_id` and anchor; the manifest retains
-both. Virtual sessions set `time_domain="virtual"` and omit Unix time.
+timestamp derives from the monotonic `Clock`, so NTP steps cannot reorder a session. Derived Unix
+time is approximate placement after capture; it is not advertised as a continuously bounded UTC
+clock. Optional later wall observations are diagnostic markers only and never remap samples. Each
+restart creates a new `archive_session_id` and anchor; the manifest retains both. Virtual sessions
+set `time_domain="virtual"` and omit Unix time.
 
 ### 7.3 Timestamp vocabulary
 
@@ -491,130 +609,225 @@ No field called merely `time_since_start` substitutes for these meanings.
 
 ## 8. Archive schema v1
 
-### 8.1 Design rules
+### 8.1 Accepted exposition surface and identity
 
-- Arrow/Parquet types are explicit and versioned.
-- Labels remain `map<string,string>` in deterministic key order.
-- `series_key` is BLAKE3 over source ID, metric family, semantic type, and canonical labels.
-- Histograms and summaries stay one structured sample per base label set.
-- Numeric source values use Float64; source-native integer identity may additionally use UInt64.
-- non-finite values use a tagged representation, not raw NaN/Inf at the boundary;
-- source and scrape identity are repeated where needed so partitions are independently readable;
-- arbitrary enrichment stays in a structured attributes map, not dynamically added columns;
-- schemas add nullable fields within a major version; incompatible changes increment the major.
+The archive parser advertises Prometheus text 0.0.4 and OpenMetrics text 1.0.0. For those formats it
+preserves every valid family type and point component listed in §4.1. Unknown content types,
+OpenMetrics 2.0, protobuf/native histograms, or valid features outside an advertised parser
+descriptor produce `unsupported_format`/`unsupported_feature` attempts; they are never silently
+downgraded. The native benchmark projection remains its narrower current policy.
 
-### 8.2 Manifest
+Every digest uses a versioned domain and length-prefixed fields, never raw concatenation:
 
-`archive-manifest.json` is the only authority over referenced partitions:
+```text
+digest(domain, fields...) =
+    BLAKE3(domain_utf8 || 0x00 || each(u64_be(length) || exact_bytes))
+```
+
+Domains include `aiperf.archive.config.v1`, `.batch.v1`, `.frame.v1`, `.series-display.v1`,
+`.series-source.v1`, `.partition.v1`, `.manifest.v1`, and `.index-node.v1`. Canonical maps sort by
+UTF-8 key bytes and reject duplicate keys. The configuration digest covers the fully validated
+secret-free authored config, every selected factory ID plus normalized config, accepted-format
+matrix, source descriptors, schema fingerprints, writer compatibility ID, and identity-key ID.
+
+Two series identities prevent redaction from silently merging source series:
+
+- `source_series_key`: keyed BLAKE3 over the pre-redaction source ID, family, semantic type, and
+  canonical source labels. The key comes from `IdentityKeyProvider`; only its ID/digest is durable.
+- `series_key`: ordinary BLAKE3 over the stored post-redaction identity plus
+  `source_series_key`.
+
+A many-to-one post-redaction mapping is visible because `source_series_key` differs. The default
+sanitizer rejects it; intentional coalescing requires a named policy and a recorded outcome.
+Enrichment attributes never enter either series key. Discovered attribute changes create a new
+`attribute_epoch_id` and a topology-change marker.
+
+### 8.2 Physical Arrow/Parquet contract
+
+The repository contains one canonical UTF-8 JSON schema descriptor per table. It fixes field
+order, names, nullability, Arrow logical/physical type, dictionary index width, child layout, and
+schema metadata. Generated Arrow schemas are not the fingerprint authority. Each table stores:
+
+```text
+aiperf.archive.table = <attempts|samples|markers>
+aiperf.archive.schema_version = 1.0
+aiperf.archive.schema_fingerprint =
+    BLAKE3("aiperf.archive.arrow-schema.v1\0" || exact_descriptor_bytes)
+```
+
+V1 uses these exact aliases:
+
+| Alias | Arrow type and invariants |
+|---|---|
+| `Uuid` | `FixedSizeBinary(16)`, non-null |
+| `Digest` | `FixedSizeBinary(32)`, non-null unless the field says nullable |
+| `Enum8` | `Dictionary(Int8, Utf8)`, non-null; values are schema-defined strings |
+| `EpochNs` | `Decimal128(38,0)`, nullable |
+| `StringMap` | sorted `Map(entries: Struct<key: Utf8 non-null, value: Utf8 non-null>)` |
+| `ArchiveNumber` | non-null `Struct<kind: Enum8, finite_value: Float64 nullable, exact_u64: UInt64 nullable>` |
+| `Exemplar` | nullable `Struct<labels: StringMap, value: ArchiveNumber, timestamp_lexeme: Utf8 nullable, timestamp_unix_ns: EpochNs>` |
+
+`ArchiveNumber.kind` is `finite`, `pos_inf`, `neg_inf`, `nan`, or `absent`. `finite_value` is
+present only for `finite`; `exact_u64` may additionally preserve a source-native non-negative
+integer and must convert to the identical finite f64 value. Every numeric leaf—including created
+time, sums, counts, bounds, buckets, quantiles, states, and exemplars—uses this representation.
+No raw non-finite Float64 is written. Maps are non-null (possibly empty); list elements and map keys
+are non-null. Parquet dictionary encoding is an implementation choice, but the logical Arrow
+dictionary index is always Int8 for frozen enums.
+
+Increment 1 must check the canonical descriptors into the repository, generate schemas from them,
+and freeze exact Arrow IPC/Parquet/DuckDB/Polars goldens before any archive capability is
+advertised. “Binary or hex,” alternate decimal encodings, and unspecified exemplar layouts are not
+conforming v1 writers.
+
+### 8.3 Manifest graph and heads
+
+Directory enumeration is never dataset authority. The local discovery authority is a small,
+checksummed, atomically replaced and parent-directory-fsynced `LOCAL-LATEST` pointer. It contains
+both current and preceding immutable head descriptors. Remote discovery uses a conditionally
+updated `LATEST` with the same logical shape. A head descriptor contains:
 
 ```jsonc
 {
-  "archive_schema_version": "1.0",
   "archive_id": "uuid",
-  "archive_sessions": [
-    {
-      "session_id": "uuid",
-      "time_domain": "real_monotonic",
-      "epoch_anchor": {"clock_ns": 0, "unix_epoch_ns": "...", "uncertainty_ns": 1000},
-      "runner_distribution_id": "blake3:..."
-    }
-  ],
-  "config_digest": "blake3:...",
-  "sources": [],
-  "partitions": [
-    {
-      "table": "samples",
-      "key": "parts/samples/.../blake3-....parquet",
-      "content_hash": "blake3:...",
-      "row_count": 10000,
-      "min_clock_ns": 0,
-      "max_clock_ns": 1000000000,
-      "source_ids": ["server-a"]
-    }
-  ],
-  "health": {
-    "attempted": 0, "succeeded": 0, "failed": 0, "empty": 0,
-    "duplicates": 0, "missed_ticks": 0, "admission_skips": 0,
-    "dropped_batches": 0, "local_durable_batches": 0, "remote_referenced_batches": 0
-  },
-  "finalized": false,
-  "termination_reason": null,
-  "generation": 7
+  "local_commit_seq": 7,
+  "generation_key": "manifests/generation-7-blake3-....json",
+  "generation_hash": "blake3:...",
+  "index_root_key": "manifest-index/blake3-....json",
+  "index_root_hash": "blake3:...",
+  "parent_generation_hash": "blake3:...",
+  "archive_state": "open"
 }
 ```
 
-`unix_epoch_ns` is a decimal string because JSON cannot exactly represent i128 nanoseconds.
-Manifests never contain credentials, signed URLs, response bodies, or unredacted diagnostics.
+Generation objects are immutable, content-addressed, and hash-linked. Generation zero is a full
+genesis containing archive/schema/writer identity, the normalized config digest, identity-key
+digest, secret-free source descriptors, session/anchor, exact runner distribution provenance, and
+empty index root. Later generations are bounded transaction records containing parent, session,
+added/removed partition IDs, exact WAL-frame/table coverage, health delta, state transition, and
+termination reason. `unix_epoch_ns` is a decimal string in JSON.
 
-### 8.3 Scrape-attempt table
+The partition set is a persistent content-addressed B-tree with fanout 256. A commit copy-on-writes
+only O(log₂₅₆ partitions) bounded index pages and the small generation object; the root hash
+defines the complete logical file set. Leaves contain ordered partition descriptors with table,
+key, content hash, byte/row counts, min/max Clock time, source IDs, schema fingerprint, and exact
+covered `(frame_id, table)` projections. Readers walk the root; they do not glob. This supplies
+bounded incremental metadata for an always-on archive without an unbounded delta chain or a flat
+full-list rewrite.
 
-One row exists per attempt/gap:
+`LOCAL-LATEST` and remote `LATEST` are discovery pointers, the immutable generation is transaction
+authority, and its index root is dataset authority. Manifests never contain credentials, signed
+URLs, response bodies, raw labels, or unredacted diagnostics.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `archive_id`, `session_id`, `source_id` | UTF-8 | stable identity |
-| `attempt_seq` | UInt64 | monotone within `(session,source)` |
-| `batch_id` | fixed binary/hex | hash of session/source/attempt |
-| `reason` | dictionary UTF-8 | cadence, boundary-start/end, manual, retry |
-| `outcome` | dictionary UTF-8 | success, empty, duplicate, HTTP, transport, parse, missed, dropped, disabled |
-| scheduling/request/capture timestamps | Int64 nullable | Clock timeline |
-| `unix_epoch_ns` | fixed decimal/UTF-8 nullable | anchored real time |
-| `http_status` | UInt16 nullable | exact response status |
-| `latency_ns` | Int64 nullable | request duration |
-| `content_hash` | fixed binary nullable | BLAKE3 of exact response bytes |
-| `duplicate_of_attempt_seq` | UInt64 nullable | prior identical body |
-| `sample_count` | UInt64 | parsed structured sample count |
-| `error_kind`, `error_message` | UTF-8 nullable | bounded redacted diagnostic |
-| gap/drop counts | UInt64 nullable | compact missed-range representation |
+### 8.4 Scrape-attempt table
 
-Failed and empty scrapes are therefore queryable rather than inferred from missing rows.
+One row exists per attempt or coalesced gap. Field order and nullability are normative:
 
-### 8.4 Sample table
+| Field | Exact type | Null? |
+|---|---|:---:|
+| `archive_id`, `session_id` | `Uuid` | no |
+| `source_id` | `Utf8` | no |
+| `attempt_seq` | `UInt64` | no |
+| `frame_id`, `batch_id` | `Digest` | no |
+| `reason`, `outcome` | `Enum8` | no |
+| `boundary_ids` | `List<Utf8 non-null>` | no |
+| `scheduled_ns`, `request_start_ns`, `first_byte_ns`, `capture_ns`, `parse_done_ns`, `accepted_ns`, `local_durable_ns`, `remote_referenced_ns` | `Int64` | yes |
+| `unix_epoch_ns` | `EpochNs` | yes |
+| `http_status` | `UInt16` | yes |
+| `latency_ns` | `Int64` | yes |
+| `body_digest` | `Digest` | yes |
+| `body_unchanged` | `Boolean` | no |
+| `same_body_as_attempt_seq` | `UInt64` | yes |
+| `sample_count` | `UInt64` | no |
+| `error_kind`, `error_message` | `Utf8` | yes |
+| `gap_first_seq`, `gap_last_seq`, `gap_first_deadline_ns`, `gap_last_deadline_ns`, `gap_count` | integer fields | yes |
+
+`outcome` is one of `success`, `empty`, `http`, `transport`, `timeout`, `parse`,
+`unsupported_format`, `unsupported_feature`, `missed`, `dropped`, `disabled`, or `shutdown`.
+`body_unchanged` is valid only for successful/empty HTTP+parse observations; successful unchanged
+attempts still have complete sample rows. Failed and empty scrapes are queryable rather than
+inferred from absence.
+
+### 8.5 Sample table
 
 One row represents one metric family/base-label-set at one successful scrape:
 
-| Field | Type |
-|---|---|
-| archive/session/source/batch/attempt identity | same as scrape table |
-| `clock_ns`, anchored `unix_epoch_ns` | Int64 / decimal nullable |
-| `metric_family` | UTF-8 |
-| `semantic_type` | dictionary UTF-8 (`counter`, `gauge`, `histogram`, `summary`, `untyped`) |
-| `series_key` | fixed 32-byte BLAKE3 |
-| `labels` | map UTF-8 → UTF-8 |
-| `attributes` | map UTF-8 → UTF-8 |
-| `help`, `unit` | UTF-8 nullable |
-| `value_kind` | dictionary UTF-8 (`finite`, `pos_inf`, `neg_inf`, `nan`, `absent`) |
-| `scalar_value` | Float64 nullable; present only for finite scalar values |
-| `histogram_sum`, `histogram_count` | Float64 nullable |
-| `histogram_buckets` | list of `{upper_bound: UTF-8, cumulative_count: Float64}` nullable |
-| `summary_sum`, `summary_count` | Float64 nullable |
-| `summary_quantiles` | list of `{quantile: Float64, value_kind, value: Float64?}` nullable |
-| supported exemplar fields | nullable struct/list |
+| Field | Exact type | Null? |
+|---|---|:---:|
+| archive/session/source/frame/batch/attempt identity | same exact types as attempt table | no |
+| `clock_ns`, `unix_epoch_ns` | `Int64`, `EpochNs` | no / yes |
+| `metric_family`, `source_type_token` | `Utf8` | no |
+| `semantic_type` | `Enum8` | no |
+| `source_series_key`, `series_key` | `Digest` | no |
+| `labels`, `attributes` | `StringMap` | no |
+| `attribute_epoch_id` | `Digest` | no |
+| `help`, `unit` | `Utf8` | yes |
+| `source_timestamp_lexeme` | `Utf8` | yes |
+| `source_timestamp_unix_ns` | `EpochNs` | yes |
+| `payload` | structured value below | no |
+| `wire_samples` | list of wire sample structs below | no |
 
-Histogram bucket bounds stay textual because `+Inf` is a valid bound and source spelling can
-matter. Buckets are sorted numerically with `+Inf` last, but no lower bounds are synthesized.
-Counts remain cumulative as emitted; phase-delta interpretation belongs to accumulators/views.
+`semantic_type` is `unknown`, `gauge`, `counter`, `stateset`, `info`, `histogram`,
+`gauge_histogram`, or `summary`. `payload` is a non-null struct with nullable branches
+`scalar`, `counter`, `stateset`, `info`, `histogram`, and `summary`; validation requires exactly
+the branch selected by `semantic_type` (unknown/gauge use scalar, gauge-histogram uses histogram).
+Branches use only `ArchiveNumber`, `StringMap`, lists, and these exact child structs:
 
-### 8.5 Lifecycle marker table
+- counter: `total`, `created`, and scalar exemplar;
+- stateset: ordered list of `{state: Utf8, enabled: ArchiveNumber}`;
+- info: its point label map;
+- histogram/gauge-histogram: `sum`, `count`, `created`, and ordered buckets of
+  `{upper_bound_lexeme: Utf8, upper_bound: ArchiveNumber, cumulative_count: ArchiveNumber,
+  exemplar: Exemplar}`;
+- summary: `sum`, `count`, `created`, and ordered quantiles of
+  `{quantile_lexeme: Utf8, quantile: ArchiveNumber, value: ArchiveNumber}`.
 
-Markers connect operational history to runner events without pretending they are samples:
+Absent optional numeric components use `ArchiveNumber(kind="absent")`; the enclosing semantic
+branch itself is nullable only for branch selection. `wire_samples` preserves every emitted sample
+as `{emitted_name: Utf8, role: Enum8, labels: StringMap, value: ArchiveNumber,
+source_timestamp_lexeme: Utf8?, source_timestamp_unix_ns: EpochNs?, exemplar: Exemplar?}`. This
+retains the source name/role association rather than reconstructing it from suffixes later.
+Histogram bounds sort numerically with `+Inf` last, but retain their lexemes; no lower bounds are
+synthesized. Counts remain cumulative as emitted. Phase deltas belong to accumulators/views.
 
-- watch/session prepared, started, stop requested, draining, finalized;
-- benchmark run start/end;
-- phase start/end and phase identity;
-- archive degraded/recovered;
-- source activated/disabled;
-- local checkpoint and remote manifest generations.
+### 8.6 Lifecycle marker table
 
-Each marker has stable identity, Clock time, optional Unix time, typed kind, and a bounded
-structured attributes map.
+Markers connect history to runner facts without pretending they are samples. The exact schema is:
 
-### 8.6 Optional raw-body CAS
+| Field | Exact type | Null? |
+|---|---|:---:|
+| `archive_id`, `session_id` | `Uuid` | no |
+| `frame_id` | `Digest` | no |
+| `marker_seq` | `UInt64` | no |
+| `kind` | `Enum8` | no |
+| `clock_ns`, `unix_epoch_ns` | `Int64`, `EpochNs` | no / yes |
+| `run_id`, `phase_id`, `source_id` | `Utf8` | yes |
+| `phase_state`, `completion_reason` | `Enum8` | yes |
+| `phase_start_ns`, `sent_end_ns`, `requests_end_ns` | `Int64` | yes |
+| `attribute_epoch_id` | `Digest` | yes |
+| `attributes` | `StringMap` | no |
 
-The default stores only `content_hash`. `RawBodyRetentionPolicy` may retain compressed exact bodies
-under content-addressed keys for all scrapes or failed scrapes. This is explicit opt-in because raw
-exposition may contain sensitive labels that bypass structured redaction. The manifest records
-policy and retained-byte counts. Raw bodies are never embedded in Parquet rows.
+Kinds cover session/run lifecycle, exact phase `STARTED`/`SENDING_COMPLETE`/`COMPLETE`, source
+state, topology change, archive degradation/recovery, local generation, and remote publication.
+Phase fields are copied from one `PhaseObserver` snapshot; capture completion of a forced scrape is
+a separate attempt timestamp.
+
+### 8.7 Optional exact raw-body retention
+
+The default stores only a keyed body digest. `RawBodyRetentionPolicy` may retain compressed exact
+entity bytes for all or failed scrapes. Raw bodies do not pass through the structured sanitizer,
+because doing so would destroy exactness. They are a separately classified artifact surface:
+
+- configuration requires an explicit sensitive-data acknowledgment, restrictive local mode, and
+  an `ArchiveRawKeyProvider` reference;
+- remote retention requires authenticated encryption; object keys use a keyed plaintext digest,
+  while nonce/algorithm/key ID and exact plaintext integrity digest live inside authenticated
+  metadata;
+- key material, plaintext digest, and bodies never appear in manifests/reports/logs;
+- raw-body bytes count against receive, spool, transaction-reserve, and retention quotas.
+
+Raw bodies are never embedded in Parquet rows. A report may state policy ID and retained-byte count,
+not a signed access URL.
 
 ---
 
@@ -623,48 +836,66 @@ policy and retained-byte counts. Raw bodies are never embedded in Parquet rows.
 ### 9.1 Ownership topology
 
 ```text
-current-thread LocalSet source drivers
-    |
-    | owned ArchiveBatch, bounded batch-level channel
-    v
-single archive IO worker thread
-    +-- WAL owner
-    +-- open segment builders
-    +-- local manifest generations
-    `-- remote sync state
+current-thread LocalSet
+    +-- source fetch drivers and native accumulator delivery
+    +-- Clock maintenance driver
+    `-- fixed-memory per-source loss ledger
+              | bounded owned bytes + reserved credits
+              v
+bounded ordered decode/projection CPU pool
+              | ArchiveWalFrame, accepted_seq
+              v
+single mutable archive-state owner
+    +-- WAL and open-partition builders
+    +-- immutable manifest/index pages and LOCAL-LATEST
+    `-- bounded asynchronous immutable-object upload futures
+              `-- verified receipts return to the same owner
 ```
 
-The channel is per batch/scrape, never per token or individual metric. The IO worker alone mutates
-state. Parquet encoding, compression, filesystem calls, and object-store clients do not run on the
-request `LocalSet`.
+Channels are per attempt/batch/control frame, never per token or individual metric. The archive
+owner alone mutates WAL, partitions, heads, and remote publication state. Upload futures receive
+only immutable files/bytes and cannot advance a head; a slow remote future is bounded/timed and is
+polled without stopping local command/WAL progress. Parquet encoding, compression, filesystem
+calls, and object-store clients do not run on the request `LocalSet`.
 
-A small independent control channel is reserved for lifecycle markers, checkpoint, health
-snapshot, and finalize commands so a full data queue cannot deadlock shutdown.
+A LocalSet maintenance driver sleeps only through `Rc<dyn Clock>` and sends `Tick { now_ns }`,
+rotate, checkpoint, sync, and retry commands. The worker never invents schedule time from wall time
+or `tokio::time`. A small independent control channel is reserved for lifecycle markers,
+maintenance, health snapshot, loss-ledger flush, and finalize commands so a full data queue cannot
+deadlock shutdown. Control priority does not bypass the final accepted-sequence watermark in §10.
 
 ### 9.2 Admission modes
 
 The same runtime supports two explicit policies:
 
-- **primary watch:** the archive is the product. When the data queue/spool is saturated, the
+- **primary watch:** the archive is the product. Before fetch/decode admission it reserves entity
+  bytes, decode result, channel frame, WAL, worst-case temporary/open Parquet, manifest/index pages,
+  raw CAS, file/inode, and emergency-finalization capacity. When any queue/spool/filesystem reserve
+  is unavailable, the
   source driver does not issue unbounded new scrapes. It waits or skips future cadence deadlines
   according to the selected policy, records missed intervals, and fails the operation if local
   durability cannot progress within its budget. Default: fail rather than silently discard.
-- **attached benchmark:** the benchmark is the product. Source/accumulator work proceeds; archive
-  ingress uses a nonblocking batch admission. Rejected batches increment a loss counter and create
-  a terminal gap summary. The request path never waits. `archive.required=true` may convert archive
-  degradation into a failed terminal operation after preserving a non-authoritative failure report,
-  but it still cannot change measured request data.
+- **attached benchmark:** the benchmark is the product. Source/native accumulator work proceeds;
+  archive-only decode/projection first tries a nonblocking byte/CPU/ingress reservation. Rejection
+  updates a fixed-memory per-source loss ledger that coalesces contiguous attempt/deadline ranges
+  by reason. The reserved control lane persists those ranges at checkpoint/finalize. If the writer
+  itself is dead, the same structured ranges appear in the failed terminal diagnostic. The request
+  path never waits. `archive.required=true` may convert archive degradation into a reporting-stage
+  failed terminal after benchmark execution; it still cannot change measured request data or emit
+  a partial result on the authoritative report path.
 
 Boundary scrapes always reach their native accumulator even if archive admission fails.
 
 ### 9.3 Batch identity
 
-```text
-batch_id = BLAKE3(archive_id || session_id || source_id || attempt_seq || content_hash/outcome)
-```
+`batch_id` uses the domain-separated, length-prefixed digest rule from §8.1 over archive/session/
+source, attempt sequence, outcome, and keyed exact-body digest when present. `frame_id` similarly
+includes frame schema/kind and control/source sequence. Marker and loss frames therefore share the
+same persistence identity discipline as attempt/sample batches.
 
-Retries of persistence retain `batch_id`. A new source request always gets a new `attempt_seq`.
-Partitions and recovery use batch IDs to prevent logical duplication.
+Retries of persistence retain `batch_id`/`frame_id`. A new source request always gets a new
+`attempt_seq`; a persistence retry never does. Partitions and recovery deduplicate exact
+`(frame_id, table)` projections, not a frame globally before all tables are covered.
 
 ---
 
