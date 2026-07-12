@@ -53,8 +53,9 @@ pub use report::{
     NativeReporter, ReportClockKind, ReportCounterStats, ReportDistributionStats,
     ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
     ReportDynamoTopology, ReportEndpointProfileIdentity, ReportError, ReportExtensionIdentity,
-    ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts, ReportProvenanceError,
-    ReportRun, ReportRunInfo, ReportRunProvenance, ReportScalarStats,
+    ReportEvaluationCompatibilityInfo, ReportGraphOutcomeInfo, ReportGraphRunInfo,
+    ReportPairRunFacts, ReportProvenanceError, ReportRun, ReportRunInfo, ReportRunProvenance,
+    ReportScalarStats,
     ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata, ReportServerMetricsPhaseRange,
     ReportStats, ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
