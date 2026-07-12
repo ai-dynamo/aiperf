@@ -306,6 +306,8 @@
     "replay_rust_entrypoints": {
       "surface": "canonical_run_facade",
       "items": [
+        "OfflineTraceReplayConfig",
+        "OfflineTraceReplayEngines",
         "ReplayKvEventVisibility",
         "generate_trace_worker_artifacts_offline",
         "generate_trace_worker_artifacts_offline_with_kv_event_visibility",
@@ -333,6 +335,7 @@
         "simulate_loaded_trace_disagg_with_router_mode_and_options",
         "simulate_loaded_trace_live_with_router_mode",
         "simulate_loaded_trace_with_router_mode_and_options",
+        "simulate_offline_trace_files",
         "simulate_trace_file",
         "simulate_trace_file_disagg_with_router_mode",
         "simulate_trace_file_disagg_with_router_mode_and_format",
