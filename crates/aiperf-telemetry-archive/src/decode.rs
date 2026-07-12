@@ -11,7 +11,9 @@ use aiperf_prometheus::{
 };
 use bytes::Bytes;
 
-use crate::SourceOutcome;
+use crate::{
+    ArchiveKeyError, ArchiveKeyProvider, ArchiveSubkey, Digest, SourceOutcome, keyed_domain_digest,
+};
 
 /// Resource bounds applied before parser or native compatibility work.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +149,32 @@ impl ExactEntityLease {
     #[must_use]
     pub fn decoded_len(&self) -> usize {
         self.decoded.len()
+    }
+
+    /// Computes the protected exact encoded-entity digest without exposing bytes.
+    pub fn encoded_digest(
+        &self,
+        provider: &dyn ArchiveKeyProvider,
+    ) -> Result<Digest, ArchiveKeyError> {
+        let key = provider.derive_subkey(ArchiveSubkey::EncodedBody)?;
+        Ok(keyed_domain_digest(
+            &key,
+            "aiperf.archive.body-encoded.v1",
+            &[&self.encoded],
+        ))
+    }
+
+    /// Computes the protected exact decoded-entity digest without exposing bytes.
+    pub fn decoded_digest(
+        &self,
+        provider: &dyn ArchiveKeyProvider,
+    ) -> Result<Digest, ArchiveKeyError> {
+        let key = provider.derive_subkey(ArchiveSubkey::DecodedBody)?;
+        Ok(keyed_domain_digest(
+            &key,
+            "aiperf.archive.body-decoded.v1",
+            &[&self.decoded],
+        ))
     }
 
     /// Exact encoded bytes for in-crate raw-envelope projection.
@@ -728,6 +756,11 @@ mod tests {
         let lease = decoded.exact_entity.unwrap();
         assert_eq!(lease.encoded(), body);
         assert_eq!(lease.decoded(), body);
+        let key = crate::Blake3ArchiveKeyProvider::new("fixture_key", [9; 32]).unwrap();
+        assert_ne!(
+            lease.encoded_digest(&key).unwrap(),
+            lease.decoded_digest(&key).unwrap()
+        );
         let point = &decoded.strict_archive_entity.unwrap().families[0].metrics[0].points[0];
         assert_eq!(
             point.wire_samples[0].value,
