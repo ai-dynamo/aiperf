@@ -181,15 +181,49 @@ def _authored_workload(cfg: Any, dataset: Any) -> dict[str, Any]:
     # scheduled fields fill only missing keys during the compatibility window.
     current_fields: dict[str, Any] = {
         "worker_count": _worker_count(cfg),
-        "dataset": _authored_model_dump(dataset),
-        "tokenizer": _authored_model_dump(cfg.tokenizer),
+        "dataset": _authored_dataset_v2(dataset),
+        "tokenizer": _authored_tokenizer_v2(cfg),
         "phases": [_phase(phase) for phase in cfg.phases],
     }
     if cfg.accuracy is not None and cfg.accuracy.enabled:
-        current_fields["accuracy"] = _authored_model_dump(cfg.accuracy)
+        accuracy = _authored_model_dump(cfg.accuracy)
+        accuracy["python_executable"] = _python_executable()
+        accuracy["worker_module"] = "aiperf.accuracy.worker"
+        current_fields["accuracy"] = accuracy
     for name, value in current_fields.items():
         workload_config.setdefault(name, value)
     return {"type": workload_type, "config": workload_config}
+
+
+def _authored_dataset_v2(dataset: Any) -> dict[str, Any]:
+    """Project authored dataset policy without loading or resolving its source."""
+    result = _authored_model_dump(dataset)
+    result.pop("name", None)
+    if isinstance(dataset, SyntheticDataset) and "turn_delay" in result:
+        result["turn_delay_ms"] = result.pop("turn_delay")
+    if isinstance(dataset, FileDataset):
+        options: dict[str, Any] = {}
+        delay_cap = result.pop("inter_turn_delay_cap_seconds", None)
+        if delay_cap is not None:
+            options["inter_turn_delay_cap_seconds"] = delay_cap
+        if options:
+            result["options"] = options
+    return result
+
+
+def _authored_tokenizer_v2(cfg: Any) -> dict[str, Any]:
+    """Retain authored tokenizer acquisition policy with an explicit identity."""
+    primary_model = cfg.models.items[0].name
+    if cfg.tokenizer is None:
+        return {
+            "name": primary_model,
+            "revision": "main",
+            "trust_remote_code": False,
+            "apply_chat_template": False,
+        }
+    result = _authored_model_dump(cfg.tokenizer)
+    result["name"] = cfg.tokenizer.name or primary_model
+    return result
 
 
 def _default_workload_type(cfg: Any, dataset: Any) -> str:

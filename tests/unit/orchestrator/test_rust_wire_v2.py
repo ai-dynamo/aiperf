@@ -106,6 +106,8 @@ def test_v2_envelope_and_default_scheduled_projection(
     assert authored["backend"] == {"type": "online_http", "config": {}}
     assert authored["workload"]["type"] == "scheduled"
     assert authored["workload"]["config"]["worker_count"] == 1
+    assert "name" not in authored["workload"]["config"]["dataset"]
+    assert authored["workload"]["config"]["tokenizer"]["name"] == "builtin"
     assert authored["workload"]["config"]["phases"] == [
         {
             "type": "concurrency",
@@ -307,6 +309,42 @@ def test_default_static_accuracy_selection(tmp_path: Path) -> None:
 
     assert workload["type"] == "static_accuracy"
     assert workload["config"]["accuracy"]["benchmark"] == "mmlu"
+    assert Path(workload["config"]["accuracy"]["python_executable"]).is_absolute()
+    assert workload["config"]["accuracy"]["worker_module"] == (
+        "aiperf.accuracy.worker"
+    )
+
+
+def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
+    tmp_path: Path,
+) -> None:
+    run = _run(
+        tmp_path,
+        dataset={
+            "type": "synthetic",
+            "entries": 1,
+            "turns": 2,
+            "turn_delay": {"mean": 25, "stddev": 3},
+            "prompts": {"isl": 8, "osl": 2},
+        },
+    )
+    run.cfg.tokenizer = None
+
+    config = build_authored_run_request(
+        run,
+        operation="validate",
+        expected_distribution_id="blake3:dataset",
+    )["run"]["workload"]["config"]
+
+    assert config["dataset"]["turn_delay_ms"] == {"mean": 25.0, "stddev": 3.0}
+    assert "turn_delay" not in config["dataset"]
+    assert "name" not in config["dataset"]
+    assert config["tokenizer"] == {
+        "name": "mock-model",
+        "revision": "main",
+        "trust_remote_code": False,
+        "apply_chat_template": False,
+    }
 
 
 def test_component_ids_are_open_strings_not_enums() -> None:
