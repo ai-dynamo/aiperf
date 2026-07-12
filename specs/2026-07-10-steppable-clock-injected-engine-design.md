@@ -504,3 +504,17 @@ trace, cancellation, adaptive, offload, artifact, or byte-exact parity behavior
 defined here. It only assigns their sole end-user AIPerf entry point to
 `aiperf-runner`. The Python `aiperf dynosim` facade remains a separate
 Dynamo-owned product and is never used as an AIPerf execution fallback.
+
+## Addendum — 2026-07-12 (authored raw-token dispatch)
+
+The existing source-trace handle bypass now also accepts the dataset seam's exact
+`Turn::raw_token_ids` handle. Offline preparation skips endpoint JSON formatting
+and request-body serialization for such a turn. `DynamoOfflineSink` resolves the
+validated segment and submits those IDs directly through `dispatch_tokens` before
+considering trace-hash synthesis or the ordinary request encoder.
+
+This is the same scheduled workload, observer, metrics, `SimClock`, engine host,
+and terminal path used by other offline requests; it adds no offline-only dataset
+or endpoint model. A feature-gated test injects request and graph encoders that
+panic if called, while a runner subprocess selects the same `vllm_generate`
+descriptor used online and verifies exact prompt/completion usage in native-v2.

@@ -345,3 +345,31 @@ and is propagated through ordinary request materialization so completed text can
 be returned without positional matching. Prompt/messages and generation controls
 remain normal segment-backed turn data. Ground truth stays inside the evaluator
 worker and is never part of the Rust evaluator protocol or dataset metadata.
+
+## Addendum — 2026-07-12 (token-native turn representation)
+
+The no-mmap decision remains authoritative. The native equivalent of the
+prototype's mmap-serialized token list is a `Payload::TokenIds` value in the
+single content-addressed segment arena, referenced by `Turn::raw_token_ids`.
+Token IDs are validated as a non-empty `u32` sequence during loading/composition;
+`Dataset::validate_for_endpoint` then enforces any open endpoint descriptor whose
+`requires_raw_token_ids` capability is true before scheduling starts.
+
+`single_turn` accepts the canonical `raw_token_ids` field, the `token_ids` alias,
+and the PR-1113-compatible `extra.token_ids` form; token-native rows validate
+their nested sampling limit and normalize it as the effective output cap.
+`raw_payload`/`inputs_json`
+extract a top-level token array once; for a token-native endpoint they retain the
+typed model/generation/extra fields, reject malformed canonical model, stream,
+sampling, or output-limit values, and discard the original payload bytes.
+Ordinary endpoints retain byte-exact raw replay unchanged. Synthetic composition
+calls `PromptGenerator::generate_token_ids`, never decodes temporary text, and
+replaces EOS with `(eos + 1) % vocab_size`, porting
+`src/aiperf/dataset/generator/prompt.py:152-200` and
+`src/aiperf/dataset/composer/synthetic.py:143-164` from
+`ajc/in-engine-transport`.
+
+Online materialization resolves the handle only when the prepared endpoint builds
+its JSON body. The simulator-aware materializer emits no body for raw-token turns;
+the feature-gated Dynamo adapter resolves the same handle directly. This extends,
+rather than forks, the existing trace-hash native-materialization path.

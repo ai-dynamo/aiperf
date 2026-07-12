@@ -271,3 +271,32 @@ HTTP behavior remains in `aiperf-transport-http`. The five KServe V2 OIP
 dialects additionally bind to the native Tonic transport described by
 `2026-07-12-aiperf-native-grpc-kserve-v2-design.md`. Endpoint parsing sees
 the same canonical JSON shape after either HTTP JSON or gRPC protobuf decoding.
+
+## Addendum — 2026-07-12 (PR-1113 vLLM token-native generate)
+
+The open registry now includes the protocol-v2-only `vllm_generate` factory for
+non-streaming `POST /inference/v1/generate`. Its descriptor publishes
+`tokenizes_input=false`, `produces_tokens=true`, token input/output modalities,
+and `requires_raw_token_ids=true`. That last fact is a representation contract
+consumed by dataset composition and validation, not an endpoint-ID branch.
+
+Formatting maps one typed `Turn::raw_token_ids` vector to `token_ids`, preserves
+validated `sampling_params` and remaining extras, applies `max_tokens` as a
+set-default, fixes `stream=false`, and selects the authored/effective model. It
+ports `src/aiperf/endpoints/vllm_generate.py:21-142` from PR 1113 while moving
+integer-array validation out of the dispatch hot path.
+
+The response parser accepts `choices[0].token_ids` as a non-text
+`ResponseData::TokenIds`, retains the exact `u32` values, and reconstructs
+completion usage from the array length. HTTP dispatch emits an output-token
+observation for every returned ID, records the raw ID vector in normalized model
+metadata, and uses the dataset's exact input length as authoritative prompt
+usage. The generic normalized response metadata also retains vLLM's
+`request_id` and first-choice finish reason. Runner subprocess coverage proves
+the exact-image capability, synthetic
+no-text request body, non-text response, and native-v2 prompt/completion totals.
+Direct Graph-IR nodes do not yet carry the linear dataset's raw-token handle;
+graph preparation therefore rejects descriptors with this requirement rather
+than deferring a missing-ID failure to dispatch. Static accuracy likewise
+rejects raw-token-required endpoints because evaluator-authored problems carry
+semantic text; agentic validation already requires a streaming text dialect.
