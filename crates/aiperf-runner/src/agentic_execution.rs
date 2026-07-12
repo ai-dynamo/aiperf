@@ -63,9 +63,10 @@ use crate::online_execution::{
 use crate::protocol::{PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
-    OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
-    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, RunnerWorkloadDescriptor,
-    RunnerWorkloadFactory, ValidatedBackendConfig, ValidatedWorkloadConfig, WorkloadRequirements,
+    OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation, ResourceRequirementsV2,
+    RunnerClockKind, RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext,
+    RunnerWorkloadDescriptor, RunnerWorkloadFactory, ValidatedBackendConfig,
+    ValidatedWorkloadConfig, WorkloadRequirements,
 };
 use crate::turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
@@ -416,6 +417,7 @@ impl RunnerWorkloadFactory for AgenticRunnerWorkloadFactory {
             semantic_responses: true,
             clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
             backend_features: BTreeSet::from(["http".to_string()]),
+            resources: ResourceRequirementsV2::inference(),
         })
     }
 }

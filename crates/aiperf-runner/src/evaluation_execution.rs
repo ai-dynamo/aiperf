@@ -12,17 +12,54 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::evaluation::host::HostOperationDescriptor;
-use aiperf_accuracy::{
-    EvaluationDistributionId, EvaluationExecutionGranularity, EvaluationProviderId,
-    EvaluationProviderRegistry, EvaluationSchedulingMode, HostCapabilityId, LogicalServiceId,
-    ValidatedProviderConfig,
+use aiperf::evaluation::host::{
+    EvaluationRoute, EvaluationRouteTable, HostExecutorRegistryBuilder, HostExecutorRuntime,
+    HostOperationDescriptor,
 };
-use anyhow::{Result, anyhow, ensure};
+use aiperf::evaluation::inference::{
+    DatasetEvaluationInferenceMaterializer, EvaluationInferenceMaterializer,
+    PreparedEvaluationRoute, register_scheduled_inference_host_executors,
+};
+use aiperf::evaluation::report::build_evaluation_report;
+use aiperf::evaluation::retry::OperationCancellation;
+use aiperf::evaluation::workload::{
+    EvaluationAssetResolver, EvaluationHostCapabilityInventory, EvaluationReportCommit,
+    EvaluationWorkload, EvaluationWorkloadLimits, SealingEvaluationArtifactFinalizer,
+};
+use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConfig};
+use aiperf::multiturn::{PreparedEndpointReference, TurnToSend};
+use aiperf::scheduled::{
+    ScheduledRuntime, TurnDispatchOutcome, TurnDispatcher, TurnResponseObserver,
+};
+use aiperf_accuracy::{
+    ArtifactProjectionPolicy, ArtifactSealLimits, CanonicalJson, EvaluationArtifactSealer,
+    EvaluationAssetRequirement, EvaluationDistributionId, EvaluationExecutionGranularity,
+    EvaluationHostBinding, EvaluationHostIdentity, EvaluationProviderId,
+    EvaluationProviderRegistry, EvaluationQueueCredits, EvaluationSchedulingMode,
+    EvaluationSessionId, EvaluatorProtocolLimits, HostCapabilityId, LogicalServiceId,
+    OperationPurpose, ProviderLaunchContext, ResolvedEvaluationAsset,
+    STOCK_EVALUATION_OPERATION_SCHEMAS, ValidatedProviderConfig, artifact_content_sha256,
+};
+use aiperf_clock::{Clock, RealClock, RealClockAnchor};
+use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
+use aiperf_endpoints::{
+    EndpointDescriptor, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable,
+    RawEndpointConfig,
+};
+use aiperf_metrics::{MetricsConfig, NativeReport, ReportPairRunFacts, ReportRunInfo, RunOutcome};
+use aiperf_timing::StopConfig;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::HttpVersion;
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use async_trait::async_trait;
+use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
-use serde_json::{Value, value::RawValue};
+use serde_json::{Value, json, value::RawValue};
+use uuid::Uuid;
 
 use crate::protocol::{
     EvaluationCapabilityInventory, EvaluationDistributionCapability,
@@ -30,9 +67,15 @@ use crate::protocol::{
     SupportedEvaluationCombination,
 };
 use crate::protocol_v2::RunnerComponentId;
+use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::registry::{
-    RunnerClockKind, RunnerRegistryBuilder, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
-    ValidatedWorkloadConfig, WorkloadRequirements,
+    OnlineHttpBackendConfigV2, PreparedReportCommit, PreparedRunOutcome, PreparedRunnerOperation,
+    ResourceRequirementV2, ResourceRequirementsV2, RunnerClockKind, RunnerPairFactory,
+    RunnerRegistryBuilder, RunnerRunContext, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
+    ValidatedBackendConfig, ValidatedWorkloadConfig, WorkloadRequirements,
+};
+use crate::turn_execution::{
+    HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
 };
 
 /// Registered evaluator implementation and immutable worker distribution.
@@ -54,6 +97,13 @@ pub struct EvaluationRouteSpecV2 {
     pub model: String,
     /// Run-local endpoint profile name.
     pub endpoint_profile: RunnerComponentId,
+    /// Exact provider-plan purpose permitted on this route.
+    #[serde(default = "default_evaluation_route_purpose")]
+    pub purpose: OperationPurpose,
+}
+
+fn default_evaluation_route_purpose() -> OperationPurpose {
+    OperationPurpose::new("primary").expect("built-in evaluation purpose is valid")
 }
 
 /// One explicitly named Rust-hosted resource implementation.
@@ -244,6 +294,10 @@ impl RunnerWorkloadFactory for EvaluationRunnerWorkloadFactory {
             semantic_responses: true,
             clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
             backend_features: BTreeSet::from(["http".to_owned()]),
+            resources: ResourceRequirementsV2 {
+                sidecars: ResourceRequirementV2::Forbidden,
+                ..ResourceRequirementsV2::inference()
+            },
         })
     }
 }
@@ -425,17 +479,1036 @@ fn operation_matches_host(
                 .collect::<BTreeSet<_>>()
 }
 
+/// Immutable provider-asset catalog selected by the runner distribution.
+///
+/// Production implementations bind only files already materialized inside the
+/// attested evaluator rootfs. Future remote stores implement this seam without
+/// changing provider planning or the evaluation workload.
+pub trait EvaluationAssetCatalog: fmt::Debug + Send + Sync {
+    /// Resolve one exact provider requirement to its contained worker path.
+    fn resolve(&self, requirement: &EvaluationAssetRequirement) -> Result<ResolvedEvaluationAsset>;
+}
+
+const GSM8K_CANARY_ASSET_ID: &str = "openai_gsm8k_main_test_canary";
+const GSM8K_CANARY_REVISION: &str =
+    "openai/gsm8k@740312add88f781978c0658806c59bc2815b9866:main:test:first5";
+const GSM8K_CANARY_SHA256: &str =
+    "fc9b5c03206d193c0013baf2d6344a133fe0096a2b47cd1eafdcee297dfd398a";
+const GSM8K_CANARY_MEDIA_TYPE: &str = "application/x-ndjson";
+const GSM8K_CANARY_CONTAINED_PATH: &str = "/assets/gsm8k_canary.jsonl";
+const GSM8K_CANARY_BYTES: &[u8] =
+    include_bytes!("../../../src/aiperf/accuracy/evaluation/manifests/assets/gsm8k_canary.jsonl");
+
+/// Stock immutable task-package catalog embedded in the exact runner image.
+///
+/// The relocatable distribution materializer copies the same bytes into the
+/// attested rootfs at [`GSM8K_CANARY_CONTAINED_PATH`]. This catalog exposes
+/// only that contained identity; it never gives the provider a host path.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StockEvaluationAssetCatalog;
+
+impl EvaluationAssetCatalog for StockEvaluationAssetCatalog {
+    fn resolve(&self, requirement: &EvaluationAssetRequirement) -> Result<ResolvedEvaluationAsset> {
+        ensure!(
+            artifact_content_sha256(GSM8K_CANARY_BYTES) == GSM8K_CANARY_SHA256,
+            "embedded GSM8K evaluator asset digest drifted"
+        );
+        ensure!(
+            requirement.asset_id == GSM8K_CANARY_ASSET_ID
+                && requirement.source_kind == "task_package"
+                && requirement.immutable_revision == GSM8K_CANARY_REVISION
+                && requirement.content_sha256 == GSM8K_CANARY_SHA256
+                && requirement.media_type == GSM8K_CANARY_MEDIA_TYPE,
+            "evaluator requested an unregistered or drifted immutable asset"
+        );
+        Ok(ResolvedEvaluationAsset {
+            asset_id: requirement.asset_id.clone(),
+            contained_path: GSM8K_CANARY_CONTAINED_PATH.to_string(),
+            content_sha256: requirement.content_sha256.clone(),
+            immutable_revision: requirement.immutable_revision.clone(),
+            media_type: requirement.media_type.clone(),
+        })
+    }
+}
+
+struct CatalogEvaluationAssetResolver {
+    catalog: Arc<dyn EvaluationAssetCatalog>,
+}
+
+#[async_trait(?Send)]
+impl EvaluationAssetResolver for CatalogEvaluationAssetResolver {
+    async fn resolve(
+        &self,
+        requirements: &[EvaluationAssetRequirement],
+    ) -> Result<Vec<ResolvedEvaluationAsset>> {
+        requirements
+            .iter()
+            .map(|requirement| self.catalog.resolve(requirement))
+            .collect()
+    }
+}
+
+/// Endpoint-dialect to semantic evaluator-operation capability seam.
+///
+/// Endpoint descriptors intentionally remain transport/presentation metadata.
+/// This separate resolver lets a future extension declare evaluator operation
+/// compatibility without adding another closed endpoint enum to the workload.
+pub trait EvaluationEndpointCapabilityResolver: fmt::Debug + Send + Sync {
+    /// Return the exact semantic capability IDs executable by one endpoint.
+    fn capabilities(&self, descriptor: &EndpointDescriptor) -> Result<BTreeSet<String>>;
+}
+
+/// Built-in endpoint capability projection for stock evaluator operations.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeEvaluationEndpointCapabilityResolver;
+
+impl EvaluationEndpointCapabilityResolver for NativeEvaluationEndpointCapabilityResolver {
+    fn capabilities(&self, descriptor: &EndpointDescriptor) -> Result<BTreeSet<String>> {
+        let capability = match descriptor.id {
+            "chat" | "messages" | "kserve_chat" => "chat",
+            "completions" | "kserve_completions" => "completion",
+            "responses" => "responses",
+            "embeddings"
+            | "chat_embeddings"
+            | "nim_embeddings"
+            | "kserve_embeddings"
+            | "kserve_v2_embeddings" => "embedding",
+            _ => {
+                bail!(
+                    "endpoint {:?} has no registered evaluator inference capability adapter",
+                    descriptor.id
+                )
+            }
+        };
+        Ok(BTreeSet::from([capability.to_string()]))
+    }
+}
+
+/// Register the real `online_http + evaluation` adapter against the same
+/// provider registry used for side-effect-free workload validation.
+pub fn register_online_http_evaluation_pair(
+    builder: &mut RunnerRegistryBuilder,
+    providers: Arc<EvaluationProviderRegistry>,
+    assets: Arc<dyn EvaluationAssetCatalog>,
+) -> Result<()> {
+    register_evaluation_workload(builder, providers.clone())?;
+    builder.register_pair(Arc::new(OnlineHttpEvaluationPairFactory {
+        providers,
+        assets,
+        endpoint_capabilities: Arc::new(NativeEvaluationEndpointCapabilityResolver),
+    }))
+}
+
+#[derive(Clone)]
+struct OnlineHttpEvaluationPairFactory {
+    providers: Arc<EvaluationProviderRegistry>,
+    assets: Arc<dyn EvaluationAssetCatalog>,
+    endpoint_capabilities: Arc<dyn EvaluationEndpointCapabilityResolver>,
+}
+
+impl fmt::Debug for OnlineHttpEvaluationPairFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OnlineHttpEvaluationPairFactory")
+            .field("provider_count", &self.providers.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
+    fn backend_id(&self) -> &'static str {
+        "online_http"
+    }
+
+    fn workload_id(&self) -> &'static str {
+        EVALUATION_WORKLOAD_DESCRIPTOR.id
+    }
+
+    fn validate_pair(
+        &self,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        validated_evaluation_backend(backend)?;
+        validated_evaluation_workload(workload)?
+            .authored()
+            .validate_structure()
+    }
+
+    fn validate_run(
+        &self,
+        run: &crate::protocol_v2::AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: &dyn ValidatedBackendConfig,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        self.validate_pair(backend, workload)?;
+        let workload = validated_evaluation_workload(workload)?;
+        validate_evaluation_authored_run(run, context, workload)?;
+        prepare_evaluation_routes(context, workload, self.endpoint_capabilities.as_ref())?;
+        Ok(())
+    }
+
+    fn prepare(
+        &self,
+        _run: &crate::protocol_v2::AuthoredRunSpecV2,
+        _backend: Box<dyn ValidatedBackendConfig>,
+        _workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        bail!("online_http + evaluation preparation requires the coordinator-owned runner context")
+    }
+
+    fn prepare_with_context(
+        &self,
+        run: &crate::protocol_v2::AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        backend: Box<dyn ValidatedBackendConfig>,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedRunnerOperation>> {
+        self.validate_run(run, context, backend.as_ref(), workload.as_ref())?;
+        let workload = validated_evaluation_workload(workload.as_ref())?.clone();
+        let routes =
+            prepare_evaluation_routes(context, &workload, self.endpoint_capabilities.as_ref())?;
+        let readiness = crate::online_execution::prepare_online_readiness(run, context)?;
+        let metrics = crate::execute::metrics_config(&run.metrics)?;
+        Ok(Box::new(PreparedOnlineEvaluationOperation {
+            benchmark_id: run.identity.benchmark_id.clone(),
+            artifact_target: run.artifact_target.clone(),
+            workload,
+            providers: self.providers.clone(),
+            assets: self.assets.clone(),
+            routes,
+            backend_factory: context.execution_factories().http_handle(),
+            readiness,
+            readiness_transport: context.execution_factories().readiness_transport_handle(),
+            metrics,
+        }))
+    }
+}
+
+fn validated_evaluation_backend(
+    config: &dyn ValidatedBackendConfig,
+) -> Result<&OnlineHttpBackendConfigV2> {
+    ValidatedBackendConfig::as_any(config)
+        .downcast_ref::<OnlineHttpBackendConfigV2>()
+        .ok_or_else(|| anyhow!("evaluation pair received the wrong online_http backend config"))
+}
+
+fn validate_evaluation_authored_run(
+    run: &crate::protocol_v2::AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    workload: &ValidatedEvaluationWorkloadConfigV2,
+) -> Result<()> {
+    ensure!(
+        workload.authored().resources.is_empty(),
+        "this runner distribution registers no evaluator host-resource capabilities"
+    );
+    crate::execute::metrics_config(&run.metrics)?;
+    ensure!(
+        run.artifacts.records_path.is_none()
+            && run.artifacts.raw_path.is_none()
+            && run.artifacts.outputs_path.is_none()
+            && !run.artifacts.trace
+            && run.artifacts.user_files.is_empty(),
+        "evaluation execution writes only canonical native-v2 and sealed provider artifacts"
+    );
+    ensure!(
+        run.artifact_target.is_absolute(),
+        "evaluation artifact target must be absolute"
+    );
+    let models = run
+        .models
+        .items
+        .iter()
+        .map(|model| model.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for (service_id, route) in &workload.authored().routes {
+        ensure!(
+            models.contains(route.model.as_str()),
+            "evaluation route {service_id} references undeclared model {:?}",
+            route.model
+        );
+        context.endpoint_profile(route.endpoint_profile.as_str())?;
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct EvaluationPreparedEndpointProfile {
+    profile_id: String,
+    endpoint_id: EndpointId,
+    config: RawEndpointConfig,
+}
+
+#[derive(Clone)]
+struct EvaluationPreparedEndpointTableFactory {
+    registry: EndpointRegistry,
+    profiles: Vec<EvaluationPreparedEndpointProfile>,
+}
+
+impl fmt::Debug for EvaluationPreparedEndpointTableFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EvaluationPreparedEndpointTableFactory")
+            .field(
+                "profiles",
+                &self
+                    .profiles
+                    .iter()
+                    .map(|profile| (&profile.profile_id, &profile.endpoint_id))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+impl EvaluationPreparedEndpointTableFactory {
+    fn prepare_table(&self) -> Result<PreparedEndpointTable> {
+        let mut table = PreparedEndpointTable::new();
+        for profile in &self.profiles {
+            let endpoint = self
+                .registry
+                .prepare(&profile.endpoint_id, profile.config.clone())
+                .with_context(|| {
+                    format!(
+                        "preparing evaluation endpoint profile {:?}",
+                        profile.profile_id
+                    )
+                })?;
+            table.push(endpoint)?;
+        }
+        Ok(table)
+    }
+}
+
+impl HttpPreparedEndpointTableFactory for EvaluationPreparedEndpointTableFactory {
+    fn prepare_worker(&self) -> Result<PreparedEndpointTable> {
+        self.prepare_table()
+    }
+}
+
+struct PreparedEvaluationRoutes {
+    routes: EvaluationRouteTable,
+    prepared: Vec<PreparedEvaluationRoute>,
+    table_factory: Arc<dyn HttpPreparedEndpointTableFactory>,
+    base_urls: Vec<String>,
+    transport: TransportSinkConfig,
+    default_model: String,
+    route_map_sha256: String,
+    prepared_endpoints_sha256: String,
+}
+
+fn prepare_evaluation_routes(
+    context: &RunnerRunContext,
+    workload: &ValidatedEvaluationWorkloadConfigV2,
+    capabilities: &dyn EvaluationEndpointCapabilityResolver,
+) -> Result<PreparedEvaluationRoutes> {
+    let referenced = workload
+        .authored()
+        .routes
+        .values()
+        .map(|route| route.endpoint_profile.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut profiles = Vec::with_capacity(referenced.len());
+    let mut policies = BTreeMap::new();
+    for (profile_id, profile) in context.endpoint_profiles() {
+        if !referenced.contains(profile_id) {
+            continue;
+        }
+        let factory = context
+            .product_registry()
+            .endpoints()
+            .resolve_factory(&profile.endpoint_id)
+            .with_context(|| format!("resolving evaluation endpoint profile {profile_id:?}"))?;
+        let mut config = profile.config.clone();
+        if factory.descriptor().supports_streaming {
+            config.streaming = true;
+            config.use_server_token_count = true;
+        }
+        profiles.push(EvaluationPreparedEndpointProfile {
+            profile_id: profile_id.to_string(),
+            endpoint_id: profile.endpoint_id.clone(),
+            config,
+        });
+        policies.insert(
+            profile_id.to_string(),
+            (
+                profile.connection_reuse,
+                profile.http2,
+                profile.session_header.clone(),
+            ),
+        );
+    }
+    ensure!(
+        profiles.len() == referenced.len(),
+        "one or more evaluation endpoint profiles were not prepared"
+    );
+    let table_factory = Arc::new(EvaluationPreparedEndpointTableFactory {
+        registry: context.product_registry().endpoints().clone(),
+        profiles,
+    });
+    let table = Rc::new(table_factory.prepare_table()?);
+
+    let mut references = BTreeMap::new();
+    let mut endpoint_identities = Vec::new();
+    for (index, profile) in table_factory.profiles.iter().enumerate() {
+        let index =
+            u32::try_from(index).context("evaluation endpoint profile index exceeds u32")?;
+        let key = EndpointKey::from_index(index);
+        let endpoint = table.get(key)?;
+        let endpoint_id = EndpointId::new(endpoint.descriptor().id)?;
+        let identity =
+            endpoint_identity_sha256(&profile.profile_id, endpoint_id.as_str(), endpoint)?;
+        ensure!(
+            references
+                .insert(
+                    profile.profile_id.clone(),
+                    (
+                        PreparedEndpointReference {
+                            key,
+                            endpoint_id: endpoint_id.clone(),
+                        },
+                        identity.clone(),
+                        capabilities.capabilities(endpoint.descriptor())?,
+                    ),
+                )
+                .is_none(),
+            "duplicate prepared evaluation endpoint profile {:?}",
+            profile.profile_id
+        );
+        endpoint_identities.push(json!({
+            "endpoint_id": endpoint_id.as_str(),
+            "prepared_identity_sha256": identity,
+            "profile_id": profile.profile_id,
+        }));
+    }
+
+    let mut routes = Vec::with_capacity(workload.authored().routes.len());
+    let mut prepared = Vec::with_capacity(workload.authored().routes.len());
+    for (service_id, authored) in &workload.authored().routes {
+        let (reference, prepared_identity_sha256, endpoint_capabilities) = references
+            .get(authored.endpoint_profile.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "evaluation route {service_id} references unprepared endpoint profile {:?}",
+                    authored.endpoint_profile.as_str()
+                )
+            })?;
+        let route = EvaluationRoute {
+            service_id: service_id.as_str().to_string(),
+            purpose: authored.purpose.as_str().to_string(),
+            model: authored.model.clone(),
+            endpoint_profile: authored.endpoint_profile.as_str().to_string(),
+            prepared_identity_sha256: prepared_identity_sha256.clone(),
+            endpoint_capabilities: endpoint_capabilities.clone(),
+        };
+        route.validate()?;
+        routes.push(route.clone());
+        prepared.push(PreparedEvaluationRoute {
+            route,
+            endpoint_table: table.clone(),
+            endpoint: reference.clone(),
+        });
+    }
+    let routes = EvaluationRouteTable::new(routes)?;
+    let route_map_sha256 = canonical_sha256(json!(
+        routes
+            .routes()
+            .map(|route| json!({
+                "endpoint_capabilities": route.endpoint_capabilities,
+                "endpoint_profile": route.endpoint_profile,
+                "model": route.model,
+                "prepared_identity_sha256": route.prepared_identity_sha256,
+                "purpose": route.purpose,
+                "service_id": route.service_id,
+            }))
+            .collect::<Vec<_>>()
+    ))?;
+    let prepared_endpoints_sha256 = canonical_sha256(Value::Array(endpoint_identities))?;
+    let first_profile = table_factory
+        .profiles
+        .first()
+        .ok_or_else(|| anyhow!("evaluation has no prepared endpoint profile"))?;
+    let first_policy = policies
+        .get(&first_profile.profile_id)
+        .expect("prepared profile retained transport policy");
+    for profile in &table_factory.profiles {
+        let policy = policies
+            .get(&profile.profile_id)
+            .expect("prepared profile retained transport policy");
+        ensure!(
+            policy == first_policy
+                && profile.config.timeout_seconds == first_profile.config.timeout_seconds,
+            "evaluation endpoint profiles must share HTTP version, reuse, session-header, and timeout policy"
+        );
+    }
+    ensure!(
+        !first_profile.config.urls.is_empty(),
+        "evaluation endpoint profile {:?} has no URL",
+        first_profile.profile_id
+    );
+    let timeout_ns = seconds_to_ns(first_profile.config.timeout_seconds)?;
+    let transport = TransportSinkConfig {
+        client: ClientConfig {
+            http_version: if first_policy.1 {
+                HttpVersion::Http2PriorKnowledge
+            } else {
+                HttpVersion::Auto
+            },
+            total_timeout_ns: (timeout_ns > 0).then_some(timeout_ns),
+            ..ClientConfig::default()
+        },
+        connection_reuse: first_policy.0,
+        session_header: first_policy.2.clone(),
+    };
+    let base_urls = first_profile.config.urls.clone();
+    let default_model = workload
+        .authored()
+        .routes
+        .values()
+        .next()
+        .expect("structural validation requires a route")
+        .model
+        .clone();
+    Ok(PreparedEvaluationRoutes {
+        routes,
+        prepared,
+        table_factory,
+        base_urls,
+        transport,
+        default_model,
+        route_map_sha256,
+        prepared_endpoints_sha256,
+    })
+}
+
+fn endpoint_identity_sha256(
+    profile_id: &str,
+    endpoint_id: &str,
+    endpoint: &dyn aiperf_endpoints::PreparedEndpoint,
+) -> Result<String> {
+    let raw = endpoint.config().to_raw();
+    let public_policy = serde_json::to_value(&raw)?;
+    canonical_sha256(json!({
+        "endpoint_id": endpoint_id,
+        "has_api_key": raw.api_key.is_some(),
+        "header_names": raw.headers.keys().collect::<Vec<_>>(),
+        "policy": public_policy,
+        "profile_id": profile_id,
+    }))
+}
+
+fn canonical_sha256(value: Value) -> Result<String> {
+    Ok(CanonicalJson::new(value)
+        .map_err(|error| anyhow!(error.to_string()))?
+        .normalized_result_sha256())
+}
+
+fn seconds_to_ns(seconds: f64) -> Result<i64> {
+    ensure!(
+        seconds.is_finite() && seconds >= 0.0 && seconds * 1_000_000_000.0 <= i64::MAX as f64,
+        "evaluation endpoint timeout must be finite, non-negative, and representable in nanoseconds"
+    );
+    Ok((seconds * 1_000_000_000.0).round_ties_even() as i64)
+}
+
+struct PreparedOnlineEvaluationOperation {
+    benchmark_id: String,
+    artifact_target: PathBuf,
+    workload: ValidatedEvaluationWorkloadConfigV2,
+    providers: Arc<EvaluationProviderRegistry>,
+    assets: Arc<dyn EvaluationAssetCatalog>,
+    routes: PreparedEvaluationRoutes,
+    backend_factory: Arc<dyn HttpExecutionBackendFactory>,
+    readiness: Box<dyn PreparedOnlineReadiness>,
+    readiness_transport: Arc<dyn ReadinessTransportFactory>,
+    metrics: MetricsConfig,
+}
+
+impl fmt::Debug for PreparedOnlineEvaluationOperation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedOnlineEvaluationOperation")
+            .field("benchmark_id", &self.benchmark_id)
+            .field("artifact_target", &self.artifact_target)
+            .field("provider", &self.workload.authored().provider)
+            .field(
+                "routes",
+                &self
+                    .routes
+                    .routes
+                    .routes()
+                    .map(|route| route.service_id.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedRunnerOperation for PreparedOnlineEvaluationOperation {
+    fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("creating evaluation runner Tokio runtime")?;
+        tokio::task::LocalSet::new().block_on(&runtime, execute_online_evaluation(*self))
+    }
+}
+
+async fn execute_online_evaluation(
+    operation: PreparedOnlineEvaluationOperation,
+) -> Result<PreparedRunOutcome> {
+    let real_clock_anchor = RealClockAnchor::now();
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
+    let authored = operation.workload.authored();
+    let factory = operation
+        .providers
+        .get(&authored.provider.provider_id)
+        .ok_or_else(|| anyhow!("validated evaluation provider disappeared before execute"))?
+        .clone();
+    ensure!(
+        operation.providers.distribution_is_available(
+            &authored.provider.provider_id,
+            &authored.provider.distribution,
+        ),
+        "validated evaluator distribution is no longer available"
+    );
+
+    let artifact_roots = prepare_evaluation_artifact_roots(
+        &operation.artifact_target,
+        operation.readiness.as_ref(),
+        operation.readiness_transport.as_ref(),
+        clock.clone(),
+    )
+    .await?;
+    let staging_root = artifact_roots.staging;
+    let promoted_root = artifact_roots.promoted;
+
+    let session_id = EvaluationSessionId::new(format!("evaluation_{}", Uuid::new_v4().simple()))
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let launch_nonce = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let launch_context = ProviderLaunchContext {
+        session_id: session_id.clone(),
+        staging_dir: staging_root.clone(),
+        proxy: None,
+        process_root_binder: None,
+        protocol_limits: EvaluatorProtocolLimits::default(),
+        launch_nonce,
+    };
+    let prepared_launch = factory
+        .prepare_launch(&authored.provider.distribution, launch_context)
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("preparing attested evaluator launch")?;
+    ensure!(
+        prepared_launch.distribution_id() == &authored.provider.distribution,
+        "prepared evaluator launch changed distribution identity"
+    );
+    ensure!(
+        aiperf_accuracy::is_sha256(prepared_launch.prelaunch_context_sha256()),
+        "prepared evaluator launch returned an invalid prelaunch digest"
+    );
+    let isolation_proof_sha256 = prepared_launch.isolation_evidence().proof_sha256.clone();
+    let (host_capabilities, capability_inventory_sha256, schema_inventory_sha256) =
+        evaluation_host_capabilities()?;
+    let host_binding = EvaluationHostBinding {
+        host: EvaluationHostIdentity {
+            runner_sha256: current_executable_sha256()?,
+            capability_inventory_sha256,
+            schema_inventory_sha256,
+            isolation_proof_sha256,
+        },
+        route_map_sha256: operation.routes.route_map_sha256.clone(),
+        prepared_endpoints_sha256: operation.routes.prepared_endpoints_sha256.clone(),
+        sandbox_sha256: None,
+    };
+    host_binding
+        .validate()
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let provider = factory
+        .launch(
+            prepared_launch,
+            operation.workload.provider_config(),
+            host_binding,
+        )
+        .await
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("launching supervised evaluator provider")?;
+
+    let start_ns = clock.now_ns();
+    let workers = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(authored.unit_concurrency)
+        .max(1);
+    let execution_backend = operation
+        .backend_factory
+        .build(HttpExecutionBackendConfig {
+            workers,
+            coordinator_clock: clock.clone(),
+            real_clock_anchor,
+            base_urls: operation.routes.base_urls.clone(),
+            model: operation.routes.default_model.clone(),
+            transport: operation.routes.transport.clone(),
+            prepared_endpoints: Some(operation.routes.table_factory.clone()),
+        })
+        .context("building evaluation HTTP execution placement")?;
+    execution_backend
+        .set_run_origin(start_ns)
+        .context("setting evaluation HTTP run origin")?;
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(EvaluationDispatcher {
+        execution_backend: execution_backend.clone(),
+        default_model: operation.routes.default_model.clone(),
+    });
+    let scheduled = ScheduledRuntime::new_with_metrics_config(
+        clock,
+        start_ns,
+        dispatcher,
+        StopConfig::default(),
+        false,
+        operation.metrics.clone(),
+    );
+    let materializer: Rc<dyn EvaluationInferenceMaterializer> =
+        Rc::new(DatasetEvaluationInferenceMaterializer::new(
+            Arc::new(TiktokenTokenizer::default()) as Arc<dyn TextTokenizer>,
+            operation.routes.prepared.clone(),
+        )?);
+    let mut host_builder = HostExecutorRegistryBuilder::default();
+    register_scheduled_inference_host_executors(&mut host_builder, materializer)?;
+    let host_executors = host_builder.freeze()?;
+    let host_runtime = HostExecutorRuntime::scheduled(scheduled.clone());
+    let asset_resolver: Rc<dyn EvaluationAssetResolver> = Rc::new(CatalogEvaluationAssetResolver {
+        catalog: operation.assets.clone(),
+    });
+    let sealer = EvaluationArtifactSealer::new(
+        ArtifactSealLimits::default(),
+        ArtifactProjectionPolicy::restricted_only(),
+    )
+    .map_err(|error| anyhow!(error.to_string()))?;
+    let finalizer = Rc::new(SealingEvaluationArtifactFinalizer::new(
+        sealer,
+        &staging_root,
+        &promoted_root,
+    )?);
+    let limits = EvaluationWorkloadLimits {
+        unit_concurrency: authored.unit_concurrency,
+        credit_ceiling: EvaluationQueueCredits {
+            units: 65_536,
+            host_operations: 1_000_000,
+            host_operations_per_unit: 1_000_000,
+            stream_events: 1_000_000,
+            sandboxes: 0,
+            processes: 0,
+            artifacts: ArtifactSealLimits::default().max_artifacts,
+            artifact_bytes: ArtifactSealLimits::default().max_total_bytes,
+        },
+        unit_page_size: 4_096,
+        event_batch_size: 4_096,
+        idle_poll_ns: 1_000_000,
+    };
+    let plan_request = operation.workload.provider_config().plan_request(
+        session_id,
+        authored.provider.distribution.clone(),
+        true,
+    );
+    let public_score_projection_policy = factory.public_score_projection_policy().clone();
+    let workload = EvaluationWorkload::new(
+        provider,
+        plan_request,
+        operation.routes.routes.clone(),
+        host_executors,
+        host_runtime,
+        asset_resolver,
+        host_capabilities,
+        public_score_projection_policy,
+        None,
+        finalizer,
+        limits,
+        OperationCancellation::default(),
+    )?;
+    let execution = workload.execute().await;
+    let shutdown = execution_backend.shutdown();
+    let execution = match (execution, shutdown) {
+        (Ok(execution), Ok(())) => execution,
+        (Err(error), Ok(())) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error).context("shutting down evaluation HTTP backend"),
+        (Err(error), Err(shutdown)) => {
+            return Err(error.context(format!(
+                "evaluation HTTP backend also failed during shutdown: {shutdown:#}"
+            )));
+        }
+    };
+    let scheduled_report = scheduled.finish("evaluation", None);
+    let evaluation_report = build_evaluation_report(
+        &execution.candidate,
+        &execution.sealed_artifacts,
+        &operation.routes.routes,
+        &execution.report_facts,
+    )?;
+    let case_count = evaluation_report.case_count;
+    let operation_count = execution.operations.len();
+    let native_report = NativeReport::from_outcome(
+        &scheduled_report.native_metrics,
+        &RunOutcome {
+            run: ReportRunInfo {
+                mode: Some("online".to_string()),
+                model: Some(operation.routes.default_model.clone()),
+            },
+            evaluation: Some(evaluation_report),
+            ..RunOutcome::default()
+        },
+    );
+    Ok(PreparedRunOutcome {
+        native_report,
+        report_facts: ReportPairRunFacts::new(),
+        provenance: BTreeMap::from([
+            ("backend".to_string(), "online_http".to_string()),
+            (
+                "provider".to_string(),
+                authored.provider.provider_id.to_string(),
+            ),
+            (
+                "distribution".to_string(),
+                authored.provider.distribution.to_string(),
+            ),
+            ("evaluation_cases".to_string(), case_count.to_string()),
+            (
+                "evaluation_host_operations".to_string(),
+                operation_count.to_string(),
+            ),
+        ]),
+        report_commit: Some(Box::new(PendingEvaluationReportCommit(
+            execution.report_commit,
+        ))),
+    })
+}
+
+struct EvaluationArtifactRoots {
+    staging: PathBuf,
+    promoted: PathBuf,
+}
+
+/// Activate endpoint-owned readiness before any run artifact path exists.
+///
+/// This preserves the ordinary online lifecycle invariant: a readiness
+/// failure cannot leave behind a directory that looks like a started run.
+async fn prepare_evaluation_artifact_roots(
+    artifact_target: &Path,
+    readiness: &dyn PreparedOnlineReadiness,
+    readiness_transport: &dyn ReadinessTransportFactory,
+    clock: Rc<dyn Clock>,
+) -> Result<EvaluationArtifactRoots> {
+    if !readiness.is_empty() {
+        let transport = readiness_transport.build(clock.clone());
+        readiness
+            .wait(clock, transport)
+            .await
+            .context("waiting for endpoint readiness")?;
+    }
+    std::fs::create_dir_all(artifact_target).with_context(|| {
+        format!(
+            "creating evaluation artifact target {}",
+            artifact_target.display()
+        )
+    })?;
+    let evaluation_root = artifact_target.join("evaluation");
+    std::fs::create_dir(&evaluation_root).with_context(|| {
+        format!(
+            "creating exclusive evaluation artifact root {}",
+            evaluation_root.display()
+        )
+    })?;
+    let staging = evaluation_root.join("staging");
+    std::fs::create_dir(&staging)
+        .with_context(|| format!("creating evaluation staging root {}", staging.display()))?;
+    Ok(EvaluationArtifactRoots {
+        staging,
+        promoted: evaluation_root.join("artifacts"),
+    })
+}
+
+struct PendingEvaluationReportCommit(EvaluationReportCommit);
+
+impl fmt::Debug for PendingEvaluationReportCommit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("PendingEvaluationReportCommit")
+            .field(&self.0)
+            .finish()
+    }
+}
+
+impl PreparedReportCommit for PendingEvaluationReportCommit {
+    fn commit(self: Box<Self>) -> Result<()> {
+        let Self(commit) = *self;
+        commit.commit()
+    }
+}
+
+struct EvaluationDispatcher {
+    execution_backend: Rc<dyn HttpTurnExecutionBackend>,
+    default_model: String,
+}
+
+#[async_trait(?Send)]
+impl TurnDispatcher for EvaluationDispatcher {
+    fn supports_response_streaming(&self) -> bool {
+        self.execution_backend.supports_response_streaming()
+    }
+
+    fn inference_dimensions(&self, turn: &TurnToSend) -> aiperf_metrics::InferenceDimensions {
+        self.execution_backend.inference_dimensions(turn)
+    }
+
+    async fn dispatch_turn(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<TurnDispatchOutcome> {
+        Ok(self
+            .execution_backend
+            .execute_turn(
+                PreparedHttpTurn::from_turn(turn, &self.default_model),
+                observer,
+                on_first_token,
+            )
+            .await?
+            .outcome)
+    }
+
+    async fn dispatch_turn_streaming(
+        &self,
+        turn: TurnToSend,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<TurnDispatchOutcome> {
+        Ok(self
+            .execution_backend
+            .execute_turn_streaming(
+                PreparedHttpTurn::from_turn(turn, &self.default_model),
+                observer,
+                on_first_token,
+                responses,
+            )
+            .await?
+            .outcome)
+    }
+}
+
+fn evaluation_host_capabilities() -> Result<(EvaluationHostCapabilityInventory, String, String)> {
+    let capabilities = STOCK_EVALUATION_OPERATION_SCHEMAS
+        .iter()
+        .map(|schema| {
+            Ok((
+                HostCapabilityId::new(format!("inference.{}.v1", schema.operation_id))?,
+                schema.combined_schema_sha256.to_string(),
+            ))
+        })
+        .collect::<std::result::Result<Vec<_>, aiperf_accuracy::EvaluationProtocolError>>()
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let capability_inventory_sha256 = canonical_sha256(json!(
+        capabilities
+            .iter()
+            .map(|(id, schema)| json!({"capability_id": id, "schema_sha256": schema}))
+            .collect::<Vec<_>>()
+    ))?;
+    let schema_inventory_sha256 = canonical_sha256(json!(
+        STOCK_EVALUATION_OPERATION_SCHEMAS
+            .iter()
+            .map(|schema| json!({
+                "endpoint_capability": schema.endpoint_capability,
+                "operation_id": schema.operation_id,
+                "request_schema_sha256": schema.request_schema_sha256,
+                "response_schema_sha256": schema.response_schema_sha256,
+                "stream_schema_sha256": schema.true_streaming.then_some(schema.canonical_stream_schema_sha256),
+            }))
+            .collect::<Vec<_>>()
+    ))?;
+    Ok((
+        EvaluationHostCapabilityInventory::new(capabilities)?,
+        capability_inventory_sha256,
+        schema_inventory_sha256,
+    ))
+}
+
+fn current_executable_sha256() -> Result<String> {
+    let path = std::env::current_exe().context("resolving current runner executable")?;
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("reading current runner executable {}", path.display()))?;
+    Ok(artifact_content_sha256(&bytes))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use aiperf::evaluation::host::{HostOperationFamily, RegisteredOperationId};
     use aiperf_accuracy::{
-        EvaluationDistributionDescriptor, EvaluationProvider, EvaluationProviderDescriptor,
-        EvaluationProviderError, EvaluationProviderLauncher, EvaluationProviderRegistryBuilder,
-        NemoEvaluatorProviderFactory, ProviderLaunchContext,
+        EvaluationDistributionDescriptor, EvaluationHostBinding, EvaluationProvider,
+        EvaluationProviderDescriptor, EvaluationProviderError, EvaluationProviderLauncher,
+        EvaluationProviderRegistryBuilder, NemoEvaluatorProviderFactory,
+        PreparedEvaluationProviderLaunch, ProviderLaunchContext,
     };
     use async_trait::async_trait;
 
+    use crate::readiness::{
+        ReadinessAttemptRequest, ReadinessAttemptResponse, ReadinessReport, ReadinessTransport,
+    };
+
     use super::*;
+
+    #[derive(Debug)]
+    struct OrderingReadiness {
+        artifact_target: PathBuf,
+        waited: Rc<Cell<bool>>,
+    }
+
+    #[async_trait(?Send)]
+    impl PreparedOnlineReadiness for OrderingReadiness {
+        fn is_empty(&self) -> bool {
+            false
+        }
+
+        fn target_count(&self) -> usize {
+            1
+        }
+
+        async fn wait(
+            &self,
+            _clock: Rc<dyn Clock>,
+            _transport: Rc<dyn ReadinessTransport>,
+        ) -> Result<ReadinessReport> {
+            ensure!(
+                !self.artifact_target.exists(),
+                "artifact target existed before evaluator readiness"
+            );
+            self.waited.set(true);
+            Ok(ReadinessReport {
+                targets_ready: 1,
+                attempts: 1,
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct UnusedReadinessTransport;
+
+    #[async_trait(?Send)]
+    impl ReadinessTransport for UnusedReadinessTransport {
+        async fn execute(&self, _request: ReadinessAttemptRequest) -> ReadinessAttemptResponse {
+            unreachable!("ordering readiness does not issue a transport attempt")
+        }
+    }
+
+    #[derive(Debug)]
+    struct UnusedReadinessTransportFactory;
+
+    impl ReadinessTransportFactory for UnusedReadinessTransportFactory {
+        fn build(&self, _clock: Rc<dyn Clock>) -> Rc<dyn ReadinessTransport> {
+            Rc::new(UnusedReadinessTransport)
+        }
+    }
 
     struct NeverLaunch;
 
@@ -448,12 +1521,22 @@ mod tests {
             Ok(())
         }
 
-        async fn launch(
+        fn prepare_launch(
             &self,
             _descriptor: &EvaluationProviderDescriptor,
             _distribution: &EvaluationDistributionDescriptor,
+            _context: ProviderLaunchContext,
+        ) -> std::result::Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError>
+        {
+            unreachable!("side-effect-free workload validation cannot prepare a provider")
+        }
+
+        async fn launch(
+            &self,
+            _descriptor: &EvaluationProviderDescriptor,
             _config: &ValidatedProviderConfig,
-            _context: &ProviderLaunchContext,
+            _host_binding: EvaluationHostBinding,
+            _prepared: Box<dyn PreparedEvaluationProviderLaunch>,
         ) -> std::result::Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
             unreachable!("side-effect-free workload validation cannot launch a provider")
         }
@@ -472,12 +1555,22 @@ mod tests {
             ))
         }
 
-        async fn launch(
+        fn prepare_launch(
             &self,
             _descriptor: &EvaluationProviderDescriptor,
             _distribution: &EvaluationDistributionDescriptor,
+            _context: ProviderLaunchContext,
+        ) -> std::result::Result<Box<dyn PreparedEvaluationProviderLaunch>, EvaluationProviderError>
+        {
+            unreachable!("an unavailable distribution cannot prepare")
+        }
+
+        async fn launch(
+            &self,
+            _descriptor: &EvaluationProviderDescriptor,
             _config: &ValidatedProviderConfig,
-            _context: &ProviderLaunchContext,
+            _host_binding: EvaluationHostBinding,
+            _prepared: Box<dyn PreparedEvaluationProviderLaunch>,
         ) -> std::result::Result<Box<dyn EvaluationProvider>, EvaluationProviderError> {
             unreachable!("an unavailable distribution cannot launch")
         }
@@ -519,12 +1612,14 @@ mod tests {
                 "distribution": "nvidia_nemo_evaluator_0_4_locked"
             },
             "evaluation": {
-                "benchmark": "fixture/exact@locked",
-                "provider_options": {"opaque": true}
+                "environment": "gsm8k",
+                "solver": "chat",
+                "solver_config": {"max_tokens": 64},
+                "selection": {"limit": 1, "seed": 0}
             },
             "routes": {
                 "primary": {"model": "candidate", "endpoint_profile": "candidate"},
-                "judge": {"model": "judge", "endpoint_profile": "judge_anthropic"}
+                "judge": {"model": "judge", "endpoint_profile": "judge_anthropic", "purpose": "judge"}
             },
             "resources": {
                 "workspace": {"type": "contained_directory", "config": {"quota": 4096}}
@@ -567,6 +1662,18 @@ mod tests {
             "nvidia_nemo_evaluator_0_4_locked"
         );
         assert_eq!(config.routes.len(), 2);
+        assert_eq!(
+            config.routes[&LogicalServiceId::new("primary").unwrap()]
+                .purpose
+                .as_str(),
+            "primary"
+        );
+        assert_eq!(
+            config.routes[&LogicalServiceId::new("judge").unwrap()]
+                .purpose
+                .as_str(),
+            "judge"
+        );
         assert_eq!(config.resources.len(), 1);
         let debug = format!("{config:?}");
         assert!(!debug.contains("fixture/exact@locked"));
@@ -631,6 +1738,43 @@ mod tests {
     }
 
     #[test]
+    fn workload_structurally_forbids_generic_sidecars() {
+        let factory = EvaluationRunnerWorkloadFactory::new(providers());
+        let raw = RawValue::from_string(authored().to_string()).unwrap();
+        let validated = factory.validate(&raw).unwrap();
+        let requirements = factory.requirements(validated.as_ref()).unwrap();
+        assert_eq!(
+            requirements.resources.sidecars,
+            ResourceRequirementV2::Forbidden
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn readiness_completes_before_evaluation_artifact_creation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let artifact_target = temporary.path().join("run");
+        let waited = Rc::new(Cell::new(false));
+        let readiness = OrderingReadiness {
+            artifact_target: artifact_target.clone(),
+            waited: waited.clone(),
+        };
+        let clock: Rc<dyn Clock> = RealClock::from_anchor(RealClockAnchor::now());
+
+        let roots = prepare_evaluation_artifact_roots(
+            &artifact_target,
+            &readiness,
+            &UnusedReadinessTransportFactory,
+            clock,
+        )
+        .await
+        .unwrap();
+
+        assert!(waited.get());
+        assert!(roots.staging.is_dir());
+        assert!(!roots.promoted.exists());
+    }
+
+    #[test]
     fn workload_factory_rejects_secret_authority_duplicate_keys_and_distribution_drift() {
         let factory = EvaluationRunnerWorkloadFactory::new(providers());
 
@@ -644,7 +1788,7 @@ mod tests {
         let duplicate = RawValue::from_string(
             r#"{
                 "provider":{"type":"nemo_evaluator","distribution":"nvidia_nemo_evaluator_0_4_locked"},
-                "evaluation":{"benchmark":"first","benchmark":"second"},
+                "evaluation":{"environment":"gsm8k","environment":"gsm8k","solver":"chat","solver_config":{"max_tokens":64},"selection":{"limit":1,"seed":0}},
                 "routes":{"primary":{"model":"candidate","endpoint_profile":"candidate"}},
                 "resources":{},
                 "unit_concurrency":1

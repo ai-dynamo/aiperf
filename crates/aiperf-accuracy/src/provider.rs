@@ -25,8 +25,7 @@ use crate::provider_protocol::{
     EvaluationPlanRequest, EvaluationProtocolError, EvaluationProviderId, EvaluationSchedulingMode,
     EvaluationSessionId, EvaluationUnitId, EvaluationUnitOccurrence,
     EvaluationUnitOccurrenceRequest, EvaluationUnitPage, EvaluationWorkerIdentity,
-    HostOperationEvent, LogicalServiceId, ResolvedEvaluationAsset, ScopedProxyBinding,
-    SemanticOperationId,
+    HostOperationEvent, ResolvedEvaluationAsset, ScopedProxyBinding, SemanticOperationId,
 };
 use crate::score_projection::PublicScoreProjectionPolicy;
 
@@ -480,6 +479,12 @@ impl EvaluatorProtocolLimits {
     }
 }
 
+/// Rust-only spawned-process authority supplied to the supervised launcher.
+pub trait EvaluatorProcessRootBinder: fmt::Debug + Send + Sync {
+    /// Bind the exact root PID returned by the supervised spawn operation.
+    fn bind_attested_root(&self, root_pid: u32) -> Result<(), ProviderRegistryError>;
+}
+
 /// Rust-owned context bound into a one-shot prepared provider launch.
 #[derive(Debug, Clone)]
 pub struct ProviderLaunchContext {
@@ -489,6 +494,8 @@ pub struct ProviderLaunchContext {
     pub staging_dir: PathBuf,
     /// Optional scoped local compatibility proxy.
     pub proxy: Option<ScopedProxyBinding>,
+    /// Optional Rust-only callback binding the spawned evaluator process tree.
+    pub process_root_binder: Option<Arc<dyn EvaluatorProcessRootBinder>>,
     /// Hard evaluator protocol bounds.
     pub protocol_limits: EvaluatorProtocolLimits,
     /// Rust-minted nonce binding `hello` to this exact launch.
@@ -513,6 +520,17 @@ impl ProviderLaunchContext {
             proxy
                 .validate()
                 .map_err(|error| ProviderRegistryError::InvalidLaunch(error.to_string()))?;
+            if proxy.grant.session_id != self.session_id {
+                return Err(ProviderRegistryError::InvalidLaunch(
+                    "scoped proxy grant session did not match provider launch session".to_string(),
+                ));
+            }
+        }
+        if self.proxy.is_some() != self.process_root_binder.is_some() {
+            return Err(ProviderRegistryError::InvalidLaunch(
+                "scoped proxy and evaluator process-root binder must be configured together"
+                    .to_string(),
+            ));
         }
         Ok(())
     }
@@ -529,8 +547,9 @@ impl ProviderLaunchContext {
         let proxy = self.proxy.as_ref().map(|proxy| {
             serde_json::json!({
                 "grant_id": proxy.grant.grant_id,
+                "session_id": proxy.grant.session_id,
                 "local_locator": proxy.local_locator,
-                "case_ids": proxy.grant.case_ids,
+                "host_socket_path": proxy.host_socket_path,
                 "max_concurrent_operations": proxy.grant.max_concurrent_operations,
                 "max_operations": proxy.grant.max_operations,
                 "max_request_bytes": proxy.grant.max_request_bytes,
@@ -540,6 +559,7 @@ impl ProviderLaunchContext {
                 "process_scope_sha256": proxy.grant.process_scope_sha256,
                 "secret_sha256": sha256_hex(proxy.grant.secret.expose_secret().as_bytes()),
                 "semantic_operation_ids": proxy.grant.semantic_operation_ids,
+                "purposes": proxy.grant.purposes,
                 "service_ids": proxy.grant.service_ids,
             })
         });
@@ -547,6 +567,7 @@ impl ProviderLaunchContext {
             "launch_nonce_sha256": sha256_hex(self.launch_nonce.as_bytes()),
             "protocol_limits": self.protocol_limits,
             "proxy": proxy,
+            "process_root_binder": self.process_root_binder.is_some(),
             "session_id": self.session_id,
             "staging_dir": staging_dir,
         }))
@@ -1182,27 +1203,19 @@ delegate_factory!(OpenBenchProviderFactory);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NemoAuthoredConfig {
-    benchmark: String,
+    environment: String,
+    solver: String,
     #[serde(default)]
-    task_names: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    max_cases: Option<usize>,
-    #[serde(default)]
-    seed: u64,
-    #[serde(default)]
-    shuffle: bool,
-    #[serde(default)]
-    shard_index: usize,
-    #[serde(default = "one_usize")]
-    shard_count: usize,
-    #[serde(default = "one_usize")]
-    repeat: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    solver: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    environment: Option<String>,
-    #[serde(default)]
-    provider_options: BTreeMap<String, CanonicalJson>,
+    environment_config: BTreeMap<String, CanonicalJson>,
+    solver_config: BTreeMap<String, CanonicalJson>,
+    selection: NemoSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NemoSelection {
+    limit: usize,
+    seed: i64,
 }
 
 struct NemoConfigValidator;
@@ -1211,17 +1224,57 @@ impl ProviderConfigValidator for NemoConfigValidator {
     fn validate(&self, config: &CanonicalJson) -> Result<CanonicalJson, ProviderRegistryError> {
         let decoded: NemoAuthoredConfig = serde_json::from_value(config.value().clone())
             .map_err(|error| ProviderRegistryError::InvalidConfig(error.to_string()))?;
-        if decoded.benchmark.trim().is_empty()
-            || decoded.max_cases == Some(0)
-            || decoded.shard_count == 0
-            || decoded.shard_index >= decoded.shard_count
-            || decoded.repeat == 0
-            || decoded.repeat > 10_000
-            || decoded.task_names.iter().any(|task| task.trim().is_empty())
+        const SOLVER_FIELDS: &[&str] = &[
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+        ];
+        let max_tokens = decoded
+            .solver_config
+            .get("max_tokens")
+            .and_then(|value| value.value().as_u64());
+        let numeric_valid = [
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+        ]
+        .iter()
+        .all(|field| {
+            decoded
+                .solver_config
+                .get(*field)
+                .is_none_or(|value| value.value().is_number())
+        });
+        let seed_valid = decoded.solver_config.get("seed").is_none_or(|value| {
+            value.value().as_i64().is_some() || value.value().as_u64().is_some()
+        });
+        let stop_valid = decoded.solver_config.get("stop").is_none_or(|value| {
+            value
+                .value()
+                .as_array()
+                .is_some_and(|items| items.iter().all(serde_json::Value::is_string))
+        });
+        if decoded.environment != "gsm8k"
+            || decoded.solver != "chat"
+            || !decoded.environment_config.is_empty()
+            || decoded
+                .solver_config
+                .keys()
+                .any(|field| !SOLVER_FIELDS.contains(&field.as_str()))
+            || !max_tokens.is_some_and(|value| value > 0)
+            || !numeric_valid
+            || !seed_valid
+            || !stop_valid
+            || !(1..=5).contains(&decoded.selection.limit)
+            || decoded.selection.seed != 0
         {
             return Err(ProviderRegistryError::InvalidConfig(
-                "NeMo Evaluator config had an empty benchmark/task or invalid selection policy"
-                    .to_string(),
+                "NeMo Evaluator config did not match the frozen GSM8K/chat canary".to_string(),
             ));
         }
         normalize_config(decoded)
@@ -1232,18 +1285,10 @@ impl ProviderConfigValidator for NemoConfigValidator {
 #[serde(deny_unknown_fields)]
 struct OpenBenchAuthoredConfig {
     task: String,
-    #[serde(default)]
     task_args: BTreeMap<String, CanonicalJson>,
-    #[serde(default = "one_usize")]
     epochs: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    max_samples: Option<usize>,
-    #[serde(default)]
-    seed: u64,
-    #[serde(default = "default_candidate_service")]
-    candidate_service: LogicalServiceId,
-    #[serde(default)]
-    auxiliary_services: BTreeMap<String, LogicalServiceId>,
+    limit: Option<usize>,
 }
 
 struct OpenBenchConfigValidator;
@@ -1252,19 +1297,13 @@ impl ProviderConfigValidator for OpenBenchConfigValidator {
     fn validate(&self, config: &CanonicalJson) -> Result<CanonicalJson, ProviderRegistryError> {
         let decoded: OpenBenchAuthoredConfig = serde_json::from_value(config.value().clone())
             .map_err(|error| ProviderRegistryError::InvalidConfig(error.to_string()))?;
-        if decoded.task.trim().is_empty()
-            || decoded.task.contains(',')
-            || decoded.epochs == 0
-            || decoded.epochs > 10_000
-            || decoded.max_samples == Some(0)
-            || decoded
-                .auxiliary_services
-                .keys()
-                .any(|role| role.trim().is_empty())
+        if decoded.task != "gsm8k"
+            || !decoded.task_args.is_empty()
+            || !(1..=8).contains(&decoded.epochs)
+            || decoded.limit.is_some_and(|limit| !(1..=5).contains(&limit))
         {
             return Err(ProviderRegistryError::InvalidConfig(
-                "OpenBench config must select one exact task and bounded nonzero epochs/samples"
-                    .to_string(),
+                "OpenBench config did not match the frozen GSM8K/Inspect canary".to_string(),
             ));
         }
         normalize_config(decoded)
@@ -1278,33 +1317,39 @@ fn normalize_config<T: Serialize>(value: T) -> Result<CanonicalJson, ProviderReg
         .map_err(|error| ProviderRegistryError::InvalidConfig(error.to_string()))
 }
 
-fn one_usize() -> usize {
-    1
-}
-
-fn default_candidate_service() -> LogicalServiceId {
-    LogicalServiceId::new("candidate").expect("stock logical service is valid")
-}
-
 fn nemo_schema() -> CanonicalJson {
     CanonicalJson::new(serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-            "benchmark": {"type": "string", "minLength": 1},
-            "environment": {"type": ["string", "null"]},
-            "max_cases": {"type": ["integer", "null"], "minimum": 1},
-            "provider_options": {"type": "object"},
-            "repeat": {"type": "integer", "minimum": 1, "maximum": 10000},
-            "seed": {"type": "integer", "minimum": 0},
-            "shard_count": {"type": "integer", "minimum": 1},
-            "shard_index": {"type": "integer", "minimum": 0},
-            "shuffle": {"type": "boolean"},
-            "solver": {"type": ["string", "null"]},
-            "task_names": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            "environment": {"const": "gsm8k"},
+            "solver": {"const": "chat"},
+            "environment_config": {"type": "object", "additionalProperties": false},
+            "solver_config": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["max_tokens"],
+                "properties": {
+                    "max_tokens": {"type": "integer", "minimum": 1},
+                    "temperature": {"type": "number"},
+                    "top_p": {"type": "number"},
+                    "seed": {"type": "integer"},
+                    "stop": {"type": "array", "items": {"type": "string"}},
+                    "frequency_penalty": {"type": "number"},
+                    "presence_penalty": {"type": "number"}
+                }
+            },
+            "selection": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["limit", "seed"],
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "seed": {"const": 0}
+                }
+            }
         },
-        "required": ["benchmark"],
-        "title": "aiperf-nemo-evaluator-config-v1",
+        "required": ["environment", "solver", "solver_config", "selection"],
         "type": "object"
     }))
     .expect("stock schema is canonical JSON")
@@ -1315,16 +1360,12 @@ fn openbench_schema() -> CanonicalJson {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-            "auxiliary_services": {"type": "object"},
-            "candidate_service": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
-            "epochs": {"type": "integer", "minimum": 1, "maximum": 10000},
-            "max_samples": {"type": ["integer", "null"], "minimum": 1},
-            "seed": {"type": "integer", "minimum": 0},
-            "task": {"type": "string", "minLength": 1},
-            "task_args": {"type": "object"}
+            "task": {"const": "gsm8k"},
+            "task_args": {"type": "object", "additionalProperties": false},
+            "epochs": {"type": "integer", "minimum": 1, "maximum": 8},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 5}
         },
-        "required": ["task"],
-        "title": "aiperf-openbench-config-v1",
+        "required": ["task", "task_args", "epochs"],
         "type": "object"
     }))
     .expect("stock schema is canonical JSON")
@@ -1616,9 +1657,10 @@ mod tests {
         )
         .unwrap();
         let config = CanonicalJson::new(serde_json::json!({
-            "benchmark": "mmlu",
-            "repeat": 2,
-            "seed": 7
+            "environment": "gsm8k",
+            "solver": "chat",
+            "solver_config": {"max_tokens": 64},
+            "selection": {"limit": 1, "seed": 0}
         }))
         .unwrap();
         let validated = factory.validate_authored_config(&config).unwrap();
@@ -1627,7 +1669,10 @@ mod tests {
         assert!(is_sha256(validated.config_sha256()));
 
         let unknown = CanonicalJson::new(serde_json::json!({
-            "benchmark": "mmlu",
+            "environment": "gsm8k",
+            "solver": "chat",
+            "solver_config": {"max_tokens": 64},
+            "selection": {"limit": 1, "seed": 0},
             "executable": "/tmp/evil"
         }))
         .unwrap();
@@ -1726,6 +1771,14 @@ mod tests {
             Arc::new(NeverLaunch),
         )
         .unwrap();
+        assert_eq!(
+            nemo.descriptor().config_schema_sha256,
+            "b501baba9601933a8239e15b34fba57aa06ebaa6deb4d3132544ae5c5c9b47c4"
+        );
+        assert_eq!(
+            openbench.descriptor().config_schema_sha256,
+            "2c1a1a970a9695dc8d741096f2fc1b92cd57c7823b6b6c53b20f37e78f4da57b"
+        );
         assert_eq!(
             nemo.descriptor().operations,
             openbench.descriptor().operations

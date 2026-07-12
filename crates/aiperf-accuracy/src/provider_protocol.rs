@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -1106,7 +1107,7 @@ impl EvaluationError {
     /// Normalize a deserialized diagnostic before public use.
     pub fn validate_and_redact(&mut self) -> Result<(), EvaluationProtocolError> {
         validate_open_id("evaluation error kind", &self.error_kind)?;
-        self.message = redact_diagnostic(&self.message);
+        self.message = "Evaluator provider reported an infrastructure error".to_string();
         Ok(())
     }
 }
@@ -1527,14 +1528,16 @@ impl fmt::Debug for ScopedProxySecret {
 pub struct ScopedProxyGrant {
     /// Opaque grant identity.
     pub grant_id: String,
+    /// Exact evaluation session bound before worker launch.
+    pub session_id: EvaluationSessionId,
     /// Secret bearer capability checked only by Rust proxy ingress.
     pub secret: ScopedProxySecret,
     /// Exact allowed logical services.
     pub service_ids: Vec<LogicalServiceId>,
     /// Exact allowed semantic operations.
     pub semantic_operation_ids: Vec<SemanticOperationId>,
-    /// Exact allowed evaluation case occurrences.
-    pub case_ids: Vec<EvaluationCaseId>,
+    /// Exact allowed semantic purposes.
+    pub purposes: Vec<OperationPurpose>,
     /// Exact evaluator process-subtree scope digest.
     pub process_scope_sha256: String,
     /// Maximum logical operations accepted by the grant.
@@ -1555,8 +1558,11 @@ pub struct ScopedProxyGrant {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopedProxyBinding {
-    /// Rust-owned loopback-only local locator.
+    /// Fixed worker-visible Unix-domain locator inside the isolated rootfs.
     pub local_locator: String,
+    /// Host-side Unix socket bind source, never serialized to the worker.
+    #[serde(skip, default)]
+    pub host_socket_path: PathBuf,
     /// Narrow per-run grant.
     pub grant: ScopedProxyGrant,
 }
@@ -1564,14 +1570,20 @@ pub struct ScopedProxyBinding {
 impl ScopedProxyBinding {
     /// Reject non-loopback locators and empty/unbounded grants.
     pub fn validate(&self) -> Result<(), EvaluationProtocolError> {
-        let loopback = self.local_locator.starts_with("http://127.0.0.1:")
-            || self.local_locator.starts_with("http://[::1]:")
-            || self.local_locator.starts_with("unix:///");
-        if !loopback
+        validate_opaque_id("scoped proxy grant_id", &self.grant.grant_id)?;
+        let worker_socket = self.local_locator == "unix:///run/aiperf/evaluator-proxy.sock";
+        if !worker_socket
+            || !self.host_socket_path.is_absolute()
+            || self.host_socket_path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )
+            })
             || self.grant.grant_id.trim().is_empty()
             || self.grant.service_ids.is_empty()
             || self.grant.semantic_operation_ids.is_empty()
-            || self.grant.case_ids.is_empty()
+            || self.grant.purposes.is_empty()
             || self.grant.service_ids.iter().collect::<BTreeSet<_>>().len()
                 != self.grant.service_ids.len()
             || self
@@ -1581,8 +1593,8 @@ impl ScopedProxyBinding {
                 .collect::<BTreeSet<_>>()
                 .len()
                 != self.grant.semantic_operation_ids.len()
-            || self.grant.case_ids.iter().collect::<BTreeSet<_>>().len()
-                != self.grant.case_ids.len()
+            || self.grant.purposes.iter().collect::<BTreeSet<_>>().len()
+                != self.grant.purposes.len()
             || self.grant.max_operations == 0
             || self.grant.max_concurrent_operations == 0
             || self.grant.max_concurrent_operations > self.grant.max_operations
@@ -1873,12 +1885,14 @@ mod tests {
     fn proxy_binding_rejects_real_endpoint_and_redacts_secret_debug() {
         let binding = ScopedProxyBinding {
             local_locator: "https://model.example/v1".to_string(),
+            host_socket_path: PathBuf::from("/run/aiperf-host/proxy.sock"),
             grant: ScopedProxyGrant {
                 grant_id: "grant-1".to_string(),
+                session_id: EvaluationSessionId::new("session-1").unwrap(),
                 secret: ScopedProxySecret::new("x".repeat(32)).unwrap(),
                 service_ids: vec![LogicalServiceId::new("primary").unwrap()],
                 semantic_operation_ids: vec![SemanticOperationId::new("model.generate").unwrap()],
-                case_ids: vec![EvaluationCaseId::new("case-1").unwrap()],
+                purposes: vec![OperationPurpose::new("primary").unwrap()],
                 process_scope_sha256: "a".repeat(64),
                 max_operations: 1,
                 max_concurrent_operations: 1,
@@ -1896,5 +1910,22 @@ mod tests {
     fn finish_candidate_rejects_duplicate_cases_and_traversal() {
         assert!(validate_relative_artifact_path("../private").is_err());
         assert!(validate_relative_artifact_path("bundle/result.json").is_ok());
+    }
+
+    #[test]
+    fn provider_authored_error_message_is_always_replaced_not_marker_redacted() {
+        let mut error = EvaluationError::new(
+            EvaluationStage::new("provider").unwrap(),
+            "provider_error",
+            false,
+            "EXPECTED_ANSWER_SENTINEL arbitrary private verifier state",
+        )
+        .unwrap();
+        error.validate_and_redact().unwrap();
+        assert_eq!(
+            error.message,
+            "Evaluator provider reported an infrastructure error"
+        );
+        assert!(!error.message.contains("EXPECTED_ANSWER_SENTINEL"));
     }
 }
