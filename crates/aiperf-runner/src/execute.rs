@@ -24,7 +24,8 @@ use aiperf::fixed_schedule::{
 use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConfig};
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
-    ConversationSource, EndpointInputTokenCounter, InputTokenCounter, IssuedCredit,
+    AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
+    IssuedCredit,
     NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
     PreparedTurnEndpointResolver, TurnToSend,
 };
@@ -1448,10 +1449,8 @@ async fn execute_graph_native(
     let allow_dataset_wrap = graph.allow_dataset_wrap;
     let metrics_config = metrics_config(&request.run.metrics)?;
     let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
-    let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
-        tokenizer.clone(),
-        request.run.tokenizer.apply_chat_template,
-    ));
+    let input_token_counter =
+        select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
     let input = graph.input.clone();
     ensure!(
         !input.plans.is_empty(),
@@ -1734,10 +1733,8 @@ async fn execute_native_inner(
         Some(accuracy) => accuracy.tokenizer.clone(),
         None => load_tokenizer(Some(&request.run.tokenizer.name))?,
     };
-    let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
-        tokenizer.clone(),
-        request.run.tokenizer.apply_chat_template,
-    ));
+    let input_token_counter =
+        select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
     let (
         endpoint_urls,
         transport_config,
@@ -3597,6 +3594,28 @@ pub(crate) fn load_tokenizer(spec: Option<&str>) -> Result<Arc<dyn TextTokenizer
     }
     let encoding = spec.parse::<TiktokenEncoding>()?;
     Ok(Arc::new(TiktokenTokenizer::new(encoding)))
+}
+
+/// Select the input-token accounting policy for one native run.
+///
+/// AIPerf pre-tokenizes every dataset segment once at composition and stores the
+/// exact per-segment token counts; the materializer sums them into each turn's
+/// authored input length. When no chat template is applied, the wire body is
+/// exactly those pre-tokenized segments, so the authored count is already exact
+/// and re-encoding the assembled body on every request is pure redundant work —
+/// the profiled online hot spot. Trust the pre-tokenized count verbatim
+/// ([`AuthoredInputTokenCounter`]) so the benchmark loop stays tokenizer-free.
+/// A chat template injects role/generation-prompt tokens composition did not
+/// measure, so that case re-encodes the templated wire body per request.
+fn select_input_token_counter(
+    tokenizer: Arc<dyn TextTokenizer>,
+    apply_chat_template: bool,
+) -> Arc<dyn InputTokenCounter> {
+    if apply_chat_template {
+        Arc::new(EndpointInputTokenCounter::new(tokenizer, true))
+    } else {
+        Arc::new(AuthoredInputTokenCounter)
+    }
 }
 
 fn seconds_to_ns(value: f64) -> Result<i64> {
