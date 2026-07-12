@@ -325,6 +325,22 @@ impl QualifiedSpool {
         &self.qualification
     }
 
+    /// Captures logical spool use and fresh filesystem bytes/inodes.
+    ///
+    /// Directory traversal and `statvfs` are intentionally blocking and must
+    /// run only during preparation or at an owner fence, never on admission.
+    pub fn budget_observation(&self) -> Result<crate::budget::ArchiveSpoolObservation, SpoolError> {
+        let (logical_bytes, logical_files) = logical_spool_usage(&self.root)?;
+        let (filesystem_available_bytes, filesystem_available_files) =
+            filesystem_budget_capacity(&self.root)?;
+        Ok(crate::budget::ArchiveSpoolObservation {
+            logical_bytes,
+            logical_files,
+            filesystem_available_bytes,
+            filesystem_available_files,
+        })
+    }
+
     pub(crate) fn read_relative(&self, relative: &Path) -> Result<Vec<u8>, SpoolError> {
         validate_relative(relative)?;
         let path = self.root.join(relative);
@@ -2003,6 +2019,62 @@ fn filesystem_capacity(path: &Path) -> Result<(u64, u64), SpoolError> {
     Ok((stat.f_bavail, stat.f_favail))
 }
 
+fn filesystem_budget_capacity(path: &Path) -> Result<(u64, u64), SpoolError> {
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| SpoolError::SymlinkOrNonDirectory(path.to_path_buf()))?;
+    // SAFETY: `statvfs` writes the initialized out-parameter and `c_path` is NUL-terminated.
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: pointers remain valid for the duration of the call.
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return Err(io_error(
+            "statvfs archive spool budget",
+            path,
+            io::Error::last_os_error(),
+        ));
+    }
+    let fragment_bytes = if stat.f_frsize == 0 {
+        stat.f_bsize
+    } else {
+        stat.f_frsize
+    };
+    let available_bytes = stat
+        .f_bavail
+        .checked_mul(fragment_bytes)
+        .ok_or(SpoolError::SequenceOverflow)?;
+    Ok((available_bytes, stat.f_favail))
+}
+
+fn logical_spool_usage(root: &Path) -> Result<(u64, u64), SpoolError> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut bytes = 0_u64;
+    let mut files = 0_u64;
+    while let Some(directory) = pending.pop() {
+        let entries = fs::read_dir(&directory)
+            .map_err(|error| io_error("read spool for budget", &directory, error))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| io_error("read spool budget entry", &directory, error))?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| io_error("stat spool budget entry", &path, error))?;
+            if metadata.file_type().is_symlink() {
+                return Err(SpoolError::SymlinkOrNonDirectory(path));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                bytes = bytes
+                    .checked_add(metadata.len())
+                    .ok_or(SpoolError::SequenceOverflow)?;
+                files = files.checked_add(1).ok_or(SpoolError::SequenceOverflow)?;
+            } else {
+                return Err(SpoolError::SymlinkOrNonDirectory(path));
+            }
+        }
+    }
+    Ok((bytes, files))
+}
+
 fn probe_atomic_create_and_rename(root: &Path) -> Result<(), SpoolError> {
     let temporary = root.join(".qualification-probe.tmp");
     let final_path = root.join(".qualification-probe.final");
@@ -2251,6 +2323,21 @@ mod tests {
         ));
         drop(first);
         QualifiedSpool::open(&path).unwrap();
+    }
+
+    #[test]
+    fn budget_observation_counts_logical_files_and_fresh_filesystem_capacity() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("spool");
+        let spool = QualifiedSpool::open(&path).unwrap();
+        let before = spool.budget_observation().unwrap();
+        assert!(before.logical_files >= 1);
+        assert!(before.filesystem_available_bytes > 0);
+        assert!(before.filesystem_available_files > 0);
+        fs::write(path.join("raw").join("budget-probe"), b"abc").unwrap();
+        let after = spool.budget_observation().unwrap();
+        assert_eq!(after.logical_files, before.logical_files + 1);
+        assert_eq!(after.logical_bytes, before.logical_bytes + 3);
     }
 
     #[test]

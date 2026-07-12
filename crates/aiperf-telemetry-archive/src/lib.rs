@@ -11,6 +11,7 @@
 
 pub mod attempt;
 pub mod boundary;
+pub mod budget;
 pub mod canonical_json;
 pub mod control_frame_codec;
 pub mod decode;
@@ -50,6 +51,12 @@ pub use attempt::{
 pub use boundary::{
     BoundaryCapturePlan, BoundaryPlanError, BoundaryPlanRegistry, BoundaryReference,
     BoundaryReferenceKey, BoundaryRole, SealedBoundaryCapturePlan, SourceBoundarySnapshotCommand,
+};
+pub use budget::{
+    ArchiveBudgetClass, ArchiveFinalizationPermit, ArchiveProjectionLease,
+    ArchiveSpoolBudgetAuthority, ArchiveSpoolBudgetError, ArchiveSpoolBudgetLimits,
+    ArchiveSpoolBudgetSnapshot, ArchiveSpoolObservation, ArchiveSpoolReservePlan,
+    ArchiveSpoolResources, AtomicArchiveSpoolBudget,
 };
 pub use canonical_json::{CanonicalJsonError, CanonicalJsonValue};
 pub use control_frame_codec::{ControlFrameCodecError, ControlFrameCodecV1};
