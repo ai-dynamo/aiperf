@@ -26,6 +26,7 @@ use aiperf_runner::dataset_input::{
 };
 use aiperf_runner::protocol_v2::RunnerEnvelopeV2;
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
+use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_test_static_extension::{
     EXTENSION_NAME, PREPARED_ONLY_ENDPOINT_ID, SAMPLER_NAME, StaticTestRegistryFactory, evidence,
     reset_evidence,
@@ -203,6 +204,7 @@ fn statically_linked_extension_child() {
             inner: BuiltinRunnerDatasetInputAdapterResolver::new(),
             loads: dataset_loads.clone(),
         }),
+        Arc::new(BuiltinRunnerSidecarInputAdapterResolver::new()),
     )
     .unwrap();
 

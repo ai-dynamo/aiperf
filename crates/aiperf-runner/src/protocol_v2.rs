@@ -21,6 +21,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
+use crate::sidecar_input::{
+    AuthoredSidecarInput, GPU_TELEMETRY_SIDECAR_ID, LIVE_STREAMING_SIDECAR_ID,
+    NETWORK_LATENCY_SIDECAR_ID, SERVER_METRICS_SIDECAR_ID,
+};
 
 /// Authored runner protocol version.
 pub const RUNNER_PROTOCOL_V2: u32 = 2;
@@ -471,6 +475,23 @@ pub struct SidecarSpecV2 {
 }
 
 impl SidecarSpecV2 {
+    /// Retain each present body beside the open adapter ID selected by its key.
+    ///
+    /// This is a borrowed structural projection only: the coordinator passes
+    /// each raw body directly to the selected adapter, which owns the sole
+    /// full decode.
+    pub(crate) fn authored_inputs(&self) -> Vec<AuthoredSidecarInput<'_>> {
+        [
+            (GPU_TELEMETRY_SIDECAR_ID, self.gpu_telemetry.as_deref()),
+            (NETWORK_LATENCY_SIDECAR_ID, self.network_latency.as_deref()),
+            (SERVER_METRICS_SIDECAR_ID, self.server_metrics.as_deref()),
+            (LIVE_STREAMING_SIDECAR_ID, self.live_streaming.as_deref()),
+        ]
+        .into_iter()
+        .filter_map(|(id, config)| config.map(|config| AuthoredSidecarInput { id, config }))
+        .collect()
+    }
+
     fn validate_outer(&self) -> Result<()> {
         for (field, raw) in [
             ("sidecars.gpu_telemetry", self.gpu_telemetry.as_deref()),

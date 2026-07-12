@@ -31,6 +31,7 @@ use serde_json::{Map, Value, value::RawValue};
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunnerComponentId};
+use crate::sidecar_input::PreparedSidecarInputs;
 
 /// Clock family supplied by one prepared backend.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -754,6 +755,7 @@ pub struct RunnerRunContext {
     product_registry: Arc<AiperfRegistry>,
     graph_inputs: Arc<dyn GraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
+    sidecar_inputs: Arc<PreparedSidecarInputs>,
     endpoint_profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
     endpoint_profile_indexes: Arc<BTreeMap<String, usize>>,
 }
@@ -762,6 +764,10 @@ impl Debug for RunnerRunContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RunnerRunContext")
+            .field(
+                "sidecar_inputs",
+                &self.sidecar_inputs.ids().collect::<Vec<_>>(),
+            )
             .field(
                 "endpoint_profiles",
                 &self
@@ -780,6 +786,7 @@ impl RunnerRunContext {
         product_registry: Arc<AiperfRegistry>,
         graph_inputs: Arc<dyn GraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
+        sidecar_inputs: Arc<PreparedSidecarInputs>,
         profiles: Vec<ValidatedEndpointProfileV2>,
     ) -> Result<Self> {
         let mut endpoint_profile_indexes = BTreeMap::new();
@@ -800,6 +807,7 @@ impl RunnerRunContext {
             product_registry,
             graph_inputs,
             dataset_inputs,
+            sidecar_inputs,
             endpoint_profiles: Arc::new(profiles),
             endpoint_profile_indexes: Arc::new(endpoint_profile_indexes),
         })
@@ -833,6 +841,16 @@ impl RunnerRunContext {
     /// Clone the dataset-input resolver into a prepared scheduled operation.
     pub fn dataset_inputs_handle(&self) -> Arc<dyn RunnerDatasetInputAdapterResolver> {
         self.dataset_inputs.clone()
+    }
+
+    /// Borrow the exact sidecar adapter outputs prepared by the coordinator.
+    pub fn sidecar_inputs(&self) -> &PreparedSidecarInputs {
+        self.sidecar_inputs.as_ref()
+    }
+
+    /// Retain the same prepared sidecar bundle through pair execution.
+    pub fn sidecar_inputs_handle(&self) -> Arc<PreparedSidecarInputs> {
+        self.sidecar_inputs.clone()
     }
 
     /// Build the coordinator-owned native-report identity from frozen values.
@@ -1448,6 +1466,7 @@ mod tests {
             Arc::new(AiperfRegistry::builtin().unwrap()),
             Arc::new(aiperf_graph::input::GraphInputAdapterRegistry::with_builtin_adapters()),
             Arc::new(crate::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
+            Arc::new(crate::sidecar_input::PreparedSidecarInputs::default()),
             vec![
                 profile("default", "chat"),
                 profile("z-last", "messages"),

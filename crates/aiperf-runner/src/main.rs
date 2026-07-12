@@ -16,6 +16,7 @@ use aiperf_runner::protocol_v2::{
 };
 use aiperf_runner::redaction::redact_diagnostic;
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
+use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
     RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities, execute_run,
 };
@@ -160,12 +161,14 @@ fn run_v2(input: &[u8]) -> ! {
     };
     let graph_inputs = Arc::new(GraphInputAdapterRegistry::with_builtin_adapters());
     let dataset_inputs = Arc::new(BuiltinRunnerDatasetInputAdapterResolver::new());
+    let sidecar_inputs = Arc::new(BuiltinRunnerSidecarInputAdapterResolver::new());
     let coordinator = match RunnerV2Coordinator::new(
         distribution_id.clone(),
         &BuiltinRunnerRegistryFactory,
         &aiperf_extensions::BuiltinAiperfRegistryFactory,
         graph_inputs,
         dataset_inputs,
+        sidecar_inputs,
     ) {
         Ok(coordinator) => coordinator,
         Err(error) => write_v2_validation_failure(

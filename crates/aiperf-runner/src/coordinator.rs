@@ -27,6 +27,7 @@ use crate::redaction::redact_diagnostic;
 use crate::registry::{
     RunnerRegistry, RunnerRegistryFactory, RunnerRunContext, validate_endpoint_profiles_v2,
 };
+use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
 
 /// Exactly one typed response emitted for a protocol-v2 request.
 #[derive(Debug, Serialize)]
@@ -58,6 +59,7 @@ pub struct RunnerV2Coordinator {
     product_registry: Arc<AiperfRegistry>,
     graph_inputs: Arc<dyn GraphInputAdapterResolver>,
     dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
+    sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
 }
 
 impl std::fmt::Debug for RunnerV2Coordinator {
@@ -78,6 +80,7 @@ impl RunnerV2Coordinator {
         product_registry_factory: &dyn AiperfRegistryFactory,
         graph_inputs: Arc<dyn GraphInputAdapterResolver>,
         dataset_inputs: Arc<dyn RunnerDatasetInputAdapterResolver>,
+        sidecar_inputs: Arc<dyn RunnerSidecarInputAdapterResolver>,
     ) -> Result<Self> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
@@ -95,6 +98,7 @@ impl RunnerV2Coordinator {
             product_registry,
             graph_inputs,
             dataset_inputs,
+            sidecar_inputs,
         })
     }
 
@@ -153,10 +157,28 @@ impl RunnerV2Coordinator {
                     );
                 }
             };
+        let sidecar_inputs = match self
+            .sidecar_inputs
+            .prepare(&envelope.run.sidecars.authored_inputs())
+        {
+            Ok(sidecars) => Arc::new(sidecars),
+            Err(error) => {
+                return failure(
+                    operation,
+                    self.distribution_id.clone(),
+                    benchmark_id,
+                    RunnerFailureStageV2::Validation,
+                    "invalid_sidecars",
+                    format!("{error:#}"),
+                    1,
+                );
+            }
+        };
         let context = match RunnerRunContext::new(
             self.product_registry.clone(),
             self.graph_inputs.clone(),
             self.dataset_inputs.clone(),
+            sidecar_inputs,
             endpoint_profiles,
         ) {
             Ok(context) => context,
