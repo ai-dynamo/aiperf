@@ -25,7 +25,8 @@ pub use model::{
 };
 pub use parser::{MetricsParseError, MetricsTextParser, PrometheusTextParser};
 pub use source::{
-    PrometheusHttpSource, ServerMetricsError, ServerMetricsScrapeMode, ServerMetricsSource,
+    PrometheusHttpSource, ServerMetricsError, ServerMetricsScrapeMode, ServerMetricsScrapeOutcome,
+    ServerMetricsSource,
 };
 pub use units::{PrometheusUnitInferer, UnitInferer, infer_unit};
 

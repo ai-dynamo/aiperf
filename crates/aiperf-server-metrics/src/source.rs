@@ -35,6 +35,17 @@ pub enum ServerMetricsScrapeMode {
     Boundary,
 }
 
+/// Successful scrape disposition, keeping an empty exposition distinct from disablement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServerMetricsScrapeOutcome {
+    /// One supported non-empty Prometheus snapshot.
+    Record(ServerMetricsRecord),
+    /// A valid empty or unsupported-only exposition; the source remains active.
+    Empty,
+    /// The source was previously classified as terminally incompatible.
+    Disabled,
+}
+
 /// One server-metrics fetch or decode failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMetricsError {
@@ -104,7 +115,7 @@ pub trait ServerMetricsSource {
     async fn scrape(
         &self,
         mode: ServerMetricsScrapeMode,
-    ) -> Result<Option<ServerMetricsRecord>, ServerMetricsError>;
+    ) -> Result<ServerMetricsScrapeOutcome, ServerMetricsError>;
 }
 
 struct SourceState {
@@ -165,7 +176,7 @@ impl PrometheusHttpSource {
         &self,
         endpoint_url: &str,
         display_url: &str,
-    ) -> Result<(ServerMetricsRecord, String), ServerMetricsError> {
+    ) -> Result<(Option<ServerMetricsRecord>, String), ServerMetricsError> {
         let record = self
             .transport
             .get(&RequestConfig::new(endpoint_url.to_string()))
@@ -199,9 +210,7 @@ impl PrometheusHttpSource {
             })
             .ok_or(ServerMetricsError::MissingBody)?;
         if body.trim().is_empty() {
-            return Err(ServerMetricsError::Incompatible(format!(
-                "endpoint {display_url:?} returned an empty metrics body"
-            )));
+            return Ok((None, body));
         }
         let metrics = if content_type
             .as_deref()
@@ -220,16 +229,14 @@ impl PrometheusHttpSource {
             ))
         })?;
         if metrics.is_empty() {
-            return Err(ServerMetricsError::Incompatible(format!(
-                "endpoint {display_url:?} returned no supported Prometheus metric families"
-            )));
+            return Ok((None, body));
         }
         let timestamp_ns = record.recv_start_ns.unwrap_or_else(|| self.clock.now_ns());
         let endpoint_latency_ns = record
             .end_ns
             .map(|end_ns| (end_ns - record.start_ns).max(0));
         Ok((
-            ServerMetricsRecord {
+            Some(ServerMetricsRecord {
                 endpoint_url: display_url.to_string(),
                 timestamp_ns,
                 endpoint_latency_ns,
@@ -238,7 +245,7 @@ impl PrometheusHttpSource {
                 is_duplicate: false,
                 benchmark_phase: None,
                 metrics,
-            },
+            }),
             body,
         ))
     }
@@ -253,7 +260,7 @@ impl PrometheusHttpSource {
         &self,
         original_url: &str,
         original_display: &str,
-    ) -> Result<(ServerMetricsRecord, String, String, String), ServerMetricsError> {
+    ) -> Result<(Option<ServerMetricsRecord>, String, String, String), ServerMetricsError> {
         let candidate_url = format!(
             "{}/prometheus/metrics",
             original_url.trim_end_matches("/metrics")
@@ -266,6 +273,22 @@ impl PrometheusHttpSource {
             ))),
         }
     }
+
+    fn commit_response(
+        state: &mut SourceState,
+        active_url: String,
+        active_display: String,
+        body: String,
+    ) -> bool {
+        if state.endpoint_url != active_url {
+            state.last_body = None;
+        }
+        let duplicate = state.last_body.as_ref().is_some_and(|last| last == &body);
+        state.endpoint_url = active_url;
+        state.display_url = active_display;
+        state.last_body = Some(body);
+        duplicate
+    }
 }
 
 #[async_trait(?Send)]
@@ -277,7 +300,7 @@ impl ServerMetricsSource for PrometheusHttpSource {
     async fn scrape(
         &self,
         _mode: ServerMetricsScrapeMode,
-    ) -> Result<Option<ServerMetricsRecord>, ServerMetricsError> {
+    ) -> Result<ServerMetricsScrapeOutcome, ServerMetricsError> {
         let (endpoint_url, display_url, disabled, should_try_fallback) = {
             let state = self.state.borrow();
             (
@@ -288,7 +311,7 @@ impl ServerMetricsSource for PrometheusHttpSource {
             )
         };
         if disabled {
-            return Ok(None);
+            return Ok(ServerMetricsScrapeOutcome::Disabled);
         }
 
         let fetched = match self.fetch(&endpoint_url, &display_url).await {
@@ -301,7 +324,7 @@ impl ServerMetricsSource for PrometheusHttpSource {
             Err(error) => return Err(error),
         };
 
-        let (mut record, body, active_url, active_display) = match fetched {
+        let (record, body, active_url, active_display) = match fetched {
             Ok(value) => value,
             Err(error) => {
                 self.state.borrow_mut().disabled = true;
@@ -309,13 +332,13 @@ impl ServerMetricsSource for PrometheusHttpSource {
             }
         };
         let mut state = self.state.borrow_mut();
-        let duplicate = state.last_body.as_ref().is_some_and(|last| last == &body);
-        state.endpoint_url = active_url;
-        state.display_url = active_display.clone();
-        state.last_body = Some(body);
+        let duplicate = Self::commit_response(&mut state, active_url, active_display.clone(), body);
+        let Some(mut record) = record else {
+            return Ok(ServerMetricsScrapeOutcome::Empty);
+        };
         record.endpoint_url = active_display;
         record.is_duplicate = duplicate;
-        Ok(Some(record))
+        Ok(ServerMetricsScrapeOutcome::Record(record))
     }
 }
 
@@ -379,5 +402,29 @@ mod tests {
             ..state
         };
         assert!(!PrometheusHttpSource::should_try_fallback(&state));
+    }
+
+    #[test]
+    fn swapping_to_fallback_resets_body_deduplication() {
+        let mut state = SourceState {
+            endpoint_url: "http://host/metrics".to_string(),
+            display_url: "http://host/metrics".to_string(),
+            fallback_attempted: true,
+            disabled: false,
+            last_body: Some("same body".to_string()),
+        };
+
+        assert!(!PrometheusHttpSource::commit_response(
+            &mut state,
+            "http://host/prometheus/metrics".to_string(),
+            "http://host/prometheus/metrics".to_string(),
+            "same body".to_string(),
+        ));
+        assert!(PrometheusHttpSource::commit_response(
+            &mut state,
+            "http://host/prometheus/metrics".to_string(),
+            "http://host/prometheus/metrics".to_string(),
+            "same body".to_string(),
+        ));
     }
 }

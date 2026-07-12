@@ -181,10 +181,16 @@ pub trait ScheduledPhaseResources {
 /// The phase driver awaits [`start`](Self::start) before it can issue the first
 /// turn and awaits [`finish`](Self::finish) after dispatch has fully drained.
 pub trait ScheduledPhaseSidecar {
-    /// Establish the phase-start boundary before issuance begins.
+    /// Prepare and force any baseline sample before issuance begins.
     fn start(&self) -> LocalPhaseFuture<Result<()>>;
 
-    /// Establish the phase-end boundary after every dispatch has drained.
+    /// Record the common phase-start instant after every sidecar is prepared.
+    fn on_phase_start(&self, _timestamp_ns: i64) {}
+
+    /// Record the common phase-end instant before any final sample is taken.
+    fn on_phase_end(&self, _timestamp_ns: i64) {}
+
+    /// Force any final sample after every dispatch has drained.
     fn finish(&self) -> LocalPhaseFuture<Result<()>>;
 }
 
@@ -518,6 +524,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         self.runtimes.borrow_mut().push(runtime.clone());
         Rc::new(ScheduledPhaseExecution {
             phase_id: config.id.clone(),
+            clock: self.clock.clone(),
             workload: plan.workload,
             runtime,
             tracker,
@@ -579,6 +586,7 @@ impl PhaseExecution for MissingScheduledPhaseExecution {
 
 struct ScheduledPhaseExecution {
     phase_id: String,
+    clock: Rc<dyn aiperf_clock::Clock>,
     workload: Rc<dyn Workload>,
     runtime: Rc<ScheduledRuntime>,
     tracker: Rc<PhaseDispatchTracker>,
@@ -605,11 +613,16 @@ impl PhaseExecution for ScheduledPhaseExecution {
 
     fn setup(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
         let sidecars = self.sidecars.clone();
+        let clock = self.clock.clone();
         Box::pin(async move {
-            for sidecar in sidecars {
+            for sidecar in &sidecars {
                 sidecar.start().await.map_err(|error| {
                     PhaseExecutionError::new(format!("starting scheduled phase sidecar: {error:#}"))
                 })?;
+            }
+            let phase_start_ns = clock.now_ns();
+            for sidecar in &sidecars {
+                sidecar.on_phase_start(phase_start_ns);
             }
             Ok(())
         })
@@ -687,10 +700,15 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let snapshot = self.workload.user_control_snapshot();
         let runtime = self.runtime.clone();
         let sidecars = self.sidecars.clone();
+        let clock = self.clock.clone();
         let reports = self.reports.clone();
         Box::pin(async move {
             runtime.scheduler().wait_idle().await;
-            for sidecar in sidecars {
+            let phase_end_ns = clock.now_ns();
+            for sidecar in &sidecars {
+                sidecar.on_phase_end(phase_end_ns);
+            }
+            for sidecar in &sidecars {
                 sidecar.finish().await.map_err(|error| {
                     PhaseExecutionError::new(format!(
                         "finishing scheduled phase sidecar: {error:#}"

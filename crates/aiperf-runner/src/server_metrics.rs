@@ -24,8 +24,8 @@ use aiperf_metrics::{
 };
 use aiperf_server_metrics::{
     MetricSample, PrometheusHttpSource, PrometheusMetricType, ServerMetricsAccumulator,
-    ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode, ServerMetricsSource,
-    ServerMetricsSummary,
+    ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,
+    ServerMetricsScrapeOutcome, ServerMetricsSource, ServerMetricsSummary,
 };
 use aiperf_transport::config::ClientConfig;
 use aiperf_transport::transport::http_transport::HttpTransport;
@@ -214,6 +214,8 @@ struct ServerMetricsPhaseSidecar {
     task: Rc<RefCell<Option<JoinHandle<()>>>>,
     started: Rc<Cell<bool>>,
     finished: Rc<Cell<bool>>,
+    phase_start_ns: Rc<Cell<Option<i64>>>,
+    phase_end_ns: Rc<Cell<Option<i64>>>,
 }
 
 impl ServerMetricsPhaseSidecar {
@@ -226,6 +228,8 @@ impl ServerMetricsPhaseSidecar {
             task: Rc::new(RefCell::new(None)),
             started: Rc::new(Cell::new(false)),
             finished: Rc::new(Cell::new(false)),
+            phase_start_ns: Rc::new(Cell::new(None)),
+            phase_end_ns: Rc::new(Cell::new(None)),
         }
     }
 
@@ -243,13 +247,14 @@ impl ServerMetricsPhaseSidecar {
         let mut records = BTreeMap::new();
         for source in sources {
             match source.scrape(ServerMetricsScrapeMode::Boundary).await {
-                Ok(Some(mut record)) => {
+                Ok(ServerMetricsScrapeOutcome::Record(mut record)) => {
                     record.benchmark_phase = Some(self.phase);
                     records.insert(record.endpoint_url.clone(), record.clone());
                     self.state.accumulator.borrow_mut().ingest_record(record);
                     successful.push(source);
                 }
-                Ok(None) => {}
+                Ok(ServerMetricsScrapeOutcome::Empty) => successful.push(source),
+                Ok(ServerMetricsScrapeOutcome::Disabled) => {}
                 Err(error) => eprintln!(
                     "server metrics skipped unreachable source {}: {error}",
                     source.endpoint_url()
@@ -291,11 +296,12 @@ impl ServerMetricsPhaseSidecar {
             let sources = self.state.active.borrow().clone();
             for source in sources {
                 match source.scrape(ServerMetricsScrapeMode::Continuous).await {
-                    Ok(Some(mut record)) => {
+                    Ok(ServerMetricsScrapeOutcome::Record(mut record)) => {
                         record.benchmark_phase = Some(self.phase);
                         self.state.accumulator.borrow_mut().ingest_record(record);
                     }
-                    Ok(None) => self.remove_source(&source),
+                    Ok(ServerMetricsScrapeOutcome::Empty) => {}
+                    Ok(ServerMetricsScrapeOutcome::Disabled) => self.remove_source(&source),
                     Err(error) => {
                         eprintln!(
                             "server metrics cadence scrape failed for {}: {error}",
@@ -326,12 +332,13 @@ impl ServerMetricsPhaseSidecar {
         let mut end_records = BTreeMap::new();
         for source in sources {
             match source.scrape(ServerMetricsScrapeMode::Boundary).await {
-                Ok(Some(mut record)) => {
+                Ok(ServerMetricsScrapeOutcome::Record(mut record)) => {
                     record.benchmark_phase = Some(self.phase);
                     end_records.insert(record.endpoint_url.clone(), record.clone());
                     self.state.accumulator.borrow_mut().ingest_record(record);
                 }
-                Ok(None) => self.remove_source(&source),
+                Ok(ServerMetricsScrapeOutcome::Empty) => {}
+                Ok(ServerMetricsScrapeOutcome::Disabled) => self.remove_source(&source),
                 Err(error) => {
                     eprintln!(
                         "server metrics final scrape failed for {}: {error}",
@@ -344,11 +351,8 @@ impl ServerMetricsPhaseSidecar {
             }
         }
         let start_records = self.start_records.borrow().clone();
-        let start_ns = start_records
-            .values()
-            .map(|record| record.timestamp_ns)
-            .min();
-        let end_ns = end_records.values().map(|record| record.timestamp_ns).max();
+        let start_ns = self.phase_start_ns.get();
+        let end_ns = self.phase_end_ns.get();
         if let (Some(start_ns), Some(end_ns)) = (start_ns, end_ns) {
             self.state
                 .accumulator
@@ -384,6 +388,14 @@ impl ScheduledPhaseSidecar for ServerMetricsPhaseSidecar {
     fn start(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
         let sidecar = self.clone();
         Box::pin(async move { sidecar.start_inner().await })
+    }
+
+    fn on_phase_start(&self, timestamp_ns: i64) {
+        self.phase_start_ns.set(Some(timestamp_ns));
+    }
+
+    fn on_phase_end(&self, timestamp_ns: i64) {
+        self.phase_end_ns.set(Some(timestamp_ns));
     }
 
     fn finish(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {

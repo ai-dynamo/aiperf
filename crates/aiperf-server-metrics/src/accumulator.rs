@@ -9,7 +9,7 @@
 //! phase start/end values, while continuous records supply gauge distributions,
 //! timeslices, and histogram bucket-mean learning.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 use aiperf_metrics::{
     AccumulatorSummary, MetricValue, Phase, SidecarMetric, SidecarSeries, SidecarStats,
@@ -469,8 +469,8 @@ fn counter_series(
     duration_seconds: Option<f64>,
     slice_duration_ns: Option<i64>,
 ) -> Option<SidecarSeries> {
-    let start = scalar_value(start).or_else(|| first_scalar(state))?;
-    let end = scalar_value(end).or_else(|| last_scalar(state))?;
+    let start = scalar_value(start)?;
+    let end = scalar_value(end)?;
     let total = (end - start).max(0.0);
     let rate = duration_seconds.map(|duration| total / duration);
     let timeslices = slice_duration_ns
@@ -497,22 +497,20 @@ fn histogram_series(
     duration_seconds: Option<f64>,
     slice_duration_ns: Option<i64>,
 ) -> Option<SidecarSeries> {
-    let start = histogram_value(start).or_else(|| first_histogram(state))?;
-    let end = histogram_value(end).or_else(|| last_histogram(state))?;
-    let sum = (end.sum.unwrap_or(0.0) - start.sum.unwrap_or(0.0)).max(0.0);
-    let count = (end.count.unwrap_or(0.0) - start.count.unwrap_or(0.0)).max(0.0) as u64;
+    let start = histogram_value(start)?;
+    let end = histogram_value(end)?;
+    let sum = (end.sum? - start.sum?).max(0.0);
+    let count = (end.count? - start.count?).max(0.0) as u64;
     let bucket_names = start
         .buckets
         .keys()
-        .chain(end.buckets.keys())
+        .filter(|name| end.buckets.contains_key(*name))
         .cloned()
-        .collect::<BTreeSet<_>>();
+        .collect::<Vec<_>>();
     let buckets = bucket_names
         .into_iter()
         .map(|name| {
-            let delta = (end.buckets.get(&name).copied().unwrap_or(0.0)
-                - start.buckets.get(&name).copied().unwrap_or(0.0))
-            .max(0.0) as u64;
+            let delta = (end.buckets[&name] - start.buckets[&name]).max(0.0) as u64;
             (name, delta)
         })
         .collect::<BTreeMap<_, _>>();
@@ -526,8 +524,8 @@ fn histogram_series(
         .filter_map(|observation| match &observation.value {
             SeriesValue::Histogram(value) => Some(HistogramSnapshot {
                 timestamp_ns: observation.timestamp_ns,
-                sum: value.sum.unwrap_or(0.0),
-                count: value.count.unwrap_or(0.0),
+                sum: value.sum?,
+                count: value.count?,
                 buckets: value.buckets.clone(),
             }),
             SeriesValue::Scalar(_) => None,
@@ -575,48 +573,6 @@ fn histogram_value(value: Option<&SeriesValue>) -> Option<&HistogramValue> {
         Some(SeriesValue::Histogram(value)) => Some(value),
         _ => None,
     }
-}
-
-fn first_scalar(state: &SeriesState) -> Option<f64> {
-    state
-        .observations
-        .iter()
-        .find_map(|observation| match observation.value {
-            SeriesValue::Scalar(value) => Some(value),
-            SeriesValue::Histogram(_) => None,
-        })
-}
-
-fn last_scalar(state: &SeriesState) -> Option<f64> {
-    state
-        .observations
-        .iter()
-        .rev()
-        .find_map(|observation| match observation.value {
-            SeriesValue::Scalar(value) => Some(value),
-            SeriesValue::Histogram(_) => None,
-        })
-}
-
-fn first_histogram(state: &SeriesState) -> Option<&HistogramValue> {
-    state
-        .observations
-        .iter()
-        .find_map(|observation| match &observation.value {
-            SeriesValue::Histogram(value) => Some(value),
-            SeriesValue::Scalar(_) => None,
-        })
-}
-
-fn last_histogram(state: &SeriesState) -> Option<&HistogramValue> {
-    state
-        .observations
-        .iter()
-        .rev()
-        .find_map(|observation| match &observation.value {
-            SeriesValue::Histogram(value) => Some(value),
-            SeriesValue::Scalar(_) => None,
-        })
 }
 
 fn timeslice_bounds(start_ns: i64, end_ns: i64, duration_ns: i64) -> Vec<(i64, i64, bool)> {
@@ -698,20 +654,18 @@ fn histogram_timeslices(
         .filter_map(|(start_ns, end_ns, complete)| {
             let start = histogram_at_or_before(state, start_ns)?;
             let end = histogram_at_or_before(state, end_ns)?;
-            let sum = (end.sum.unwrap_or(0.0) - start.sum.unwrap_or(0.0)).max(0.0);
-            let count = (end.count.unwrap_or(0.0) - start.count.unwrap_or(0.0)).max(0.0) as u64;
+            let sum = (end.sum? - start.sum?).max(0.0);
+            let count = (end.count? - start.count?).max(0.0) as u64;
             let names = start
                 .buckets
                 .keys()
-                .chain(end.buckets.keys())
+                .filter(|name| end.buckets.contains_key(*name))
                 .cloned()
-                .collect::<BTreeSet<_>>();
+                .collect::<Vec<_>>();
             let buckets = names
                 .into_iter()
                 .map(|name| {
-                    let delta = (end.buckets.get(&name).copied().unwrap_or(0.0)
-                        - start.buckets.get(&name).copied().unwrap_or(0.0))
-                    .max(0.0) as u64;
+                    let delta = (end.buckets[&name] - start.buckets[&name]).max(0.0) as u64;
                     (name, delta)
                 })
                 .collect();
@@ -884,5 +838,82 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn counters_without_both_boundary_values_are_omitted() {
+        let start = record(0, 100.0, 1.0, 10.0);
+        let mut end = record(1_000_000_000, 110.0, 1.0, 20.0);
+        end.metrics.remove("requests");
+        let mut accumulator = ServerMetricsAccumulator::new();
+        accumulator.ingest_record(start.clone());
+        accumulator.ingest_record(end.clone());
+        accumulator.set_phase_boundary(ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 1_000_000_000,
+            start_records: BTreeMap::from([(start.endpoint_url.clone(), start)]),
+            end_records: BTreeMap::from([(end.endpoint_url.clone(), end)]),
+        });
+
+        let summary = accumulator.summarize_phase(Phase::Profiling, None);
+
+        assert!(!summary.sidecar_metrics().contains_key("requests"));
+    }
+
+    #[test]
+    fn histogram_boundary_delta_uses_only_complete_fields_and_shared_buckets() {
+        let start = record(0, 100.0, 1.0, 10.0);
+        let mut end = record(1_000_000_000, 110.0, 1.0, 20.0);
+        let MetricSample::Histogram { value, .. } =
+            &mut end.metrics.get_mut("latency_seconds").unwrap().samples[0]
+        else {
+            panic!("histogram")
+        };
+        value.buckets.remove("1.0");
+        let mut accumulator = ServerMetricsAccumulator::new();
+        accumulator.ingest_record(start.clone());
+        accumulator.ingest_record(end.clone());
+        accumulator.set_phase_boundary(ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 1_000_000_000,
+            start_records: BTreeMap::from([(start.endpoint_url.clone(), start)]),
+            end_records: BTreeMap::from([(end.endpoint_url.clone(), end)]),
+        });
+
+        let summary = accumulator.summarize_phase(Phase::Profiling, None);
+        let SidecarStats::Histogram { buckets, .. } =
+            &summary.sidecar_metrics()["latency_seconds"].series[0].stats
+        else {
+            panic!("histogram")
+        };
+        assert_eq!(buckets, &BTreeMap::from([("+Inf".to_string(), 10)]));
+    }
+
+    #[test]
+    fn histogram_without_boundary_sum_is_omitted() {
+        let start = record(0, 100.0, 1.0, 10.0);
+        let mut end = record(1_000_000_000, 110.0, 1.0, 20.0);
+        let MetricSample::Histogram { value, .. } =
+            &mut end.metrics.get_mut("latency_seconds").unwrap().samples[0]
+        else {
+            panic!("histogram")
+        };
+        value.sum = None;
+        let mut accumulator = ServerMetricsAccumulator::new();
+        accumulator.ingest_record(start.clone());
+        accumulator.ingest_record(end.clone());
+        accumulator.set_phase_boundary(ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 1_000_000_000,
+            start_records: BTreeMap::from([(start.endpoint_url.clone(), start)]),
+            end_records: BTreeMap::from([(end.endpoint_url.clone(), end)]),
+        });
+
+        let summary = accumulator.summarize_phase(Phase::Profiling, None);
+
+        assert!(!summary.sidecar_metrics().contains_key("latency_seconds"));
     }
 }

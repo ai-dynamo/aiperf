@@ -151,6 +151,8 @@ struct GpuTelemetryState {
     accumulator: Rc<RefCell<GpuTelemetryAccumulator>>,
     start_snapshots: RefCell<Vec<GpuBoundarySnapshot>>,
     boundary: RefCell<Option<GpuPhaseBoundary>>,
+    phase_start_ns: Cell<Option<i64>>,
+    phase_end_ns: Cell<Option<i64>>,
     stop: Rc<Notify>,
     task: RefCell<Option<JoinHandle<()>>>,
     started: Cell<bool>,
@@ -173,6 +175,8 @@ impl GpuTelemetrySidecar {
                 accumulator: Rc::new(RefCell::new(accumulator)),
                 start_snapshots: RefCell::new(Vec::new()),
                 boundary: RefCell::new(None),
+                phase_start_ns: Cell::new(None),
+                phase_end_ns: Cell::new(None),
                 stop: Rc::new(Notify::new()),
                 task: RefCell::new(None),
                 started: Cell::new(false),
@@ -225,6 +229,14 @@ impl ScheduledPhaseSidecar for GpuTelemetrySidecar {
     fn start(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.start().await })
+    }
+
+    fn on_phase_start(&self, timestamp_ns: i64) {
+        self.state.phase_start_ns.set(Some(timestamp_ns));
+    }
+
+    fn on_phase_end(&self, timestamp_ns: i64) {
+        self.state.phase_end_ns.set(Some(timestamp_ns));
     }
 
     fn finish(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
@@ -340,9 +352,17 @@ impl GpuTelemetryState {
         }
 
         let start_snapshots = self.start_snapshots.borrow();
+        let start_ns = self
+            .phase_start_ns
+            .get()
+            .context("GPU telemetry phase-start boundary was not recorded")?;
+        let end_ns = self
+            .phase_end_ns
+            .get()
+            .context("GPU telemetry phase-end boundary was not recorded")?;
         if let (Some(start), Some(end)) = (
-            combine_snapshots(&start_snapshots, BoundarySide::Start),
-            combine_snapshots(&end_snapshots, BoundarySide::End),
+            combine_snapshots(&start_snapshots, start_ns),
+            combine_snapshots(&end_snapshots, end_ns),
         ) {
             let boundary = GpuPhaseBoundary::new(start, end)?;
             self.accumulator
@@ -373,20 +393,11 @@ fn native_unit(unit: GpuTelemetryUnitSpec) -> Unit {
     }
 }
 
-#[derive(Clone, Copy)]
-enum BoundarySide {
-    Start,
-    End,
-}
-
 fn combine_snapshots(
     snapshots: &[GpuBoundarySnapshot],
-    side: BoundarySide,
+    timestamp_ns: i64,
 ) -> Option<GpuBoundarySnapshot> {
-    let timestamp_ns = match side {
-        BoundarySide::Start => snapshots.iter().map(|item| item.timestamp_ns).min()?,
-        BoundarySide::End => snapshots.iter().map(|item| item.timestamp_ns).max()?,
-    };
+    snapshots.first()?;
     let mut counters = BTreeMap::new();
     for snapshot in snapshots {
         counters.extend(snapshot.counters.clone());
@@ -440,7 +451,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn snapshot_merge_keeps_all_endpoints_and_barrier_extrema() {
+    fn snapshot_merge_keeps_all_endpoints_and_uses_runtime_boundary() {
         let first = GpuBoundarySnapshot {
             timestamp_ns: 10,
             counters: BTreeMap::new(),
@@ -450,16 +461,16 @@ mod tests {
             counters: BTreeMap::new(),
         };
         assert_eq!(
-            combine_snapshots(&[first.clone(), second.clone()], BoundarySide::Start)
+            combine_snapshots(&[first.clone(), second.clone()], 30)
                 .unwrap()
                 .timestamp_ns,
-            10
+            30
         );
         assert_eq!(
-            combine_snapshots(&[first, second], BoundarySide::End)
+            combine_snapshots(&[first, second], 40)
                 .unwrap()
                 .timestamp_ns,
-            20
+            40
         );
     }
 }
