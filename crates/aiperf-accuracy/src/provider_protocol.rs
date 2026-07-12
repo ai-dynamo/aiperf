@@ -934,6 +934,8 @@ impl HostOperationRequest {
         validate_no_secret_host_payload(&self.payload)
             .map_err(|error| EvaluationProtocolError::new(error.to_string()))?;
         if let Some(restricted) = &self.restricted_payload {
+            validate_no_secret_host_payload(&restricted.body)
+                .map_err(|error| EvaluationProtocolError::new(error.to_string()))?;
             restricted.validate_for(&self.service_id, &self.purpose)?;
         }
         Ok(())
@@ -1554,6 +1556,72 @@ pub struct ScopedProxyGrant {
     pub expires_after_ms: u64,
 }
 
+impl ScopedProxyGrant {
+    /// Reject empty, duplicated, inconsistent, or unscoped capability fields.
+    pub fn validate(&self) -> Result<(), EvaluationProtocolError> {
+        validate_opaque_id("scoped proxy grant_id", &self.grant_id)?;
+        if self.service_ids.is_empty()
+            || self.semantic_operation_ids.is_empty()
+            || self.purposes.is_empty()
+            || self.service_ids.iter().collect::<BTreeSet<_>>().len() != self.service_ids.len()
+            || self
+                .semantic_operation_ids
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.semantic_operation_ids.len()
+            || self.purposes.iter().collect::<BTreeSet<_>>().len() != self.purposes.len()
+            || self.max_operations == 0
+            || self.max_concurrent_operations == 0
+            || self.max_concurrent_operations > self.max_operations
+            || self.max_request_bytes == 0
+            || self.max_response_bytes == 0
+            || self.max_stream_events == 0
+            || self.expires_after_ms == 0
+            || !is_sha256(&self.process_scope_sha256)
+        {
+            return Err(EvaluationProtocolError::new(
+                "scoped proxy grant was not unique, bounded, and process-scoped",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Prove this grant only reduces route and numeric authority from one exact ceiling.
+    pub fn validate_narrowing_of(&self, ceiling: &Self) -> Result<(), EvaluationProtocolError> {
+        self.validate()?;
+        ceiling.validate()?;
+        if self.grant_id != ceiling.grant_id
+            || self.session_id != ceiling.session_id
+            || self.secret != ceiling.secret
+            || !self
+                .service_ids
+                .iter()
+                .all(|value| ceiling.service_ids.contains(value))
+            || !self
+                .semantic_operation_ids
+                .iter()
+                .all(|value| ceiling.semantic_operation_ids.contains(value))
+            || !self
+                .purposes
+                .iter()
+                .all(|value| ceiling.purposes.contains(value))
+            || self.process_scope_sha256 != ceiling.process_scope_sha256
+            || self.max_operations > ceiling.max_operations
+            || self.max_concurrent_operations > ceiling.max_concurrent_operations
+            || self.max_request_bytes > ceiling.max_request_bytes
+            || self.max_response_bytes > ceiling.max_response_bytes
+            || self.max_stream_events > ceiling.max_stream_events
+            || self.expires_after_ms > ceiling.expires_after_ms
+        {
+            return Err(EvaluationProtocolError::new(
+                "scoped proxy grant changed identity or expanded its registered ceiling",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Runner-to-worker local compatibility proxy binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1570,7 +1638,7 @@ pub struct ScopedProxyBinding {
 impl ScopedProxyBinding {
     /// Reject non-loopback locators and empty/unbounded grants.
     pub fn validate(&self) -> Result<(), EvaluationProtocolError> {
-        validate_opaque_id("scoped proxy grant_id", &self.grant.grant_id)?;
+        self.grant.validate()?;
         let worker_socket = self.local_locator == "unix:///run/aiperf/evaluator-proxy.sock";
         if !worker_socket
             || !self.host_socket_path.is_absolute()
@@ -1580,29 +1648,6 @@ impl ScopedProxyBinding {
                     std::path::Component::ParentDir | std::path::Component::CurDir
                 )
             })
-            || self.grant.grant_id.trim().is_empty()
-            || self.grant.service_ids.is_empty()
-            || self.grant.semantic_operation_ids.is_empty()
-            || self.grant.purposes.is_empty()
-            || self.grant.service_ids.iter().collect::<BTreeSet<_>>().len()
-                != self.grant.service_ids.len()
-            || self
-                .grant
-                .semantic_operation_ids
-                .iter()
-                .collect::<BTreeSet<_>>()
-                .len()
-                != self.grant.semantic_operation_ids.len()
-            || self.grant.purposes.iter().collect::<BTreeSet<_>>().len()
-                != self.grant.purposes.len()
-            || self.grant.max_operations == 0
-            || self.grant.max_concurrent_operations == 0
-            || self.grant.max_concurrent_operations > self.grant.max_operations
-            || self.grant.max_request_bytes == 0
-            || self.grant.max_response_bytes == 0
-            || self.grant.max_stream_events == 0
-            || self.grant.expires_after_ms == 0
-            || !is_sha256(&self.grant.process_scope_sha256)
         {
             return Err(EvaluationProtocolError::new(
                 "scoped proxy binding was not loopback-only, bounded, and process-scoped",
@@ -1844,6 +1889,30 @@ mod tests {
                 .validate_for(&LogicalServiceId::new("primary").unwrap(), &purpose)
                 .is_err()
         );
+
+        let mut request = HostOperationRequest {
+            operation_id: HostOperationId::new("operation-1").unwrap(),
+            context: HostCallContext {
+                session_id: EvaluationSessionId::new("session-1").unwrap(),
+                unit_id: EvaluationUnitId::new("unit-1").unwrap(),
+                case_id: EvaluationCaseId::new("case-1").unwrap(),
+                semantic_attempt_id: SemanticAttemptId::new("attempt-1").unwrap(),
+                logical_call_id: LogicalCallId::new("call-1").unwrap(),
+            },
+            service_id: service,
+            purpose,
+            semantic_operation_id: SemanticOperationId::new("model.generate").unwrap(),
+            payload: CanonicalJson::new(serde_json::json!({})).unwrap(),
+            restricted_payload: Some(restricted),
+            response_mode: HostResponseMode::Terminal,
+            deadline_ms: None,
+            idempotency_key: "idempotency-1".to_string(),
+        };
+        request.validate().unwrap();
+        request.restricted_payload.as_mut().unwrap().body =
+            CanonicalJson::new(serde_json::json!({"upstream_url": "https://hidden.invalid"}))
+                .unwrap();
+        assert!(request.validate().is_err());
     }
 
     #[test]
@@ -1904,6 +1973,54 @@ mod tests {
         };
         assert!(binding.validate().is_err());
         assert!(!format!("{:?}", binding.grant.secret).contains(&"x".repeat(32)));
+    }
+
+    #[test]
+    fn scoped_proxy_grant_only_accepts_identity_preserving_reductions() {
+        let ceiling = ScopedProxyGrant {
+            grant_id: "grant-1".to_string(),
+            session_id: EvaluationSessionId::new("session-1").unwrap(),
+            secret: ScopedProxySecret::new("x".repeat(32)).unwrap(),
+            service_ids: vec![
+                LogicalServiceId::new("primary").unwrap(),
+                LogicalServiceId::new("judge").unwrap(),
+            ],
+            semantic_operation_ids: vec![
+                SemanticOperationId::new("model.generate").unwrap(),
+                SemanticOperationId::new("model.responses").unwrap(),
+            ],
+            purposes: vec![
+                OperationPurpose::new("primary").unwrap(),
+                OperationPurpose::new("judge").unwrap(),
+            ],
+            process_scope_sha256: "a".repeat(64),
+            max_operations: 40,
+            max_concurrent_operations: 40,
+            max_request_bytes: 40 * 1024,
+            max_response_bytes: 40 * 2048,
+            max_stream_events: 40,
+            expires_after_ms: 1000,
+        };
+        let mut narrowed = ceiling.clone();
+        narrowed.max_operations = 1;
+        narrowed.max_concurrent_operations = 1;
+        narrowed.max_request_bytes = 1024;
+        narrowed.max_response_bytes = 2048;
+        narrowed.max_stream_events = 1;
+        narrowed.service_ids.truncate(1);
+        narrowed.semantic_operation_ids.truncate(1);
+        narrowed.purposes.truncate(1);
+        narrowed.validate_narrowing_of(&ceiling).unwrap();
+
+        let mut expanded = narrowed.clone();
+        expanded.max_operations = 41;
+        assert!(expanded.validate_narrowing_of(&ceiling).is_err());
+        let mut changed_identity = narrowed;
+        changed_identity.grant_id = "grant-2".to_string();
+        assert!(changed_identity.validate_narrowing_of(&ceiling).is_err());
+        let mut broadened_route = ceiling.clone();
+        broadened_route.service_ids = vec![LogicalServiceId::new("unregistered").unwrap()];
+        assert!(broadened_route.validate_narrowing_of(&ceiling).is_err());
     }
 
     #[test]

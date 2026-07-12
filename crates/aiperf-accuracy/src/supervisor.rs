@@ -493,6 +493,7 @@ pub struct SupervisedEvaluationProvider {
     control_timeout: Duration,
     next_request_id: u64,
     proxy: Option<crate::provider_protocol::ScopedProxyBinding>,
+    proxy_grant_installed: bool,
     host_binding: crate::provider_protocol::EvaluationHostBinding,
     plan_request: Option<EvaluationPlanRequest>,
     plan: Option<EvaluationPlan>,
@@ -643,6 +644,7 @@ impl SupervisedEvaluationProvider {
             control_timeout,
             next_request_id: 1,
             proxy: context.proxy.clone(),
+            proxy_grant_installed: false,
             host_binding,
             plan_request: None,
             plan: None,
@@ -835,6 +837,28 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
         self.finish_worker_response(validation).await
     }
 
+    fn install_compatibility_proxy_grant(
+        &mut self,
+        grant: &crate::provider_protocol::ScopedProxyGrant,
+    ) -> Result<(), EvaluationProviderError> {
+        if self.lifecycle.state() != EvaluationLifecycleState::Planned || self.proxy_grant_installed
+        {
+            return Err(EvaluationProviderError::Lifecycle(
+                "compatibility proxy grant was not installed exactly once after planning"
+                    .to_string(),
+            ));
+        }
+        let binding = self.proxy.as_mut().ok_or_else(|| {
+            EvaluationProviderError::Lifecycle(
+                "pipe-only evaluator received a compatibility proxy grant".to_string(),
+            )
+        })?;
+        grant.validate_narrowing_of(&binding.grant)?;
+        binding.grant = grant.clone();
+        self.proxy_grant_installed = true;
+        Ok(())
+    }
+
     async fn bind_assets(
         &mut self,
         assets: &[ResolvedEvaluationAsset],
@@ -847,6 +871,11 @@ impl EvaluationProvider for SupervisedEvaluationProvider {
         let plan = self.plan.as_ref().ok_or_else(|| {
             EvaluationProviderError::Lifecycle("bind_assets preceded plan_session".to_string())
         })?;
+        if self.proxy.is_some() && !self.proxy_grant_installed {
+            return Err(EvaluationProviderError::Lifecycle(
+                "bind_assets preceded post-plan compatibility grant installation".to_string(),
+            ));
+        }
         validate_asset_binding(plan, assets)?;
         let id = self.take_request_id()?;
         let result: BindAssetsResult = self

@@ -25,7 +25,8 @@ use crate::provider_protocol::{
     EvaluationPlanRequest, EvaluationProtocolError, EvaluationProviderId, EvaluationSchedulingMode,
     EvaluationSessionId, EvaluationUnitId, EvaluationUnitOccurrence,
     EvaluationUnitOccurrenceRequest, EvaluationUnitPage, EvaluationWorkerIdentity,
-    HostOperationEvent, ResolvedEvaluationAsset, ScopedProxyBinding, SemanticOperationId,
+    HostOperationEvent, ResolvedEvaluationAsset, ScopedProxyBinding, ScopedProxyGrant,
+    SemanticOperationId,
 };
 use crate::score_projection::PublicScoreProjectionPolicy;
 
@@ -612,6 +613,16 @@ pub trait EvaluationProvider {
         request: &EvaluationPlanRequest,
     ) -> Result<EvaluationPlan, EvaluationProviderError>;
 
+    /// Install the one-shot post-plan reduction of a prelaunch proxy ceiling.
+    fn install_compatibility_proxy_grant(
+        &mut self,
+        _grant: &ScopedProxyGrant,
+    ) -> Result<(), EvaluationProviderError> {
+        Err(EvaluationProviderError::Lifecycle(
+            "evaluation provider does not support a compatibility proxy".to_string(),
+        ))
+    }
+
     /// Bind Rust-resolved immutable assets and freeze evaluation identity.
     async fn bind_assets(
         &mut self,
@@ -718,6 +729,15 @@ pub trait EvaluationProviderFactory: Send + Sync {
         config: &CanonicalJson,
     ) -> Result<ValidatedProviderConfig, ProviderRegistryError>;
 
+    /// Project a previously validated config into factory-reviewed public report data.
+    ///
+    /// Implementations must fail closed or return an explicitly safe projection;
+    /// the runtime never publishes the authored provider value directly.
+    fn project_public_config(
+        &self,
+        validated_config: &CanonicalJson,
+    ) -> Result<CanonicalJson, ProviderRegistryError>;
+
     /// Prove one descriptor-backed distribution is executable by this factory.
     fn check_distribution_available(
         &self,
@@ -794,6 +814,18 @@ impl EvaluationProviderFactory for RegisteredProviderFactory {
             config: normalized,
             config_sha256,
         })
+    }
+
+    fn project_public_config(
+        &self,
+        validated_config: &CanonicalJson,
+    ) -> Result<CanonicalJson, ProviderRegistryError> {
+        // Re-run the exact pure validator so callers cannot use this method to
+        // bless a value that did not pass the factory-owned authored schema.
+        let projection = self.validator.validate(validated_config)?;
+        validate_no_secret_control_value(&projection)
+            .map_err(|error| ProviderRegistryError::InvalidConfig(error.to_string()))?;
+        Ok(projection)
     }
 
     fn check_distribution_available(
@@ -1172,6 +1204,13 @@ macro_rules! delegate_factory {
                 config: &CanonicalJson,
             ) -> Result<ValidatedProviderConfig, ProviderRegistryError> {
                 self.0.validate_authored_config(config)
+            }
+
+            fn project_public_config(
+                &self,
+                validated_config: &CanonicalJson,
+            ) -> Result<CanonicalJson, ProviderRegistryError> {
+                self.0.project_public_config(validated_config)
             }
 
             fn check_distribution_available(
@@ -1671,6 +1710,10 @@ mod tests {
         assert_eq!(validated.provider_id().as_str(), "nemo_evaluator");
         assert!(is_sha256(validated.schema_sha256()));
         assert!(is_sha256(validated.config_sha256()));
+        assert_eq!(
+            factory.project_public_config(validated.config()).unwrap(),
+            validated.config().clone()
+        );
 
         let unknown = CanonicalJson::new(serde_json::json!({
             "environment": "gsm8k",
@@ -1681,6 +1724,7 @@ mod tests {
         }))
         .unwrap();
         assert!(factory.validate_authored_config(&unknown).is_err());
+        assert!(factory.project_public_config(&unknown).is_err());
     }
 
     #[test]
