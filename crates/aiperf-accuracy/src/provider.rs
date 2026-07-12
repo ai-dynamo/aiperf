@@ -27,6 +27,7 @@ use crate::provider_protocol::{
     HostOperationEvent, LogicalServiceId, ResolvedEvaluationAsset, ScopedProxyBinding,
     SemanticOperationId,
 };
+use crate::score_projection::PublicScoreProjectionPolicy;
 
 /// Process-protocol operation schema and endpoint compatibility descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,8 @@ pub struct EvaluationOperationDescriptor {
 pub struct StockEvaluationOperationSchema {
     /// Open semantic operation ID.
     pub operation_id: &'static str,
+    /// Canonical SHA-256 for the full `{request,response,stream}` capability schema.
+    pub combined_schema_sha256: &'static str,
     /// Canonical request JSON Schema SHA-256.
     pub request_schema_sha256: &'static str,
     /// Canonical response JSON Schema SHA-256.
@@ -77,6 +80,7 @@ pub struct StockEvaluationOperationSchema {
 pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] = &[
     StockEvaluationOperationSchema {
         operation_id: "model.generate",
+        combined_schema_sha256: "d468bbc4f1fdbbc54360cede8194732b2ebaabbdfb55490bc572c4bb44f89cdf",
         request_schema_sha256: "c2f30f5396f4af6e44025d80294b2685916492c23dd730cd1e2a6ebdb6ae5d21",
         response_schema_sha256: "6c8d726e5a0c05a22de946ce2495d6a4bcf3b3b7bb7a48e5c39bad07ff954ca0",
         canonical_stream_schema_sha256: "84a861ea0a983368cd48e6db2fa4ac71b8219d7685065718859f0bfc4ea49206",
@@ -94,6 +98,7 @@ pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] 
     },
     StockEvaluationOperationSchema {
         operation_id: "model.complete",
+        combined_schema_sha256: "bf476cc2ec39d6168c4dab8872bab0f70932aacf30afaa20a7a001800d135083",
         request_schema_sha256: "a2b90611bd9bef0849c7e9472820124432d0b68578a9c6d403fda7e7ea108901",
         response_schema_sha256: "274926adc0a1d6944d77b28882965e80e528bc7724da6aee075381b22d37af68",
         canonical_stream_schema_sha256: "c1b02dc133d9bed9f61fee3b434a9bb59dc0f0d834ad09715c9af549be1ab9f4",
@@ -103,6 +108,7 @@ pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] 
     },
     StockEvaluationOperationSchema {
         operation_id: "model.responses",
+        combined_schema_sha256: "c58154fbc26e5a787a170b438eaccb391b00f2bc06a16ea6be82f9926c6e3286",
         request_schema_sha256: "ecfbf3cb2741066d555df42e01c4c3c68d37c3674d818116feeaf8fdead2d5b3",
         response_schema_sha256: "b1702513240975373a50c2720a9f1d39df8e2466560fe90174e63a0d631cd3e7",
         canonical_stream_schema_sha256: "800695bec0f214e79c9eb0b469ce020fc2931167126cb0d4e0ca7cce2d2f262e",
@@ -112,6 +118,7 @@ pub const STOCK_EVALUATION_OPERATION_SCHEMAS: &[StockEvaluationOperationSchema] 
     },
     StockEvaluationOperationSchema {
         operation_id: "model.embed",
+        combined_schema_sha256: "9f68f85de35c85a33536a3bde8a2e727c81cd217479755f53eeadcc01f775749",
         request_schema_sha256: "d46a1567b54ffeb888fbecbb451e8f2790b846e5928e339bf7afeedd4be34f86",
         response_schema_sha256: "ddea46c3ffba13ff7b860ad0d6c6277c19a2f51b71adbc0cef76c0d8fd2c6bc1",
         canonical_stream_schema_sha256: "bcde375ebd4cbacf651311181173836b169d5a360c6ac158c6a2cdaf49be3f61",
@@ -617,6 +624,9 @@ pub trait EvaluationProviderFactory: Send + Sync {
     /// Immutable capability, schema, isolation, and distribution descriptor.
     fn descriptor(&self) -> &EvaluationProviderDescriptor;
 
+    /// Factory-owned executable validators for every public score schema.
+    fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy;
+
     /// Strictly validate authored configuration without any external effect.
     fn validate_authored_config(
         &self,
@@ -641,6 +651,7 @@ pub trait EvaluationProviderFactory: Send + Sync {
 struct RegisteredProviderFactory {
     descriptor: EvaluationProviderDescriptor,
     validator: Arc<dyn ProviderConfigValidator>,
+    public_score_projection_policy: PublicScoreProjectionPolicy,
     launcher: Arc<dyn EvaluationProviderLauncher>,
 }
 
@@ -648,12 +659,17 @@ impl RegisteredProviderFactory {
     fn new(
         descriptor: EvaluationProviderDescriptor,
         validator: Arc<dyn ProviderConfigValidator>,
+        public_score_projection_policy: PublicScoreProjectionPolicy,
         launcher: Arc<dyn EvaluationProviderLauncher>,
     ) -> Result<Self, ProviderRegistryError> {
         descriptor.validate()?;
+        public_score_projection_policy
+            .validate_descriptor_fingerprints(&descriptor.public_projection_schemas)
+            .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
         Ok(Self {
             descriptor,
             validator,
+            public_score_projection_policy,
             launcher,
         })
     }
@@ -663,6 +679,10 @@ impl RegisteredProviderFactory {
 impl EvaluationProviderFactory for RegisteredProviderFactory {
     fn descriptor(&self) -> &EvaluationProviderDescriptor {
         &self.descriptor
+    }
+
+    fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy {
+        &self.public_score_projection_policy
     }
 
     fn validate_authored_config(
@@ -746,6 +766,10 @@ impl EvaluationProviderRegistryBuilder {
         factory: Arc<dyn EvaluationProviderFactory>,
     ) -> Result<&mut Self, ProviderRegistryError> {
         factory.descriptor().validate()?;
+        factory
+            .public_score_projection_policy()
+            .validate_descriptor_fingerprints(&factory.descriptor().public_projection_schemas)
+            .map_err(|error| ProviderRegistryError::InvalidDescriptor(error.to_string()))?;
         let id = factory.descriptor().provider_id.clone();
         if self.factories.contains_key(&id) {
             return Err(ProviderRegistryError::DuplicateProvider(id.to_string()));
@@ -815,6 +839,16 @@ impl EvaluationProviderRegistry {
         provider_id: &EvaluationProviderId,
     ) -> Option<&Arc<dyn EvaluationProviderFactory>> {
         self.factories.get(provider_id)
+    }
+
+    /// Resolve the exact factory-owned score projection validators for a provider.
+    pub fn public_score_projection_policy(
+        &self,
+        provider_id: &EvaluationProviderId,
+    ) -> Option<&PublicScoreProjectionPolicy> {
+        self.factories
+            .get(provider_id)
+            .map(|factory| factory.public_score_projection_policy())
     }
 
     /// Strictly decode and validate authored JSON bytes for one provider/distribution.
@@ -950,6 +984,7 @@ impl NemoEvaluatorProviderFactory {
         Ok(Self(RegisteredProviderFactory::new(
             descriptor,
             Arc::new(NemoConfigValidator),
+            PublicScoreProjectionPolicy::restricted_only(),
             launcher,
         )?))
     }
@@ -976,6 +1011,7 @@ impl OpenBenchProviderFactory {
         Ok(Self(RegisteredProviderFactory::new(
             descriptor,
             Arc::new(OpenBenchConfigValidator),
+            PublicScoreProjectionPolicy::restricted_only(),
             launcher,
         )?))
     }
@@ -987,6 +1023,10 @@ macro_rules! delegate_factory {
         impl EvaluationProviderFactory for $type {
             fn descriptor(&self) -> &EvaluationProviderDescriptor {
                 self.0.descriptor()
+            }
+
+            fn public_score_projection_policy(&self) -> &PublicScoreProjectionPolicy {
+                self.0.public_score_projection_policy()
             }
 
             fn validate_authored_config(
@@ -1577,6 +1617,32 @@ mod tests {
             STOCK_EVALUATION_OPERATION_SCHEMAS[3].canonical_stream_schema_sha256,
             "bcde375ebd4cbacf651311181173836b169d5a360c6ac158c6a2cdaf49be3f61"
         );
+        assert_eq!(
+            STOCK_EVALUATION_OPERATION_SCHEMAS[0].combined_schema_sha256,
+            "d468bbc4f1fdbbc54360cede8194732b2ebaabbdfb55490bc572c4bb44f89cdf"
+        );
+    }
+
+    #[test]
+    fn factory_rejects_public_schema_without_executable_validator() {
+        let stock = NemoEvaluatorProviderFactory::new(
+            vec![distribution("nemo-locked")],
+            Arc::new(NeverLaunch),
+        )
+        .unwrap();
+        let mut descriptor = stock.descriptor().clone();
+        descriptor
+            .public_projection_schemas
+            .insert("accuracy".to_string(), "a".repeat(64));
+        assert!(
+            RegisteredProviderFactory::new(
+                descriptor,
+                Arc::new(NemoConfigValidator),
+                PublicScoreProjectionPolicy::restricted_only(),
+                Arc::new(NeverLaunch),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1600,6 +1666,7 @@ mod tests {
             RegisteredProviderFactory::new(
                 descriptor,
                 Arc::new(OpenBenchConfigValidator),
+                PublicScoreProjectionPolicy::restricted_only(),
                 Arc::new(NeverLaunch),
             )
             .unwrap(),

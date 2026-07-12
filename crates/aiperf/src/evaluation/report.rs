@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use aiperf_accuracy::{
     ArtifactVisibility, CanonicalJson, CaseOutcomeKind, EvaluationCaseId, EvaluationCaseTemplateId,
-    EvaluationFinishCandidate, SealedEvaluationArtifacts, is_sha256, redact_diagnostic,
-    validate_no_secret_control_value,
+    EvaluationFinishCandidate, PublicScoreProjectionPolicy, SealedEvaluationArtifacts, is_sha256,
+    redact_diagnostic, validate_no_secret_control_value,
 };
 use aiperf_metrics::{
     EvaluationAggregateMetricReport, EvaluationArtifactReport, EvaluationCaseErrorReport,
@@ -43,8 +43,8 @@ pub struct EvaluationReportFacts {
     pub safe_config: Value,
     /// Exact occurrence-to-template/reporting identity map.
     pub cases: BTreeMap<EvaluationCaseId, EvaluationCaseReportFacts>,
-    /// Factory-owned public score projection schema fingerprints by score name.
-    pub public_score_projection_schemas: BTreeMap<String, String>,
+    /// Factory-owned executable public score projection validators.
+    pub public_score_projection_policy: PublicScoreProjectionPolicy,
     /// Rust-authoritative per-route accounting summaries.
     pub route_summaries: BTreeMap<String, EvaluationRouteSummaryReport>,
 }
@@ -67,7 +67,6 @@ pub fn build_evaluation_report(
     let route_reports = build_routes(routes, &facts.route_summaries)?;
     validate_case_fact_manifest(&candidate, &facts.cases)?;
     let sealed_by_id = validate_sealed_manifest(&candidate, sealed)?;
-    validate_public_score_schemas(&facts.public_score_projection_schemas)?;
 
     let templates = candidate
         .identity
@@ -132,20 +131,15 @@ pub fn build_evaluation_report(
                             .map(|projection| (name, projection))
                     })
                     .map(|(name, projection)| {
-                        validate_no_secret_control_value(projection)
+                        let schema = facts
+                            .public_score_projection_policy
+                            .validate(name, projection)
                             .map_err(|error| anyhow!(error.to_string()))?;
-                        let schema = facts.public_score_projection_schemas.get(name).ok_or_else(
-                            || {
-                                anyhow!(
-                                    "provider exposed unregistered public score projection {name:?}"
-                                )
-                            },
-                        )?;
                         Ok((
                             name.clone(),
                             EvaluationPublicScoreReport {
                                 value: projection.value().clone(),
-                                projection_schema: schema.clone(),
+                                projection_schema: schema.to_string(),
                             },
                         ))
                     })
@@ -388,16 +382,6 @@ fn validate_sealed_manifest<'a>(
     Ok(sealed_by_id)
 }
 
-fn validate_public_score_schemas(schemas: &BTreeMap<String, String>) -> Result<()> {
-    for (name, fingerprint) in schemas {
-        ensure!(
-            !name.trim().is_empty() && is_sha256(fingerprint),
-            "public score projection schema {name:?} was empty or mutable"
-        );
-    }
-    Ok(())
-}
-
 fn build_identity(candidate: &EvaluationFinishCandidate) -> Result<EvaluationIdentityReport> {
     let source = &candidate.identity;
     let host_identity = CanonicalJson::new(json!({
@@ -456,6 +440,7 @@ fn build_identity(candidate: &EvaluationFinishCandidate) -> Result<EvaluationIde
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use aiperf_accuracy::{
         AggregateMetric, ArtifactRef, CaseOutcome, CompletedCaseOutcome, EvaluationArtifactId,
@@ -464,11 +449,32 @@ mod tests {
         EvaluationHostIdentity, EvaluationIdentity, EvaluationIdentityComponent,
         EvaluationProviderId, EvaluationStage, EvaluationUnitTemplateDescriptor,
         EvaluationUnitTemplateId, EvaluationWorkerIdentity, FiniteF64, ProviderScore,
-        SealedEvaluationArtifact,
+        PublicScoreProjectionError, PublicScoreProjectionValidator, SealedEvaluationArtifact,
     };
 
     use super::*;
     use crate::evaluation::host::{EvaluationRoute, EvaluationRouteTable};
+
+    struct ZeroProjection;
+
+    impl PublicScoreProjectionValidator for ZeroProjection {
+        fn schema_sha256(&self) -> &str {
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+
+        fn validate(
+            &self,
+            value: &CanonicalJson,
+        ) -> std::result::Result<(), PublicScoreProjectionError> {
+            if value.value() == &json!(0) {
+                Ok(())
+            } else {
+                Err(PublicScoreProjectionError::rejected(
+                    "fixture schema permits only numeric zero",
+                ))
+            }
+        }
+    }
 
     fn worker() -> EvaluationWorkerIdentity {
         EvaluationWorkerIdentity {
@@ -676,13 +682,14 @@ mod tests {
                 )
             })
             .collect();
+        let mut public_score_projection_policy = PublicScoreProjectionPolicy::restricted_only();
+        public_score_projection_policy
+            .register("accuracy", Arc::new(ZeroProjection))
+            .unwrap();
         EvaluationReportFacts {
             safe_config: json!({"benchmark": "fixture"}),
             cases,
-            public_score_projection_schemas: BTreeMap::from([(
-                "accuracy".to_string(),
-                "c".repeat(64),
-            )]),
+            public_score_projection_policy,
             route_summaries: BTreeMap::from([(
                 "primary".to_string(),
                 EvaluationRouteSummaryReport {
@@ -735,7 +742,8 @@ mod tests {
     fn report_rejects_unregistered_public_score_and_artifact_drift() {
         let candidate = candidate();
         let mut missing_schema_facts = facts(&candidate);
-        missing_schema_facts.public_score_projection_schemas.clear();
+        missing_schema_facts.public_score_projection_policy =
+            PublicScoreProjectionPolicy::restricted_only();
         assert!(
             build_evaluation_report(&candidate, &sealed(), &routes(), &missing_schema_facts)
                 .is_err()

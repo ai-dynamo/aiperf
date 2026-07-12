@@ -15,6 +15,7 @@ pub mod isolation;
 pub mod lifecycle;
 pub mod provider;
 pub mod provider_protocol;
+pub mod score_projection;
 
 pub mod protocol;
 pub mod supervisor;
@@ -65,6 +66,9 @@ pub use provider_protocol::{
     LogicalServiceRequirement, OperationPurpose, ProviderScore, ResolvedEvaluationAsset,
     RestrictedDisclosure, RestrictedInferencePayload, ScopedProxyBinding, ScopedProxyGrant,
     ScopedProxySecret, SemanticAttemptId, SemanticOperationId, SequencedEvaluationEvent,
+};
+pub use score_projection::{
+    PublicScoreProjectionError, PublicScoreProjectionPolicy, PublicScoreProjectionValidator,
 };
 pub use supervisor::{
     EvaluationProviderLogSink, StderrEvaluationProviderLogSink, SupervisedEvaluationProvider,

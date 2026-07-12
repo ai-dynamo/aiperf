@@ -90,6 +90,7 @@ impl CanonicalJson {
         bytes: &[u8],
         limits: CanonicalJsonLimits,
     ) -> Result<Self, CanonicalJsonError> {
+        validate_integer_lexemes(bytes)?;
         let nodes = Cell::new(0);
         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
         let value = StrictValueSeed {
@@ -328,6 +329,71 @@ fn validate_number(number: &Number) -> Result<(), String> {
     } else {
         Err("canonical JSON number was non-finite or outside the 64-bit domain".to_string())
     }
+}
+
+fn validate_integer_lexemes(bytes: &[u8]) -> Result<(), CanonicalJsonError> {
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                index += 1;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        b'\\' => index = index.saturating_add(2),
+                        b'"' => {
+                            index += 1;
+                            break;
+                        }
+                        _ => index += 1,
+                    }
+                }
+            }
+            b'-' | b'0'..=b'9' => {
+                let start = index;
+                if bytes[index] == b'-' {
+                    index += 1;
+                }
+                while index < bytes.len() && bytes[index].is_ascii_digit() {
+                    index += 1;
+                }
+                let mut is_integer = true;
+                if index < bytes.len() && bytes[index] == b'.' {
+                    is_integer = false;
+                    index += 1;
+                    while index < bytes.len() && bytes[index].is_ascii_digit() {
+                        index += 1;
+                    }
+                }
+                if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
+                    is_integer = false;
+                    index += 1;
+                    if index < bytes.len() && matches!(bytes[index], b'+' | b'-') {
+                        index += 1;
+                    }
+                    while index < bytes.len() && bytes[index].is_ascii_digit() {
+                        index += 1;
+                    }
+                }
+                if is_integer {
+                    let lexeme = std::str::from_utf8(&bytes[start..index]).map_err(|_| {
+                        CanonicalJsonError::new("canonical JSON was not valid UTF-8")
+                    })?;
+                    let in_range = if lexeme.starts_with('-') {
+                        lexeme.parse::<i64>().is_ok()
+                    } else {
+                        lexeme.parse::<u64>().is_ok()
+                    };
+                    if !in_range {
+                        return Err(CanonicalJsonError::new(
+                            "canonical JSON integer was outside the signed/unsigned 64-bit domain",
+                        ));
+                    }
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(())
 }
 
 fn validate_collection_len(len: usize, limits: CanonicalJsonLimits) -> Result<(), String> {
@@ -622,5 +688,16 @@ mod tests {
         assert!(CanonicalJson::from_slice(br#"[[0]]"#, limits).is_err());
         assert!(CanonicalJson::from_slice(br#"[0,1,2]"#, limits).is_err());
         assert!(CanonicalJson::from_slice(br#""four""#, limits).is_err());
+    }
+
+    #[test]
+    fn rejects_out_of_domain_integer_lexemes_without_rejecting_finite_floats() {
+        let limits = CanonicalJsonLimits::default();
+        CanonicalJson::from_slice(b"18446744073709551615", limits).unwrap();
+        CanonicalJson::from_slice(b"-9223372036854775808", limits).unwrap();
+        assert!(CanonicalJson::from_slice(b"18446744073709551616", limits).is_err());
+        assert!(CanonicalJson::from_slice(b"-9223372036854775809", limits).is_err());
+        CanonicalJson::from_slice(b"18446744073709551616.0", limits).unwrap();
+        CanonicalJson::from_slice(b"1.8446744073709552e19", limits).unwrap();
     }
 }
