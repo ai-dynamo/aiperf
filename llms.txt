@@ -276,7 +276,8 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   in-process sink/observer/completion/cancellation seam, all profiles/topologies/
   routers/trace formats, paced/scheduled/graph consumers, SLA/raw/timed artifacts,
   AIC/offload feature families, and byte-exact no-server conformance against the
-  sibling Dynamo mocker.
+  sibling Dynamo mocker. The runner-only execution-surface spec owns the pending
+  feature-gated product projection.
 - `specs/2026-07-10-aiperf-transport-rust-port-design.md` — the Clock-injected
   hyper transport (→ `aiperf-transport`).
 - `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — **built end to
@@ -292,17 +293,26 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   directly injected Python-worker evaluator seam. The endpoint addendum points
   to the runner-owned redesign for open dialect IDs and production composition.
 - `specs/2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` —
-  **decided / not built; authoritative for endpoint ownership**: the exact selected
+  **decided / not built + adjudication addendum; authoritative for endpoint ownership**:
+  the exact selected
   `aiperf-runner` owns one open-ID, descriptor-bearing, extension-aware registry
   used for capabilities, validation, and execution. Python becomes structurally
   endpoint-neutral and deletes its manifest, enum, implementations, validators,
-  and execution fallback. Includes catalog/digest negotiation, prebound profiles,
-  packaging, migration, deletion, and verification gates.
-- `specs/2026-07-11-python-orchestrator-rust-single-run-design.md` — **built +
-  product-entry addendum**: Python `aiperf` is the only human frontend and
-  `aiperf-runner` the only Rust executable. The `aiperf` crate is library-only;
-  static accuracy and scheduled/adaptive online runs are runner-reachable, while
-  stateful agentic and AIPerf offline still need runner protocol projections.
+  and execution fallback. The addendum pins authored preflight, completeness,
+  the strict v2 envelope, exact image identity, and worker-local prepared bindings;
+  mode reachability is intentionally delegated to the next spec.
+- `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **decided /
+  partly built; authoritative for native product reachability**: one strict v2
+  runner envelope composes registered `online_http` or feature-gated
+  `dynamo_offline` backends with scheduled, Graph-IR, static-accuracy, or
+  stateful-agentic workloads. Defines feature forwarding, capabilities,
+  preparation, native-v2, packaging, migration, and subprocess gates for every pair.
+- `specs/2026-07-11-python-orchestrator-rust-single-run-design.md` — **built v1 +
+  runner-only v2 addenda**: Python `aiperf` is the only human frontend and
+  `aiperf-runner` the only Rust executable. Python owns structural Config v2 and
+  outer/presentation loops; protocol v2 uses a side-effect-free authored request
+  followed by Rust validation/preparation. The separate execution-surface spec owns
+  the remaining Graph/offline/agentic projections.
 - `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
   every load mode reduces to one dispatch verb on the clock-scheduled graph
   executor; strategies become `Workload` schedule generators. Supersedes the
@@ -356,8 +366,8 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   Rust owns inference/timing/metrics/reporting and supervised pinned Python
   workers own canonical datasets, environments, hidden tests, loops, and scoring.
   Static Lighteval is runner subprocess-tested. Harbor, AgentLab/BrowserGym, and
-  MCPMark remain library/provider implementations; their former native-CLI live
-  canaries do not establish a current end-user path.
+  MCPMark remain library/provider implementations; the runner-only execution-surface
+  spec owns their pending strict workload/callback projection and restored process canaries.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,
@@ -397,8 +407,9 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   composition/samplers and ancillary timing policies consume it; broader
   scheduler/graph integration remains.
 - `specs/2026-07-09-graph-ir-rust-port-design.md` — byte-exact Graph-IR port
-  (partly built in `aiperf-graph`); addendum supersedes standalone/offline-only
-  framing with the current `LocalSet` + `drive_sim`/`drive_real` + HTTP-dispatch path.
+  (partly built in `aiperf-graph`); addenda supersede standalone/offline-only
+  framing with the current `LocalSet` + `drive_sim`/`drive_real` + HTTP-dispatch path
+  and assign product reachability to the runner-only `graph` workload.
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).

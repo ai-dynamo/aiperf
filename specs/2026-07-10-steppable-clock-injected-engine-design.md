@@ -489,3 +489,18 @@ because they delegate to Dynamo's canonical Python-owned parsers and products;
 they are not a substitute for exposing AIPerf's Rust offline adapter through
 `aiperf-runner`. Restoring that path requires a versioned runner DTO and runner
 subprocess coverage for the full fail-closed capability/parity matrix.
+
+## Addendum — 2026-07-11 (runner-only offline product projection)
+
+`2026-07-11-aiperf-runner-only-execution-surface-design.md` is authoritative
+for the missing product projection identified above. It defines the
+feature-gated `dynamo_offline` runner backend, feature forwarding, authored
+engine/router/topology configuration, scheduled and Graph workload pairing,
+capability advertisement, preparation order, native-v2 provenance, and the
+subprocess parity/fail-closed matrix.
+
+This addendum does not alter the engine, clock, DES ordering, topology/router,
+trace, cancellation, adaptive, offload, artifact, or byte-exact parity behavior
+defined here. It only assigns their sole end-user AIPerf entry point to
+`aiperf-runner`. The Python `aiperf dynosim` facade remains a separate
+Dynamo-owned product and is never used as an AIPerf execution fallback.

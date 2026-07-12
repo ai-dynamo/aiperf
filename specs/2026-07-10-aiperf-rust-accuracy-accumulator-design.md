@@ -628,3 +628,18 @@ callback call routing, provenance/reward reports, cancellation semantics, and
 real provider subprocess canaries before agentic accuracy is again described as
 product-reachable. This addendum does not weaken the canonical-provider rule or
 authorize reimplementing any evaluator in Rust.
+
+## Addendum — 2026-07-11 (runner-only stateful-agentic projection)
+
+`2026-07-11-aiperf-runner-only-execution-surface-design.md` is authoritative
+for restoring the product route identified above. It defines `agentic` as a
+strict runner workload over the `online_http` backend, including provider-worker
+supervision, authenticated callback-gateway lifecycle, primary/environment/
+verifier admission through the shared Rust endpoint/transport path, typed
+native-v2 results, and real Harbor, BrowserGym, and MCPMark subprocess canaries.
+
+The canonical-provider boundary in this spec remains unchanged. Python workers
+continue to own prompts, agents, environments, private tests, tool loops, and
+rewards; they do not become an alternate inference client. Agentic capability
+is product-reachable only when the selected runner advertises the workload and
+passes the provider subprocess matrix.

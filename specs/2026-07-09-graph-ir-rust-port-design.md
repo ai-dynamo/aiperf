@@ -308,3 +308,18 @@ The byte-exact dataflow and deterministic virtual-clock goals still matter for g
 logic, but new work should preserve the current `SimClock` + `LocalSet` architecture
 and the transport-backed benchmark path instead of reintroducing a separate custom
 FIFO executor or a detached Cargo workspace.
+
+## Addendum — 2026-07-11 (runner-only Graph-IR product projection)
+
+The Graph-IR library/runtime behavior above remains authoritative, while
+`2026-07-11-aiperf-runner-only-execution-surface-design.md` owns its sole product
+entry point. It defines a strict `graph` workload that pairs with `online_http`
+through `drive_real` and feature-gated `dynamo_offline` through
+`drive_sim_with_source`, using the same runner registries, endpoint bindings,
+worker-local metrics, native-v2 report, and capability handshake as scheduled
+workloads.
+
+Library tests and transport benches remain algorithm/performance evidence. Graph
+is product-reachable only after real `aiperf-runner` subprocess proofs exist for
+the advertised backend/workload pair; no standalone graph binary or Python graph
+executor is an accepted substitute.

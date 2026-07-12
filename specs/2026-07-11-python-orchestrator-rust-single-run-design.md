@@ -183,3 +183,40 @@ This addendum supersedes every older reference in the design record to a native
 `aiperf` CLI, its flags, `src/main.rs`, or `CARGO_BIN_EXE_aiperf`. The runtime,
 transport, scheduling, metrics, evaluator, and backend algorithm decisions in
 those records are unchanged.
+
+## Addendum — 2026-07-11 (protocol-v2 authored projection and complete runner reachability)
+
+`2026-07-11-aiperf-runner-only-execution-surface-design.md` is now authoritative
+for making every built native backend/workload product-reachable through the only
+native executable. It defines the common v2 operation envelope, online/offline
+backend selection, scheduled/Graph/static-accuracy/agentic workload selection,
+feature-bearing runner distributions, capabilities, preparation, reports, and
+subprocess gates. The endpoint-specific companion is
+`2026-07-11-aiperf-runner-owned-endpoint-registry-design.md`.
+
+The protocol-v1 process sequence in this spec remains code truth only for the
+compatibility path. Protocol v2 changes the permanent sequence to:
+
+1. Python performs structural Config-v2 validation and outer-loop expansion.
+2. Python selects and verifies one exact `RunnerInstallation`.
+3. Python projects a side-effect-free authored request without consuming
+   `BenchmarkRun.resolved`.
+4. The runner performs static validation and reports deferred checks.
+5. On execution, Rust resolves datasets/tokenizers/endpoints/backends and completes
+   deferred validation.
+6. Only then are run artifacts, supervised workers, scheduling, and traffic started.
+7. Python consumes Rust-owned results for outer-loop decisions and presentation.
+
+Accordingly, the earlier ownership row assigning per-run artifact creation,
+tokenizer localization, and public-dataset resolution permanently to Python is
+superseded where Rust already owns those capabilities. Python may select an
+artifact target and author dataset/tokenizer policy, but protocol-v2 preparation
+belongs to Rust. Python-only presentation, outer-loop, user-template, or external
+library work that Rust does not implement remains Python-owned and must run after
+the appropriate validation gate.
+
+Stateful agentic, online Graph-IR, and Dynamo offline are no longer left as
+unbounded “future runner additions”: the runner-only execution-surface spec owns
+their explicit migration increments and acceptance matrix. Until each pair is
+advertised and proven by the exact runner, it remains library-built but not
+product-reachable.
