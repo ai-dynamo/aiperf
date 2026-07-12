@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aiperf_accuracy::HostOperationUsage;
 use aiperf_dataset::{
     AccuracyAssociation, ContentGroup, Conversation, ConversationContextMode, CorrelationId,
     Dataset, MediaKind, ModelId, Role, SegmentPool, TextTokenizer, Turn,
@@ -544,6 +545,13 @@ fn normalized_terminal(outcome: TurnDispatchOutcome) -> HostExecutionTerminal {
                 "message": outcome.model_response.error_message,
             })),
         }),
+        usage: HostOperationUsage {
+            prompt_tokens: outcome.prompt_tokens,
+            completion_tokens: outcome.completion_tokens,
+            reasoning_tokens: None,
+            cached_tokens: outcome.model_response.cached_prompt_tokens,
+        },
+        retryable: false,
     }
 }
 
