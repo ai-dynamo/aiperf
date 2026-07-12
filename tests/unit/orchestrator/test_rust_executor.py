@@ -62,6 +62,63 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
     assert runner_installation._load_capabilities(Path("runner")) == response
 
 
+def test_capability_child_receives_only_the_selected_provider_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = _capabilities("chat")
+    root = tmp_path / "provider-root"
+    root.mkdir()
+    observed: dict[str, str] = {}
+
+    def run(*_args, **kwargs) -> subprocess.CompletedProcess:
+        observed.update(kwargs["env"])
+        return _completed(response)
+
+    monkeypatch.setenv("AIPERF_EVALUATOR_PROVIDER_ROOTS", "/attacker/ambient")
+    monkeypatch.setattr(
+        runner_installation,
+        "_runner_distribution_id",
+        lambda _binary: _TEST_DISTRIBUTION_ID,
+    )
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert runner_installation._load_capabilities(Path("runner"), (root,)) == response
+    assert observed["AIPERF_EVALUATOR_PROVIDER_ROOTS"] == str(root.resolve())
+
+
+def test_resolve_accepts_independent_explicit_provider_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "aiperf-runner"
+    binary.write_bytes(b"runner")
+    nemo_root = tmp_path / "nemo"
+    openbench_root = tmp_path / "openbench"
+    nemo_root.mkdir()
+    openbench_root.mkdir()
+    selected: list[tuple[Path, ...]] = []
+
+    monkeypatch.setenv("AIPERF_EVALUATOR_PROVIDER_ROOTS", "/attacker/ambient")
+    monkeypatch.setattr(
+        runner_installation,
+        "_resolve_runner_binary",
+        lambda _binary: binary,
+    )
+    monkeypatch.setattr(
+        runner_installation,
+        "_load_capabilities",
+        lambda _binary, roots: selected.append(roots) or _capabilities("chat"),
+    )
+
+    installation = runner_installation.RunnerInstallation.resolve(
+        binary,
+        provider_roots=(nemo_root, openbench_root),
+    )
+
+    expected = (nemo_root.resolve(), openbench_root.resolve())
+    assert installation.provider_roots == expected
+    assert selected == [expected]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [

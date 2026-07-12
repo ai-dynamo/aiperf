@@ -14,6 +14,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hmac import compare_digest
 from importlib import metadata
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
 _RUNNER_COMPANION_DISTRIBUTION = "aiperf-runner"
 _RUNNER_COMMAND = "aiperf-runner"
+_PROVIDER_ROOTS_ENV = "AIPERF_EVALUATOR_PROVIDER_ROOTS"
 _NATIVE_REPORT_SCHEMA_VERSION = "2.0"
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _DISTRIBUTION_ID_PREFIX = "blake3:"
@@ -49,12 +52,33 @@ class RunnerInstallation:
 
     binary: Path
     capabilities: dict[str, Any]
+    provider_roots: tuple[Path, ...] = ()
 
     @classmethod
-    def resolve(cls, binary: Path | None = None) -> RunnerInstallation:
-        """Discover one runner and negotiate its capability contract once."""
+    def resolve(
+        cls,
+        binary: Path | None = None,
+        *,
+        provider_roots: Sequence[Path] | None = None,
+    ) -> RunnerInstallation:
+        """Discover one runner and negotiate its capability contract once.
+
+        ``provider_roots`` is an explicit Python-owned deployment selection for
+        mutually independent evaluator environments.  When omitted, a regular
+        monolithic installation uses the active AIPerf Python prefix.  Ambient
+        child environment variables never broaden either selection.
+        """
         resolved = _resolve_runner_binary(binary)
-        return cls(binary=resolved, capabilities=_load_capabilities(resolved))
+        selected_provider_roots = (
+            _deployment_provider_roots()
+            if provider_roots is None
+            else _normalize_provider_roots(provider_roots)
+        )
+        return cls(
+            binary=resolved,
+            capabilities=_load_capabilities(resolved, selected_provider_roots),
+            provider_roots=selected_provider_roots,
+        )
 
     def preflight_endpoint(self, endpoint_id: str) -> None:
         """Reject an endpoint absent from this exact compiled runner catalog."""
@@ -173,6 +197,7 @@ class RunnerInstallation:
             input=orjson.dumps(request),
             capture_output=True,
             check=False,
+            env=_runner_subprocess_environment(self.provider_roots),
         )
 
     def validate_authored_run(self, run: BenchmarkRun) -> dict[str, Any]:
@@ -285,12 +310,44 @@ def _require_runner_binary(candidate: Path, source: str) -> Path:
     )
 
 
-def _load_capabilities(binary: Path) -> dict[str, Any]:
+def _deployment_provider_roots() -> tuple[Path, ...]:
+    """Return the exact Python installation root selected by the product CLI."""
+    root = Path(sys.prefix).resolve(strict=True)
+    if not root.is_dir():
+        raise RuntimeError(f"active AIPerf Python installation root is invalid: {root}")
+    return (root,)
+
+
+def _normalize_provider_roots(provider_roots: Sequence[Path]) -> tuple[Path, ...]:
+    """Freeze one explicit deployment-owned evaluator-root selection."""
+    normalized = tuple(Path(root).resolve(strict=True) for root in provider_roots)
+    if len(set(normalized)) != len(normalized) or not all(
+        root.is_dir() for root in normalized
+    ):
+        raise RuntimeError("runner evaluator provider roots are invalid or duplicated")
+    return normalized
+
+
+def _runner_subprocess_environment(provider_roots: tuple[Path, ...]) -> dict[str, str]:
+    """Bind child discovery to deployment-owned roots, overriding ambient input."""
+    environment = os.environ.copy()
+    if provider_roots:
+        normalized = _normalize_provider_roots(provider_roots)
+        environment[_PROVIDER_ROOTS_ENV] = os.pathsep.join(map(os.fspath, normalized))
+    else:
+        environment.pop(_PROVIDER_ROOTS_ENV, None)
+    return environment
+
+
+def _load_capabilities(
+    binary: Path, provider_roots: tuple[Path, ...] = ()
+) -> dict[str, Any]:
     expected_distribution_id = _runner_distribution_id(binary)
     completed = subprocess.run(
         [str(binary), "--capabilities"],
         capture_output=True,
         check=False,
+        env=_runner_subprocess_environment(provider_roots),
     )
     if completed.returncode != 0:
         stderr = redact_string(completed.stderr.decode(errors="replace")).strip()
