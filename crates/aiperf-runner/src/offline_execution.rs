@@ -16,7 +16,6 @@
 //! directly into Graph-IR once; it never constructs an intermediate linear
 //! dataset or re-projects the authored object through protocol v1.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -24,14 +23,18 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::dynamo_offline::{
-    CanonicalSharedMetrics, DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
-    OfflineAicConfig, OfflineDirectGraphReport, OfflineEngineConfig, OfflineGraphReport,
-    OfflineGraphRunFactory, OfflineKvEventVisibility, OfflineMetricParity, OfflineRouterMode,
-    OfflineRunReport, OfflineScheduledExecution, OfflineScheduledExecutionFinalizer,
-    OfflineScheduledReport, OfflineScheduledRunFactory, OfflineTopology, OfflineTraceConfig,
-    run_graph_offline, run_graph_workload_offline, run_scheduled_backend_offline,
-    run_scheduled_backend_offline_deferred, run_trace_offline, write_dynamo_per_request_jsonl,
-    write_dynamo_report_json, write_dynamo_worker_artifacts_json,
+    CanonicalSharedMetrics, DeferredOfflineGraphFuture, DeferredOfflineGraphRunFactory,
+    DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
+    IncrementalOfflineEventDelivery, OfflineAicConfig, OfflineDirectGraphReport,
+    OfflineEngineConfig, OfflineEventDeliveryPolicy, OfflineGraphBackendConfig,
+    OfflineGraphBackendFactory, OfflineGraphEventSink, OfflineGraphExecution, OfflineGraphReport,
+    OfflineGraphRequestRecord, OfflineGraphRunFactory, OfflineKvEventVisibility,
+    OfflineMetricParity, OfflineRouterMode, OfflineRunReport, OfflineScheduledExecution,
+    OfflineScheduledExecutionFinalizer, OfflineScheduledReport, OfflineScheduledRunFactory,
+    OfflineTopology, OfflineTraceConfig, TerminalOfflineEventDelivery, run_graph_offline,
+    run_graph_workload_offline, run_graph_workload_offline_deferred, run_scheduled_backend_offline,
+    run_scheduled_backend_offline_deferred_with_delivery, run_trace_offline,
+    write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::{
@@ -42,19 +45,14 @@ use aiperf::multiturn::{
 use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
 use aiperf_clock::Clock;
 use aiperf_dataset::{
-    SamplerRegistry, SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
+    HashIdentityTracePromptStorage, SamplerRegistry, SegmentStore, TextTokenizer,
+    TraceHashAwareRequestMaterializer,
 };
 use aiperf_endpoints::{Modality, PreparedEndpointTable};
 use aiperf_graph::bench::BenchConfig;
 use aiperf_graph::input::GraphInputBundle;
 use aiperf_graph::policy::{
-    AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
-    FailFastRunFailurePolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
-};
-use aiperf_graph::workload::{
-    CyclingGraphTraceSource, DurationGraphStop, GraphArrivalPolicy, GraphTraceInstanceSequence,
-    GraphTraceSource, GraphWorkload, ImmediateGraphArrival, IntervalGraphArrival,
-    SlotPoolTraceAdmission,
+    AbortTraceNodeFailurePolicy, CancellationNodePolicy, NodeDispatchPolicy, NodeFailurePolicy,
 };
 use aiperf_metrics::{
     CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
@@ -63,9 +61,7 @@ use aiperf_metrics::{
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
 use aiperf_rng::{RngRoot, namespace};
-use aiperf_timing::{
-    BernoulliFixedDelay, NoopPhaseObserver, Phase, SlotPool, make_interval_generator,
-};
+use aiperf_timing::{BernoulliFixedDelay, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
@@ -76,13 +72,19 @@ use crate::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
     load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
 };
+use crate::graph_execution::{RunnerGraphExecutionEvent, RunnerGraphExecutionEventSink};
 use crate::graph_input::RunnerGraphInputContext;
+use crate::graph_phase_runtime::{
+    GraphPhaseBackendConfig, PreparedGraphPhaseBackend, RunnerGraphPhaseBackendFactory,
+    run_graph_phases, validate_graph_phases,
+};
 use crate::online_execution::{
     NativeOnlineTokenizerSourceResolver, OnlineTokenizerSourceResolver, lower_authored_tokenizer,
     validate_authored_tokenizer,
 };
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
+use crate::records::{CapturedModelOutput, CapturedRecord};
 use crate::registry::{
     GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerBackendDescriptor,
     RunnerBackendFactory, RunnerClockKind, RunnerPairFactory, RunnerRegistryBuilder,
@@ -935,6 +937,7 @@ impl RunnerPairFactory for DynamoOfflineScheduledPairFactory {
             run_rng_root: rng_root,
             tokenizer: tokenizer.as_ref(),
             rankings,
+            trace_prompt_storage: Arc::new(HashIdentityTracePromptStorage),
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1187,6 +1190,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
         create_artifact_target(&artifact_target)?;
 
         let phase_count = phases.len();
+        let terminal_event_delivery = terminal_event_delivery_is_safe(&phases);
         let backend_sla_metrics = backend.sla.native_metrics_config()?;
         let artifact_for_factory = artifact_target.clone();
         let benchmark_for_factory = benchmark_id.clone();
@@ -1267,9 +1271,14 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
                     Ok(finalizer)
                 }) as DeferredOfflineScheduledFuture
             });
+        let event_delivery: Rc<dyn OfflineEventDeliveryPolicy> = if terminal_event_delivery {
+            Rc::new(TerminalOfflineEventDelivery)
+        } else {
+            Rc::new(IncrementalOfflineEventDelivery)
+        };
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
-            .execute_scheduled_deferred(factory)?;
+            .execute_scheduled_deferred_with_delivery(factory, event_delivery)?;
         let warmup = outcome
             .report
             .auxiliary_phase_reports
@@ -1300,6 +1309,15 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
         provenance.insert("workload".into(), "scheduled".into());
         provenance.insert("phase_count".into(), phase_count.to_string());
         provenance.insert("benchmark_id".into(), benchmark_id);
+        provenance.insert(
+            "event_delivery".into(),
+            if terminal_event_delivery {
+                "terminal_coalesced"
+            } else {
+                "incremental"
+            }
+            .into(),
+        );
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
@@ -1309,91 +1327,23 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
     }
 }
 
-fn validate_direct_graph_phase(phase: &PhaseSpec) -> Result<()> {
-    let common = phase.common();
-    ensure!(
-        common.name == "profiling" && !common.exclude_from_results,
-        "the current offline direct-graph pair requires one profiling phase"
-    );
-    ensure!(
-        phase.request_arrival().is_some(),
-        "offline direct graph supports concurrency, poisson, gamma, or constant scheduling"
-    );
-    ensure!(
-        common.concurrency_ramp.is_none()
-            && common.prefill_ramp.is_none()
-            && common.rate_ramp.is_none(),
-        "offline direct graph does not yet support actuator ramps"
-    );
-    ensure!(
-        common.adaptive_scale.is_none(),
-        "offline direct graph does not yet support adaptive scale"
-    );
-    ensure!(
-        !common.seamless,
-        "offline direct graph does not support seamless handoff"
-    );
-    ensure!(
-        common.grace_period.is_none(),
-        "offline direct graph drains admitted roots and does not accept grace_period"
-    );
-    ensure!(
-        common.requests != Some(0),
-        "phase requests must be positive"
-    );
-    ensure!(
-        common.sessions != Some(0),
-        "phase sessions must be positive"
-    );
-    if let Some(duration) = common.duration {
-        let _ = seconds_to_ns(duration, "phase duration")?;
-        ensure!(duration > 0.0, "phase duration must be positive");
-    }
-    if let Some(concurrency) = phase.concurrency() {
-        ensure!(concurrency > 0, "phase concurrency must be positive");
-    }
-    if let Some(prefill) = common.prefill_concurrency {
-        ensure!(prefill > 0, "phase prefill_concurrency must be positive");
-        if let Some(concurrency) = phase.concurrency() {
-            ensure!(
-                prefill <= concurrency,
-                "phase prefill_concurrency must be <= concurrency"
-            );
-        }
-    }
-    match phase {
-        PhaseSpec::Concurrency { .. } => {}
-        PhaseSpec::Poisson { rate, .. } | PhaseSpec::Constant { rate, .. } => ensure!(
-            rate.is_finite() && *rate > 0.0,
-            "rate graph phase requires a finite positive rate"
-        ),
-        PhaseSpec::Gamma {
-            rate, smoothness, ..
-        } => {
-            ensure!(
-                rate.is_finite() && *rate > 0.0,
-                "rate graph phase requires a finite positive rate"
-            );
-            ensure!(
-                smoothness.is_none_or(|value| value.is_finite() && value > 0.0),
-                "gamma smoothness must be finite and positive"
-            );
-        }
-        PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. } => {
-            unreachable!("unsupported phase kind rejected above")
-        }
-    }
-    if let Some(cancellation) = common.cancellation {
-        ensure!(
-            cancellation.rate.is_finite() && (0.0..=100.0).contains(&cancellation.rate),
-            "phase cancellation.rate must be finite and in 0..=100"
-        );
-        ensure!(
-            cancellation.delay.is_finite() && cancellation.delay >= 0.0,
-            "phase cancellation.delay must be finite and non-negative"
-        );
-    }
-    Ok(())
+fn terminal_event_delivery_is_safe(phases: &[PhaseSpec]) -> bool {
+    let [PhaseSpec::Concurrency { common, .. }] = phases else {
+        return false;
+    };
+    common.name == "profiling"
+        && !common.exclude_from_results
+        && common.requests.is_some()
+        && common.sessions.is_none()
+        && common.duration.is_none()
+        && common.prefill_concurrency.is_none()
+        && common.grace_period.is_none()
+        && !common.seamless
+        && common.concurrency_ramp.is_none()
+        && common.prefill_ramp.is_none()
+        && common.rate_ramp.is_none()
+        && common.cancellation.is_none()
+        && common.adaptive_scale.is_none()
 }
 
 fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
@@ -1446,12 +1396,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
             "dynamo_offline direct graph uses one LocalSet around one globally contended engine; worker_count must be 1"
         );
         validate_authored_tokenizer(&workload.tokenizer)?;
-        ensure!(
-            workload.phases.len() == 1,
-            "dynamo_offline direct graph currently requires exactly one profiling phase"
-        );
-        validate_direct_graph_phase(&workload.phases[0])?;
-        Ok(())
+        validate_graph_phases(&workload.phases)
     }
 
     fn validate_run(
@@ -1493,7 +1438,7 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         let backend = validated_dynamo_offline_backend(backend.as_ref())?.clone();
         let workload = validated_graph_workload(workload.as_ref())?;
-        let phase = workload.phases[0].clone();
+        let phases = workload.phases.clone();
         ensure!(
             run.models.items.len() == 1
                 && matches!(run.models.strategy, ModelSelectionStrategy::RoundRobin),
@@ -1533,9 +1478,10 @@ impl RunnerPairFactory for DynamoOfflineGraphPairFactory {
         Ok(Box::new(PreparedDynamoOfflineGraphOperation {
             backend,
             input: prepared.bundle,
-            phase,
+            phases,
             metrics,
             model,
+            benchmark_id: run.identity.benchmark_id.clone(),
             random_seed,
             artifact_target: run.artifact_target.clone(),
             default_max_tokens,
@@ -1554,12 +1500,84 @@ fn validated_graph_workload(
         .ok_or_else(|| anyhow!("dynamo_offline graph pair received a different workload type"))
 }
 
+struct OfflineGraphRunnerEventSink {
+    events: Arc<dyn RunnerGraphExecutionEventSink>,
+}
+
+impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
+    fn first_token(&self, uuid: uuid::Uuid, trace_id: &str) -> Result<()> {
+        self.events
+            .emit(RunnerGraphExecutionEvent::FirstToken {
+                trace_id: trace_id.to_owned(),
+                uuid,
+            })
+            .map_err(Into::into)
+    }
+
+    fn record(&self, record: OfflineGraphRequestRecord) -> Result<()> {
+        self.events
+            .emit(RunnerGraphExecutionEvent::Record(Box::new(
+                CapturedRecord {
+                    uuid: record.uuid,
+                    x_correlation_id: record.trace_id,
+                    output: CapturedModelOutput::from_parts(&record.response_text, None, None),
+                    raw: None,
+                    ingest: record.ingest,
+                },
+            )))
+            .map_err(Into::into)
+    }
+}
+
+struct DynamoOfflineGraphPhaseBackendFactory {
+    backends: Rc<dyn OfflineGraphBackendFactory>,
+}
+
+impl RunnerGraphPhaseBackendFactory for DynamoOfflineGraphPhaseBackendFactory {
+    fn prepare_backend(
+        &self,
+        config: GraphPhaseBackendConfig,
+    ) -> Result<PreparedGraphPhaseBackend> {
+        let node_policy = config
+            .cancellation
+            .map(|cancellation| -> Result<Rc<dyn NodeDispatchPolicy>> {
+                let worker_rng = cancellation
+                    .rng_root
+                    .derive_indexed_root(namespace::GRAPH_NODE_CANCELLATION_WORKER, 0);
+                Ok(Rc::new(CancellationNodePolicy::new(
+                    Box::new(BernoulliFixedDelay::new(
+                        Some(cancellation.rate),
+                        cancellation.delay_seconds,
+                        worker_rng,
+                    )?),
+                    cancellation.phase,
+                )) as Rc<dyn NodeDispatchPolicy>)
+            })
+            .transpose()?;
+        let events: Rc<dyn OfflineGraphEventSink> = Rc::new(OfflineGraphRunnerEventSink {
+            events: config.events,
+        });
+        let placement = self.backends.create_backend(OfflineGraphBackendConfig {
+            phase: config.metrics_phase,
+            prefill_concurrency: config.prefill_concurrency,
+            node_policy,
+            node_failure: Rc::new(AbortTraceNodeFailurePolicy),
+            events,
+        })?;
+        Ok(PreparedGraphPhaseBackend {
+            placement,
+            requires_node_records: true,
+        })
+    }
+}
+
 struct PreparedDynamoOfflineGraphOperation {
     backend: ValidatedDynamoOfflineBackend,
     input: GraphInputBundle,
-    phase: PhaseSpec,
+    phases: Vec<PhaseSpec>,
     metrics: MetricsConfig,
     model: String,
+    benchmark_id: String,
     random_seed: Option<u64>,
     artifact_target: PathBuf,
     default_max_tokens: usize,
@@ -1583,9 +1601,10 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
         let Self {
             backend,
             input,
-            phase,
+            phases,
             metrics,
             model,
+            benchmark_id,
             random_seed,
             artifact_target,
             default_max_tokens,
@@ -1593,27 +1612,41 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             phase_count,
         } = *self;
         create_artifact_target(&artifact_target)?;
+        let metadata = input.metadata.clone();
         let graph_report = ReportGraphRunInfo::new(
-            input.metadata.format.clone(),
-            input.metadata.root_count,
-            input.metadata.node_count,
+            metadata.format.clone(),
+            metadata.root_count,
+            metadata.node_count,
             worker_count,
             phase_count,
         )?;
         let rng_root = RngRoot::new(random_seed);
-        let phase_rng = rng_root.derive_indexed_root(namespace::GRAPH_PHASE, 0);
-        let node_policy = graph_node_policy(&phase, phase_rng)?;
-        let workload = graph_workload_factory(input.plans, &phase, phase_rng)?;
+        let segments = input.segments.clone();
+        let artifact_dir = artifact_target.clone();
+        let factory: Box<dyn DeferredOfflineGraphRunFactory> = Box::new(
+            move |clock: Rc<dyn Clock>, backends: Rc<dyn OfflineGraphBackendFactory>| {
+                let backends = DynamoOfflineGraphPhaseBackendFactory { backends };
+                Ok(Box::pin(async move {
+                    let phased = run_graph_phases(
+                        &phases,
+                        &benchmark_id,
+                        &artifact_dir,
+                        &input,
+                        clock,
+                        rng_root,
+                        &backends,
+                    )
+                    .await?;
+                    Ok(OfflineGraphExecution {
+                        workload: phased.workload,
+                        phases: phased.phases,
+                    })
+                }) as DeferredOfflineGraphFuture)
+            },
+        );
         let outcome = backend
             .executor(model.clone(), &artifact_target)?
-            .execute_graph(
-                input.segments,
-                default_max_tokens,
-                metrics,
-                node_policy,
-                Rc::new(AbortTraceNodeFailurePolicy),
-                workload,
-            )?;
+            .execute_graph_deferred(segments, default_max_tokens, metrics, factory)?;
         if outcome.report.workload.failed > 0 {
             let detail = outcome
                 .report
@@ -1642,9 +1675,14 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
                     model: Some(model),
                 },
                 summary: ReportSummary {
-                    duration_s: Some(outcome.report.performance.throughput.wall_time_ms / 1_000.0),
+                    was_cancelled: outcome
+                        .report
+                        .phases
+                        .iter()
+                        .any(|phase| phase.was_cancelled),
                     ..ReportSummary::default()
                 },
+                warmup: outcome.report.warmup_metrics.clone(),
                 ..RunOutcome::default()
             },
         );
@@ -1662,9 +1700,10 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             )?);
         let mut provenance = outcome.provenance;
         provenance.insert("workload".into(), "graph".into());
-        provenance.insert("graph_input".into(), input.metadata.format);
-        provenance.insert("graph_roots".into(), input.metadata.root_count.to_string());
-        provenance.insert("graph_nodes".into(), input.metadata.node_count.to_string());
+        provenance.insert("graph_input".into(), metadata.format);
+        provenance.insert("graph_roots".into(), metadata.root_count.to_string());
+        provenance.insert("graph_nodes".into(), metadata.node_count.to_string());
+        provenance.insert("phase_count".into(), phase_count.to_string());
         Ok(PreparedRunOutcome {
             native_report,
             report_facts,
@@ -1672,87 +1711,6 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             report_commit: None,
         })
     }
-}
-
-fn graph_node_policy(
-    phase: &PhaseSpec,
-    phase_rng: RngRoot,
-) -> Result<Option<Rc<dyn NodeDispatchPolicy>>> {
-    let common = phase.common();
-    let mut policies = Vec::<Rc<dyn NodeDispatchPolicy>>::new();
-    if let Some(limit) = common.prefill_concurrency {
-        policies.push(Rc::new(PrefillSlotNodePolicy::new(Rc::new(SlotPool::new(
-            limit,
-        )))));
-    }
-    if let Some(cancellation) = common.cancellation {
-        policies.push(Rc::new(CancellationNodePolicy::new(
-            Box::new(BernoulliFixedDelay::new(
-                Some(cancellation.rate),
-                cancellation.delay,
-                phase_rng.derive_root(namespace::GRAPH_NODE_CANCELLATION),
-            )?),
-            Phase::Profiling,
-        )));
-    }
-    Ok(match policies.len() {
-        0 => None,
-        1 => policies.pop(),
-        _ => Some(Rc::new(CompositeNodeDispatchPolicy::new(policies))),
-    })
-}
-
-fn graph_workload_factory(
-    plans: Vec<aiperf_graph::model::GraphTracePlan>,
-    phase: &PhaseSpec,
-    phase_rng: RngRoot,
-) -> Result<Box<dyn OfflineGraphRunFactory>> {
-    let phase = phase.clone();
-    let common = phase.common();
-    let one_pass =
-        common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
-    let session_limit = if one_pass {
-        Some(u64::try_from(plans.len()).context("graph root count exceeds u64")?)
-    } else {
-        common.sessions
-    };
-    let arrival_seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
-    Ok(Box::new(move |clock, backend| {
-        let common = phase.common();
-        let source: Rc<dyn GraphTraceSource> =
-            Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
-                plans,
-                session_limit,
-                common.requests,
-                GraphTraceInstanceSequence::default(),
-            )?);
-        let (arrival_pattern, rate, smoothness) = phase
-            .request_arrival()
-            .ok_or_else(|| anyhow!("unsupported direct graph arrival policy"))?;
-        let arrival: Rc<dyn GraphArrivalPolicy> = if matches!(&phase, PhaseSpec::Concurrency { .. })
-        {
-            Rc::new(ImmediateGraphArrival)
-        } else {
-            Rc::new(IntervalGraphArrival::new(Rc::new(RefCell::new(
-                make_interval_generator(arrival_pattern, rate, smoothness, arrival_seed),
-            ))))
-        };
-        let mut workload = GraphWorkload::new(clock, source, backend)
-            .with_arrival(arrival)
-            .with_run_failure(Rc::new(FailFastRunFailurePolicy::default()));
-        if let Some(concurrency) = phase.concurrency() {
-            workload = workload.with_admission(Rc::new(SlotPoolTraceAdmission::new(Rc::new(
-                SlotPool::new(concurrency),
-            ))));
-        }
-        if let Some(duration) = common.duration {
-            workload = workload.with_stop_policy(Rc::new(DurationGraphStop::new(seconds_to_ns(
-                duration,
-                "phase duration",
-            )?)?));
-        }
-        Ok(workload)
-    }))
 }
 
 fn offline_metrics_config(spec: &MetricsSpec) -> Result<MetricsConfig> {
@@ -1843,14 +1801,27 @@ impl DynamoOfflineExecutor {
         self,
         workload: Box<dyn DeferredOfflineScheduledRunFactory>,
     ) -> Result<DynamoOfflineScheduledOutcome> {
+        self.execute_scheduled_deferred_with_delivery(
+            workload,
+            Rc::new(IncrementalOfflineEventDelivery),
+        )
+    }
+
+    /// Run a deferred scheduled workload with an injected Dynamo event-delivery policy.
+    pub fn execute_scheduled_deferred_with_delivery(
+        self,
+        workload: Box<dyn DeferredOfflineScheduledRunFactory>,
+        event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
+    ) -> Result<DynamoOfflineScheduledOutcome> {
         ensure!(
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report = run_scheduled_backend_offline_deferred(
+        let report = run_scheduled_backend_offline_deferred_with_delivery(
             self.engine.clone(),
             self.model.clone(),
             workload,
+            event_delivery,
         )?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;
         let artifacts = self.emit_backend_artifacts(
@@ -1915,6 +1886,58 @@ impl DynamoOfflineExecutor {
             metrics,
             node_policy,
             node_failure,
+            workload,
+        )?;
+        verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        if report.workload.failed > 0 {
+            let detail = report
+                .workload
+                .traces
+                .iter()
+                .find_map(|trace| {
+                    trace
+                        .result
+                        .as_ref()
+                        .err()
+                        .map(|error| format!("trace {:?}: {error}", trace.trace_id))
+                })
+                .unwrap_or_else(|| "unknown trace failure".into());
+            return Err(anyhow!(
+                "offline graph aborted after {} failed root(s): {detail}",
+                report.workload.failed
+            ));
+        }
+        let artifacts = self.emit_backend_artifacts(
+            |path| write_dynamo_report_json(&report.dynamo, path),
+            |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
+        )?;
+        let provenance = self.provenance(report.parity);
+        Ok(DynamoOfflineDirectGraphOutcome {
+            report,
+            artifacts,
+            provenance,
+        })
+    }
+
+    /// Execute an injected multi-phase Graph-IR driver over one SimClock and
+    /// one passive engine.
+    pub fn execute_graph_deferred(
+        self,
+        segments: Arc<dyn SegmentStore>,
+        default_max_tokens: usize,
+        metrics: MetricsConfig,
+        workload: Box<dyn DeferredOfflineGraphRunFactory>,
+    ) -> Result<DynamoOfflineDirectGraphOutcome> {
+        ensure!(
+            self.artifacts.worker_artifacts_json.is_none(),
+            "worker_artifacts_json is supported only by canonical trace workloads"
+        );
+        let report = run_graph_workload_offline_deferred(
+            self.engine.clone(),
+            self.model.clone(),
+            segments,
+            default_max_tokens,
+            metrics,
             workload,
         )?;
         verify_parity(&report.performance, &report.dynamo, report.parity)?;

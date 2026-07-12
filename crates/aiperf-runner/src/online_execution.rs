@@ -15,7 +15,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aiperf_dataset::{DatasetFetcher, HttpDatasetFetcher, TiktokenEncoding};
+use aiperf_dataset::{
+    DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage, TiktokenEncoding,
+};
 use aiperf_endpoints::Modality;
 use aiperf_metrics::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
 use aiperf_rng::RngRoot;
@@ -832,6 +834,7 @@ pub(crate) fn lower_scheduled(
         run_rng_root: RngRoot::new(run.identity.random_seed),
         tokenizer: tokenizer_impl.as_ref(),
         rankings,
+        trace_prompt_storage: Arc::new(MaterializedTracePromptStorage),
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

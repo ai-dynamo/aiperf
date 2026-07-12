@@ -12,7 +12,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf_dataset::{Dataset, TextTokenizer};
+use aiperf_dataset::{Dataset, TextTokenizer, TracePromptStoragePolicy};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -533,6 +533,8 @@ pub struct RunnerDatasetInputContext<'a> {
     pub tokenizer: &'a dyn TextTokenizer,
     /// Whether the selected endpoint expects ranking-shaped synthesis.
     pub rankings: bool,
+    /// Trace prompt storage policy selected by the execution backend.
+    pub trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
 }
 
 /// One direct authored dataset-source adapter.
@@ -719,6 +721,7 @@ impl RunnerDatasetInputAdapter for FileDatasetInputAdapter {
             context.models,
             rng_root,
             context.tokenizer,
+            context.trace_prompt_storage.clone(),
         )
         .await?;
         Ok(PreparedDatasetInput {

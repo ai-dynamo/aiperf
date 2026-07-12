@@ -149,10 +149,23 @@ def _graph_run(artifact_dir: Path) -> BenchmarkRun:
             },
             "phases": [
                 {
-                    "name": "profiling",
+                    "name": "warmup",
                     "type": "concurrency",
                     "requests": 3,
+                    "concurrency": 1,
+                },
+                {
+                    "name": "profiling",
+                    "type": "constant",
+                    "requests": 3,
+                    "duration": 1.0,
+                    "rate": 100.0,
                     "concurrency": 2,
+                    "prefill_concurrency": 2,
+                    "seamless": True,
+                    "grace_period": 0.01,
+                    "rate_ramp": {"duration": 0.001, "strategy": "linear"},
+                    "cancellation": {"rate": 0.0, "delay": 0.001},
                 }
             ],
         }
@@ -289,7 +302,7 @@ def test_python_config_v2_reaches_direct_graph_adapter_without_dual_conversion(
         offline_installation,
         run,
     )
-    _assert_product_result(
+    terminal, native = _assert_product_result(
         run=run,
         request=request,
         completed=completed,
@@ -306,9 +319,14 @@ def test_python_config_v2_reaches_direct_graph_adapter_without_dual_conversion(
     assert dataset["records"] == _graph_rows()
     assert "graph_ir" not in dataset
     assert "conversation" not in dataset
+    assert terminal["provenance"]["phase_count"] == "2"
+    assert native["run"]["graph"]["phase_count"] == 2
+    assert native["run"]["graph"]["outcome"]["admitted"] == 2
+    assert native["run"]["graph"]["outcome"]["completed"] == 2
+    assert native["warmup_metrics"]
     dynamo = orjson.loads((artifact_dir / "dynamo/report.json").read_bytes())
-    assert dynamo["completed_requests"] == 3
-    assert len((artifact_dir / "dynamo/requests.jsonl").read_text().splitlines()) == 3
+    assert dynamo["completed_requests"] == 6
+    assert len((artifact_dir / "dynamo/requests.jsonl").read_text().splitlines()) == 6
 
 
 def test_online_only_capability_image_rejects_offline_before_legacy_resolution(

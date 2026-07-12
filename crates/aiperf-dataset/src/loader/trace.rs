@@ -315,30 +315,39 @@ impl Composer for MooncakeTraceComposer {
                     turn.input_tokens = input_tokens_excluding_tools(&extracted, tokenizer)?;
                 }
                 MooncakeMode::Delta => {
-                    let generated = match parsed.text_input {
-                        Some(text) => {
-                            let tokens = tokenizer.encode(&text)?;
-                            crate::prompt::GeneratedPrompt { text, tokens }
-                        }
-                        None => prompt_generator.generate(
-                            parsed.input_length.expect("delta input mode has length") as usize,
-                            &parsed.hash_ids,
-                            block_size,
-                        )?,
-                    };
-                    turn.input_tokens = generated.tokens.len() as u64;
-                    let handle = segments.intern_text(
-                        parents[position],
-                        Role::from("user"),
-                        Bytes::from(generated.text),
-                        generated.tokens.into_boxed_slice(),
-                    )?;
-                    parents[position] = Some(handle);
-                    turn.content.push(crate::model::ContentGroup {
-                        kind: crate::model::MediaKind::Text,
-                        name: "text".into(),
-                        handles: smallvec![handle],
-                    });
+                    if config
+                        .trace_prompt_storage
+                        .stores_generated_prompt(&parsed.hash_ids)
+                    {
+                        let generated = match parsed.text_input {
+                            Some(text) => {
+                                let tokens = tokenizer.encode(&text)?;
+                                crate::prompt::GeneratedPrompt { text, tokens }
+                            }
+                            None => prompt_generator.generate(
+                                parsed.input_length.expect("delta input mode has length") as usize,
+                                &parsed.hash_ids,
+                                block_size,
+                            )?,
+                        };
+                        turn.input_tokens = generated.tokens.len() as u64;
+                        let handle = segments.intern_text(
+                            parents[position],
+                            Role::from("user"),
+                            Bytes::from(generated.text),
+                            generated.tokens.into_boxed_slice(),
+                        )?;
+                        parents[position] = Some(handle);
+                        turn.content.push(crate::model::ContentGroup {
+                            kind: crate::model::MediaKind::Text,
+                            name: "text".into(),
+                            handles: smallvec![handle],
+                        });
+                    } else {
+                        turn.input_tokens = parsed
+                            .input_length
+                            .expect("hash-backed delta mode has an authored input length");
+                    }
                 }
             }
             if let Some(extra) = parsed.extra {
@@ -471,15 +480,27 @@ impl Composer for BailianTraceComposer {
             let mut conversation = Conversation::new(root.to_string());
             let mut parent = None;
             for row in rows {
-                let prompt =
-                    generator.generate(row.input_length as usize, &row.hash_ids, block_size)?;
-                let handle = segments.intern_text(
-                    parent,
-                    "user",
-                    Bytes::from(prompt.text),
-                    prompt.tokens.into_boxed_slice(),
-                )?;
-                parent = Some(handle);
+                let content = if config
+                    .trace_prompt_storage
+                    .stores_generated_prompt(&row.hash_ids)
+                {
+                    let prompt =
+                        generator.generate(row.input_length as usize, &row.hash_ids, block_size)?;
+                    let handle = segments.intern_text(
+                        parent,
+                        "user",
+                        Bytes::from(prompt.text),
+                        prompt.tokens.into_boxed_slice(),
+                    )?;
+                    parent = Some(handle);
+                    smallvec![crate::model::ContentGroup {
+                        kind: crate::model::MediaKind::Text,
+                        name: "text".into(),
+                        handles: smallvec![handle],
+                    }]
+                } else {
+                    smallvec![]
+                };
                 let trace_hash_ids = segments
                     .intern_trace_hash_ids(row.hash_ids.clone().into_boxed_slice(), block_size)?;
                 let mut turn = Turn {
@@ -487,11 +508,7 @@ impl Composer for BailianTraceComposer {
                     max_tokens: cap_output(Some(row.output_length), config.max_output_tokens),
                     input_tokens: row.input_length,
                     trace_hash_ids: Some(trace_hash_ids),
-                    content: smallvec![crate::model::ContentGroup {
-                        kind: crate::model::MediaKind::Text,
-                        name: "text".into(),
-                        handles: smallvec![handle],
-                    }],
+                    content,
                     ..Turn::default()
                 };
                 finalizer.finalize_turn(&mut turn)?;
@@ -1378,6 +1395,38 @@ mod tests {
                 .unwrap(),
             crate::Payload::TraceHashIds { hash_ids, block_size }
                 if hash_ids.as_ref() == [1, 2] && *block_size == 512
+        ));
+    }
+
+    #[tokio::test]
+    async fn mooncake_can_store_hash_identity_without_generated_prompt_material() {
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(MooncakeTraceDatasetLoader),
+                Arc::new(MooncakeTraceComposer),
+            ))
+            .unwrap();
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(9)));
+        compose.trace_prompt_storage = Arc::new(crate::HashIdentityTracePromptStorage);
+        let dataset = registry
+            .build_dataset(
+                Some("mooncake_trace"),
+                &LoadConfig::new(DatasetSource::Inline(json!([
+                    {"input_length":128,"hash_ids":[11],"output_length":4}
+                ]))),
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.input_tokens, 128);
+        assert!(turn.content.is_empty());
+        assert!(matches!(
+            dataset.segments().get(turn.trace_hash_ids.unwrap()).unwrap(),
+            crate::Payload::TraceHashIds { hash_ids, block_size: 512 }
+                if hash_ids.as_ref() == [11]
         ));
     }
 

@@ -87,14 +87,29 @@ fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Va
                         "trust_remote_code": false,
                         "apply_chat_template": false
                     },
-                    "phases": [{
-                        "name": "profiling",
-                        "type": "concurrency",
-                        "exclude_from_results": false,
-                        "requests": 3,
-                        "concurrency": 2,
-                        "seamless": false
-                    }]
+                    "phases": [
+                        {
+                            "name": "warmup",
+                            "type": "concurrency",
+                            "exclude_from_results": true,
+                            "requests": 3,
+                            "concurrency": 1
+                        },
+                        {
+                            "name": "profiling",
+                            "type": "constant",
+                            "exclude_from_results": false,
+                            "requests": 3,
+                            "duration": 1.0,
+                            "rate": 100.0,
+                            "concurrency": 2,
+                            "prefill_concurrency": 2,
+                            "seamless": true,
+                            "grace_period": 0.01,
+                            "rate_ramp": {"duration": 0.001, "strategy": "linear"},
+                            "cancellation": {"rate": 0.0, "delay": 0.001}
+                        }
+                    ]
                 }
             },
             "resources": {
@@ -199,6 +214,7 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     assert_eq!(terminal["success"], true);
     assert_eq!(terminal["provenance"]["backend"], "dynamo_offline");
     assert_eq!(terminal["provenance"]["workload"], "graph");
+    assert_eq!(terminal["provenance"]["phase_count"], "2");
     assert_eq!(terminal["provenance"]["parity_shared_fields"], "74");
 
     let report_path = PathBuf::from(terminal["report_path"].as_str().unwrap());
@@ -219,10 +235,11 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     assert_eq!(native["run"]["graph"]["root_count"], 1);
     assert_eq!(native["run"]["graph"]["node_count"], 3);
     assert_eq!(native["run"]["graph"]["worker_count"], 1);
-    assert_eq!(native["run"]["graph"]["phase_count"], 1);
-    assert_eq!(native["run"]["graph"]["outcome"]["admitted"], 1);
-    assert_eq!(native["run"]["graph"]["outcome"]["completed"], 1);
+    assert_eq!(native["run"]["graph"]["phase_count"], 2);
+    assert_eq!(native["run"]["graph"]["outcome"]["admitted"], 2);
+    assert_eq!(native["run"]["graph"]["outcome"]["completed"], 2);
     assert_eq!(native["run"]["graph"]["outcome"]["failed"], 0);
+    assert!(native["warmup_metrics"].is_object());
     assert_eq!(native["run"]["dynamo"]["clock"], "sim");
     assert_eq!(native["run"]["dynamo"]["topology"], "single");
     assert_eq!(native["run"]["dynamo"]["router"], "round_robin");
@@ -239,13 +256,13 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
 
     let dynamo: Value =
         serde_json::from_slice(&std::fs::read(target.join("dynamo/report.json")).unwrap()).unwrap();
-    assert_eq!(dynamo["completed_requests"], 3);
+    assert_eq!(dynamo["completed_requests"], 6);
     assert_eq!(
         std::fs::read_to_string(target.join("dynamo/requests.jsonl"))
             .unwrap()
             .lines()
             .count(),
-        3
+        6
     );
     std::fs::remove_dir_all(target).unwrap();
 }

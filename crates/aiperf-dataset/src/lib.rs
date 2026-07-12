@@ -79,6 +79,7 @@ pub use tokenizer::{HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, Tikto
 pub mod loader;
 pub mod media;
 pub use compose::{
-    ComposeConfig, Composer, ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
-    RoundRobinModelSelectorFactory, SessionIdGenerator,
+    ComposeConfig, Composer, HashIdentityTracePromptStorage, MaterializedTracePromptStorage,
+    ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
+    RoundRobinModelSelectorFactory, SessionIdGenerator, TracePromptStoragePolicy,
 };
