@@ -85,9 +85,7 @@ use aiperf_transport_http::models::HttpVersion;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{
-    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
-};
+use loadgen_core::sink::RequestObserver;
 use uuid::Uuid;
 
 use crate::dataset_input::PreparedDatasetInput;
