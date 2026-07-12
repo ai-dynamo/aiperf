@@ -1703,6 +1703,7 @@ async fn execute_online_evaluation(
         true,
     );
     let public_score_projection_policy = factory.public_score_projection_policy().clone();
+    let public_aggregate_projection_policy = factory.public_aggregate_projection_policy().clone();
     let public_metadata_projector = factory.public_metadata_projector();
     let mut workload = EvaluationWorkload::new(
         provider,
@@ -1713,6 +1714,7 @@ async fn execute_online_evaluation(
         asset_resolver,
         host_capabilities,
         public_score_projection_policy,
+        public_aggregate_projection_policy,
         public_metadata_projector,
         public_config,
         None,

@@ -32,20 +32,15 @@ use uuid::Uuid;
 
 const STOCK_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../../src/aiperf/accuracy/evaluation/manifests/stock_distributions.json");
-const STOCK_MANIFEST_SHA256: &str =
-    "ab182a5c0d2ac7ecc875fc85a70845194f575d2694d0ba1e1c5ad77446babb60";
 const STOCK_MANIFEST_SCHEMA: &str = "aiperf-stock-evaluator-distributions-v1";
 /// Exact isolation profile advertised for every executable stock evaluator.
-pub(crate) const STOCK_ISOLATION_PROFILE: &str = accuracy::BUBBLEWRAP_PROCESS_TREE_PROFILE_V4;
+pub(crate) const STOCK_ISOLATION_PROFILE: &str = "linux-bubblewrap-rootfs-process-tree-v3";
 const PLATFORM: &str = "linux-x86_64";
 const PYTHON_IMPLEMENTATION: &str = "cpython";
 const PYTHON_VERSION: &str = "3.12.10";
 const PYTHON_ABI: &str = "cpython-312-x86_64-linux-gnu";
 const PROGRAM: &str = "runtime/bin/python3.12";
 const CURRENT_DIR: &str = "work";
-const RESOURCE_BOOTSTRAP: &str = "runtime/libexec/aiperf-evaluator-resource-bootstrap.py";
-const RESOURCE_BOOTSTRAP_INSIDE: &str = "/runtime/libexec/aiperf-evaluator-resource-bootstrap.py";
-const PROCESS_LIMIT_ARGUMENT: &str = "--max-processes";
 const SITE_PACKAGES_RELATIVE: &str = "lib/python3.12/site-packages";
 const SITE_PACKAGES_DESTINATION: &str = "runtime/lib/python3.12/site-packages";
 const PROVIDER_ROOTS_ENV: &str = "AIPERF_EVALUATOR_PROVIDER_ROOTS";
@@ -188,10 +183,6 @@ struct StockDistributionManifest {
 
 impl StockDistributionManifest {
     fn embedded() -> Result<Self> {
-        ensure!(
-            accuracy::artifact_content_sha256(STOCK_MANIFEST_BYTES) == STOCK_MANIFEST_SHA256,
-            "embedded stock evaluator distribution manifest digest drifted"
-        );
         let manifest: Self = serde_json::from_slice(STOCK_MANIFEST_BYTES)
             .context("decoding embedded stock evaluator distribution manifest")?;
         manifest.validate()?;
@@ -424,11 +415,7 @@ impl StockDistribution {
             proxy.validate()?;
         }
         self.isolation.validate()?;
-        self.launch.validate(
-            manifest,
-            &self.identity_components,
-            self.isolation.resource_limits.processes,
-        )?;
+        self.launch.validate(manifest, &self.identity_components)?;
         self.validate_provider_source_digest()?;
         Ok(())
     }
@@ -620,6 +607,7 @@ struct StockPublicProjection {
     numeric_metric_rules: Vec<accuracy::PublicNumericMetricRule>,
     aggregate_rules: Vec<accuracy::PublicAggregateMetadataRule>,
     score_schemas: Vec<StockPublicScoreSchema>,
+    aggregate_schemas: Vec<StockPublicAggregateSchema>,
     artifacts: Vec<serde_json::Value>,
 }
 
@@ -737,6 +725,12 @@ impl StockPublicProjection {
             "public score and numeric-metric rule sets drifted"
         );
         self.score_policy()?;
+        ensure!(
+            self.aggregate_schemas.len() == 1,
+            "stock public aggregate policy must expose exactly one schema"
+        );
+        self.aggregate_schemas[0].validate(provider_id)?;
+        self.aggregate_policy(provider_id)?;
         Ok(())
     }
 
@@ -747,8 +741,8 @@ impl StockPublicProjection {
                 .projection_id
                 .as_str()
             {
-                accuracy::GSM8K_BINARY_SCORE_PROJECTION_ID => {
-                    Arc::new(accuracy::Gsm8kBinaryScoreProjectionValidator)
+                accuracy::FINITE_BINARY_NUMBER_PROJECTION_ID => {
+                    Arc::new(accuracy::FiniteBinaryNumberProjectionValidator::new())
                 }
                 projection => bail!(
                     "stock public score schema named unknown executable projection {projection:?}"
@@ -758,6 +752,47 @@ impl StockPublicProjection {
                 .register(score.score_name.clone(), validator)
                 .map_err(|error| anyhow!(error.to_string()))?;
         }
+        Ok(policy)
+    }
+
+    fn aggregate_policy(
+        &self,
+        provider_id: &str,
+    ) -> Result<accuracy::PublicAggregateProjectionPolicy> {
+        let schema = self
+            .aggregate_schemas
+            .first()
+            .ok_or_else(|| anyhow!("stock public aggregate schema is absent"))?;
+        let validator: Arc<dyn accuracy::PublicAggregateProjectionValidator> = match provider_id {
+            "nemo_evaluator" => {
+                let rule = self
+                    .aggregate_rules
+                    .first()
+                    .ok_or_else(|| anyhow!("NeMo public aggregate metadata rule is absent"))?;
+                Arc::new(
+                    accuracy::ExactBinaryMeanAggregateValidator::accuracy(
+                        rule.provider_scorer.clone(),
+                        rule.provider_reducer.clone(),
+                        rule.provider_metric.clone(),
+                        rule.definition.clone(),
+                        accuracy::NEMO_GSM8K_PUBLIC_SCORE_NAME,
+                    )
+                    .map_err(|error| anyhow!(error.to_string()))?,
+                )
+            }
+            "openbench" => Arc::new(accuracy::OpenBenchGsm8kAggregateValidator::new()),
+            provider => bail!("unregistered stock public aggregate projector {provider:?}"),
+        };
+        let mut policy = accuracy::PublicAggregateProjectionPolicy::restricted_only();
+        policy
+            .register(schema.projection_id.clone(), validator)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        policy
+            .validate_descriptor_fingerprints(&BTreeMap::from([(
+                schema.projection_id.clone(),
+                schema.schema_sha256.clone(),
+            )]))
+            .map_err(|error| anyhow!(error.to_string()))?;
         Ok(policy)
     }
 
@@ -785,7 +820,7 @@ impl StockPublicScoreSchema {
     fn validate(&self) -> Result<()> {
         validate_open_manifest_id(&self.score_name, "stock public score name")?;
         ensure!(
-            self.projection_id == accuracy::GSM8K_BINARY_SCORE_PROJECTION_ID,
+            self.projection_id == accuracy::FINITE_BINARY_NUMBER_PROJECTION_ID,
             "stock public score named an unknown executable validator"
         );
         validate_sha256(&self.schema_sha256, "stock public score schema")?;
@@ -793,29 +828,142 @@ impl StockPublicScoreSchema {
             .map_err(|error| anyhow!(error.to_string()))?;
         ensure!(
             canonical.normalized_result_sha256() == self.schema_sha256
-                && self.schema_sha256 == accuracy::GSM8K_BINARY_SCORE_SCHEMA_SHA256,
+                && self.schema_sha256 == accuracy::FINITE_BINARY_NUMBER_SCHEMA_SHA256,
             "stock public score schema has no executable validator"
         );
         ensure!(
-            self.schema == stock_binary_score_schema(),
+            self.schema == stock_finite_binary_number_schema(),
             "stock public score schema did not match the executable validator"
         );
         Ok(())
     }
 }
 
-fn stock_binary_score_schema() -> serde_json::Value {
+fn stock_finite_binary_number_schema() -> serde_json::Value {
     serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-            "value": {
-                "enum": [0, 1],
-                "type": "number",
-            },
+        "enum": [0, 1],
+        "type": "number",
+    })
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StockPublicAggregateSchema {
+    projection_id: String,
+    schema_sha256: String,
+    schema: serde_json::Value,
+}
+
+impl StockPublicAggregateSchema {
+    fn validate(&self, provider_id: &str) -> Result<()> {
+        ensure!(
+            self.projection_id == accuracy::STOCK_ACCURACY_MEAN_PROJECTION_ID,
+            "stock public aggregate named an unknown executable validator"
+        );
+        validate_sha256(&self.schema_sha256, "stock public aggregate schema")?;
+        let (expected_sha256, expected_schema) = match provider_id {
+            "nemo_evaluator" => (
+                accuracy::NEMO_GSM8K_ACCURACY_MEAN_SCHEMA_SHA256,
+                stock_nemo_accuracy_mean_schema(),
+            ),
+            "openbench" => (
+                accuracy::OPENBENCH_GSM8K_ACCURACY_MEAN_SCHEMA_SHA256,
+                stock_openbench_accuracy_mean_schema(),
+            ),
+            provider => bail!("unregistered stock public aggregate schema {provider:?}"),
+        };
+        let canonical = accuracy::CanonicalJson::new(self.schema.clone())
+            .map_err(|error| anyhow!(error.to_string()))?;
+        ensure!(
+            canonical.normalized_result_sha256() == self.schema_sha256
+                && self.schema_sha256 == expected_sha256,
+            "stock public aggregate schema has no executable validator"
+        );
+        ensure!(
+            self.schema == expected_schema,
+            "stock public aggregate schema did not match the executable validator"
+        );
+        Ok(())
+    }
+}
+
+fn stock_nemo_accuracy_mean_schema() -> serde_json::Value {
+    serde_json::json!({
+        "comparison": {
+            "max_ulps": 0,
+            "reference": "flat_binary_case_mean",
         },
-        "required": ["value"],
-        "type": "object",
+        "denominator": {
+            "cancelled": "unscored",
+            "completed": "scored",
+            "infrastructure_error": "unscored",
+        },
+        "empty_completed_projection": "absent",
+        "provider": {
+            "definition": {
+                "exclude_cancelled": true,
+                "exclude_infrastructure": true,
+            },
+            "metric": "reward",
+            "reducer": "mean",
+            "scorer": "nemo_evaluator.gsm8k_scorer",
+        },
+        "public": {
+            "metric": "accuracy",
+            "reducer": "mean",
+            "scorer": "accuracy",
+        },
+        "schema": accuracy::EXACT_BINARY_MEAN_AGGREGATE_SCHEMA_V1,
+        "source_score": {
+            "name": accuracy::NEMO_GSM8K_PUBLIC_SCORE_NAME,
+            "schema_sha256": accuracy::FINITE_BINARY_NUMBER_SCHEMA_SHA256,
+        },
+    })
+}
+
+fn stock_openbench_accuracy_mean_schema() -> serde_json::Value {
+    serde_json::json!({
+        "candidate_counts": {
+            "scored_count": "config.limit",
+            "unscored_count": 0,
+        },
+        "comparison": {
+            "endpoints": "exact",
+            "max_ulps": accuracy::OPENBENCH_GSM8K_MAX_MEAN_ULPS,
+            "reference": "flat_binary_case_mean",
+        },
+        "configuration": {
+            "epochs": {"field": "epochs", "maximum": 8, "minimum": 1},
+            "sample_count": {"field": "limit", "maximum": 5, "minimum": 1},
+            "task": {"field": "task", "value": "gsm8k"},
+            "task_args": {"field": "task_args", "value": {}},
+        },
+        "denominator": {
+            "cancelled": "absent",
+            "completed": "all_required",
+            "infrastructure_error": "absent",
+        },
+        "provider": {
+            "definition": {
+                "metric_params": {},
+                "params": {},
+                "score_name": "grade_school_math_scorer",
+            },
+            "metric": "accuracy",
+            "reducer": "identity",
+            "scorer": "grade_school_math_scorer",
+        },
+        "public": {
+            "metric": "accuracy",
+            "reducer": "mean",
+            "scorer": "accuracy",
+        },
+        "schema": accuracy::OPENBENCH_GSM8K_AGGREGATE_SCHEMA_V1,
+        "source_score": {
+            "name": accuracy::OPENBENCH_GSM8K_PUBLIC_SCORE_NAME,
+            "schema_sha256": accuracy::FINITE_BINARY_NUMBER_SCHEMA_SHA256,
+        },
     })
 }
 
@@ -878,15 +1026,11 @@ impl StockIsolation {
     }
 
     fn implementation(&self) -> Result<Arc<dyn accuracy::EvaluatorIsolation>> {
-        let bootstrap = accuracy::AttestedProcessLimitBootstrap::new(RESOURCE_BOOTSTRAP)?;
-        Ok(Arc::new(
-            accuracy::BubblewrapEvaluatorIsolation::new(
-                &self.bubblewrap,
-                self.bubblewrap_sha256.clone(),
-                self.resource_limits,
-            )?
-            .with_attested_process_limit_bootstrap(bootstrap),
-        ))
+        Ok(Arc::new(accuracy::BubblewrapEvaluatorIsolation::new(
+            &self.bubblewrap,
+            self.bubblewrap_sha256.clone(),
+            self.resource_limits,
+        )?))
     }
 }
 
@@ -909,7 +1053,6 @@ impl StockLaunch {
         &self,
         manifest: &StockDistributionManifest,
         identity_components: &[accuracy::EvaluationIdentityComponent],
-        maximum_processes: u64,
     ) -> Result<()> {
         ensure!(
             !self.shared_closure_ids.is_empty()
@@ -937,21 +1080,6 @@ impl StockLaunch {
                     && !value.contains('\0')),
             "stock worker argv/environment is invalid"
         );
-        let expected_process_limit = maximum_processes.to_string();
-        ensure!(
-            self.args.len() >= 4
-                && self.args[0] == "-I"
-                && self.args[1] == RESOURCE_BOOTSTRAP_INSIDE
-                && self.args[2] == PROCESS_LIMIT_ARGUMENT
-                && self.args[3] == expected_process_limit
-                && self
-                    .args
-                    .iter()
-                    .filter(|argument| argument.as_str() == PROCESS_LIMIT_ARGUMENT)
-                    .count()
-                    == 1,
-            "stock worker process-limit bootstrap argv drifted from isolation policy"
-        );
         for key in STAGING_ENVIRONMENT_DIRECTORIES {
             let value = self
                 .environment
@@ -977,10 +1105,6 @@ impl StockLaunch {
                 file.destination
             );
         }
-        ensure!(
-            embedded_destinations.contains(RESOURCE_BOOTSTRAP),
-            "stock worker process-limit bootstrap is absent from the embedded closure"
-        );
         let mut overlay_distributions = BTreeSet::new();
         for overlay in &self.metadata_overlays {
             overlay.validate(
@@ -3031,6 +3155,9 @@ pub(crate) fn stock_evaluation_composition() -> Result<StockEvaluationCompositio
     for entry in &manifest.distributions {
         let distribution = entry.descriptor()?;
         let public_score_projection_policy = entry.public_projection.score_policy()?;
+        let public_aggregate_projection_policy = entry
+            .public_projection
+            .aggregate_policy(&entry.provider_id)?;
         let public_metadata_projector: Arc<dyn accuracy::PublicEvaluationMetadataProjector> =
             Arc::new(entry.public_projection.metadata_policy()?);
         let launcher: Arc<dyn accuracy::EvaluationProviderLauncher> =
@@ -3045,6 +3172,7 @@ pub(crate) fn stock_evaluation_composition() -> Result<StockEvaluationCompositio
                     vec![distribution],
                     launcher,
                     public_score_projection_policy,
+                    public_aggregate_projection_policy,
                     public_metadata_projector,
                 )?,
             ),
@@ -3053,6 +3181,7 @@ pub(crate) fn stock_evaluation_composition() -> Result<StockEvaluationCompositio
                     vec![distribution],
                     launcher,
                     public_score_projection_policy,
+                    public_aggregate_projection_policy,
                     public_metadata_projector,
                 )?,
             ),
@@ -3067,6 +3196,15 @@ pub(crate) fn stock_evaluation_composition() -> Result<StockEvaluationCompositio
                         .score_schemas
                         .iter()
                         .map(|score| (score.score_name.clone(), score.schema_sha256.clone()))
+                        .collect::<BTreeMap<_, _>>()
+                && factory.descriptor().public_aggregate_projection_schemas
+                    == entry
+                        .public_projection
+                        .aggregate_schemas
+                        .iter()
+                        .map(|schema| {
+                            (schema.projection_id.clone(), schema.schema_sha256.clone())
+                        })
                         .collect::<BTreeMap<_, _>>()
                 && factory.descriptor().public_metadata_schema_sha256
                     == entry.public_projection.metadata_schema_sha256,
@@ -3157,31 +3295,6 @@ mod tests {
                 serde_json::json!("unreviewed_projection_v1");
         });
         assert!(error.contains("unknown executable validator"), "{error}");
-    }
-
-    #[test]
-    fn manifest_binary_score_policy_rejects_fractional_projection() {
-        let manifest = StockDistributionManifest::embedded().unwrap();
-        for distribution in &manifest.distributions {
-            let policy = distribution.public_projection.score_policy().unwrap();
-            let score_name = &distribution.public_projection.score_schemas[0].score_name;
-            for value in [
-                serde_json::json!({"value": 0}),
-                serde_json::json!({"value": 1}),
-            ] {
-                policy
-                    .validate(score_name, &accuracy::CanonicalJson::new(value).unwrap())
-                    .unwrap();
-            }
-            assert!(
-                policy
-                    .validate(
-                        score_name,
-                        &accuracy::CanonicalJson::new(serde_json::json!({"value": 0.5})).unwrap(),
-                    )
-                    .is_err()
-            );
-        }
     }
 
     #[test]

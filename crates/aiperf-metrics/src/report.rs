@@ -1294,7 +1294,7 @@ pub struct EvaluationCaseErrorReport {
 /// One factory-schema-validated public score projection.
 ///
 /// The provider's complete native score tree is never stored here. It remains
-/// in the restricted sealed bundle and is referenced by digest.
+/// in the restricted sealed bundle with no public content digest.
 #[derive(Debug, Clone, PartialEq, DeriveSerialize)]
 pub struct EvaluationPublicScoreReport {
     /// Canonical public value after Rust validation and reserialization.
@@ -1316,13 +1316,13 @@ pub struct EvaluationCaseReport {
     pub source: String,
     /// Explicit semantic terminal class.
     pub outcome: EvaluationCaseOutcomeKind,
-    /// Reviewed public score projections keyed by provider score name.
+    /// Reviewed public score projections keyed by factory-owned public label.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub scores: BTreeMap<String, EvaluationPublicScoreReport>,
     /// Finite scalar projections eligible for score/performance joins.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub numeric_metrics: BTreeMap<String, f64>,
-    /// Provider-selected primary score name, when public.
+    /// Factory-owned primary public score label, when reviewed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_score: Option<String>,
     /// Redacted infrastructure or cancellation metadata.
@@ -1333,23 +1333,23 @@ pub struct EvaluationCaseReport {
     pub artifact_refs: Vec<String>,
 }
 
-/// One provider-native aggregate projected into the public report.
+/// One factory-validated aggregate projected into the public report.
 #[derive(Debug, Clone, PartialEq, DeriveSerialize)]
 pub struct EvaluationAggregateMetricReport {
-    /// Provider scorer identity.
+    /// Factory-owned stable public scorer label.
     pub scorer: String,
-    /// Provider reducer identity.
+    /// Factory-owned stable public reducer label.
     pub reducer: String,
-    /// Metric name selected by the provider.
+    /// Factory-owned stable public metric label.
     pub metric: String,
     /// Finite provider-computed aggregate value.
     pub value: f64,
-    /// Number of outcomes included by provider aggregation policy.
+    /// Number of factory-validated aggregation units in the denominator.
     pub scored_count: usize,
-    /// Number of outcomes excluded or unscored by provider policy.
+    /// Number of factory-validated units excluded from the denominator.
     pub unscored_count: usize,
-    /// Exact factory-reviewed canonical provider aggregation definition.
-    pub definition: Value,
+    /// Exact executable factory aggregate-rule fingerprint.
+    pub projection_schema: String,
 }
 
 /// Rust-authoritative traffic totals for one logical evaluator route.
@@ -1396,13 +1396,15 @@ pub struct EvaluationArtifactReport {
     pub media_type: Option<String>,
     /// Factory-authorized visibility (`public` or `restricted`).
     pub visibility: String,
-    /// Size observed from the opened file descriptor.
-    pub size_bytes: u64,
-    /// SHA-256 over exact opened file bytes.
-    pub artifact_content_sha256: String,
-    /// Optional semantic digest using `aiperf-canonical-json-v1`.
+    /// Factory-reviewed public byte length; absent for restricted artifacts.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub normalized_result_sha256: Option<String>,
+    pub size_bytes: Option<u64>,
+    /// Factory-reviewed public SHA-256; absent for restricted artifacts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_content_sha256: Option<String>,
+    /// Factory-owned public artifact projection schema; absent when restricted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projection_schema: Option<String>,
 }
 
 /// Safe identity graph for a replaceable evaluator-provider run.
@@ -1472,16 +1474,12 @@ pub struct EvaluationReport {
     pub cancelled_count: usize,
     /// Ordered report-safe case outcomes.
     pub cases: Vec<EvaluationCaseReport>,
-    /// Provider-computed canonical aggregate projections.
+    /// Factory-validated public aggregate projections.
     pub aggregates: Vec<EvaluationAggregateMetricReport>,
     /// Rust traffic summaries keyed by logical service ID.
     pub route_summaries: BTreeMap<String, EvaluationRouteSummaryReport>,
-    /// Rust-verified sealed artifact manifest.
+    /// Rust-verified report projection of the sealed artifact manifest.
     pub artifacts: Vec<EvaluationArtifactReport>,
-    /// Digest of the exact restricted provider bundle artifact.
-    pub canonical_bundle_artifact_content_sha256: String,
-    /// Digest of the provider semantic result after declared normalization.
-    pub normalized_result_sha256: String,
 }
 
 /// Terminal lifecycle state reported by a telemetry archive execution.
@@ -2524,7 +2522,7 @@ mod tests {
                 value: 0.0,
                 scored_count: 1,
                 unscored_count: 1,
-                definition: serde_json::json!({"kind": "mean"}),
+                projection_schema: "6".repeat(64),
             }],
             route_summaries: BTreeMap::from([(
                 "primary".into(),
@@ -2541,12 +2539,10 @@ mod tests {
                 path: None,
                 media_type: None,
                 visibility: "restricted".into(),
-                size_bytes: 9,
-                artifact_content_sha256: "4".repeat(64),
-                normalized_result_sha256: Some("5".repeat(64)),
+                size_bytes: None,
+                artifact_content_sha256: None,
+                projection_schema: None,
             }],
-            canonical_bundle_artifact_content_sha256: "4".repeat(64),
-            normalized_result_sha256: "5".repeat(64),
         };
 
         let report = NativeReport::from_outcome(
@@ -2571,6 +2567,34 @@ mod tests {
         assert_eq!(
             value["evaluation"]["artifacts"][0]["visibility"],
             "restricted"
+        );
+        for field in [
+            "path",
+            "media_type",
+            "size_bytes",
+            "artifact_content_sha256",
+            "projection_schema",
+        ] {
+            assert!(value["evaluation"]["artifacts"][0].get(field).is_none());
+        }
+        assert!(
+            value["evaluation"]
+                .get("canonical_bundle_artifact_content_sha256")
+                .is_none()
+        );
+        assert!(
+            value["evaluation"]
+                .get("normalized_result_sha256")
+                .is_none()
+        );
+        assert!(
+            value["evaluation"]["aggregates"][0]
+                .get("definition")
+                .is_none()
+        );
+        assert_eq!(
+            value["evaluation"]["aggregates"][0]["projection_schema"],
+            "6".repeat(64)
         );
     }
 

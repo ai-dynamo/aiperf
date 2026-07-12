@@ -16,6 +16,7 @@ import yaml
 from aiperf.cli_commands.watch import (
     _load_archive_report,
     _parse_watch_terminal,
+    _terminal_failure,
     build_watch_request,
 )
 
@@ -186,3 +187,29 @@ def test_watch_loads_only_typed_report_inside_artifact_target(tmp_path: Path) ->
     outside = tmp_path.parent / "native-v2.json"
     with pytest.raises(ValueError, match="escaped"):
         _load_archive_report({"report_path": str(outside)}, tmp_path)
+
+
+def test_watch_failure_surfaces_typed_diagnostic_without_a_report() -> None:
+    terminal = {
+        "success": False,
+        "stage": "reporting",
+        "errors": [
+            {
+                "code": "archive_remote_finalization_failed",
+                "message": "remote archive unavailable",
+            }
+        ],
+        "diagnostic_artifacts": [
+            {
+                "kind": "archive_failure_diagnostic",
+                "relative_path": "archive-failure-diagnostic.json",
+                "content_hash": "blake3:" + "a" * 64,
+            }
+        ],
+    }
+
+    detail = _terminal_failure(terminal, b"")
+
+    assert "remote archive unavailable" in detail
+    assert "archive-failure-diagnostic.json" in detail
+    assert "native-v2.json" not in detail

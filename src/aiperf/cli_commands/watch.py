@@ -310,6 +310,18 @@ def _terminal_failure(terminal: dict[str, Any], stderr: bytes) -> str:
             and entry["message"]
         ]
     detail = "; ".join(messages) or "native watch execution failed"
+    artifacts = terminal.get("diagnostic_artifacts")
+    if isinstance(artifacts, list):
+        evidence = [
+            f"{entry['kind']}={entry['relative_path']} ({entry['content_hash']})"
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and isinstance(entry.get("kind"), str)
+            and isinstance(entry.get("relative_path"), str)
+            and isinstance(entry.get("content_hash"), str)
+        ]
+        if evidence:
+            detail = f"{detail}; diagnostic artifacts: {', '.join(evidence)}"
     diagnostic = stderr.decode(errors="replace").strip()
     if diagnostic:
         detail = f"{detail}; Rust stderr: {diagnostic[-4000:]}"
