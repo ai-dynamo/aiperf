@@ -1159,6 +1159,222 @@ pub struct AgenticEvaluationReport {
     pub records: Vec<AgenticEpisodeReport>,
 }
 
+/// Terminal semantic class assigned by the selected evaluator provider.
+///
+/// This is deliberately independent from the Rust transport terminal stored in
+/// request metrics. A completed score of zero is therefore never confused with
+/// infrastructure failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationCaseOutcomeKind {
+    /// Provider scoring completed and public score projections may be present.
+    Completed,
+    /// A provider, host, or evaluator infrastructure stage failed.
+    InfrastructureError,
+    /// Rust or the provider explicitly cancelled the case.
+    Cancelled,
+}
+
+/// Report-safe evaluator error metadata.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluationCaseErrorReport {
+    /// Provider-defined lifecycle stage, validated as a bounded identifier.
+    pub stage: String,
+    /// Stable error category with secret-bearing detail removed.
+    pub kind: String,
+    /// Whether provider semantic policy permits a new semantic attempt.
+    pub retryable: bool,
+    /// Redacted diagnostic suitable for the public report.
+    pub message: String,
+}
+
+/// One factory-schema-validated public score projection.
+///
+/// The provider's complete native score tree is never stored here. It remains
+/// in the restricted sealed bundle and is referenced by digest.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct EvaluationPublicScoreReport {
+    /// Canonical public value after Rust validation and reserialization.
+    pub value: Value,
+    /// Versioned factory-owned projection schema.
+    pub projection_schema: String,
+}
+
+/// Report-safe terminal record for one opaque evaluator case occurrence.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct EvaluationCaseReport {
+    /// Opaque occurrence identifier in frozen canonical order.
+    pub case_id: String,
+    /// Opaque provider template identifier.
+    pub template_id: String,
+    /// Safe provider-owned task label.
+    pub task: String,
+    /// Safe immutable source label.
+    pub source: String,
+    /// Explicit semantic terminal class.
+    pub outcome: EvaluationCaseOutcomeKind,
+    /// Reviewed public score projections keyed by provider score name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub scores: BTreeMap<String, EvaluationPublicScoreReport>,
+    /// Finite scalar projections eligible for score/performance joins.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub numeric_metrics: BTreeMap<String, f64>,
+    /// Provider-selected primary score name, when public.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_score: Option<String>,
+    /// Redacted infrastructure or cancellation metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<EvaluationCaseErrorReport>,
+    /// Declared artifact paths; contents remain outside the public report.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_refs: Vec<String>,
+}
+
+/// One provider-native aggregate projected into the public report.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct EvaluationAggregateMetricReport {
+    /// Provider scorer identity.
+    pub scorer: String,
+    /// Provider reducer identity.
+    pub reducer: String,
+    /// Metric name selected by the provider.
+    pub metric: String,
+    /// Finite provider-computed aggregate value.
+    pub value: f64,
+    /// Number of outcomes included by provider aggregation policy.
+    pub scored_count: usize,
+    /// Number of outcomes excluded or unscored by provider policy.
+    pub unscored_count: usize,
+}
+
+/// Rust-authoritative traffic totals for one logical evaluator route.
+#[derive(Debug, Clone, Default, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluationRouteSummaryReport {
+    /// Logical host operations accepted by Rust.
+    pub logical_operations: usize,
+    /// Concrete upstream transport attempts made by Rust.
+    pub transport_attempts: usize,
+    /// Attempts after the first attempt of a logical operation.
+    pub retries: usize,
+    /// Rust-owned cache or explicitly identity-bound replay hits.
+    pub cache_hits: usize,
+    /// Operations that completed normally at the transport layer.
+    pub completed: usize,
+    /// Operations that failed or were rejected at the transport layer.
+    pub failed: usize,
+    /// Operations cancelled before or during transport.
+    pub cancelled: usize,
+    /// Prompt tokens when every contributing operation reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u64>,
+    /// Completion tokens when every contributing operation reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u64>,
+    /// Reasoning tokens when every contributing operation reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    /// Cached prompt tokens when every contributing operation reported usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+}
+
+/// Rust-verified artifact manifest entry.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluationArtifactReport {
+    /// Contained path below the immutable promoted artifact root.
+    pub path: String,
+    /// Declared media type.
+    pub media_type: String,
+    /// Factory-authorized visibility (`public` or `restricted`).
+    pub visibility: String,
+    /// Size observed from the opened file descriptor.
+    pub size_bytes: u64,
+    /// SHA-256 over exact opened file bytes.
+    pub artifact_content_sha256: String,
+    /// Optional semantic digest using `aiperf-canonical-json-v1`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_result_sha256: Option<String>,
+}
+
+/// Safe identity graph for a replaceable evaluator-provider run.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluationIdentityReport {
+    /// Evaluator-worker protocol version.
+    pub evaluator_protocol: u32,
+    /// Open provider registry ID.
+    pub provider: String,
+    /// Factory-owned immutable distribution ID.
+    pub distribution: String,
+    /// Provider package/source identity digest.
+    pub provider_source_sha256: String,
+    /// Factory-attested worker source digest.
+    pub worker_source_sha256: String,
+    /// Factory-attested dependency lock digest.
+    pub dependency_lock_sha256: String,
+    /// Fingerprint of the pure authored-configuration schema.
+    pub authored_schema_fingerprint: String,
+    /// Canonical secret-redacted resolved evaluator configuration digest.
+    pub resolved_config_sha256: String,
+    /// Ordered case/unit manifest digest.
+    pub ordered_manifest_sha256: String,
+    /// Rust host implementation and capability inventory digest.
+    pub host_identity_sha256: String,
+    /// Enforced evaluator isolation proof digest.
+    pub isolation_proof_sha256: String,
+    /// Optional immutable OCI identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_digest: Option<String>,
+    /// Provider-specific, factory-approved identity fields.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<String, String>,
+}
+
+/// Secret-free prepared logical route inventory.
+#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
+pub struct EvaluationRouteReport {
+    /// Logical service identifier requested by the evaluator.
+    pub service_id: String,
+    /// Safe purpose label.
+    pub purpose: String,
+    /// Authored model alias, not an endpoint locator.
+    pub model: String,
+    /// Prepared endpoint profile ID.
+    pub endpoint_profile: String,
+    /// Digest of the credential-free prepared binding identity.
+    pub prepared_identity_sha256: String,
+}
+
+/// Generic native-v2 evaluation result shared by static and stateful providers.
+#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
+pub struct EvaluationReport {
+    /// Factory-attested evaluator/provider/host identity.
+    pub identity: EvaluationIdentityReport,
+    /// Factory-schema-projected safe resolved configuration.
+    pub config: Value,
+    /// Secret-free logical route inventory in deterministic service order.
+    pub routes: Vec<EvaluationRouteReport>,
+    /// Number of frozen case occurrences.
+    pub case_count: usize,
+    /// Cases with a provider semantic result, including valid zero scores.
+    pub completed_count: usize,
+    /// Cases excluded because infrastructure failed.
+    pub infrastructure_error_count: usize,
+    /// Cases excluded because they were cancelled.
+    pub cancelled_count: usize,
+    /// Ordered report-safe case outcomes.
+    pub cases: Vec<EvaluationCaseReport>,
+    /// Provider-computed canonical aggregate projections.
+    pub aggregates: Vec<EvaluationAggregateMetricReport>,
+    /// Rust traffic summaries keyed by logical service ID.
+    pub route_summaries: BTreeMap<String, EvaluationRouteSummaryReport>,
+    /// Rust-verified sealed artifact manifest.
+    pub artifacts: Vec<EvaluationArtifactReport>,
+    /// Digest of the exact restricted provider bundle artifact.
+    pub canonical_bundle_artifact_content_sha256: String,
+    /// Digest of the provider semantic result after declared normalization.
+    pub normalized_result_sha256: String,
+}
+
 /// Runtime facts supplied to a [`Reporter`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunOutcome {
@@ -1180,6 +1396,8 @@ pub struct RunOutcome {
     pub evaluator: Option<EvaluatorReportInfo>,
     /// Optional stateful agentic evaluator result block.
     pub agentic: Option<AgenticEvaluationReport>,
+    /// Generic provider-neutral evaluation result block.
+    pub evaluation: Option<EvaluationReport>,
     /// Grouped run errors.
     pub errors: Vec<ReportError>,
 }
@@ -1228,6 +1446,7 @@ impl Reporter for NativeReporter {
             accuracy_records: outcome.accuracy_records.clone(),
             evaluator: outcome.evaluator.clone(),
             agentic: outcome.agentic.clone(),
+            evaluation: outcome.evaluation.clone(),
             errors: outcome.errors.clone(),
         }
     }
@@ -1267,6 +1486,9 @@ pub struct NativeReport {
     /// Stateful harness identity, configuration, summary, and episode records.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agentic: Option<AgenticEvaluationReport>,
+    /// Provider-neutral evaluator identity, results, traffic, and artifact digests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluation: Option<EvaluationReport>,
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,
@@ -1614,9 +1836,131 @@ mod tests {
         assert!(value.get("warmup_metrics").is_none());
         assert!(value.get("accuracy").is_none());
         assert!(value.get("accuracy_records").is_none());
+        assert!(value.get("evaluation").is_none());
         assert!(value["run"].get("distribution_id").is_none());
         assert!(value["run"].get("graph").is_none());
         assert!(value["run"].get("dynamo").is_none());
+    }
+
+    #[test]
+    fn provider_neutral_evaluation_keeps_zero_score_distinct_from_failure() {
+        let zero_case = EvaluationCaseReport {
+            case_id: "case-0".into(),
+            template_id: "template-0".into(),
+            task: "fixture".into(),
+            source: "sha256:dataset".into(),
+            outcome: EvaluationCaseOutcomeKind::Completed,
+            scores: BTreeMap::from([(
+                "accuracy".into(),
+                EvaluationPublicScoreReport {
+                    value: serde_json::json!(0),
+                    projection_schema: "fixture-score-v1".into(),
+                },
+            )]),
+            numeric_metrics: BTreeMap::from([("accuracy".into(), 0.0)]),
+            primary_score: Some("accuracy".into()),
+            error: None,
+            artifact_refs: Vec::new(),
+        };
+        let failed_case = EvaluationCaseReport {
+            case_id: "case-1".into(),
+            template_id: "template-1".into(),
+            task: "fixture".into(),
+            source: "sha256:dataset".into(),
+            outcome: EvaluationCaseOutcomeKind::InfrastructureError,
+            scores: BTreeMap::new(),
+            numeric_metrics: BTreeMap::new(),
+            primary_score: None,
+            error: Some(EvaluationCaseErrorReport {
+                stage: "inference".into(),
+                kind: "transport_failure".into(),
+                retryable: false,
+                message: "upstream attempt failed".into(),
+            }),
+            artifact_refs: Vec::new(),
+        };
+        let evaluation = EvaluationReport {
+            identity: EvaluationIdentityReport {
+                evaluator_protocol: 2,
+                provider: "openbench".into(),
+                distribution: "openbench_fixture_locked".into(),
+                provider_source_sha256: "a".repeat(64),
+                worker_source_sha256: "b".repeat(64),
+                dependency_lock_sha256: "c".repeat(64),
+                authored_schema_fingerprint: "d".repeat(64),
+                resolved_config_sha256: "e".repeat(64),
+                ordered_manifest_sha256: "f".repeat(64),
+                host_identity_sha256: "1".repeat(64),
+                isolation_proof_sha256: "2".repeat(64),
+                container_digest: None,
+                components: BTreeMap::new(),
+            },
+            config: serde_json::json!({"benchmark": "fixture"}),
+            routes: vec![EvaluationRouteReport {
+                service_id: "primary".into(),
+                purpose: "primary".into(),
+                model: "candidate".into(),
+                endpoint_profile: "candidate_openai".into(),
+                prepared_identity_sha256: "3".repeat(64),
+            }],
+            case_count: 2,
+            completed_count: 1,
+            infrastructure_error_count: 1,
+            cancelled_count: 0,
+            cases: vec![zero_case, failed_case],
+            aggregates: vec![EvaluationAggregateMetricReport {
+                scorer: "fixture".into(),
+                reducer: "mean".into(),
+                metric: "accuracy".into(),
+                value: 0.0,
+                scored_count: 1,
+                unscored_count: 1,
+            }],
+            route_summaries: BTreeMap::from([(
+                "primary".into(),
+                EvaluationRouteSummaryReport {
+                    logical_operations: 2,
+                    transport_attempts: 2,
+                    completed: 1,
+                    failed: 1,
+                    ..EvaluationRouteSummaryReport::default()
+                },
+            )]),
+            artifacts: vec![EvaluationArtifactReport {
+                path: "bundle.eval".into(),
+                media_type: "application/octet-stream".into(),
+                visibility: "restricted".into(),
+                size_bytes: 9,
+                artifact_content_sha256: "4".repeat(64),
+                normalized_result_sha256: Some("5".repeat(64)),
+            }],
+            canonical_bundle_artifact_content_sha256: "4".repeat(64),
+            normalized_result_sha256: "5".repeat(64),
+        };
+
+        let report = NativeReport::from_outcome(
+            &AccumulatorSummary::new(),
+            &RunOutcome {
+                evaluation: Some(evaluation),
+                ..RunOutcome::default()
+            },
+        );
+        let value = serde_json::to_value(report).unwrap();
+        assert_eq!(value["evaluation"]["cases"][0]["outcome"], "completed");
+        assert_eq!(
+            value["evaluation"]["cases"][0]["scores"]["accuracy"]["value"],
+            0
+        );
+        assert!(value["evaluation"]["cases"][0].get("error").is_none());
+        assert_eq!(
+            value["evaluation"]["cases"][1]["outcome"],
+            "infrastructure_error"
+        );
+        assert!(value["evaluation"]["cases"][1].get("scores").is_none());
+        assert_eq!(
+            value["evaluation"]["artifacts"][0]["visibility"],
+            "restricted"
+        );
     }
 
     #[test]
