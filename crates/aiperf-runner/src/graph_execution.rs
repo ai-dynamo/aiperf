@@ -9,7 +9,7 @@
 //! policies. Replacing native placement with ZMQ leaves graph scheduling and
 //! this worker-side execution contract unchanged.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -566,6 +566,9 @@ impl GraphTraceExecutionBackendFactory for RunnerGraphBackendFactory {
             node_policy,
             prefill_slots,
             next_session: Cell::new(0),
+            next_execution: Cell::new(0),
+            cancelled: Cell::new(false),
+            active: RefCell::new(HashMap::new()),
         }))
     }
 }
@@ -586,11 +589,20 @@ struct RunnerGraphWorkerBackend {
     node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
     prefill_slots: Option<Rc<SlotPool>>,
     next_session: Cell<u64>,
+    next_execution: Cell<u64>,
+    cancelled: Cell<bool>,
+    active: RefCell<HashMap<u64, Rc<LocalGraphTraceExecutionBackend<OpenAiChatMessage>>>>,
 }
 
 #[async_trait(?Send)]
 impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
     async fn execute_trace(&self, plan: GraphTracePlan) -> Result<(), TraceError> {
+        if self.cancelled.get() {
+            return Err(TraceError::Cancelled(format!(
+                "graph trace {:?} was rejected after worker cancellation",
+                plan.trace.id
+            )));
+        }
         let local_session = self.next_session.get();
         self.next_session.set(local_session.saturating_add(1));
         let session_num = (self.worker_id as u64)
@@ -630,10 +642,35 @@ impl GraphTraceExecutionBackend for RunnerGraphWorkerBackend {
             local = local.with_node_policy(policy.clone());
         }
         local = local.with_node_failure(Rc::new(AbortTraceNodeFailurePolicy));
+        let local = Rc::new(local);
+        let execution_id = self.next_execution.get();
+        self.next_execution.set(execution_id.saturating_add(1));
+        self.active.borrow_mut().insert(execution_id, local.clone());
         let result = local.execute_trace(plan).await;
-        sink.verify_finalized_records()
-            .map_err(|error| TraceError::Other(error.to_string()))?;
+        let finalized = sink
+            .verify_finalized_records()
+            .map_err(|error| TraceError::Other(error.to_string()));
+        self.active.borrow_mut().remove(&execution_id);
+        finalized?;
         result
+    }
+
+    fn cancel_inflight(&self) -> Result<(), TraceError> {
+        self.cancelled.set(true);
+        let active = self.active.borrow().values().cloned().collect::<Vec<_>>();
+        let errors = active
+            .iter()
+            .filter_map(|backend| backend.cancel_inflight().err())
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(TraceError::Other(format!(
+                "cancelling worker-local graph traces: {}",
+                errors.join("; ")
+            )))
+        }
     }
 
     fn set_prefill_limit(&self, limit: usize) -> Result<(), TraceError> {
