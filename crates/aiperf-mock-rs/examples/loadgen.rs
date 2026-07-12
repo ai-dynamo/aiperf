@@ -30,6 +30,10 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    anyhow::ensure!(
+        args.concurrency > 0,
+        "--concurrency must be greater than zero"
+    );
     let client = Client::builder()
         .no_proxy()
         .http1_only()
@@ -53,11 +57,11 @@ async fn main() -> anyhow::Result<()> {
     let total_latency_us = Arc::new(AtomicU64::new(0));
     let max_latency_us = Arc::new(AtomicU64::new(0));
 
-    let per_worker = args.total / args.concurrency;
     let start = Instant::now();
 
     let mut handles = Vec::with_capacity(args.concurrency);
-    for _w in 0..args.concurrency {
+    for worker_index in 0..args.concurrency {
+        let worker_requests = requests_for_worker(args.total, args.concurrency, worker_index);
         let client = client.clone();
         let url = args.url.clone();
         let body = body.clone();
@@ -68,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         let max_latency_us = max_latency_us.clone();
         let streaming = args.streaming;
         handles.push(tokio::spawn(async move {
-            for _ in 0..per_worker {
+            for _ in 0..worker_requests {
                 let req_start = Instant::now();
                 let resp = client
                     .post(&url)
@@ -141,4 +145,30 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+fn requests_for_worker(total: usize, concurrency: usize, worker_index: usize) -> usize {
+    total / concurrency + usize::from(worker_index < total % concurrency)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requests_for_worker;
+
+    #[test]
+    fn distributes_every_request_when_total_has_a_remainder() {
+        let counts = (0..3)
+            .map(|worker| requests_for_worker(8, 3, worker))
+            .collect::<Vec<_>>();
+        assert_eq!(counts, vec![3, 3, 2]);
+        assert_eq!(counts.into_iter().sum::<usize>(), 8);
+    }
+
+    #[test]
+    fn supports_more_workers_than_requests() {
+        let counts = (0..5)
+            .map(|worker| requests_for_worker(2, 5, worker))
+            .collect::<Vec<_>>();
+        assert_eq!(counts, vec![1, 1, 0, 0, 0]);
+    }
 }

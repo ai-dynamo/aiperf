@@ -97,14 +97,18 @@ fn find_corpus_path() -> Option<PathBuf> {
     }
 
     let candidates = [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/aiperf/dataset/generator/assets/shakespeare.txt"),
+        workspace_corpus_path(),
         PathBuf::from("src/aiperf/dataset/generator/assets/shakespeare.txt"),
         PathBuf::from("../src/aiperf/dataset/generator/assets/shakespeare.txt"),
         PathBuf::from("../../src/aiperf/dataset/generator/assets/shakespeare.txt"),
         PathBuf::from("../../../src/aiperf/dataset/generator/assets/shakespeare.txt"),
     ];
     candidates.into_iter().find(|path| path.exists())
+}
+
+fn workspace_corpus_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../src/aiperf/dataset/generator/assets/shakespeare.txt")
 }
 
 /// Character-based tokenizer: ~4 chars/token, breaking at whitespace when possible.
@@ -640,6 +644,13 @@ mod tests {
     #[test]
     fn tokenize_empty_returns_empty() {
         assert!(tokenize("").is_empty());
+    }
+
+    #[test]
+    fn workspace_corpus_is_discoverable_without_a_deprecated_checkout() {
+        let path = workspace_corpus_path();
+        assert!(path.ends_with("src/aiperf/dataset/generator/assets/shakespeare.txt"));
+        assert!(path.is_file());
     }
 
     #[test]
