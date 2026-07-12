@@ -64,6 +64,8 @@ struct DagTurnRaw<'a> {
     #[serde(default, borrow)]
     tools: Option<&'a RawValue>,
     #[serde(default, borrow)]
+    raw_system: Option<&'a RawValue>,
+    #[serde(default, borrow)]
     extra: Option<&'a RawValue>,
     #[serde(default, borrow)]
     extra_headers: Option<&'a RawValue>,
@@ -148,6 +150,7 @@ impl DagConversationRaw<'_> {
             }
             validate_messages(turn.messages, origin, index)?;
             validate_optional_array(turn.tools, "tools", origin, index)?;
+            validate_optional_array(turn.raw_system, "raw_system", origin, index)?;
             validate_optional_object(turn.extra, "extra", origin, index)?;
             validate_optional_string_object(turn.extra_headers, "extra_headers", origin, index)?;
             validate_optional_string_object(
@@ -350,6 +353,15 @@ fn lower_conversation(
         if tools_handle.is_some() {
             parent = tools_handle;
         }
+        let raw_system_handle = authored
+            .raw_system
+            .map(|system| {
+                segments.intern_raw(parent, Bytes::copy_from_slice(system.get().as_bytes()))
+            })
+            .transpose()?;
+        if raw_system_handle.is_some() {
+            parent = raw_system_handle;
+        }
         let extra_handle = authored
             .extra
             .map(|extra| {
@@ -385,6 +397,7 @@ fn lower_conversation(
             delay_ms: Some(delay_cap_ms.map_or(authored.delay, |cap| authored.delay.min(cap))),
             raw_messages: Some(messages_handle),
             tools: tools_handle,
+            raw_system: raw_system_handle,
             extra_body: extra_handle,
             extra_headers,
             request_parameters,

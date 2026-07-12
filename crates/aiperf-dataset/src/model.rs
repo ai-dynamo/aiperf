@@ -239,6 +239,8 @@ pub struct Turn {
     pub raw_messages: Option<Handle>,
     /// Preformatted tool definitions.
     pub tools: Option<Handle>,
+    /// Preformatted vendor-shaped top-level system content blocks.
+    pub raw_system: Option<Handle>,
     /// Earliest prior turn included when walking backward for the most recent tools.
     pub tool_walk_start: Option<u32>,
     /// Per-turn extra request-body fields.
@@ -272,6 +274,7 @@ impl Default for Turn {
             raw_payload: None,
             raw_messages: None,
             tools: None,
+            raw_system: None,
             tool_walk_start: None,
             extra_body: None,
             extra_headers: None,

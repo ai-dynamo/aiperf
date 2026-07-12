@@ -315,6 +315,7 @@ fn rebase_conversation_handles(
             &mut turn.raw_payload,
             &mut turn.raw_messages,
             &mut turn.tools,
+            &mut turn.raw_system,
             &mut turn.extra_body,
             &mut turn.extra_headers,
             &mut turn.request_parameters,

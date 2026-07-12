@@ -3,6 +3,8 @@
 
 //! Endpoint configuration validation and normalization.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::Url;
@@ -58,6 +60,12 @@ pub struct EndpointConfig {
     pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
+    /// Headers merged into every request before per-turn header overrides.
+    #[serde(default, skip_serializing)]
+    pub headers: BTreeMap<String, String>,
+    /// Endpoint API key. It is deliberately never serialized into artifacts.
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
     /// Endpoint-level extra body fields.
     pub extra: Option<Map<String, Value>>,
 }
@@ -82,6 +90,8 @@ impl Default for EndpointConfig {
             wait_for_model_mode_set: false,
             use_legacy_max_tokens: false,
             use_server_token_count: false,
+            headers: BTreeMap::new(),
+            api_key: None,
             extra: None,
         }
     }

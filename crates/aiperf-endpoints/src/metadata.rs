@@ -15,6 +15,8 @@ pub enum EndpointType {
     Completions,
     /// OpenAI Responses API.
     Responses,
+    /// Anthropic Messages API.
+    Messages,
     /// OpenAI Embeddings.
     Embeddings,
     /// Chat-shaped embeddings.
@@ -105,7 +107,7 @@ macro_rules! m {
     };
 }
 
-const METADATA: [EndpointMetadata; 17] = [
+const METADATA: [EndpointMetadata; 18] = [
     m!(
         Chat,
         Some("/v1/chat/completions"),
@@ -153,6 +155,24 @@ const METADATA: [EndpointMetadata; 17] = [
         false,
         false,
         true,
+        true,
+        false,
+        false,
+        false,
+        "LLM Metrics",
+        "llm"
+    ),
+    m!(
+        Messages,
+        Some("/v1/messages"),
+        None,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
         true,
         false,
         false,

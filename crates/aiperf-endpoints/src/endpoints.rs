@@ -25,6 +25,18 @@ pub trait Endpoint: std::fmt::Debug + Send + Sync {
     fn metadata(&self) -> &'static EndpointMetadata;
     /// Build a decoded JSON request body.
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value>;
+    /// Build endpoint-owned request headers before per-turn overrides.
+    ///
+    /// Authentication is a dialect property: OpenAI-compatible endpoints use
+    /// bearer auth while Anthropic Messages uses `x-api-key`. Keeping the hook
+    /// here lets every workload share the same transport path.
+    fn format_headers(&self, config: &EndpointConfig) -> BTreeMap<String, String> {
+        let mut headers = config.headers.clone();
+        if let Some(api_key) = &config.api_key {
+            headers.insert("Authorization".into(), format!("Bearer {api_key}"));
+        }
+        headers
+    }
     /// Parse a decoded server response.
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
     /// Parse with the effective per-request configuration when a dialect needs
@@ -44,6 +56,10 @@ pub trait Endpoint: std::fmt::Debug + Send + Sync {
     /// Build an assistant turn for context replay.
     fn build_assistant_turn(&self, record: &RequestRecord) -> EndpointResult<Option<Turn>> {
         build_plain_assistant_turn(self, record)
+    }
+    /// Whether successful responses should be reconstructed for later turns.
+    fn captures_assistant_turn(&self) -> bool {
+        false
     }
     /// Return endpoint content-part names.
     fn part_types(&self) -> PartTypes {
@@ -200,6 +216,10 @@ impl Endpoint for ChatEndpoint {
             ..Turn::default()
         }))
     }
+
+    fn captures_assistant_turn(&self) -> bool {
+        true
+    }
 }
 
 impl Endpoint for ResponsesEndpoint {
@@ -345,6 +365,10 @@ impl Endpoint for ResponsesEndpoint {
     fn part_types(&self) -> PartTypes {
         PartTypes::responses()
     }
+
+    fn captures_assistant_turn(&self) -> bool {
+        true
+    }
 }
 
 impl Endpoint for CompletionsEndpoint {
@@ -480,12 +504,13 @@ pub(crate) fn require_turns<'a>(
 }
 
 #[derive(Clone, Copy)]
-enum PartShape {
+pub(crate) enum PartShape {
     Chat,
     Responses,
+    Messages,
 }
 
-fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult<Vec<Value>> {
+pub(crate) fn build_messages(turns: &[Turn], shape: PartShape) -> EndpointResult<Vec<Value>> {
     let mut messages = Vec::new();
     for turn in turns {
         if let Some(raw_messages) = &turn.raw_messages
@@ -552,7 +577,7 @@ fn render_turn_content(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {
     for media in &turn.audios {
         for content in &media.contents {
             if !content.is_empty() {
-                parts.push(render_audio_part(content)?);
+                parts.push(render_audio_part(content, shape)?);
             }
         }
     }
@@ -581,7 +606,7 @@ where
 
 fn render_text_part(text: &str, shape: PartShape) -> Value {
     match shape {
-        PartShape::Chat => json!({"type":"text","text":text}),
+        PartShape::Chat | PartShape::Messages => json!({"type":"text","text":text}),
         PartShape::Responses => json!({"type":"input_text","text":text}),
     }
 }
@@ -589,9 +614,25 @@ fn render_image_part(url: &str, shape: PartShape) -> Value {
     match shape {
         PartShape::Chat => json!({"type":"image_url","image_url":{"url":url}}),
         PartShape::Responses => json!({"type":"input_image","image_url":url}),
+        PartShape::Messages if url.starts_with("data:") => {
+            let (header, data) = url.split_once(',').unwrap_or((url, ""));
+            let media_type = header
+                .strip_prefix("data:")
+                .and_then(|value| value.split(';').next())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("image/png");
+            json!({"type":"image","source":{"type":"base64","media_type":media_type,"data":data}})
+        }
+        PartShape::Messages => json!({"type":"image","source":{"type":"url","url":url}}),
     }
 }
-fn render_audio_part(format_and_b64: &str) -> EndpointResult<Value> {
+fn render_audio_part(format_and_b64: &str, shape: PartShape) -> EndpointResult<Value> {
+    if matches!(shape, PartShape::Messages) {
+        return Err(EndpointError::InvalidRequest(
+            "Anthropic Messages API does not support audio input. Use a different endpoint, or remove audio content from the turn."
+                .into(),
+        ));
+    }
     let Some((left, b64)) = format_and_b64.split_once(',') else {
         return Err(EndpointError::InvalidRequest(
             "audio content must be in the format 'format,b64_audio'".into(),
@@ -609,6 +650,10 @@ fn render_video_part(url: &str, shape: PartShape) -> EndpointResult<Value> {
         PartShape::Chat => Ok(json!({"type":"video_url","video_url":{"url":url}})),
         PartShape::Responses => Err(EndpointError::InvalidRequest(
             "Responses API does not support video input".into(),
+        )),
+        PartShape::Messages => Err(EndpointError::InvalidRequest(
+            "Anthropic Messages API does not support video input. Use a different endpoint, or remove video content from the turn."
+                .into(),
         )),
     }
 }
@@ -658,7 +703,7 @@ fn prepend_system_message(mut rendered: Vec<Value>, system: &str) -> Vec<Value> 
     rendered
 }
 
-fn latest_turn_attr<'a, T, F>(turns: &'a [Turn], get: F) -> Option<&'a T>
+pub(crate) fn latest_turn_attr<'a, T, F>(turns: &'a [Turn], get: F) -> Option<&'a T>
 where
     F: Fn(&'a Turn) -> Option<&'a T>,
 {
@@ -691,7 +736,7 @@ fn first_choice(obj: &Map<String, Value>) -> Option<&Map<String, Value>> {
         .and_then(|choices| choices.first())
         .and_then(Value::as_object)
 }
-fn non_empty_field(obj: &Map<String, Value>, field: &str) -> Option<Value> {
+pub(crate) fn non_empty_field(obj: &Map<String, Value>, field: &str) -> Option<Value> {
     match obj.get(field) {
         Some(Value::Null) | None => None,
         Some(Value::Object(map)) if map.is_empty() => None,
@@ -1229,7 +1274,7 @@ pub(crate) fn number_array(value: &Value) -> Option<Vec<f64>> {
     Some(out)
 }
 
-fn build_plain_assistant_turn<E: Endpoint + ?Sized>(
+pub(crate) fn build_plain_assistant_turn<E: Endpoint + ?Sized>(
     endpoint: &E,
     record: &RequestRecord,
 ) -> EndpointResult<Option<Turn>> {

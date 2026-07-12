@@ -37,6 +37,16 @@ impl PartTypes {
         }
     }
 
+    /// Anthropic Messages content part names.
+    pub fn messages() -> Self {
+        Self {
+            text: &["text"],
+            image: &["image"],
+            audio: &[],
+            video: &[],
+        }
+    }
+
     fn kind_for(&self, ty: &str) -> Option<MediaKind> {
         if self.text.contains(&ty) {
             Some(MediaKind::Text)

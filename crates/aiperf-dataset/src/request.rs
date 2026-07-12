@@ -17,9 +17,10 @@ use std::sync::Arc;
 use aiperf_endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CohereRankingsEndpoint, CompletionsEndpoint, CreditPhase,
     EmbeddingsEndpoint, Endpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint,
-    ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, ModelEndpoint,
-    NimEmbeddingsEndpoint, NimRankingsEndpoint, RawEndpoint, RequestInfo, ResponsesEndpoint,
-    SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn, VideoGenerationEndpoint,
+    ImageEditEndpoint, ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, MessagesEndpoint,
+    ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, RawEndpoint, RequestInfo,
+    ResponsesEndpoint, SolidoRagEndpoint, TemplateEndpoint, Turn as EndpointTurn,
+    VideoGenerationEndpoint,
 };
 use bytes::Bytes;
 use serde_json::{Map, Value};
@@ -82,6 +83,12 @@ pub trait RequestMaterializer: Send + Sync {
 pub trait EndpointResolver: Send + Sync {
     /// Resolve an optional authored endpoint name, falling back to the registry default.
     fn resolve(&self, name: Option<&str>) -> Result<Arc<dyn Endpoint>>;
+    /// Resolve the typed endpoint selected by run configuration when a dataset
+    /// turn has no authored name override.
+    fn resolve_type(
+        &self,
+        endpoint_type: aiperf_endpoints::EndpointType,
+    ) -> Result<Arc<dyn Endpoint>>;
 }
 
 /// Extensible name-to-endpoint registry containing the endpoint implementations
@@ -90,6 +97,7 @@ pub trait EndpointResolver: Send + Sync {
 pub struct BuiltinEndpointResolver {
     default_name: String,
     endpoints: HashMap<String, Arc<dyn Endpoint>>,
+    endpoint_types: HashMap<aiperf_endpoints::EndpointType, Arc<dyn Endpoint>>,
 }
 
 impl std::fmt::Debug for BuiltinEndpointResolver {
@@ -109,6 +117,7 @@ impl BuiltinEndpointResolver {
         let mut resolver = Self {
             default_name: "chat".into(),
             endpoints: HashMap::new(),
+            endpoint_types: HashMap::new(),
         };
         resolver
             .register("chat", ChatEndpoint)
@@ -121,6 +130,9 @@ impl BuiltinEndpointResolver {
             .expect("built-in endpoint names are unique");
         resolver
             .register("responses", ResponsesEndpoint)
+            .expect("built-in endpoint names are unique");
+        resolver
+            .register("messages", MessagesEndpoint)
             .expect("built-in endpoint names are unique");
         resolver
             .register("embeddings", EmbeddingsEndpoint)
@@ -203,7 +215,12 @@ impl BuiltinEndpointResolver {
                 "duplicate endpoint registration {authored:?}"
             )));
         }
-        self.endpoints.insert(normalized, Arc::new(endpoint));
+        let endpoint_type = endpoint.metadata().endpoint_type;
+        let endpoint: Arc<dyn Endpoint> = Arc::new(endpoint);
+        self.endpoint_types
+            .entry(endpoint_type)
+            .or_insert_with(|| endpoint.clone());
+        self.endpoints.insert(normalized, endpoint);
         Ok(())
     }
 }
@@ -227,6 +244,20 @@ impl EndpointResolver for BuiltinEndpointResolver {
                 available.join(", ")
             ))
         })
+    }
+
+    fn resolve_type(
+        &self,
+        endpoint_type: aiperf_endpoints::EndpointType,
+    ) -> Result<Arc<dyn Endpoint>> {
+        self.endpoint_types
+            .get(&endpoint_type)
+            .cloned()
+            .ok_or_else(|| {
+                DatasetError::Validation(format!(
+                    "endpoint type {endpoint_type:?} is not registered"
+                ))
+            })
     }
 }
 
@@ -294,9 +325,15 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             .or(endpoint.metadata().endpoint_path)
             .map(str::to_string)
         });
+        let mut headers = endpoint.format_headers(&model_endpoint.endpoint);
+        headers.extend(raw_string_map(
+            store,
+            current.extra_headers,
+            "extra_headers",
+        )?);
         Ok(MaterializedRequest {
             body,
-            headers: raw_string_map(store, current.extra_headers, "extra_headers")?,
+            headers,
             parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
             endpoint: current.endpoint.clone(),
             endpoint_path,
@@ -732,6 +769,7 @@ fn resolve_turn(store: &dyn SegmentStore, turn: &Turn) -> Result<EndpointTurn> {
         max_tokens: turn.max_tokens,
         raw_messages: (!raw_messages.is_empty()).then_some(raw_messages),
         raw_tools: raw_array(store, turn.tools, "tools")?,
+        raw_system: raw_array(store, turn.raw_system, "raw_system")?,
         extra_body: raw_object(store, turn.extra_body, "extra_body")?,
         ..EndpointTurn::default()
     };
@@ -917,6 +955,7 @@ mod tests {
             "chat_completions",
             "completions",
             "responses",
+            "messages",
             "embeddings",
             "chat_embeddings",
             "nim_embeddings",
@@ -934,6 +973,14 @@ mod tests {
         ] {
             assert!(resolver.resolve(Some(name)).is_ok(), "missing {name}");
         }
+        assert_eq!(
+            resolver
+                .resolve_type(EndpointType::Messages)
+                .unwrap()
+                .metadata()
+                .endpoint_type,
+            EndpointType::Messages
+        );
     }
 
     fn message(pool: &mut SegmentPool, parent: Option<Handle>, role: &str, text: &str) -> Handle {

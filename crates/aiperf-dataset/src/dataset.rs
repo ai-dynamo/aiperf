@@ -332,6 +332,7 @@ fn validate_turn(
         turn.raw_payload,
         turn.raw_messages,
         turn.tools,
+        turn.raw_system,
         turn.extra_body,
         turn.extra_headers,
         turn.request_parameters,

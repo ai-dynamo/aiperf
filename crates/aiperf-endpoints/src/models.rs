@@ -88,6 +88,8 @@ pub struct Turn {
     pub raw_messages: Option<Vec<Value>>,
     /// Preformatted OpenAI-compatible tools.
     pub raw_tools: Option<Vec<Value>>,
+    /// Preformatted vendor-shaped top-level system content blocks.
+    pub raw_system: Option<Vec<Value>>,
     /// Text items.
     pub texts: Vec<Media>,
     /// Image items.

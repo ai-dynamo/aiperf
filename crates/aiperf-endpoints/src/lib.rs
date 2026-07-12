@@ -7,13 +7,16 @@
 //! OpenAI-compatible endpoint dialects. Transport concerns such as URL assembly, headers,
 //! SSE framing, and cancellation remain outside this crate.
 
+mod anthropic;
 mod config;
 mod endpoints;
 mod extraction;
 mod metadata;
 mod models;
 mod tier2;
+mod usage;
 
+pub use anthropic::MessagesEndpoint;
 pub use config::{EndpointConfig, RequestContentType};
 pub use endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
@@ -31,3 +34,4 @@ pub use tier2::{
     ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
     RawEndpoint, SolidoRagEndpoint, TemplateEndpoint, VideoGenerationEndpoint,
 };
+pub use usage::UsageView;
