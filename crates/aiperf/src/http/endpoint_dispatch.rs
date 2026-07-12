@@ -146,12 +146,12 @@ impl TransportSink {
         &self,
         req: HttpRequest,
         endpoint: &dyn PreparedEndpoint,
+        model: &str,
         obs: &dyn RequestObserver,
         on_first_token: impl FnMut(i64),
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<HttpCollectedDispatch> {
-        let binding =
-            MetadataHttpEndpointBinding::from_prepared(endpoint, &self.base_urls, &self.model);
+        let binding = MetadataHttpEndpointBinding::from_prepared(endpoint, &self.base_urls, model);
         let endpoint = WorkerPreparedEndpointAdapter(endpoint);
         self.dispatch_runtime_endpoint_collect_record_with_hooks(
             req,
@@ -257,7 +257,10 @@ impl TransportSink {
             if !first_token_released.replace(true) {
                 on_first_token(ttft_ns);
             }
-            true
+            // HttpClient stops invoking this filter after it returns true. A
+            // response observer needs every normalized SSE frame, while the
+            // ordinary timing path should retain the one-shot parse fast path.
+            responses.is_none()
         };
         let record = prepared
             .dispatch(

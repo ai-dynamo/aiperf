@@ -316,6 +316,10 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
     ) -> Result<()> {
         validate_online_run(run, context)?;
         ensure!(
+            run.sidecars.live_streaming.is_none(),
+            "protocol-v2 graph execution does not support live-result streaming"
+        );
+        ensure!(
             run.models.items.len() == 1,
             "online graph execution requires exactly one default model"
         );
@@ -427,9 +431,8 @@ fn validate_online_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> R
     ensure!(
         run.sidecars.gpu_telemetry.is_none()
             && run.sidecars.network_latency.is_none()
-            && run.sidecars.server_metrics.is_none()
-            && run.sidecars.live_streaming.is_none(),
-        "protocol-v2 online execution has no registered sidecar adapter"
+            && run.sidecars.server_metrics.is_none(),
+        "protocol-v2 online execution has no registered GPU, network-latency, or server-metrics runtime adapter"
     );
     Ok(())
 }

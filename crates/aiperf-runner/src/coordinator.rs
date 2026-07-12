@@ -149,6 +149,24 @@ impl RunnerV2Coordinator {
             );
         }
 
+        let selection = match self
+            .runner_registry
+            .validate_selection_for_run(&envelope.run)
+        {
+            Ok(selection) => selection,
+            Err(error) => {
+                return failure(
+                    operation,
+                    self.distribution_id.clone(),
+                    benchmark_id,
+                    RunnerFailureStageV2::Validation,
+                    "invalid_backend_workload_selection",
+                    format!("{error:#}"),
+                    1,
+                );
+            }
+        };
+
         let endpoint_profiles =
             match validate_endpoint_profiles_v2(&envelope.run, self.product_registry.endpoints()) {
                 Ok(profiles) => profiles,
@@ -209,27 +227,10 @@ impl RunnerV2Coordinator {
                 benchmark_id,
                 RunnerFailureStageV2::Validation,
                 "unsupported_sidecar",
-                "protocol-v2 sidecar preparation adapters are not registered in this distribution",
+                "protocol-v2 runtime adapters are not registered for GPU, network-latency, or server-metrics sidecars",
                 1,
             );
         }
-        let selection = match self
-            .runner_registry
-            .validate_selection(&envelope.run.backend, &envelope.run.workload)
-        {
-            Ok(selection) => selection,
-            Err(error) => {
-                return failure(
-                    operation,
-                    self.distribution_id.clone(),
-                    benchmark_id,
-                    RunnerFailureStageV2::Validation,
-                    "invalid_backend_workload_selection",
-                    format!("{error:#}"),
-                    1,
-                );
-            }
-        };
         if let Err(error) = self
             .runner_registry
             .validate_run(&envelope.run, &context, &selection)
@@ -418,7 +419,6 @@ fn has_unavailable_sidecar(envelope: &RunnerEnvelopeV2) -> bool {
     sidecars.gpu_telemetry.is_some()
         || sidecars.network_latency.is_some()
         || sidecars.server_metrics.is_some()
-        || sidecars.live_streaming.is_some()
 }
 
 #[allow(clippy::too_many_arguments)]
