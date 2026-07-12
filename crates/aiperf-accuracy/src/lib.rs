@@ -76,6 +76,7 @@ pub use provider_protocol::{
     SequencedEvaluationEvent,
 };
 pub use score_projection::{
+    GSM8K_SCALAR_SCORE_SCHEMA_SHA256, Gsm8kScalarScoreProjectionValidator,
     PublicScoreProjectionError, PublicScoreProjectionPolicy, PublicScoreProjectionValidator,
 };
 pub use supervisor::{

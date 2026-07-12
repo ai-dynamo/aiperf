@@ -24,6 +24,43 @@ pub trait PublicScoreProjectionValidator: Send + Sync {
     fn validate(&self, value: &CanonicalJson) -> Result<(), PublicScoreProjectionError>;
 }
 
+/// Canonical schema fingerprint for the reviewed GSM8K `{ "value": 0..1 }` projection.
+pub const GSM8K_SCALAR_SCORE_SCHEMA_SHA256: &str =
+    "64440005a209339a632787d5fe39b01c89a120a3a8f64194aa02fdbd4fa42cb9";
+
+/// Executable validator for the stock NeMo/OpenBench GSM8K public score.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Gsm8kScalarScoreProjectionValidator;
+
+impl PublicScoreProjectionValidator for Gsm8kScalarScoreProjectionValidator {
+    fn schema_sha256(&self) -> &str {
+        GSM8K_SCALAR_SCORE_SCHEMA_SHA256
+    }
+
+    fn validate(&self, value: &CanonicalJson) -> Result<(), PublicScoreProjectionError> {
+        let Some(object) = value.value().as_object() else {
+            return Err(PublicScoreProjectionError::rejected(
+                "expected the reviewed GSM8K scalar object",
+            ));
+        };
+        let Some(number) = object
+            .get("value")
+            .filter(|_| object.len() == 1)
+            .and_then(serde_json::Value::as_f64)
+        else {
+            return Err(PublicScoreProjectionError::rejected(
+                "expected exactly one finite numeric value field",
+            ));
+        };
+        if !(0.0..=1.0).contains(&number) {
+            return Err(PublicScoreProjectionError::rejected(
+                "GSM8K public score was outside the reviewed zero-to-one range",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 struct PublicScoreProjectionRule {
     validator: Arc<dyn PublicScoreProjectionValidator>,
@@ -223,5 +260,33 @@ mod tests {
                 .validate_descriptor_fingerprints(&BTreeMap::new())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stock_gsm8k_validator_matches_manifest_schema_exactly() {
+        let validator = Gsm8kScalarScoreProjectionValidator;
+        assert_eq!(validator.schema_sha256(), GSM8K_SCALAR_SCORE_SCHEMA_SHA256);
+        for value in [
+            json!({"value": 0}),
+            json!({"value": 0.5}),
+            json!({"value": 1}),
+        ] {
+            validator
+                .validate(&CanonicalJson::new(value).unwrap())
+                .unwrap();
+        }
+        for value in [
+            json!(0),
+            json!({"value": -0.1}),
+            json!({"value": 1.1}),
+            json!({"value": 1, "answer": "hidden"}),
+            json!({"value": true}),
+        ] {
+            assert!(
+                validator
+                    .validate(&CanonicalJson::new(value).unwrap())
+                    .is_err()
+            );
+        }
     }
 }
