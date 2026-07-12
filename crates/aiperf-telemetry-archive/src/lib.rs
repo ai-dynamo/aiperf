@@ -25,6 +25,7 @@ pub mod index;
 pub mod key;
 pub mod lifecycle;
 pub mod loss;
+pub mod loss_ledger;
 pub mod manifest;
 pub mod object_store;
 pub mod owner;
@@ -60,9 +61,11 @@ pub use decode::{
 pub use descriptor::{CanonicalDescriptor, DescriptorError};
 pub use digest::{Digest, DigestError, domain_digest};
 pub use driver::{
-    ArchiveSourceError, DriverConsumerError, DriverStartError, DriverStopError, FetchRequest,
-    FixedDeadlineTelemetryDriver, LocalCancellationSignal, PreparedTelemetryDriver,
-    RunningTelemetryDriver, TelemetryAttemptConsumer, TelemetryDriverConfig,
+    ArchiveSourceError, BoundaryAttemptCompletion, BoundaryAttemptTerminal,
+    DEFAULT_BOUNDARY_COMMAND_CAPACITY, DriverCommandError, DriverConsumerError, DriverStartError,
+    DriverStopError, FetchRequest, FixedDeadlineTelemetryDriver, LocalCancellationSignal,
+    LocalDriverFuture, PreparedTelemetryDriver, RunningTelemetryDriver, TelemetryAttemptConsumer,
+    TelemetryAttemptDisposition, TelemetryAttemptEnvelope, TelemetryDriverConfig,
     TelemetryDriverSummary, TelemetryFetcher,
 };
 pub use evidence::{
@@ -95,6 +98,10 @@ pub use loss::{
     ExactLossRangeV1, LossKindV1, LossReasonV1, LossSaturationSnapshotV1, LossValidationError,
     loss_saturation_slot_id_v1,
 };
+pub use loss_ledger::{
+    FixedLossLedgerV1, LossLedgerAllocationShapeV1, LossLedgerError, LossLedgerLimitsV1,
+    LossLedgerRecordOutcomeV1, LossLedgerViewV1,
+};
 pub use manifest::{
     ArchiveState, GenerationMutationV1, GenerationObjectV1, GenerationTransactionKind,
     GenerationV1, GenesisV1, HeadDescriptorV1, LocalLatestV1, ManifestError, TimeDomain,
@@ -105,8 +112,8 @@ pub use object_store::{
     VersionedHead, archive_object_digest,
 };
 pub use owner::{
-    ArchiveFrameSequencerV1, ArchiveFrameTimingV1, FrameSequencingError, SequencedArchiveFrameV1,
-    SourceProjectionPolicyV1,
+    ArchiveAttemptProjectionContextV1, ArchiveFrameSequencerV1, ArchiveFrameTimingV1,
+    FrameSequencingError, SequencedArchiveFrameV1, SourceProjectionPolicyV1,
 };
 pub use parquet::{
     CompletedPartitionV1, FrameTableProjectionV1, ParquetPartitionBuilderV1,
@@ -166,9 +173,10 @@ pub use schema::{
 };
 pub use sink::{
     AppendReceipt, ArchiveSink, ArchiveSinkError, ArchiveWalFrame, ArchiveWalFrameDecoder,
-    CheckpointCompletion, DurabilityCompletion, FinalizeCompletion, LocalParquetArchiveSink,
-    MemoryArchiveSink, MemoryArchiveSinkFault, OwnedLocalArchiveSink, OwnedLocalArchiveSinkFactory,
-    OwnedReceiptJournalMode, ReceiptEventDraft, RecoveredArchive, TerminationReason,
+    CanonicalArchiveWalFrameDecoderV1, CheckpointCompletion, DurabilityCompletion,
+    FinalizeCompletion, LocalParquetArchiveSink, MemoryArchiveSink, MemoryArchiveSinkFault,
+    OwnedLocalArchiveSink, OwnedLocalArchiveSinkFactory, OwnedReceiptJournalMode,
+    ReceiptEventDraft, RecoveredArchive, TerminationReason,
 };
 pub use spool::{
     DurabilityEdge, DurabilityFaultInjector, FailAtDurabilityEdge, FilesystemKind,
@@ -181,6 +189,6 @@ pub use sync::{
 };
 pub use time::{EpochAnchor, EpochAnchorError, EpochAnchorProvider, SystemEpochAnchorProvider};
 pub use wal::{
-    Crc32c, RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment, WAL_FOOTER_MAGIC, WalError,
-    WalFrame, WalFrameHeaderV1, WalSegmentBuilder, WalSegmentHeaderV1,
+    Crc32c, DEFAULT_MAX_WAL_FRAME_BYTES, RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment,
+    WAL_FOOTER_MAGIC, WalError, WalFrame, WalFrameHeaderV1, WalSegmentBuilder, WalSegmentHeaderV1,
 };
