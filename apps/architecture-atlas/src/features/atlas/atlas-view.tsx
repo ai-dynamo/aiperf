@@ -251,11 +251,11 @@ function ComponentDrawer({
 
   return (
     <motion.div
-      animate={reduceMotion ? undefined : { opacity: 1, x: 0 }}
+      animate={reduceMotion ? undefined : { x: 0 }}
       aria-label={component.title[audience]}
       aria-modal="false"
       className="atlas-drawer"
-      initial={reduceMotion ? false : { opacity: 0, x: 24 }}
+      initial={reduceMotion ? false : { x: 24 }}
       role="dialog"
       transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: "easeOut" }}
     >

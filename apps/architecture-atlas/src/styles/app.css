@@ -963,11 +963,15 @@
   }
 
   .atlas-node-owner {
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-family: var(--font-data);
     font-size: 0.7rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+  }
+
+  .atlas-node .status-badge {
+    color: var(--text-secondary);
   }
 
   .react-flow__edge-path {
