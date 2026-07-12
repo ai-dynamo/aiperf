@@ -1411,6 +1411,20 @@ impl EngineHost {
         )
     }
 
+    /// Default engine host over a wall clock for the in-process online driver.
+    ///
+    /// Mirrors [`EngineHost::new`] but binds the native engine to any `Clock`
+    /// (typically `RealClock`) with no virtual look-ahead, so the engine steps
+    /// only to driver-supplied real-time deadlines (`drive_real_with_source`).
+    fn new_real(clock: Rc<dyn Clock>, config: &OfflineEngineConfig) -> Result<Rc<Self>> {
+        Self::new_real_with_factory_and_delivery(
+            clock,
+            config,
+            &NativeDynamoEngineFactory,
+            Rc::new(IncrementalOfflineEventDelivery),
+        )
+    }
+
     fn new_with_delivery(
         clock: Rc<SimClock>,
         config: &OfflineEngineConfig,
@@ -3685,6 +3699,152 @@ pub fn run_graph_workload_offline_deferred(
     })
 }
 
+/// Execute a direct Graph-IR workload against the in-process Dynamo engine under
+/// the **wall clock** — the real-time in-process online mode (Dynamo's
+/// `--replay-mode online`) driven entirely by aiperf's *own* recorded-trace
+/// graph flow. The trace is compiled by `aiperf-graph` into a [`GraphWorkload`]
+/// and dispatched through the same [`DynamoOfflineSink`], materializer, observer,
+/// and native accumulator as [`run_graph_workload_offline`]; the mocker's own
+/// trace driver is never involved. Only the clock/driver axis differs
+/// ([`drive_real_with_source`] vs [`drive_sim_with_source`]).
+///
+/// Because real timers carry jitter and virtual look-ahead is absent, byte-exact
+/// parity with the engine's report is not enforced (see
+/// [`finish_shared_metrics_enforcing`]); the shared collector/report path is
+/// preserved so metric *identities* still match within the online tolerance.
+pub fn run_graph_workload_online(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    segments: Arc<dyn SegmentStore>,
+    default_max_tokens: usize,
+    metrics_config: MetricsConfig,
+    node_policy: Option<Rc<dyn NodeDispatchPolicy>>,
+    node_failure: Rc<dyn NodeFailurePolicy>,
+    factory: Box<dyn OfflineGraphRunFactory>,
+) -> Result<OfflineDirectGraphReport> {
+    let deferred: Box<dyn DeferredOfflineGraphRunFactory> = Box::new(
+        move |clock: Rc<dyn Clock>,
+              backends: Rc<dyn OfflineGraphBackendFactory>|
+              -> Result<DeferredOfflineGraphFuture> {
+            let backend = backends.create_backend(OfflineGraphBackendConfig {
+                phase: MetricsPhase::Profiling,
+                prefill_concurrency: None,
+                node_policy,
+                node_failure,
+                events: Rc::new(DiscardOfflineGraphEvents),
+            })?;
+            let workload = factory.create(clock, backend)?;
+            Ok(Box::pin(async move {
+                let workload = workload
+                    .execute()
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                Ok(OfflineGraphExecution {
+                    workload,
+                    phases: Vec::new(),
+                })
+            }))
+        },
+    );
+    run_graph_workload_online_deferred(
+        engine_config,
+        model,
+        segments,
+        default_max_tokens,
+        metrics_config,
+        deferred,
+    )
+}
+
+/// Deferred multi-phase online twin of [`run_graph_workload_offline_deferred`].
+///
+/// Identical composition (aiperf's [`GraphWorkload`] + [`DynamoOfflineSink`] +
+/// shared observer/accumulator), swapping only the DES pump for the wall-clock
+/// [`drive_real_with_source`] driver and relaxing byte-exact enforcement.
+pub fn run_graph_workload_online_deferred(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    segments: Arc<dyn SegmentStore>,
+    default_max_tokens: usize,
+    metrics_config: MetricsConfig,
+    factory: Box<dyn DeferredOfflineGraphRunFactory>,
+) -> Result<OfflineDirectGraphReport> {
+    anyhow::ensure!(
+        !model.trim().is_empty(),
+        "online graph model cannot be empty"
+    );
+    anyhow::ensure!(
+        default_max_tokens > 0,
+        "online graph default_max_tokens must be positive"
+    );
+
+    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let start_ns = clock.now_ns();
+    let host = EngineHost::new_real(clock.clone(), &engine_config)?;
+    let sink = DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let native_metrics = Rc::new(NativeMetricsObserver::new(
+        clock.clone(),
+        start_ns,
+        metrics_config.clone(),
+    ));
+    let collector = Rc::new(CollectorObserver::new(false));
+    let observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(vec![
+        collector.clone(),
+        native_metrics.clone(),
+    ]));
+    let backends: Rc<dyn OfflineGraphBackendFactory> = Rc::new(DynamoOfflineGraphBackendFactory {
+        backend: sink,
+        observer,
+        native_metrics: native_metrics.clone(),
+        materializer: Rc::new(SegmentItemsMaterializer::new(segments)),
+        max_tokens: default_max_tokens,
+        next_uuid: Rc::new(Cell::new(1)),
+    });
+    let future = factory.create(clock.clone(), backends)?;
+    let result = Rc::new(RefCell::new(None));
+    let result_for_body = result.clone();
+    let source: Rc<dyn SimEventSource> = host.clone();
+    let wakeup = host.submit_wakeup();
+    let outcome = drive_real_with_source(source, wakeup, move |_handle| async move {
+        *result_for_body.borrow_mut() = Some(future.await);
+    })?;
+    anyhow::ensure!(
+        !outcome.deadlocked,
+        "Dynamo online (wall-clock in-process) direct graph run deadlocked"
+    );
+    let execution = result
+        .borrow_mut()
+        .take()
+        .context("Dynamo online driver exited without a graph phase result")??;
+    let wall_ms = clock.now_ns().saturating_sub(start_ns) as f64 / NS_PER_MS;
+    let dynamo = host.take_report_at(wall_ms);
+    let performance = collector.finish(wall_ms);
+    let (performance, dynamo, parity) =
+        finish_shared_metrics_enforcing(performance, dynamo, false)?;
+    let collection = native_metrics.finish_with_records();
+    let mut accumulator = MetricsAccumulator::with_config(metrics_config);
+    for record in &collection.records {
+        accumulator.process_record(record);
+    }
+    let mut profiling_metrics =
+        accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+    let warmup_metrics = collection
+        .records
+        .iter()
+        .any(|record| record.phase == MetricsPhase::Warmup)
+        .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
+    inject_dynamo_goodput(&mut profiling_metrics, &dynamo);
+    Ok(OfflineDirectGraphReport {
+        workload: execution.workload,
+        performance,
+        native_metrics: profiling_metrics,
+        warmup_metrics,
+        phases: execution.phases,
+        dynamo,
+        parity,
+    })
+}
+
 fn run_scheduled_offline(
     engine_config: OfflineEngineConfig,
     model: String,
@@ -3957,6 +4117,51 @@ pub fn run_scheduled_backend_offline_deferred_with_delivery(
     let dynamo = host.take_report_at(wall_ms);
     let execution = finalizer.finish()?;
     finish_scheduled_backend_with_report(execution, dynamo)
+}
+
+/// Deferred online (wall-clock in-process) twin of
+/// [`run_scheduled_backend_offline_deferred_with_delivery`].
+///
+/// Identical scheduled workload, dispatcher, materializer, observer, and report
+/// path; only the driver ([`drive_real_with_source`]) and the relaxed parity
+/// finalizer differ. Used by the runner's scheduled pair when the authored
+/// backend selects `replay_mode = online`.
+pub fn run_scheduled_backend_online_deferred_with_delivery(
+    engine_config: OfflineEngineConfig,
+    model: String,
+    factory: Box<dyn DeferredOfflineScheduledRunFactory>,
+    event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
+) -> Result<OfflineScheduledReport> {
+    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let host = EngineHost::new_real_with_factory_and_delivery(
+        clock.clone(),
+        &engine_config,
+        &NativeDynamoEngineFactory,
+        event_delivery,
+    )?;
+    let dispatcher: Rc<dyn TurnDispatcher> =
+        DynamoOfflineSink::new(host.clone(), clock.clone(), model);
+    let start_ns = clock.now_ns();
+    let future = factory.create(clock.clone(), start_ns, dispatcher);
+    let result = Rc::new(RefCell::new(None));
+    let result_for_body = result.clone();
+    let source: Rc<dyn SimEventSource> = host.clone();
+    let wakeup = host.submit_wakeup();
+    let outcome = drive_real_with_source(source, wakeup, move |_handle| async move {
+        *result_for_body.borrow_mut() = Some(future.await);
+    })?;
+    anyhow::ensure!(
+        !outcome.deadlocked,
+        "Dynamo online (wall-clock in-process) scheduled run deadlocked"
+    );
+    let finalizer = result
+        .borrow_mut()
+        .take()
+        .context("Dynamo online driver exited without a scheduled finalizer")??;
+    let wall_ms = clock.now_ns().saturating_sub(start_ns) as f64 / 1_000_000.0;
+    let dynamo = host.take_report_at(wall_ms);
+    let execution = finalizer.finish()?;
+    finish_scheduled_backend_with_report_enforcing(execution, dynamo, false)
 }
 
 fn finish_scheduled_backend(

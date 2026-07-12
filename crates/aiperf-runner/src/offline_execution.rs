@@ -32,8 +32,10 @@ use aiperf::dynamo_offline::{
     OfflineMetricParity, OfflineRouterMode, OfflineRunReport, OfflineScheduledExecution,
     OfflineScheduledExecutionFinalizer, OfflineScheduledReport, OfflineScheduledRunFactory,
     OfflineTopology, OfflineTraceConfig, TerminalOfflineEventDelivery, run_graph_offline,
-    run_graph_workload_offline, run_graph_workload_offline_deferred, run_scheduled_backend_offline,
-    run_scheduled_backend_offline_deferred_with_delivery, run_trace_offline,
+    run_graph_workload_offline, run_graph_workload_offline_deferred, run_graph_workload_online,
+    run_graph_workload_online_deferred, run_scheduled_backend_offline,
+    run_scheduled_backend_offline_deferred_with_delivery, run_scheduled_backend_online,
+    run_scheduled_backend_online_deferred_with_delivery, run_trace_offline,
     write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
 use aiperf::metrics::NativeMetricsObserver;
@@ -210,6 +212,38 @@ impl From<DynamoOfflineTopologySpec> for OfflineTopology {
             DynamoOfflineTopologySpec::Single => Self::Single,
             DynamoOfflineTopologySpec::Aggregated => Self::Aggregated,
             DynamoOfflineTopologySpec::Disaggregated => Self::Disaggregated,
+        }
+    }
+}
+
+/// Clock axis for the in-process Dynamo engine co-simulation.
+///
+/// `Offline` fast-forwards a `SimClock` through the discrete-event pump for
+/// deterministic byte-exact replay. `Online` drives the *same* engine, sink,
+/// materializer, observer, and report under a wall clock
+/// (`drive_real_with_source`) — the equivalent of Dynamo's `--replay-mode
+/// online`: no sockets/HTTP/frontend, but stepped in real time. aiperf still
+/// owns the trace flow in both modes; the mocker's own trace driver is unused.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DynamoReplayModeSpec {
+    /// Deterministic virtual-clock discrete-event replay (default).
+    #[default]
+    Offline,
+    /// Wall-clock in-process replay for live-throughput measurement.
+    Online,
+}
+
+impl DynamoReplayModeSpec {
+    /// Whether this mode drives the engine under the real wall clock.
+    const fn is_online(self) -> bool {
+        matches!(self, Self::Online)
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Offline => "offline",
+            Self::Online => "online",
         }
     }
 }
@@ -531,6 +565,10 @@ pub struct DynamoOfflineBackendSpec {
     /// Router policy for routed topologies.
     #[serde(default)]
     pub router_mode: DynamoOfflineRouterSpec,
+    /// Clock axis: deterministic virtual replay (default) or wall-clock
+    /// in-process replay for live-throughput measurement.
+    #[serde(default)]
+    pub replay_mode: DynamoReplayModeSpec,
     /// Optional build capabilities that must exist in the exact runner image.
     #[serde(default)]
     pub required_features: BTreeSet<DynamoBuildFeature>,
@@ -635,6 +673,7 @@ impl DynamoOfflineBackendSpec {
             sla: self.sla,
             topology,
             router_mode,
+            replay_mode: self.replay_mode,
             required_features: required,
         })
     }
@@ -702,10 +741,23 @@ pub struct ValidatedDynamoOfflineBackend {
     sla: DynamoOfflineSlaSpec,
     topology: DynamoOfflineTopologySpec,
     router_mode: DynamoOfflineRouterSpec,
+    replay_mode: DynamoReplayModeSpec,
     required_features: BTreeSet<DynamoBuildFeature>,
 }
 
 impl ValidatedDynamoOfflineBackend {
+    /// Report/provenance prefix for the selected clock axis.
+    ///
+    /// `"offline"` for deterministic virtual-clock replay, `"online"` for
+    /// wall-clock in-process replay (`drive_real_with_source`).
+    pub const fn mode_prefix(&self) -> &'static str {
+        if self.replay_mode.is_online() {
+            "online"
+        } else {
+            "offline"
+        }
+    }
+
     /// Build a no-side-effect execution adapter rooted at the selected target.
     pub fn executor(
         &self,
@@ -728,6 +780,7 @@ impl ValidatedDynamoOfflineBackend {
             artifacts: self.artifacts.clone(),
             topology: self.topology,
             router_mode: self.router_mode,
+            replay_mode: self.replay_mode,
             required_features: self.required_features.clone(),
             model,
             artifact_target,
@@ -755,7 +808,11 @@ fn dynamo_report_facts(
         throughput.gpu_hours,
     )?;
     Ok(ReportDynamoRunInfo::new(
-        ReportClockKind::Sim,
+        if backend.replay_mode.is_online() {
+            ReportClockKind::Real
+        } else {
+            ReportClockKind::Sim
+        },
         backend.topology.report(),
         backend.router_mode.report(),
         backend
@@ -1292,11 +1349,11 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineScheduledOperation {
             &outcome.report.aiperf.native_metrics,
             &RunOutcome {
                 run: ReportRunInfo {
-                    mode: Some("offline:scheduled".into()),
+                    mode: Some(format!("{}:scheduled", backend.mode_prefix())),
                     model: Some(model),
                 },
                 summary: ReportSummary {
-                    endpoints_configured: vec!["dynamo://offline".into()],
+                    endpoints_configured: vec![format!("dynamo://{}", backend.mode_prefix())],
                     ..ReportSummary::default()
                 },
                 warmup,
@@ -1695,7 +1752,7 @@ impl PreparedRunnerOperation for PreparedDynamoOfflineGraphOperation {
             &outcome.report.native_metrics,
             &RunOutcome {
                 run: ReportRunInfo {
-                    mode: Some("offline:graph".into()),
+                    mode: Some(format!("{}:graph", backend.mode_prefix())),
                     model: Some(model),
                 },
                 summary: ReportSummary {
@@ -1788,6 +1845,7 @@ pub struct DynamoOfflineExecutor {
     artifacts: DynamoOfflineArtifactSpec,
     topology: DynamoOfflineTopologySpec,
     router_mode: DynamoOfflineRouterSpec,
+    replay_mode: DynamoReplayModeSpec,
     required_features: BTreeSet<DynamoBuildFeature>,
     model: String,
     artifact_target: PathBuf,
@@ -1804,9 +1862,17 @@ impl DynamoOfflineExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report =
-            run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?;
-        verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        let online = self.replay_mode.is_online();
+        let report = if online {
+            run_scheduled_backend_online(self.engine.clone(), self.model.clone(), workload)?
+        } else {
+            run_scheduled_backend_offline(self.engine.clone(), self.model.clone(), workload)?
+        };
+        if online {
+            verify_parity_online(&report.performance, report.parity)?;
+        } else {
+            verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        }
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
@@ -1841,13 +1907,27 @@ impl DynamoOfflineExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report = run_scheduled_backend_offline_deferred_with_delivery(
-            self.engine.clone(),
-            self.model.clone(),
-            workload,
-            event_delivery,
-        )?;
-        verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        let online = self.replay_mode.is_online();
+        let report = if online {
+            run_scheduled_backend_online_deferred_with_delivery(
+                self.engine.clone(),
+                self.model.clone(),
+                workload,
+                event_delivery,
+            )?
+        } else {
+            run_scheduled_backend_offline_deferred_with_delivery(
+                self.engine.clone(),
+                self.model.clone(),
+                workload,
+                event_delivery,
+            )?
+        };
+        if online {
+            verify_parity_online(&report.performance, report.parity)?;
+        } else {
+            verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        }
         let artifacts = self.emit_backend_artifacts(
             |path| write_dynamo_report_json(&report.dynamo, path),
             |path| write_dynamo_per_request_jsonl(&report.dynamo, path),
@@ -1902,17 +1982,35 @@ impl DynamoOfflineExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report = run_graph_workload_offline(
-            self.engine.clone(),
-            self.model.clone(),
-            segments,
-            default_max_tokens,
-            metrics,
-            node_policy,
-            node_failure,
-            workload,
-        )?;
-        verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        let online = self.replay_mode.is_online();
+        let report = if online {
+            run_graph_workload_online(
+                self.engine.clone(),
+                self.model.clone(),
+                segments,
+                default_max_tokens,
+                metrics,
+                node_policy,
+                node_failure,
+                workload,
+            )?
+        } else {
+            run_graph_workload_offline(
+                self.engine.clone(),
+                self.model.clone(),
+                segments,
+                default_max_tokens,
+                metrics,
+                node_policy,
+                node_failure,
+                workload,
+            )?
+        };
+        if online {
+            verify_parity_online(&report.performance, report.parity)?;
+        } else {
+            verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        }
         if report.workload.failed > 0 {
             let detail = report
                 .workload
@@ -1956,15 +2054,31 @@ impl DynamoOfflineExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let report = run_graph_workload_offline_deferred(
-            self.engine.clone(),
-            self.model.clone(),
-            segments,
-            default_max_tokens,
-            metrics,
-            workload,
-        )?;
-        verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        let online = self.replay_mode.is_online();
+        let report = if online {
+            run_graph_workload_online_deferred(
+                self.engine.clone(),
+                self.model.clone(),
+                segments,
+                default_max_tokens,
+                metrics,
+                workload,
+            )?
+        } else {
+            run_graph_workload_offline_deferred(
+                self.engine.clone(),
+                self.model.clone(),
+                segments,
+                default_max_tokens,
+                metrics,
+                workload,
+            )?
+        };
+        if online {
+            verify_parity_online(&report.performance, report.parity)?;
+        } else {
+            verify_parity(&report.performance, &report.dynamo, report.parity)?;
+        }
         if report.workload.failed > 0 {
             let detail = report
                 .workload
@@ -1998,6 +2112,11 @@ impl DynamoOfflineExecutor {
     /// Run one canonical Dynamo trace workload through AIPerf's observer and
     /// native metrics stack, retaining the complete byte-exact parity proof.
     pub fn execute_trace(self, trace: OfflineTraceConfig) -> Result<DynamoOfflineTraceOutcome> {
+        ensure!(
+            !self.replay_mode.is_online(),
+            "replay_mode=online drives the trace through AIPerf's own graph flow; \
+             the canonical mocker trace driver runs only under offline replay"
+        );
         let report = run_trace_offline(self.engine.clone(), trace.clone())?;
         verify_parity(&report.aiperf.performance, &report.dynamo, report.parity)?;
         let mut artifacts = self.emit_backend_artifacts(
@@ -2074,7 +2193,15 @@ impl DynamoOfflineExecutor {
     fn provenance(&self, parity: OfflineMetricParity) -> BTreeMap<String, String> {
         BTreeMap::from([
             ("backend".into(), DYNAMO_OFFLINE_BACKEND_ID.into()),
-            ("clock".into(), "sim".into()),
+            (
+                "clock".into(),
+                if self.replay_mode.is_online() {
+                    "real".into()
+                } else {
+                    "sim".into()
+                },
+            ),
+            ("replay_mode".into(), self.replay_mode.as_str().into()),
             ("topology".into(), self.topology.as_str().into()),
             ("router".into(), self.router_mode.as_str().into()),
             (
@@ -2162,6 +2289,31 @@ fn verify_parity(
         "offline parity evidence has an inconsistent serialized byte count"
     );
     ensure!(parity.shared_fields > 0, "offline parity schema is empty");
+    Ok(())
+}
+
+/// Relaxed parity verification for wall-clock in-process (`replay_mode=online`)
+/// runs. The AIPerf and Dynamo shared summaries are *not* byte-identical — real
+/// timers cannot reproduce the engine's internal completion times — so only the
+/// field-accounting and non-empty-schema invariants are enforced. Request and
+/// token counts remain exact; latency/throughput are the live measured values.
+fn verify_parity_online(
+    aiperf: &impl CanonicalSharedMetrics,
+    parity: OfflineMetricParity,
+) -> Result<()> {
+    let aiperf_bytes = aiperf
+        .canonical_shared_metric_bytes()
+        .context("serializing runner-side AIPerf online parity summary")?;
+    ensure!(
+        parity.independently_accumulated_fields + parity.backend_owned_fields
+            == parity.shared_fields,
+        "online parity evidence has inconsistent field accounting"
+    );
+    ensure!(
+        parity.serialized_bytes == aiperf_bytes.len(),
+        "online parity evidence has an inconsistent serialized byte count"
+    );
+    ensure!(parity.shared_fields > 0, "online parity schema is empty");
     Ok(())
 }
 

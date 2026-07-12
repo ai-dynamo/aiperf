@@ -613,11 +613,10 @@ impl ReportDynamoRunInfo {
         decode_workers: usize,
         parity: ReportDynamoParityInfo,
     ) -> Result<Self, ReportProvenanceError> {
-        if clock != ReportClockKind::Sim {
-            return Err(ReportProvenanceError::new(
-                "Dynamo offline report facts require the sim clock",
-            ));
-        }
+        // Both clocks are valid Dynamo engine report axes: `Sim` for
+        // deterministic virtual-clock replay and `Real` for the wall-clock
+        // in-process online mode (`--replay-mode online`). No further constraint
+        // is imposed here; the enum is exhaustive.
         if workers == 0 || prefill_workers == 0 || decode_workers == 0 {
             return Err(ReportProvenanceError::new(
                 "Dynamo worker counts must be positive",
