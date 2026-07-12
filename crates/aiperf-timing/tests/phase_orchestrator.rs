@@ -3,7 +3,7 @@
 
 //! Warmup/profiling handoff and shared debt-drain integration coverage.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::pin;
 use std::rc::Rc;
@@ -16,7 +16,8 @@ use aiperf_timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, GracePeriod, LocalPhaseFuture,
     PhaseBranchStats, PhaseCompletionReason, PhaseConfig, PhaseContext, PhaseExecution,
     PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseObserver, PhaseOrchestrator,
-    PhaseOrchestratorError, PhaseReturn, PhaseSend, PhaseStats, SlotPool, StopConfig,
+    PhaseOrchestratorError, PhaseReturn, PhaseRunError, PhaseSend, PhaseStats, SlotPool,
+    StopConfig,
 };
 use tokio::task::LocalSet;
 
@@ -279,6 +280,162 @@ fn external_cancel_never_advances_into_the_next_phase() {
             .iter()
             .any(|event| matches!(event, TimelineEvent::Start(id, _) if id == "profiling"))
     );
+}
+
+struct SeamlessFailureFactory {
+    clock: Rc<SimClock>,
+    cancel_all_calls: Rc<Cell<usize>>,
+    profiling_cancellations: Rc<Cell<usize>>,
+}
+
+impl PhaseExecutionFactory for SeamlessFailureFactory {
+    fn create(&self, config: &PhaseConfig, context: PhaseContext) -> Rc<dyn PhaseExecution> {
+        match config.id.as_str() {
+            "warmup" => Rc::new(DelayedFinalizeFailure {
+                clock: self.clock.clone(),
+                context,
+            }),
+            "profiling-active" | "profiling-must-not-start" => Rc::new(BlockingExecution {
+                cancellations: self.profiling_cancellations.clone(),
+            }),
+            id => panic!("unexpected phase {id:?}"),
+        }
+    }
+
+    fn cancel_all(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let calls = self.cancel_all_calls.clone();
+        Box::pin(async move {
+            calls.set(calls.get() + 1);
+            Ok(())
+        })
+    }
+}
+
+struct DelayedFinalizeFailure {
+    clock: Rc<SimClock>,
+    context: PhaseContext,
+}
+
+impl PhaseExecution for DelayedFinalizeFailure {
+    fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let clock = self.clock.clone();
+        let context = self.context.clone();
+        Box::pin(async move {
+            context
+                .record_sent(PhaseSend::single_turn_session())
+                .map_err(|error| PhaseExecutionError::new(error.to_string()))?;
+            tokio::task::spawn_local(async move {
+                clock.sleep(10).await;
+                context.record_first_token();
+                context.record_returned(PhaseReturn {
+                    completes_session: true,
+                    ..PhaseReturn::default()
+                });
+            });
+            Ok(())
+        })
+    }
+
+    fn finalize(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        Box::pin(async {
+            Err(PhaseExecutionError::new(
+                "intentional seamless predecessor failure",
+            ))
+        })
+    }
+}
+
+struct BlockingExecution {
+    cancellations: Rc<Cell<usize>>,
+}
+
+impl PhaseExecution for BlockingExecution {
+    fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        Box::pin(std::future::pending())
+    }
+
+    fn cancel_inflight(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let cancellations = self.cancellations.clone();
+        Box::pin(async move {
+            cancellations.set(cancellations.get() + 1);
+            Ok(())
+        })
+    }
+}
+
+#[test]
+fn seamless_predecessor_failure_cancels_active_phase_before_advancing() {
+    let clock = Rc::new(SimClock::new());
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let observer: Rc<dyn PhaseObserver> = Rc::new(TimelineObserver {
+        clock: clock.clone(),
+        events: events.clone(),
+    });
+    let cancel_all_calls = Rc::new(Cell::new(0));
+    let profiling_cancellations = Rc::new(Cell::new(0));
+    let execution_factory: Rc<dyn PhaseExecutionFactory> = Rc::new(SeamlessFailureFactory {
+        clock: clock.clone(),
+        cancel_all_calls: cancel_all_calls.clone(),
+        profiling_cancellations: profiling_cancellations.clone(),
+    });
+    let runner_factory = Rc::new(ClockPhaseRunnerFactory::new(
+        clock.clone(),
+        observer.clone(),
+        execution_factory,
+    ));
+    let orchestrator = ClockPhaseOrchestrator::new(
+        vec![
+            PhaseConfig::new(
+                "warmup",
+                PhaseKind::Warmup,
+                StopConfig {
+                    total_expected_requests: Some(1),
+                    ..StopConfig::default()
+                },
+            )
+            .with_seamless(true),
+            PhaseConfig::new(
+                "profiling-active",
+                PhaseKind::Profiling,
+                StopConfig {
+                    expected_duration_ns: Some(100),
+                    ..StopConfig::default()
+                },
+            ),
+            PhaseConfig::new(
+                "profiling-must-not-start",
+                PhaseKind::Profiling,
+                StopConfig {
+                    total_expected_requests: Some(1),
+                    ..StopConfig::default()
+                },
+            ),
+        ],
+        runner_factory,
+        observer,
+    )
+    .unwrap();
+
+    let error = drive_sim(clock.clone(), orchestrator.run_all()).unwrap_err();
+
+    assert_eq!(
+        error,
+        PhaseOrchestratorError::Runner {
+            phase_id: "warmup".into(),
+            source: PhaseRunError::Execution(PhaseExecutionError::new(
+                "intentional seamless predecessor failure"
+            )),
+        }
+    );
+    assert_eq!(clock.now_ns(), 10);
+    assert_eq!(cancel_all_calls.get(), 1);
+    assert_eq!(profiling_cancellations.get(), 1);
+    let events = events.borrow();
+    assert!(events.contains(&TimelineEvent::Start("warmup".into(), 0)));
+    assert!(events.contains(&TimelineEvent::Start("profiling-active".into(), 0)));
+    assert!(!events.iter().any(
+        |event| matches!(event, TimelineEvent::Start(id, _) if id == "profiling-must-not-start")
+    ));
 }
 
 fn orchestrator(

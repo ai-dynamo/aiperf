@@ -16,6 +16,7 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
 use aiperf_clock::Clock;
+use tokio::sync::Notify;
 
 use super::{
     ClockPhaseRunner, LocalPhaseFuture, PhaseConfig, PhaseExecutionFactory, PhaseKind,
@@ -88,8 +89,47 @@ struct OrchestratorInner {
     runner_factory: Rc<dyn PhaseRunnerFactory>,
     observer: Rc<dyn PhaseObserver>,
     active: RefCell<Vec<Rc<dyn PhaseRunner>>>,
+    seamless_failures: SeamlessFailureSignal,
     run_started: Cell<bool>,
     cancelled: Cell<bool>,
+}
+
+#[derive(Clone)]
+struct SeamlessFailure {
+    phase_id: String,
+    source: PhaseRunError,
+}
+
+#[derive(Default)]
+struct SeamlessFailureSignal {
+    first: RefCell<Option<SeamlessFailure>>,
+    notify: Notify,
+}
+
+impl SeamlessFailureSignal {
+    fn record(&self, failure: SeamlessFailure) {
+        let mut first = self.first.borrow_mut();
+        if first.is_none() {
+            *first = Some(failure);
+            self.notify.notify_waiters();
+        }
+    }
+
+    fn first(&self) -> Option<SeamlessFailure> {
+        self.first.borrow().clone()
+    }
+
+    async fn wait(&self) -> SeamlessFailure {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(failure) = self.first() {
+                return failure;
+            }
+            notified.await;
+        }
+    }
 }
 
 /// Default ordered phase orchestrator.
@@ -112,6 +152,7 @@ impl ClockPhaseOrchestrator {
                 runner_factory,
                 observer,
                 active: RefCell::new(Vec::new()),
+                seamless_failures: SeamlessFailureSignal::default(),
                 run_started: Cell::new(false),
                 cancelled: Cell::new(false),
             }),
@@ -125,6 +166,7 @@ impl ClockPhaseOrchestrator {
 
         let mut ordered_runners = Vec::with_capacity(self.inner.configs.len());
         for (index, config) in self.inner.configs.iter().cloned().enumerate() {
+            self.fail_if_seamless_predecessor_failed().await?;
             if self.inner.cancelled.get() {
                 break;
             }
@@ -142,18 +184,14 @@ impl ClockPhaseOrchestrator {
             self.inner.active.borrow_mut().push(runner.clone());
             ordered_runners.push(runner.clone());
 
-            if let Err(source) = runner.run(is_final).await {
-                let _ = self.cancel_active().await;
-                return Err(PhaseOrchestratorError::Runner { phase_id, source });
-            }
+            self.await_runner_operation(&phase_id, runner.run(is_final))
+                .await?;
 
             if seamless_non_final {
                 self.spawn_active_cleanup(runner);
             } else {
-                if let Err(source) = runner.wait_complete().await {
-                    let _ = self.cancel_active().await;
-                    return Err(PhaseOrchestratorError::Runner { phase_id, source });
-                }
+                self.await_runner_operation(&phase_id, runner.wait_complete())
+                    .await?;
                 self.remove_active(&runner);
             }
             if self.inner.cancelled.get() {
@@ -164,13 +202,10 @@ impl ClockPhaseOrchestrator {
         let mut final_stats = Vec::with_capacity(ordered_runners.len());
         for runner in ordered_runners {
             let phase_id = runner.config().id;
-            match runner.wait_complete().await {
-                Ok(stats) => final_stats.push(stats),
-                Err(source) => {
-                    let _ = self.cancel_active().await;
-                    return Err(PhaseOrchestratorError::Runner { phase_id, source });
-                }
-            }
+            final_stats.push(
+                self.await_runner_operation(&phase_id, runner.wait_complete())
+                    .await?,
+            );
             self.remove_active(&runner);
         }
         self.inner.observer.on_phases_complete(final_stats.clone());
@@ -180,15 +215,61 @@ impl ClockPhaseOrchestrator {
     fn spawn_active_cleanup(&self, runner: Rc<dyn PhaseRunner>) {
         let inner = Rc::downgrade(&self.inner);
         let runner_for_wait = runner.clone();
+        let phase_id = runner.config().id;
         tokio::task::spawn_local(async move {
-            let _ = runner_for_wait.wait_complete().await;
+            let result = runner_for_wait.wait_complete().await;
             if let Some(inner) = inner.upgrade() {
+                if let Err(source) = result {
+                    inner
+                        .seamless_failures
+                        .record(SeamlessFailure { phase_id, source });
+                }
                 inner
                     .active
                     .borrow_mut()
                     .retain(|active| !Rc::ptr_eq(active, &runner));
             }
         });
+    }
+
+    async fn await_runner_operation(
+        &self,
+        phase_id: &str,
+        operation: LocalPhaseFuture<Result<PhaseStats, PhaseRunError>>,
+    ) -> Result<PhaseStats, PhaseOrchestratorError> {
+        if let Some(failure) = self.inner.seamless_failures.first() {
+            let _ = self.cancel_active().await;
+            return Err(background_failure(failure));
+        }
+        let background = self.inner.seamless_failures.wait();
+        tokio::pin!(background);
+        tokio::pin!(operation);
+        tokio::select! {
+            biased;
+            failure = &mut background => {
+                let _ = self.cancel_active().await;
+                let _ = operation.await;
+                Err(background_failure(failure))
+            }
+            result = &mut operation => match result {
+                Ok(stats) => Ok(stats),
+                Err(source) => {
+                    let _ = self.cancel_active().await;
+                    Err(PhaseOrchestratorError::Runner {
+                        phase_id: phase_id.to_string(),
+                        source,
+                    })
+                }
+            }
+        }
+    }
+
+    async fn fail_if_seamless_predecessor_failed(&self) -> Result<(), PhaseOrchestratorError> {
+        let Some(failure) = self.inner.seamless_failures.first() else {
+            return Ok(());
+        };
+        let _ = self.cancel_active().await;
+        Err(background_failure(failure))
     }
 
     fn remove_active(&self, runner: &Rc<dyn PhaseRunner>) {
@@ -215,6 +296,13 @@ impl ClockPhaseOrchestrator {
             }
         }
         shared_result.map_err(PhaseOrchestratorError::Cancel)
+    }
+}
+
+fn background_failure(failure: SeamlessFailure) -> PhaseOrchestratorError {
+    PhaseOrchestratorError::Runner {
+        phase_id: failure.phase_id,
+        source: failure.source,
     }
 }
 
