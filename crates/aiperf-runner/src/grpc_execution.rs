@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use aiperf_metrics::ReportPairRunFacts;
 use aiperf_transport_grpc::GrpcBindingRegistry;
+use aiperf_transport_http::config::ClientConfig;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use url::Url;
 
@@ -123,6 +124,7 @@ fn scheduled_workload(config: &dyn ValidatedWorkloadConfig) -> Result<&Scheduled
 
 fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Result<()> {
     let default = context.default_endpoint_profile()?;
+    let default_http_client = ClientConfig::default();
     let bindings = GrpcBindingRegistry::builtin()?;
     for (profile_id, profile) in context.endpoint_profiles() {
         bindings
@@ -152,8 +154,12 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
             "endpoint profile {profile_id:?} mixes grpc:// and grpcs:// URLs"
         );
         ensure!(
-            !profile.http2,
-            "endpoint profile {profile_id:?}.http2 is HTTP-specific and unsupported by online_grpc"
+            profile.client.http_version == default_http_client.http_version
+                && profile.client.ssl_verify == default_http_client.ssl_verify
+                && profile.client.keepalive_ns == default_http_client.keepalive_ns
+                && profile.client.max_connections_per_origin
+                    == default_http_client.max_connections_per_origin,
+            "endpoint profile {profile_id:?} authors HTTP-specific client policy unsupported by online_grpc"
         );
         ensure!(
             profile.config.wait_for_model_timeout <= 0.0,

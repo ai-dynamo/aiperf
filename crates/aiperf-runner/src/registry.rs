@@ -21,7 +21,8 @@ use aiperf_metrics::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,
 };
-use aiperf_transport_http::models::ConnectionReuseStrategy;
+use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -898,6 +899,12 @@ struct EndpointProfileConfigV2 {
     session_header: Option<String>,
     #[serde(default)]
     http2: bool,
+    #[serde(default = "default_ssl_verify")]
+    ssl_verify: bool,
+    #[serde(default = "default_connection_limit")]
+    connection_limit: usize,
+    #[serde(default = "default_keepalive_timeout")]
+    keepalive_timeout: f64,
 }
 
 /// One statically validated endpoint profile and its normalized policy.
@@ -911,8 +918,9 @@ pub struct ValidatedEndpointProfileV2 {
     pub config: RawEndpointConfig,
     /// Authored HTTP connection reuse policy.
     pub connection_reuse: ConnectionReuseStrategy,
-    /// Whether cleartext HTTP/2 prior knowledge was requested.
-    pub http2: bool,
+    /// Fully validated HTTP client policy retained directly for worker-local
+    /// transport construction.
+    pub client: ClientConfig,
     /// Optional authored session-affinity header name.
     pub session_header: Option<String>,
 }
@@ -1128,6 +1136,10 @@ pub fn validate_endpoint_profiles_v2(
             "endpoint profile {index}.urls cannot be empty"
         );
         ensure!(
+            config.connection_limit > 0,
+            "endpoint profile {index}.connection_limit must be positive"
+        );
+        ensure!(
             matches!(
                 config.wait_for_model_mode.as_str(),
                 "models" | "inference" | "both"
@@ -1169,12 +1181,31 @@ pub fn validate_endpoint_profiles_v2(
                 prepared.readiness_policy(&model.name)?;
             }
         }
+        let effective = prepared.config().to_raw();
+        let client = ClientConfig {
+            total_timeout_ns: seconds_to_optional_ns(
+                effective.timeout_seconds,
+                &format!("endpoint profile {index}.timeout_seconds"),
+            )?,
+            ssl_verify: config.ssl_verify,
+            http_version: if config.http2 {
+                HttpVersion::Http2PriorKnowledge
+            } else {
+                HttpVersion::Auto
+            },
+            keepalive_ns: Some(seconds_to_ns(
+                config.keepalive_timeout,
+                &format!("endpoint profile {index}.keepalive_timeout"),
+            )?),
+            max_connections_per_origin: config.connection_limit,
+            ..ClientConfig::default()
+        };
         validated.push(ValidatedEndpointProfileV2 {
             profile_id: config.id,
             endpoint_id: canonical_id,
-            config: prepared.config().to_raw(),
+            config: effective,
             connection_reuse: config.connection_reuse,
-            http2: config.http2,
+            client,
             session_header: config.session_header,
         });
     }
@@ -1195,6 +1226,41 @@ const fn default_wait_for_model_interval() -> f64 {
 
 fn default_wait_for_model_mode() -> String {
     "inference".to_owned()
+}
+
+const fn default_ssl_verify() -> bool {
+    true
+}
+
+const fn default_connection_limit() -> usize {
+    2_500
+}
+
+const fn default_keepalive_timeout() -> f64 {
+    300.0
+}
+
+fn seconds_to_ns(value: f64, field: &str) -> Result<i64> {
+    ensure!(
+        value.is_finite() && value >= 0.0,
+        "{field} must be finite and non-negative"
+    );
+    let nanoseconds = value * 1_000_000_000.0;
+    ensure!(
+        nanoseconds <= i64::MAX as f64,
+        "{field} exceeds the native Clock range"
+    );
+    let nanoseconds = nanoseconds.round() as i64;
+    ensure!(
+        value == 0.0 || nanoseconds > 0,
+        "{field} must be zero or at least one native Clock nanosecond"
+    );
+    Ok(nanoseconds)
+}
+
+fn seconds_to_optional_ns(value: f64, field: &str) -> Result<Option<i64>> {
+    let nanoseconds = seconds_to_ns(value, field)?;
+    Ok((nanoseconds > 0).then_some(nanoseconds))
 }
 
 /// Built-in online HTTP backend descriptor.
@@ -1703,7 +1769,7 @@ mod tests {
                 ..RawEndpointConfig::default()
             },
             connection_reuse: ConnectionReuseStrategy::default(),
-            http2: false,
+            client: ClientConfig::default(),
             session_header: None,
         };
         let context = RunnerRunContext::new(
@@ -1741,6 +1807,67 @@ mod tests {
                 .map(|profile| profile.profile_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["default", "z-last", "a-first"]
+        );
+    }
+
+    #[test]
+    fn endpoint_profile_retains_one_fully_validated_http_client_policy() {
+        let run: AuthoredRunSpecV2 = serde_json::from_value(serde_json::json!({
+            "identity": {"benchmark_id": "http-policy"},
+            "artifact_target": "/tmp/http-policy",
+            "backend": {"type": "online_http", "config": {}},
+            "workload": {"type": "scheduled", "config": {}},
+            "resources": {
+                "models": {"items": [{"name": "model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["https://example.test"],
+                    "timeout_seconds": 0.5,
+                    "http2": true,
+                    "ssl_verify": false,
+                    "connection_limit": 7,
+                    "keepalive_timeout": 0.25
+                }]}
+            }
+        }))
+        .unwrap();
+
+        let profiles =
+            validate_endpoint_profiles_v2(&run, &EndpointRegistry::builtin().unwrap()).unwrap();
+        let client = &profiles[0].client;
+        assert_eq!(client.http_version, HttpVersion::Http2PriorKnowledge);
+        assert!(!client.ssl_verify);
+        assert_eq!(client.max_connections_per_origin, 7);
+        assert_eq!(client.keepalive_ns, Some(250_000_000));
+        assert_eq!(client.total_timeout_ns, Some(500_000_000));
+    }
+
+    #[test]
+    fn endpoint_profile_rejects_zero_connection_capacity() {
+        let run: AuthoredRunSpecV2 = serde_json::from_value(serde_json::json!({
+            "identity": {"benchmark_id": "http-policy-invalid"},
+            "artifact_target": "/tmp/http-policy-invalid",
+            "backend": {"type": "online_http", "config": {}},
+            "workload": {"type": "scheduled", "config": {}},
+            "resources": {
+                "models": {"items": [{"name": "model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://example.test"],
+                    "connection_limit": 0
+                }]}
+            }
+        }))
+        .unwrap();
+
+        let error = validate_endpoint_profiles_v2(&run, &EndpointRegistry::builtin().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("connection_limit must be positive"),
+            "{error}"
         );
     }
 

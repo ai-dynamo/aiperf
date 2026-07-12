@@ -624,7 +624,7 @@ fn process_worker_and_auxiliary_gateway_share_the_injected_dispatcher() {
             },
             connection_reuse: Default::default(),
             session_header: None,
-            http2: false,
+            client: Default::default(),
         },
     };
     let outcome = execute_agentic_online_with_factories(

@@ -19,7 +19,7 @@ use crate::models::HttpVersion;
 /// Config-v2's endpoint request timeout. For all three, `None` or a non-positive
 /// value means "no deadline".
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientConfig {
     /// Deadline for DNS, TCP, TLS, and HTTP handshake establishment.
     pub connect_timeout_ns: Option<i64>,

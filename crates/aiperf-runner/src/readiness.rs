@@ -28,9 +28,7 @@ use aiperf_endpoints::{
     ReadinessPolicy,
 };
 use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{
-    ConnectionReuseStrategy, HttpVersion, RequestConfig, Response,
-};
+use aiperf_transport_http::models::{ConnectionReuseStrategy, RequestConfig, Response};
 use aiperf_transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
@@ -48,7 +46,7 @@ pub struct ReadinessEndpointProfile {
     endpoint_id: EndpointId,
     config: RawEndpointConfig,
     connection_reuse: ConnectionReuseStrategy,
-    http2: bool,
+    client: ClientConfig,
 }
 
 impl ReadinessEndpointProfile {
@@ -58,14 +56,14 @@ impl ReadinessEndpointProfile {
         endpoint_id: EndpointId,
         config: RawEndpointConfig,
         connection_reuse: ConnectionReuseStrategy,
-        http2: bool,
+        client: ClientConfig,
     ) -> Self {
         Self {
             profile_id: profile_id.into(),
             endpoint_id,
             config,
             connection_reuse,
-            http2,
+            client,
         }
     }
 
@@ -89,9 +87,9 @@ impl ReadinessEndpointProfile {
         self.connection_reuse
     }
 
-    /// Whether the profile requires cleartext HTTP/2 prior knowledge.
-    pub const fn http2(&self) -> bool {
-        self.http2
+    /// Fully validated HTTP client policy for this profile.
+    pub fn client(&self) -> &ClientConfig {
+        &self.client
     }
 }
 
@@ -150,7 +148,7 @@ pub struct ReadinessAttemptRequest {
     body: Option<Value>,
     timeout_ns: i64,
     connection_reuse: ConnectionReuseStrategy,
-    http2: bool,
+    client: ClientConfig,
 }
 
 impl fmt::Debug for ReadinessAttemptRequest {
@@ -162,7 +160,7 @@ impl fmt::Debug for ReadinessAttemptRequest {
             .field("header_count", &self.headers.len())
             .field("has_body", &self.body.is_some())
             .field("connection_reuse", &self.connection_reuse)
-            .field("http2", &self.http2)
+            .field("client", &self.client)
             .finish_non_exhaustive()
     }
 }
@@ -198,9 +196,9 @@ impl ReadinessAttemptRequest {
         self.connection_reuse
     }
 
-    /// Whether this target requires cleartext HTTP/2 prior knowledge.
-    pub const fn http2(&self) -> bool {
-        self.http2
+    /// Fully validated HTTP client policy for this target.
+    pub fn client(&self) -> &ClientConfig {
+        &self.client
     }
 }
 
@@ -372,7 +370,7 @@ fn prepare_target(
             body: request.body,
             timeout_ns,
             connection_reuse: profile.connection_reuse,
-            http2: profile.http2,
+            client: profile.client.clone(),
         },
         timeout_ns,
         interval_ns,
@@ -506,35 +504,32 @@ impl ReadinessTransportFactory for NativeHttpReadinessTransportFactory {
     fn build(&self, clock: Rc<dyn Clock>) -> Rc<dyn ReadinessTransport> {
         Rc::new(NativeHttpReadinessTransport {
             clock,
-            transports: RefCell::new(BTreeMap::new()),
+            transports: RefCell::new(Vec::new()),
         })
     }
 }
 
 struct NativeHttpReadinessTransport {
     clock: Rc<dyn Clock>,
-    transports: RefCell<BTreeMap<(i64, bool), Rc<HttpTransport>>>,
+    transports: RefCell<Vec<(ClientConfig, Rc<HttpTransport>)>>,
 }
 
 impl NativeHttpReadinessTransport {
-    fn transport_for(&self, timeout_ns: i64, http2: bool) -> Rc<HttpTransport> {
-        let key = (timeout_ns, http2);
-        if let Some(transport) = self.transports.borrow().get(&key) {
+    fn transport_for(&self, timeout_ns: i64, client: &ClientConfig) -> Rc<HttpTransport> {
+        let mut effective = client.clone();
+        effective.total_timeout_ns = Some(timeout_ns);
+        if let Some((_, transport)) = self
+            .transports
+            .borrow()
+            .iter()
+            .find(|(candidate, _)| candidate == &effective)
+        {
             return transport.clone();
         }
-        let transport = Rc::new(HttpTransport::new(
-            self.clock.clone(),
-            ClientConfig {
-                total_timeout_ns: Some(timeout_ns),
-                http_version: if http2 {
-                    HttpVersion::Http2PriorKnowledge
-                } else {
-                    HttpVersion::Auto
-                },
-                ..ClientConfig::default()
-            },
-        ));
-        self.transports.borrow_mut().insert(key, transport.clone());
+        let transport = Rc::new(HttpTransport::new(self.clock.clone(), effective.clone()));
+        self.transports
+            .borrow_mut()
+            .push((effective, transport.clone()));
         transport
     }
 }
@@ -550,7 +545,7 @@ impl fmt::Debug for NativeHttpReadinessTransport {
 #[async_trait(?Send)]
 impl ReadinessTransport for NativeHttpReadinessTransport {
     async fn execute(&self, request: ReadinessAttemptRequest) -> ReadinessAttemptResponse {
-        let transport = self.transport_for(request.timeout_ns, request.http2);
+        let transport = self.transport_for(request.timeout_ns, &request.client);
         let mut config = RequestConfig::new(request.url).reuse(request.connection_reuse);
         config.headers = request.headers;
         let record = match (request.method, request.body) {
@@ -581,6 +576,8 @@ mod tests {
     use std::collections::VecDeque;
     use std::future::Future;
     use std::pin::Pin;
+
+    use aiperf_transport_http::models::HttpVersion;
 
     use super::*;
 
@@ -661,7 +658,7 @@ mod tests {
                 ..RawEndpointConfig::default()
             },
             ConnectionReuseStrategy::Pooled,
-            false,
+            ClientConfig::default(),
         )
     }
 
@@ -835,12 +832,19 @@ mod tests {
     fn native_transport_reuses_one_pool_for_equal_attempt_policy() {
         let transport = NativeHttpReadinessTransport {
             clock: Rc::new(AdvancingClock::new()),
-            transports: RefCell::new(BTreeMap::new()),
+            transports: RefCell::new(Vec::new()),
         };
 
-        let first = transport.transport_for(5_000_000_000, false);
-        let second = transport.transport_for(5_000_000_000, false);
-        let capped = transport.transport_for(1_000_000_000, false);
+        let client = ClientConfig {
+            ssl_verify: false,
+            max_connections_per_origin: 7,
+            keepalive_ns: Some(250_000_000),
+            http_version: HttpVersion::Http2PriorKnowledge,
+            ..ClientConfig::default()
+        };
+        let first = transport.transport_for(5_000_000_000, &client);
+        let second = transport.transport_for(5_000_000_000, &client);
+        let capped = transport.transport_for(1_000_000_000, &client);
 
         assert!(Rc::ptr_eq(&first, &second));
         assert!(!Rc::ptr_eq(&first, &capped));

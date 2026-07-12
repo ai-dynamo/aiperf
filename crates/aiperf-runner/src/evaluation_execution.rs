@@ -52,8 +52,6 @@ use aiperf_endpoints::{
 };
 use aiperf_metrics::{MetricsConfig, NativeReport, ReportPairRunFacts, ReportRunInfo, RunOutcome};
 use aiperf_timing::StopConfig;
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::HttpVersion;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::sink::RequestObserver;
@@ -834,7 +832,7 @@ fn prepare_evaluation_routes(
             profile_id.to_string(),
             (
                 profile.connection_reuse,
-                profile.http2,
+                profile.client.clone(),
                 profile.session_header.clone(),
             ),
         );
@@ -937,9 +935,8 @@ fn prepare_evaluation_routes(
             .get(&profile.profile_id)
             .expect("prepared profile retained transport policy");
         ensure!(
-            policy == first_policy
-                && profile.config.timeout_seconds == first_profile.config.timeout_seconds,
-            "evaluation endpoint profiles must share HTTP version, reuse, session-header, and timeout policy"
+            policy == first_policy,
+            "evaluation endpoint profiles must share HTTP client, reuse, and session-header policy"
         );
     }
     ensure!(
@@ -947,17 +944,8 @@ fn prepare_evaluation_routes(
         "evaluation endpoint profile {:?} has no URL",
         first_profile.profile_id
     );
-    let timeout_ns = seconds_to_ns(first_profile.config.timeout_seconds)?;
     let transport = TransportSinkConfig {
-        client: ClientConfig {
-            http_version: if first_policy.1 {
-                HttpVersion::Http2PriorKnowledge
-            } else {
-                HttpVersion::Auto
-            },
-            total_timeout_ns: (timeout_ns > 0).then_some(timeout_ns),
-            ..ClientConfig::default()
-        },
+        client: first_policy.1.clone(),
         connection_reuse: first_policy.0,
         session_header: first_policy.2.clone(),
     };
@@ -1002,14 +990,6 @@ fn canonical_sha256(value: Value) -> Result<String> {
     Ok(CanonicalJson::new(value)
         .map_err(|error| anyhow!(error.to_string()))?
         .normalized_result_sha256())
-}
-
-fn seconds_to_ns(seconds: f64) -> Result<i64> {
-    ensure!(
-        seconds.is_finite() && seconds >= 0.0 && seconds * 1_000_000_000.0 <= i64::MAX as f64,
-        "evaluation endpoint timeout must be finite, non-negative, and representable in nanoseconds"
-    );
-    Ok((seconds * 1_000_000_000.0).round_ties_even() as i64)
 }
 
 struct PreparedOnlineEvaluationOperation {

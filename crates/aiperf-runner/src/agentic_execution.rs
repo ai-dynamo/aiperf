@@ -49,7 +49,7 @@ use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegi
 use aiperf_metrics::ReportPairRunFacts;
 use aiperf_timing::StopConfig;
 use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
+use aiperf_transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use loadgen_core::sink::RequestObserver;
@@ -511,7 +511,7 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
                 config: endpoint.config.clone(),
                 connection_reuse: endpoint.connection_reuse,
                 session_header: endpoint.session_header.clone(),
-                http2: endpoint.http2,
+                client: endpoint.client.clone(),
             },
         };
         spec.validate()?;
@@ -638,8 +638,8 @@ pub struct AgenticOnlineEndpointSpec {
     pub connection_reuse: ConnectionReuseStrategy,
     /// Optional replacement session-affinity header.
     pub session_header: Option<String>,
-    /// Whether cleartext endpoints use HTTP/2 prior knowledge.
-    pub http2: bool,
+    /// Fully validated HTTP client policy retained from endpoint preparation.
+    pub client: ClientConfig,
 }
 
 /// Completely authored input to the online agentic execution composition.
@@ -1167,17 +1167,8 @@ fn prepare_agentic_endpoint(
     );
     let urls = effective_raw.urls.clone();
     ensure!(!urls.is_empty(), "agentic endpoint has no URL");
-    let timeout_ns = seconds_to_ns(effective_raw.timeout_seconds)?;
     let transport = TransportSinkConfig {
-        client: ClientConfig {
-            http_version: if spec.http2 {
-                HttpVersion::Http2PriorKnowledge
-            } else {
-                HttpVersion::Auto
-            },
-            total_timeout_ns: (timeout_ns > 0).then_some(timeout_ns),
-            ..ClientConfig::default()
-        },
+        client: spec.client.clone(),
         connection_reuse: spec.connection_reuse,
         session_header: spec.session_header.clone(),
     };
@@ -1199,14 +1190,6 @@ fn ensure_agentic_endpoint(descriptor: &aiperf_endpoints::EndpointDescriptor) ->
         descriptor.id
     );
     Ok(())
-}
-
-fn seconds_to_ns(seconds: f64) -> Result<i64> {
-    ensure!(
-        seconds.is_finite() && seconds >= 0.0 && seconds * 1_000_000_000.0 <= i64::MAX as f64,
-        "agentic endpoint timeout must be finite, non-negative, and representable in nanoseconds"
-    );
-    Ok((seconds * 1_000_000_000.0).round_ties_even() as i64)
 }
 
 struct AgenticDispatcher {

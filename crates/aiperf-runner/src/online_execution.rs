@@ -446,7 +446,7 @@ pub(crate) fn prepare_online_readiness(
                 profile.endpoint_id.clone(),
                 profile.config.clone(),
                 profile.connection_reuse,
-                profile.http2,
+                profile.client.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -983,7 +983,10 @@ fn lower_prepared_endpoint_plan(context: &RunnerRunContext) -> NativePreparedEnd
                 endpoint_id: profile.endpoint_id.clone(),
                 config: profile.config.clone(),
                 connection_reuse: profile.connection_reuse,
-                http2: profile.http2,
+                http2: matches!(
+                    profile.client.http_version,
+                    aiperf_transport_http::models::HttpVersion::Http2PriorKnowledge
+                ),
                 session_header: profile.session_header.clone(),
             })
             .collect(),
