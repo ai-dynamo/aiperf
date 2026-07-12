@@ -173,6 +173,34 @@ impl GpuTelemetryAccumulator {
         self.timestamps_ns.is_empty()
     }
 
+    /// Materializes the raw per-GPU scrape records in deterministic time order.
+    ///
+    /// Native-v2 reporting stays columnar through [`summarize_phase`](Self::summarize_phase).
+    /// This colder clone path exists for the legacy-compatible telemetry JSONL
+    /// artifact consumed by Python plot and user-extension code.
+    pub fn records(&self) -> Vec<GpuTelemetryRecord> {
+        let mut records = self
+            .series
+            .iter()
+            .flat_map(|(key, state)| {
+                state.samples.iter().map(move |sample| GpuTelemetryRecord {
+                    timestamp_ns: sample.timestamp_ns,
+                    endpoint_url: key.endpoint_url.clone(),
+                    metadata: state.metadata.clone(),
+                    metrics: sample.metrics.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.timestamp_ns
+                .cmp(&right.timestamp_ns)
+                .then_with(|| left.endpoint_url.cmp(&right.endpoint_url))
+                .then_with(|| left.metadata.gpu_index.cmp(&right.metadata.gpu_index))
+                .then_with(|| left.metadata.gpu_uuid.cmp(&right.metadata.gpu_uuid))
+        });
+        records
+    }
+
     /// Appends one decoded per-GPU scrape record.
     pub fn ingest_record(&mut self, record: &GpuTelemetryRecord) {
         self.timestamps_ns.push(record.timestamp_ns);

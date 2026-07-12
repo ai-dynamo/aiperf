@@ -9,6 +9,7 @@
 //! authoritative native-v2 report.
 
 pub mod execute;
+mod gpu_telemetry;
 pub mod protocol;
 mod records;
 

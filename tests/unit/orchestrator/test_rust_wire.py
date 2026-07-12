@@ -95,6 +95,34 @@ def test_projection_is_explicit_and_canonicalizes_nested_distributions(
         "records_path": "profile_export.jsonl",
         "trace": False,
     }
+    assert run["gpu_telemetry"] == {
+        "collection_interval_ns": 333_000_000,
+        "request_timeout_ns": 10_000_000_000,
+        "records_path": "gpu_telemetry_export.jsonl",
+        "sources": [
+            {"type": "dcgm", "url": "http://localhost:9400/metrics"},
+            {"type": "dcgm", "url": "http://localhost:9401/metrics"},
+        ],
+    }
+
+
+def test_projects_gpu_telemetry_defaults_custom_urls_and_disable(tmp_path) -> None:
+    run = _run(tmp_path)
+    run.cfg.gpu_telemetry.urls = [
+        "http://localhost:9400/",
+        "http://gpu-node:9400",
+    ]
+
+    telemetry = build_run_request(run)["run"]["gpu_telemetry"]
+
+    assert telemetry["sources"] == [
+        {"type": "dcgm", "url": "http://localhost:9400/metrics"},
+        {"type": "dcgm", "url": "http://localhost:9401/metrics"},
+        {"type": "dcgm", "url": "http://gpu-node:9400/metrics"},
+    ]
+
+    run.cfg.gpu_telemetry.enabled = False
+    assert "gpu_telemetry" not in build_run_request(run)["run"]
 
 
 def test_projects_slos_timeslices_and_custom_record_path(tmp_path) -> None:

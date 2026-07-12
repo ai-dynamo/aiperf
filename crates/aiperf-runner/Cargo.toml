@@ -16,9 +16,11 @@ aiperf-clock.workspace = true
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true
 aiperf-extensions.workspace = true
+aiperf-gpu-telemetry = { path = "../aiperf-gpu-telemetry" }
 aiperf-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../aiperf-timing" }
+aiperf-transport.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 loadgen-core.workspace = true

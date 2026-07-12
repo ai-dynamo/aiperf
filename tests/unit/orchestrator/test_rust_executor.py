@@ -33,6 +33,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
         "phase_types": ["concurrency"],
         "phase_features": [],
         "run_features": [],
+        "telemetry_source_types": [],
         "runner_version": "0.0.0",
     }
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -60,6 +61,7 @@ def test_capabilities_reject_incompatible_runner(
         "phase_types": [],
         "phase_features": [],
         "run_features": [],
+        "telemetry_source_types": [],
     }
     response[field] = value
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -87,6 +89,7 @@ def test_capabilities_surface_process_failure(monkeypatch) -> None:
         "phase_types",
         "phase_features",
         "run_features",
+        "telemetry_source_types",
     ],
 )
 def test_capabilities_require_every_typed_feature_inventory(
@@ -101,6 +104,7 @@ def test_capabilities_require_every_typed_feature_inventory(
         "phase_types": [],
         "phase_features": [],
         "run_features": [],
+        "telemetry_source_types": [],
     }
     response.pop(field)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
@@ -115,7 +119,12 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         "dataset_types": ["synthetic"],
         "phase_types": ["concurrency"],
         "phase_features": ["adaptive_scale", "ramps", "request_cancellation"],
-        "run_features": ["outputs_json", "python_accuracy_evaluator"],
+        "run_features": [
+            "gpu_telemetry",
+            "outputs_json",
+            "python_accuracy_evaluator",
+        ],
+        "telemetry_source_types": ["dcgm"],
     }
     request = {
         "run": {
@@ -131,6 +140,7 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
             ],
             "artifacts": {"outputs_path": "outputs.json"},
             "accuracy": {},
+            "gpu_telemetry": {"sources": [{"type": "dcgm"}]},
         }
     }
 
@@ -145,6 +155,8 @@ def test_request_capabilities_cover_every_nested_native_variant() -> None:
         ("phase_features", "request_cancellation"),
         ("run_features", "outputs_json"),
         ("run_features", "python_accuracy_evaluator"),
+        ("run_features", "gpu_telemetry"),
+        ("telemetry_source_types", "dcgm"),
     ):
         narrowed = {name: list(values) for name, values in capabilities.items()}
         narrowed[field].remove(value)

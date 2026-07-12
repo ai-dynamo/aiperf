@@ -11,7 +11,7 @@
 use std::rc::Rc;
 
 use crate::accumulator::GpuTelemetryAccumulator;
-use crate::model::GpuBoundarySnapshot;
+use crate::model::{GpuBoundarySnapshot, GpuScrape};
 use crate::source::{GpuScrapeMode, GpuTelemetryError, GpuTelemetrySource};
 
 /// Drives one injected GPU source into one caller-owned accumulator.
@@ -30,18 +30,44 @@ impl GpuTelemetryCollector {
         self.source.endpoint_url()
     }
 
+    /// Collects one cadence scrape without borrowing an accumulator across IO.
+    ///
+    /// Runtimes with interior-mutability-owned stores use this split API so
+    /// they can await the source first and then ingest synchronously.
+    pub async fn collect_continuous(&self) -> Result<Option<GpuScrape>, GpuTelemetryError> {
+        self.source.scrape(GpuScrapeMode::Continuous).await
+    }
+
+    /// Collects one mandatory boundary scrape and its exact counter snapshot.
+    pub async fn collect_boundary(
+        &self,
+    ) -> Result<(GpuScrape, GpuBoundarySnapshot), GpuTelemetryError> {
+        let scrape = self
+            .source
+            .scrape(GpuScrapeMode::Boundary)
+            .await?
+            .expect("boundary sources must not suppress duplicate bodies");
+        let boundary = GpuBoundarySnapshot::from_scrape(&scrape);
+        Ok((scrape, boundary))
+    }
+
+    /// Synchronously appends a completed scrape to caller-owned storage.
+    pub fn ingest_scrape(scrape: &GpuScrape, accumulator: &mut GpuTelemetryAccumulator) {
+        for record in &scrape.records {
+            accumulator.ingest_record(record);
+        }
+    }
+
     /// Performs one cadence scrape and ingests it unless its body is unchanged.
     pub async fn scrape_continuous(
         &self,
         accumulator: &mut GpuTelemetryAccumulator,
     ) -> Result<usize, GpuTelemetryError> {
-        let Some(scrape) = self.source.scrape(GpuScrapeMode::Continuous).await? else {
+        let Some(scrape) = self.collect_continuous().await? else {
             return Ok(0);
         };
         let count = scrape.records.len();
-        for record in &scrape.records {
-            accumulator.ingest_record(record);
-        }
+        Self::ingest_scrape(&scrape, accumulator);
         Ok(count)
     }
 
@@ -50,15 +76,9 @@ impl GpuTelemetryCollector {
         &self,
         accumulator: &mut GpuTelemetryAccumulator,
     ) -> Result<GpuBoundarySnapshot, GpuTelemetryError> {
-        let scrape = self
-            .source
-            .scrape(GpuScrapeMode::Boundary)
-            .await?
-            .expect("boundary sources must not suppress duplicate bodies");
-        for record in &scrape.records {
-            accumulator.ingest_record(record);
-        }
-        Ok(GpuBoundarySnapshot::from_scrape(&scrape))
+        let (scrape, boundary) = self.collect_boundary().await?;
+        Self::ingest_scrape(&scrape, accumulator);
+        Ok(boundary)
     }
 }
 

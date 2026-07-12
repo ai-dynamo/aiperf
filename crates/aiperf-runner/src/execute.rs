@@ -57,8 +57,8 @@ use aiperf_dataset::{
 use aiperf_endpoints::{EndpointConfig, EndpointType};
 use aiperf_extensions::AiperfRegistry;
 use aiperf_metrics::{
-    CATALOG, ExportContext, MetricsAccumulator, MetricsConfig, NativeReport, Phase as MetricsPhase,
-    ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
+    CATALOG, ExportContext, MetricTag, MetricsAccumulator, MetricsConfig, NativeReport,
+    Phase as MetricsPhase, ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
 use aiperf_rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
@@ -78,6 +78,7 @@ use loadgen_core::sink::{
 };
 use uuid::Uuid;
 
+use crate::gpu_telemetry::GpuTelemetryRun;
 use crate::protocol::{
     AccuracySpec, AdaptiveControlVariableSpec, AdaptiveScaleSpec, AdaptiveStepPolicySpec,
     DatasetSpec, DistributionSpec, EndpointSpec, FileDatasetSpec, MetricsSpec,
@@ -152,6 +153,18 @@ fn validate_request(request: &RunRequest) -> Result<()> {
             common.exclude_from_results == (common.name == "warmup"),
             "phase {:?} exclude_from_results disagrees with its semantic kind",
             common.name
+        );
+    }
+    if request.run.gpu_telemetry.is_some() {
+        ensure!(
+            request
+                .run
+                .phases
+                .iter()
+                .filter(|phase| phase.common().name == "profiling")
+                .count()
+                == 1,
+            "GPU telemetry requires exactly one profiling phase"
         );
     }
     Ok(())
@@ -292,6 +305,24 @@ async fn execute_native_inner(
     }
 
     let clock: Rc<dyn Clock> = RealClock::new();
+    let gpu_telemetry = request
+        .run
+        .gpu_telemetry
+        .as_ref()
+        .map(|spec| GpuTelemetryRun::new(spec, clock.clone()))
+        .transpose()?;
+    let gpu_records_path = request
+        .run
+        .gpu_telemetry
+        .as_ref()
+        .map(|spec| {
+            artifact_path(
+                &request.run.artifact_dir,
+                &spec.records_path,
+                "gpu_telemetry.records_path",
+            )
+        })
+        .transpose()?;
     let start_ns = clock.now_ns();
     let capture = Rc::new(RunCapture::new(
         clock.clone(),
@@ -565,6 +596,11 @@ async fn execute_native_inner(
             .with_resources(resources)
             .with_record_processors(record_processors)
             .with_controller(controller);
+        if phase.common().name == "profiling"
+            && let Some(gpu_telemetry) = &gpu_telemetry
+        {
+            plan = plan.with_sidecars(vec![gpu_telemetry.sidecar()]);
+        }
         if let Some(extension) = runtime_extension {
             plan = plan.with_runtime_extension(extension);
         }
@@ -589,8 +625,21 @@ async fn execute_native_inner(
     for record in &captured {
         accumulator.process_record(&record.ingest);
     }
-    let profiling_metrics =
+    let mut profiling_metrics =
         accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+    if let Some(gpu_telemetry) = &gpu_telemetry {
+        let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
+        let concurrency = request
+            .run
+            .phases
+            .iter()
+            .find(|phase| phase.common().name == "profiling")
+            .and_then(PhaseSpec::concurrency)
+            .map(|value| value as u64);
+        gpu_telemetry
+            .summarize(total_output_tokens, concurrency)
+            .attach_to(&mut profiling_metrics);
+    }
     let warmup = phased
         .reports
         .iter()
@@ -608,6 +657,9 @@ async fn execute_native_inner(
     if let Some(outputs_path) = &request.run.artifacts.outputs_path {
         let outputs_path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&outputs_path, &captured, &metrics_config)?;
+    }
+    if let (Some(gpu_telemetry), Some(gpu_records_path)) = (&gpu_telemetry, &gpu_records_path) {
+        gpu_telemetry.write_records_jsonl(gpu_records_path)?;
     }
     let mut outcome = RunOutcome {
         run: ReportRunInfo {

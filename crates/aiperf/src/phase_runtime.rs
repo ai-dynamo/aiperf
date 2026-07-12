@@ -173,6 +173,21 @@ pub trait ScheduledPhaseResources {
     fn release_stuck(&self) -> ReleasedStuckSlots;
 }
 
+/// Asynchronous control-plane work synchronized to one phase's hard barriers.
+///
+/// Sidecars are intentionally outside [`RequestObserver`]: low-rate telemetry,
+/// profilers, and future extension runtimes may need a forced sample before
+/// issuance and after every return without adding work to the per-token path.
+/// The phase driver awaits [`start`](Self::start) before it can issue the first
+/// turn and awaits [`finish`](Self::finish) after dispatch has fully drained.
+pub trait ScheduledPhaseSidecar {
+    /// Establish the phase-start boundary before issuance begins.
+    fn start(&self) -> LocalPhaseFuture<Result<()>>;
+
+    /// Establish the phase-end boundary after every dispatch has drained.
+    fn finish(&self) -> LocalPhaseFuture<Result<()>>;
+}
+
 /// Resources used by workloads with no shared admission state.
 #[derive(Default)]
 pub struct NoopScheduledPhaseResources;
@@ -247,6 +262,8 @@ pub struct ScheduledPhasePlan {
     pub controller: Rc<dyn ScheduledPhaseController>,
     /// Long-lived admission state and force cleanup.
     pub resources: Rc<dyn ScheduledPhaseResources>,
+    /// Low-rate control-plane services synchronized to phase barriers.
+    pub sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     /// Optional phase-local observer/gate/controller decorator.
     pub runtime_extension: Option<Rc<dyn ScheduledRuntimeExtension>>,
 }
@@ -267,6 +284,7 @@ impl ScheduledPhasePlan {
             start_ns: None,
             controller: Rc::new(NoopScheduledPhaseController),
             resources: Rc::new(NoopScheduledPhaseResources),
+            sidecars: Vec::new(),
             runtime_extension: None,
         }
     }
@@ -301,6 +319,12 @@ impl ScheduledPhasePlan {
     /// Attach shared admission resources used across phase workloads.
     pub fn with_resources(mut self, resources: Rc<dyn ScheduledPhaseResources>) -> Self {
         self.resources = resources;
+        self
+    }
+
+    /// Attach control-plane services that share this phase's hard barriers.
+    pub fn with_sidecars(mut self, sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>) -> Self {
+        self.sidecars = sidecars;
         self
     }
 
@@ -500,6 +524,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             wait_for_natural_drain: !plan.enforce_stop,
             controller,
             resources: plan.resources,
+            sidecars: plan.sidecars,
             reports: self.reports.clone(),
             finalized: Cell::new(false),
         })
@@ -560,6 +585,7 @@ struct ScheduledPhaseExecution {
     wait_for_natural_drain: bool,
     controller: Rc<dyn ScheduledPhaseController>,
     resources: Rc<dyn ScheduledPhaseResources>,
+    sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
     reports: Rc<RefCell<Vec<(String, ScheduledRunReport)>>>,
     finalized: Cell<bool>,
 }
@@ -575,6 +601,18 @@ impl PhaseExecution for ScheduledPhaseExecution {
         self.controller
             .start()
             .map_err(|error| PhaseExecutionError::new(format!("starting phase ramps: {error:#}")))
+    }
+
+    fn setup(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
+        let sidecars = self.sidecars.clone();
+        Box::pin(async move {
+            for sidecar in sidecars {
+                sidecar.start().await.map_err(|error| {
+                    PhaseExecutionError::new(format!("starting scheduled phase sidecar: {error:#}"))
+                })?;
+            }
+            Ok(())
+        })
     }
 
     fn execute(&self) -> LocalPhaseFuture<Result<(), PhaseExecutionError>> {
@@ -648,9 +686,17 @@ impl PhaseExecution for ScheduledPhaseExecution {
         let strategy = self.workload.name();
         let snapshot = self.workload.user_control_snapshot();
         let runtime = self.runtime.clone();
+        let sidecars = self.sidecars.clone();
         let reports = self.reports.clone();
         Box::pin(async move {
             runtime.scheduler().wait_idle().await;
+            for sidecar in sidecars {
+                sidecar.finish().await.map_err(|error| {
+                    PhaseExecutionError::new(format!(
+                        "finishing scheduled phase sidecar: {error:#}"
+                    ))
+                })?;
+            }
             reports
                 .borrow_mut()
                 .push((phase_id, runtime.finish(strategy, snapshot)));

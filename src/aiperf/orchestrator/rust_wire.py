@@ -146,7 +146,60 @@ def build_run_request(run: BenchmarkRun) -> dict[str, Any]:
         )
         _set_optional(accuracy, "system_prompt", cfg.accuracy.system_prompt)
         run_wire["accuracy"] = accuracy
+    gpu_telemetry = _gpu_telemetry(run)
+    if gpu_telemetry is not None:
+        run_wire["gpu_telemetry"] = gpu_telemetry
     return {"protocol_version": RUNNER_PROTOCOL_VERSION, "run": run_wire}
+
+
+def _gpu_telemetry(run: BenchmarkRun) -> dict[str, Any] | None:
+    """Lower the fault-tolerant DCGM collector into phase-bounded Rust IO."""
+    config = run.cfg.gpu_telemetry
+    if not config.enabled:
+        return None
+    if str(config.collector) != "dcgm":
+        raise RustWireError(
+            f"native runner protocol v1 does not accept GPU telemetry collector "
+            f"{config.collector!s}"
+        )
+    if config.metrics_file is not None:
+        raise RustWireError(
+            "native runner protocol v1 does not yet accept custom DCGM metric files"
+        )
+
+    from aiperf.common.environment import Environment
+
+    authored = [*Environment.GPU.DEFAULT_DCGM_ENDPOINTS, *config.urls]
+    urls = list(dict.fromkeys(_normalize_dcgm_url(url) for url in authored))
+    return {
+        "collection_interval_ns": _positive_seconds_to_ns(
+            Environment.GPU.COLLECTION_INTERVAL,
+            "GPU collection interval",
+        ),
+        "request_timeout_ns": _positive_seconds_to_ns(
+            Environment.GPU.REACHABILITY_TIMEOUT,
+            "GPU reachability timeout",
+        ),
+        "records_path": _artifact_relative_path(
+            run.artifact_dir,
+            run.cfg.artifacts.profile_export_gpu_telemetry_jsonl_file,
+        ),
+        "sources": [{"type": "dcgm", "url": url} for url in urls],
+    }
+
+
+def _normalize_dcgm_url(url: str) -> str:
+    normalized = url.rstrip("/")
+    return normalized if normalized.endswith("/metrics") else f"{normalized}/metrics"
+
+
+def _positive_seconds_to_ns(value: float, label: str) -> int:
+    if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+        raise RustWireError(f"{label} must be positive, got {value!r}")
+    nanoseconds = round(float(value) * 1_000_000_000)
+    if nanoseconds <= 0 or nanoseconds > 2**63 - 1:
+        raise RustWireError(f"{label} is outside the native nanosecond range")
+    return nanoseconds
 
 
 def _dataset(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:

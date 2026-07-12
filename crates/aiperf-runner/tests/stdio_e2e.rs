@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use axum::{Router, extract::State, http::header, response::IntoResponse, routing::post};
+use axum::{
+    Router, extract::State, http::header, response::IntoResponse, routing::get, routing::post,
+};
 
 #[test]
 fn capabilities_are_a_single_versioned_json_line() {
@@ -47,6 +49,12 @@ fn capabilities_are_a_single_versioned_json_line() {
             .unwrap()
             .contains(&serde_json::json!("outputs_json"))
     );
+    assert!(
+        capabilities["telemetry_source_types"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("dcgm"))
+    );
 }
 
 async fn chat_handler() -> impl IntoResponse {
@@ -73,6 +81,32 @@ async fn delayed_chat_handler(State(probe): State<Arc<ConcurrencyProbe>>) -> imp
     tokio::time::sleep(Duration::from_millis(50)).await;
     probe.active.fetch_sub(1, Ordering::SeqCst);
     chat_handler().await
+}
+
+struct DcgmProbe {
+    inference: Arc<ConcurrencyProbe>,
+    scrapes: AtomicUsize,
+    inference_count_at_first_scrape: AtomicUsize,
+}
+
+async fn dcgm_handler(State(probe): State<Arc<DcgmProbe>>) -> impl IntoResponse {
+    let scrape = probe.scrapes.fetch_add(1, Ordering::SeqCst) + 1;
+    let inference_count = probe.inference.total.load(Ordering::SeqCst);
+    let _ = probe.inference_count_at_first_scrape.compare_exchange(
+        usize::MAX,
+        inference_count,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+    let energy_millijoules = scrape as u64 * 1_000_000_000;
+    format!(
+        concat!(
+            "DCGM_FI_DEV_POWER_USAGE{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} 250\n",
+            "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} {energy_millijoules}\n",
+            "DCGM_FI_DEV_GPU_UTIL{{gpu=\"0\",UUID=\"GPU-e2e\",modelName=\"H100\",Hostname=\"node\"}} 80\n"
+        ),
+        energy_millijoules = energy_millijoules,
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -201,6 +235,149 @@ async fn stdio_child_runs_http_and_commits_native_report() {
             && row["metrics"]["output_token_count"] == 1.0
             && row["metrics"]["output_sequence_length"] == 1.0
             && row["metrics"]["request_latency"].is_number()
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stdio_child_bounds_dcgm_to_profiling_and_joins_native_results() {
+    let inference_probe = Arc::new(ConcurrencyProbe::default());
+    let inference_app = Router::new()
+        .route("/v1/chat/completions", post(delayed_chat_handler))
+        .with_state(inference_probe.clone());
+    let inference_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let inference_address = inference_listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(inference_listener, inference_app)
+            .await
+            .unwrap()
+    });
+
+    let dcgm_probe = Arc::new(DcgmProbe {
+        inference: inference_probe.clone(),
+        scrapes: AtomicUsize::new(0),
+        inference_count_at_first_scrape: AtomicUsize::new(usize::MAX),
+    });
+    let dcgm_app = Router::new()
+        .route("/metrics", get(dcgm_handler))
+        .with_state(dcgm_probe.clone());
+    let dcgm_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dcgm_address = dcgm_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(dcgm_listener, dcgm_app).await.unwrap() });
+
+    let artifacts = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({
+        "protocol_version": 1,
+        "run": {
+            "benchmark_id": "gpu-telemetry-stdio-e2e",
+            "artifact_dir": artifacts.path(),
+            "models": {"items": [{"name": "mock-model"}]},
+            "endpoint": {
+                "urls": [format!("http://{inference_address}/v1/chat/completions")],
+                "type": "chat",
+                "streaming": true,
+                "use_server_token_count": true
+            },
+            "dataset": {
+                "type": "synthetic",
+                "entries": 6,
+                "prompts": {
+                    "isl": {"value": 8.0},
+                    "osl": {"value": 1.0}
+                }
+            },
+            "phases": [
+                {
+                    "type": "concurrency",
+                    "name": "warmup",
+                    "exclude_from_results": true,
+                    "requests": 2,
+                    "concurrency": 1
+                },
+                {
+                    "type": "concurrency",
+                    "name": "profiling",
+                    "exclude_from_results": false,
+                    "requests": 4,
+                    "concurrency": 2
+                }
+            ],
+            "gpu_telemetry": {
+                "collection_interval_ns": 10_000_000,
+                "request_timeout_ns": 1_000_000_000,
+                "records_path": "gpu_telemetry_export.jsonl",
+                "sources": [{"type": "dcgm", "url": format!("http://{dcgm_address}")}]
+            }
+        }
+    });
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let binary = env!("CARGO_BIN_EXE_aiperf-runner").to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        output.status.success(),
+        "runner stdout: {}\nrunner stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        dcgm_probe
+            .inference_count_at_first_scrape
+            .load(Ordering::SeqCst),
+        2,
+        "the first forced scrape must occur after warmup and before profiling"
+    );
+    assert!(dcgm_probe.scrapes.load(Ordering::SeqCst) >= 3);
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(artifacts.path().join("native-v2.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        report["metrics"]["request_count"]["series"][0]["stats"]["total"],
+        4.0
+    );
+    assert_eq!(
+        report["metrics"]["total_gpu_power"]["series"][0]["stats"]["value"],
+        250.0
+    );
+    assert!(
+        report["metrics"]["total_gpu_energy"]["series"][0]["stats"]["value"]
+            .as_f64()
+            .unwrap()
+            > 0.0
+    );
+    assert!(
+        report["metrics"]["output_tokens_per_joule"]["series"][0]["stats"]["value"]
+            .as_f64()
+            .unwrap()
+            > 0.0
+    );
+    assert_eq!(
+        report["metrics"]["gpu_power_usage"]["series"][0]["labels"]["gpu_uuid"],
+        "GPU-e2e"
+    );
+
+    let telemetry =
+        std::fs::read_to_string(artifacts.path().join("gpu_telemetry_export.jsonl")).unwrap();
+    let rows = telemetry
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(rows.len() >= 3);
+    assert!(rows.iter().all(|row| {
+        row["gpu_uuid"] == "GPU-e2e"
+            && row["dcgm_url"] == format!("http://{dcgm_address}/metrics")
+            && row["telemetry_data"]["gpu_power_usage"] == 250.0
     }));
 }
 

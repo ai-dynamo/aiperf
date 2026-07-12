@@ -160,6 +160,7 @@ def _load_capabilities(binary: Path) -> dict[str, Any]:
         "phase_types",
         "phase_features",
         "run_features",
+        "telemetry_source_types",
     ):
         values = capabilities.get(field)
         if not isinstance(values, list) or not all(
@@ -212,6 +213,22 @@ def _require_request_capabilities(
         _require_capability(capabilities, "run_features", "python_accuracy_evaluator")
     if "outputs_path" in artifacts:
         _require_capability(capabilities, "run_features", "outputs_json")
+    gpu_telemetry = run.get("gpu_telemetry")
+    if gpu_telemetry is not None:
+        _require_capability(capabilities, "run_features", "gpu_telemetry")
+        if not isinstance(gpu_telemetry, dict):
+            raise ValueError("native run gpu_telemetry must be an object")
+        sources = gpu_telemetry.get("sources")
+        if not isinstance(sources, list) or not sources:
+            raise ValueError("native run GPU telemetry requires at least one source")
+        for index, source in enumerate(sources):
+            if not isinstance(source, dict) or not isinstance(source.get("type"), str):
+                raise ValueError(f"native GPU telemetry source {index} omitted type")
+            _require_capability(
+                capabilities,
+                "telemetry_source_types",
+                source["type"],
+            )
 
 
 def _require_capability(

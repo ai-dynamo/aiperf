@@ -31,6 +31,8 @@ pub struct RunnerCapabilities {
     pub phase_features: &'static [&'static str],
     /// Optional single-run subsystems accepted by the runner.
     pub run_features: &'static [&'static str],
+    /// GPU telemetry source implementations accepted by the runner.
+    pub telemetry_source_types: &'static [&'static str],
     /// Rust runner package version.
     pub runner_version: &'static str,
 }
@@ -71,7 +73,8 @@ impl RunnerCapabilities {
                 "fixed_schedule",
             ],
             phase_features: &["adaptive_scale", "ramps", "request_cancellation"],
-            run_features: &["outputs_json", "python_accuracy_evaluator"],
+            run_features: &["gpu_telemetry", "outputs_json", "python_accuracy_evaluator"],
+            telemetry_source_types: &["dcgm"],
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
@@ -130,6 +133,9 @@ pub struct RunSpec {
     /// Optional canonical Python-evaluated accuracy run.
     #[serde(default)]
     pub accuracy: Option<AccuracySpec>,
+    /// Optional phase-bounded GPU telemetry collection.
+    #[serde(default)]
+    pub gpu_telemetry: Option<GpuTelemetrySpec>,
 }
 
 /// Canonical evaluator configuration for an accuracy-enabled native run.
@@ -218,6 +224,31 @@ pub struct ArtifactSpec {
     /// Include transport timing details on JSONL records.
     #[serde(default)]
     pub trace: bool,
+}
+
+/// Low-rate GPU telemetry synchronized to the profiling phase.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuTelemetrySpec {
+    /// Clock cadence between continuous scrapes.
+    pub collection_interval_ns: i64,
+    /// Clock deadline applied independently to each telemetry HTTP request.
+    pub request_timeout_ns: i64,
+    /// Legacy-compatible per-GPU JSONL path relative to the run directory.
+    pub records_path: PathBuf,
+    /// Ordered source list after Config-v2 default expansion and deduplication.
+    pub sources: Vec<GpuTelemetrySourceSpec>,
+}
+
+/// One injected GPU telemetry source.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GpuTelemetrySourceSpec {
+    /// NVIDIA DCGM Prometheus endpoint collected by Rust HTTP.
+    Dcgm {
+        /// Metrics endpoint; `/metrics` is appended when absent.
+        url: String,
+    },
 }
 
 /// Outer-loop variation coordinates carried through process results.
