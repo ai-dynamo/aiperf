@@ -90,10 +90,7 @@ struct PendingRequest {
     response: PendingResponseMetadata,
     input_tokens: u64,
     requested_output_tokens: u64,
-    token_range_start: usize,
-    token_count: usize,
-    token_capacity: usize,
-    token_overflow: Option<Vec<i64>>,
+    token_arrivals_ns: Vec<i64>,
     output_tokens: u64,
     reasoning_tokens: u64,
     first_output_token_ns: Option<i64>,
@@ -150,7 +147,6 @@ struct ObserverState {
     request_slots: FxHashMap<Uuid, usize>,
     order: Vec<usize>,
     metadata: FxHashMap<Uuid, RequestMetricMetadata>,
-    token_arrivals_ns: Vec<i64>,
 }
 
 #[derive(Debug)]
@@ -168,13 +164,6 @@ impl ObserverState {
     fn request_mut(&mut self, uuid: Uuid) -> Option<&mut PendingRequest> {
         let slot = *self.request_slots.get(&uuid)?;
         Some(&mut self.requests.get_mut(slot)?.as_mut()?.request)
-    }
-
-    fn token_values<'a>(&'a self, request: &'a PendingRequest) -> &'a [i64] {
-        request.token_overflow.as_deref().unwrap_or_else(|| {
-            &self.token_arrivals_ns
-                [request.token_range_start..request.token_range_start + request.token_count]
-        })
     }
 }
 
@@ -284,10 +273,11 @@ impl NativeMetricsObserver {
     /// best-effort side channel cannot alter the authoritative report.
     pub fn snapshot_record(&self, uuid: Uuid, ordinal: u64) -> Option<RecordIngest> {
         let finish_ns = self.relative_now_ns();
-        let state = self.state.borrow();
-        let request = state.request(uuid)?.clone();
-        let token_arrivals_ns = state.token_values(&request).to_vec();
-        Some(request.into_record(uuid, ordinal, finish_ns, token_arrivals_ns))
+        self.state
+            .borrow()
+            .request(uuid)
+            .cloned()
+            .map(|request| request.into_record(uuid, ordinal, finish_ns))
     }
 
     /// Finalizes every retained request and returns the full native summary.
@@ -369,18 +359,12 @@ impl NativeMetricsFinalizer {
             let Some(entry) = state.requests.get_mut(slot).and_then(Option::take) else {
                 continue;
             };
-            let mut request = entry.request;
-            let start = request.token_range_start;
-            let count = request.token_count;
-            let overflow = request.token_overflow.take();
-            let token_arrivals_ns = overflow
-                .as_deref()
-                .unwrap_or(&state.token_arrivals_ns[start..start + count]);
-            let mut record = request.into_record(entry.uuid, ordinal as u64, finish_ns, Vec::new());
-            record.first_token_ns = token_arrivals_ns.first().copied();
-            record.second_token_ns = token_arrivals_ns.get(1).copied();
-            accumulator.process_record_with_token_arrivals(&record, token_arrivals_ns);
+            let record = entry
+                .request
+                .into_record(entry.uuid, ordinal as u64, finish_ns);
+            accumulator.process_record(&record);
         }
+        drop(state);
         accumulator.summarize()
     }
 
@@ -395,17 +379,13 @@ impl NativeMetricsFinalizer {
             let Some(entry) = state.requests.get_mut(slot).and_then(Option::take) else {
                 continue;
             };
-            let mut request = entry.request;
-            let start = request.token_range_start;
-            let count = request.token_count;
-            let overflow = request.token_overflow.take();
-            let token_arrivals_ns =
-                overflow.unwrap_or_else(|| state.token_arrivals_ns[start..start + count].to_vec());
-            let record =
-                request.into_record(entry.uuid, ordinal as u64, finish_ns, token_arrivals_ns);
+            let record = entry
+                .request
+                .into_record(entry.uuid, ordinal as u64, finish_ns);
             accumulator.process_record(&record);
             records.push(record);
         }
+        drop(state);
         NativeMetricsCollection {
             summary: accumulator.summarize(),
             records,
@@ -414,13 +394,7 @@ impl NativeMetricsFinalizer {
 }
 
 impl PendingRequest {
-    fn into_record(
-        self,
-        uuid: Uuid,
-        ordinal: u64,
-        finish_ns: i64,
-        token_arrivals_ns: Vec<i64>,
-    ) -> RecordIngest {
+    fn into_record(self, uuid: Uuid, ordinal: u64, finish_ns: i64) -> RecordIngest {
         let start_ns = self
             .response
             .start_ns
@@ -463,10 +437,10 @@ impl PendingRequest {
                 .metadata
                 .has_credit_timestamp
                 .then_some(self.credit_issued_ns),
-            first_token_ns: token_arrivals_ns.first().copied(),
-            second_token_ns: token_arrivals_ns.get(1).copied(),
+            first_token_ns: self.token_arrivals_ns.first().copied(),
+            second_token_ns: self.token_arrivals_ns.get(1).copied(),
             first_output_token_ns: self.first_output_token_ns,
-            token_arrival_ns: token_arrivals_ns,
+            token_arrival_ns: self.token_arrivals_ns,
             errored: matches!(
                 terminal,
                 ReplayTerminalStatus::Rejected | ReplayTerminalStatus::Failed
@@ -529,10 +503,6 @@ impl RequestObserver for NativeMetricsObserver {
         );
         state.request_slots.insert(uuid, slot);
         state.order.push(slot);
-        let token_range_start = state.token_arrivals_ns.len();
-        state
-            .token_arrivals_ns
-            .resize(token_range_start + requested_output_length, 0);
         state.requests[slot] = Some(PendingEntry {
             uuid,
             request: PendingRequest {
@@ -542,10 +512,7 @@ impl RequestObserver for NativeMetricsObserver {
                 response: PendingResponseMetadata::default(),
                 input_tokens: input_length as u64,
                 requested_output_tokens: requested_output_length as u64,
-                token_range_start,
-                token_count: 0,
-                token_capacity: requested_output_length,
-                token_overflow: None,
+                token_arrivals_ns: Vec::with_capacity(requested_output_length),
                 output_tokens: 0,
                 reasoning_tokens: 0,
                 first_output_token_ns: None,
@@ -571,32 +538,8 @@ impl RequestObserver for NativeMetricsObserver {
 
     fn on_classified_token(&self, uuid: Uuid, at_ms: f64, kind: ObservedTokenKind) {
         let at_ns = self.relative_ns_from_ms(at_ms);
-        let mut state = self.state.borrow_mut();
-        let Some(slot) = state.request_slots.get(&uuid).copied() else {
-            return;
-        };
-        let ObserverState {
-            requests,
-            token_arrivals_ns,
-            ..
-        } = &mut *state;
-        if let Some(request) = requests
-            .get_mut(slot)
-            .and_then(Option::as_mut)
-            .map(|entry| &mut entry.request)
-        {
-            if let Some(overflow) = &mut request.token_overflow {
-                overflow.push(at_ns);
-            } else if request.token_count < request.token_capacity {
-                token_arrivals_ns[request.token_range_start + request.token_count] = at_ns;
-            } else {
-                let mut overflow = token_arrivals_ns
-                    [request.token_range_start..request.token_range_start + request.token_count]
-                    .to_vec();
-                overflow.push(at_ns);
-                request.token_overflow = Some(overflow);
-            }
-            request.token_count += 1;
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+            request.token_arrivals_ns.push(at_ns);
             match kind {
                 ObservedTokenKind::Output => {
                     request.output_tokens += 1;
@@ -800,6 +743,47 @@ mod tests {
                 .unwrap()
                 .avg,
             MetricValue::Finite(1.0)
+        );
+    }
+
+    #[test]
+    fn interleaved_tokens_survive_zero_and_underestimated_requested_output_lengths() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let zero_osl = Uuid::from_u128(20);
+        let underestimated_osl = Uuid::from_u128(21);
+
+        observer.on_arrival(zero_osl, 0.0, 4, 0);
+        observer.on_arrival(underestimated_osl, 0.0, 4, 1);
+        observer.on_token(zero_osl, 10.0);
+        observer.on_token(underestimated_osl, 11.0);
+        observer.on_token(zero_osl, 20.0);
+        observer.on_token(underestimated_osl, 21.0);
+        observer.on_token(underestimated_osl, 31.0);
+        clock.advance_to(40_000_000);
+        observer.on_terminal(zero_osl, ReplayTerminalStatus::Completed);
+        observer.on_terminal(underestimated_osl, ReplayTerminalStatus::Completed);
+
+        assert_eq!(
+            observer
+                .snapshot_record(zero_osl, 0)
+                .unwrap()
+                .token_arrival_ns,
+            vec![10_000_000, 20_000_000]
+        );
+        assert_eq!(
+            observer
+                .snapshot_record(underestimated_osl, 1)
+                .unwrap()
+                .token_arrival_ns,
+            vec![11_000_000, 21_000_000, 31_000_000]
+        );
+
+        let summary = observer.finish();
+        assert_eq!(summary.finite_value(MetricTag::RequestCount), Some(2.0));
+        assert_eq!(
+            summary.finite_value(MetricTag::TotalOutputTokens),
+            Some(5.0)
         );
     }
 
