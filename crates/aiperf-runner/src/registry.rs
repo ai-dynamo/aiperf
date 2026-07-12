@@ -745,7 +745,8 @@ pub struct ValidatedEndpointProfileV2 {
 #[derive(Clone)]
 pub struct RunnerRunContext {
     product_registry: Arc<AiperfRegistry>,
-    endpoint_profiles: Arc<BTreeMap<String, ValidatedEndpointProfileV2>>,
+    endpoint_profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
+    endpoint_profile_indexes: Arc<BTreeMap<String, usize>>,
 }
 
 impl Debug for RunnerRunContext {
@@ -754,7 +755,11 @@ impl Debug for RunnerRunContext {
             .debug_struct("RunnerRunContext")
             .field(
                 "endpoint_profiles",
-                &self.endpoint_profiles.keys().collect::<Vec<_>>(),
+                &self
+                    .endpoint_profiles
+                    .iter()
+                    .map(|profile| profile.profile_id.as_str())
+                    .collect::<Vec<_>>(),
             )
             .finish_non_exhaustive()
     }
@@ -766,23 +771,24 @@ impl RunnerRunContext {
         product_registry: Arc<AiperfRegistry>,
         profiles: Vec<ValidatedEndpointProfileV2>,
     ) -> Result<Self> {
-        let mut endpoint_profiles = BTreeMap::new();
-        for profile in profiles {
+        let mut endpoint_profile_indexes = BTreeMap::new();
+        for (index, profile) in profiles.iter().enumerate() {
             let profile_id = profile.profile_id.clone();
             ensure!(
-                endpoint_profiles
-                    .insert(profile_id.clone(), profile)
+                endpoint_profile_indexes
+                    .insert(profile_id.clone(), index)
                     .is_none(),
                 "duplicate validated endpoint profile ID {profile_id:?}"
             );
         }
         ensure!(
-            !endpoint_profiles.is_empty(),
+            !profiles.is_empty(),
             "runner context requires at least one endpoint profile"
         );
         Ok(Self {
             product_registry,
-            endpoint_profiles: Arc::new(endpoint_profiles),
+            endpoint_profiles: Arc::new(profiles),
+            endpoint_profile_indexes: Arc::new(endpoint_profile_indexes),
         })
     }
 
@@ -798,16 +804,19 @@ impl RunnerRunContext {
 
     /// Resolve a run-local endpoint profile without reparsing authored JSON.
     pub fn endpoint_profile(&self, profile_id: &str) -> Result<&ValidatedEndpointProfileV2> {
-        self.endpoint_profiles.get(profile_id).ok_or_else(|| {
-            anyhow!(
-                "endpoint profile {profile_id:?} is not defined; available: {}",
-                self.endpoint_profiles
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })
+        self.endpoint_profile_indexes
+            .get(profile_id)
+            .map(|index| &self.endpoint_profiles[*index])
+            .ok_or_else(|| {
+                anyhow!(
+                    "endpoint profile {profile_id:?} is not defined; available: {}",
+                    self.endpoint_profiles
+                        .iter()
+                        .map(|profile| profile.profile_id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
     }
 
     /// Resolve the conventional profile injected by the Python projection.
@@ -815,13 +824,16 @@ impl RunnerRunContext {
         self.endpoint_profile("default")
     }
 
-    /// Iterate normalized profiles in deterministic profile-ID order.
+    /// Iterate normalized profiles in authored order.
+    ///
+    /// Keeping this sequence intact lets prepared endpoint tables and report
+    /// provenance consume the same coordinator-owned identity ordering.
     pub fn endpoint_profiles(
         &self,
     ) -> impl ExactSizeIterator<Item = (&str, &ValidatedEndpointProfileV2)> {
         self.endpoint_profiles
             .iter()
-            .map(|(name, profile)| (name.as_str(), profile))
+            .map(|profile| (profile.profile_id.as_str(), profile))
     }
 }
 
@@ -1345,6 +1357,42 @@ mod tests {
         assert_eq!(registry.backend_descriptors(), vec![&BACKEND]);
         assert_eq!(registry.workload_descriptors(), vec![&WORKLOAD]);
         assert_eq!(registry.supported_pairs(), vec![(BACKEND.id, WORKLOAD.id)]);
+    }
+
+    #[test]
+    fn run_context_retains_authored_endpoint_profile_order() {
+        let profile = |profile_id: &str, endpoint_id: &str| ValidatedEndpointProfileV2 {
+            profile_id: profile_id.to_owned(),
+            endpoint_id: EndpointId::new(endpoint_id).unwrap(),
+            config: RawEndpointConfig {
+                urls: vec![format!("http://{profile_id}.example")],
+                ..RawEndpointConfig::default()
+            },
+            connection_reuse: ConnectionReuseStrategy::default(),
+            http2: false,
+            session_header: None,
+        };
+        let context = RunnerRunContext::new(
+            Arc::new(AiperfRegistry::builtin().unwrap()),
+            vec![
+                profile("default", "chat"),
+                profile("z-last", "messages"),
+                profile("a-first", "chat"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            context
+                .endpoint_profiles()
+                .map(|(profile_id, _)| profile_id)
+                .collect::<Vec<_>>(),
+            vec!["default", "z-last", "a-first"]
+        );
+        assert_eq!(
+            context.endpoint_profile("a-first").unwrap().profile_id,
+            "a-first"
+        );
     }
 
     #[test]
