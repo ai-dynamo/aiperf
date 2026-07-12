@@ -32,6 +32,7 @@ use crate::protocol::{
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
 const AGENTIC_CAPABILITY: &str = "agentic_harbor";
+const GRADER_OVERRIDE_CAPABILITY: &str = "grader_override";
 
 /// Sink for worker stderr lines.
 pub trait EvaluatorLogSink: Send + Sync {
@@ -143,6 +144,24 @@ pub trait AccuracyEvaluator {
         benchmark: &str,
         config: &EvaluatorLoadConfig,
     ) -> Result<EvaluatorLoadResult, EvaluatorWorkerError>;
+
+    /// Load a benchmark with an optional evaluator-owned grader override.
+    ///
+    /// Implementations without this protocol capability retain a fail-closed
+    /// default. The override never moves grading into Rust.
+    async fn load_with_grader(
+        &mut self,
+        benchmark: &str,
+        config: &EvaluatorLoadConfig,
+        grader: Option<&str>,
+    ) -> Result<EvaluatorLoadResult, EvaluatorWorkerError> {
+        if let Some(grader) = grader {
+            return Err(EvaluatorWorkerError::Protocol(format!(
+                "evaluator does not support grader override {grader:?}"
+            )));
+        }
+        self.load(benchmark, config).await
+    }
 
     /// Retrieve one ordered page of opaque problems.
     async fn next_problems(
@@ -655,11 +674,32 @@ impl AccuracyEvaluator for PythonEvaluator {
         benchmark: &str,
         config: &EvaluatorLoadConfig,
     ) -> Result<EvaluatorLoadResult, EvaluatorWorkerError> {
+        self.load_with_grader(benchmark, config, None).await
+    }
+
+    async fn load_with_grader(
+        &mut self,
+        benchmark: &str,
+        config: &EvaluatorLoadConfig,
+        grader: Option<&str>,
+    ) -> Result<EvaluatorLoadResult, EvaluatorWorkerError> {
+        if grader.is_some()
+            && !self
+                .identity
+                .capabilities
+                .iter()
+                .any(|capability| capability == GRADER_OVERRIDE_CAPABILITY)
+        {
+            return Err(EvaluatorWorkerError::Protocol(
+                "evaluator worker does not report grader_override".to_string(),
+            ));
+        }
         let id = self.take_id()?;
         self.request(WorkerRequest::Load {
             id,
             benchmark,
             config,
+            grader,
         })
         .await
     }

@@ -266,8 +266,23 @@ pub async fn load_evaluator_problems(
     benchmark: &str,
     config: &EvaluatorLoadConfig,
 ) -> anyhow::Result<(EvaluatorLoadResult, Vec<EvaluatorProblem>)> {
+    load_evaluator_problems_with_grader(evaluator, benchmark, config, None).await
+}
+
+/// Load opaque evaluator problems with an optional Python grader override.
+///
+/// Config v2 has always allowed explicit grader selection
+/// (`src/aiperf/config/accuracy.py:168-177`). The override crosses the stdio
+/// control plane, but dataset loading, answer extraction, and scoring remain
+/// entirely inside the Python plugin implementation.
+pub async fn load_evaluator_problems_with_grader(
+    evaluator: &mut dyn AccuracyEvaluator,
+    benchmark: &str,
+    config: &EvaluatorLoadConfig,
+    grader: Option<&str>,
+) -> anyhow::Result<(EvaluatorLoadResult, Vec<EvaluatorProblem>)> {
     let loaded = evaluator
-        .load(benchmark, config)
+        .load_with_grader(benchmark, config, grader)
         .await
         .with_context(|| format!("canonical evaluator failed to load {benchmark:?}"))?;
     validate_evaluator_load_identity(&loaded)?;

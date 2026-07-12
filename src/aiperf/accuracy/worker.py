@@ -43,7 +43,7 @@ from aiperf.accuracy.agentic import (
 )
 
 PROTOCOL_VERSION = 1
-WORKER_VERSION = "1.3.0"
+WORKER_VERSION = "1.4.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
 _LOCKED_PACKAGE_VERSIONS = {
     "datasets": "5.0.0",
@@ -190,6 +190,7 @@ class AccuracyWorker:
         self._problems: list[_Problem] = []
         self._by_id: dict[str, _Problem] = {}
         self._grader: Any | None = None
+        self._uses_lcb_batch_grader = False
         self._lighteval_task: Any | None = None
         self._dataset_identity: dict[str, Any] = {}
         self._agentic: AgenticHarness | None = None
@@ -212,7 +213,13 @@ class AccuracyWorker:
                 "harbor",
             )
         }
-        capabilities = ["load", "next_problems", "grade_batch", "shutdown"]
+        capabilities = [
+            "load",
+            "next_problems",
+            "grade_batch",
+            "grader_override",
+            "shutdown",
+        ]
         capabilities.extend(
             [
                 "load_agentic",
@@ -244,6 +251,7 @@ class AccuracyWorker:
         self._problems = []
         self._by_id = {}
         self._grader = None
+        self._uses_lcb_batch_grader = False
         self._lighteval_task = None
         self._dataset_identity = {}
         benchmark = _canonical_benchmark(_required_string(request, "benchmark"))
@@ -251,15 +259,18 @@ class AccuracyWorker:
         if not isinstance(config, dict):
             raise TypeError("load.config must be an object")
         _verify_locked_environment()
-        if config.get("grader"):
-            raise ValueError(
-                "grader overrides are disabled for canonical worker runs; "
-                "the benchmark's pinned grader must be used"
-            )
+        grader = request.get("grader")
+        if grader is not None and (not isinstance(grader, str) or not grader.strip()):
+            raise ValueError("load.grader must be a non-empty string or null")
         if benchmark == "mmlu-pro":
+            if grader is not None:
+                raise ValueError(
+                    "MMLU-Pro is graded by its pinned Lighteval task metrics and "
+                    "does not accept a grader override"
+                )
             await self._load_mmlu_pro(config)
         else:
-            await self._load_inherited(benchmark, config)
+            await self._load_inherited(benchmark, config, grader)
         self._benchmark = benchmark
         self._by_id = {problem.problem_id: problem for problem in self._problems}
         if len(self._by_id) != len(self._problems):
@@ -315,7 +326,7 @@ class AccuracyWorker:
                 raise ValueError(f"duplicate grade_batch problem_id {problem_id!r}")
             submitted_ids.add(problem_id)
             submitted.append((problem, response))
-        if self._benchmark == "lcb-codegeneration":
+        if self._benchmark == "lcb-codegeneration" and self._uses_lcb_batch_grader:
             grades = await self._grade_lcb_batch(submitted)
         else:
             grades = [
@@ -346,6 +357,7 @@ class AccuracyWorker:
         self._problems = []
         self._by_id = {}
         self._grader = None
+        self._uses_lcb_batch_grader = False
         self._lighteval_task = None
         self._dataset_identity = {}
         _verify_agentic_environment()
@@ -504,7 +516,9 @@ class AccuracyWorker:
             raise RuntimeError("canonical LiveCodeBench batch omitted a grade")
         return [grade for grade in grades if grade is not None]
 
-    async def _load_inherited(self, benchmark: str, config: dict[str, Any]) -> None:
+    async def _load_inherited(
+        self, benchmark: str, config: dict[str, Any], grader_override: str | None
+    ) -> None:
         registration = _REGISTRATIONS.get(benchmark)
         if registration is None:
             raise ValueError(
@@ -535,6 +549,7 @@ class AccuracyWorker:
             n_shots=n_shots,
             enable_cot=bool(enable_cot),
             system_prompt=system_prompt,
+            grader=grader_override,
             enabled=True,
         )
         seed = int(config.get("seed", 0))
@@ -544,10 +559,22 @@ class AccuracyWorker:
         )
         benchmark_module = importlib.import_module(benchmark_module_name)
         benchmark_class = getattr(benchmark_module, benchmark_symbol)
-        grader_class = _import_symbol(registration.grader_class)
+        if grader_override is None:
+            grader_class = _import_symbol(registration.grader_class)
+        else:
+            from aiperf.plugin import plugins
+            from aiperf.plugin.enums import PluginType
+
+            grader_class = plugins.get_class(
+                PluginType.ACCURACY_GRADER, grader_override
+            )
         benchmark_instance = benchmark_class(run=run)
         grader_class.check_available()
         self._grader = grader_class(run=run)
+        self._uses_lcb_batch_grader = (
+            benchmark == "lcb-codegeneration"
+            and grader_class.__name__ == "CodeExecutionGrader"
+        )
         original_load_dataset = getattr(benchmark_module, "load_dataset", None)
         if original_load_dataset is None:
             raise RuntimeError(
@@ -705,6 +732,7 @@ class AccuracyWorker:
             raise ValueError("MMLU-Pro returned no problems")
         self._problems = problems
         self._grader = None
+        self._uses_lcb_batch_grader = False
         self._lighteval_task = task
         self._dataset_identity = {
             "provider": "lighteval",

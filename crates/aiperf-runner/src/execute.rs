@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use aiperf::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
-    load_evaluator_problems,
+    load_evaluator_problems_with_grader,
 };
 use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
@@ -181,10 +181,6 @@ async fn execute_native(request: RunRequest) -> Result<NativeReport> {
         !spec.worker_module.trim().is_empty(),
         "accuracy worker_module cannot be empty"
     );
-    ensure!(
-        spec.grader.is_none(),
-        "accuracy grader overrides are not canonical; select the benchmark's pinned Python grader"
-    );
     let worker = WorkerProcessConfig::new(spec.python_executable.as_os_str())
         .arg("-u")
         .arg("-m")
@@ -245,10 +241,11 @@ async fn execute_native_inner(
             max_tokens: None,
             seed: request.run.random_seed.unwrap_or(0),
         };
-        let (loaded, problems) = load_evaluator_problems(
+        let (loaded, problems) = load_evaluator_problems_with_grader(
             accuracy.evaluator,
             &accuracy.spec.benchmark,
             &evaluator_config,
+            accuracy.spec.grader.as_deref(),
         )
         .await?;
         let dataset =

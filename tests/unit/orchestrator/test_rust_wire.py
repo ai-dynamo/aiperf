@@ -209,6 +209,7 @@ def test_projects_accuracy_to_the_canonical_python_worker(tmp_path) -> None:
         tasks=["abstract_algebra"],
         n_shots=3,
         enable_cot=False,
+        grader="exact_match",
         system_prompt="Answer with one letter.",
         verbose=True,
     )
@@ -220,6 +221,7 @@ def test_projects_accuracy_to_the_canonical_python_worker(tmp_path) -> None:
         "tasks": ["abstract_algebra"],
         "n_shots": 3,
         "enable_cot": False,
+        "grader": "exact_match",
         "system_prompt": "Answer with one letter.",
         "python_executable": str(Path(sys.executable).resolve()),
         "worker_module": "aiperf.accuracy.worker",

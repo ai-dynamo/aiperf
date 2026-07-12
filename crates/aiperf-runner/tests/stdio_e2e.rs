@@ -486,7 +486,7 @@ for line in sys.stdin:
             "worker_source_sha256": "a" * 64,
             "dependency_lock_sha256": "b" * 64,
             "container_digest": None,
-            "capabilities": ["load", "next_problems", "grade_batch", "shutdown"],
+            "capabilities": ["load", "next_problems", "grade_batch", "grader_override", "shutdown"],
         }
     elif op == "load":
         result = {
@@ -501,7 +501,7 @@ for line in sys.stdin:
                 "evaluation_splits": ["test"],
                 "task_version": 1,
             },
-            "grader": "fixture-python-grader",
+            "grader": request.get("grader") or "fixture-python-grader",
         }
     elif op == "next_problems":
         start = request["offset"]
@@ -566,6 +566,7 @@ for line in sys.stdin:
             }],
             "accuracy": {
                 "benchmark": "fixture-benchmark",
+                "grader": "exact_match",
                 "python_executable": python,
                 "worker_module": "fixture_accuracy_worker"
             }
@@ -613,7 +614,7 @@ for line in sys.stdin:
         .map(|record| record["correlation_id"].as_str().unwrap())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(correlations.len(), 4);
-    assert_eq!(report["evaluator"]["grader"], "fixture-python-grader");
+    assert_eq!(report["evaluator"]["grader"], "exact_match");
     assert_eq!(
         report["evaluator"]["dataset"]["revision"],
         "fixture-revision"

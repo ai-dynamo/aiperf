@@ -204,18 +204,61 @@ def test_locked_environment_mismatch_is_an_infrastructure_error(
 
 
 @pytest.mark.asyncio
-async def test_load_rejects_grader_override_before_benchmark_setup(
+async def test_mmlu_pro_rejects_grader_override_before_benchmark_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(worker_module, "_verify_locked_environment", lambda: None)
     worker = AccuracyWorker()
-    with pytest.raises(ValueError, match="grader overrides are disabled"):
+    with pytest.raises(ValueError, match="pinned Lighteval task metrics"):
         await worker.load(
             {
                 "benchmark": "mmlu-pro",
-                "config": {"grader": "bespoke-rust-equivalent"},
+                "config": {},
+                "grader": "exact_match",
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_inherited_benchmark_routes_grader_override_to_python_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(worker_module, "_verify_locked_environment", lambda: None)
+    captured: list[tuple[str, str | None]] = []
+    worker = AccuracyWorker()
+
+    async def load_inherited(
+        benchmark: str, _config: dict[str, Any], grader: str | None
+    ) -> None:
+        captured.append((benchmark, grader))
+        worker._problems = [
+            _Problem(
+                problem_id="opaque",
+                task="task",
+                prompt="prompt",
+                messages=[{"role": "user", "content": "prompt"}],
+                generation={
+                    "max_tokens": 1,
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                    "stop": [],
+                },
+                ground_truth="answer",
+            )
+        ]
+        worker._dataset_identity = {
+            "provider": "fixture",
+            "revision": "fixture-revision",
+            "evaluation_splits": ["test"],
+        }
+
+    monkeypatch.setattr(worker, "_load_inherited", load_inherited)
+    result = await worker.load(
+        {"benchmark": "mmlu", "config": {}, "grader": "exact_match"}
+    )
+
+    assert captured == [("mmlu", "exact_match")]
+    assert result["problem_count"] == 1
 
 
 def test_dynamic_subset_identity_is_explicit() -> None:
@@ -371,6 +414,7 @@ async def test_livecodebench_reuses_one_lighteval_pool_per_batch(
     worker._problems = problems
     worker._by_id = {problem.problem_id: problem for problem in problems}
     worker._grader = SimpleNamespace(extract_answer=lambda response: response)
+    worker._uses_lcb_batch_grader = True
     result = await worker.grade_batch(
         [
             {"problem_id": problem.problem_id, "response": f"code-{index}"}

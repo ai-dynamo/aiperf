@@ -567,6 +567,8 @@ pub(crate) enum WorkerRequest<'a> {
         id: u64,
         benchmark: &'a str,
         config: &'a EvaluatorLoadConfig,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        grader: Option<&'a str>,
     },
     NextProblems {
         id: u64,
