@@ -537,6 +537,8 @@ fn materialize_messages(store: &dyn SegmentStore, leaf: Handle) -> Result<Vec<Op
 pub struct TurnResponse {
     /// Endpoint-normalized assistant text.
     pub text: String,
+    /// Endpoint-normalized assistant message for lossless history replay.
+    pub assistant_message: Option<Value>,
     /// Authoritative completion-token usage, when emitted by the server.
     pub completion_tokens: Option<u64>,
     /// Dispatch terminal state.
@@ -1000,11 +1002,17 @@ impl RuntimeSessionBackend for NativeSessionBackend {
                         .map_err(|_| anyhow!("assistant token count exceeds u64"))?,
                 };
                 session.capture_response(
-                    EndpointTurn {
-                        role: Some("assistant".into()),
-                        texts: vec![EndpointMedia::new(vec![response.text])],
-                        ..EndpointTurn::default()
-                    },
+                    response.assistant_message.map_or_else(
+                        || EndpointTurn {
+                            role: Some("assistant".into()),
+                            texts: vec![EndpointMedia::new(vec![response.text])],
+                            ..EndpointTurn::default()
+                        },
+                        |message| EndpointTurn {
+                            raw_messages: Some(vec![message]),
+                            ..EndpointTurn::default()
+                        },
+                    ),
                     tokens,
                 )?;
             }
@@ -1597,6 +1605,7 @@ mod tests {
                 &credit,
                 TurnResponse {
                     text: "server reply".to_string(),
+                    assistant_message: None,
                     completion_tokens: None,
                     terminal: ReplayTerminalStatus::Completed,
                 },
@@ -1685,6 +1694,7 @@ mod tests {
                 &IssuedCredit::from_turn(id0, 0, &first),
                 TurnResponse {
                     text: String::new(),
+                    assistant_message: None,
                     completion_tokens: None,
                     terminal: ReplayTerminalStatus::Completed,
                 },
@@ -1701,6 +1711,7 @@ mod tests {
                 &IssuedCredit::from_turn(2, 0, &second),
                 TurnResponse {
                     text: String::new(),
+                    assistant_message: None,
                     completion_tokens: None,
                     terminal: ReplayTerminalStatus::Completed,
                 },
@@ -1748,6 +1759,7 @@ mod tests {
                 &IssuedCredit::from_turn(0, 0, &first),
                 TurnResponse {
                     text: "live answer".into(),
+                    assistant_message: None,
                     completion_tokens: Some(2),
                     terminal: ReplayTerminalStatus::Completed,
                 },
@@ -1767,6 +1779,66 @@ mod tests {
         assert_eq!(next_body["messages"][1]["content"], "live answer");
         assert_eq!(next.input_length, first.input_length + 2 + 2);
         assert_eq!(next.delay_ms, Some(5.0));
+    }
+
+    #[tokio::test]
+    async fn native_messages_session_replays_lossless_assistant_blocks() {
+        let dataset = LoaderRegistry::with_builtin_formats()
+            .unwrap()
+            .build_dataset(
+                Some("multi_turn"),
+                &LoadConfig::new(DatasetSource::Inline(json!([{
+                    "session_id":"messages",
+                    "turns":[
+                        {"text":"first","output_length":4},
+                        {"text":"second","output_length":4}
+                    ]
+                }]))),
+                &ComposeConfig::new("claude", RngRoot::new(Some(9))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let mut source =
+            NativeDatasetConversationSource::sequential_with_endpoint_config_and_resolver(
+                dataset,
+                "claude",
+                4,
+                EndpointConfig {
+                    endpoint_type: aiperf_endpoints::EndpointType::Messages,
+                    streaming: true,
+                    ..EndpointConfig::default()
+                },
+                Arc::new(BuiltinEndpointResolver::default()),
+            )
+            .unwrap();
+        let first = source.next(None).unwrap().build_first_turn(None).unwrap();
+        let assistant = json!({
+            "role":"assistant",
+            "content":[
+                {"type":"thinking","thinking":"why","signature":"sig"},
+                {"type":"text","text":"answer"},
+                {"type":"tool_use","id":"tool-1","name":"lookup","input":{"q":"x"}}
+            ]
+        });
+        let next = source
+            .next_turn(
+                &IssuedCredit::from_turn(0, 0, &first),
+                TurnResponse {
+                    text: "whyanswerlookup{\"q\":\"x\"}".into(),
+                    assistant_message: Some(assistant.clone()),
+                    completion_tokens: Some(9),
+                    terminal: ReplayTerminalStatus::Completed,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let body: Value = serde_json::from_slice(next.request_body.as_ref().unwrap()).unwrap();
+        assert_eq!(body["messages"][1], assistant);
+        assert_eq!(
+            body["messages"][2],
+            json!({"role":"user","content":"second"})
+        );
     }
 
     #[tokio::test]

@@ -44,6 +44,12 @@ fn capabilities_are_a_single_versioned_json_line() {
             .unwrap()
             .contains(&serde_json::json!("chat"))
     );
+    assert!(
+        capabilities["endpoint_types"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("messages"))
+    );
     assert_eq!(
         capabilities["dataset_types"],
         serde_json::json!(["synthetic", "file", "public"])

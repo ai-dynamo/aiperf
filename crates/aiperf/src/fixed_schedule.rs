@@ -247,6 +247,10 @@ fn schedule_fixed_turn(
                                 &credit,
                                 TurnResponse {
                                     text: outcome.response_text.clone(),
+                                    assistant_message: outcome
+                                        .model_response
+                                        .assistant_message
+                                        .clone(),
                                     completion_tokens: outcome.completion_tokens,
                                     terminal: outcome.terminal,
                                 },

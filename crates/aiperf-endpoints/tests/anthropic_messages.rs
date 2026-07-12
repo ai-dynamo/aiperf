@@ -63,6 +63,16 @@ fn simple_non_streaming_request_is_byte_exact_with_pr_731() {
 }
 
 #[test]
+fn authored_empty_raw_messages_suppresses_the_synthetic_turn() {
+    let mut turn = text_turn("must not be rendered");
+    turn.raw_messages = Some(Vec::new());
+    let body = MessagesEndpoint
+        .format_payload(&request(vec![turn], false))
+        .unwrap();
+    assert_eq!(body["messages"], json!([]));
+}
+
+#[test]
 fn full_request_merge_order_and_omitted_false_stream_are_byte_exact() {
     let mut first = text_turn("first");
     first.raw_system = Some(vec![json!({
@@ -207,6 +217,19 @@ fn non_streaming_parse_uses_reasoning_text_tool_precedence() {
             content: Some("calling".into()),
         })
     );
+
+    let parsed = MessagesEndpoint
+        .parse_response(&response(
+            9,
+            json!({
+                "type":"message",
+                "content":[{"type":"text","text":"answer"}],
+                "usage":{}
+            }),
+        ))
+        .unwrap()
+        .unwrap();
+    assert_eq!(parsed.usage, Some(json!({})));
 }
 
 #[test]

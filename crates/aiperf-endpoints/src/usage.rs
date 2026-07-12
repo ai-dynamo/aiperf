@@ -202,4 +202,17 @@ mod tests {
         assert_eq!(usage.prompt_uncached_tokens(), None);
         assert_eq!(usage.prompt_cache_read_tokens(), Some(40));
     }
+
+    #[test]
+    fn synonym_lookup_stops_at_the_first_present_key() {
+        let value = json!({
+            "completion_tokens": null,
+            "output_tokens": 15,
+            "prompt_tokens_details": {"cached_tokens": null},
+            "input_tokens_details": {"cached_tokens": 7}
+        });
+        let usage = UsageView::from_value(&value).unwrap();
+        assert_eq!(usage.completion_tokens(), None);
+        assert_eq!(usage.prompt_cache_read_tokens(), None);
+    }
 }

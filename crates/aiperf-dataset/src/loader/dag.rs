@@ -965,6 +965,7 @@ mod tests {
                 "model":"turn-model",
                 "endpoint":"responses",
                 "streaming":false,
+                "raw_system":[{"type":"text","text":"cached system","cache_control":{"type":"ephemeral"}}],
                 "extra_headers":{"x-agent":"yes"},
                 "request_parameters":{"api-version":"2026-07"}
             }]
@@ -975,6 +976,7 @@ mod tests {
         assert_eq!(turn.model.as_ref().unwrap().as_str(), "turn-model");
         assert_eq!(turn.endpoint.as_deref(), Some("responses"));
         assert_eq!(turn.streaming, Some(false));
+        assert!(turn.raw_system.is_some());
         assert!(turn.extra_headers.is_some());
         assert!(turn.request_parameters.is_some());
     }

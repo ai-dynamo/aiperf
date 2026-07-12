@@ -614,6 +614,7 @@ async fn issue_user_turn(
                         &credit,
                         TurnResponse {
                             text: outcome.response_text,
+                            assistant_message: outcome.model_response.assistant_message,
                             completion_tokens: outcome.completion_tokens,
                             terminal: outcome.terminal,
                         },
