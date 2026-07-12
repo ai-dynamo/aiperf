@@ -363,3 +363,34 @@ ordinary Rust transport, exact response metadata returns to the worker, and a
 second sandbox failure remains outside the primary-score denominator. A real
 Harbor task-container run is still required before claiming SWE-bench or any
 other packaged benchmark has been proven end to end in this environment.
+
+## Addendum — 2026-07-11 (real Harbor registry, Docker, and verifier proof)
+
+The final generic-Harbor caveat above is now superseded. The opt-in
+`crates/aiperf/tests/agentic_harbor_e2e.rs` acceptance test uses the real pinned
+worker environment and Harbor's live package registry. It resolves
+`harbor/hello-world` to immutable dataset revision
+`sha256:d10e96e201d6816b22553504e06e7de0153a26381e808d11404cbca530b9d388`,
+starts the package's real Docker environment, runs the inherited Terminus-2
+agent, sends every model turn through the compiled Rust CLI's ordinary
+OpenAI-SSE transport, executes the package's verifier, and requires a completed
+finite canonical reward plus Harbor trial/verifier artifacts in native v2.
+
+The proof also pins the worker dependency-lock digest
+`5ab314ec28af774ed9edf4a6baf5216f8831ecf06eb9bf3b62418bef275b57ef`,
+`harbor==0.18.0`, the callback agent identity, environment, verifier identity,
+and equality between captured Rust HTTP calls and the episode's reported model
+call count. Its deliberately non-solving model response can earn zero; the
+acceptance criterion is canonical verification, never a fabricated Rust score.
+The test is ignored by default because it requires registry access and a Docker
+daemon; run it explicitly with:
+
+```bash
+AIPERF_AGENTIC_PYTHON=/path/to/pinned/agentic/python \
+  cargo test -p aiperf --test agentic_harbor_e2e -- --ignored --nocapture
+```
+
+This proves the generic packaged Harbor path through a real sandbox and
+verifier. It does not yet prove a SWE-bench task or the cross-family benchmark
+matrix; those named canaries remain required before claiming the broader
+agentic-evaluation objective complete.

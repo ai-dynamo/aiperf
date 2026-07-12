@@ -110,6 +110,13 @@ harness source/version, dataset revision, agent, environment, verifier, authored
 configuration, canonical rewards, episode records, and artifacts. Infrastructure
 and cancellation records are never converted into zero/incorrect scores.
 
+Opt-in live registry, Docker, and packaged-verifier acceptance:
+
+```bash
+AIPERF_AGENTIC_PYTHON=/path/to/pinned/agentic/python \
+  cargo test -p aiperf --test agentic_harbor_e2e -- --ignored --nocapture
+```
+
 ## Run the scheduled workloads
 
 ```bash
@@ -246,8 +253,9 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   environments, hidden tests, execution, and scoring over opaque JSONL IDs. Static
   Lighteval runs are wired. The stateful `AgenticEvaluator`, pinned Harbor 0.18
   callback adapter, generic normal-pipeline `AgenticWorkload`, agentic CLI, and
-  typed native-v2 reporting are built with exact provenance; loopback CLI E2E is
-  proven. Real Harbor task-container E2E remains.
+  typed native-v2 reporting are built with exact provenance. Loopback CLI and a
+  live Harbor registry/Docker/packaged-verifier canary are proven. SWE-bench-
+  specific and cross-family canaries remain.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, windows/timeslices, worker merge, all-mode runtime wiring,
