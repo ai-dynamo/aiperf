@@ -348,6 +348,44 @@ def test_v2_dataset_and_tokenizer_projection_is_native_shaped_but_unresolved(
     }
 
 
+def test_v2_file_dataset_projects_directly_to_selected_native_adapter(
+    tmp_path: Path,
+) -> None:
+    run = _run(
+        tmp_path / "not-created",
+        dataset={
+            "type": "file",
+            "records": [{"timestamp": 0.0, "input_length": 8, "output_length": 2}],
+            "format": "burst_gpt_trace",
+            "entries": 1,
+            "sampling": "shuffle",
+            "random_seed": 23,
+            "inter_turn_delay_cap_seconds": 0.5,
+            "osl": 7,
+        },
+    )
+
+    dataset = build_authored_run_request(
+        run,
+        operation="validate",
+        expected_distribution_id=_DISTRIBUTION_A,
+    )["run"]["workload"]["config"]["dataset"]
+
+    assert dataset == {
+        "type": "file",
+        "format": "burst_gpt",
+        "sampling": "shuffle",
+        "options": {"inter_turn_delay_cap_seconds": 0.5},
+        "entries": 1,
+        "random_seed": 23,
+        "osl": {"value": 7.0},
+        "records": [
+            {"timestamp": 0.0, "input_length": 8, "output_length": 2}
+        ],
+    }
+    assert not run.artifact_dir.exists()
+
+
 def test_v2_user_files_are_rendered_and_serialized_once_without_writing(
     tmp_path: Path,
 ) -> None:

@@ -214,17 +214,43 @@ def _authored_dataset_v2(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
     if isinstance(dataset, PublicDataset):
         return _public_dataset(run, dataset)
 
+    if isinstance(dataset, FileDataset):
+        native_format, options = _native_file_format(str(dataset.format))
+        if native_format == "mooncake_trace":
+            options.setdefault("block_size", 512)
+        elif native_format == "bailian_trace":
+            options.setdefault("block_size", 16)
+        if dataset.inter_turn_delay_cap_seconds is not None:
+            options["inter_turn_delay_cap_seconds"] = (
+                dataset.inter_turn_delay_cap_seconds
+            )
+        result: dict[str, Any] = {
+            "type": "file",
+            "format": native_format,
+            "sampling": str(dataset.sampling),
+            "options": options,
+        }
+        _set_optional(result, "entries", dataset.entries)
+        _set_optional(result, "random_seed", dataset.random_seed)
+        if dataset.osl is not None:
+            result["osl"] = _distribution(dataset.osl)
+        if dataset.synthesis is not None:
+            result["synthesis"] = dataset.synthesis.model_dump(
+                mode="json", exclude_none=True
+            )
+        if dataset.path is not None:
+            path = dataset.path.expanduser()
+            result["path"] = str(
+                path if path.is_absolute() else (Path.cwd() / path).absolute()
+            )
+        else:
+            result["records"] = copy.deepcopy(dataset.records)
+        return result
+
     result = _authored_model_dump(dataset)
     result.pop("name", None)
     if isinstance(dataset, SyntheticDataset) and "turn_delay" in result:
         result["turn_delay_ms"] = result.pop("turn_delay")
-    if isinstance(dataset, FileDataset):
-        options: dict[str, Any] = {}
-        delay_cap = result.pop("inter_turn_delay_cap_seconds", None)
-        if delay_cap is not None:
-            options["inter_turn_delay_cap_seconds"] = delay_cap
-        if options:
-            result["options"] = options
     return result
 
 
