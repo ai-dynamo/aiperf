@@ -8,15 +8,13 @@ use std::io::{self, Read, Write};
 use std::sync::Arc;
 
 use aiperf_graph::input::GraphInputAdapterRegistry;
+use aiperf_runner::coordinator::RunnerV2Coordinator;
 use aiperf_runner::protocol_v2::{
-    DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
-    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
+    RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use aiperf_runner::redaction::redact_diagnostic;
-use aiperf_runner::registry::{
-    BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerRunContext,
-    validate_endpoint_profiles_v2,
-};
+use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::{
     RUNNER_PROTOCOL_VERSION, RunRequest, RunTerminal, RunnerCapabilities, execute_run,
 };
@@ -159,156 +157,24 @@ fn run_v2(input: &[u8]) -> ! {
             format!("invalid protocol-v2 request: {error}"),
         ),
     };
-    let benchmark_id = Some(envelope.run.identity.benchmark_id.clone());
-    if let Err(error) = envelope.validate_outer() {
-        write_v2_validation_failure(
-            envelope.operation,
-            distribution_id,
-            benchmark_id,
-            "invalid_run",
-            format!("{error:#}"),
-        );
-    }
-
-    let runner_registry = match BuiltinRunnerRegistryFactory.build() {
-        Ok(registry) => registry,
-        Err(error) => {
-            eprintln!("failed to compose runner registry: {error:#}");
-            std::process::exit(2);
-        }
-    };
-    let product_registry = match aiperf_extensions::AiperfRegistryFactory::build(
-        &aiperf_extensions::BuiltinAiperfRegistryFactory,
-    ) {
-        Ok(registry) => Arc::new(registry),
-        Err(error) => {
-            eprintln!("failed to compose AIPerf registry: {error}");
-            std::process::exit(2);
-        }
-    };
-    let endpoint_profiles =
-        match validate_endpoint_profiles_v2(&envelope.run, product_registry.endpoints()) {
-            Ok(profiles) => profiles,
-            Err(error) => write_v2_validation_failure(
-                envelope.operation,
-                distribution_id,
-                benchmark_id,
-                "invalid_endpoint_profiles",
-                format!("{error:#}"),
-            ),
-        };
     let graph_inputs = Arc::new(GraphInputAdapterRegistry::with_builtin_adapters());
-    let run_context = match RunnerRunContext::new(product_registry, graph_inputs, endpoint_profiles)
-    {
-        Ok(context) => context,
+    let coordinator = match RunnerV2Coordinator::new(
+        distribution_id.clone(),
+        &BuiltinRunnerRegistryFactory,
+        &aiperf_extensions::BuiltinAiperfRegistryFactory,
+        graph_inputs,
+    ) {
+        Ok(coordinator) => coordinator,
         Err(error) => write_v2_validation_failure(
             envelope.operation,
             distribution_id,
-            benchmark_id,
-            "invalid_run_context",
+            Some(envelope.run.identity.benchmark_id.clone()),
+            "coordinator_initialization_failed",
             format!("{error:#}"),
         ),
     };
-    if has_unavailable_sidecar(&envelope) {
-        write_v2_validation_failure(
-            envelope.operation,
-            distribution_id,
-            benchmark_id,
-            "unsupported_sidecar",
-            "protocol-v2 sidecar preparation adapters are not registered in this distribution"
-                .to_owned(),
-        );
-    }
-    let selection =
-        match runner_registry.validate_selection(&envelope.run.backend, &envelope.run.workload) {
-            Ok(selection) => selection,
-            Err(error) => write_v2_validation_failure(
-                envelope.operation,
-                distribution_id,
-                benchmark_id,
-                "invalid_backend_workload_selection",
-                format!("{error:#}"),
-            ),
-        };
-    if let Err(error) = runner_registry.validate_run(&envelope.run, &run_context, &selection) {
-        write_v2_validation_failure(
-            envelope.operation,
-            distribution_id,
-            benchmark_id,
-            "invalid_backend_workload_run",
-            format!("{error:#}"),
-        );
-    }
-
-    match envelope.operation {
-        RunnerOperationV2::Validate => write_json_line(
-            &RunValidationV2 {
-                protocol_version: RUNNER_PROTOCOL_V2,
-                event: "run_validation",
-                distribution_id,
-                benchmark_id,
-                success: true,
-                completeness: ValidationCompletenessV2::Static,
-                deferred_checks: vec![DeferredCheckV2 {
-                    code: "workload_preparation".to_owned(),
-                    path: "run.workload".to_owned(),
-                    reason: "dataset, tokenizer, endpoint-profile references, and backend resources require execution preparation"
-                        .to_owned(),
-                }],
-                errors: Vec::new(),
-            },
-            0,
-        ),
-        RunnerOperationV2::Execute => {
-            let operation = match runner_registry.prepare_with_context(
-                &envelope.run,
-                &run_context,
-                selection,
-            ) {
-                Ok(operation) => operation,
-                Err(error) => write_v2_terminal_failure(
-                    distribution_id,
-                    benchmark_id,
-                    RunnerFailureStageV2::Preparation,
-                    "preparation_failed",
-                    format!("{error:#}"),
-                    1,
-                ),
-            };
-            match operation.execute() {
-                Ok(outcome) => write_json_line(
-                    &RunTerminalV2 {
-                        protocol_version: RUNNER_PROTOCOL_V2,
-                        event: "run_terminal",
-                        distribution_id,
-                        benchmark_id,
-                        success: true,
-                        report_path: Some(outcome.report_path),
-                        stage: None,
-                        errors: Vec::new(),
-                        provenance: outcome.provenance,
-                    },
-                    0,
-                ),
-                Err(error) => write_v2_terminal_failure(
-                    distribution_id,
-                    benchmark_id,
-                    RunnerFailureStageV2::Execution,
-                    "execution_failed",
-                    format!("{error:#}"),
-                    1,
-                ),
-            }
-        }
-    }
-}
-
-fn has_unavailable_sidecar(envelope: &RunnerEnvelopeV2) -> bool {
-    let sidecars = &envelope.run.sidecars;
-    sidecars.gpu_telemetry.is_some()
-        || sidecars.network_latency.is_some()
-        || sidecars.server_metrics.is_some()
-        || sidecars.live_streaming.is_some()
+    let result = coordinator.handle(envelope);
+    write_json_line(&result.response, result.exit_code);
 }
 
 fn operation_hint(input: &[u8]) -> Option<RunnerOperationV2> {
