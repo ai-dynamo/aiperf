@@ -1427,6 +1427,17 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Genesis,
             session_id: Some(session()),
+            session_anchor: Some(
+                crate::SessionAnchorV1::new(
+                    TimeDomain::Real,
+                    Some(EpochAnchor {
+                        clock_ns: 10,
+                        unix_epoch_ns: 1_700_000_000_000_000_000,
+                        capture_uncertainty_ns: 2,
+                    }),
+                )
+                .unwrap(),
+            ),
             next_record_seq: 0,
             active_wal_segment_id: None,
             mutations: vec![],

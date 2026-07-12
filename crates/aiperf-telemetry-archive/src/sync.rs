@@ -321,7 +321,7 @@ impl ArchiveRemoteSynchronizer {
         &self,
         repository: &LocalArchiveRepository,
         new_writer_session_id: SessionId,
-        expected_prior_claim_id: WriterClaimId,
+        expected_prior_claim_id: Option<WriterClaimId>,
         observation: RemotePublicationObservationV1,
         observation_clock: &dyn Clock,
     ) -> Result<RemotePublicationCompletionV1, ArchiveSyncError> {
@@ -340,11 +340,39 @@ impl ArchiveRemoteSynchronizer {
         };
         let desired_bytes = desired.canonical_bytes()?;
         let desired_digest = archive_object_digest(&desired_bytes);
-        let current = self
-            .store
-            .read_head(REMOTE_LATEST_KEY)
-            .await?
-            .ok_or(ArchiveSyncError::MissingRemoteBootstrap)?;
+        let current = self.store.read_head(REMOTE_LATEST_KEY).await?;
+        let Some(current) = current else {
+            if expected_prior_claim_id.is_some() {
+                return Err(ArchiveSyncError::UnexpectedPriorWriterClaim);
+            }
+            let completion = match self
+                .store
+                .create_head_if_absent(
+                    REMOTE_LATEST_KEY,
+                    desired_bytes.clone().into(),
+                    desired_digest,
+                )
+                .await
+            {
+                Ok(receipt) => RemotePublicationCompletionV1 {
+                    remote: desired,
+                    object_version: receipt.version,
+                    observation_kind: ObservationKind::ResponseObserved,
+                    receipt: None,
+                },
+                Err(error) => {
+                    self.reconcile_head_error(error, &desired, desired_digest)
+                        .await?
+                }
+            };
+            return self.record_publication_receipt(
+                repository,
+                completion,
+                observation,
+                observation_clock,
+                WriterClaimState::Active,
+            );
+        };
         if current.digest == desired_digest && current.body.as_ref() == desired_bytes {
             let completion = RemotePublicationCompletionV1 {
                 remote: desired,
@@ -362,6 +390,10 @@ impl ArchiveRemoteSynchronizer {
         }
         let prior = RemoteLatestV1::decode(&current.body)?;
         let actual_prior_claim_id = prior.writer_claim.map(WriterClaimV1::claim_id);
+        let expected_prior_claim_id =
+            expected_prior_claim_id.ok_or(ArchiveSyncError::PriorWriterClaimRequired {
+                actual: actual_prior_claim_id,
+            })?;
         if actual_prior_claim_id != Some(expected_prior_claim_id) {
             return Err(ArchiveSyncError::PriorWriterClaimMismatch {
                 expected: expected_prior_claim_id,
@@ -892,6 +924,13 @@ pub enum ArchiveSyncError {
         /// Verified current claim ID, absent for a terminal head.
         actual: Option<WriterClaimId>,
     },
+    /// A non-idempotent existing remote claim requires an authored takeover ID.
+    PriorWriterClaimRequired {
+        /// Verified current claim ID, absent for a terminal head.
+        actual: Option<WriterClaimId>,
+    },
+    /// An authored prior claim was supplied although remote authority is absent.
+    UnexpectedPriorWriterClaim,
     /// CAS failed uncertain and verified reread did not resolve it.
     UncertainHeadOutcome,
     /// Local generation ancestry is incomplete or inconsistent.
@@ -951,6 +990,13 @@ impl Display for ArchiveSyncError {
                 "remote prior writer claim mismatch: expected {expected}, found {}",
                 actual.map_or_else(|| "absent".to_owned(), |value| value.to_string())
             ),
+            Self::PriorWriterClaimRequired { actual } => write!(
+                formatter,
+                "remote writer claim {} requires an explicitly authored prior_claim_id",
+                actual.map_or_else(|| "absent".to_owned(), |value| value.to_string())
+            ),
+            Self::UnexpectedPriorWriterClaim => formatter
+                .write_str("prior_claim_id was authored but remote writer authority is absent"),
             Self::UncertainHeadOutcome => formatter.write_str("remote head outcome is uncertain"),
             Self::GenerationChain => formatter.write_str("local generation chain is invalid"),
             Self::SessionGenerationMissing => {
@@ -1067,6 +1113,7 @@ mod tests {
             repository.head().genesis_hash,
             repository.genesis().writer_compatibility_id,
             repository.head().next_record_seq,
+            repository.head().session_anchor.unwrap(),
             vec![],
         )
         .unwrap();
@@ -1118,6 +1165,7 @@ mod tests {
             repository.head().genesis_hash,
             repository.genesis().writer_compatibility_id,
             0,
+            repository.head().session_anchor.unwrap(),
             vec![],
         )
         .unwrap();
@@ -1180,6 +1228,7 @@ mod tests {
             repository.head().genesis_hash,
             repository.genesis().writer_compatibility_id,
             repository.head().next_record_seq,
+            crate::SessionAnchorV1::new(TimeDomain::Virtual, None).unwrap(),
             vec![],
         )
         .unwrap();
@@ -1215,7 +1264,7 @@ mod tests {
         let claim = writer_claim(&repository, session_id).unwrap();
         assert_eq!(
             claim.claim_id().to_hex(),
-            "721cef640c9b96e3d821b9e11e1b225af8340e121a014e42f01131ee078a84e0"
+            "76582a5f3385f86258d307b7fb3ce83429c06a23b77359517047e85730b43fc9"
         );
         let active = RemoteLatestV1 {
             head: repository.head().clone(),
@@ -1455,7 +1504,7 @@ mod tests {
             .publish_resumed_active(
                 &repository,
                 resumed_session_id,
-                prior_claim_id,
+                Some(prior_claim_id),
                 RemotePublicationObservationV1 {
                     observer_epoch_id: resumed_epoch_id,
                 },
@@ -1474,7 +1523,7 @@ mod tests {
             .publish_resumed_active(
                 &repository,
                 resumed_session_id,
-                prior_claim_id,
+                Some(prior_claim_id),
                 RemotePublicationObservationV1 {
                     observer_epoch_id: resumed_epoch_id,
                 },
@@ -1513,12 +1562,28 @@ mod tests {
         let (resumed_session_id, resumed_epoch_id) =
             rotate_to_resumed_session(&mut repository, prior_session_id);
         let before = store.read_head(REMOTE_LATEST_KEY).await.unwrap().unwrap();
+        let missing = synchronizer
+            .publish_resumed_active(
+                &repository,
+                resumed_session_id,
+                None,
+                RemotePublicationObservationV1 {
+                    observer_epoch_id: resumed_epoch_id,
+                },
+                &clock,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            missing,
+            ArchiveSyncError::PriorWriterClaimRequired { actual: Some(_) }
+        ));
         let expected = WriterClaimId::from_digest(Digest::from_bytes([0xff; 32]));
         let error = synchronizer
             .publish_resumed_active(
                 &repository,
                 resumed_session_id,
-                expected,
+                Some(expected),
                 RemotePublicationObservationV1 {
                     observer_epoch_id: resumed_epoch_id,
                 },
@@ -1537,6 +1602,67 @@ mod tests {
             store.read_head(REMOTE_LATEST_KEY).await.unwrap().unwrap(),
             before
         );
+    }
+
+    #[tokio::test]
+    async fn exact_resume_remote_absent_creates_only_from_verified_local_genesis() {
+        let (_directory, mut repository, prior_session_id, _) = active_repository();
+        let (resumed_session_id, resumed_epoch_id) =
+            rotate_to_resumed_session(&mut repository, prior_session_id);
+        let store = Arc::new(MemoryArchiveObjectStore::default());
+        let synchronizer = ArchiveRemoteSynchronizer::new(store.clone()).unwrap();
+        let clock = SimClock::new();
+
+        let created = synchronizer
+            .publish_resumed_active(
+                &repository,
+                resumed_session_id,
+                None,
+                RemotePublicationObservationV1 {
+                    observer_epoch_id: resumed_epoch_id,
+                },
+                &clock,
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.observation_kind, ObservationKind::ResponseObserved);
+        assert_eq!(created.receipt.as_ref().unwrap().receipt_seq, 0);
+        assert_eq!(
+            created.remote.writer_claim.unwrap().writer_session_id,
+            resumed_session_id
+        );
+        let retry = synchronizer
+            .publish_resumed_active(
+                &repository,
+                resumed_session_id,
+                None,
+                RemotePublicationObservationV1 {
+                    observer_epoch_id: resumed_epoch_id,
+                },
+                &clock,
+            )
+            .await
+            .unwrap();
+        assert_eq!(retry.observation_kind, ObservationKind::RecoveryVerified);
+        assert_eq!(retry.receipt.as_ref().unwrap().receipt_seq, 1);
+
+        let other_store = Arc::new(MemoryArchiveObjectStore::default());
+        let other = ArchiveRemoteSynchronizer::new(other_store).unwrap();
+        let authored = WriterClaimId::from_digest(Digest::from_bytes([0x99; 32]));
+        assert!(matches!(
+            other
+                .publish_resumed_active(
+                    &repository,
+                    resumed_session_id,
+                    Some(authored),
+                    RemotePublicationObservationV1 {
+                        observer_epoch_id: resumed_epoch_id,
+                    },
+                    &clock,
+                )
+                .await,
+            Err(ArchiveSyncError::UnexpectedPriorWriterClaim)
+        ));
     }
 
     #[tokio::test]
@@ -1567,7 +1693,7 @@ mod tests {
             .publish_resumed_active(
                 &repository,
                 resumed_session_id,
-                prior_claim_id,
+                Some(prior_claim_id),
                 RemotePublicationObservationV1 {
                     observer_epoch_id: resumed_epoch_id,
                 },
@@ -1634,7 +1760,7 @@ mod tests {
             .publish_resumed_active(
                 &repository,
                 resumed_session_id,
-                prior_claim_id,
+                Some(prior_claim_id),
                 RemotePublicationObservationV1 {
                     observer_epoch_id: resumed_epoch_id,
                 },
@@ -1695,7 +1821,7 @@ mod tests {
             .publish_resumed_active(
                 &repository,
                 resumed_session_id,
-                authored_competing_id,
+                Some(authored_competing_id),
                 RemotePublicationObservationV1 {
                     observer_epoch_id: resumed_epoch_id,
                 },

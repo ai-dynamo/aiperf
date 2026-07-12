@@ -50,6 +50,57 @@ impl TimeDomain {
     }
 }
 
+/// Manifest- and WAL-bound Clock interpretation for one collection session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionAnchorV1 {
+    /// Real monotonic Clock or deterministic virtual Clock domain.
+    pub time_domain: TimeDomain,
+    /// Bracketed Unix placement required only for a real Clock session.
+    pub epoch_anchor: Option<EpochAnchor>,
+}
+
+impl SessionAnchorV1 {
+    /// Validates the closed time-domain/epoch-anchor pairing.
+    pub fn new(
+        time_domain: TimeDomain,
+        epoch_anchor: Option<EpochAnchor>,
+    ) -> Result<Self, ManifestError> {
+        let value = Self {
+            time_domain,
+            epoch_anchor,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    /// Validates the closed time-domain/epoch-anchor pairing.
+    pub fn validate(self) -> Result<(), ManifestError> {
+        match (self.time_domain, self.epoch_anchor) {
+            (TimeDomain::Real, Some(_)) | (TimeDomain::Virtual, None) => Ok(()),
+            _ => Err(ManifestError::InvalidField("session_anchor")),
+        }
+    }
+
+    fn to_value(self) -> CanonicalJsonValue {
+        object(vec![
+            ("epoch_anchor", epoch_anchor_value(self.epoch_anchor)),
+            ("time_domain", string(self.time_domain.as_str())),
+        ])
+    }
+
+    fn from_value(value: &CanonicalJsonValue) -> Result<Self, ManifestError> {
+        let fields = as_object(value, "session_anchor")?;
+        let anchor = Self::new(
+            TimeDomain::parse(text(fields, "time_domain")?)?,
+            parse_epoch_anchor(fields.get("epoch_anchor"))?,
+        )?;
+        if anchor.to_value() != *value {
+            return Err(ManifestError::InvalidField("session_anchor fields"));
+        }
+        Ok(anchor)
+    }
+}
+
 /// Immutable archive lifecycle state stored in generations and heads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArchiveState {
@@ -164,6 +215,13 @@ pub struct GenesisV1 {
 }
 
 impl GenesisV1 {
+    /// Returns the initial session anchor, absent for source-free bootstrap.
+    pub fn initial_session_anchor(&self) -> Result<Option<SessionAnchorV1>, ManifestError> {
+        self.initial_session_id
+            .map(|_| SessionAnchorV1::new(self.time_domain, self.epoch_anchor))
+            .transpose()
+    }
+
     /// Validates cross-field time/session invariants.
     pub fn validate(&self) -> Result<(), ManifestError> {
         match (self.time_domain, self.epoch_anchor) {
@@ -179,6 +237,7 @@ impl GenesisV1 {
         ) {
             return Err(ManifestError::InvalidField("persistent_writer_identity"));
         }
+        self.initial_session_anchor()?;
         Ok(())
     }
 
@@ -349,6 +408,8 @@ pub struct GenerationV1 {
     pub transaction_kind: GenerationTransactionKind,
     /// Session made current by this transaction when applicable.
     pub session_id: Option<SessionId>,
+    /// Clock interpretation frozen for the current collection session.
+    pub session_anchor: Option<SessionAnchorV1>,
     /// First global record sequence after the manifest-verified durable WAL prefix.
     pub next_record_seq: u64,
     /// Exact open WAL segment authorized for recovery, absent outside collection.
@@ -364,11 +425,23 @@ pub struct GenerationV1 {
 impl GenerationV1 {
     /// Validates generation-zero and descendant shape invariants.
     pub fn validate(&self) -> Result<(), ManifestError> {
+        if self.session_id.is_some() != self.session_anchor.is_some() {
+            return Err(ManifestError::InvalidContinuationTransition);
+        }
+        if let Some(anchor) = self.session_anchor {
+            anchor.validate()?;
+        }
         if self.local_commit_seq == 0 {
+            let initial_anchor = self
+                .genesis
+                .as_ref()
+                .ok_or(ManifestError::InvalidGenesisShape)?
+                .initial_session_anchor()?;
             if self.transaction_kind != GenerationTransactionKind::Genesis
                 || self.parent_generation_hash.is_some()
                 || self.genesis_hash.is_some()
                 || self.genesis.as_ref().map(|value| value.archive_id) != Some(self.archive_id)
+                || self.session_anchor != initial_anchor
                 || !self.mutations.is_empty()
                 || self.next_record_seq != 0
                 || self.active_wal_segment_id.is_some()
@@ -480,6 +553,7 @@ impl GenerationV1 {
                     && parent.active_wal_segment_id.is_some()
                     && self.active_wal_segment_id.is_none()
                     && self.session_id == parent.session_id
+                    && self.session_anchor == parent.session_anchor
                     && self.next_record_seq == parent.next_record_seq
                     && self.index_root == parent.index_root
             }
@@ -487,6 +561,7 @@ impl GenerationV1 {
                 parent.active_wal_segment_id.is_some()
                     && self.active_wal_segment_id == parent.active_wal_segment_id
                     && self.session_id == parent.session_id
+                    && self.session_anchor == parent.session_anchor
                     && self.archive_state == parent.archive_state
             }
             GenerationTransactionKind::LocalFinalization => {
@@ -496,6 +571,7 @@ impl GenerationV1 {
                 ) && parent.active_wal_segment_id.is_some()
                     && self.active_wal_segment_id.is_none()
                     && self.session_id == parent.session_id
+                    && self.session_anchor == parent.session_anchor
                     && self.next_record_seq == parent.next_record_seq
                     && self.index_root == parent.index_root
             }
@@ -503,12 +579,14 @@ impl GenerationV1 {
                 parent.active_wal_segment_id.is_none()
                     && self.active_wal_segment_id.is_none()
                     && self.session_id == parent.session_id
+                    && self.session_anchor == parent.session_anchor
                     && self.next_record_seq == parent.next_record_seq
                     && self.index_root == parent.index_root
                     && self.archive_state == parent.archive_state
             }
             GenerationTransactionKind::StateTransition => {
                 self.session_id == parent.session_id
+                    && self.session_anchor == parent.session_anchor
                     && self.next_record_seq == parent.next_record_seq
                     && (self.active_wal_segment_id == parent.active_wal_segment_id
                         || (self.active_wal_segment_id.is_none()
@@ -561,6 +639,11 @@ impl GenerationV1 {
                 "parent_generation_hash",
                 optional_digest(self.parent_generation_hash),
             ),
+            (
+                "session_anchor",
+                self.session_anchor
+                    .map_or(CanonicalJsonValue::Null, SessionAnchorV1::to_value),
+            ),
             ("session_id", optional_session(self.session_id)),
             (
                 "termination_reason",
@@ -591,6 +674,11 @@ impl GenerationV1 {
             archive_state: ArchiveState::parse(text(object, "archive_state")?)?,
             transaction_kind: GenerationTransactionKind::parse(text(object, "transaction_kind")?)?,
             session_id: parse_optional_session(object.get("session_id"))?,
+            session_anchor: match object.get("session_anchor") {
+                Some(CanonicalJsonValue::Null) => None,
+                Some(value) => Some(SessionAnchorV1::from_value(value)?),
+                None => return Err(ManifestError::InvalidField("session_anchor")),
+            },
             next_record_seq: unsigned(object, "next_record_seq")?,
             active_wal_segment_id: parse_optional_digest(object.get("active_wal_segment_id"))?,
             mutations,
@@ -673,6 +761,8 @@ pub struct HeadDescriptorV1 {
     pub genesis_hash: Digest,
     /// Resulting archive state.
     pub archive_state: ArchiveState,
+    /// Clock interpretation frozen for the current collection session.
+    pub session_anchor: Option<SessionAnchorV1>,
     /// First global record sequence after the manifest-verified durable WAL prefix.
     pub next_record_seq: u64,
     /// Exact open WAL segment authorized for recovery, when collection is active.
@@ -700,6 +790,7 @@ impl HeadDescriptorV1 {
             parent_generation_hash: generation.parent_generation_hash,
             genesis_hash,
             archive_state: generation.archive_state,
+            session_anchor: generation.session_anchor,
             next_record_seq: generation.next_record_seq,
             active_wal_segment_id: generation.active_wal_segment_id,
         })
@@ -749,6 +840,11 @@ impl HeadDescriptorV1 {
                 "parent_generation_hash",
                 optional_digest(self.parent_generation_hash),
             ),
+            (
+                "session_anchor",
+                self.session_anchor
+                    .map_or(CanonicalJsonValue::Null, SessionAnchorV1::to_value),
+            ),
         ])
     }
 
@@ -764,6 +860,11 @@ impl HeadDescriptorV1 {
             parent_generation_hash: parse_optional_digest(object.get("parent_generation_hash"))?,
             genesis_hash: digest(object, "genesis_hash")?,
             archive_state: ArchiveState::parse(text(object, "archive_state")?)?,
+            session_anchor: match object.get("session_anchor") {
+                Some(CanonicalJsonValue::Null) => None,
+                Some(value) => Some(SessionAnchorV1::from_value(value)?),
+                None => return Err(ManifestError::InvalidField("session_anchor")),
+            },
             next_record_seq: unsigned(object, "next_record_seq")?,
             active_wal_segment_id: parse_optional_digest(object.get("active_wal_segment_id"))?,
         };
@@ -1213,6 +1314,30 @@ mod tests {
         SessionId::new([0x22; 16]).unwrap()
     }
 
+    fn initial_anchor() -> SessionAnchorV1 {
+        SessionAnchorV1::new(
+            TimeDomain::Real,
+            Some(EpochAnchor {
+                clock_ns: 10,
+                unix_epoch_ns: 1_700_000_000_000_000_000,
+                capture_uncertainty_ns: 2,
+            }),
+        )
+        .unwrap()
+    }
+
+    fn resumed_anchor() -> SessionAnchorV1 {
+        SessionAnchorV1::new(
+            TimeDomain::Real,
+            Some(EpochAnchor {
+                clock_ns: 20,
+                unix_epoch_ns: 1_700_000_000_000_000_010,
+                capture_uncertainty_ns: 3,
+            }),
+        )
+        .unwrap()
+    }
+
     fn genesis(root: IndexRootV1) -> GenerationV1 {
         GenerationV1 {
             archive_id: archive(),
@@ -1223,6 +1348,7 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Genesis,
             session_id: Some(session()),
+            session_anchor: Some(initial_anchor()),
             next_record_seq: 0,
             active_wal_segment_id: None,
             mutations: vec![],
@@ -1260,11 +1386,11 @@ mod tests {
         let head = HeadDescriptorV1::from_generation(&object).unwrap();
         assert_eq!(
             object.hash.to_hex(),
-            "899a19c087fc7b3104522099f72318ff345e391bf07fc32aacddd4d91424690f"
+            "47ae8a0734b4f2825d5af16c8157f33a085b3c8aac16f5266f5b40258427962f"
         );
         assert_eq!(
             head.hash().to_hex(),
-            "e9675eb5ab0b7d7cde25a987a655fd6946c454a36b88e7d979635676bfba6443"
+            "07955359532df21d860a647354d11d852e8aa4a031403b029a952b401be1d937"
         );
         assert_eq!(head.next_record_seq, 0);
         assert_eq!(head.active_wal_segment_id, None);
@@ -1292,6 +1418,7 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::SessionStarted,
             session_id: Some(session()),
+            session_anchor: Some(initial_anchor()),
             next_record_seq: 0,
             active_wal_segment_id: Some(segment_id),
             mutations: vec![],
@@ -1313,6 +1440,7 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Checkpoint,
             session_id: Some(session()),
+            session_anchor: Some(initial_anchor()),
             next_record_seq: 3,
             active_wal_segment_id: Some(segment_id),
             mutations: vec![],
@@ -1334,6 +1462,7 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::SessionClosed,
             session_id: Some(session()),
+            session_anchor: Some(initial_anchor()),
             next_record_seq: 3,
             active_wal_segment_id: None,
             mutations: vec![],
@@ -1354,6 +1483,7 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::SessionStarted,
             session_id: Some(SessionId::new([0x33; 16]).unwrap()),
+            session_anchor: Some(resumed_anchor()),
             next_record_seq: 3,
             active_wal_segment_id: Some(Digest::from_bytes([0x99; 32])),
             mutations: vec![],
@@ -1380,6 +1510,12 @@ mod tests {
             invalid.validate_descendant_of(&session_started.generation),
             Err(ManifestError::InvalidContinuationTransition)
         ));
+        let mut invalid = checkpoint.generation.clone();
+        invalid.session_anchor = Some(resumed_anchor());
+        assert!(matches!(
+            invalid.validate_descendant_of(&session_started.generation),
+            Err(ManifestError::InvalidContinuationTransition)
+        ));
 
         let finalized = GenerationObjectV1::new(GenerationV1 {
             archive_id: archive(),
@@ -1390,6 +1526,7 @@ mod tests {
             archive_state: ArchiveState::LocallyFinalized,
             transaction_kind: GenerationTransactionKind::LocalFinalization,
             session_id: Some(session()),
+            session_anchor: Some(initial_anchor()),
             next_record_seq: 3,
             active_wal_segment_id: None,
             mutations: vec![],
@@ -1434,6 +1571,7 @@ mod tests {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Checkpoint,
             session_id: Some(session()),
+            session_anchor: Some(initial_anchor()),
             next_record_seq: 0,
             active_wal_segment_id: Some(Digest::from_bytes([9; 32])),
             mutations: vec![],

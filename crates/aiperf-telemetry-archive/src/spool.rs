@@ -19,8 +19,8 @@ use crate::{
     ArchiveId, ArchiveState, Digest, GenerationMutationV1, GenerationObjectV1,
     GenerationTransactionKind, GenerationV1, GenesisV1, HeadDescriptorV1, IndexError,
     IndexMutationSetV1, IndexPageSource, IndexSnapshot, LocalLatestV1, ManifestError, MutationMode,
-    RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment, SessionId, TableId, WAL_FOOTER_MAGIC,
-    WalError, WalFrame, WalSegmentBuilder, WalSegmentHeaderV1,
+    RecoveredWal, SEALED_WAL_FOOTER_BYTES, SealedWalSegment, SessionAnchorV1, SessionId, TableId,
+    WAL_FOOTER_MAGIC, WalError, WalFrame, WalSegmentBuilder, WalSegmentHeaderV1,
 };
 
 const LOCAL_LATEST: &str = "LOCAL-LATEST";
@@ -518,6 +518,7 @@ struct GenerationCommit<'a> {
     transaction_kind: GenerationTransactionKind,
     archive_state: ArchiveState,
     session_id: Option<SessionId>,
+    session_anchor: Option<SessionAnchorV1>,
     termination_reason: Option<String>,
     next_record_seq: u64,
     active_wal_segment_id: Option<Digest>,
@@ -537,6 +538,9 @@ impl LocalArchiveRepository {
         genesis.validate().map_err(SpoolError::Manifest)?;
         let index = IndexSnapshot::empty().map_err(SpoolError::Index)?;
         persist_index(&spool, &index, faults)?;
+        let initial_session_anchor = genesis
+            .initial_session_anchor()
+            .map_err(SpoolError::Manifest)?;
         let generation = GenerationObjectV1::new(GenerationV1 {
             archive_id: genesis.archive_id,
             local_commit_seq: 0,
@@ -546,6 +550,7 @@ impl LocalArchiveRepository {
             archive_state: ArchiveState::Open,
             transaction_kind: GenerationTransactionKind::Genesis,
             session_id: genesis.initial_session_id,
+            session_anchor: initial_session_anchor,
             next_record_seq: 0,
             active_wal_segment_id: None,
             mutations: vec![],
@@ -716,6 +721,10 @@ impl LocalArchiveRepository {
                     .generation
                     .genesis_hash
                     .ok_or(SpoolError::IdentityMismatch("active WAL genesis"))?;
+                let session_anchor = object
+                    .generation
+                    .session_anchor
+                    .ok_or(SpoolError::IdentityMismatch("active WAL session anchor"))?;
                 let header = WalSegmentHeaderV1::new(
                     self.head.archive_id,
                     session_id,
@@ -723,6 +732,7 @@ impl LocalArchiveRepository {
                     genesis_hash,
                     self.genesis.writer_compatibility_id,
                     object.generation.next_record_seq,
+                    session_anchor,
                     table_schema_fingerprints,
                 )
                 .map_err(SpoolError::Wal)?;
@@ -768,6 +778,7 @@ impl LocalArchiveRepository {
             if self.head.archive_state == ArchiveState::Open
                 && self.head.parent_generation_hash == Some(header.previous_head_hash)
                 && self.head.next_record_seq == header.first_record_seq
+                && self.head.session_anchor == Some(header.session_anchor)
             {
                 return Ok(&self.head);
             }
@@ -791,6 +802,7 @@ impl LocalArchiveRepository {
                 transaction_kind: GenerationTransactionKind::SessionStarted,
                 archive_state: ArchiveState::Open,
                 session_id: Some(header.session_id),
+                session_anchor: Some(header.session_anchor),
                 termination_reason: None,
                 next_record_seq: self.head.next_record_seq,
                 active_wal_segment_id: Some(header.segment_id),
@@ -824,6 +836,7 @@ impl LocalArchiveRepository {
                 transaction_kind: GenerationTransactionKind::Checkpoint,
                 archive_state: self.head.archive_state,
                 session_id: Some(session_id),
+                session_anchor: self.head.session_anchor,
                 termination_reason: None,
                 next_record_seq,
                 active_wal_segment_id: Some(active_wal_segment_id),
@@ -862,6 +875,7 @@ impl LocalArchiveRepository {
                 transaction_kind: GenerationTransactionKind::SessionClosed,
                 archive_state: ArchiveState::Open,
                 session_id: Some(session_id),
+                session_anchor: self.head.session_anchor,
                 termination_reason: None,
                 next_record_seq,
                 active_wal_segment_id: None,
@@ -892,6 +906,7 @@ impl LocalArchiveRepository {
                 transaction_kind: GenerationTransactionKind::LocalFinalization,
                 archive_state: ArchiveState::LocallyFinalized,
                 session_id: Some(session_id),
+                session_anchor: self.head.session_anchor,
                 termination_reason: Some(termination_reason),
                 next_record_seq,
                 active_wal_segment_id: None,
@@ -928,6 +943,7 @@ impl LocalArchiveRepository {
             archive_state: commit.archive_state,
             transaction_kind: commit.transaction_kind,
             session_id: commit.session_id,
+            session_anchor: commit.session_anchor,
             next_record_seq: commit.next_record_seq,
             active_wal_segment_id: commit.active_wal_segment_id,
             mutations: GenerationMutationV1::from_set(commit.mutation_set),
@@ -982,6 +998,7 @@ impl LocalArchiveRepository {
             || self.head.next_record_seq != header.first_record_seq
             || header.genesis_hash != self.head.genesis_hash
             || header.writer_compatibility_id != self.genesis.writer_compatibility_id
+            || self.head.session_anchor != Some(header.session_anchor)
         {
             return Err(SpoolError::IdentityMismatch("WAL header"));
         }
@@ -1001,6 +1018,7 @@ impl LocalArchiveRepository {
             || self.head.next_record_seq != header.first_record_seq
             || header.genesis_hash != self.head.genesis_hash
             || header.writer_compatibility_id != self.genesis.writer_compatibility_id
+            || self.head.session_anchor != Some(header.session_anchor)
         {
             return Err(SpoolError::IdentityMismatch("WAL header"));
         }
@@ -1074,6 +1092,7 @@ impl LocalArchiveRepository {
             || header.first_record_seq > self.head.next_record_seq
             || header.genesis_hash != self.head.genesis_hash
             || header.writer_compatibility_id != self.genesis.writer_compatibility_id
+            || self.head.session_anchor != Some(header.session_anchor)
             || !generation_is_ancestor(&self.spool, &self.head, header.previous_head_hash)?
         {
             return Err(SpoolError::IdentityMismatch("recovered WAL header"));
@@ -1730,6 +1749,7 @@ fn verify_head(
         || generation.generation.index_root.root_hash != head.index_root_hash
         || generation.generation.parent_generation_hash != head.parent_generation_hash
         || generation.generation.archive_state != head.archive_state
+        || generation.generation.session_anchor != head.session_anchor
         || generation.generation.next_record_seq != head.next_record_seq
         || generation.generation.active_wal_segment_id != head.active_wal_segment_id
     {
@@ -2154,6 +2174,7 @@ mod tests {
             repository.head.genesis_hash,
             repository.genesis.writer_compatibility_id,
             repository.head.next_record_seq,
+            repository.head.session_anchor.unwrap(),
             vec![(TableId::Attempts, Digest::from_bytes([9; 32]))],
         )
         .unwrap()

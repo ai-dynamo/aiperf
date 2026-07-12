@@ -339,7 +339,7 @@ impl ArchiveRecoveryPolicy for CreateNewRecoveryPolicy {
 pub struct ExactResumeRecoveryPolicy {
     expected_archive_id: ArchiveId,
     expected_persistent_identity_digest: Digest,
-    prior_writer_claim_id: WriterClaimId,
+    prior_writer_claim_id: Option<WriterClaimId>,
 }
 
 impl ExactResumeRecoveryPolicy {
@@ -348,7 +348,7 @@ impl ExactResumeRecoveryPolicy {
     pub const fn new(
         expected_archive_id: ArchiveId,
         expected_persistent_identity_digest: Digest,
-        prior_writer_claim_id: WriterClaimId,
+        prior_writer_claim_id: Option<WriterClaimId>,
     ) -> Self {
         Self {
             expected_archive_id,
@@ -407,7 +407,7 @@ impl ArchiveRecoveryPolicy for ExactResumeRecoveryPolicy {
     }
 
     fn prior_writer_claim_id(&self) -> Option<WriterClaimId> {
-        Some(self.prior_writer_claim_id)
+        self.prior_writer_claim_id
     }
 }
 
@@ -531,10 +531,19 @@ mod tests {
             next_record_seq: 9,
         };
         let prior_claim = WriterClaimId::from_digest(Digest::from_bytes([5; 32]));
-        let policy = ExactResumeRecoveryPolicy::new(archive(), identity, prior_claim);
+        let policy = ExactResumeRecoveryPolicy::new(archive(), identity, Some(prior_claim));
         assert_eq!(policy.prior_writer_claim_id(), Some(prior_claim));
         assert_eq!(
             policy.recover(&local, None).unwrap(),
+            RecoveryPlan::ResumeLocal {
+                head_hash: head,
+                next_record_seq: 9,
+            }
+        );
+        let remote_absent_policy = ExactResumeRecoveryPolicy::new(archive(), identity, None);
+        assert_eq!(remote_absent_policy.prior_writer_claim_id(), None);
+        assert_eq!(
+            remote_absent_policy.recover(&local, None).unwrap(),
             RecoveryPlan::ResumeLocal {
                 head_hash: head,
                 next_record_seq: 9,

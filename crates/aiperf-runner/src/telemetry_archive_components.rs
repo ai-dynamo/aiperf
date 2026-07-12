@@ -25,7 +25,7 @@ use aiperf_telemetry_archive::{
     ExactResumeRecoveryPolicy, FileArchiveObjectStore, LocalArchiveRepository, NoopEnricher,
     NoopSanitizer, OwnedLocalArchiveSinkFactory, OwnedReceiptJournalMode, ParquetRotationConfigV1,
     PrimaryWatchAdmissionPolicy, SanitizationError, SanitizedSample, SegmentRotationPolicy,
-    StaticLabelEnricher, TelemetryEnricher, WalSegmentHeaderV1, domain_digest,
+    SessionAnchorV1, StaticLabelEnricher, TelemetryEnricher, WalSegmentHeaderV1, domain_digest,
 };
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -362,6 +362,7 @@ pub trait PreparedArchiveWriter: Debug + Send + Sync {
         &self,
         repository: LocalArchiveRepository,
         new_session_id: aiperf_telemetry_archive::SessionId,
+        new_session_anchor: SessionAnchorV1,
         maximum_frame_bytes: u64,
         receipts: OwnedReceiptJournalMode,
         decoder: &dyn ArchiveWalFrameDecoder,
@@ -1530,6 +1531,7 @@ impl PreparedArchiveWriter for PreparedParquetArchiveWriter {
         &self,
         repository: LocalArchiveRepository,
         new_session_id: aiperf_telemetry_archive::SessionId,
+        new_session_anchor: SessionAnchorV1,
         maximum_frame_bytes: u64,
         receipts: OwnedReceiptJournalMode,
         decoder: &dyn ArchiveWalFrameDecoder,
@@ -1538,6 +1540,7 @@ impl PreparedArchiveWriter for PreparedParquetArchiveWriter {
             .resume(
                 repository,
                 new_session_id,
+                new_session_anchor,
                 maximum_frame_bytes,
                 receipts,
                 decoder,
@@ -1926,11 +1929,7 @@ impl ValidatedArchiveRecoveryComponent for ValidatedRecovery {
                 Ok(Box::new(ExactResumeRecoveryPolicy::new(
                     expected_archive_id,
                     expectation.persistent_identity_digest,
-                    self.expected_prior_claim_id.ok_or_else(|| {
-                        ArchiveComponentError::Prepare(
-                            "exact_resume is missing its validated prior claim ID".to_owned(),
-                        )
-                    })?,
+                    self.expected_prior_claim_id,
                 )))
             }
             ArchiveRecoveryOperation::FinalizeRemote => {
@@ -1952,11 +1951,12 @@ impl ValidatedArchiveRecoveryComponent for ValidatedRecovery {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExactResumeRecoveryConfig {
     archive_id: Uuid,
-    prior_claim_id: String,
+    #[serde(default)]
+    prior_claim_id: Option<String>,
 }
 
 impl ArchiveRecoveryComponentFactory for ExactResumeRecoveryFactory {
@@ -1985,26 +1985,32 @@ impl ArchiveRecoveryComponentFactory for ExactResumeRecoveryFactory {
                     message: error.to_string(),
                 }
             })?;
-        let expected_prior_claim_id =
-            WriterClaimId::parse(&config.prior_claim_id).map_err(|error| {
-                ArchiveComponentError::InvalidConfig {
-                    family: RECOVERY_FAMILY,
-                    id: self.descriptor().id.to_owned(),
-                    message: format!("prior_claim_id: {error}"),
-                }
-            })?;
-        if config.prior_claim_id != expected_prior_claim_id.to_hex() {
-            return Err(ArchiveComponentError::InvalidConfig {
+        let expected_prior_claim_id = config
+            .prior_claim_id
+            .as_deref()
+            .map(WriterClaimId::parse)
+            .transpose()
+            .map_err(|error| ArchiveComponentError::InvalidConfig {
                 family: RECOVERY_FAMILY,
                 id: self.descriptor().id.to_owned(),
-                message: "prior_claim_id must be 64 lowercase hexadecimal characters".to_owned(),
-            });
+                message: format!("prior_claim_id: {error}"),
+            })?;
+        if let Some(expected_prior_claim_id) = expected_prior_claim_id {
+            let canonical = expected_prior_claim_id.to_hex();
+            if config.prior_claim_id.as_deref() != Some(canonical.as_str()) {
+                return Err(ArchiveComponentError::InvalidConfig {
+                    family: RECOVERY_FAMILY,
+                    id: self.descriptor().id.to_owned(),
+                    message: "prior_claim_id must be 64 lowercase hexadecimal characters"
+                        .to_owned(),
+                });
+            }
         }
         Ok(Box::new(ValidatedRecovery {
             identity: component_identity(RECOVERY_FAMILY, self.descriptor().id, &config)?,
             operation: ArchiveRecoveryOperation::ExactResume,
             expected_archive_id: Some(expected_archive_id),
-            expected_prior_claim_id: Some(expected_prior_claim_id),
+            expected_prior_claim_id,
         }))
     }
 }
@@ -2890,7 +2896,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_resume_requires_and_exposes_authored_archive_and_prior_claim_identity() {
+    fn exact_resume_requires_archive_and_accepts_optional_prior_claim_identity() {
         let registries = TelemetryArchiveComponentRegistries::stock();
         let mut missing = collect_archive_for_value();
         missing["recovery"] = json!({"type": "exact_resume", "config": {}});
@@ -2903,6 +2909,18 @@ mod tests {
 
         let authored_uuid = Uuid::parse_str("018f84a7-1f3c-7c21-8be2-7e8dbf9536b1").unwrap();
         let expected = ArchiveId::new(*authored_uuid.as_bytes()).unwrap();
+        let mut remote_absent = collect_archive_for_value();
+        remote_absent["recovery"] = json!({
+            "type": "exact_resume",
+            "config": {"archive_id": authored_uuid}
+        });
+        let remote_absent: TelemetryArchiveSpecV2 = serde_json::from_value(remote_absent).unwrap();
+        let validated = registries
+            .validate_collect(remote_absent, ArchiveCollectionPlacement::StandalonePrimary)
+            .unwrap();
+        assert_eq!(validated.recovery.expected_archive_id(), Some(expected));
+        assert_eq!(validated.recovery.expected_prior_claim_id(), None);
+
         let prior_claim = WriterClaimId::from_digest(Digest::from_bytes([0x77; 32]));
         let mut exact = collect_archive_for_value();
         exact["recovery"] = json!({

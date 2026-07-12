@@ -768,6 +768,7 @@ impl OwnedLocalArchiveSinkFactory {
         &self,
         mut repository: LocalArchiveRepository,
         new_session_id: SessionId,
+        new_session_anchor: crate::SessionAnchorV1,
         maximum_frame_bytes: u64,
         receipt_mode: OwnedReceiptJournalMode,
         decoder: &dyn ArchiveWalFrameDecoder,
@@ -788,6 +789,13 @@ impl OwnedLocalArchiveSinkFactory {
             .map(|schema| (schema.table(), schema.fingerprint()))
             .collect::<Vec<_>>();
         if let Some(active_header) = repository.active_wal_header(schema_fingerprints.clone())? {
+            if active_header.session_id == new_session_id
+                && active_header.session_anchor != new_session_anchor
+            {
+                return Err(ArchiveSinkError::Spool(SpoolError::IdentityMismatch(
+                    "resumed session anchor",
+                )));
+            }
             let unactivated_retry = active_header.session_id == new_session_id
                 && repository.head().parent_generation_hash
                     == Some(active_header.previous_head_hash)
@@ -823,6 +831,7 @@ impl OwnedLocalArchiveSinkFactory {
             repository.head().genesis_hash,
             repository.genesis().writer_compatibility_id,
             repository.head().next_record_seq,
+            new_session_anchor,
             schema_fingerprints,
         )?;
         repository.start_session(&header, self.faults.as_ref())?;
@@ -1795,6 +1804,30 @@ mod tests {
         SessionId::new([0x33; 16]).unwrap()
     }
 
+    fn session_anchor() -> crate::SessionAnchorV1 {
+        crate::SessionAnchorV1::new(
+            TimeDomain::Real,
+            Some(EpochAnchor {
+                clock_ns: 0,
+                unix_epoch_ns: 1_700_000_000_000_000_000,
+                capture_uncertainty_ns: 1,
+            }),
+        )
+        .unwrap()
+    }
+
+    fn resumed_session_anchor() -> crate::SessionAnchorV1 {
+        crate::SessionAnchorV1::new(
+            TimeDomain::Real,
+            Some(EpochAnchor {
+                clock_ns: 10,
+                unix_epoch_ns: 1_700_000_000_000_000_010,
+                capture_uncertainty_ns: 2,
+            }),
+        )
+        .unwrap()
+    }
+
     fn segment(schemas: &ArchiveSchemasV1) -> WalSegmentHeaderV1 {
         WalSegmentHeaderV1::new(
             archive(),
@@ -1803,6 +1836,7 @@ mod tests {
             Digest::from_bytes([2; 32]),
             Digest::from_bytes([3; 32]),
             0,
+            session_anchor(),
             schemas
                 .iter()
                 .map(|schema| (schema.table(), schema.fingerprint()))
@@ -1847,6 +1881,7 @@ mod tests {
             repository.head().genesis_hash,
             repository.genesis().writer_compatibility_id,
             0,
+            session_anchor(),
             schemas
                 .iter()
                 .map(|schema| (schema.table(), schema.fingerprint()))
@@ -2174,6 +2209,7 @@ mod tests {
             .resume(
                 repository,
                 resumed_session(),
+                resumed_session_anchor(),
                 1 << 20,
                 OwnedReceiptJournalMode::Disabled,
                 &decoder,
@@ -2201,6 +2237,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(active.session_id, resumed_session());
+        assert_eq!(active.session_anchor, resumed_session_anchor());
+        assert_eq!(
+            resumed.repository().head().session_anchor,
+            Some(resumed_session_anchor())
+        );
         assert_ne!(active.segment_id, header.segment_id);
         assert!(
             archive_path
@@ -2257,6 +2298,7 @@ mod tests {
             .resume(
                 repository,
                 resumed_session(),
+                resumed_session_anchor(),
                 1 << 20,
                 OwnedReceiptJournalMode::Disabled,
                 &decoder,
@@ -2328,6 +2370,7 @@ mod tests {
             let result = crash_factory.resume(
                 repository,
                 resumed_session(),
+                resumed_session_anchor(),
                 1 << 20,
                 OwnedReceiptJournalMode::Disabled,
                 &decoder,
@@ -2347,10 +2390,35 @@ mod tests {
                 safe_faults.as_ref(),
             )
             .unwrap();
+            let repository = if stage == "new session" {
+                let error = safe_factory
+                    .resume(
+                        repository,
+                        resumed_session(),
+                        session_anchor(),
+                        1 << 20,
+                        OwnedReceiptJournalMode::Disabled,
+                        &decoder,
+                    )
+                    .unwrap_err();
+                assert!(matches!(
+                    error,
+                    ArchiveSinkError::Spool(SpoolError::IdentityMismatch("resumed session anchor"))
+                ));
+                LocalArchiveRepository::recover(
+                    QualifiedSpool::open(&archive_path).unwrap(),
+                    expectation,
+                    safe_faults.as_ref(),
+                )
+                .unwrap()
+            } else {
+                repository
+            };
             let mut resumed = safe_factory
                 .resume(
                     repository,
                     resumed_session(),
+                    resumed_session_anchor(),
                     1 << 20,
                     OwnedReceiptJournalMode::Disabled,
                     &decoder,
@@ -2385,6 +2453,12 @@ mod tests {
                 "stage={stage}"
             );
             assert_eq!(closed.generation.active_wal_segment_id, None);
+            assert_eq!(closed.generation.session_anchor, Some(session_anchor()));
+            assert_eq!(
+                resumed.repository().head().session_anchor,
+                Some(resumed_session_anchor()),
+                "stage={stage}"
+            );
             assert!(
                 archive_path
                     .join("wal")

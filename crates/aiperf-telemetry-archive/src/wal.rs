@@ -9,7 +9,8 @@ use std::fmt::{self, Display, Formatter};
 use crate::descriptor::WAL_V1;
 use crate::{
     ArchiveId, BatchId, Digest, FrameId, FrameIdentityV1, ProjectionEvidence,
-    ProjectionReservationId, RequiredProjection, SessionId, TableId, TerminalKind, domain_digest,
+    ProjectionReservationId, RequiredProjection, SessionAnchorV1, SessionId, TableId, TerminalKind,
+    TimeDomain, domain_digest,
 };
 
 const FRAME_MAGIC: &[u8; 8] = b"AIPFWF01";
@@ -251,12 +252,15 @@ pub struct WalSegmentHeaderV1 {
     pub writer_compatibility_id: Digest,
     /// First permitted global record sequence.
     pub first_record_seq: u64,
+    /// Clock interpretation frozen for this collection session.
+    pub session_anchor: SessionAnchorV1,
     /// Table schema fingerprints in ascending table order.
     pub table_schema_fingerprints: Vec<(TableId, Digest)>,
 }
 
 impl WalSegmentHeaderV1 {
     /// Constructs a canonical segment header and derives its segment ID.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         archive_id: ArchiveId,
         session_id: SessionId,
@@ -264,8 +268,12 @@ impl WalSegmentHeaderV1 {
         genesis_hash: Digest,
         writer_compatibility_id: Digest,
         first_record_seq: u64,
+        session_anchor: SessionAnchorV1,
         mut table_schema_fingerprints: Vec<(TableId, Digest)>,
     ) -> Result<Self, WalError> {
+        session_anchor
+            .validate()
+            .map_err(|_| WalError::InvalidSessionAnchor)?;
         table_schema_fingerprints.sort_unstable_by_key(|(table, _)| *table);
         for pair in table_schema_fingerprints.windows(2) {
             if pair[0].0 == pair[1].0 {
@@ -286,6 +294,7 @@ impl WalSegmentHeaderV1 {
                 genesis_hash.as_bytes(),
                 writer_compatibility_id.as_bytes(),
                 &first_record_seq.to_be_bytes(),
+                &session_anchor_bytes(session_anchor),
                 &schema_bytes,
             ],
         );
@@ -297,6 +306,7 @@ impl WalSegmentHeaderV1 {
             genesis_hash,
             writer_compatibility_id,
             first_record_seq,
+            session_anchor,
             table_schema_fingerprints,
         })
     }
@@ -312,6 +322,7 @@ impl WalSegmentHeaderV1 {
         body.extend_from_slice(self.genesis_hash.as_bytes());
         body.extend_from_slice(self.writer_compatibility_id.as_bytes());
         body.extend_from_slice(&self.first_record_seq.to_be_bytes());
+        body.extend_from_slice(&session_anchor_bytes(self.session_anchor));
         body.extend_from_slice(
             &u16::try_from(self.table_schema_fingerprints.len())
                 .map_err(|_| WalError::CountOverflow("table schema fingerprints"))?
@@ -335,6 +346,21 @@ impl WalSegmentHeaderV1 {
         );
         bytes.extend_from_slice(&body);
         Ok(bytes)
+    }
+}
+
+fn session_anchor_bytes(anchor: SessionAnchorV1) -> Vec<u8> {
+    match (anchor.time_domain, anchor.epoch_anchor) {
+        (TimeDomain::Real, Some(epoch)) => {
+            let mut bytes = Vec::with_capacity(1 + 8 + 16 + 8);
+            bytes.push(1);
+            bytes.extend_from_slice(&epoch.clock_ns.to_be_bytes());
+            bytes.extend_from_slice(&epoch.unix_epoch_ns.to_be_bytes());
+            bytes.extend_from_slice(&epoch.capture_uncertainty_ns.to_be_bytes());
+            bytes
+        }
+        (TimeDomain::Virtual, None) => vec![2],
+        _ => unreachable!("SessionAnchorV1 validation closes anchor shapes"),
     }
 }
 
@@ -643,6 +669,8 @@ pub enum WalError {
     UnsupportedVersion(u16),
     /// Descriptor fingerprint does not match this implementation.
     DescriptorFingerprintMismatch,
+    /// Session Clock domain and epoch anchor do not form a closed valid pair.
+    InvalidSessionAnchor,
     /// Terminal kind discriminant is unknown.
     UnknownTerminalKind(u8),
     /// Header frame ID does not match terminal kind/reservation/sequence.
@@ -702,6 +730,7 @@ impl Display for WalError {
             Self::DescriptorFingerprintMismatch => {
                 formatter.write_str("WAL descriptor fingerprint mismatch")
             }
+            Self::InvalidSessionAnchor => formatter.write_str("invalid WAL session anchor"),
             Self::UnknownTerminalKind(kind) => {
                 write!(formatter, "unknown WAL terminal kind {kind}")
             }
@@ -897,6 +926,20 @@ fn decode_segment_header(bytes: &[u8]) -> Result<(WalSegmentHeaderV1, usize), Wa
     let genesis_hash = cursor.digest("genesis hash")?;
     let writer_compatibility_id = cursor.digest("writer compatibility ID")?;
     let first_record_seq = cursor.u64("first record sequence")?;
+    let session_anchor = match cursor.u8("session time domain")? {
+        1 => SessionAnchorV1::new(
+            TimeDomain::Real,
+            Some(crate::EpochAnchor {
+                clock_ns: cursor.i64("session anchor clock")?,
+                unix_epoch_ns: cursor.i128("session anchor Unix epoch")?,
+                capture_uncertainty_ns: cursor.u64("session anchor uncertainty")?,
+            }),
+        )
+        .map_err(|_| WalError::InvalidSessionAnchor)?,
+        2 => SessionAnchorV1::new(TimeDomain::Virtual, None)
+            .map_err(|_| WalError::InvalidSessionAnchor)?,
+        _ => return Err(WalError::InvalidSessionAnchor),
+    };
     let count = usize::from(cursor.u16("schema fingerprint count")?);
     let mut table_schema_fingerprints = Vec::with_capacity(count);
     for _ in 0..count {
@@ -915,6 +958,7 @@ fn decode_segment_header(bytes: &[u8]) -> Result<(WalSegmentHeaderV1, usize), Wa
         genesis_hash,
         writer_compatibility_id,
         first_record_seq,
+        session_anchor,
         table_schema_fingerprints,
     )?;
     if canonical.segment_id != segment_id {
@@ -1167,6 +1211,12 @@ impl<'a> Cursor<'a> {
         ))
     }
 
+    fn i128(&mut self, field: &'static str) -> Result<i128, WalError> {
+        Ok(i128::from_be_bytes(
+            self.take(16, field)?.try_into().expect("checked length"),
+        ))
+    }
+
     fn array16(&mut self, field: &'static str) -> Result<[u8; 16], WalError> {
         Ok(self.take(16, field)?.try_into().expect("checked length"))
     }
@@ -1245,6 +1295,7 @@ mod tests {
             Digest::from_bytes([0x66; 32]),
             Digest::from_bytes([0x77; 32]),
             first_record_seq,
+            SessionAnchorV1::new(TimeDomain::Virtual, None).unwrap(),
             vec![
                 (TableId::Samples, Digest::from_bytes([0x88; 32])),
                 (TableId::Attempts, Digest::from_bytes([0x99; 32])),
