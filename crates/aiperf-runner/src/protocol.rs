@@ -152,6 +152,7 @@ impl RunnerCapabilities {
                 "python_accuracy_evaluator",
                 "raw_records",
                 "http_transport_policy",
+                "grpc_transport_policy",
                 "thread_per_core_execution",
                 "network_latency",
                 "server_metrics",
@@ -220,8 +221,11 @@ pub struct EvaluationHostOperationCapability {
     pub family: String,
     /// Request-schema SHA-256.
     pub request_schema_sha256: String,
-    /// Response/event-schema SHA-256.
+    /// Terminal-response schema SHA-256.
     pub response_schema_sha256: String,
+    /// Incremental-event schema SHA-256 when true streaming is executable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_schema_sha256: Option<String>,
     /// Whether the adapter emits real incremental typed events.
     pub true_streaming: bool,
     /// Endpoint capabilities required for route compatibility.

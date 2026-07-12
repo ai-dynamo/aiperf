@@ -292,6 +292,7 @@ pub fn build_evaluation_capability_inventory<'a>(
                     family: descriptor.family.as_str().to_owned(),
                     request_schema_sha256: descriptor.request_schema_fingerprint.clone(),
                     response_schema_sha256: descriptor.response_schema_fingerprint.clone(),
+                    stream_schema_sha256: descriptor.stream_schema_fingerprint.clone(),
                     true_streaming: descriptor.true_streaming,
                     endpoint_capabilities: descriptor
                         .endpoint_capabilities
@@ -305,8 +306,8 @@ pub fn build_evaluation_capability_inventory<'a>(
     host_operations.sort_by(|left, right| left.0.cmp(&right.0));
     let executable_operations = host_operations
         .iter()
-        .map(|(id, _)| id.clone())
-        .collect::<BTreeSet<_>>();
+        .map(|(id, capability)| (id.clone(), capability.clone()))
+        .collect::<BTreeMap<_, _>>();
     let host_operation_capabilities = host_operations
         .into_iter()
         .map(|(_, capability)| capability)
@@ -329,10 +330,15 @@ pub fn build_evaluation_capability_inventory<'a>(
             .iter()
             .map(|operation| operation.operation_id.as_str().to_owned())
             .collect::<Vec<_>>();
-        let operations = declared_operations
+        let operations = descriptor
+            .operations
             .iter()
-            .filter(|operation| executable_operations.contains(operation.as_str()))
-            .cloned()
+            .filter(|operation| {
+                executable_operations
+                    .get(operation.operation_id.as_str())
+                    .is_some_and(|host| operation_matches_host(operation, host))
+            })
+            .map(|operation| operation.operation_id.as_str().to_owned())
             .collect::<Vec<_>>();
         let distributions = descriptor
             .distributions
@@ -395,6 +401,25 @@ pub fn build_evaluation_capability_inventory<'a>(
         host_operations: host_operation_capabilities,
         supported_combinations,
     })
+}
+
+fn operation_matches_host(
+    provider: &aiperf_accuracy::EvaluationOperationDescriptor,
+    host: &EvaluationHostOperationCapability,
+) -> bool {
+    provider.input_schema_sha256 == host.request_schema_sha256
+        && provider.output_schema_sha256 == host.response_schema_sha256
+        && provider.stream_schema_sha256 == host.stream_schema_sha256
+        && provider
+            .endpoint_capabilities
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            == host
+                .endpoint_capabilities
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>()
 }
 
 #[cfg(test)]
@@ -467,6 +492,30 @@ mod tests {
             },
             "unit_concurrency": 2
         })
+    }
+
+    fn matching_generate_descriptor(
+        providers: &EvaluationProviderRegistry,
+    ) -> HostOperationDescriptor {
+        let operation = providers
+            .descriptors()
+            .next()
+            .expect("fixture provider")
+            .operations
+            .iter()
+            .find(|operation| operation.operation_id.as_str() == "model.generate")
+            .expect("stock provider declares model.generate");
+        HostOperationDescriptor {
+            operation_id: RegisteredOperationId::new(operation.operation_id.as_str()).unwrap(),
+            family: HostOperationFamily::new("inference").unwrap(),
+            request_schema_fingerprint: operation.input_schema_sha256.clone(),
+            response_schema_fingerprint: operation.output_schema_sha256.clone(),
+            stream_schema_fingerprint: operation.stream_schema_sha256.clone(),
+            true_streaming: operation.stream_schema_sha256.is_some(),
+            max_request_bytes: 1024,
+            max_response_bytes: 1024,
+            endpoint_capabilities: operation.endpoint_capabilities.iter().cloned().collect(),
+        }
     }
 
     #[test]
@@ -576,18 +625,8 @@ mod tests {
 
     #[test]
     fn capabilities_publish_only_linked_operations_and_proven_distributions() {
-        let digest = "b".repeat(64);
-        let generate = HostOperationDescriptor {
-            operation_id: RegisteredOperationId::new("model.generate").unwrap(),
-            family: HostOperationFamily::new("inference").unwrap(),
-            request_schema_fingerprint: digest.clone(),
-            response_schema_fingerprint: digest,
-            true_streaming: true,
-            max_request_bytes: 1024,
-            max_response_bytes: 1024,
-            endpoint_capabilities: BTreeSet::from(["model_generate".to_owned()]),
-        };
         let providers = providers();
+        let generate = matching_generate_descriptor(providers.as_ref());
         let unavailable = build_evaluation_capability_inventory(
             providers.as_ref(),
             [&generate],
@@ -617,5 +656,44 @@ mod tests {
                 .operations
                 .contains(&"model.complete".to_owned())
         );
+        assert_eq!(
+            available.host_operations[0].stream_schema_sha256,
+            generate.stream_schema_fingerprint
+        );
+    }
+
+    #[test]
+    fn capabilities_reject_id_only_or_partial_schema_matches() {
+        let providers = providers();
+        let matching = matching_generate_descriptor(providers.as_ref());
+
+        let mut mismatches = Vec::new();
+        let mut request = matching.clone();
+        request.request_schema_fingerprint = "1".repeat(64);
+        mismatches.push(request);
+        let mut response = matching.clone();
+        response.response_schema_fingerprint = "2".repeat(64);
+        mismatches.push(response);
+        let mut stream = matching.clone();
+        stream.stream_schema_fingerprint = Some("3".repeat(64));
+        mismatches.push(stream);
+        let mut endpoint_capabilities = matching;
+        endpoint_capabilities.endpoint_capabilities = BTreeSet::from(["model.complete".to_owned()]);
+        mismatches.push(endpoint_capabilities);
+
+        for mismatch in &mismatches {
+            let inventory = build_evaluation_capability_inventory(
+                providers.as_ref(),
+                [mismatch],
+                std::iter::empty(),
+                "strict_process_tree_v1",
+                true,
+            )
+            .unwrap();
+            assert!(
+                inventory.supported_combinations.is_empty(),
+                "ID-only match overclaimed executable capability for {mismatch:?}"
+            );
+        }
     }
 }
