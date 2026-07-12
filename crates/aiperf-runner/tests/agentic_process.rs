@@ -734,7 +734,7 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
             "models": {"items": [{"name": "primary-model"}]},
             "endpoints": {"profiles": [{
                 "id": "default",
-                "type": "chat",
+                "type": "chat_completions",
                 "urls": [server.base_url.clone()],
                 "streaming": true,
                 "use_legacy_max_tokens": false,
@@ -808,6 +808,14 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
     assert_eq!(report_path, artifact_target.join("native-v2.json"));
     let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
     assert_eq!(report["schema_version"], "2.0");
+    assert_eq!(report["run"]["distribution_id"], distribution_id);
+    assert_eq!(report["run"]["backend"], "online_http");
+    assert_eq!(report["run"]["workload"], "agentic");
+    assert_eq!(report["run"]["extensions"], json!([]));
+    assert_eq!(
+        report["run"]["endpoint_profiles"],
+        json!([{"profile_id": "default", "endpoint_id": "chat"}])
+    );
     assert_eq!(report["run"]["mode"], "agentic_accuracy");
     assert_eq!(report["agentic"]["summary"]["episode_count"], 3);
     assert_eq!(report["agentic"]["summary"]["completed_count"], 1);

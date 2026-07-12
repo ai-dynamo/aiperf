@@ -170,6 +170,20 @@ fn statically_linked_extension_is_selected_in_a_fresh_runner_process() {
     assert_eq!(proof["distribution_id"], DISTRIBUTION_ID);
     assert_eq!(proof["backend"], "dynamo_offline");
     assert_eq!(proof["workload"], "scheduled");
+    assert_eq!(proof["report_distribution_id"], DISTRIBUTION_ID);
+    assert_eq!(proof["report_backend"], "dynamo_offline");
+    assert_eq!(proof["report_workload"], "scheduled");
+    assert_eq!(
+        proof["report_extensions"],
+        serde_json::json!([{"name": EXTENSION_NAME}])
+    );
+    assert_eq!(
+        proof["report_endpoint_profiles"],
+        serde_json::json!([{
+            "profile_id": "default",
+            "endpoint_id": PREPARED_ONLY_ENDPOINT_ID
+        }])
+    );
 }
 
 #[test]
@@ -234,6 +248,20 @@ fn statically_linked_extension_child() {
     let report: serde_json::Value =
         serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
+    assert_eq!(report["run"]["distribution_id"], DISTRIBUTION_ID);
+    assert_eq!(report["run"]["backend"], "dynamo_offline");
+    assert_eq!(report["run"]["workload"], "scheduled");
+    assert_eq!(
+        report["run"]["extensions"],
+        serde_json::json!([{"name": EXTENSION_NAME}])
+    );
+    assert_eq!(
+        report["run"]["endpoint_profiles"],
+        serde_json::json!([{
+            "profile_id": "default",
+            "endpoint_id": PREPARED_ONLY_ENDPOINT_ID
+        }])
+    );
     let request_count = report["metrics"]["request_count"]["series"][0]["stats"]["total"]
         .as_f64()
         .unwrap();
@@ -253,7 +281,12 @@ fn statically_linked_extension_child() {
             "advertised_extensions": capabilities.extensions,
             "distribution_id": capabilities.distribution_id,
             "backend": terminal.provenance["backend"],
-            "workload": terminal.provenance["workload"]
+            "workload": terminal.provenance["workload"],
+            "report_distribution_id": report["run"]["distribution_id"],
+            "report_backend": report["run"]["backend"],
+            "report_workload": report["run"]["workload"],
+            "report_extensions": report["run"]["extensions"],
+            "report_endpoint_profiles": report["run"]["endpoint_profiles"]
         }))
         .unwrap(),
     )

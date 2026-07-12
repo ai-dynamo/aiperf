@@ -184,16 +184,28 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
             "identity": {"benchmark_id": "online-v2-graph", "random_seed": 7},
             "artifact_target": artifact_target,
             "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
-            "endpoints": {"profiles": [{
-                "id": "default",
-                "type": "chat",
-                "urls": [endpoint],
-                "streaming": true,
-                "use_server_token_count": true,
-                "wait_for_model_timeout": 0.0,
-                "wait_for_model_interval": 5.0,
-                "wait_for_model_mode": "inference"
-            }]},
+            "endpoints": {"profiles": [
+                {
+                    "id": "judge",
+                    "type": "chat_completions",
+                    "urls": [endpoint],
+                    "streaming": true,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                },
+                {
+                    "id": "default",
+                    "type": "chat",
+                    "urls": [endpoint],
+                    "streaming": true,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                }
+            ]},
             "backend": {"type": "online_http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 1,
@@ -253,6 +265,20 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
     let report: Value =
         serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
             .unwrap();
+    assert_eq!(
+        report["run"]["distribution_id"],
+        capabilities["distribution_id"]
+    );
+    assert_eq!(report["run"]["backend"], "online_http");
+    assert_eq!(report["run"]["workload"], "graph");
+    assert_eq!(report["run"]["extensions"], json!([]));
+    assert_eq!(
+        report["run"]["endpoint_profiles"],
+        json!([
+            {"profile_id": "judge", "endpoint_id": "chat"},
+            {"profile_id": "default", "endpoint_id": "chat"}
+        ])
+    );
     assert_eq!(report["run"]["mode"], "graph");
     assert_eq!(
         report["metrics"]["request_count"]["series"][0]["stats"]["total"],

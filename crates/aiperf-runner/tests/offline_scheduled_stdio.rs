@@ -131,7 +131,7 @@ fn envelope(
             "models": {"items": [{"name": "mock-model"}]},
             "endpoints": {"profiles": [{
                 "id": "default",
-                "type": "chat",
+                "type": "chat_completions",
                 "urls": ["http://127.0.0.1:9"]
             }]},
             "backend": {
@@ -175,7 +175,7 @@ fn target(name: &str) -> PathBuf {
     ))
 }
 
-fn assert_success(output: Output, target: &Path, workload: &str) -> Value {
+fn assert_success(output: Output, target: &Path, distribution_id: &str, workload: &str) -> Value {
     let terminal = one_line(&output);
     assert!(
         output.status.success(),
@@ -193,6 +193,14 @@ fn assert_success(output: Output, target: &Path, workload: &str) -> Value {
     let native: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
+    assert_eq!(native["run"]["distribution_id"], distribution_id);
+    assert_eq!(native["run"]["backend"], "dynamo_offline");
+    assert_eq!(native["run"]["workload"], workload);
+    assert_eq!(native["run"]["extensions"], json!([]));
+    assert_eq!(
+        native["run"]["endpoint_profiles"],
+        json!([{"profile_id": "default", "endpoint_id": "chat"}])
+    );
     assert_eq!(native["run"]["mode"], "offline:scheduled");
     assert_eq!(native["run"]["dynamo"]["clock"], "sim");
     assert_eq!(native["run"]["dynamo"]["parity"]["shared_fields"], 77);
@@ -250,7 +258,7 @@ fn warmup_and_profiling_share_one_engine_clock_and_exact_live_parity_collector()
     assert_eq!(validation_terminal["success"], true);
     assert!(!target.exists(), "scheduled validation created artifacts");
 
-    let terminal = assert_success(run(&request), &target, "scheduled");
+    let terminal = assert_success(run(&request), &target, &distribution_id, "scheduled");
     assert_eq!(terminal["provenance"]["phase_count"], "2");
     assert_eq!(terminal["provenance"]["topology"], "aggregated");
     assert_eq!(terminal["provenance"]["router"], "kv");
@@ -364,7 +372,7 @@ fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
             dataset,
             json!([phase]),
         );
-        assert_success(run(&request), &target, "scheduled");
+        assert_success(run(&request), &target, &distribution_id, "scheduled");
         let native: Value =
             serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
         assert_eq!(
@@ -466,7 +474,7 @@ fn every_adaptive_actuator_executes_and_commits_schema_v2_artifacts() {
             },
             json!([phase]),
         );
-        assert_success(run(&request), &target, "scheduled");
+        assert_success(run(&request), &target, &distribution_id, "scheduled");
         let summary: Value = serde_json::from_slice(
             &std::fs::read(target.join("adaptive_scale_summary.json")).unwrap(),
         )

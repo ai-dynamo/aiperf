@@ -42,7 +42,7 @@ fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Va
             "models": {"items": [{"name": "mock-model"}]},
             "endpoints": {"profiles": [{
                 "id": "default",
-                "type": "chat",
+                "type": "chat_completions",
                 "urls": ["http://127.0.0.1:9"]
             }]},
             "backend": {
@@ -204,6 +204,14 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     assert!(report_path.is_file());
     let native: Value = serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
+    assert_eq!(native["run"]["distribution_id"], distribution_id);
+    assert_eq!(native["run"]["backend"], "dynamo_offline");
+    assert_eq!(native["run"]["workload"], "graph");
+    assert_eq!(native["run"]["extensions"], json!([]));
+    assert_eq!(
+        native["run"]["endpoint_profiles"],
+        json!([{"profile_id": "default", "endpoint_id": "chat"}])
+    );
     assert_eq!(native["run"]["mode"], "offline:graph");
     assert_eq!(native["run"]["graph"]["input_format"], "dag_jsonl");
     assert_eq!(native["run"]["graph"]["root_count"], 1);
