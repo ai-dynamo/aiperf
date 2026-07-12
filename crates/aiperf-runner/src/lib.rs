@@ -33,6 +33,7 @@ pub mod redaction;
 pub mod registry;
 mod server_metrics;
 pub mod sidecar_input;
+pub mod telemetry_watch;
 pub mod turn_execution;
 
 pub use distribution_identity::current_distribution_id;
