@@ -1,15 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ExecutionFlavor, FlowChannel } from "./architecture";
+import type {
+  ArchitectureCatalog,
+  ExecutionFlavor,
+  FlowChannel,
+  GraphEdge,
+  GraphNode,
+} from "./architecture";
 
 export interface FlowTimelineEvent {
   id: string;
   step: number;
   channel: FlowChannel;
   flavor: ExecutionFlavor | "shared";
-  title: string;
+  sceneId: string;
+  reference: FlowTimelineReference;
+  label: string;
 }
+
+export type FlowTimelineReference =
+  | { kind: "node"; nodeId: string }
+  | { kind: "edge"; edgeId: string };
 
 export interface TimelinePlaybackState {
   isPlaying: boolean;
@@ -23,47 +35,66 @@ export interface TimelineSemanticState {
   completedEvents: FlowTimelineEvent[];
 }
 
-interface TimelineEventDefinition {
-  id: string;
-  channel: FlowChannel;
-  title: string;
-}
+type TimelineEventDefinition =
+  | {
+      sceneId: string;
+      channel: FlowChannel;
+      reference: Extract<FlowTimelineReference, { kind: "node" }>;
+    }
+  | {
+      sceneId: string;
+      reference: Extract<FlowTimelineReference, { kind: "edge" }>;
+    };
 
-const SHARED_TIMELINE_DEFINITIONS: readonly TimelineEventDefinition[] = [
+const SHARED_TIMELINE_PREFIX: readonly TimelineEventDefinition[] = [
   {
-    id: "shared.control.config-v2-projected",
+    sceneId: "scene.runner-protocol-registries",
     channel: "control",
-    title: "Config v2 request projected",
+    reference: {
+      kind: "node",
+      nodeId: "node.runner-protocol-registries",
+    },
   },
   {
-    id: "shared.control.runner-validated",
+    sceneId: "scene.scheduling-phase-lifecycle",
     channel: "control",
-    title: "Runner validates authored operation",
+    reference: {
+      kind: "node",
+      nodeId: "node.scheduling-phase-lifecycle",
+    },
   },
   {
-    id: "shared.request.workload-materialized",
+    sceneId: "scene.dataset-segment-pipeline",
     channel: "request_data",
-    title: "Workload and request materialization",
+    reference: {
+      kind: "node",
+      nodeId: "node.dataset-segment-pipeline",
+    },
   },
+];
+
+const SHARED_TIMELINE_SUFFIX: readonly TimelineEventDefinition[] = [
   {
-    id: "shared.token.first-token-observed",
+    sceneId: "scene.runtime-composition",
     channel: "token",
-    title: "First token observed",
+    reference: {
+      kind: "node",
+      nodeId: "node.request-sink-seam",
+    },
   },
   {
-    id: "shared.token.stream-complete",
-    channel: "token",
-    title: "Token stream completion",
+    sceneId: "scene.metrics-telemetry",
+    reference: {
+      kind: "edge",
+      edgeId: "edge.runtime.dispatch.metrics",
+    },
   },
   {
-    id: "shared.telemetry.metrics-aggregated",
-    channel: "telemetry",
-    title: "Metrics and telemetry aggregation",
-  },
-  {
-    id: "shared.result.native-report-emitted",
-    channel: "report_result",
-    title: "Native report emitted",
+    sceneId: "scene.metrics-telemetry",
+    reference: {
+      kind: "edge",
+      edgeId: "edge.metrics.to.result",
+    },
   },
 ];
 
@@ -73,62 +104,47 @@ const FLAVOR_TIMELINE_DEFINITIONS: Record<
 > = {
   native_http: [
     {
-      id: "branch.native-http.transport-selected",
-      channel: "control",
-      title: "HTTP transport selected",
-    },
-    {
-      id: "branch.native-http.sse-response",
-      channel: "request_data",
-      title: "SSE response stream dispatched",
+      sceneId: "scene.endpoint-bindings-transports",
+      reference: {
+        kind: "edge",
+        edgeId: "edge.dataset.to.endpoint",
+      },
     },
   ],
   native_grpc: [
     {
-      id: "branch.native-grpc.transport-selected",
-      channel: "control",
-      title: "gRPC transport selected",
-    },
-    {
-      id: "branch.native-grpc.bidi-stream",
-      channel: "request_data",
-      title: "Bidirectional gRPC stream dispatched",
+      sceneId: "scene.endpoint-bindings-transports",
+      reference: {
+        kind: "edge",
+        edgeId: "edge.dataset.to.endpoint",
+      },
     },
   ],
   online_mock: [
     {
-      id: "branch.online-mock.target-selected",
-      channel: "control",
-      title: "Online mock target selected",
-    },
-    {
-      id: "branch.online-mock.synthetic-latency",
-      channel: "telemetry",
-      title: "Synthetic latency and backend telemetry",
+      sceneId: "scene.endpoint-bindings-transports",
+      reference: {
+        kind: "edge",
+        edgeId: "edge.dataset.to.endpoint",
+      },
     },
   ],
   dynamo_offline: [
     {
-      id: "branch.dynamo-offline.sim-clock",
-      channel: "control",
-      title: "Virtual SimClock drives replay",
-    },
-    {
-      id: "branch.dynamo-offline.parity-gate",
-      channel: "report_result",
-      title: "Common-summary parity gate applied",
+      sceneId: "scene.runtime-composition",
+      reference: {
+        kind: "edge",
+        edgeId: "edge.dynamo.offline.sim-clock.replay",
+      },
     },
   ],
   dynamo_online: [
     {
-      id: "branch.dynamo-online.replay-online",
-      channel: "control",
-      title: "Replay mode set to online",
-    },
-    {
-      id: "branch.dynamo-online.wall-clock-dispatch",
-      channel: "request_data",
-      title: "Wall-clock replay dispatch",
+      sceneId: "scene.runtime-composition",
+      reference: {
+        kind: "edge",
+        edgeId: "edge.dynamo.online.replay-mode",
+      },
     },
   ],
 };
@@ -138,17 +154,103 @@ export const DEFAULT_TIMELINE_PLAYBACK: TimelinePlaybackState = {
   position: 0,
 };
 
+function resolveTimelineEvent(
+  catalog: ArchitectureCatalog,
+  definition: TimelineEventDefinition,
+  flavor: ExecutionFlavor | "shared",
+): Omit<FlowTimelineEvent, "step"> {
+  const scene = catalog.graphScenes.find(({ id }) => id === definition.sceneId);
+  if (!scene) {
+    throw new Error(`timeline references missing scene ${definition.sceneId}`);
+  }
+
+  let channel: FlowChannel;
+  let label: string;
+  let referenceId: string;
+  const reference = definition.reference;
+  if (reference.kind === "node") {
+    const node = catalog.graphNodes.find(
+      ({ id }) => id === reference.nodeId,
+    );
+    assertNodeInScene(scene.nodeIds, reference.nodeId, node);
+    if (!("channel" in definition)) {
+      throw new Error(`timeline node ${reference.nodeId} requires a channel`);
+    }
+    channel = definition.channel;
+    label = node.title.developer;
+    referenceId = node.id;
+  } else {
+    const edge = catalog.graphEdges.find(
+      ({ id }) => id === reference.edgeId,
+    );
+    assertEdgeInScene(scene.edgeIds, reference.edgeId, edge);
+    channel = edge.channel;
+    label = edge.protocol;
+    referenceId = edge.id;
+  }
+
+  return {
+    id: `${flavor}.${definition.reference.kind}.${referenceId}`,
+    channel,
+    flavor,
+    sceneId: scene.id,
+    reference: definition.reference,
+    label,
+  };
+}
+
+function assertNodeInScene(
+  sceneNodeIds: readonly string[],
+  nodeId: string,
+  node: GraphNode | undefined,
+): asserts node is GraphNode {
+  if (!node) {
+    throw new Error(`timeline references missing node ${nodeId}`);
+  }
+  if (!sceneNodeIds.includes(nodeId)) {
+    throw new Error(`timeline scene does not contain node ${nodeId}`);
+  }
+}
+
+function assertEdgeInScene(
+  sceneEdgeIds: readonly string[],
+  edgeId: string,
+  edge: GraphEdge | undefined,
+): asserts edge is GraphEdge {
+  if (!edge) {
+    throw new Error(`timeline references missing edge ${edgeId}`);
+  }
+  if (!sceneEdgeIds.includes(edgeId)) {
+    throw new Error(`timeline scene does not contain edge ${edgeId}`);
+  }
+}
+
 function toTimelineEvents(
+  catalog: ArchitectureCatalog,
   definitions: readonly TimelineEventDefinition[],
   flavor: ExecutionFlavor | "shared",
 ): FlowTimelineEvent[] {
-  return definitions.map((definition, step) => ({ ...definition, step, flavor }));
+  return definitions.map((definition, step) => ({
+    ...resolveTimelineEvent(catalog, definition, flavor),
+    step,
+  }));
 }
 
-export function buildFlowTimeline(flavor: ExecutionFlavor): FlowTimelineEvent[] {
-  const shared = toTimelineEvents(SHARED_TIMELINE_DEFINITIONS, "shared");
-  const branch = toTimelineEvents(FLAVOR_TIMELINE_DEFINITIONS[flavor], flavor);
-  return [...shared, ...branch].map((event, step) => ({ ...event, step }));
+export function buildFlowTimeline(
+  catalog: ArchitectureCatalog,
+  flavor: ExecutionFlavor,
+): FlowTimelineEvent[] {
+  const prefix = toTimelineEvents(catalog, SHARED_TIMELINE_PREFIX, "shared");
+  const branch = toTimelineEvents(
+    catalog,
+    FLAVOR_TIMELINE_DEFINITIONS[flavor],
+    flavor,
+  );
+  const suffix = toTimelineEvents(catalog, SHARED_TIMELINE_SUFFIX, "shared");
+  return [...prefix, ...branch, ...suffix].map((event, step) => ({
+    ...event,
+    step,
+  }));
 }
 
 export function clampTimelinePosition(position: number): number {
@@ -180,7 +282,6 @@ export function scrubTimeline(
 export function resolveTimelineSemanticState(
   timeline: readonly FlowTimelineEvent[],
   position: number,
-  reducedMotion: boolean,
 ): TimelineSemanticState {
   if (timeline.length === 0) {
     throw new Error("timeline requires at least one event");
@@ -188,9 +289,7 @@ export function resolveTimelineSemanticState(
   const clampedPosition = clampTimelinePosition(position);
   const lastIndex = timeline.length - 1;
   const eventProgress = clampedPosition * lastIndex;
-  const nextIndex = reducedMotion
-    ? Math.round(eventProgress)
-    : Math.floor(eventProgress);
+  const nextIndex = Math.floor(eventProgress);
   const eventIndex = Math.max(0, Math.min(lastIndex, nextIndex));
   return {
     position: clampedPosition,

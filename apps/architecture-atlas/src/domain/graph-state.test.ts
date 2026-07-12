@@ -10,6 +10,7 @@ import {
   clearStoredGraphState,
   decodeGraphStateFromUrl,
   encodeGraphStateForUrl,
+  graphStateSchema,
   mergeLayoutStateWithCanonical,
   readStoredGraphState,
   resetManualLayoutState,
@@ -27,15 +28,6 @@ function canonicalDomain(): CanonicalGraphStateDomain {
       sceneId: "scene.runtime-composition",
       timelinePosition: 0,
     }),
-    edgeEndpoints: new Map([
-      [
-        "edge.runtime.dispatch.metrics",
-        {
-          sourceNodeId: "node.runtime-composition",
-          targetNodeId: "node.metrics-telemetry",
-        },
-      ],
-    ]),
     edgeIds: new Set(["edge.runtime.dispatch.metrics"]),
     nodeIds: new Set(["node.runtime-composition", "node.metrics-telemetry"]),
     sceneIds: new Set(["scene.runtime-composition", "scene.metrics-telemetry"]),
@@ -52,8 +44,6 @@ describe("graph share state", () => {
         {
           edgeId: "edge.runtime.dispatch.metrics",
           points: [{ x: 15, y: 30 }],
-          sourceNodeId: "node.runtime-composition",
-          targetNodeId: "node.metrics-telemetry",
         },
       ],
       expandedNodeIds: ["node.runtime-composition"],
@@ -69,7 +59,60 @@ describe("graph share state", () => {
 
     const decoded = decodeGraphStateFromUrl(encoded, canonicalDomain());
     expect(decoded.state).toEqual(state);
+    expect(decoded.state.edgeWaypoints[0]).toEqual({
+      edgeId: "edge.runtime.dispatch.metrics",
+      points: [{ x: 15, y: 30 }],
+    });
+    expect(decoded.state.edgeWaypoints[0]).not.toHaveProperty("sourceNodeId");
+    expect(decoded.state.edgeWaypoints[0]).not.toHaveProperty("targetNodeId");
     expect(decoded.notice).toBeUndefined();
+  });
+
+  it("rejects endpoint semantics in waypoint state", () => {
+    const candidate = {
+      ...canonicalGraphState({
+        audience: "developer",
+        primaryFlavor: "native_http",
+        sceneId: "scene.runtime-composition",
+      }),
+      edgeWaypoints: [
+        {
+          edgeId: "edge.runtime.dispatch.metrics",
+          points: [{ x: 1, y: 2 }],
+          sourceNodeId: "node.runtime-composition",
+          targetNodeId: "node.metrics-telemetry",
+        },
+      ],
+    };
+
+    expect(graphStateSchema.safeParse(candidate).success).toBe(false);
+  });
+
+  it("rejects waypoint edge IDs absent from the canonical graph", () => {
+    const state = canonicalGraphState({
+      audience: "developer",
+      edgeWaypoints: [
+        {
+          edgeId: "edge.unknown",
+          points: [{ x: 1, y: 2 }],
+        },
+      ],
+      primaryFlavor: "native_http",
+      sceneId: "scene.runtime-composition",
+    });
+
+    const resolved = resolveGraphState({
+      canonical: canonicalDomain(),
+      storage: {
+        getItem: () => null,
+        removeItem: () => undefined,
+        setItem: () => undefined,
+      },
+      urlState: encodeGraphStateForUrl(state),
+    });
+
+    expect(resolved.source).toBe("canonical");
+    expect(resolved.notice?.code).toBe("invalid_url_state");
   });
 
   it("prefers valid URL state over local state", () => {
@@ -156,7 +199,7 @@ describe("graph share state", () => {
     expect(resolved.notice?.code).toBe("invalid_url_state");
   });
 
-  it("rejects semantic graph content and endpoint tampering from URL state", () => {
+  it("rejects semantic graph content from URL state", () => {
     const canonical = canonicalDomain();
     const encoded = encodeURIComponent(
       JSON.stringify({
@@ -168,14 +211,7 @@ describe("graph share state", () => {
         expandedNodeIds: [],
         focusedEntityId: null,
         nodePositions: [],
-        edgeWaypoints: [
-          {
-            edgeId: "edge.runtime.dispatch.metrics",
-            points: [{ x: 1, y: 2 }],
-            sourceNodeId: "node.hijacked",
-            targetNodeId: "node.metrics-telemetry",
-          },
-        ],
+        edgeWaypoints: [],
         timelinePosition: 0,
         graphNodes: [{ id: "node.injected", title: "forbidden semantic content" }],
       }),
@@ -199,8 +235,6 @@ describe("layout state helpers", () => {
           {
             edgeId: "edge.runtime.dispatch.metrics",
             points: [{ x: 10, y: 10 }],
-            sourceNodeId: "node.runtime-composition",
-            targetNodeId: "node.metrics-telemetry",
           },
         ],
         nodePositions: [
@@ -213,8 +247,6 @@ describe("layout state helpers", () => {
           {
             edgeId: "edge.runtime.dispatch.metrics",
             points: [{ x: 70, y: 80 }],
-            sourceNodeId: "node.runtime-composition",
-            targetNodeId: "node.metrics-telemetry",
           },
         ],
         nodePositions: [{ nodeId: "node.metrics-telemetry", x: 100, y: 120 }],
@@ -230,8 +262,6 @@ describe("layout state helpers", () => {
       {
         edgeId: "edge.runtime.dispatch.metrics",
         points: [{ x: 70, y: 80 }],
-        sourceNodeId: "node.runtime-composition",
-        targetNodeId: "node.metrics-telemetry",
       },
     ]);
   });
@@ -244,8 +274,6 @@ describe("layout state helpers", () => {
           {
             edgeId: "edge.runtime.dispatch.metrics",
             points: [{ x: 7, y: 11 }],
-            sourceNodeId: "node.runtime-composition",
-            targetNodeId: "node.metrics-telemetry",
           },
         ],
         expandedNodeIds: ["node.runtime-composition"],

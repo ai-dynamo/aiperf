@@ -29,8 +29,6 @@ const edgeWaypointSchema = z
   .object({
     edgeId: architectureIdSchema,
     points: z.array(coordinateSchema),
-    sourceNodeId: architectureIdSchema,
-    targetNodeId: architectureIdSchema,
   })
   .strict();
 
@@ -58,13 +56,6 @@ export interface CanonicalGraphStateDomain {
   sceneIds: ReadonlySet<string>;
   nodeIds: ReadonlySet<string>;
   edgeIds: ReadonlySet<string>;
-  edgeEndpoints: ReadonlyMap<
-    string,
-    {
-      sourceNodeId: string;
-      targetNodeId: string;
-    }
-  >;
   supportedFlavors: ReadonlySet<ExecutionFlavor>;
 }
 
@@ -250,7 +241,7 @@ export function mergeLayoutStateWithCanonical(
     edgeWaypoints: stableEdgeWaypoints([
       ...canonicalLayout.edgeWaypoints,
       ...manualLayout.edgeWaypoints,
-    ]).filter((waypoint) => hasMatchingCanonicalEndpoints(waypoint, canonical)),
+    ]).filter(({ edgeId }) => canonical.edgeIds.has(edgeId)),
   };
 }
 
@@ -338,9 +329,7 @@ function sanitizeGraphState(
     return null;
   }
   if (
-    state.edgeWaypoints.some(
-      (waypoint) => !hasMatchingCanonicalEndpoints(waypoint, canonical),
-    )
+    state.edgeWaypoints.some(({ edgeId }) => !canonical.edgeIds.has(edgeId))
   ) {
     return null;
   }
@@ -351,18 +340,6 @@ function sanitizeGraphState(
     edgeWaypoints: stableEdgeWaypoints(state.edgeWaypoints),
     timelinePosition: normalizeTimelinePosition(state.timelinePosition),
   };
-}
-
-function hasMatchingCanonicalEndpoints(
-  waypoint: EdgeWaypointOverride,
-  canonical: CanonicalGraphStateDomain,
-): boolean {
-  const expected = canonical.edgeEndpoints.get(waypoint.edgeId);
-  return (
-    expected !== undefined &&
-    expected.sourceNodeId === waypoint.sourceNodeId &&
-    expected.targetNodeId === waypoint.targetNodeId
-  );
 }
 
 function sortedUniqueIds(ids: readonly string[]): string[] {
