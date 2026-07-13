@@ -13,12 +13,6 @@ import type {
   GraphTraceMode,
 } from "./types";
 
-const flavorColors: Record<GraphFlavorClass, string> = {
-  "compare-only": "#b691d4",
-  "primary-only": "#7aa9d6",
-  shared: "#94d340",
-};
-
 export interface RuntimeGraphNodeData extends Record<string, unknown> {
   audience: AudienceLevel;
   expanded: boolean;
@@ -67,18 +61,6 @@ export function RuntimeGraphNode({
       data-trace-mode={data.traceMode}
       data-testid={`graph-node-${data.node.id}`}
       style={{
-        borderColor:
-          data.node.status.state === "planned"
-            ? "rgba(239, 83, 80, 0.5)"
-            : "var(--panel-border)",
-        borderStyle: data.node.status.state === "planned" ? "dashed" : "solid",
-        borderWidth: 1,
-        borderLeftWidth: 3,
-        borderLeftStyle: "solid",
-        borderLeftColor:
-          data.node.status.state === "planned"
-            ? "#ef5350"
-            : flavorColors[data.flavorClass],
         opacity:
           data.traceMode !== "none" && data.pathState === "default" ? 0.35 : 1,
       }}

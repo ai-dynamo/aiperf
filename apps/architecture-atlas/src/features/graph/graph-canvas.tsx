@@ -534,7 +534,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           onInit={setInstance}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={24} size={1} />
+          <Background color="#22222c" gap={26} size={1} />
           <Panel className="graph-canvas-controls-panel" position="bottom-left">
             <div aria-label="Graph viewport controls" role="group">
               <Controls showInteractive={false} />
