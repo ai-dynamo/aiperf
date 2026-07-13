@@ -682,17 +682,3 @@ protocol v1": static accuracy is now product-reachable through the same strict
 protocol-v2 `online_http + static_accuracy` pair. The canonical-provider
 boundary and the supervised Python grader/JSONL protocol are unchanged; only the
 runner wire protocol that carries the authored request moved from v1 to v2-only.
-
-
-## Addendum — 2026-07-13
-
-**The accuracy/evaluation/agentic vertical was removed from the codebase.** The
-`aiperf-accuracy` crate, the `aiperf` library's `accuracy`/`agentic`/
-`agentic_gateway`/`evaluation` modules, the runner's `agentic_execution`/
-`evaluation_execution`/`stock_evaluation` modules and their `static_accuracy`/
-`agentic`/`evaluation` workloads and pairs, the `aiperf-metrics` accuracy
-accumulator/analyzer and the evaluation/agentic report DTOs, and the
-`aiperf-dataset` accuracy loader/association were all deleted. Runner
-capabilities no longer advertise any accuracy, agentic, or evaluation
-pair/provider. This spec is retained as historical design; nothing it describes
-is reachable in the current tree.

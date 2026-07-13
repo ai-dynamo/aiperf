@@ -3395,3 +3395,34 @@ Retained:
 - The general control-plane HTTP seam (`aiperf-runner::control_plane_http`) is
   kept; its previously-borrowed `LocalCancellationSignal` type was relocated
   into that module since it is a general execution-factory seam, not archive code.
+
+## Addendum — 2026-07-13 (feature restored)
+
+The withdrawal recorded in the preceding addendum is **reversed**. The durable
+telemetry archive/watch feature has been restored to the workspace and rebuilt
+against the current HEAD; this addendum is authoritative where it conflicts with
+the "feature removed" addendum above. The prior addenda are retained as an
+append-only historical record.
+
+Restored to the state before removal:
+
+- The `aiperf-telemetry-archive` crate in its entirety (`crates/telemetry-archive/`),
+  recovered verbatim from the pre-removal blob. Its 205 unit tests pass.
+- The runner integration modules `telemetry_archive_components.rs`,
+  `telemetry_archive_owner.rs`, `telemetry_attachment.rs`, `telemetry_execution.rs`,
+  `telemetry_operation.rs`, `telemetry_pipeline.rs`, `telemetry_source.rs`, and
+  `telemetry_watch.rs`, plus the `telemetry_watch_v2.rs` runner test (8/8 passing).
+- The `telemetry_watch` workload and its transport/workload pair registration; the
+  base build again advertises the `http + telemetry_watch` pair in capabilities.
+- The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its test
+  (5/5 passing), and its CLI registration in `src/aiperf/cli.py`.
+- The additive native-v2 telemetry-archive report block in
+  `crates/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
+  boundary report types, and `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`).
+
+Reconciliation against intervening refactors: the local `LocalCancellationSignal`
+fork that `control_plane_http.rs` grew while the crate was deleted has been
+reverted; `control_plane_http.rs` again imports the shared
+`aiperf_telemetry_archive::LocalCancellationSignal`, eliminating the
+two-distinct-types collision. Original design intent in the body remains the
+"runner-reachable, final validation pending" state.

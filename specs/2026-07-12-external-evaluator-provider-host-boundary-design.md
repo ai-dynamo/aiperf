@@ -1816,17 +1816,3 @@ Those capabilities remain unsupported until an exact frozen manifest, executable
 adapter, isolation proof, provider parity evidence, product subprocess proof, and the original
 section 15 deletion gates all pass. The long-term full-replacement decision therefore stands, but
 no legacy provider or workload may be deleted on the evidence of these canaries alone.
-
-
-## Addendum — 2026-07-13
-
-**The accuracy/evaluation/agentic vertical was removed from the codebase.** The
-`aiperf-accuracy` crate, the `aiperf` library's `accuracy`/`agentic`/
-`agentic_gateway`/`evaluation` modules, the runner's `agentic_execution`/
-`evaluation_execution`/`stock_evaluation` modules and their `static_accuracy`/
-`agentic`/`evaluation` workloads and pairs, the `aiperf-metrics` accuracy
-accumulator/analyzer and the evaluation/agentic report DTOs, and the
-`aiperf-dataset` accuracy loader/association were all deleted. Runner
-capabilities no longer advertise any accuracy, agentic, or evaluation
-pair/provider. This spec is retained as historical design; nothing it describes
-is reachable in the current tree.

@@ -35,8 +35,11 @@ fallback. The runner exact-image-preflights the requested transport/workload pai
 and direct-loads its one registered adapter. It drives **ONLINE-real** over
 native HTTP or gRPC (including KServe OIP and NVIDIA Riva ASR/TTS/NLP) and
 **ONLINE-mock** over HTTP through one `{transport,
-clock}` seam. The base image registers HTTP scheduled/graph and native gRPC scheduled
-execution. **OFFLINE-mock** is product-
+clock}` seam. The base image registers HTTP scheduled/graph/static-accuracy/
+agentic/telemetry-watch and native gRPC scheduled execution. Exact deployment-owned evaluator
+roots and the Linux isolation closure conditionally add `http +
+evaluation` for only the stock NeMo/OpenBench GSM8K canaries; without those
+roots the provider combinations and pair are absent. **OFFLINE-mock** is product-
 reachable through the same Python Config-v2 path when the runner is built with
 the non-default `dynosim` feature; that image adds `dynosim_offline` and
 `dynosim_online` scheduled and graph pairs. Unregistered pairs fail closed.
@@ -52,8 +55,8 @@ Generated image/video delivery can be externalized through one run-owned native
 content server. Python projects `AIPERF_CONTENT_SERVER_*` into a strict v2
 sidecar input; `aiperf-dataset` injects inline or file/URL publication; the
 runner binds, tracks, and drains `aiperf-content-server`. Audio remains inline.
-Scheduled/graph online HTTP execute the sidecar; native gRPC and
-offline pairs reject it.
+Scheduled/graph/static-accuracy online HTTP execute the sidecar;
+agentic/evaluation, native gRPC, and offline pairs reject it.
 Time lives behind `Clock` (`RealClock` vs
 integer-ns DES `SimClock`); dispatch lives behind `RequestSink<R>` +
 `RequestObserver` into a `TraceCollector`; token callbacks can carry
@@ -91,35 +94,38 @@ native segments and HTTP bodies under that canonical stream.
 | `aiperf-timing` | Clock-native scheduling + phase policy: arrivals, debt-draining slots, stop bounds, user-centric math, ramps, cancellation, URL selection, and `PhaseLifecycle`/`PhaseObserver`/`PhaseRunner`/`PhaseOrchestrator` with grace/drain/force escalation, seamless overlap, cancellation, and progress snapshots; scheduled and graph pair adapters both consume the phase driver | `src/intervals.rs`, `src/slots.rs`, `src/stop.rs`, `src/user_centric.rs`, `src/ramping.rs`, `src/cancellation.rs`, `src/url_selection.rs`, `src/phase/` |
 | `aiperf-adaptive` | transport-neutral adaptive-control leaf: live concurrency/prefill/rate/users actuators, tumbling windows joining arrival/admit/token/usage/terminal observations, authoritative completion-token OSL/ITL reconciliation, SLA evaluation, step policies, `ramp_until_fail` controller, Clock-paced runtime, schema-v2 artifacts | `src/actuator.rs`, `src/window.rs`, `src/sla.rs`, `src/step.rs`, `src/controller.rs`, `src/runtime.rs`, `src/artifacts.rs` |
 | `aiperf-rng` | the hash-derived reproducibility leaf: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, `RandomGenerator` (`Pcg64` + `rand_distr`), alloc-free `HashIdRandomGenerator`, generic sampling seams, and consumed dataset, recorded-content, and graph phase/arrival/node-cancellation/worker streams | `src/derive.rs`, `src/namespace.rs`, `src/generator.rs`, `src/hash_id.rs`, `src/dist.rs` |
-| `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline: token-keyed prefix-dependent dense handles, exact raw/message replay, validated raw-token handles plus endpoint-required load checks, vocabulary-aware no-decode synthesis, simulator-native body bypass, decoded HF + synthetic media, context reconstruction, sampler factories, tokenizer/fetch/request traits. `dag_jsonl`, `weka_trace`, and `dynamo_trace` are intentionally absent from the generic loader registry and enter the runner-owned graph adapter directly | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
+| `aiperf-dataset` | complete loader/composer/store/sampler/materializer pipeline: token-keyed prefix-dependent dense handles, exact raw/message replay, validated raw-token handles plus endpoint-required load checks, vocabulary-aware no-decode synthesis, simulator-native body bypass, decoded HF + synthetic media, context reconstruction, sampler factories, tokenizer/fetch/request traits; accuracy carries only opaque evaluator correlation/task identity. `dag_jsonl`, `weka_trace`, and `dynamo_trace` are intentionally absent from the generic loader registry and enter the runner-owned graph adapter directly | `src/loader/`, `src/compose.rs`, `src/segment.rs`, `src/materialize.rs`, `src/request.rs`, `src/sampler.rs`, `src/tokenizer.rs`, `src/fetch.rs` |
 | `aiperf-content-server` | run-owned generated-media delivery: injected file/URL publisher, ready-before-use Axum serving, health, confined MIME/range file responses, complete two-clock body tracking, bounded records/lifetime counters, temporary roots, and graceful shutdown | `src/lib.rs`, `src/publisher.rs`, `src/server.rs`, `src/tracker.rs`, `src/model.rs`, `src/error.rs` |
 | `aiperf-mock-rs` | standalone online test/benchmark inference target: OpenAI chat/completions/embeddings, TGI, rerank, image, multimodal, and RAG routes; real SSE; analytic/batch-scheduler latency; deterministic token generation; prefix-cache policy; Prometheus dialects; and synthetic DCGM telemetry. Exports both a test router and a tuned Hyper server binary; not a runner dependency | `src/app.rs`, `src/config.rs`, `src/handlers.rs`, `src/tokens.rs`, `src/latency.rs`, `src/scheduler.rs`, `src/prefix_cache.rs`, `src/metrics.rs`, `src/prom.rs`, `src/dcgm.rs`, `src/main.rs` |
-| `aiperf-metrics` | IO-free performance engine: validated 117-row catalog, NaN-sparse columns + exact ragged replay, record/aggregate/derived formulas, collector-wide completion-usage reconciliation, SLO/phase/window/timeslice logic, deterministic worker merge, effective/active/ICL sweeps, per-model/per-endpoint native-v2 series | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/report.rs` |
-| `aiperf-gpu-telemetry` | DCGM/Python GPU side-channel producer: parsing/scaling, exact boundary counters, cadence gauges, custom metrics, per-GPU summaries, and performance energy/power/efficiency joins | `src/source.rs`, `src/python_source.rs`, `src/parser.rs`, `src/fields.rs`, `src/collector.rs`, `src/accumulator.rs` |
+| `aiperf-metrics` | IO-free performance/accuracy engine: validated 119-row catalog, NaN-sparse columns + exact ragged replay, record/aggregate/derived formulas, collector-wide completion-usage reconciliation, SLO/phase/window/timeslice logic, deterministic worker merge, effective/active/ICL sweeps, per-model/per-endpoint native-v2 series, accuracy analysis, legacy evaluator blocks, and the provider-neutral evaluation identity/outcome/aggregate/route/artifact block | `src/store.rs`, `src/accumulator.rs`, `src/sweepline/`, `src/catalog.rs`, `src/accuracy.rs`, `src/report.rs` |
+| `aiperf-gpu-telemetry` | DCGM/Python GPU side-channel producer: parsing/scaling, exact boundary counters, cadence gauges, custom metrics, per-GPU summaries, and performance/accuracy energy/power/efficiency joins | `src/source.rs`, `src/python_source.rs`, `src/parser.rs`, `src/fields.rs`, `src/collector.rs`, `src/accumulator.rs` |
 | `aiperf-server-metrics` | Prometheus/OpenMetrics producer: routing/fallback/auto-disable, exact counter/histogram boundaries, gauge distributions, histogram estimator, units, and vLLM/SGLang atlas. Low-level exposition parsing lives in `aiperf-prometheus` | `src/source.rs`, `src/parser.rs`, `src/accumulator.rs`, `src/histogram.rs`, `src/atlas.rs`, `src/units.rs` |
 | `aiperf-prometheus` | IO-free Prometheus/OpenMetrics parser and compatibility leaf: strict syntax/semantic parsing, role validation, numeric/limit handling, compatibility projection, and parser conformance fixtures | `src/lib.rs`, `src/parser.rs`, `src/syntax.rs`, `src/semantic.rs`, `src/compatibility.rs`, `src/role_matrix.rs`, `src/model.rs` |
+| `aiperf-telemetry-archive` | Durable operational-history archive leaf: canonical frame identity, schema/descriptors, WAL, filesystem/object-store durability, Parquet projection, loss ledger, receipts, sync, policies, and query surfaces consumed by telemetry-watch and attached archive ownership | `src/lib.rs`, `src/frame_codec.rs`, `src/wal.rs`, `src/filesystem_store.rs`, `src/parquet.rs`, `src/object_store.rs`, `src/manifest.rs`, `src/loss_ledger.rs`, `src/query.rs` |
 | `aiperf-network-latency` | Fresh TCP-connect RTT calibration: target discovery, DNS fallback, Clock deadlines, nonfatal samples, per-target population stats, and flat-mean delivery | `src/probe.rs`, `src/accumulator.rs`, `src/model.rs` |
-| `aiperf-extensions` | cycle-free compile-time composition: aggregate `AiperfRegistry`, transactional `AiperfExtension` application, and typed dataset/sampler/endpoint registries; the runner freezes the linked registry with its resolvers and pair factories into one immutable application | `src/lib.rs` |
+| `aiperf-accuracy` | transport-free provider-neutral evaluator control plane: strict evaluator-worker protocol v2 DTOs, open factory/availability registry, factory-owned config/public projections, dedicated-control-FD supervision, launch attestation, Bubblewrap process-tree isolation/quiescence, and FD-relative artifact sealing. Legacy static `AccuracyEvaluator`, stateful `AgenticEvaluator`, and `PythonEvaluator` remain for exact-parity migration; deliberately no Rust benchmark builders, graders, hidden-test decoder, code executor, dataset client, or dispatch path. | `src/provider.rs`, `src/provider_protocol.rs`, `src/supervisor.rs`, `src/isolation.rs`, `src/artifacts.rs`, `src/metadata_projection.rs`, `src/score_projection.rs`, `src/protocol.rs`, `src/worker.rs` |
+| `aiperf-extensions` | cycle-free compile-time composition: aggregate `AiperfRegistry`, transactional `AiperfExtension` application, and typed dataset/sampler/endpoint registries; the runner freezes the linked registry with its resolvers and pair factories into one immutable application, while accuracy remains directly injected | `src/lib.rs` |
 | `aiperf-endpoints` | trait-backed wire dialects plus the open registry foundation: validated `EndpointId`, co-located descriptors (including representation requirements), identity-free raw/effective policy, deterministic factories/aliases, dense worker-local prepared bindings, readiness policy, and compile-once raw/template state. Runner-v2-only families include nine KServe factories, nine NVIDIA Riva ASR/TTS/NLP factories, and PR-1113 `vllm_generate` exact token arrays/non-text output data, without adding a closed enum variant | `src/registry.rs`, `src/config.rs`, `src/kserve.rs`, `src/vllm_generate.rs`, `src/riva.rs`, `src/anthropic.rs`, `src/endpoints.rs`, `src/tier2/flexible.rs`, `tests/kserve.rs`, `tests/vllm_generate.rs`, `tests/riva.rs` |
 | `aiperf-transport-http` | the Clock-injected hyper transport plus object-safe endpoint binding (canonical JSON ↔ HTTP URL/body/lifecycle and HTTP/SSE response decoding); h1/h2c/UDS, rustls, trace timing, send-complete cancellation, and reuse strategies | `src/transport/endpoint_binding.rs`, `src/client/`, `src/transport/`, `src/sse/`, `src/models/` |
 | `aiperf-transport-grpc` | Clock-injected raw Tonic transport with an open endpoint-binding registry, exact checked-in KServe DTOs and reference-grounded Riva Prost DTOs, OIP typed/raw tensor conversion, Riva ASR/TTS/NLP codecs, grpc/grpcs TLS, unary/server/bidirectional streaming, optional readiness, native status/trace facts, pooled/never/sticky channels, and post-send cancellation | `src/binding.rs`, `src/codec.rs`, `src/riva_binding.rs`, `src/riva_codec.rs`, `src/riva_proto.rs`, `src/transport.rs`, `src/models.rs`, `src/proto.rs`, `src/raw_codec.rs` |
 | `aiperf-graph` | Backend-neutral Graph-IR dataflow over the unified segment store, canonical DAG plus WEKA/Dynamo recorded-trace compilation/lowering, trait-backed root/arrival/admission/placement/failure policy, shared phase-lifecycle adaptation, ramps/adaptive controls, placement-wide cancellation/prefill updates, DES drivers, and worker-local native metrics merged once at join | `src/input.rs`, `src/lowering.rs`, `src/recorded/`, `src/workload.rs`, `src/placement.rs`, `src/runtime.rs`, `src/executor.rs`, `src/materialize.rs`, `src/transport_bench.rs` |
-| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; the v2 graph path uses that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph and native gRPC scheduled; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/offline_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs`, `src/records.rs` |
-| `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive paths, and the feature-gated offline implementation | `src/grpc.rs`, `src/http.rs`, `src/dynosim.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/scheduled.rs`, `src/report.rs` |
+| `aiperf-runner` | sole strict Rust executable: Python always sends exact-image-bound protocol-v2 `validate`/`execute`; the runner is protocol-v2-only, advertises `protocol_versions: [2]`, and rejects any non-v2 request as a v2 failure envelope. One immutable linked `RunnerApplication` owns capabilities, one runner-owned identity-dispatched graph-input resolver, other input resolvers, factories, and coordinators; the v2 graph path uses that resolver and direct compiler. Its frozen pair registry direct-loads one prepared operation. The base image registers HTTP scheduled/graph/static-accuracy/agentic/telemetry-watch and native gRPC scheduled; attested deployment-owned evaluator roots conditionally add the stock `http + evaluation` pair for only the NeMo/OpenBench GSM8K canaries; `dynosim` adds `dynosim_offline`/`dynosim_online` scheduled/graph | `src/application.rs`, `src/main.rs`, `src/protocol_v2.rs`, `src/registry.rs`, `src/graph_input.rs`, `src/execute.rs`, `src/online_execution.rs`, `src/evaluation_execution.rs`, `src/stock_evaluation.rs`, `src/offline_execution.rs`, `src/agentic_execution.rs`, `src/grpc_execution.rs`, `src/grpc_turn_execution.rs`, `src/graph_phase_runtime.rs`, `src/graph_execution.rs`, `src/telemetry_watch.rs`, `src/telemetry_execution.rs`, `src/telemetry_operation.rs` |
+| `aiperf` | library-only load-generation runtime composed by `aiperf-runner`: prepared HTTP/gRPC sinks, online paced/scheduled/adaptive/static-accuracy paths, the provider-neutral evaluation workload/typed host registry/fair arbiter/ledger/Clock retry/scoped proxy/report join, legacy stateful agentic seams, and the feature-gated offline implementation | `src/evaluation.rs`, `src/evaluation/`, `src/grpc.rs`, `src/http.rs`, `src/agentic.rs`, `src/dynosim.rs`, `src/phase_runtime.rs`, `src/ancillary.rs`, `src/metrics.rs`, `src/accuracy.rs`, `src/scheduled.rs`, `src/report.rs` |
 
-Deps: `aiperf` → {`aiperf-adaptive`,
+Deps: `aiperf` → {`aiperf-accuracy`, `aiperf-adaptive`,
 `aiperf-dataset`, `aiperf-endpoints`, `aiperf-graph`, `aiperf-metrics`,
 `aiperf-rng`, `aiperf-timing`, `aiperf-transport-http`,
 `aiperf-transport-grpc`, `aiperf-clock`, `loadgen-core`} plus optional
 `dynamo-mocker` only under `dynosim`; `aiperf-extensions` →
-{`aiperf-dataset`, `aiperf-endpoints`};
+{`aiperf-dataset`, `aiperf-endpoints`}; `aiperf-accuracy` has no workspace-crate dependency;
 `aiperf-adaptive` → {`aiperf-clock`, `aiperf-metrics`,
 `aiperf-timing`, `loadgen-core`}; `aiperf-dataset` → {`aiperf-clock`,
 `aiperf-endpoints`, `aiperf-rng`, `aiperf-transport-http`}; `aiperf-graph` → {`aiperf-dataset`,
 `aiperf-metrics`, `aiperf-rng`, `aiperf-timing`, `aiperf-transport-http`, `aiperf-clock`,
 `loadgen-core`}; `aiperf-timing` → {`aiperf-clock`, `aiperf-rng`};
 `aiperf-transport-http` and
-`aiperf-transport-grpc` → {`aiperf-clock`, `aiperf-endpoints`}.
+`aiperf-transport-grpc` → {`aiperf-clock`, `aiperf-endpoints`};
+`aiperf-telemetry-archive` → {`aiperf-prometheus`}.
 `aiperf-metrics` stays IO-free and runtime-neutral.
 
 Content-serving deps: `aiperf-runner` → `aiperf-content-server` →
@@ -130,12 +136,13 @@ Mock-server deps: standalone `aiperf-mock-rs` → `aiperf-rng` among workspace
 crates. Runner and transport crates do not depend on it; real-network tests spawn
 its binary as an ordinary target.
 
-Telemetry deps: `aiperf-runner` composes all three producer leaves;
-`aiperf-gpu-telemetry` →
+Telemetry deps: `aiperf-runner` composes all three producer leaves plus
+telemetry-watch/archive ownership; `aiperf-gpu-telemetry` →
 {`aiperf-clock`, `aiperf-metrics`, `aiperf-transport-http`};
 `aiperf-server-metrics` → {`aiperf-clock`, `aiperf-metrics`,
 `aiperf-prometheus`, `aiperf-transport-http`}; `aiperf-network-latency` →
-{`aiperf-clock`, `aiperf-metrics`}. Core metrics never depends back on a producer.
+{`aiperf-clock`, `aiperf-metrics`}; `aiperf-telemetry-archive` →
+{`aiperf-prometheus`}. Core metrics never depends back on a producer.
 
 ## Run AIPerf
 
@@ -153,11 +160,15 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 
 # Developer-only runner protocol inventory; normal runs are launched by Python.
 cargo run --release -p aiperf-runner -- --capabilities
+
+# Operational telemetry archive/watch uses the same Python -> runner path.
+aiperf watch --config telemetry_watch.yaml
 ```
 
 `cargo run -p aiperf` is intentionally invalid: the `aiperf` Rust package has
 no binary. Config-v2 YAML expresses endpoints, datasets, phases, ramps,
-cancellation, adaptive policy, telemetry, artifacts, and open
+cancellation, adaptive policy, static/stateful accuracy, provider-neutral
+evaluation, telemetry, artifacts, and open
 transport/workload selections. Python expands outer loops; execution retains the
 side-effect-free authored-v2 shape through validation and execution. It
 requires the selected runner image to advertise the exact pair and never
@@ -174,6 +185,11 @@ Python forwards those authored values without parsing trace payloads. Native gRP
 in-process Dynamo replay requires `transport.type: dynosim_offline` or
 `transport.type: dynosim_online` and a feature-bearing runner.
 
+Provider-neutral evaluation additionally requires the selected runner
+deployment's wheel-`RECORD`-verified companion roots or generated adjacent
+root-registry sidecar. Missing or drifted roots make the evaluator distributions
+unavailable and omit `http + evaluation`; Python does not substitute an
+ambient provider environment or a legacy workload.
 
 Content-server validation is side-effect-free. Image/video URL publication
 requires both `AIPERF_CONTENT_SERVER_ENABLED=true` and a non-empty existing
@@ -185,6 +201,62 @@ actuators. User-centric owns only its optional session-concurrency pool, while
 fixed schedule owns none; unsupported ramps fail validation rather than becoming
 inert. Scheduled strategies support per-turn cancellation and turn-zero sticky
 endpoint routing.
+
+## Canonical static accuracy
+
+Static accuracy is configured through Config v2 and launched by
+`aiperf profile --config ...`. Python selects the pinned evaluator environment;
+the runner supervises it while retaining all inference traffic and timing.
+
+Rust sends every LLM request and parses every response through its normal
+transport. The Python/Lighteval child prepares opaque problems and batch-grades
+terminal response text; it never contacts the inference server, and ground
+truth/private tests never cross the JSONL protocol. The evaluator protocol rejects
+unknown static-response fields and restricts static prompts to `{role, content}`; stateful
+agent/tool messages retain role-specific fields losslessly. The worker redirects
+ambient fd 1 output to stderr and native v2 records its source/lock identity.
+
+## Stateful agentic accuracy
+
+The Harbor, AgentLab/BrowserGym, and MCPMark providers and Rust
+`AgenticWorkload` are product-reachable through the registered
+`http + agentic` protocol-v2 pair. Real subprocess proofs cover the
+supervised evaluator, authenticated callback gateway, ordinary Rust HTTP/SSE
+dispatch, and scored native-v2 report. Do not add a second CLI or move model
+traffic into Python.
+
+Harbor owns task packages, Terminus-2, environments, trajectories, terminal
+execution, and verifier rewards. Primary calls use its queue callback. Packaged
+LLM-backed environments/verifiers receive an authenticated callback address;
+Rust's ingress converts those calls to the same scheduled workload and never
+forwards directly. Rust issues every turn through the generic online
+scheduled/transport runner. Native v2 records exact worker/lock/container,
+harness source/version, dataset revision, agent, environment, verifier, authored
+configuration, canonical rewards, episode records, and artifacts. Infrastructure
+and cancellation records are never converted into zero/incorrect scores.
+Harbor's canonical source forms are accepted unchanged: Hub
+`org/name@ref`, legacy `name@version` (for example `bfcl@1.0`), and an existing
+local task-directory path. Hub tags are reported as resolved content hashes;
+legacy versions are frozen before Harbor enumerates their tasks.
+
+The removed native-CLI route remains deleted; product proofs launch only the
+strict runner through Python's Config-v2 path.
+
+AgentLab 0.4.2 plus BrowserGym 0.14.3 is the canonical browser provider. It
+directly runs `DEFAULT_BENCHMARKS`, `GenericAgent`, and `ExpArgs`; its sync model
+callback emits JSONL and only a Rust terminal result can resume the browser
+loop. BrowserGym owns prompts, actions, Playwright transitions, traces, and
+rewards. Browser tasks use dependency-safe sequential admission. The separately
+hashed worker lock is required because AgentLab's OpenAI <2 constraint conflicts
+with Harbor's LiteLLM/OpenAI 2.x constraint.
+
+MCPMark commit `cd45b7f57923b9b3985467f5139927575f83141c` is a third
+independently hash-locked provider. MCPMark owns the registry, task instructions,
+100-turn loop, MCP servers, state managers, task-local `verify.py`, artifacts,
+and cleanup. AIPerf replaces only `litellm.acompletion` with its JSONL broker;
+Python never receives a model-server URL. Native v2 records MCPMark's exact
+source/lock, canonical agent controls, selected server artifact, task digest,
+and concrete local-environment digest.
 
 ## Run the scheduled workloads
 
@@ -221,7 +293,9 @@ JSON bytes: 74 base fields, plus three goodput fields when configured. Multi-
 phase runs retain the independent compatibility observer; single-phase product
 runs avoid that duplicate row store and reconstruct the byte-equal compatibility
 report from Dynamo after drain while native metrics remain callback-driven.
-Requested KV offload fails closed on initialization error.
+Requested KV offload fails closed on initialization error. Canonical accuracy
+alone remains online because the timing engine does not generate semantic answer
+text.
 
 ## Run offline/online Dynamo replay through `aiperf profile`
 
@@ -244,6 +318,17 @@ profiler.
 - **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)
   → `aiperf/src/http.rs` (`TransportSink`) →
   `loadgen-core/src/observer.rs` (`CollectorObserver`).
+- **Where is evaluator ownership split?** Provider-neutral control/isolation lives
+  in `aiperf-accuracy/src/{provider,provider_protocol,supervisor,isolation,artifacts}.rs`;
+  Rust-owned host effects, admission, ledger, proxy, sealing, and report join live
+  in `aiperf/src/evaluation{.rs,/}`; exact stock composition and root-conditioned
+  product registration live in `aiperf-runner/src/{stock_evaluation,evaluation_execution,registry}.rs`.
+  Provider semantics and the only built external canaries live under
+  `src/aiperf/accuracy/evaluation/`. Legacy static/stateful ownership remains in
+  `aiperf-accuracy/src/{protocol,worker}.rs`,
+  `src/aiperf/accuracy/{worker,agentic,model_broker,harbor,harbor_agent,browsergym,mcpmark}.py`,
+  `aiperf/src/{accuracy,agentic,agentic_gateway}.rs`, and
+  `aiperf-runner/src/agentic_execution.rs` until its exact deletion gates pass.
 - **Where do native TTFT/ITL/e2e/throughput/goodput and sweeps come from?**
   `aiperf/src/metrics.rs` (runtime join) → `aiperf-metrics/src/{store,accumulator,sweepline}.rs`.
   `aiperf/src/http.rs` also translates the real transport trace into HTTP metric facts;
@@ -328,11 +413,12 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   KServe V1 Predict remains an endpoint dialect, not runner protocol v1.
 - `specs/2026-07-10-aiperf-rust-dataset-segment-seam-design.md` — **built end to
   end + addenda** as `aiperf-dataset`: full loader→compose→dense
-  store→sampler→materializer flow shared by the runner and Graph-IR,
+  store→sampler→materializer flow shared by the runner, accuracy, and Graph-IR,
   including exact replay, validated raw-token handles, endpoint-required load
   checks, vocabulary-aware no-decode synthesis, decoded/synthetic media,
-  context/dispatch fields; direct `dag_jsonl` bypasses linear
-  `Dataset`/`Conversation`/`DagMetadata` composition.
+  context/dispatch fields, and opaque accuracy correlation/task ids; direct `dag_jsonl` bypasses linear
+  `Dataset`/`Conversation`/`DagMetadata` composition. Rust no longer stores
+  evaluator ground truth.
 - `specs/2026-07-12-aiperf-rust-content-server-design.md` — **built**: public
   environment-to-strict-v2 projection, injected inline/file publication,
   stable generated image/video URLs with inline audio, ready-before-use native
@@ -344,6 +430,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   endpoints. `RunnerApplication` freezes that linked registry with input
   resolvers, pair factories, compatibility authority, and the v2 coordinator;
   capabilities, validation, and execution share the exact object graph.
+  Accuracy remains a directly injected evaluator process seam.
 - `specs/2026-07-11-aiperf-runner-owned-endpoint-registry-design.md` —
   **foundation, v2 validation, and selected prepared execution built; broader convergence pending + addenda; authoritative for endpoint ownership**:
   `aiperf-endpoints` owns open IDs, adapter-local descriptors, deterministic factory/alias
@@ -356,12 +443,14 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
 - `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **decided /
   canonical pair matrix built; authoritative for native product reachability**:
   one strict image-bound v2 runner envelope composes registered transports
-  (`http`, `grpc`, `dynosim_offline`, `dynosim_online`) with scheduled or
-  Graph-IR workloads. The
+  (`http`, `grpc`, `dynosim_offline`, `dynosim_online`) with scheduled,
+  Graph-IR, static-accuracy, telemetry-watch, or stateful-agentic workloads. The
   decoder, typed terminals, factory-owned strict config decode, registry-derived
   static compatibility, and executable-only `supported_pairs` are built. HTTP
-  graph/scheduled and gRPC scheduled adapters have execution and subprocess
-  proofs, while unavailable and remaining combinations stay unregistered.
+  agentic/graph/scheduled/static-accuracy/telemetry-watch and gRPC scheduled
+  adapters have execution and subprocess proofs; exact deployment-owned evaluator
+  roots conditionally add the stock `http + evaluation` GSM8K adapter, while
+  unavailable and remaining combinations stay unregistered.
   `dag_jsonl`, `weka_trace`, and `dynamo_trace` are direct-loaded by the graph
   pair and lowered once through the runner-owned Graph-IR authored-input adapter
   and exactly one format-specific compiler.
@@ -429,7 +518,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   workers own canonical datasets, environments, hidden tests, loops, and scoring.
   Static Lighteval and the stateful agentic pair are runner subprocess-tested.
   Harbor, AgentLab/BrowserGym, and MCPMark remain canonical Python providers;
-  every model call returns through Rust's scheduled endpoint/transport path. *(The accuracy/evaluation/agentic vertical was removed from the codebase 2026-07-13; retained as historical design.)*
+  every model call returns through Rust's scheduled endpoint/transport path.
 - `specs/2026-07-12-external-evaluator-provider-host-boundary-design.md` —
   **neutral foundation + exact GSM8K canaries built; broad migration/deletion
   gated + addendum**: provider protocol/runtime, attested Bubblewrap isolation,
@@ -437,7 +526,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   are built. Root-conditioned stock distributions cover only NeMo Evaluator
   0.4.0 and OpenBench 0.5.3 + Inspect 0.3.141 over the frozen five-record GSM8K
   canary and `model.generate`; all full benchmarks, arbitrary tasks/effects, and
-  legacy deletions remain gated. *(The accuracy/evaluation/agentic vertical was removed from the codebase 2026-07-13; retained as historical design.)*
+  legacy deletions remain gated.
 - `specs/2026-07-10-aiperf-rust-metrics-accumulator-sweepline-design.md` — **built +
   addenda**: columnar/ragged engine, formulas/SLOs, full effective/active/ICL sweeps,
   duration-weighted stats, authoritative completion-usage reconciliation,
@@ -455,12 +544,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   GPU-energy accuracy analysis,
   native server report blocks, compatibility JSONL, fallback/auto-disable state
   machine, vLLM/SGLang atlas, histogram estimator, and TCP calibration.
-- `specs/2026-07-11-aiperf-rust-telemetry-archive-watch-design.md` — **REMOVED
-  (see removal addendum)**: the `aiperf-telemetry-archive` crate, Python `aiperf
-  watch`, and the runner `telemetry_watch` workload/pair were deleted. Only
-  `aiperf-prometheus` survives, as the parsing leaf consumed by the
-  `aiperf-server-metrics` live producer; there is no durable operational-history
-  archive plane. Live GPU/server/network telemetry is unaffected.
+- `specs/2026-07-11-aiperf-rust-telemetry-archive-watch-design.md` — **runner-
+  reachable; final validation pending + addendum**: `aiperf-prometheus`,
+  `aiperf-telemetry-archive`, Python `aiperf watch`, and the runner
+  `telemetry_watch` workload provide the operational history plane with
+  immutable WAL/Parquet archive, object-store sync interfaces, structured
+  redaction/enrichment, and diagnostic provenance while native metrics remain
+  authoritative.
 - `specs/2026-07-11-aiperf-rust-exporters-overhaul-design.md` — **partially built +
   addenda**: native-v2 typed reporter + runner JSON writer are built. The removed
   Rust CLI's tables, accuracy CSV, logger, and legacy writers are deleted; Python
@@ -500,7 +590,7 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   refactor design set: implementation plan (PR1 `RunCapture` uuid-keyed join
   **(built)** → A1 worker-local accumulation **(built, runner HTTP + gRPC via an
   additive `execute_turn_measured`/`drain_records` seam; `BufferedObserver` kept
-  for the replay path)** → A3 connector / A4 lean → A2 compat projection),
+  for agentic/evaluation)** → A3 connector / A4 lean → A2 compat projection),
   regression harnesses, the four component specs, and the cellular-ready seams +
   roadmap (single-issuer today, cross-node autonomous cells deferred). Start with
   `specs/2026-07-12-track-a-implementation.md`.
