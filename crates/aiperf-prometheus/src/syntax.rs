@@ -761,7 +761,17 @@ fn parse_quoted_value(
                         *cursor += 1;
                     }
                     _ if format == ExpositionFormat::OpenMetricsText100 => {
-                        let character = line[*cursor..].chars().next().expect("valid UTF-8 tail");
+                        // `line` is a validated &str and the cursor sits on a char boundary, so a
+                        // tail char is present today; return a parse error instead of panicking if
+                        // this untrusted-input path is ever reached with an exhausted cursor.
+                        let character = line[*cursor..].chars().next().ok_or_else(|| {
+                            ParseError::line(
+                                line_number,
+                                *cursor + 1,
+                                ParseErrorKind::Label,
+                                "label value ends in an incomplete escape",
+                            )
+                        })?;
                         decoded.push(character);
                         *cursor += character.len_utf8();
                     }
@@ -776,7 +786,16 @@ fn parse_quoted_value(
                 }
             }
             _ => {
-                let character = line[*cursor..].chars().next().expect("valid UTF-8 tail");
+                // See the escape branch above: the cursor is on a char boundary of a validated
+                // &str, so this is defensive against a future refactor on the untrusted path.
+                let character = line[*cursor..].chars().next().ok_or_else(|| {
+                    ParseError::line(
+                        line_number,
+                        *cursor + 1,
+                        ParseErrorKind::Label,
+                        "label value contains no decodable character",
+                    )
+                })?;
                 decoded.push(character);
                 *cursor += character.len_utf8();
             }
@@ -801,7 +820,16 @@ fn decode_escaped(
     let mut decoded = String::new();
     while cursor < bytes.len() {
         if bytes[cursor] != b'\\' {
-            let character = raw[cursor..].chars().next().expect("valid UTF-8 tail");
+            // `raw` is a validated &str and the cursor sits on a char boundary, so a tail char is
+            // present today; fail the parse rather than panic on this untrusted-input path.
+            let character = raw[cursor..].chars().next().ok_or_else(|| {
+                ParseError::line(
+                    line_number,
+                    column + cursor,
+                    ParseErrorKind::Metadata,
+                    "metadata value contains no decodable character",
+                )
+            })?;
             decoded.push(character);
             cursor += character.len_utf8();
             continue;
@@ -820,7 +848,15 @@ fn decode_escaped(
             b'\\' => decoded.push('\\'),
             b'\"' if format == ExpositionFormat::OpenMetricsText100 => decoded.push('\"'),
             _ if format == ExpositionFormat::OpenMetricsText100 => {
-                let character = raw[cursor..].chars().next().expect("valid UTF-8 tail");
+                // See the non-escape branch above: defensive parse error on the untrusted path.
+                let character = raw[cursor..].chars().next().ok_or_else(|| {
+                    ParseError::line(
+                        line_number,
+                        column + cursor,
+                        ParseErrorKind::Metadata,
+                        "metadata value ends in an incomplete escape",
+                    )
+                })?;
                 decoded.push(character);
                 cursor += character.len_utf8();
                 continue;

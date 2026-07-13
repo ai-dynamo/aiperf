@@ -28,6 +28,12 @@ use std::task::{Context, Poll, Wake, Waker};
 use tokio::sync::Notify;
 use tokio::task::LocalSet;
 
+/// Consecutive same-instant pump steps with no progress before the DES driver
+/// declares a stall. Bounds a pathological firing-gate cycle (a node that keeps
+/// rescheduling itself at the current instant) so `drive_sim` cannot spin
+/// forever; real graphs settle in a handful of same-instant steps.
+const MAX_NO_PROGRESS_STEPS: u32 = 100_000;
+
 /// Shared handle threaded into task futures: spawn, clock access, sleeping.
 ///
 /// Clock-agnostic: `Rc<dyn Clock>` is either the virtual [`SimClock`] or the
@@ -308,7 +314,7 @@ where
                     no_progress_steps = 0;
                 } else {
                     no_progress_steps += 1;
-                    if no_progress_steps >= 100_000 {
+                    if no_progress_steps >= MAX_NO_PROGRESS_STEPS {
                         return Err(SimDriveError::Stalled { at_ns });
                     }
                 }
@@ -352,7 +358,7 @@ fn drain_source(clock: &SimClock, source: &dyn SimEventSource) -> Result<(), Sim
             no_progress_steps = 0;
         } else {
             no_progress_steps += 1;
-            if no_progress_steps >= 100_000 {
+            if no_progress_steps >= MAX_NO_PROGRESS_STEPS {
                 return Err(SimDriveError::Stalled { at_ns });
             }
         }

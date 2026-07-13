@@ -1166,11 +1166,12 @@ fn created_from_wire(wire: Option<&WireSample>) -> Result<CreatedTimestamp, Pars
             "Created value must be a finite Unix-seconds timestamp",
         ));
     }
-    let lexeme = wire
-        .value
-        .source_lexeme
-        .as_deref()
-        .expect("finite wire values retain their source lexeme");
+    // A finite value should always retain its source lexeme, but this parser consumes
+    // untrusted server exposition: return a parse error rather than panic if a future
+    // refactor ever lets a finite-kind value reach here without one.
+    let lexeme = wire.value.source_lexeme.as_deref().ok_or_else(|| {
+        semantic_error(wire.line, "Created value is missing its source lexeme")
+    })?;
     CreatedTimestamp::parse_openmetrics(lexeme).map_err(|error| {
         semantic_error(
             wire.line,
@@ -1265,16 +1266,29 @@ fn validate_metric_point_order(
         }
     }
     for pair in points.windows(2) {
+        // The UniformExplicit check above guarantees an exact decimal today, but this
+        // parser handles hostile input: fail the exposition rather than panic if a
+        // uniform-explicit point ever reaches here without its exact decimal.
         let left = pair[0]
             .source_timestamp
             .exact_decimal
             .as_ref()
-            .expect("uniform timestamp has exact decimal");
+            .ok_or_else(|| {
+                semantic_error(
+                    pair[0].metric_point_seq as usize,
+                    "OpenMetrics MetricPoint timestamp is missing its exact decimal",
+                )
+            })?;
         let right = pair[1]
             .source_timestamp
             .exact_decimal
             .as_ref()
-            .expect("uniform timestamp has exact decimal");
+            .ok_or_else(|| {
+                semantic_error(
+                    pair[1].metric_point_seq as usize,
+                    "OpenMetrics MetricPoint timestamp is missing its exact decimal",
+                )
+            })?;
         if left.numeric_cmp(right) != Ordering::Less {
             return Err(semantic_error(
                 pair[1].metric_point_seq as usize,

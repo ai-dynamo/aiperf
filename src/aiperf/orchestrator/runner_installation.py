@@ -38,6 +38,7 @@ from aiperf.orchestrator.rust_wire import (
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
 
+_CAPABILITIES_TIMEOUT_SECONDS = 30.0
 _RUNNER_ENV = "AIPERF_RUNNER_BIN"
 _RUNNER_COMPANION_DISTRIBUTION = "aiperf-runner"
 _RUNNER_COMMAND = "aiperf-runner"
@@ -179,7 +180,7 @@ class RunnerInstallation:
             expected_distribution_id=distribution_id,
         )
 
-    def supports_pair(self, backend_id: str, workload_id: str) -> bool:
+    def supports_pair(self, transport_id: str, workload_id: str) -> bool:
         """Return whether this exact image advertises an executable v2 pair."""
         versions = self.capabilities.get("protocol_versions")
         if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
@@ -187,7 +188,7 @@ class RunnerInstallation:
         supported = self.capabilities.get("supported_pairs")
         if not isinstance(supported, list):
             return False
-        return [backend_id, workload_id] in supported
+        return [transport_id, workload_id] in supported
 
     def preflight_plan(self, plan: BenchmarkPlan) -> None:
         """Validate every distinct fixed-plan endpoint before its first run."""
@@ -651,12 +652,19 @@ def _load_capabilities(
     binary: Path, provider_roots: tuple[Path, ...] = ()
 ) -> dict[str, Any]:
     expected_distribution_id = _runner_distribution_id(binary)
-    completed = subprocess.run(
-        [str(binary), "--capabilities"],
-        capture_output=True,
-        check=False,
-        env=_runner_subprocess_environment(provider_roots),
-    )
+    try:
+        completed = subprocess.run(
+            [str(binary), "--capabilities"],
+            capture_output=True,
+            check=False,
+            env=_runner_subprocess_environment(provider_roots),
+            timeout=_CAPABILITIES_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"aiperf-runner capability negotiation timed out after "
+            f"{_CAPABILITIES_TIMEOUT_SECONDS:g}s"
+        ) from error
     if completed.returncode != 0:
         stderr = redact_string(completed.stderr.decode(errors="replace")).strip()
         raise RuntimeError(
@@ -746,9 +754,9 @@ def _validate_v2_capabilities(capabilities: dict[str, Any]) -> None:
         ):
             raise ValueError(
                 f"aiperf-runner capability {field} must be an array of "
-                "[backend, workload] string pairs"
+                "[transport, workload] string pairs"
             )
-    for field in ("backends", "workloads", "endpoints"):
+    for field in ("transports", "workloads", "endpoints"):
         descriptors = capabilities.get(field)
         if not isinstance(descriptors, list) or not all(
             isinstance(descriptor, dict)
@@ -861,7 +869,7 @@ def _validate_evaluation_capabilities(capabilities: dict[str, Any]) -> None:
         _require_nonempty_strings(
             combination,
             (
-                "backend",
+                "transport",
                 "workload",
                 "provider",
                 "distribution",
@@ -877,7 +885,7 @@ def _validate_evaluation_capabilities(capabilities: dict[str, Any]) -> None:
                     f"supported evaluation combination {field} must be strings"
                 )
         combination_key = (
-            combination["backend"],
+            combination["transport"],
             combination["workload"],
             combination["provider"],
             combination["distribution"],
@@ -1045,18 +1053,18 @@ def _require_v2_request_capabilities(
     run = request.get("run")
     if not isinstance(run, dict):
         raise ValueError("protocol-v2 request omitted its run object")
-    backend = run.get("backend")
+    transport = run.get("transport")
     workload = run.get("workload")
-    if not isinstance(backend, dict) or not isinstance(backend.get("type"), str):
-        raise ValueError("protocol-v2 request omitted run.backend.type")
+    if not isinstance(transport, dict) or not isinstance(transport.get("type"), str):
+        raise ValueError("protocol-v2 request omitted run.transport.type")
     if not isinstance(workload, dict) or not isinstance(workload.get("type"), str):
         raise ValueError("protocol-v2 request omitted run.workload.type")
     if workload["type"] == "evaluation":
         _require_evaluation_selection_capability(
-            capabilities, backend["type"], workload
+            capabilities, transport["type"], workload
         )
 
-    pair = [backend["type"], workload["type"]]
+    pair = [transport["type"], workload["type"]]
     supported = capabilities.get("supported_pairs")
     if not isinstance(supported, list) or pair not in supported:
         raise RuntimeError(
@@ -1080,7 +1088,7 @@ def _require_v2_request_capabilities(
 
 
 def _require_evaluation_selection_capability(
-    capabilities: dict[str, Any], backend_id: str, workload: dict[str, Any]
+    capabilities: dict[str, Any], transport_id: str, workload: dict[str, Any]
 ) -> None:
     """Require one exact executable provider/distribution combination."""
     config = workload.get("config")
@@ -1105,7 +1113,7 @@ def _require_evaluation_selection_capability(
             combination
             for combination in combinations
             if isinstance(combination, dict)
-            and combination.get("backend") == backend_id
+            and combination.get("transport") == transport_id
             and combination.get("workload") == "evaluation"
             and combination.get("provider") == provider_id
             and combination.get("distribution") == distribution_id

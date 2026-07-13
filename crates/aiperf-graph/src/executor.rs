@@ -217,7 +217,13 @@ impl<M: WireMessage> TraceExecutor<M> {
             return Ok(None);
         }
 
-        let inputs = ctx.store.snapshot_at_seq(gate_seq)?;
+        // The materializer only reads this node's splice channels; reducing the
+        // whole store per fire is O(channels × history) on the allocation hot
+        // path. `snapshot_selected_at_seq` is byte-identical over these keys.
+        let splice_channels = node.splice_channels();
+        let inputs = ctx
+            .store
+            .snapshot_selected_at_seq(&splice_channels, gate_seq)?;
         let messages: Vec<Bytes> = self
             .materializer
             .build(node, &inputs)

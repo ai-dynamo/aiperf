@@ -1054,10 +1054,10 @@ impl TransportSink {
                         continue;
                     }
                     let Some(data) = msg.data() else { continue };
-                    if self.capture_wire_responses {
-                        if let Ok(value) = serde_json::from_str::<Value>(data) {
-                            model_response.wire_responses.push(value);
-                        }
+                    if self.capture_wire_responses
+                        && let Ok(value) = serde_json::from_str::<Value>(data)
+                    {
+                        model_response.wire_responses.push(value);
                     }
                     let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) else {
                         continue;
@@ -1654,7 +1654,7 @@ impl TransportSink {
                         end_ns: Some(outcome.end_ns),
                         prompt_tokens: outcome.prompt_tokens,
                         completion_tokens: outcome.completion_tokens,
-                        http: outcome.http.clone(),
+                        http: outcome.http,
                     },
                 );
             }

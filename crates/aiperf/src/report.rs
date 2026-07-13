@@ -146,7 +146,7 @@ mod tests {
         .unwrap();
         let value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(value["run"]["backend"], "online_http");
+        assert_eq!(value["run"]["transport"], "online_http");
         assert_eq!(value["run"]["workload"], "scheduled");
         assert_eq!(value["run"]["endpoint_profiles"][0]["endpoint_id"], "chat");
         let _ = std::fs::remove_file(&path);

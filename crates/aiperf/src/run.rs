@@ -641,6 +641,14 @@ pub(crate) async fn run_paced_with_backend(
             // prefill at terminal instead of leaking the slot.
             prefill_guard.borrow_mut().take();
         }));
+
+        // Concurrency is bounded by the slot pools, but the handle set is not:
+        // open-loop rate has no session cap, so without pruning the Vec grows
+        // O(total requests). Reap completed tasks so it stays O(in-flight).
+        const HANDLE_REAP_THRESHOLD: usize = 1024;
+        if handles.len() >= HANDLE_REAP_THRESHOLD {
+            handles.retain(|handle| !handle.is_finished());
+        }
     }
     for h in handles {
         if let Err(e) = h.await {

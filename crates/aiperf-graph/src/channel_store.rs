@@ -351,15 +351,40 @@ impl VersionedChannelStore {
         let inner = self.inner.borrow();
         let mut out = BTreeMap::new();
         for ch in inner.specs.keys() {
-            let entries: Vec<&LogEntry> = inner.logs[ch]
-                .iter()
-                .filter(|e| e.write_seq <= max_seq)
-                .collect();
-            if entries.is_empty() {
+            if let Some(value) = reduce_channel_at_seq(&inner, ch, max_seq)? {
+                out.insert(ch.clone(), value);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Reduce only the named channels considering entries with `write_seq <= max_seq`.
+    ///
+    /// This is the executor's per-node input snapshot: a node materializes its
+    /// prompt from just its `PromptItem::Splice` channels, so reducing every
+    /// channel in the store on every fire is O(channels × history) wasted work on
+    /// the profiled allocation hot path. The result over the covered channels is
+    /// identical to [`snapshot_at_seq`] restricted to those keys — reducers are
+    /// strictly per-channel, and a splice key that is not declared state (or has
+    /// no visible write) is omitted here exactly as the full-store snapshot omits
+    /// it, so the materializer's `.get(key)` sees the same value or the same
+    /// absence. Repeated keys are reduced once.
+    pub fn snapshot_selected_at_seq(
+        &self,
+        channels: &[&str],
+        max_seq: i64,
+    ) -> Result<BTreeMap<String, ChanVal>, StoreError> {
+        let inner = self.inner.borrow();
+        let mut out = BTreeMap::new();
+        for &ch in channels {
+            // Only declared channels have a log; the full-store snapshot iterates
+            // `specs`, so an undeclared splice key is absent there too.
+            if !inner.specs.contains_key(ch) || out.contains_key(ch) {
                 continue;
             }
-            let owned: Vec<LogEntry> = entries.into_iter().cloned().collect();
-            out.insert(ch.clone(), reduce_all(&inner, ch, &owned)?);
+            if let Some(value) = reduce_channel_at_seq(&inner, ch, max_seq)? {
+                out.insert(ch.to_string(), value);
+            }
         }
         Ok(out)
     }
@@ -489,6 +514,45 @@ fn reduce_value_channel(
         .map(|e| (e.writer_node_id.clone(), e.value.clone()))
         .collect();
     Ok(apply_reducer(spec.reducer, &current, &tuples)?)
+}
+
+/// Reduce one channel over just the entries with `write_seq <= max_seq`, reading
+/// the log by reference.
+///
+/// Mirrors [`reduce_all`]'s ordering and init/tuple split exactly, but folds the
+/// sequence filter in and never materializes an intermediate `Vec<LogEntry>` — it
+/// borrows each entry and clones only the reducer inputs the reducer consumes.
+/// Returns `None` when no entry is visible at `max_seq` (the caller omits the
+/// channel, matching `snapshot_at_seq`'s empty-skip).
+fn reduce_channel_at_seq(
+    inner: &StoreInner,
+    channel: &str,
+    max_seq: i64,
+) -> Result<Option<ChanVal>, StoreError> {
+    let mut sorted: Vec<&LogEntry> = inner.logs[channel]
+        .iter()
+        .filter(|e| e.write_seq <= max_seq)
+        .collect();
+    if sorted.is_empty() {
+        return Ok(None);
+    }
+    sorted.sort_by(|a, b| entry_order(a, b));
+    let init = sorted.iter().find(|e| e.write_seq == 0);
+    let current = match init {
+        Some(e) => e.value.clone(),
+        None => ChanVal::Unset,
+    };
+    let tuples: Vec<(String, ChanVal)> = sorted
+        .iter()
+        .filter(|e| e.write_seq != 0)
+        .map(|e| (e.writer_node_id.clone(), e.value.clone()))
+        .collect();
+    let spec = &inner.specs[channel];
+    if tuples.is_empty() {
+        Ok(Some(current))
+    } else {
+        Ok(Some(apply_reducer(spec.reducer, &current, &tuples)?))
+    }
 }
 
 fn reduce_all(

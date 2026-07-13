@@ -77,7 +77,17 @@ impl EndpointFactory for VllmGenerateFactory {
         if let Some(api_key) = &config.as_raw().api_key {
             headers.insert("Authorization".into(), format!("Bearer {api_key}"));
         }
-        Ok(Box::new(PreparedVllmGenerate { config, headers }))
+        // The endpoint `extra`/`sampling_params` split depends only on immutable
+        // config, so validate and lift it once here instead of on every dispatch.
+        let mut endpoint_extra = config.as_raw().extra.clone().unwrap_or_default();
+        validate_protected_extras(Some(&endpoint_extra), "endpoint.extra")?;
+        let endpoint_sampling = take_sampling_params(&mut endpoint_extra, "endpoint.extra")?;
+        Ok(Box::new(PreparedVllmGenerate {
+            config,
+            headers,
+            endpoint_extra,
+            endpoint_sampling,
+        }))
     }
 }
 
@@ -85,6 +95,8 @@ impl EndpointFactory for VllmGenerateFactory {
 struct PreparedVllmGenerate {
     config: EffectiveEndpointConfig,
     headers: BTreeMap<String, String>,
+    endpoint_extra: Map<String, Value>,
+    endpoint_sampling: Map<String, Value>,
 }
 
 impl PreparedEndpoint for PreparedVllmGenerate {
@@ -113,15 +125,11 @@ impl PreparedEndpoint for PreparedVllmGenerate {
             ));
         }
 
-        let mut endpoint_extra = self.config.as_raw().extra.clone().unwrap_or_default();
-        validate_protected_extras(Some(&endpoint_extra), "endpoint.extra")?;
-        let endpoint_sampling = take_sampling_params(&mut endpoint_extra, "endpoint.extra")?;
-
         let mut turn_extra = turn.extra_body.clone().unwrap_or_default();
         validate_protected_extras(Some(&turn_extra), "turn.extra_body")?;
         let turn_sampling = take_sampling_params(&mut turn_extra, "turn.extra_body")?;
 
-        let mut sampling_params = endpoint_sampling;
+        let mut sampling_params = self.endpoint_sampling.clone();
         sampling_params.extend(turn_sampling);
         if let Some(max_tokens) = turn.max_tokens {
             sampling_params
@@ -129,7 +137,7 @@ impl PreparedEndpoint for PreparedVllmGenerate {
                 .or_insert_with(|| Value::from(max_tokens));
         }
 
-        let mut payload = endpoint_extra;
+        let mut payload = self.endpoint_extra.clone();
         payload.extend(turn_extra);
         payload.insert(
             "model".into(),

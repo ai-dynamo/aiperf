@@ -199,6 +199,50 @@ where
     }
 }
 
+/// Non-backpressured fast-path SSE handler: records every message and drives the
+/// filter's first-token search only until it reports the first significant
+/// token, then stops invoking it while still draining the body.
+///
+/// This mirrors the former inline `read_sse` closure exactly — same
+/// `perf_ns - start_ns` TTFT delta, same `first_seen` short-circuit, and an
+/// always-ready `poll_ready` (a non-backpressured filter never blocks on
+/// capacity, so it is never consulted here). The reason it exists as a handler
+/// rather than an infallible closure is panic safety: `SseMessageFilter` is a
+/// public trait, so an external filter may legitimately override
+/// `is_backpressured()` to `false` yet return `Err` from `start_send`. Routing
+/// through the fallible [`SseMessageHandler`] seam propagates that error to fail
+/// the request instead of unwrapping it into a panic.
+struct FirstTokenSseHandler<'a, F>
+where
+    F: SseMessageFilter + ?Sized,
+{
+    start_ns: i64,
+    first_seen: bool,
+    filter: &'a mut F,
+    responses: &'a mut Vec<Response>,
+}
+
+impl<F> SseMessageHandler for FirstTokenSseHandler<'_, F>
+where
+    F: SseMessageFilter + ?Sized,
+{
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(&mut self, message: SseMessage) -> Result<(), ErrorDetails> {
+        if !self.first_seen
+            && self
+                .filter
+                .start_send(message.perf_ns - self.start_ns, &message)?
+        {
+            self.first_seen = true;
+        }
+        self.responses.push(Response::Sse(message));
+        Ok(())
+    }
+}
+
 pub struct HttpClient {
     clock: Rc<dyn Clock>,
     cfg: ClientConfig,
@@ -695,20 +739,13 @@ impl HttpClient {
                 };
                 read_sse_with_handler(timed, self.clock.clone(), &mut handler).await
             } else {
-                let start_ns = record.start_ns;
-                let mut first_seen = false;
-                let responses = &mut record.responses;
-                read_sse(timed, self.clock.clone(), |message: SseMessage| {
-                    if !first_seen
-                        && first_token_filter
-                            .start_send(message.perf_ns - start_ns, &message)
-                            .expect("synchronous SSE filter is infallible")
-                    {
-                        first_seen = true;
-                    }
-                    responses.push(Response::Sse(message));
-                })
-                .await
+                let mut handler = FirstTokenSseHandler {
+                    start_ns: record.start_ns,
+                    first_seen: false,
+                    filter: first_token_filter,
+                    responses: &mut record.responses,
+                };
+                read_sse_with_handler(timed, self.clock.clone(), &mut handler).await
             };
 
             timing.borrow().copy_to(trace);

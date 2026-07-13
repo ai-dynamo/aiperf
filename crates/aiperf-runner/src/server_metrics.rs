@@ -37,10 +37,6 @@ use tokio::task::JoinHandle;
 
 use crate::protocol::ServerMetricsSpec;
 /// Prepared server-metrics source whose sole physical driver is not phase-owned.
-#[expect(
-    dead_code,
-    reason = "scheduled attachment preparation consumes this adapter in the integration slice"
-)]
 pub(crate) struct PreparedRunOwnedServerMetricsDriver {
     source_id: String,
     driver: Box<dyn PreparedTelemetryDriver>,

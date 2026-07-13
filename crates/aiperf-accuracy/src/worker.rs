@@ -31,6 +31,44 @@ use crate::protocol::{
 
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
+
+/// Exact parent-environment keys forwarded to the evaluator subprocess.
+///
+/// The hardened [`SupervisedEvaluationProvider::spawn`](crate::SupervisedEvaluationProvider)
+/// path in `supervisor.rs` calls `env_clear()` before installing a curated
+/// allowlist. This legacy stdio path shares the same threat surface: passing the
+/// full parent environment leaks unrelated host secrets (cloud credentials,
+/// database URLs, foreign API tokens) into a third-party Python evaluator. Only
+/// the interpreter/runtime essentials below survive `env_clear()`; callers add
+/// anything else explicitly through [`WorkerProcessConfig::env`].
+const FORWARDED_ENVIRONMENT_KEYS: &[&str] = &[
+    // Executable lookup for a bare `python` program name plus any subprocess the
+    // interpreter spawns; clearing this without restoring it breaks program
+    // resolution outright (the fixture tests exec `python` off PATH).
+    "PATH",
+    // Runtime home used for cache/config discovery and tempfile fallback.
+    "HOME",
+    // Text codec / locale so the worker's stdio encoding matches the parent.
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    // Temp-file root.
+    "TMPDIR",
+    // Interpreter and module resolution for venv, editable, and src-layout installs.
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "VIRTUAL_ENV",
+];
+
+/// Parent-environment key prefixes forwarded to the evaluator subprocess.
+///
+/// Namespaced runtime configuration the canonical evaluator stack genuinely
+/// reads — Hugging Face hub/dataset roots and tokens, transformers caches,
+/// freedesktop dirs, and AIPerf worker settings. These are the vars a curated
+/// deployment would supply; unrelated host secrets outside these namespaces stay
+/// cleared, matching the supervised path's intent.
+const FORWARDED_ENVIRONMENT_PREFIXES: &[&str] =
+    &["AIPERF_", "HF_", "HUGGINGFACE_", "TRANSFORMERS_", "XDG_"];
 const AGENTIC_CAPABILITY: &str = "agentic";
 const LEGACY_AGENTIC_CAPABILITY: &str = "agentic_harbor";
 const AGENTIC_INFERENCE_GATEWAY_CAPABILITY: &str = "agentic_inference_gateway";
@@ -252,13 +290,50 @@ pub struct PythonEvaluator {
     shutdown: bool,
 }
 
+/// Whether a parent-environment key is on the evaluator forwarding allowlist.
+fn is_forwarded_environment_key(key: &OsStr) -> bool {
+    // Non-UTF-8 keys are never part of the curated allowlist.
+    let Some(name) = key.to_str() else {
+        return false;
+    };
+    FORWARDED_ENVIRONMENT_KEYS.contains(&name)
+        || FORWARDED_ENVIRONMENT_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
+
+/// Build the child environment as the curated parent allowlist plus explicit
+/// caller entries.
+///
+/// The launching-process environment is filtered to interpreter/runtime
+/// essentials and evaluator-owned namespaces; caller-provided entries are
+/// layered last so explicit values win. Applied under `env_clear()`, this keeps
+/// the legacy stdio evaluator at parity with the hardened supervised path
+/// (`supervisor.rs`) rather than inheriting the full parent environment.
+fn allowlisted_child_environment(
+    explicit: &BTreeMap<OsString, OsString>,
+) -> BTreeMap<OsString, OsString> {
+    let mut environment: BTreeMap<OsString, OsString> = std::env::vars_os()
+        .filter(|(key, _)| is_forwarded_environment_key(key))
+        .collect();
+    for (key, value) in explicit {
+        environment.insert(key.clone(), value.clone());
+    }
+    environment
+}
+
 impl PythonEvaluator {
     /// Spawn the worker, drain stderr, and negotiate protocol version 1.
     pub async fn spawn(config: WorkerProcessConfig) -> Result<Self, EvaluatorWorkerError> {
+        // Parity with the hardened `SupervisedEvaluationProvider::spawn`
+        // (`supervisor.rs`): clear the inherited environment and forward only a
+        // curated allowlist so host secrets never reach the Python evaluator.
+        let child_environment = allowlisted_child_environment(&config.environment);
         let mut command = Command::new(&config.program);
         command
             .args(&config.args)
-            .envs(&config.environment)
+            .env_clear()
+            .envs(&child_environment)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

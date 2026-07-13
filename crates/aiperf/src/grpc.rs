@@ -250,7 +250,7 @@ impl GrpcTransportSink {
                         end_ns: Some(outcome.end_ns),
                         prompt_tokens: outcome.prompt_tokens,
                         completion_tokens: outcome.completion_tokens,
-                        http: outcome.http.clone(),
+                        http: outcome.http,
                     },
                 );
             }

@@ -903,6 +903,14 @@ impl ScheduledRuntime {
 
         let runtime = self.clone();
         self.scheduler.execute_async(Box::pin(async move {
+            // Every post-dispatch consumer here needs only the Copy `uuid`; the
+            // one exception (the optional lifecycle observer's `on_terminal`)
+            // reads the full turn from `credit.turn`, which `from_issued_turn`
+            // already deep-cloned unconditionally. Capturing `uuid` up front and
+            // sourcing the full turn from `credit` lets us MOVE the original
+            // `turn` into dispatch instead of deep-cloning its message history +
+            // maps on every request (the top profiled allocation hotspot).
+            let turn_uuid = turn.uuid;
             let recorder = runtime.recorder.clone();
             let clock = runtime.clock.clone();
             let start_ns = runtime.start_ns;
@@ -911,7 +919,7 @@ impl ScheduledRuntime {
                     .borrow_mut()
                     .first_token(record_index, clock.now_ns(), start_ns, ttft_ns);
                 if let Some(observer) = &turn_lifecycle_observer {
-                    observer.on_first_token(turn.uuid);
+                    observer.on_first_token(turn_uuid);
                 }
                 on_first_token(ttft_ns);
             };
@@ -921,7 +929,7 @@ impl ScheduledRuntime {
                     runtime
                         .dispatcher
                         .dispatch_turn_streaming(
-                            turn.clone(),
+                            turn,
                             runtime.observer.as_ref(),
                             &first_token,
                             responses,
@@ -930,7 +938,7 @@ impl ScheduledRuntime {
                 } else {
                     runtime
                         .dispatcher
-                        .dispatch_turn(turn.clone(), runtime.observer.as_ref(), &first_token)
+                        .dispatch_turn(turn, runtime.observer.as_ref(), &first_token)
                         .await
                 }
             };
@@ -952,7 +960,7 @@ impl ScheduledRuntime {
                 None => {
                     runtime
                         .observer
-                        .on_terminal(turn.uuid, ReplayTerminalStatus::Canceled);
+                        .on_terminal(turn_uuid, ReplayTerminalStatus::Canceled);
                     let now = runtime.clock.now_ns();
                     TurnDispatchOutcome {
                         start_ns: issued_ns,
@@ -974,13 +982,13 @@ impl ScheduledRuntime {
                 Some(Ok(outcome)) => outcome,
                 Some(Err(error)) => {
                     tracing::warn!(
-                        uuid = %turn.uuid,
+                        uuid = %turn_uuid,
                         error = %error,
                         "scheduled turn dispatch failed"
                     );
                     runtime
                         .observer
-                        .on_terminal(turn.uuid, ReplayTerminalStatus::Failed);
+                        .on_terminal(turn_uuid, ReplayTerminalStatus::Failed);
                     let now = runtime.clock.now_ns();
                     TurnDispatchOutcome {
                         start_ns: issued_ns,
@@ -999,14 +1007,17 @@ impl ScheduledRuntime {
                 }
             };
             if let Some(observer) = runtime.turn_lifecycle_observer.borrow().as_ref() {
-                observer.on_terminal(&turn, &outcome);
+                // `credit.turn` is the same unconditionally-cloned turn snapshot,
+                // taken before dispatch and never mutated, so it is byte-identical
+                // to the original turn the observer previously observed at issue.
+                observer.on_terminal(&credit.turn, &outcome);
             }
             runtime
                 .recorder
                 .borrow_mut()
                 .terminal(record_index, &outcome, runtime.start_ns);
             runtime.native_metrics.record_response(
-                turn.uuid,
+                turn_uuid,
                 NativeResponseMetadata {
                     start_ns: Some(outcome.start_ns),
                     end_ns: Some(outcome.end_ns),
@@ -1019,7 +1030,7 @@ impl ScheduledRuntime {
                 (
                     credit.clone(),
                     outcome.clone(),
-                    turn.request_correlation_id.clone(),
+                    credit.turn.request_correlation_id.clone(),
                 )
             });
             if credit.is_final_turn() {
@@ -1036,7 +1047,7 @@ impl ScheduledRuntime {
                 runtime.spawn_record_processing(
                     processor_credit,
                     processor_outcome,
-                    turn.uuid,
+                    turn_uuid,
                     correlation_id,
                 );
             }

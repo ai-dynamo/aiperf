@@ -156,6 +156,23 @@ impl LlmNode {
     pub fn write_channels(&self) -> Vec<&str> {
         vec![self.output.as_str()]
     }
+
+    /// Dynamic channel keys this node's prompt splices in (`PromptItem::Splice`).
+    ///
+    /// These are the *only* channels a node reads while materializing its prompt:
+    /// `Seg`/`RawMessages`/`Text` items resolve through the segment store and never
+    /// consult channel state. The executor uses this to reduce just these channels
+    /// from the gated snapshot instead of the whole store (per-node materialize is
+    /// otherwise O(channels × history) in a wide graph).
+    pub fn splice_channels(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                PromptItem::Splice { splice } => Some(splice.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// Topology record (`GraphRecord`).

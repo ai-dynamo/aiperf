@@ -86,11 +86,12 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     let Ok(envelope) = serde_json::from_slice::<Value>(input) else {
         return;
     };
-    if envelope
-        .pointer("/run/backend/type")
-        .and_then(Value::as_str)
-        != Some("dynosim")
-    {
+    if !matches!(
+        envelope
+            .pointer("/run/transport/type")
+            .and_then(Value::as_str),
+        Some("dynosim_offline" | "dynosim_online")
+    ) {
         return;
     }
 
@@ -191,8 +192,71 @@ fn run_v2(input: &[u8], application: &RunnerApplication) -> ! {
             format!("invalid protocol-v2 request: {error}"),
         ),
     };
-    let result = application.handle_v2(envelope);
+    // The runner's contract is exactly one terminal/validation JSONL line. A
+    // panic anywhere in prepare/execute would otherwise unwind past this writer
+    // and abort the child (exit 101) with no envelope, so Python sees a crashed
+    // subprocess instead of a typed failure. Convert a caught panic into the
+    // corresponding v2 failure envelope.
+    let operation = bootstrap.operation;
+    let benchmark_id = benchmark_id_from_raw(&bootstrap.run);
+    let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        application.handle_v2(envelope)
+    })) {
+        Ok(result) => result,
+        Err(payload) => write_v2_internal_panic(
+            operation,
+            distribution_id,
+            benchmark_id,
+            panic_payload_message(payload.as_ref()),
+        ),
+    };
     write_json_line(&result.response, result.exit_code);
+}
+
+/// Best-effort human-readable message from a caught panic payload.
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "runner panicked with a non-string payload".to_owned()
+    }
+}
+
+/// Emit the v2 failure envelope for an internal panic, matching the requested
+/// operation (validation failure for `validate`, execution-stage terminal for
+/// `execute`).
+fn write_v2_internal_panic(
+    operation: RunnerOperationV2,
+    distribution_id: String,
+    benchmark_id: Option<String>,
+    message: String,
+) -> ! {
+    let message = format!("aiperf-runner internal panic: {message}");
+    match operation {
+        RunnerOperationV2::Validate => write_json_line(
+            &RunValidationV2 {
+                protocol_version: RUNNER_PROTOCOL_V2,
+                event: "run_validation",
+                distribution_id,
+                benchmark_id,
+                success: false,
+                completeness: ValidationCompletenessV2::Static,
+                deferred_checks: Vec::new(),
+                errors: vec![diagnostic("internal_panic", message)],
+            },
+            2,
+        ),
+        RunnerOperationV2::Execute => write_v2_terminal_failure(
+            distribution_id,
+            benchmark_id,
+            RunnerFailureStageV2::Execution,
+            "internal_panic",
+            message,
+            2,
+        ),
+    }
 }
 
 fn operation_hint(input: &[u8]) -> Option<RunnerOperationV2> {

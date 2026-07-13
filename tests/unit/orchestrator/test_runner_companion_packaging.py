@@ -232,7 +232,7 @@ def test_platform_ci_builds_and_executes_both_native_profiles() -> None:
     assert "--test offline_stdio" in workflow
     assert "--test offline_scheduled_stdio" in workflow
     assert "cargo build --locked --release -p aiperf-runner" in workflow
-    assert "--features dynamo-offline" in workflow
+    assert "--features dynosim" in workflow
     assert "tools/runner_release_input.py create" in workflow
     assert "tools/runner_release_input.py verify" in workflow
     assert "dynamo-aiperf-native=${DYNAMO_REVISION}" in workflow

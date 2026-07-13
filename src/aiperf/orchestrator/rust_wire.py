@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import multiprocessing
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -129,9 +130,9 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
     return {
         "identity": identity,
         "artifact_target": str(run.artifact_dir),
-        "backend": {
-            "type": str(cfg.backend.type),
-            "config": copy.deepcopy(cfg.backend.config),
+        "transport": {
+            "type": str(cfg.transport.type),
+            "config": copy.deepcopy(cfg.transport.config),
         },
         "workload": workload,
         "resources": resources,
@@ -480,11 +481,18 @@ def _gpu_telemetry(
     from aiperf.common.environment import Environment
 
     collector = str(config.collector)
-    metrics_file = (
-        str(config.metrics_file.expanduser().resolve())
-        if config.metrics_file is not None
-        else None
-    )
+    # Authored projection must not inspect the filesystem, so the metrics-file
+    # path is made absolute without dereferencing symlinks (matching
+    # ``_content_server`` / ``_python_executable``), not via ``Path.resolve``.
+    if config.metrics_file is not None:
+        metrics_path = config.metrics_file.expanduser()
+        metrics_file: str | None = str(
+            metrics_path
+            if metrics_path.is_absolute()
+            else (Path.cwd() / metrics_path).absolute()
+        )
+    else:
+        metrics_file = None
     sources: list[dict[str, Any]] = []
     if collector == "dcgm":
         authored = [*Environment.GPU.DEFAULT_DCGM_ENDPOINTS, *config.urls]
@@ -1007,8 +1015,16 @@ def _set_optional(target: dict[str, Any], name: str, value: Any) -> None:
 
 
 def _artifact_relative_path(root: Path, output: Path) -> str:
-    root_path = root.resolve()
-    output_path = output.resolve()
+    """Relative artifact path via pure normalization, never a filesystem probe.
+
+    The authored projection is side-effect-free, so both paths are normalized
+    with ``os.path.abspath`` (lexical ``..`` collapse plus cwd-anchoring, no
+    ``lstat``/``readlink``) rather than ``Path.resolve``. ``relative_to`` is
+    itself purely lexical. For ordinary non-symlink inputs this yields the
+    identical string ``resolve`` would have produced.
+    """
+    root_path = Path(os.path.abspath(root))
+    output_path = Path(os.path.abspath(output))
     try:
         return str(output_path.relative_to(root_path))
     except ValueError as error:

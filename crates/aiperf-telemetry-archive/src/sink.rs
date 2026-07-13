@@ -903,7 +903,26 @@ impl OwnedLocalArchiveSinkFactory {
 }
 
 /// Product-usable local sink owning repository, spool lock, WAL, and builders.
+///
+/// The durable core lives in a `Send + 'static` [`OwnedLocalArchiveSinkInner`]
+/// so every fsync/`sync_all`/rename-bearing operation runs on
+/// [`tokio::task::spawn_blocking`], never on the runner's `current_thread` +
+/// `LocalSet` reactor thread. An fsync stall therefore cannot park co-located
+/// telemetry sources, cadence timers, or boundary commands. The inner value is
+/// moved out for the duration of each blocking op and moved back on completion;
+/// it is absent only after a blocking task itself panics, which is treated as an
+/// uncertain durable outcome.
 pub struct OwnedLocalArchiveSink {
+    inner: Option<OwnedLocalArchiveSinkInner>,
+}
+
+/// Owned durable core executed exclusively on the blocking pool.
+///
+/// The synchronous methods below preserve the exact temp -> flush ->
+/// `sync_all` -> rename -> parent-dir fsync ordering and every poison/fault
+/// semantic; the only behavioral change is that they no longer run inline on the
+/// async reactor.
+struct OwnedLocalArchiveSinkInner {
     repository: LocalArchiveRepository,
     wal: Option<OwnedLocalWalWriter>,
     faults: Arc<dyn DurabilityFaultInjector>,
@@ -923,16 +942,20 @@ pub struct OwnedLocalArchiveSink {
 
 impl Debug for OwnedLocalArchiveSink {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("OwnedLocalArchiveSink")
-            .field("archive_id", &self.archive_id)
-            .field("session_id", &self.session_id)
-            .field("state", &self.state)
-            .field("frames", &self.frames.len())
-            .field("checkpoint_seq", &self.checkpoint_seq)
-            .field("receipts_enabled", &self.receipts_enabled)
-            .field("poisoned", &self.poisoned)
-            .finish_non_exhaustive()
+        let mut debug = formatter.debug_struct("OwnedLocalArchiveSink");
+        match self.inner.as_ref() {
+            Some(inner) => debug
+                .field("archive_id", &inner.archive_id)
+                .field("session_id", &inner.session_id)
+                .field("state", &inner.state)
+                .field("frames", &inner.frames.len())
+                .field("checkpoint_seq", &inner.checkpoint_seq)
+                .field("receipts_enabled", &inner.receipts_enabled)
+                .field("poisoned", &inner.poisoned)
+                .finish_non_exhaustive(),
+            // Absent only after a blocking durable task panicked mid-operation.
+            None => debug.field("durable_task", &"lost").finish_non_exhaustive(),
+        }
     }
 }
 
@@ -949,32 +972,76 @@ impl OwnedLocalArchiveSink {
         receipts_enabled: bool,
     ) -> Result<Self, ArchiveSinkError> {
         Ok(Self {
-            repository,
-            wal: Some(wal),
-            faults,
-            parquet: Some(ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?),
-            schemas,
-            rotation,
-            pending_physical: PartitionBuildOutputV1::default(),
-            archive_id,
-            session_id,
-            state: ArchiveState::Open,
-            frames: Vec::new(),
-            completions: Vec::new(),
-            checkpoint_seq: 0,
-            receipts_enabled,
-            poisoned: false,
+            inner: Some(OwnedLocalArchiveSinkInner {
+                repository,
+                wal: Some(wal),
+                faults,
+                parquet: Some(ParquetPartitionBuilderV1::new(schemas.clone(), rotation)?),
+                schemas,
+                rotation,
+                pending_physical: PartitionBuildOutputV1::default(),
+                archive_id,
+                session_id,
+                state: ArchiveState::Open,
+                frames: Vec::new(),
+                completions: Vec::new(),
+                checkpoint_seq: 0,
+                receipts_enabled,
+                poisoned: false,
+            }),
         })
     }
 
     /// Returns the current authoritative local repository/head.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if a prior blocking durable task panicked and lost the inner
+    /// core; a live sink always retains it.
     #[must_use]
-    pub const fn repository(&self) -> &LocalArchiveRepository {
-        &self.repository
+    pub fn repository(&self) -> &LocalArchiveRepository {
+        &self
+            .inner
+            .as_ref()
+            .expect("owned archive sink retains its durable core")
+            .repository
     }
 
     /// Consumes a finalized sink and returns its repository for publication.
     pub fn into_repository(self) -> Result<LocalArchiveRepository, ArchiveSinkError> {
+        self.inner
+            .ok_or(ArchiveSinkError::NotLocallyFinalized)?
+            .into_repository()
+    }
+
+    /// Moves the durable core onto the blocking pool for one fsync-bearing op.
+    ///
+    /// The `Send + 'static` inner value crosses the `spawn_blocking` boundary and
+    /// returns with its result, so the async reactor is never parked on fsync. A
+    /// join failure (a panic inside the durable task) leaves the inner core
+    /// absent and is reported as an uncertain outcome to be recovered under the
+    /// same frame identity.
+    async fn on_blocking_core<T, F>(&mut self, operation: F) -> Result<T, ArchiveSinkError>
+    where
+        F: FnOnce(&mut OwnedLocalArchiveSinkInner) -> Result<T, ArchiveSinkError> + Send + 'static,
+        T: Send + 'static,
+    {
+        let mut inner = self.inner.take().ok_or(ArchiveSinkError::Finalized)?;
+        let (inner, result) = tokio::task::spawn_blocking(move || {
+            let result = operation(&mut inner);
+            (inner, result)
+        })
+        .await
+        .map_err(|error| {
+            ArchiveSinkError::Uncertain(format!("archive durable task join failed: {error}"))
+        })?;
+        self.inner = Some(inner);
+        result
+    }
+}
+
+impl OwnedLocalArchiveSinkInner {
+    fn into_repository(self) -> Result<LocalArchiveRepository, ArchiveSinkError> {
         if self.state != ArchiveState::LocallyFinalized || self.wal.is_some() || self.poisoned {
             return Err(ArchiveSinkError::NotLocallyFinalized);
         }
@@ -986,6 +1053,82 @@ impl OwnedLocalArchiveSink {
             return Err(ArchiveSinkError::Poisoned);
         }
         ensure_operable(self.state, false)
+    }
+
+    fn recover_snapshot(&self) -> Result<RecoveredArchive, ArchiveSinkError> {
+        self.ensure_operable()?;
+        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
+        recovered_archive(
+            self.archive_id,
+            self.session_id,
+            self.state,
+            &self.frames,
+            &BTreeSet::new(),
+            wal.durable_prefix(),
+            wal.header().first_record_seq,
+        )
+    }
+
+    fn append_frame(
+        &mut self,
+        frame: ArchiveWalFrame,
+    ) -> Result<DurabilityCompletion, ArchiveSinkError> {
+        self.ensure_operable()?;
+        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
+        validate_archive_frame(&frame, wal.header(), &self.schemas)?;
+        let output = self
+            .parquet
+            .as_mut()
+            .ok_or(ArchiveSinkError::Finalized)?
+            .append_frame(frame.table_projections)?;
+        merge_physical(&mut self.pending_physical, output);
+        let wal = self.wal.as_mut().ok_or(ArchiveSinkError::Finalized)?;
+        if let Err(error) = wal.append(&frame.wal_frame) {
+            self.poisoned = true;
+            return Err(ArchiveSinkError::Spool(error));
+        }
+        let completion = DurabilityCompletion {
+            wal_segment_id: wal.header().segment_id,
+            durable_prefix_hash: wal.durable_prefix(),
+            frame_id: frame.wal_frame.header().frame_id,
+            first_record_seq: frame.wal_frame.header().record_seq,
+            last_record_seq: frame.wal_frame.header().record_seq,
+            projection_coverage_digest: declared_projection_coverage_digest(&frame.wal_frame),
+        };
+        self.frames.push(frame.wal_frame);
+        self.completions.push(completion.clone());
+        Ok(completion)
+    }
+
+    fn record_receipt(
+        &mut self,
+        draft: ReceiptEventDraft,
+    ) -> Result<AppendReceipt, ArchiveSinkError> {
+        self.ensure_operable()?;
+        if !self.receipts_enabled {
+            return Err(ArchiveSinkError::ReceiptJournalUnavailable);
+        }
+        let mut journal = ReceiptJournal::recover(
+            self.repository.spool(),
+            self.archive_id,
+            self.faults.as_ref(),
+        )?;
+        validate_receipt_draft(
+            self.archive_id,
+            &draft,
+            next_receipt_sequence(journal.last_receipt_seq())?,
+        )?;
+        validate_receipt_target(self.session_id, &draft.target, &self.completions)?;
+        if let Some(epoch) = draft.observer_epoch {
+            journal.append_observer_epoch(epoch, self.faults.as_ref())?;
+        }
+        let receipt = AppendReceipt {
+            receipt_target_id: draft.target.receipt_target_id,
+            event_id: draft.event.event_id,
+            receipt_seq: draft.event.receipt_seq,
+        };
+        journal.record_event(draft.target, draft.event, self.faults.as_ref())?;
+        Ok(receipt)
     }
 
     fn checkpoint_sync(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError> {
@@ -1041,91 +1184,8 @@ impl OwnedLocalArchiveSink {
         self.checkpoint_seq = next_checkpoint_seq;
         Ok(completion)
     }
-}
 
-#[async_trait]
-impl ArchiveSink for OwnedLocalArchiveSink {
-    async fn recover(&mut self) -> Result<RecoveredArchive, ArchiveSinkError> {
-        self.ensure_operable()?;
-        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
-        recovered_archive(
-            self.archive_id,
-            self.session_id,
-            self.state,
-            &self.frames,
-            &BTreeSet::new(),
-            wal.durable_prefix(),
-            wal.header().first_record_seq,
-        )
-    }
-
-    async fn append_frame(
-        &mut self,
-        frame: ArchiveWalFrame,
-    ) -> Result<DurabilityCompletion, ArchiveSinkError> {
-        self.ensure_operable()?;
-        let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
-        validate_archive_frame(&frame, wal.header(), &self.schemas)?;
-        let output = self
-            .parquet
-            .as_mut()
-            .ok_or(ArchiveSinkError::Finalized)?
-            .append_frame(frame.table_projections)?;
-        merge_physical(&mut self.pending_physical, output);
-        let wal = self.wal.as_mut().ok_or(ArchiveSinkError::Finalized)?;
-        if let Err(error) = wal.append(&frame.wal_frame) {
-            self.poisoned = true;
-            return Err(ArchiveSinkError::Spool(error));
-        }
-        let completion = DurabilityCompletion {
-            wal_segment_id: wal.header().segment_id,
-            durable_prefix_hash: wal.durable_prefix(),
-            frame_id: frame.wal_frame.header().frame_id,
-            first_record_seq: frame.wal_frame.header().record_seq,
-            last_record_seq: frame.wal_frame.header().record_seq,
-            projection_coverage_digest: declared_projection_coverage_digest(&frame.wal_frame),
-        };
-        self.frames.push(frame.wal_frame);
-        self.completions.push(completion.clone());
-        Ok(completion)
-    }
-
-    async fn record_receipt(
-        &mut self,
-        draft: ReceiptEventDraft,
-    ) -> Result<AppendReceipt, ArchiveSinkError> {
-        self.ensure_operable()?;
-        if !self.receipts_enabled {
-            return Err(ArchiveSinkError::ReceiptJournalUnavailable);
-        }
-        let mut journal = ReceiptJournal::recover(
-            self.repository.spool(),
-            self.archive_id,
-            self.faults.as_ref(),
-        )?;
-        validate_receipt_draft(
-            self.archive_id,
-            &draft,
-            next_receipt_sequence(journal.last_receipt_seq())?,
-        )?;
-        validate_receipt_target(self.session_id, &draft.target, &self.completions)?;
-        if let Some(epoch) = draft.observer_epoch {
-            journal.append_observer_epoch(epoch, self.faults.as_ref())?;
-        }
-        let receipt = AppendReceipt {
-            receipt_target_id: draft.target.receipt_target_id,
-            event_id: draft.event.event_id,
-            receipt_seq: draft.event.receipt_seq,
-        };
-        journal.record_event(draft.target, draft.event, self.faults.as_ref())?;
-        Ok(receipt)
-    }
-
-    async fn checkpoint(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError> {
-        self.checkpoint_sync()
-    }
-
-    async fn finalize(
+    fn finalize(
         &mut self,
         reason: TerminationReason,
     ) -> Result<FinalizeCompletion, ArchiveSinkError> {
@@ -1167,9 +1227,49 @@ impl ArchiveSink for OwnedLocalArchiveSink {
             local_head: Some(terminal_head),
         })
     }
+}
+
+#[async_trait]
+impl ArchiveSink for OwnedLocalArchiveSink {
+    async fn recover(&mut self) -> Result<RecoveredArchive, ArchiveSinkError> {
+        // Recovery reads only in-memory frame/prefix state, so it stays inline.
+        self.inner
+            .as_ref()
+            .ok_or(ArchiveSinkError::Finalized)?
+            .recover_snapshot()
+    }
+
+    async fn append_frame(
+        &mut self,
+        frame: ArchiveWalFrame,
+    ) -> Result<DurabilityCompletion, ArchiveSinkError> {
+        self.on_blocking_core(move |inner| inner.append_frame(frame))
+            .await
+    }
+
+    async fn record_receipt(
+        &mut self,
+        draft: ReceiptEventDraft,
+    ) -> Result<AppendReceipt, ArchiveSinkError> {
+        self.on_blocking_core(move |inner| inner.record_receipt(draft))
+            .await
+    }
+
+    async fn checkpoint(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError> {
+        self.on_blocking_core(OwnedLocalArchiveSinkInner::checkpoint_sync)
+            .await
+    }
+
+    async fn finalize(
+        &mut self,
+        reason: TerminationReason,
+    ) -> Result<FinalizeCompletion, ArchiveSinkError> {
+        self.on_blocking_core(move |inner| inner.finalize(reason))
+            .await
+    }
 
     fn local_repository(&self) -> Option<&LocalArchiveRepository> {
-        Some(&self.repository)
+        self.inner.as_ref().map(|inner| &inner.repository)
     }
 
     fn into_local_repository(
