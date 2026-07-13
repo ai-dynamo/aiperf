@@ -25,6 +25,9 @@ use std::ops::Deref;
 /// Native report schema identifier.
 pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
 
+/// Schema identifier for the additive native-v2 telemetry-archive block.
+pub const TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION: &str = "1.0";
+
 /// A present report value: finite numbers serialize normally; non-finite tails
 /// serialize as JSON null without colliding with structurally absent fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
