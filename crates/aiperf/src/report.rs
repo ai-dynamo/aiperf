@@ -119,7 +119,7 @@ mod tests {
     fn native_report_json_uses_the_metrics_first_v2_shape() {
         let mut summary = aiperf_metrics::AccumulatorSummary::new();
         summary.insert_finite(aiperf_metrics::MetricTag::RequestCount, 1.0);
-        let report = NativeReport::new(&summary);
+        let report = NativeReport::new(&summary, None);
         let path =
             std::env::temp_dir().join(format!("aiperf_native_sum_{}.json", std::process::id()));
         write_native_report_json(&report, &path).unwrap();
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn coordinator_finalizes_typed_run_before_the_only_write() {
-        let report = NativeReport::new(&aiperf_metrics::AccumulatorSummary::new());
+        let report = NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None);
         let path = std::env::temp_dir().join(format!(
             "aiperf_finalized_native_sum_{}.json",
             std::process::id()
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn report_commit_never_replaces_existing_authority() {
-        let report = NativeReport::new(&aiperf_metrics::AccumulatorSummary::new());
+        let report = NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None);
         let path = std::env::temp_dir().join(format!(
             "aiperf_existing_native_sum_{}.json",
             std::process::id()

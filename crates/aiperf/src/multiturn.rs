@@ -1047,7 +1047,7 @@ impl TurnDataPolicy {
         }
     }
 
-    /// Restricted content may exist only for the live dispatch.
+    /// Restricted evaluator content may exist only for the live dispatch.
     pub const fn restricted_transient() -> Self {
         Self {
             restricted_transient: true,
@@ -1092,8 +1092,8 @@ pub struct TurnToSend {
     pub conversation_id: String,
     /// Runtime session identifier.
     pub x_correlation_id: String,
-    /// Correlation identity sent to the backend and metrics association;
-    /// mirrors the runtime session id.
+    /// Correlation identity sent to the backend and metrics association. This
+    /// differs from the runtime session id for typed accuracy datasets.
     pub request_correlation_id: String,
     /// Zero-based turn index.
     pub turn_index: usize,
@@ -1543,7 +1543,11 @@ impl NativeSessionBackend {
             .max_tokens
             .map(|tokens| tokens as usize)
             .unwrap_or(self.default_output_tokens);
-        let request_correlation_id = owner.x_correlation_id.clone();
+        let request_correlation_id = materialized
+            .accuracy
+            .as_ref()
+            .map(|accuracy| accuracy.correlation_id.as_str().to_string())
+            .unwrap_or_else(|| owner.x_correlation_id.clone());
         let endpoint_path = materialized.endpoint_path;
         Ok(TurnToSend {
             uuid: Uuid::new_v4(),

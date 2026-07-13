@@ -12,19 +12,24 @@
 //! by `aiperf-runner`: the online HTTP sink over `aiperf-transport-http` ([`http`]),
 //! ancillary policy wiring ([`ancillary`]), phased scheduled execution
 //! ([`phase_runtime`]), workload shaping ([`workload`]), the online run loop
-//! ([`run`]), and reporting ([`report`]). Named compile-time extension
-//! composition lives in `aiperf_extensions` and is owned by the runner, so
-//! extension crates never need a dependency cycle through this runtime crate.
+//! ([`run`]), reporting ([`report`]), and canonical accuracy/agentic execution
+//! seams. Named compile-time extension composition lives in `aiperf_extensions`
+//! and is owned by the runner, so extension crates never need a dependency cycle
+//! through this runtime crate.
 //! With the `dynosim` Cargo feature, [`dynosim`] composes the
 //! same workloads and observers with `SimClock` plus Dynamo's passive mock
 //! engine for deterministic, socket-free co-simulation.
 
+pub mod accuracy;
 pub mod adaptive;
+pub mod agentic;
+pub mod agentic_gateway;
 pub mod ancillary;
 #[cfg(feature = "dynamo-aic-forward-pass")]
 pub mod aic_runtime;
 #[cfg(feature = "dynosim")]
 pub mod dynosim;
+pub mod evaluation;
 pub mod fixed_schedule;
 pub mod grpc;
 pub mod http;
