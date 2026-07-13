@@ -49,6 +49,21 @@ pub struct PreparedRunnerGraphInput {
     pub allow_dataset_wrap: bool,
 }
 
+// `GraphInputBundle` holds an `Arc<dyn SegmentStore>` that is not `Debug`, so
+// this summarizes the prepared bundle rather than deriving over it.
+impl fmt::Debug for PreparedRunnerGraphInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedRunnerGraphInput")
+            .field("plans", &self.bundle.plans.len())
+            .field("format", &self.bundle.metadata.format)
+            .field("random_seed", &self.random_seed)
+            .field("default_output_tokens", &self.default_output_tokens)
+            .field("allow_dataset_wrap", &self.allow_dataset_wrap)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Inputs shared by every direct graph-source adapter.
 pub struct RunnerGraphInputContext<'a> {
     /// Fully prepared tokenizer used during segment interning and token counts.

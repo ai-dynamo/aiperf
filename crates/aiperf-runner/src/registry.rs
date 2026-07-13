@@ -2097,7 +2097,8 @@ mod tests {
         let factory = OnlineHttpBackendFactoryV2;
         let control_requirements = WorkloadRequirements {
             backend_features: BTreeSet::from(["control_plane_http".to_owned()]),
-            ..WorkloadRequirements::inference()
+            resources: ResourceRequirementsV2::inference(),
+            ..Default::default()
         };
         let valid = RawValue::from_string(
             serde_json::json!({"client": {"connect_timeout_ns": 50_000_000_i64}}).to_string(),
@@ -2111,7 +2112,10 @@ mod tests {
         .unwrap();
         assert!(factory.validate(&invalid, &control_requirements).is_err());
 
-        let ordinary_requirements = WorkloadRequirements::inference();
+        let ordinary_requirements = WorkloadRequirements {
+            resources: ResourceRequirementsV2::inference(),
+            ..Default::default()
+        };
         let inert = RawValue::from_string(
             serde_json::json!({"client": {"connect_timeout_ns": 50_000_000_i64}}).to_string(),
         )
