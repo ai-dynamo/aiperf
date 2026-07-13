@@ -60,7 +60,10 @@ fn one_line(output: &Output) -> Value {
 }
 
 fn distribution_id() -> String {
-    let output = Command::new(binary()).arg("--capabilities").output().unwrap();
+    let output = Command::new(binary())
+        .arg("--capabilities")
+        .output()
+        .unwrap();
     assert!(output.status.success());
     let capabilities = one_line(&output);
     capabilities["distribution_id"].as_str().unwrap().to_owned()
@@ -186,8 +189,7 @@ fn online_scheduled_runs_in_process_under_real_clock_with_exact_counts() {
     assert_eq!(native["run"]["mode"], "online:scheduled");
     assert_eq!(native["run"]["dynamo"]["clock"], "real");
     assert_eq!(
-        native["metrics"]["request_count"]["series"][0]["stats"]["total"],
-        4.0,
+        native["metrics"]["request_count"]["series"][0]["stats"]["total"], 4.0,
         "online scheduled run did not serve the exact authored request count"
     );
 
@@ -408,7 +410,11 @@ fn online_product_path_matches_native_live_replay_within_3pct() {
         );
     };
     within_3pct("ttft", avg("time_to_first_token"), native.ttft_mean_ms);
-    within_3pct("e2e", avg("request_latency"), native.request_latency_mean_ms);
+    within_3pct(
+        "e2e",
+        avg("request_latency"),
+        native.request_latency_mean_ms,
+    );
     within_3pct(
         "itl",
         avg("inter_token_latency"),
@@ -445,7 +451,11 @@ fn dynamo_native_dir() -> Option<PathBuf> {
 
 fn python_bin() -> Option<&'static str> {
     for bin in ["python3", "python"] {
-        if Command::new(bin).arg("--version").output().is_ok_and(|o| o.status.success()) {
+        if Command::new(bin)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
             return Some(bin);
         }
     }
@@ -579,7 +589,9 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
     let aiperf: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     let a_avg = |tag: &str| -> f64 {
-        aiperf["metrics"][tag]["series"][0]["stats"]["avg"].as_f64().unwrap()
+        aiperf["metrics"][tag]["series"][0]["stats"]["avg"]
+            .as_f64()
+            .unwrap()
     };
     let a_total = |tag: &str| -> f64 {
         aiperf["metrics"][tag]["series"][0]["stats"]["total"]
@@ -593,14 +605,21 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
     let native_out = Command::new(python)
         .env("PYTHONPATH", &pythonpath)
         .args([
-            "-m", "dynamo.replay",
+            "-m",
+            "dynamo.replay",
             trace_path.to_str().unwrap(),
-            "--replay-mode", "online",
-            "--replay-concurrency", &REQUESTS.to_string(),
-            "--num-workers", "1",
-            "--extra-engine-args", &format!(r#"{{"block_size":{BLOCK_SIZE}}}"#),
-            "--trace-format", "mooncake",
-            "--report-json", native_report.to_str().unwrap(),
+            "--replay-mode",
+            "online",
+            "--replay-concurrency",
+            &REQUESTS.to_string(),
+            "--num-workers",
+            "1",
+            "--extra-engine-args",
+            &format!(r#"{{"block_size":{BLOCK_SIZE}}}"#),
+            "--trace-format",
+            "mooncake",
+            "--report-json",
+            native_report.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -609,13 +628,18 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
         "python dynamo.replay failed: {}",
         String::from_utf8_lossy(&native_out.stderr)
     );
-    let native: Value =
-        serde_json::from_slice(&std::fs::read(&native_report).unwrap()).unwrap();
+    let native: Value = serde_json::from_slice(&std::fs::read(&native_report).unwrap()).unwrap();
     let n = |key: &str| -> f64 { native[key].as_f64().unwrap() };
 
     // Counts: exact.
-    assert_eq!(a_total("total_usage_prompt_tokens"), n("total_input_tokens"));
-    assert_eq!(a_total("total_usage_completion_tokens"), n("total_output_tokens"));
+    assert_eq!(
+        a_total("total_usage_prompt_tokens"),
+        n("total_input_tokens")
+    );
+    assert_eq!(
+        a_total("total_usage_completion_tokens"),
+        n("total_output_tokens")
+    );
     assert_eq!(a_total("request_count"), n("completed_requests"));
 
     // Latency means: within 3% (1ms floor).
@@ -638,6 +662,142 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
         "aiperf rps {a_rps:.3} < python-dynamo rps {:.3}",
         n("request_throughput_rps")
     );
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// End-to-end **byte-exact** offline gate: the runner's `dynosim` offline
+/// concurrency replay (auto-driven by Dynamo's `execute_pass` single engine for
+/// this single-worker, single-turn, no-ancillary-timing case) versus
+/// `python -m dynamo.replay --replay-mode offline` on the SAME mooncake trace.
+/// Both are deterministic virtual-clock runs, so counts and `wall_time_ms` are
+/// byte-identical and every latency mean matches native's own 6-decimal report
+/// precision — the parity that failed (tens of percent) before the single-engine
+/// fix under prefill saturation. Skips when the native checkout/python is absent.
+#[test]
+fn offline_product_path_is_byte_exact_with_python_dynamo_replay() {
+    let Some(native_dir) = dynamo_native_dir() else {
+        eprintln!("SKIP: no dynamo-aiperf-native checkout");
+        return;
+    };
+    let Some(python) = python_bin() else {
+        eprintln!("SKIP: no python");
+        return;
+    };
+    let pythonpath = format!(
+        "{}:{}",
+        native_dir.join("components/src").display(),
+        native_dir.join("lib/bindings/python/src").display()
+    );
+    if !Command::new(python)
+        .env("PYTHONPATH", &pythonpath)
+        .args(["-m", "dynamo.replay", "--help"])
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        eprintln!("SKIP: dynamo.replay not runnable");
+        return;
+    }
+
+    // Saturated: 32 requests, ISL 256 (16 blocks), conc 16 → concurrent prefill
+    // demand (16*256) exceeds the default 8192 batch budget.
+    const REQUESTS: usize = 32;
+    const BLOCKS: usize = 16;
+    const ISL: usize = 16 * BLOCKS;
+    const OSL: usize = 8;
+    const CONCURRENCY: usize = 16;
+
+    let base = std::env::temp_dir().join(format!("aiperf-offline-be-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let trace_path = base.join("trace.jsonl");
+    {
+        let mut trace = String::new();
+        for i in 0..REQUESTS {
+            let hash_ids: Vec<i64> = (0..BLOCKS as i64).map(|b| (i as i64) * 1000 + b).collect();
+            trace.push_str(
+                &serde_json::to_string(&json!({
+                    "timestamp": 0, "input_length": ISL, "output_length": OSL, "hash_ids": hash_ids
+                }))
+                .unwrap(),
+            );
+            trace.push('\n');
+        }
+        std::fs::write(&trace_path, trace).unwrap();
+    }
+
+    let target = base.join("aiperf");
+    let request = json!({
+        "protocol_version": 2, "operation": "execute",
+        "expected_distribution_id": distribution_id(),
+        "run": {
+            "identity": {"benchmark_id": "offline-be", "random_seed": 41},
+            "artifact_target": target,
+            "backend": {"type": "dynosim", "config": {
+                "replay_mode": "offline", "engine": {"block_size": 16},
+                "artifacts": {"report_json": "dynamo/report.json"}
+            }},
+            "workload": {"type": "scheduled", "config": {
+                "worker_count": 1,
+                "dataset": {"type": "file", "format": "mooncake_trace", "sampling": "sequential",
+                            "path": trace_path, "osl": {"value": OSL as f64}},
+                "tokenizer": {"name": "builtin", "revision": "main",
+                              "trust_remote_code": false, "apply_chat_template": false},
+                "phases": [{"type": "concurrency", "name": "profiling",
+                            "exclude_from_results": false, "requests": REQUESTS, "concurrency": CONCURRENCY}]
+            }},
+            "resources": {
+                "models": {"items": [{"name": "mock-model"}]},
+                "endpoints": {"profiles": [{"id": "default", "type": "chat_completions", "urls": ["http://127.0.0.1:9"]}]},
+                "metrics": {"slos": {}}, "artifacts": {}, "sidecars": {}
+            }
+        }
+    });
+    let output = run(&request);
+    let terminal = one_line(&output);
+    assert!(output.status.success(), "aiperf terminal={terminal} stderr={}",
+        String::from_utf8_lossy(&output.stderr));
+    // clock=sim: this is a deterministic offline run.
+    assert_eq!(terminal["provenance"]["clock"], "sim");
+    let aiperf: Value =
+        serde_json::from_slice(&std::fs::read(target.join("dynamo/report.json")).unwrap()).unwrap();
+
+    let native_report = base.join("native.json");
+    let native_out = Command::new(python)
+        .env("PYTHONPATH", &pythonpath)
+        .args([
+            "-m", "dynamo.replay", trace_path.to_str().unwrap(),
+            "--replay-mode", "offline", "--replay-concurrency", &CONCURRENCY.to_string(),
+            "--num-workers", "1", "--extra-engine-args", r#"{"block_size":16}"#,
+            "--trace-format", "mooncake", "--report-json", native_report.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(native_out.status.success(), "python dynamo.replay failed: {}",
+        String::from_utf8_lossy(&native_out.stderr));
+    let native: Value = serde_json::from_slice(&std::fs::read(&native_report).unwrap()).unwrap();
+
+    let f = |v: &Value, k: &str| v[k].as_f64().unwrap();
+    // Counts + wall time: byte-identical (deterministic offline).
+    assert_eq!(f(&aiperf, "completed_requests"), f(&native, "completed_requests"));
+    assert_eq!(f(&aiperf, "total_input_tokens"), f(&native, "total_input_tokens"));
+    assert_eq!(f(&aiperf, "total_output_tokens"), f(&native, "total_output_tokens"));
+    assert_eq!(
+        f(&aiperf, "wall_time_ms"), f(&native, "wall_time_ms"),
+        "wall_time not byte-exact"
+    );
+    // Latency means: equal to native's 6-decimal report precision (the property
+    // that diverged by tens of percent before the single-engine fix).
+    let to_native_precision = |name: &str| {
+        let a = f(&aiperf, name);
+        let n = f(&native, name);
+        assert!(
+            (a - n).abs() <= n.abs() * 1e-6 + 1e-6,
+            "{name}: aiperf={a} native={n}"
+        );
+    };
+    to_native_precision("mean_ttft_ms");
+    to_native_precision("mean_e2e_latency_ms");
+    to_native_precision("mean_itl_ms");
 
     std::fs::remove_dir_all(&base).unwrap();
 }

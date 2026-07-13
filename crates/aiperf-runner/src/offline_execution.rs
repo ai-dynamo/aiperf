@@ -63,7 +63,7 @@ use aiperf_metrics::{
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
 use aiperf_rng::{RngRoot, namespace};
-use aiperf_timing::{BernoulliFixedDelay, NoopPhaseObserver};
+use aiperf_timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
@@ -615,10 +615,7 @@ impl DynosimBackendSpec {
         }
 
         let mut required = self.required_features.clone();
-        if self
-            .aic
-            .as_ref()
-            .is_some_and(DynosimAicSpec::requested)
+        if self.aic.as_ref().is_some_and(DynosimAicSpec::requested)
             || [&self.engine, &self.prefill_engine, &self.decode_engine]
                 .into_iter()
                 .flatten()
@@ -1251,7 +1248,18 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
         let dataset = dataset.dataset;
         create_artifact_target(&artifact_target)?;
 
+        // Match Dynamo's own offline replay: drive a single round-robin worker
+        // with the `execute_pass` engine when the run is a closed-loop, single-
+        // turn concurrency replay with no clock-scheduled events. `build_native`
+        // additionally gates on backend single-worker eligibility, so setting the
+        // flag on any other topology is a no-op. This makes offline concurrency
+        // byte-exact with `dynamo.replay --replay-mode offline` under saturation.
+        let mut backend = backend;
+        backend.engine.single_pass_engine = dataset.is_single_turn()
+            && phases.iter().all(phase_allows_single_pass_engine);
+
         let phase_count = phases.len();
+        let single_pass_engine = backend.engine.single_pass_engine;
         let terminal_event_delivery = terminal_event_delivery_is_safe(&phases);
         let backend_sla_metrics = backend.sla.native_metrics_config()?;
         let artifact_for_factory = artifact_target.clone();
@@ -1290,6 +1298,12 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                         .with_performance_summary_collection(phase_count != 1)
                         .with_native_metric_record_dimensions(false)
                         .with_timing_record_capture(false);
+                        if single_pass_engine {
+                            // The `execute_pass` single engine cannot stop at a
+                            // finite clock deadline, so no periodic progress event
+                            // may be scheduled during the run.
+                            plan.config.progress_interval_ns = DISABLED_PROGRESS_INTERVAL_NS;
+                        }
                         if phase.common().name == "profiling"
                             && let Some(observer) = &backend_goodput
                         {
@@ -1401,6 +1415,27 @@ fn terminal_event_delivery_is_safe(phases: &[PhaseSpec]) -> bool {
         && common.prefill_concurrency.is_none()
         && common.grace_period.is_none()
         && !common.seamless
+        && common.concurrency_ramp.is_none()
+        && common.prefill_ramp.is_none()
+        && common.rate_ramp.is_none()
+        && common.cancellation.is_none()
+        && common.adaptive_scale.is_none()
+}
+
+/// Whether a single scheduled phase schedules no clock events during engine
+/// processing, so a closed-loop concurrency run can be driven by Dynamo's
+/// `execute_pass` single engine (which cannot stop at a finite clock deadline).
+///
+/// Only a `Concurrency` phase is closed-loop (request-rate/user-centric/fixed
+/// phases pace arrivals on the clock). A `duration` stop arms a clock timer;
+/// ramps drive clock-paced actuators; cancellation schedules clock-timed aborts;
+/// adaptive scale runs Clock-paced assessment. Any of these forces bounded
+/// stepping, so they disqualify the single-pass engine.
+fn phase_allows_single_pass_engine(phase: &PhaseSpec) -> bool {
+    let PhaseSpec::Concurrency { common, .. } = phase else {
+        return false;
+    };
+    common.duration.is_none()
         && common.concurrency_ramp.is_none()
         && common.prefill_ramp.is_none()
         && common.rate_ramp.is_none()

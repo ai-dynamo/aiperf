@@ -19,7 +19,9 @@ mod progress;
 mod runner;
 mod stats;
 
-pub use config::{GracePeriod, PhaseConfig, PhaseConfigError, PhaseKind};
+pub use config::{
+    DISABLED_PROGRESS_INTERVAL_NS, GracePeriod, PhaseConfig, PhaseConfigError, PhaseKind,
+};
 pub use lifecycle::{
     PhaseCompletionReason, PhaseLifecycle, PhaseLifecycleError, PhaseLifecycleSnapshot, PhaseState,
 };

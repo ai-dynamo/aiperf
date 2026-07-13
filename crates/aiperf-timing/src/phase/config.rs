@@ -19,6 +19,12 @@ use crate::StopConfig;
 /// Default interval between phase-owned progress observations.
 pub const DEFAULT_PROGRESS_INTERVAL_NS: i64 = 2_000_000_000;
 
+/// Sentinel `progress_interval_ns` that disables periodic progress observation
+/// entirely: the phase emits only its opening and terminal snapshots and
+/// schedules no intermediate progress clock event. Required for the offline
+/// `execute_pass` single engine, which cannot stop at a finite clock deadline.
+pub const DISABLED_PROGRESS_INTERVAL_NS: i64 = i64::MAX;
+
 /// Default bounded wait for cancelled requests to return.
 pub const DEFAULT_CANCEL_DRAIN_TIMEOUT_NS: i64 = 10_000_000_000;
 

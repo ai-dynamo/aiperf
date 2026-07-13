@@ -21,6 +21,7 @@ use aiperf_clock::Clock;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
+use super::config::DISABLED_PROGRESS_INTERVAL_NS;
 use crate::{RunState, StopChecker};
 
 use super::{
@@ -742,12 +743,24 @@ impl ClockPhaseRunner {
                 }
                 runner.inner.observer.on_progress(runner.stats());
                 let stopped = runner.inner.progress_stop.notified();
+                tokio::pin!(stopped);
+                if runner.inner.config.progress_interval_ns == DISABLED_PROGRESS_INTERVAL_NS {
+                    // Periodic progress is disabled: emit the opening snapshot and
+                    // then wait only for the terminal stop, scheduling NO
+                    // intermediate clock event. Used by the offline `execute_pass`
+                    // single engine, which cannot stop at a finite clock deadline
+                    // — a periodic progress sleep would be exactly such a deadline.
+                    stopped.await;
+                    if runner.inner.progress_stopped.get() {
+                        return;
+                    }
+                    continue;
+                }
                 let sleep = runner
                     .inner
                     .clock
                     .clone()
                     .sleep(runner.inner.config.progress_interval_ns);
-                tokio::pin!(stopped);
                 tokio::pin!(sleep);
                 tokio::select! {
                     _ = &mut stopped => {

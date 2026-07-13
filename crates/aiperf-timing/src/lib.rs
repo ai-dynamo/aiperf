@@ -32,7 +32,8 @@ pub use cancellation::{BernoulliFixedDelay, CancellationPolicy, CancellationPoli
 pub use intervals::{ArrivalPattern, IntervalGenerator, make_interval_generator};
 pub use phase::{
     ClockPhaseOrchestrator, ClockPhaseRunner, ClockPhaseRunnerFactory, ConsolePhaseObserver,
-    GracePeriod, LocalPhaseFuture, NoopPhaseExecution, NoopPhaseExecutionFactory,
+    DISABLED_PROGRESS_INTERVAL_NS, GracePeriod, LocalPhaseFuture, NoopPhaseExecution,
+    NoopPhaseExecutionFactory,
     NoopPhaseObserver, PhaseBranchStats, PhaseCompletionReason, PhaseConfig, PhaseConfigError,
     PhaseContext, PhaseEvent, PhaseEventKind, PhaseExecution, PhaseExecutionError,
     PhaseExecutionFactory, PhaseKind, PhaseLifecycle, PhaseLifecycleError, PhaseLifecycleSnapshot,

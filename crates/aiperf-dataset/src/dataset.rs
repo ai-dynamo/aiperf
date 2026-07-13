@@ -117,6 +117,19 @@ impl Dataset {
         &self.conversations
     }
 
+    /// Whether every conversation is at most a single turn.
+    ///
+    /// Multi-turn conversations introduce continuation think-time, which a
+    /// scheduled runtime realizes as clock-scheduled deferral; a single-turn
+    /// dataset issues each session exactly once with no such clock event. Used
+    /// to decide whether a closed-loop concurrency run can be driven by an
+    /// engine that cannot stop at a finite clock deadline.
+    pub fn is_single_turn(&self) -> bool {
+        self.conversations
+            .iter()
+            .all(|conversation| conversation.turns.len() <= 1)
+    }
+
     /// Borrow conversation identifiers in authored insertion order.
     pub fn conversation_ids(&self) -> impl ExactSizeIterator<Item = &SessionId> {
         self.conversations
