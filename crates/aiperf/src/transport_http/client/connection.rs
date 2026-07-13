@@ -538,8 +538,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::with_timeout;
-    use crate::transport_http::models::{ErrorDetails, ErrorKind};
     use crate::clock::{Clock, SimClock};
+    use crate::transport_http::models::{ErrorDetails, ErrorKind};
     use std::future::Future;
     use std::pin::pin;
     use std::rc::Rc;

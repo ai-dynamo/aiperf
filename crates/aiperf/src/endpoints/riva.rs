@@ -19,7 +19,9 @@ use crate::endpoints::models::{
     AudioResponseData, EndpointError, EndpointResult, ExtractedPayload, ParsedResponse,
     RequestRecord, ResponseData, ServerResponse, Turn,
 };
-use crate::endpoints::registry::{EndpointFactory, PreparedEndpoint, PreparedRequest, ReadinessPolicy};
+use crate::endpoints::registry::{
+    EndpointFactory, PreparedEndpoint, PreparedRequest, ReadinessPolicy,
+};
 
 const RIVA_ASR_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "riva_asr",

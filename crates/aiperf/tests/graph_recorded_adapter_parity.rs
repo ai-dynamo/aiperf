@@ -9,7 +9,9 @@
 
 use std::collections::BTreeMap;
 
-use aiperf::dataset::{DatasetSource, Handle, LoadConfig, Payload, SegmentStore, TiktokenTokenizer};
+use aiperf::dataset::{
+    DatasetSource, Handle, LoadConfig, Payload, SegmentStore, TiktokenTokenizer,
+};
 use aiperf::graph::materialize::{PromptMaterializer, SegmentItemsMaterializer};
 use aiperf::graph::model::{GraphRecord, LlmNode};
 use aiperf::graph::recorded::{

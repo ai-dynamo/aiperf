@@ -10,10 +10,10 @@
 
 use std::collections::HashMap;
 
+use crate::dataset::TiktokenTokenizer;
 use crate::graph::model::GraphRecord;
 use crate::graph::segment::{InMemorySegmentStore, SegmentPool, intern_message};
 use crate::graph::wire::OpenAiChatMessage as Msg;
-use crate::dataset::TiktokenTokenizer;
 
 /// Benchmark configuration.
 pub struct BenchConfig {

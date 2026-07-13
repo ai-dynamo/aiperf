@@ -13,7 +13,9 @@ use crate::clock::Clock;
 
 use crate::transport_http::client::cancellation::{CancelOutcome, race_cancel_after_send};
 use crate::transport_http::client::connection::{SendCompletion, with_timeout};
-use crate::transport_http::client::http_client::{HttpClient, SseMessageFilter, SynchronousSseMessageFilter};
+use crate::transport_http::client::http_client::{
+    HttpClient, SseMessageFilter, SynchronousSseMessageFilter,
+};
 use crate::transport_http::client::pool::{ConnectionManager, ConnectionPool};
 use crate::transport_http::config::ClientConfig;
 use crate::transport_http::models::{

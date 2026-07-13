@@ -15,12 +15,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive_scale};
-use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::phase_runtime::{RampScheduledPhaseController, ScheduledPhaseController};
 use aiperf::adaptive_core::{
     AdaptiveError, ControlActuator, ControlSnapshot, RequestRateActuator,
     SessionConcurrencyActuator, SharedWindowSampler, TumblingWindowSampler,
 };
+use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::clock::Clock;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::GraphTraceExecutionBackend;
@@ -32,6 +31,7 @@ use aiperf::graph::workload::{
     ImmediateGraphArrival, IntervalGraphArrival, SlotPoolTraceAdmission, TraceAdmissionInfo,
 };
 use aiperf::metrics_core::Phase as MetricsPhase;
+use aiperf::phase_runtime::{RampScheduledPhaseController, ScheduledPhaseController};
 use aiperf::rng::{RngRoot, namespace};
 use aiperf::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, NoopPhaseObserver,
@@ -1385,8 +1385,11 @@ mod tests {
     }
 
     fn graph_phase_record(trace_id: &str, errored: bool, canceled: bool) -> CapturedRecord {
-        let mut ingest =
-            aiperf::metrics_core::RecordIngest::minimal(0, 1, aiperf::metrics_core::Phase::Profiling);
+        let mut ingest = aiperf::metrics_core::RecordIngest::minimal(
+            0,
+            1,
+            aiperf::metrics_core::Phase::Profiling,
+        );
         ingest.errored = errored;
         ingest.canceled = canceled;
         CapturedRecord {

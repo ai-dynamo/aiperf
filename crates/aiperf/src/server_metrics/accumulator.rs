@@ -20,7 +20,9 @@ use crate::server_metrics::atlas::{ServerMetricAtlas, ServerMetricView, VllmSgla
 use crate::server_metrics::histogram::{
     HistogramSnapshot, accumulate_bucket_statistics, compute_estimated_percentiles,
 };
-use crate::server_metrics::model::{HistogramValue, MetricSample, PrometheusMetricType, ServerMetricsRecord};
+use crate::server_metrics::model::{
+    HistogramValue, MetricSample, PrometheusMetricType, ServerMetricsRecord,
+};
 use crate::server_metrics::units::infer_unit;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;

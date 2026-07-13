@@ -15,11 +15,11 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use aiperf::clock::Clock;
 use aiperf::network_latency::{
     NetworkLatencyAccumulator, NetworkLatencyProbe, NetworkLatencyTarget, TcpConnectProbe,
 };
+use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use anyhow::{Context, Result, ensure};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;

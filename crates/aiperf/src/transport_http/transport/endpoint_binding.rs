@@ -26,10 +26,16 @@ use crate::transport_http::client::http_client::SseMessageFilter;
 use crate::transport_http::models::{
     ConnectionReuseStrategy, ErrorDetails, RequestConfig, RequestRecord, Response, SseMessage,
 };
-use crate::transport_http::transport::body::{JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder};
+use crate::transport_http::transport::body::{
+    JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
+};
 use crate::transport_http::transport::http_transport::HttpTransport;
-use crate::transport_http::transport::inline_media::{HttpMediaFetcher, ImageDataUrlEncoder, inline_image_urls};
-use crate::transport_http::transport::polling::{JsonVideoPollingProtocol, PollingOptions, submit_and_poll};
+use crate::transport_http::transport::inline_media::{
+    HttpMediaFetcher, ImageDataUrlEncoder, inline_image_urls,
+};
+use crate::transport_http::transport::polling::{
+    JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
+};
 use crate::transport_http::transport::url::build_url;
 
 /// Failure while binding a decoded endpoint request to HTTP.
@@ -253,7 +259,8 @@ pub trait HttpEndpointBinding: fmt::Debug {
         &self,
         payload: &Value,
         content_type: RequestContentType,
-    ) -> Result<crate::transport_http::transport::body::EncodedRequestBody, HttpEndpointBindingError> {
+    ) -> Result<crate::transport_http::transport::body::EncodedRequestBody, HttpEndpointBindingError>
+    {
         match content_type {
             RequestContentType::ApplicationJson => JsonBodyEncoder.encode(payload),
             RequestContentType::MultipartFormData => MultipartBodyEncoder.encode(payload),
@@ -584,9 +591,9 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport_http::models::SseMessage;
     use crate::clock::SimClock;
     use crate::endpoints::{ChatEndpoint, ImageEditEndpoint};
+    use crate::transport_http::models::SseMessage;
 
     fn endpoint_request(body: Bytes) -> HttpEndpointRequest {
         HttpEndpointRequest {
@@ -679,7 +686,10 @@ mod tests {
     #[tokio::test]
     async fn metadata_binding_preserves_json_and_lowers_multipart_at_http_boundary() {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let transport = HttpTransport::new(clock, crate::transport_http::config::ClientConfig::default());
+        let transport = HttpTransport::new(
+            clock,
+            crate::transport_http::config::ClientConfig::default(),
+        );
         let config = EndpointConfig::default();
         let base_urls = vec!["http://host/v1".to_string()];
         let binding =

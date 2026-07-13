@@ -12,7 +12,9 @@ use prost::Message;
 use serde_json::{Map, Number, Value};
 
 use crate::transport_grpc::proto::infer_parameter::ParameterChoice;
-use crate::transport_grpc::proto::model_infer_request::{InferInputTensor, InferRequestedOutputTensor};
+use crate::transport_grpc::proto::model_infer_request::{
+    InferInputTensor, InferRequestedOutputTensor,
+};
 use crate::transport_grpc::proto::{
     InferParameter, InferTensorContents, ModelInferRequest, ModelInferResponse, ModelReadyRequest,
     ModelReadyResponse, ModelStreamInferResponse,

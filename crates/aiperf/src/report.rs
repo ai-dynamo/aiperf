@@ -110,7 +110,9 @@ mod tests {
             "online_http",
             "scheduled",
             Vec::new(),
-            vec![crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
+            vec![
+                crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap(),
+            ],
         )
         .unwrap()
     }

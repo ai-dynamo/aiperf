@@ -603,7 +603,8 @@ mod tests {
                     streaming: false,
                     ..aiperf::endpoints::RawEndpointConfig::default()
                 },
-                connection_reuse: aiperf::transport_http::models::ConnectionReuseStrategy::default(),
+                connection_reuse: aiperf::transport_http::models::ConnectionReuseStrategy::default(
+                ),
                 client: Default::default(),
                 session_header: None,
             },

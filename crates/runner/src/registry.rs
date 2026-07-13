@@ -1737,7 +1737,10 @@ mod tests {
     impl PreparedRunnerOperation for Operation {
         fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
             Ok(PreparedRunOutcome {
-                native_report: NativeReport::new(&aiperf::metrics_core::AccumulatorSummary::new(), None),
+                native_report: NativeReport::new(
+                    &aiperf::metrics_core::AccumulatorSummary::new(),
+                    None,
+                ),
                 report_facts: ReportPairRunFacts::new(),
                 provenance: BTreeMap::from([(
                     "fixture".into(),

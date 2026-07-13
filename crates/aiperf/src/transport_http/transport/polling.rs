@@ -13,7 +13,9 @@ use bytes::Bytes;
 use serde_json::Value;
 
 use crate::transport_http::client::cancellation::{CancelOutcome, race_cancel};
-use crate::transport_http::models::{ErrorDetails, ErrorKind, RequestConfig, RequestRecord, Response, TraceData};
+use crate::transport_http::models::{
+    ErrorDetails, ErrorKind, RequestConfig, RequestRecord, Response, TraceData,
+};
 use crate::transport_http::transport::http_transport::HttpTransport;
 
 /// Provider-neutral classification of one poll response.

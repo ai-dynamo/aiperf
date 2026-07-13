@@ -271,7 +271,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::dataset::generator::{NativeAudioGenerator, SyntheticAudioConfig, SyntheticMediaGenerator};
+    use crate::dataset::generator::{
+        NativeAudioGenerator, SyntheticAudioConfig, SyntheticMediaGenerator,
+    };
     use crate::dataset::loader::{DatasetSource, LoaderRegistry};
     use crate::dataset::segment::Payload;
     use crate::dataset::tokenizer::TiktokenTokenizer;

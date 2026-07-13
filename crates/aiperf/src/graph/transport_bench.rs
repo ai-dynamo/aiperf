@@ -30,6 +30,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 
+use crate::clock::Clock;
+use crate::clock::real_clock::RealClock;
+use crate::dataset::{Overrides, build_message_body_from_wires};
 use crate::graph::bench::{BenchConfig, build_workload, resolve_servers};
 use crate::graph::executor::{ExecutorFlags, TraceExecutor};
 use crate::graph::materialize::SegmentItemsMaterializer;
@@ -38,9 +41,6 @@ use crate::graph::runtime::Handle;
 use crate::graph::segment::{InMemorySegmentStore, SegmentStore};
 use crate::graph::sink::{GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage as Msg;
-use crate::clock::Clock;
-use crate::clock::real_clock::RealClock;
-use crate::dataset::{Overrides, build_message_body_from_wires};
 use crate::metrics_core::{
     AccumulatorSummary, InferenceDimensions, MetricsAccumulator, Phase, RecordIngest, TokenCounts,
     UsageMetrics,

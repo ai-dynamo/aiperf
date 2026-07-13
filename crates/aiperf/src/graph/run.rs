@@ -10,6 +10,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::clock::sim_clock::SimClock;
 use crate::graph::errors::TraceError;
 use crate::graph::executor::{ExecutorFlags, TraceExecutor, TraceResult};
 use crate::graph::materialize::PromptMaterializer;
@@ -17,7 +18,6 @@ use crate::graph::model::{GraphRecord, TraceRecord};
 use crate::graph::runtime::{drive_real, drive_sim};
 use crate::graph::sink::GraphSink;
 use crate::graph::wire::WireMessage;
-use crate::clock::sim_clock::SimClock;
 
 /// Which time base the run uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

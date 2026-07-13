@@ -93,8 +93,9 @@ impl GpuBoundarySnapshot {
                     .iter()
                     .filter(|(name, value)| {
                         value.is_finite()
-                            && crate::gpu_telemetry::fields::metric_spec(name)
-                                .is_some_and(|spec| spec.kind == crate::gpu_telemetry::GpuMetricKind::Counter)
+                            && crate::gpu_telemetry::fields::metric_spec(name).is_some_and(|spec| {
+                                spec.kind == crate::gpu_telemetry::GpuMetricKind::Counter
+                            })
                     })
                     .map(|(name, value)| (name.clone(), *value))
                     .collect::<BTreeMap<_, _>>();

@@ -30,7 +30,9 @@ use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
     EndpointResult, ExtractedPayload, ParsedResponse, RequestRecord, ServerResponse, Turn,
 };
-use crate::endpoints::registry::{EndpointFactory, PreparedEndpoint, PreparedRequest, ReadinessPolicy};
+use crate::endpoints::registry::{
+    EndpointFactory, PreparedEndpoint, PreparedRequest, ReadinessPolicy,
+};
 
 const DYNOSIM_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     id: "dynosim",

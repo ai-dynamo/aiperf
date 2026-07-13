@@ -19,7 +19,9 @@ use crate::endpoints::models::{
     EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
     ParsedResponse, RequestInfo, ResponseData, ServerResponse, VideoResponseData,
 };
-use crate::endpoints::registry::{PreparedEndpointBehavior, PreparedRequest, format_legacy_payload};
+use crate::endpoints::registry::{
+    PreparedEndpointBehavior, PreparedRequest, format_legacy_payload,
+};
 
 pub use flexible::{RawEndpoint, RawEndpointFactory, TemplateEndpoint, TemplateEndpointFactory};
 
@@ -1042,7 +1044,10 @@ fn prepared_require_turns<'a>(
     }
 }
 
-fn prepared_effective_model(request: &PreparedRequest<'_>, turn: &crate::endpoints::Turn) -> String {
+fn prepared_effective_model(
+    request: &PreparedRequest<'_>,
+    turn: &crate::endpoints::Turn,
+) -> String {
     turn.model
         .clone()
         .unwrap_or_else(|| request.primary_model_name().to_string())

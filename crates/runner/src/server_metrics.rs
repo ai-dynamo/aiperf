@@ -14,12 +14,12 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use aiperf::clock::Clock;
 use aiperf::metrics_core::{
     Phase, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
     ReportServerMetricsPhaseRange,
 };
+use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use aiperf::server_metrics::{
     MetricSample, PrometheusHttpSource, PrometheusMetricType, ServerMetricsAccumulator,
     ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,

@@ -20,6 +20,11 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use aiperf::clock::Clock;
+use aiperf::dataset::{
+    HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
+    SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
+};
 use aiperf::dynosim::{
     CanonicalSharedMetrics, DeferredOfflineGraphFuture, DeferredOfflineGraphRunFactory,
     DeferredOfflineScheduledFuture, DeferredOfflineScheduledRunFactory,
@@ -36,30 +41,25 @@ use aiperf::dynosim::{
     run_scheduled_backend_online_deferred_with_delivery, run_trace_offline,
     write_dynamo_per_request_jsonl, write_dynamo_report_json, write_dynamo_worker_artifacts_json,
 };
-use aiperf::metrics::NativeMetricsObserver;
-use aiperf::multiturn::{
-    ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
-    NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
-    PreparedTurnEndpointResolver,
-};
-use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
-use aiperf::clock::Clock;
-use aiperf::dataset::{
-    HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
-    SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
-};
 use aiperf::endpoints::{Modality, PreparedEndpointTable};
 use aiperf::graph::bench::BenchConfig;
 use aiperf::graph::input::GraphInputBundle;
 use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, NodeDispatchPolicy, NodeFailurePolicy,
 };
+use aiperf::metrics::NativeMetricsObserver;
 use aiperf::metrics_core::{
     CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
     ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
     ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
+use aiperf::multiturn::{
+    ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
+    NativeDatasetConversationSource, PreparedEndpointReference, PreparedEndpointTableResolver,
+    PreparedTurnEndpointResolver,
+};
+use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
 use aiperf::rng::{RngRoot, namespace};
 use aiperf::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};

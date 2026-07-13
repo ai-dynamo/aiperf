@@ -149,9 +149,9 @@ fn text_message_wire(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dataset::{TextTokenizer, TiktokenTokenizer};
     use crate::graph::segment::{SegmentPool, intern_message};
     use crate::graph::wire::OpenAiChatMessage as Msg;
-    use crate::dataset::{TextTokenizer, TiktokenTokenizer};
     use serde_json::json;
 
     #[test]

@@ -30,8 +30,12 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 
-use crate::content_server::model::{ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot};
-use crate::content_server::tracker::{ContentServerClock, RequestTracker, SystemContentServerClock};
+use crate::content_server::model::{
+    ContentRequestRecord, ContentServerStatus, RequestTrackerSnapshot,
+};
+use crate::content_server::tracker::{
+    ContentServerClock, RequestTracker, SystemContentServerClock,
+};
 use crate::content_server::{ContentServerError, Result};
 
 /// Listener, serving-root, and bounded tracking policy for one run.

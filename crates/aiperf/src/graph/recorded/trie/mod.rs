@@ -297,7 +297,10 @@ fn theoretical_prefix_cache(nodes: &[TrieNode]) -> HashMap<String, (usize, usize
     stats
 }
 
-pub(crate) fn graph_plan(graph: GraphRecord, trace_id: String) -> crate::graph::model::GraphTracePlan {
+pub(crate) fn graph_plan(
+    graph: GraphRecord,
+    trace_id: String,
+) -> crate::graph::model::GraphTracePlan {
     crate::graph::model::GraphTracePlan {
         graph,
         trace: crate::graph::model::TraceRecord {

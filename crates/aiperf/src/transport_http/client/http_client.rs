@@ -18,7 +18,9 @@ use url::Url;
 use crate::clock::Clock;
 
 use crate::transport_http::client::cancellation::{CancelOutcome, race_cancel_after_send};
-use crate::transport_http::client::connection::{SendCompletion, Sender, TimedBody, establish, with_timeout};
+use crate::transport_http::client::connection::{
+    SendCompletion, Sender, TimedBody, establish, with_timeout,
+};
 use crate::transport_http::config::ClientConfig;
 use crate::transport_http::models::{
     ErrorDetails, ErrorKind, RequestRecord, Response, SseMessage, TextResponse, TraceData,

@@ -825,13 +825,13 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::clock::sim_clock::SimClock;
     use crate::graph::executor::{ExecutorFlags, TraceExecutor};
     use crate::graph::input::{GraphInputConfig, compile_dag_jsonl_input};
     use crate::graph::materialize::{PromptMaterializer, SegmentItemsMaterializer};
     use crate::graph::runtime::{Handle as RuntimeHandle, drive_sim};
     use crate::graph::sink::{GraphReply, GraphSink};
     use crate::graph::wire::OpenAiChatMessage;
-    use crate::clock::sim_clock::SimClock;
 
     async fn lowered(value: Value) -> LoweredGraphInput {
         let bundle = compile_dag_jsonl_input(

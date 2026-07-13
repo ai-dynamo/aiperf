@@ -10,8 +10,8 @@
 
 use bytes::Bytes;
 
-use crate::graph::wire::WireMessage;
 use crate::dataset::{Result, TextTokenizer};
+use crate::graph::wire::WireMessage;
 
 pub use crate::dataset::{
     Handle, InMemorySegmentStore, Payload, Role, Segment, SegmentId, SegmentPool, SegmentStore,
@@ -39,8 +39,8 @@ pub fn intern_message<M: WireMessage>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::wire::OpenAiChatMessage as Msg;
     use crate::dataset::TiktokenTokenizer;
+    use crate::graph::wire::OpenAiChatMessage as Msg;
 
     #[test]
     fn graph_messages_use_dense_prefix_dependent_dataset_handles() {

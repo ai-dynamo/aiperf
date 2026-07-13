@@ -12,9 +12,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use aiperf::report::finalize_and_write_native_report_json;
 use aiperf::extensions::{AiperfRegistry, AiperfRegistryFactory};
 use aiperf::metrics_core::ReportRunProvenance;
+use aiperf::report::finalize_and_write_native_report_json;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
@@ -589,7 +589,10 @@ mod tests {
             "http",
             "evaluation",
             Vec::new(),
-            vec![aiperf::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
+            vec![
+                aiperf::metrics_core::ReportEndpointProfileIdentity::new("default", "chat")
+                    .unwrap(),
+            ],
         )
         .unwrap()
     }

@@ -15,7 +15,6 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::rc::Rc;
 
-use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use aiperf::clock::Clock;
 use aiperf::gpu_telemetry::{
     DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind, GpuPhaseBoundary,
@@ -23,6 +22,7 @@ use aiperf::gpu_telemetry::{
     PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
 };
 use aiperf::metrics_core::Unit;
+use aiperf::phase_runtime::ScheduledPhaseSidecar;
 use aiperf::transport_http::config::ClientConfig;
 use aiperf::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};

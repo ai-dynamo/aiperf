@@ -6,6 +6,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use aiperf::clock::Clock;
+use aiperf::clock::sim_clock::SimClock;
+use aiperf::graph::runtime::drive_sim;
 use aiperf::multiturn::{
     ConversationDataset, ConversationSource, DatasetConversationSource,
     SyntheticConversationSource, TurnToSend,
@@ -14,11 +17,8 @@ use aiperf::request_rate::{RequestRateConfig, RequestRateWorkload};
 use aiperf::scheduled::{
     ScheduledRunReport, TurnDispatchOutcome, TurnDispatcher, Workload, run_scheduled_workload,
 };
-use aiperf::workload::SkeletonWorkload;
-use aiperf::clock::Clock;
-use aiperf::clock::sim_clock::SimClock;
-use aiperf::graph::runtime::drive_sim;
 use aiperf::timing::{ArrivalPattern, StopConfig};
+use aiperf::workload::SkeletonWorkload;
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;

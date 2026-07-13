@@ -733,7 +733,9 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::dataset::model::{BranchId, ConversationBranch, DagMetadata, DispatchTiming, SessionId};
+    use crate::dataset::model::{
+        BranchId, ConversationBranch, DagMetadata, DispatchTiming, SessionId,
+    };
     use crate::dataset::segment::SegmentPool;
 
     fn one_turn(id: &str, handle: Handle) -> Conversation {

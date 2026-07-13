@@ -13,40 +13,16 @@ use aiperf::accuracy::{
     AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
     load_evaluator_problems_with_grader,
 };
-use aiperf::adaptive::{
-    AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
-    positive_seconds_to_ns,
-};
-use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
-use aiperf::fixed_schedule::{
-    DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
-};
-use aiperf::http::{
-    HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
-    TransportSinkConfig,
-};
-use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf::multiturn::{
-    AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
-    IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
-    PreparedEndpointTableResolver, PreparedTurnEndpointResolver, TurnToSend,
-};
-use aiperf::phase_runtime::{
-    RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
-    ScheduledPhaseResources, ScheduledRuntimeExtension, ScheduledRuntimeExtensionParts,
-    SlotPoolPhaseResources, run_scheduled_phases,
-};
-use aiperf::request_rate::RequestRateWorkload;
-use aiperf::scheduled::{
-    IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
-    TurnRecordProcessor, Workload,
-};
-use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
 use aiperf::accuracy_core::{
     AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
     WorkerProcessConfig,
 };
+use aiperf::adaptive::{
+    AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
+    positive_seconds_to_ns,
+};
 use aiperf::adaptive_core::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
+use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
@@ -63,15 +39,38 @@ use aiperf::dataset::{
 };
 use aiperf::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
 use aiperf::extensions::AiperfRegistry;
+use aiperf::fixed_schedule::{
+    DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
+};
 use aiperf::graph::input::GraphInputBundle;
+use aiperf::http::{
+    HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
+    TransportSinkConfig,
+};
+use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::metrics_core::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
     NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo, ReportSummary, RunOutcome,
     SloThreshold,
 };
+use aiperf::multiturn::{
+    AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
+    IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
+    PreparedEndpointTableResolver, PreparedTurnEndpointResolver, TurnToSend,
+};
+use aiperf::phase_runtime::{
+    RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
+    ScheduledPhaseResources, ScheduledRuntimeExtension, ScheduledRuntimeExtensionParts,
+    SlotPoolPhaseResources, run_scheduled_phases,
+};
+use aiperf::request_rate::RequestRateWorkload;
 use aiperf::rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
     SequenceLengthDistribution, SequenceLengthPair, namespace,
+};
+use aiperf::scheduled::{
+    IssuanceGate, ScheduledAncillaryPolicies, TurnDispatchOutcome, TurnDispatcher,
+    TurnRecordProcessor, Workload,
 };
 use aiperf::timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
@@ -79,6 +78,7 @@ use aiperf::timing::{
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
     make_interval_generator,
 };
+use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -642,10 +642,7 @@ fn validate_plan(request: &NativeRunSpec) -> Result<()> {
         !request.endpoint.default_urls()?.is_empty(),
         "at least one endpoint URL is required"
     );
-    ensure!(
-        !request.phases.is_empty(),
-        "at least one phase is required"
-    );
+    ensure!(!request.phases.is_empty(), "at least one phase is required");
     ensure!(request.workers > 0, "workers must be greater than zero");
     ensure!(
         request
@@ -1043,10 +1040,7 @@ fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
         "authored Graph-IR runs currently require exactly one configured default model; per-node model overrides remain supported"
     );
     ensure!(
-        matches!(
-            request.models.strategy,
-            ModelSelectionStrategy::RoundRobin
-        ),
+        matches!(request.models.strategy, ModelSelectionStrategy::RoundRobin),
         "authored Graph-IR runs currently require round_robin model selection; other policies need a graph model-selection trait implementation"
     );
     ensure!(
@@ -1114,10 +1108,8 @@ async fn execute_graph_native(
     let graph_random_seed = graph.random_seed;
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
-    let metrics_config = metrics_config(
-        &request.metrics,
-        request.endpoint.use_server_token_count(),
-    )?;
+    let metrics_config =
+        metrics_config(&request.metrics, request.endpoint.use_server_token_count())?;
     let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
@@ -1352,10 +1344,8 @@ async fn execute_native_inner(
         NativeDatasetPlan::StaticAccuracy(_) => rng_root,
         NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
     };
-    let metrics_config = metrics_config(
-        &request.metrics,
-        request.endpoint.use_server_token_count(),
-    )?;
+    let metrics_config =
+        metrics_config(&request.metrics, request.endpoint.use_server_token_count())?;
     let model_names = request
         .models
         .items

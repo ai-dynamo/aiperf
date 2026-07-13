@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use aiperf::endpoints::{
-    CreditPhase, Endpoint, EndpointConfig, EndpointType, Media, MessagesEndpoint, ModelEndpoint,
-    Modality, RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
+    CreditPhase, Endpoint, EndpointConfig, EndpointType, Media, MessagesEndpoint, Modality,
+    ModelEndpoint, RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
 };
 use serde_json::{Map, Value, json};
 

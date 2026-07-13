@@ -13,7 +13,9 @@ use std::rc::Rc;
 use crate::clock::Clock;
 use tokio::net::TcpStream;
 
-use crate::network_latency::model::{NetworkLatencyErrorDetails, NetworkLatencySample, NetworkLatencyTarget};
+use crate::network_latency::model::{
+    NetworkLatencyErrorDetails, NetworkLatencySample, NetworkLatencyTarget,
+};
 
 /// Non-`Send` future used by a thread-local probe implementation.
 pub type LocalProbeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;

@@ -2168,7 +2168,11 @@ mod tests {
         assert_eq!(values, vec![json!({"prompt":"hello","tokens":3})]);
     }
 
-    fn content_bytes<'a>(dataset: &'a crate::dataset::Dataset, turn: &Turn, kind: MediaKind) -> &'a [u8] {
+    fn content_bytes<'a>(
+        dataset: &'a crate::dataset::Dataset,
+        turn: &Turn,
+        kind: MediaKind,
+    ) -> &'a [u8] {
         let handle = turn
             .content
             .iter()

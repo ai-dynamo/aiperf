@@ -21,7 +21,9 @@ use crate::dataset::{
 };
 use bytes::Bytes;
 
-use crate::graph::dag_source::{DagJsonlProgram, dag_jsonl_turn_token_counts, load_dag_jsonl_program};
+use crate::graph::dag_source::{
+    DagJsonlProgram, dag_jsonl_turn_token_counts, load_dag_jsonl_program,
+};
 use crate::graph::lowering::{
     CatalogBranch, CatalogConversation, CatalogPrerequisite, CatalogTurn, GraphCatalog,
     lower_catalog,

@@ -1235,10 +1235,10 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
 mod tests {
     use super::*;
     use crate::adaptive::{AdaptiveRunConfig, AdaptiveStepConfig};
-    use crate::workload::SkeletonWorkload;
     use crate::adaptive_core::{CorrelationContext, SlaFilter, SlaOp, SlaStat};
     use crate::clock::SimClock;
     use crate::graph::runtime::drive_sim;
+    use crate::workload::SkeletonWorkload;
 
     #[test]
     fn phase_ramps_drive_the_live_slot_and_interval_actuators() {

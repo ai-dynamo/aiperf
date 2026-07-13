@@ -14,15 +14,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
 use aiperf::http::{
     HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome,
     PreparedHttpTurn,
 };
 use aiperf::metrics::NativeMetricsObserver;
-use aiperf::multiturn::TurnToSend;
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
+use aiperf::multiturn::TurnToSend;
 use aiperf::transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
@@ -258,9 +258,7 @@ impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
         context: MeasuredTurnContext,
         on_first_token: &dyn Fn(i64),
     ) -> Result<MeasuredTurnOutcome> {
-        let reply = self
-            .execute_command(turn, context, on_first_token)
-            .await?;
+        let reply = self.execute_command(turn, context, on_first_token).await?;
         Ok(MeasuredTurnOutcome {
             result: reply.result?,
             live_record: reply.live_record,
@@ -535,7 +533,10 @@ async fn execute_worker_command(
                 .wants_live_record
                 .then(|| observer.snapshot_record(uuid, 0))
                 .flatten();
-            WorkerReply { result, live_record }
+            WorkerReply {
+                result,
+                live_record,
+            }
         }
         None => {
             let _ = completed.send(WorkerReply {

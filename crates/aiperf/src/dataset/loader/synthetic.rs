@@ -16,7 +16,9 @@ use smallvec::SmallVec;
 
 use crate::dataset::compose::{ComposeConfig, Composer, SessionIdGenerator};
 use crate::dataset::error::{DatasetError, Result};
-use crate::dataset::generator::{SyntheticDatasetConfig, SyntheticMediaGenerator, SyntheticPrefixConfig};
+use crate::dataset::generator::{
+    SyntheticDatasetConfig, SyntheticMediaGenerator, SyntheticPrefixConfig,
+};
 use crate::dataset::loader::{DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow};
 use crate::dataset::model::{ContentGroup, Conversation, ConversationContextMode, MediaKind, Turn};
 use crate::dataset::prompt::PromptGenerator;

@@ -14,12 +14,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::http::{
-    HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
-    PreparedHttpTurn, TransportSink, TransportSinkConfig,
-};
-use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf::multiturn::InputTokenCounter;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::dataset::{Handle, Payload, SegmentStore};
 use aiperf::endpoints::{
@@ -39,7 +33,13 @@ use aiperf::graph::policy::{
 };
 use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
 use aiperf::graph::wire::OpenAiChatMessage;
+use aiperf::http::{
+    HttpRequest, HttpRequestDispatcher, PreparedEndpointReference, PreparedHttpEndpoint,
+    PreparedHttpTurn, TransportSink, TransportSinkConfig,
+};
+use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
+use aiperf::multiturn::InputTokenCounter;
 use aiperf::rng::{RngRoot, namespace};
 use aiperf::timing::{BernoulliFixedDelay, SlotPool};
 use anyhow::{Context, Result, anyhow, ensure};
@@ -1011,13 +1011,13 @@ fn uniquify_dynamo_session_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf::multiturn::AuthoredInputTokenCounter;
     use aiperf::clock::SimClock;
     use aiperf::endpoints::{
         ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
         RawEndpointConfig, StatelessEndpointFactory,
     };
+    use aiperf::multiturn::AuthoredInputTokenCounter;
     use aiperf::transport_http::models::ConnectionReuseStrategy;
 
     #[derive(Debug)]

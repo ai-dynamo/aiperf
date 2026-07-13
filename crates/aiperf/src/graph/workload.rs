@@ -667,6 +667,8 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
+    use crate::clock::sim_clock::SimClock;
+    use crate::dataset::TiktokenTokenizer;
     use crate::graph::materialize::{PromptMaterializer, SegmentItemsMaterializer};
     use crate::graph::model::{
         ChannelSpec, ChannelType, GraphRecord, LlmNode, PromptItem, ReducerName, StaticEdge,
@@ -676,8 +678,6 @@ mod tests {
     use crate::graph::segment::{SegmentPool, intern_message};
     use crate::graph::sink::{GraphReply, GraphSink};
     use crate::graph::wire::OpenAiChatMessage;
-    use crate::clock::sim_clock::SimClock;
-    use crate::dataset::TiktokenTokenizer;
 
     fn one_node_plan(id: &str, handle: crate::dataset::Handle) -> GraphTracePlan {
         let output = format!("out-{id}");

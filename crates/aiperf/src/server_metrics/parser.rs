@@ -11,7 +11,9 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
-use crate::server_metrics::model::{HistogramValue, MetricFamily, MetricSample, PrometheusMetricType};
+use crate::server_metrics::model::{
+    HistogramValue, MetricFamily, MetricSample, PrometheusMetricType,
+};
 
 /// Malformed exposition input with a one-based line location.
 #[derive(Debug, Clone, PartialEq, Eq)]

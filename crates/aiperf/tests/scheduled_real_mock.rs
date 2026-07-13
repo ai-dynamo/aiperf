@@ -12,9 +12,9 @@ use aiperf::multiturn::{
     ConversationDataset, ConversationSource, DatasetConversationSource, SyntheticConversationSource,
 };
 use aiperf::run::{run_fixed_schedule_online, run_user_centric_online};
+use aiperf::timing::StopConfig;
 use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
-use aiperf::timing::StopConfig;
 
 struct RealMock {
     child: Child,

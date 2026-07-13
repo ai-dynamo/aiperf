@@ -18,16 +18,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context as TaskContext, Poll};
 use std::thread::JoinHandle;
 
+use aiperf::clock::{Clock, RealClock, RealClockAnchor};
+use aiperf::endpoints::{ParsedResponse, PreparedEndpointTable};
 use aiperf::http::{
     HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome,
     PreparedHttpTurn, TransportSink, TransportSinkConfig,
 };
 use aiperf::metrics::NativeMetricsObserver;
+use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use aiperf::multiturn::TurnToSend;
 use aiperf::scheduled::TurnResponseObserver;
-use aiperf::clock::{Clock, RealClock, RealClockAnchor};
-use aiperf::endpoints::{ParsedResponse, PreparedEndpointTable};
-use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -688,7 +688,10 @@ async fn execute_worker_command(
                 .wants_live_record
                 .then(|| observer.snapshot_record(uuid, 0))
                 .flatten();
-            WorkerReply { result, live_record }
+            WorkerReply {
+                result,
+                live_record,
+            }
         }
         None => {
             let _ = completed.send(WorkerReply {
@@ -730,9 +733,9 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use aiperf::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use aiperf::http::{HttpRequest, PreparedHttpEndpoint};
     use aiperf::multiturn::PreparedEndpointReference;
-    use aiperf::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
@@ -801,7 +804,9 @@ mod tests {
             .unwrap();
         let origin_ns = clock.now_ns();
         backend.set_run_origin(origin_ns).unwrap();
-        backend.configure_measurement(MetricsConfig::default(), origin_ns).unwrap();
+        backend
+            .configure_measurement(MetricsConfig::default(), origin_ns)
+            .unwrap();
         backend
     }
 

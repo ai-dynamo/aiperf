@@ -9,9 +9,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
-use aiperf::run::run_single_turn_dataset_online;
-use aiperf::scheduled::ScheduledRunReport;
 use aiperf::clock::{Clock, RealClock};
 use aiperf::dataset::{
     BuiltinEndpointResolver, ComposeConfig, DatasetSource, EndpointResolver, LoadConfig,
@@ -19,7 +16,10 @@ use aiperf::dataset::{
 };
 use aiperf::endpoints::{EndpointConfig, EndpointType};
 use aiperf::metrics_core::MetricTag;
+use aiperf::multiturn::{ConversationSource, NativeDatasetConversationSource};
 use aiperf::rng::RngRoot;
+use aiperf::run::run_single_turn_dataset_online;
+use aiperf::scheduled::ScheduledRunReport;
 use aiperf::transport_http::config::ClientConfig;
 use aiperf::transport_http::models::{ErrorKind, RequestConfig};
 use aiperf::transport_http::transport::http_transport::HttpTransport;

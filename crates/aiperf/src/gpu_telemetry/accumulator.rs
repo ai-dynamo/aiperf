@@ -17,8 +17,12 @@ use crate::metrics_core::{
     SidecarMetric, SidecarSeries, SidecarStats, boundary_counter_delta, linear_distribution,
 };
 
-use crate::gpu_telemetry::fields::{AMD_METRICS, DCGM_METRICS, GpuMetricKind, RuntimeGpuMetricSpec};
-use crate::gpu_telemetry::model::{GpuBoundarySnapshot, GpuMetadata, GpuSeriesKey, GpuTelemetryRecord};
+use crate::gpu_telemetry::fields::{
+    AMD_METRICS, DCGM_METRICS, GpuMetricKind, RuntimeGpuMetricSpec,
+};
+use crate::gpu_telemetry::model::{
+    GpuBoundarySnapshot, GpuMetadata, GpuSeriesKey, GpuTelemetryRecord,
+};
 use crate::gpu_telemetry::source::GpuTelemetryError;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
