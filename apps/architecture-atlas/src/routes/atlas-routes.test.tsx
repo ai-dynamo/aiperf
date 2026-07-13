@@ -4,9 +4,13 @@
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { decompressFromEncodedURIComponent } from "lz-string";
 
+import {
+  canonicalGraphState,
+  encodeGraphStateForUrl,
+} from "../domain/graph-state";
 import { createAppRouter } from "./router";
 
 function renderAtlas(path: string) {
@@ -33,6 +37,51 @@ describe("graph-first route shell", () => {
     expect(
       within(rail).getByRole("link", { name: "Crate dependency topology" }),
     ).toBeInTheDocument();
+  });
+
+  it("uses the only visible graph search input as the drawer focus fallback", async () => {
+    const user = userEvent.setup();
+    const state = encodeGraphStateForUrl(
+      canonicalGraphState({
+        audience: "developer",
+        focusedEntityId: "node.clock-seam",
+        primaryFlavor: "native_http",
+        sceneId: "scene.runtime-composition",
+      }),
+    );
+    renderAtlas(`/?audience=developer&s=${state}`);
+
+    const graphSearch = await screen.findByRole("searchbox", {
+      name: "Graph search",
+    });
+    expect(
+      screen.queryByRole("textbox", { name: "Graph search focus target" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("searchbox")).toEqual([graphSearch]);
+
+    const close = await screen.findByRole("button", {
+      name: "Close evidence panel",
+    });
+    const originalClosest = HTMLElement.prototype.closest;
+    const closest = vi
+      .spyOn(HTMLElement.prototype, "closest")
+      .mockImplementation(function (this: HTMLElement, selector) {
+        if (
+          selector === "details:not([open])" &&
+          this.dataset.graphEntityId === "node.clock-seam"
+        ) {
+          return document.createElement("details");
+        }
+        return originalClosest.call(this, selector);
+      });
+    try {
+      await user.click(close);
+      await waitFor(() => {
+        expect(graphSearch).toHaveFocus();
+      });
+    } finally {
+      closest.mockRestore();
+    }
   });
 });
 

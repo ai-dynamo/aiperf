@@ -8,6 +8,7 @@ import {
   ReactFlow,
   type Edge,
   type Node,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -16,6 +17,7 @@ import { RuntimeGraphEdge, edgeMarker, type RuntimeGraphEdgeData } from "./graph
 import { RuntimeGraphNode, type RuntimeGraphNodeData } from "./graph-nodes";
 import type {
   GraphCanvasProps,
+  GraphFlavorClass,
   GraphNodePortView,
   GraphPathState,
 } from "./types";
@@ -31,6 +33,35 @@ interface GraphLayoutLoadingState {
 }
 
 type CanvasLayoutState = GraphLayoutState | GraphLayoutLoadingState;
+
+export async function fitGraphView(
+  instance: Pick<ReactFlowInstance, "fitView">,
+  nodeIds: readonly string[],
+  padding = 0.14,
+): Promise<void> {
+  await instance.fitView({
+    nodes: nodeIds.map((id) => ({ id })),
+    padding,
+  });
+}
+
+function classifyFlavor(
+  entityId: string,
+  sharedIds: readonly string[] | undefined,
+  primaryOnlyIds: readonly string[] | undefined,
+  compareOnlyIds: readonly string[] | undefined,
+): GraphFlavorClass {
+  if (sharedIds?.includes(entityId)) {
+    return "shared";
+  }
+  if (compareOnlyIds?.includes(entityId)) {
+    return "compare-only";
+  }
+  if (primaryOnlyIds?.includes(entityId)) {
+    return "primary-only";
+  }
+  return "primary-only";
+}
 
 function classifyNodePathState(
   nodeId: string,
@@ -123,6 +154,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
   const [layoutState, setLayoutState] = useState<CanvasLayoutState>({
     status: "loading",
   });
+  const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -156,6 +188,34 @@ export function GraphCanvas(props: GraphCanvasProps) {
   );
   const portViewsByNode = useMemo(() => classifyPortDirections(props), [props]);
 
+  useEffect(() => {
+    if (
+      !instance ||
+      layoutState.status !== "ready" ||
+      !props.fitViewCommand
+    ) {
+      return;
+    }
+    let active = true;
+    void fitGraphView(
+      instance,
+      layoutState.result.positions.map(({ id }) => id),
+      props.fitViewCommand.padding,
+    ).then(() => {
+      if (active) {
+        props.onFitViewComplete?.(props.fitViewCommand?.requestId ?? 0);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    instance,
+    layoutState,
+    props.fitViewCommand,
+    props.onFitViewComplete,
+  ]);
+
   const positionsByNodeId = useMemo(
     () =>
       layoutState.status === "ready"
@@ -176,6 +236,12 @@ export function GraphCanvas(props: GraphCanvasProps) {
         : props.visibleNodes.map((node) => ({
             data: {
               audience: props.audience,
+              flavorClass: classifyFlavor(
+                node.id,
+                props.overlay?.sharedNodeIds,
+                props.overlay?.primaryOnlyNodeIds,
+                props.overlay?.compareOnlyNodeIds,
+              ),
               node,
               onSelect: props.onFocusEntity,
               pathState: classifyNodePathState(
@@ -200,6 +266,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
       props.audience,
       props.focusedEntityId,
       props.onFocusEntity,
+      props.overlay,
       props.visibleNodes,
       upstreamNodeIds,
     ],
@@ -207,33 +274,42 @@ export function GraphCanvas(props: GraphCanvasProps) {
 
   const edges: Edge<RuntimeGraphEdgeData>[] = useMemo(
     () =>
-      props.visibleEdges.map((edge) => ({
-        className: `graph-edge-path-${classifyEdgePathState(
+      props.visibleEdges.map((edge) => {
+        const pathState = classifyEdgePathState(
           edge,
           props.focusedEntityId,
           upstreamNodeIds,
           downstreamNodeIds,
-        )}`,
-        data: {
-          edge,
-          onSelect: props.onFocusEntity,
-          pathState: classifyEdgePathState(
+        );
+        const flavorClass = classifyFlavor(
+          edge.id,
+          props.overlay?.sharedEdgeIds,
+          props.overlay?.primaryOnlyEdgeIds,
+          props.overlay?.compareOnlyEdgeIds,
+        );
+        return {
+          className: `graph-edge-path-${pathState}`,
+          data: {
             edge,
-            props.focusedEntityId,
-            upstreamNodeIds,
-            downstreamNodeIds,
+            flavorClass,
+            onSelect: props.onFocusEntity,
+            pathState,
+          },
+          id: edge.id,
+          markerEnd: edgeMarker(
+            flavorClass,
+            edge.status.state === "planned",
           ),
-        },
-        id: edge.id,
-        markerEnd: edgeMarker(),
-        source: edge.source.nodeId,
-        target: edge.target.nodeId,
-        type: "runtimeEdge",
-      })),
+          source: edge.source.nodeId,
+          target: edge.target.nodeId,
+          type: "runtimeEdge",
+        };
+      }),
     [
       downstreamNodeIds,
       props.focusedEntityId,
       props.onFocusEntity,
+      props.overlay,
       props.visibleEdges,
       upstreamNodeIds,
     ],
@@ -263,6 +339,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           nodeTypes={nodeTypes}
           nodes={nodes}
           nodesDraggable={false}
+          onInit={setInstance}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={24} size={1} />

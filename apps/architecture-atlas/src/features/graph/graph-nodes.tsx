@@ -4,10 +4,21 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 
 import type { AudienceLevel, GraphNode } from "../../domain/architecture";
-import type { GraphNodePortView, GraphPathState } from "./types";
+import type {
+  GraphFlavorClass,
+  GraphNodePortView,
+  GraphPathState,
+} from "./types";
+
+const flavorColors: Record<GraphFlavorClass, string> = {
+  "compare-only": "#A78BFA",
+  "primary-only": "#45C7F4",
+  shared: "#76B900",
+};
 
 export interface RuntimeGraphNodeData extends Record<string, unknown> {
   audience: AudienceLevel;
+  flavorClass: GraphFlavorClass;
   node: GraphNode;
   onSelect(nodeId: string): void;
   pathState: GraphPathState;
@@ -20,8 +31,16 @@ export function RuntimeGraphNode({
   return (
     <article
       data-owner={data.node.owner}
+      data-flavor-class={data.flavorClass}
+      data-implementation-state={data.node.status.state}
       data-path-state={data.pathState}
       data-testid={`graph-node-${data.node.id}`}
+      style={{
+        border: `${data.pathState === "focused" ? 3 : 2}px ${
+          data.node.status.state === "planned" ? "dashed" : "solid"
+        } ${data.node.status.state === "planned" ? "#FF7A7A" : flavorColors[data.flavorClass]}`,
+        opacity: data.pathState === "default" ? 0.82 : 1,
+      }}
     >
       <Handle position={Position.Left} type="target" />
       <button
@@ -36,6 +55,9 @@ export function RuntimeGraphNode({
         <p>
           owner: {data.node.owner} | tier: {data.node.tier} | status:{" "}
           {data.node.status.state}
+        </p>
+        <p>
+          flavor: {data.flavorClass} | path: {data.pathState}
         </p>
       </button>
       <ul aria-label={`${data.node.title[data.audience]} seam ports`}>

@@ -31,6 +31,7 @@ interface AppShellProps {
   activeScenePath: AtlasRoutePath;
   primaryFlavor: ExecutionFlavor;
   compareFlavor: ExecutionFlavor | null;
+  graphSearchInputId: string;
   graphSearchQuery: string;
   sharedStateNotice?: string;
   onAudienceChange(audience: Audience): void;
@@ -82,6 +83,7 @@ export function AppShell({
   activeScenePath,
   primaryFlavor,
   compareFlavor,
+  graphSearchInputId,
   graphSearchQuery,
   sharedStateNotice,
   onAudienceChange,
@@ -171,6 +173,7 @@ export function AppShell({
               <span>Graph search</span>
               <input
                 aria-label="Graph search"
+                id={graphSearchInputId}
                 onChange={(event) => onGraphSearchChange(event.target.value)}
                 placeholder="Component or crate"
                 type="search"

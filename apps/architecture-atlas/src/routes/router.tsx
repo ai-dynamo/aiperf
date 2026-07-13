@@ -9,7 +9,12 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import type { RouterHistory } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import { z } from "zod";
 
 import { AudienceProvider, useAudience } from "../app/audience-context";
@@ -41,7 +46,13 @@ import {
   type SceneId,
 } from "../domain/routes";
 import { CrateReferenceView } from "../features/crates/crate-reference";
-import { GraphScene } from "../features/graph/graph-scene";
+import {
+  GraphScene,
+} from "../features/graph/graph-scene";
+import type { GraphFitViewCommand } from "../features/graph/types";
+
+const GRAPH_SEARCH_INPUT_ID = "atlas-graph-search";
+const GraphFitRequestContext = createContext<GraphFitViewCommand | null>(null);
 
 const unavailableStorage: GraphStateStorage = {
   getItem: () => null,
@@ -122,6 +133,8 @@ function RootRouteComponent() {
   const [sharedStateNotice, setSharedStateNotice] = useState(
     resolvedGraphState.notice?.message,
   );
+  const [fitViewCommand, setFitViewCommand] =
+    useState<GraphFitViewCommand | null>(null);
   const effectiveGraphState = canonicalGraphState({
     ...resolvedGraphState.state,
     audience,
@@ -205,6 +218,7 @@ function RootRouteComponent() {
       activeScenePath={scenePathFor(routeSceneId)}
       audience={audience}
       compareFlavor={compareFlavor}
+      graphSearchInputId={GRAPH_SEARCH_INPUT_ID}
       graphSearchQuery={search.q ?? ""}
       onAudienceChange={(nextAudience) => {
         void navigate({
@@ -224,7 +238,9 @@ function RootRouteComponent() {
         });
       }}
       onFitGraph={() => {
-        window.dispatchEvent(new CustomEvent("atlas:fit-graph"));
+        setFitViewCommand((previous) => ({
+          requestId: (previous?.requestId ?? 0) + 1,
+        }));
       }}
       onGraphSearchChange={(query) => {
         void navigate({
@@ -275,7 +291,9 @@ function RootRouteComponent() {
       sharedStateNotice={sharedStateNotice}
     >
       <AudienceProvider audience={audience}>
-        <Outlet />
+        <GraphFitRequestContext.Provider value={fitViewCommand}>
+          <Outlet />
+        </GraphFitRequestContext.Provider>
       </AudienceProvider>
     </AppShell>
   );
@@ -288,6 +306,7 @@ const rootRoute = createRootRoute({
 
 function GraphSceneRouteComponent({ sceneId }: { sceneId: SceneId }) {
   const audience = useAudience();
+  const fitViewCommand = useContext(GraphFitRequestContext);
   const navigate = rootRoute.useNavigate();
   const locationSearch = useRouterState({
     select: (routerState) => routerState.location.search,
@@ -316,6 +335,8 @@ function GraphSceneRouteComponent({ sceneId }: { sceneId: SceneId }) {
     <GraphScene
       audience={audience}
       compareFlavor={compareFlavor}
+      fallbackFocusElementId={GRAPH_SEARCH_INPUT_ID}
+      fitViewCommand={fitViewCommand}
       onGraphStateChange={(nextState) => {
         void navigate({
           replace: true,

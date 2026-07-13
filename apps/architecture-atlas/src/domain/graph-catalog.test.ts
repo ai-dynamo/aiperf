@@ -339,6 +339,68 @@ describe("graph-first catalog", () => {
     ]);
   });
 
+  it("keeps runtime composition as the complete canonical default scene", () => {
+    const scene = architectureCatalog.graphScenes.find(
+      ({ id }) => id === "scene.runtime-composition",
+    );
+
+    expect(scene).toBeDefined();
+    expect(scene?.nodeIds).toEqual(
+      expect.arrayContaining([
+        "node.journey.python-config-load",
+        "node.journey.config-v2-resolution",
+        "node.journey.authored-request-projection",
+        "node.journey.runner-spawn",
+        "node.journey.strict-jsonl-validation",
+        "node.journey.frozen-runner-application",
+        "node.journey.workload-preparation",
+        "node.journey.scheduling-or-graph-ir",
+        "node.journey.dataset-materialization",
+        "node.journey.endpoint-binding",
+        "node.journey.http-grpc-dynamo-dispatch",
+        "node.journey.observer-callbacks",
+        "node.journey.metrics-and-reporting",
+        "node.journey.result-returned-to-python",
+        "node.runtime-composition",
+        "node.clock-seam",
+        "node.request-sink-seam",
+        "node.endpoint-bindings-transports",
+        "node.metrics-telemetry",
+        "node.dynamo-online-library-seam",
+        "node.dynamo-offline-runner-backend",
+        "node.dynamo-online-replay-mode",
+        "node.dynamo-offline-sim-clock",
+        "node.dynamo-offline-steppable-replay",
+        "node.dynamo-offline-report-gate",
+      ]),
+    );
+    expect(scene?.edgeIds).toEqual(
+      expect.arrayContaining([
+        "edge.journey.1",
+        "edge.journey.2",
+        "edge.journey.3",
+        "edge.journey.4",
+        "edge.journey.5",
+        "edge.journey.6",
+        "edge.journey.7",
+        "edge.journey.8",
+        "edge.journey.9",
+        "edge.journey.10",
+        "edge.journey.11",
+        "edge.journey.12",
+        "edge.journey.13",
+        "edge.dataset.to.endpoint",
+        "edge.runtime.dispatch.metrics",
+        "edge.request-sink.token.metrics",
+        "edge.metrics.to.result",
+        "edge.dynamo.online.replay-mode",
+        "edge.dynamo.offline.runner.sim-clock",
+        "edge.dynamo.offline.sim-clock.replay",
+        "edge.dynamo.offline.replay.report-gate",
+      ]),
+    );
+  });
+
   it("models Dynamo online as planned runner integration", () => {
     const librarySeam = architectureCatalog.graphNodes.find(
       (node) => node.id === "node.dynamo-online-library-seam",

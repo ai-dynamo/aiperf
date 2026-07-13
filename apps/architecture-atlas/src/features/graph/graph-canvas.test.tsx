@@ -11,9 +11,12 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { GraphEdge, GraphNode } from "../../domain/architecture";
-import type { DirectedNeighborhood } from "../../domain/graph-derivation";
+import type {
+  DirectedNeighborhood,
+  FlavorOverlay,
+} from "../../domain/graph-derivation";
 import type { LayoutRequest, LayoutResult } from "../atlas/layout";
-import { GraphCanvas } from "./graph-canvas";
+import { fitGraphView, GraphCanvas } from "./graph-canvas";
 import type { GraphCanvasLayoutService } from "./types";
 
 function createNode(input: {
@@ -23,6 +26,7 @@ function createNode(input: {
   ports: Array<{ id: string; name: string; channel: GraphNode["seamPorts"][number]["channel"] }>;
   tier: GraphNode["tier"];
   title: string;
+  state?: GraphNode["status"]["state"];
 }): GraphNode {
   return {
     audience: {
@@ -37,7 +41,7 @@ function createNode(input: {
     owner: input.owner,
     parentId: input.parentId ?? null,
     seamPorts: input.ports,
-    status: { delivery: "unconditional", state: "built" },
+    status: { delivery: "unconditional", state: input.state ?? "built" },
     summary: {
       developer: `${input.title} summary`,
       executive: `${input.title} summary`,
@@ -127,6 +131,15 @@ const neighborhood: DirectedNeighborhood = {
   upstreamNodeIds: ["node.python"],
 };
 
+const overlay: FlavorOverlay = {
+  compareOnlyEdgeIds: ["edge.runner.transport"],
+  compareOnlyNodeIds: ["node.transport"],
+  primaryOnlyEdgeIds: [],
+  primaryOnlyNodeIds: [],
+  sharedEdgeIds: ["edge.python.runner"],
+  sharedNodeIds: ["node.python", "node.runner"],
+};
+
 const layoutResult: LayoutResult = {
   bands: [],
   degraded: false,
@@ -165,6 +178,7 @@ describe("graph canvas", () => {
         layoutService={createLayoutService(layoutResult)}
         neighborhood={neighborhood}
         onFocusEntity={onFocusEntity}
+        overlay={overlay}
         visibleEdges={visibleEdges}
         visibleNodes={visibleNodes}
       />,
@@ -199,6 +213,7 @@ describe("graph canvas", () => {
         layoutService={createLayoutService(layoutResult)}
         neighborhood={neighborhood}
         onFocusEntity={onFocusEntity}
+        overlay={overlay}
         visibleEdges={visibleEdges}
         visibleNodes={visibleNodes}
       />,
@@ -223,6 +238,66 @@ describe("graph canvas", () => {
     expect(onFocusEntity).toHaveBeenCalledWith("node.runner");
   });
 
+  it("threads flavor overlay and planned classifications into graph entities", async () => {
+    const plannedNodes = visibleNodes.map((node) =>
+      node.id === "node.transport"
+        ? { ...node, status: { ...node.status, state: "planned" as const } }
+        : node,
+    );
+
+    render(
+      <GraphCanvas
+        audience="developer"
+        focusedEntityId={null}
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(layoutResult)}
+        neighborhood={{ downstreamNodeIds: [], upstreamNodeIds: [] }}
+        onFocusEntity={vi.fn()}
+        overlay={overlay}
+        visibleEdges={visibleEdges}
+        visibleNodes={plannedNodes}
+      />,
+    );
+
+    await screen.findByTestId("graph-node-node.runner");
+    expect(screen.getByTestId("graph-node-node.runner")).toHaveAttribute(
+      "data-flavor-class",
+      "shared",
+    );
+    expect(screen.getByTestId("graph-node-node.transport")).toHaveAttribute(
+      "data-flavor-class",
+      "compare-only",
+    );
+    expect(screen.getByTestId("graph-node-node.transport")).toHaveAttribute(
+      "data-implementation-state",
+      "planned",
+    );
+    expect(screen.getByTestId("graph-node-node.transport")).toHaveTextContent(
+      "compare-only",
+    );
+    expect(screen.getByTestId("graph-node-node.transport")).toHaveTextContent(
+      "planned",
+    );
+  });
+
+  it("executes a typed fit-view command through the React Flow API", async () => {
+    const fitView = vi.fn(async () => true);
+
+    await fitGraphView(
+      { fitView },
+      ["node.python", "node.runner", "node.transport"],
+    );
+
+    expect(fitView).toHaveBeenCalledWith({
+      nodes: [
+        { id: "node.python" },
+        { id: "node.runner" },
+        { id: "node.transport" },
+      ],
+      padding: 0.14,
+    });
+  });
+
   it("shows loading then a degraded fallback layout notice", async () => {
     let resolveLayout: ((result: LayoutResult) => void) | undefined;
     const layoutPromise = new Promise<LayoutResult>((resolve) => {
@@ -240,6 +315,7 @@ describe("graph canvas", () => {
         layoutService={service}
         neighborhood={{ downstreamNodeIds: [], upstreamNodeIds: [] }}
         onFocusEntity={vi.fn()}
+        overlay={overlay}
         visibleEdges={visibleEdges}
         visibleNodes={visibleNodes}
       />,

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useRef } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 
 import { architectureCatalog } from "../../content";
 import type { Audience } from "../../domain/audience";
@@ -23,10 +27,13 @@ import {
 import { AccessibilityOutline } from "./accessibility-outline";
 import { EvidenceDrawer, type EvidenceDrawerEntity } from "./evidence-drawer";
 import { GraphCanvas } from "./graph-canvas";
+import type { GraphFitViewCommand } from "./types";
 
 interface GraphSceneProps {
   audience: Audience;
   compareFlavor: ExecutionFlavor | null;
+  fallbackFocusElementId: string;
+  fitViewCommand: GraphFitViewCommand | null;
   primaryFlavor: ExecutionFlavor;
   sceneId: string;
   searchQuery: string;
@@ -135,6 +142,8 @@ function createEvidenceEntity(
 export function GraphScene({
   audience,
   compareFlavor,
+  fallbackFocusElementId,
+  fitViewCommand,
   primaryFlavor,
   sceneId,
   searchQuery,
@@ -142,6 +151,12 @@ export function GraphScene({
   onGraphStateChange,
 }: GraphSceneProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    searchInputRef.current = document.getElementById(
+      fallbackFocusElementId,
+    ) as HTMLInputElement | null;
+  }, [fallbackFocusElementId]);
 
   const derivation = useMemo(
     () =>
@@ -236,18 +251,15 @@ export function GraphScene({
           value={state.timelinePosition}
         />
       </label>
-      <label>
-        <span className="sr-only">Graph search focus target</span>
-        <input aria-label="Graph search focus target" ref={searchInputRef} type="text" />
-      </label>
-
       <GraphCanvas
         audience={audience}
+        fitViewCommand={fitViewCommand ?? undefined}
         focusedEntityId={state.focusedEntityId}
         layoutRequest={layoutRequest}
         layoutService={{ layout: layoutAtlas }}
         neighborhood={derivation.neighborhood}
         onFocusEntity={(entityId) => updateState({ focusedEntityId: entityId })}
+        overlay={derivation.overlay}
         visibleEdges={derivation.visibleEdges}
         visibleNodes={derivation.visibleNodes}
       />

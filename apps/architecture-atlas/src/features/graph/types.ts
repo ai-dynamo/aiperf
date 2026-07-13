@@ -6,13 +6,22 @@ import type {
   GraphEdge,
   GraphNode,
 } from "../../domain/architecture";
-import type { DirectedNeighborhood } from "../../domain/graph-derivation";
+import type {
+  DirectedNeighborhood,
+  FlavorOverlay,
+} from "../../domain/graph-derivation";
 import type {
   LayoutRequest,
   LayoutResult,
 } from "../atlas/layout";
 
 export type GraphPathState = "focused" | "upstream" | "downstream" | "default";
+export type GraphFlavorClass = "shared" | "primary-only" | "compare-only";
+
+export interface GraphFitViewCommand {
+  requestId: number;
+  padding?: number;
+}
 
 export interface GraphCanvasLayoutService {
   layout(request: LayoutRequest): Promise<LayoutResult>;
@@ -24,7 +33,10 @@ export interface GraphCanvasProps {
   layoutRequest: LayoutRequest;
   layoutService: GraphCanvasLayoutService;
   neighborhood: DirectedNeighborhood;
+  fitViewCommand?: GraphFitViewCommand;
+  onFitViewComplete?(requestId: number): void;
   onFocusEntity(entityId: string): void;
+  overlay?: FlavorOverlay;
   visibleEdges: readonly GraphEdge[];
   visibleNodes: readonly GraphNode[];
 }

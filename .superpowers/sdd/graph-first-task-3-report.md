@@ -88,3 +88,26 @@ Final gate results:
 - `npm --prefix apps/architecture-atlas run build` — pass; Vite production build completed.
 
 The build retains Vite's advisory warning that the worker and main chunks exceed 500 kB; this is non-failing and remains a Task 4/performance-polish concern.
+
+## Review Integration Follow-Up — 2026-07-12
+
+Integrated the remaining Task 3 review slices:
+
+- The default runtime scene now includes the complete Tier-0 Python-to-result journey and its canonical edges alongside the runtime seam branches.
+- The command bar emits typed `GraphFitViewCommand` values through router context and `GraphScene` into `GraphCanvas`; the canvas executes each command through the React Flow `fitView` API.
+- `GraphScene` now passes `derivation.overlay` directly into the canvas, which classifies shared, primary-only, and comparison-only nodes and edges.
+- Built and planned state, overlay class, and directed path state reach both custom node presentation and the underlying `BaseEdge` path styling.
+- Evidence focus restoration now targets the one visible command-bar graph search input; the temporary hidden duplicate input was removed.
+- No accidental `artifacts/task-3-report.md` exists; this file remains the canonical Task 3 report.
+
+The fit/overlay route test was corrected before orchestrator wiring and failed on both missing typed fit commands and missing overlay propagation. After integration, the focused review suite passed 46 tests across five files.
+
+Final gate results after review integration:
+
+- `npm --prefix apps/architecture-atlas run validate:content` — pass; 25 components, 20 edges, 23 crates.
+- `npm --prefix apps/architecture-atlas run typecheck` — pass.
+- `npm --prefix apps/architecture-atlas run lint` — pass.
+- `npm --prefix apps/architecture-atlas test` — pass; 21 files, 187 tests.
+- `npm --prefix apps/architecture-atlas run build` — pass; Vite production build completed.
+
+The existing non-failing Vite warning remains: the layout worker and main application chunks exceed 500 kB.
