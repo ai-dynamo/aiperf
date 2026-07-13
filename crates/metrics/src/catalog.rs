@@ -103,6 +103,8 @@ pub enum MetricTag {
     NetworkRtt,
     StreamSetupLatency,
     StreamPrefillLatency,
+    AccuracyCorrect,
+    AccuracyUnparsed,
     AudioDuration,
     NumImages,
     ImageThroughput,
@@ -228,6 +230,8 @@ impl MetricTag {
             Self::NetworkRtt => "network_rtt",
             Self::StreamSetupLatency => "stream_setup_latency",
             Self::StreamPrefillLatency => "stream_prefill_latency",
+            Self::AccuracyCorrect => "accuracy.correct",
+            Self::AccuracyUnparsed => "accuracy.unparsed",
             Self::AudioDuration => "audio_duration",
             Self::NumImages => "num_images",
             Self::ImageThroughput => "image_throughput",
@@ -1181,6 +1185,24 @@ pub static CATALOG: LazyLock<Vec<MetricSpec>> = LazyLock::new(|| {
             [TimeToFirstToken, StreamSetupLatency]
         ),
         spec!(
+            AccuracyCorrect,
+            "Accuracy Correct",
+            Ratio,
+            Aggregate,
+            Some(AggregationKind::Sum),
+            MetricFlags::INTERNAL,
+            []
+        ),
+        spec!(
+            AccuracyUnparsed,
+            "Accuracy Unparsed",
+            Ratio,
+            Aggregate,
+            Some(AggregationKind::Sum),
+            MetricFlags::INTERNAL,
+            []
+        ),
+        spec!(
             AudioDuration,
             "Audio Duration",
             Second,
@@ -1849,6 +1871,8 @@ fn configure_catalog_metadata(catalog: &mut [MetricSpec]) {
             | OslMismatchDiffPct
             | OslMismatchCount
             | CreditToStartLatency
+            | AccuracyCorrect
+            | AccuracyUnparsed
             | AudioDuration
             | NumImages
             | HttpReqBlocked
@@ -2054,7 +2078,7 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
-        assert_eq!(CATALOG.len(), 117);
+        assert_eq!(CATALOG.len(), 119);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG
@@ -2065,8 +2089,8 @@ mod tests {
 
     #[test]
     fn catalog_identity_matches_the_source_grounded_snapshot() {
-        // Covers the 101 Python identities plus the 16 native sweep identities.
+        // Covers the 103 Python identities plus the 16 native sweep identities.
         // Any intentional metadata change must be re-audited before updating this value.
-        assert_eq!(catalog_fingerprint(), 17_389_367_419_078_851_658);
+        assert_eq!(catalog_fingerprint(), 9_668_288_044_080_706_792);
     }
 }
