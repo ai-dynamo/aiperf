@@ -833,8 +833,6 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // Feature-bearing modules add registrations here without changing lookup,
     // validation, or dispatch. Keeping the composition function even in the
     // base build prevents capability code from growing mode string branches.
-    crate::agentic_execution::register_agentic_workload(builder)?;
-    crate::agentic_execution::register_agentic_online_pair(builder)?;
     crate::online_execution::register_http_pairs(builder)?;
     crate::online_execution::register_http_scheduled_pair(builder)?;
     crate::online_execution::register_http_static_accuracy_pair(builder)?;
@@ -2081,7 +2079,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_transports
         );
-        let expected_workloads = vec!["agentic", "graph", "scheduled", "static_accuracy"];
+        let expected_workloads = vec!["graph", "scheduled", "static_accuracy"];
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -2097,7 +2095,6 @@ mod tests {
             ("dynosim_online", "graph"),
             ("dynosim_online", "scheduled"),
             ("grpc", "scheduled"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
@@ -2105,7 +2102,6 @@ mod tests {
         #[cfg(not(feature = "dynosim"))]
         let expected_supported = vec![
             ("grpc", "scheduled"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
@@ -2118,7 +2114,6 @@ mod tests {
             ("dynosim_online", "scheduled"),
             ("grpc", "graph"),
             ("grpc", "scheduled"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
@@ -2127,7 +2122,6 @@ mod tests {
         let expected_static = vec![
             ("grpc", "graph"),
             ("grpc", "scheduled"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),

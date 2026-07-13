@@ -7,8 +7,6 @@
 //! aggregation. This crate accepts exactly one versioned run request and owns
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
-
-pub mod agentic_execution;
 pub mod application;
 pub mod control_plane_http;
 pub mod coordinator;

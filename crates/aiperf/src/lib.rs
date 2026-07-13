@@ -12,7 +12,7 @@
 //! by `aiperf-runner`: the online HTTP sink over `aiperf-transport-http` ([`http`]),
 //! ancillary policy wiring ([`ancillary`]), phased scheduled execution
 //! ([`phase_runtime`]), workload shaping ([`workload`]), the online run loop
-//! ([`run`]), reporting ([`report`]), and canonical accuracy/agentic execution
+//! ([`run`]), reporting ([`report`]), and canonical static-accuracy execution
 //! seams. Named compile-time extension composition lives in `aiperf_extensions`
 //! and is owned by the runner, so extension crates never need a dependency cycle
 //! through this runtime crate.
@@ -22,8 +22,6 @@
 
 pub mod accuracy;
 pub mod adaptive;
-pub mod agentic;
-pub mod agentic_gateway;
 pub mod ancillary;
 #[cfg(feature = "dynamo-aic-forward-pass")]
 pub mod aic_runtime;
