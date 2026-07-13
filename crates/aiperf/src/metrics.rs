@@ -207,8 +207,15 @@ pub struct NativeMetricsObserver {
 pub struct NativeMetricsCollection {
     /// Aggregate over every finalized request.
     pub summary: AccumulatorSummary,
-    /// Finalized request facts in ascending absolute request-slot order.
-    pub records: Vec<RecordIngest>,
+    /// Finalized request facts in ascending absolute request-slot order, each
+    /// paired with the true drain [`Uuid`] of the request that produced it.
+    ///
+    /// The uuid is the request's dispatch identity, not `RecordIngest.correlation_id`:
+    /// in aggregate-only mode `correlation_id` is the empty string for every
+    /// record, so a coordinator that must re-associate a record with its
+    /// dispatch identity keys on this uuid. Consumers that only re-ingest the
+    /// records (offline direct-graph reports) ignore it.
+    pub records: Vec<(Uuid, RecordIngest)>,
 }
 
 /// Owned post-drain native-metrics reduction.
@@ -429,11 +436,10 @@ impl NativeMetricsFinalizer {
             let Some(entry) = entry else {
                 continue;
             };
-            let record = entry
-                .request
-                .into_record(entry.uuid, slot as u64, finish_ns);
+            let uuid = entry.uuid;
+            let record = entry.request.into_record(uuid, slot as u64, finish_ns);
             accumulator.process_record(&record);
-            records.push(record);
+            records.push((uuid, record));
         }
         NativeMetricsCollection {
             summary: accumulator.summarize(),
@@ -814,11 +820,12 @@ mod tests {
 
         let collection = observer.finish_with_records();
         assert_eq!(collection.records.len(), 1);
-        assert_eq!(collection.records[0].correlation_id, uuid.to_string());
-        assert_eq!(collection.records[0].session_num, 9);
-        assert_eq!(collection.records[0].turn_index, 2);
+        assert_eq!(collection.records[0].0, uuid);
+        assert_eq!(collection.records[0].1.correlation_id, uuid.to_string());
+        assert_eq!(collection.records[0].1.session_num, 9);
+        assert_eq!(collection.records[0].1.turn_index, 2);
         assert_eq!(
-            collection.records[0].usage,
+            collection.records[0].1.usage,
             UsageMetrics {
                 prompt_tokens: Some(8),
                 completion_tokens: Some(2),
@@ -836,7 +843,7 @@ mod tests {
             }
         );
         assert_eq!(
-            collection.records[0].token_arrival_ns,
+            collection.records[0].1.token_arrival_ns,
             vec![10_000_000, 20_000_000]
         );
         let summary = collection.summary;
@@ -974,7 +981,7 @@ mod tests {
         assert_eq!(snapshot.end_ns, 9_000_000);
 
         let collection = observer.finish_with_records();
-        assert_eq!(collection.records, vec![snapshot]);
+        assert_eq!(collection.records, vec![(uuid, snapshot)]);
     }
 
     #[test]
@@ -1028,7 +1035,7 @@ mod tests {
             collection
                 .records
                 .iter()
-                .map(|record| (record.request_index, record.correlation_id.as_str()))
+                .map(|(_uuid, record)| (record.request_index, record.correlation_id.as_str()))
                 .collect::<Vec<_>>(),
             vec![(Some(0), "slot-zero"), (Some(2), "slot-two")]
         );
@@ -1088,9 +1095,9 @@ mod tests {
         observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
 
         let collection = observer.finish_with_records();
-        assert_eq!(collection.records[0].token_arrival_ns.len(), 2);
-        assert_eq!(collection.records[0].tokens.output, Some(2));
-        assert_eq!(collection.records[0].usage.completion_tokens, Some(5));
+        assert_eq!(collection.records[0].1.token_arrival_ns.len(), 2);
+        assert_eq!(collection.records[0].1.tokens.output, Some(2));
+        assert_eq!(collection.records[0].1.usage.completion_tokens, Some(5));
         assert_eq!(
             collection
                 .summary
