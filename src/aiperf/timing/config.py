@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -21,6 +20,7 @@ from aiperf.plugin.enums import (
 )
 from aiperf.timing.adaptive_config import (
     ADAPTIVE_TIMING_FIELDS,
+    AdaptiveControlVariable,
     AdaptiveTimingConfig,
 )
 from aiperf.timing.request_cancellation import RequestCancellationConfig
@@ -270,7 +270,9 @@ class CreditPhaseConfig(AIPerfBaseModel):
             if field in ADAPTIVE_TIMING_FIELDS
         }
         if adaptive_update:
-            folded["adaptive"] = self.adaptive.model_copy(update=adaptive_update)
+            adaptive_payload = self.adaptive.model_dump(mode="python")
+            adaptive_payload.update(adaptive_update)
+            folded["adaptive"] = AdaptiveTimingConfig.model_validate(adaptive_payload)
         return folded
 
     @property
@@ -282,12 +284,16 @@ class CreditPhaseConfig(AIPerfBaseModel):
         return self.adaptive.adaptive_assessment_period_sec
 
     @property
-    def adaptive_control_variable(self) -> Literal["concurrency"]:
+    def adaptive_control_variable(self) -> AdaptiveControlVariable:
         return self.adaptive.adaptive_control_variable
 
     @property
-    def adaptive_scale_min_concurrency(self) -> int:
-        return self.adaptive.adaptive_scale_min_concurrency
+    def adaptive_control_min(self) -> float:
+        return self.adaptive.adaptive_control_min
+
+    @property
+    def adaptive_control_max(self) -> float | None:
+        return self.adaptive.adaptive_control_max
 
     @property
     def adaptive_scale_strategy_type(self) -> Literal["ramp_until_fail"]:
@@ -327,7 +333,10 @@ def _ramp_duration(ramp: object | None) -> float | None:
 
 def _phase_request_rate(phase: PhaseConfig) -> float | None:
     """Return the configured request rate for a phase, if any."""
-    return getattr(phase, "rate", None)
+    # Lazy import: aiperf.config.phases is only a TYPE_CHECKING import here.
+    from aiperf.config.phases import get_phase_rate
+
+    return get_phase_rate(phase)
 
 
 def _phase_arrival_pattern(phase: PhaseConfig) -> ArrivalPattern:
@@ -418,9 +427,8 @@ def _build_profiling_config(
         adaptive_control_variable=getattr(
             phase, "adaptive_control_variable", "concurrency"
         ),
-        adaptive_scale_min_concurrency=getattr(
-            phase, "adaptive_scale_min_concurrency", 1
-        ),
+        adaptive_control_min=getattr(phase, "adaptive_control_min", 1),
+        adaptive_control_max=getattr(phase, "adaptive_control_max", None),
         adaptive_scale_strategy_type=getattr(
             phase, "adaptive_scale_strategy_type", "ramp_until_fail"
         ),

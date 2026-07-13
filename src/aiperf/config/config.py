@@ -32,10 +32,9 @@ Example Usage:
 from __future__ import annotations
 
 import difflib
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.accuracy import (

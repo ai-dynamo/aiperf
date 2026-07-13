@@ -19,12 +19,13 @@ from itertools import cycle
 from string import ascii_uppercase
 from typing import TYPE_CHECKING, Any
 
-from datasets import Dataset, DatasetDict, load_dataset
-
+from aiperf.accuracy.benchmarks._datasets_compat import load_dataset
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.mixins import AIPerfLoggerMixin
 
 if TYPE_CHECKING:
+    from datasets import Dataset, DatasetDict
+
     from aiperf.config.resolution.plan import BenchmarkRun
 
 DATASET_NAME = "lighteval/mmlu"

@@ -5,7 +5,13 @@ import traceback
 from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    CreditPhase,
+    ExportLevel,
+    MessageType,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_message, on_pull_message
@@ -13,6 +19,7 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
     MetricRecordsMessage,
+    ProfileCompleteCommand,
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -31,6 +38,7 @@ from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.post_processors.protocols import RecordProcessorProtocol
+from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 if TYPE_CHECKING:
@@ -67,6 +75,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             run=self.run,
         )
 
+        # DatasetConfiguredNotification (SUB) and inference results (PULL) arrive on
+        # independent channels with no ordering guarantee. Gate record processing on
+        # this event so processors are configured (e.g. accuracy ground truths) before
+        # any record is graded.
+        self._dataset_configured_event: asyncio.Event = asyncio.Event()
+
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
             try:
@@ -97,6 +111,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         for processor in self.records_processors:
             if hasattr(processor, "on_dataset_configured"):
                 processor.on_dataset_configured(message.metadata)
+        self._dataset_configured_event.set()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -104,6 +119,33 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     ) -> None:
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
+
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _profile_complete_command(
+        self,
+        message: ProfileCompleteCommand,  # noqa: ARG002
+    ) -> None:
+        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+
+        RecordsManager sends PROFILE_COMPLETE after all records are processed
+        but before exporting/aggregating results. Flushing children here ensures
+        buffered writers drain to disk before the RawRecordAggregator reads them.
+
+        We flush rather than stop: stop() runs the @on_stop hook chain inside
+        the message-handler task, and when SystemController later broadcasts
+        SHUTDOWN it cancels the in-flight handler task, leaving the writer
+        wedged at STOPPING with the buffer un-flushed. flush_buffer() drains
+        the buffer without tearing down the file handle, and the writer's
+        normal _close_file hook handles teardown during service shutdown.
+        """
+        for child in self._children:
+            flush = getattr(child, "flush_buffer", None)
+            if flush is None:
+                continue
+            try:
+                await flush()
+            except Exception as e:  # noqa: BLE001
+                self.error(f"Failed to flush child {child}: {e!r}")
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
@@ -168,7 +210,21 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
-        """Handle an inference results message."""
+        """Handle an inference results message.
+
+        Lockstep contract: every received message forwards exactly one
+        ``MetricRecordsMessage``. The worker has already returned the credit as
+        completed by the time the record arrives here, so a dropped record
+        leaves the RecordsManager completion barrier (``success_records +
+        error_records >= final_requests_completed``, which has no timeout)
+        permanently short and hangs the run at end-of-phase. A parse/process
+        failure is therefore forwarded as an error record instead of being
+        allowed to escape the handler. The dataset-configured gate below is
+        the one exception: its False path has already killed the service and
+        aborted the run, so no barrier is left waiting.
+        """
+        if not await await_dataset_configured(self, self._dataset_configured_event):
+            return
         record = message.record
 
         # Capture last response timestamp before parsing frees raw SSE data.
@@ -176,6 +232,36 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             record.responses[-1].perf_ns if record.responses else None
         )
 
+        try:
+            await self._process_and_forward_record(
+                message, record, last_response_perf_ns
+            )
+        except Exception as e:  # noqa: BLE001
+            # Never drop the record: the worker already returned this credit as
+            # completed, so forward an error record to keep the records-side
+            # count in lockstep and let the completion barrier converge.
+            self.exception(
+                f"Failed to process inference record; forwarding as error: {e!r}"
+            )
+            # Last-resort guard: a failure inside the error-forward path must not
+            # propagate out of the handler, or the timeout-less completion barrier
+            # hangs the run (see docstring). Log and swallow.
+            try:
+                await self._forward_failed_record(
+                    message, record, last_response_perf_ns, e
+                )
+            except Exception as forward_exc:  # noqa: BLE001
+                self.exception(
+                    f"Failed to forward error record; dropping to avoid escaping handler: {forward_exc!r}"
+                )
+
+    async def _process_and_forward_record(
+        self,
+        message: InferenceResultsMessage,
+        record: RequestRecord,
+        last_response_perf_ns: int | None,
+    ) -> None:
+        """Parse, process, and forward the metric record for a single request."""
         parsed_record = await self.inference_result_parser.parse_request_record(record)
 
         # Free raw SSE messages now that parsing extracted what it needs.
@@ -186,6 +272,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             record, message.service_id, last_response_perf_ns
         )
+
         raw_results = await self._process_record(parsed_record, metadata)
 
         trace_data, error = self._free_record_data(record, parsed_record)
@@ -206,6 +293,50 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 results=results,
                 trace_data=trace_data,
                 error=error,
+            )
+        )
+
+    async def _forward_failed_record(
+        self,
+        message: InferenceResultsMessage,
+        record: RequestRecord,
+        last_response_perf_ns: int | None,
+        exc: Exception,
+    ) -> None:
+        """Forward an error record after a parse/process failure so the
+        records-side count stays in lockstep with the already-returned credit."""
+        try:
+            metadata = self._create_metric_record_metadata(
+                record, message.service_id, last_response_perf_ns
+            )
+        except Exception as meta_exc:  # noqa: BLE001
+            # Metadata creation itself can fail (e.g. request_info is None, which
+            # was often the original failure cause). Fall back to a minimal record
+            # built only from always-available fields so lockstep is preserved.
+            self.exception(
+                f"Failed to build metric record metadata for error record; using fallback: {meta_exc!r}"
+            )
+            if record.request_info is not None:
+                session_num = record.request_info.credit_num
+                benchmark_phase = record.request_info.credit_phase
+            else:
+                session_num = -1
+                benchmark_phase = CreditPhase.PROFILING
+            metadata = MetricRecordMetadata(
+                session_num=session_num,
+                request_start_ns=record.timestamp_ns,
+                request_end_ns=record.timestamp_ns,
+                worker_id=message.service_id,
+                record_processor_id=self.service_id,
+                benchmark_phase=benchmark_phase,
+            )
+        await self.records_push_client.push(
+            MetricRecordsMessage(
+                service_id=self.service_id,
+                metadata=metadata,
+                results=[],
+                trace_data=None,
+                error=record.error or ErrorDetails.from_exception(exc),
             )
         )
 

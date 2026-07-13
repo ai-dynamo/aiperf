@@ -62,6 +62,7 @@ def _walk_items_arrays(
     fallbacks should not also fire).
     """
     found = False
+    chat_messages: list[dict[str, str]] = []
     for items_field in ("messages", "input"):
         items = payload.get(items_field)
         if not isinstance(items, list) or not items:
@@ -76,7 +77,12 @@ def _walk_items_arrays(
         found = True
         for item in items:
             if isinstance(item, dict):
-                _walk_item(item, result, type_to_media)
+                _walk_item(item, result, type_to_media, chat_messages)
+    if found:
+        # Chat-template view: the role/content array the consumer feeds to
+        # the tokenizer's ``apply_chat_template`` ISL path. Only populated
+        # for recognised items-array shapes; ``None`` for flat shapes.
+        result.messages = chat_messages
     return found
 
 
@@ -84,32 +90,51 @@ def _walk_item(
     item: dict[str, Any],
     result: ExtractedPayload,
     type_to_media: dict[str, MediaType],
+    chat_messages: list[dict[str, str]],
 ) -> None:
-    """Walk one chat/Responses item: content, tool_calls, function_call(_output)."""
-    _walk_item_content(item, result, type_to_media)
+    """Walk one chat/Responses item: content, tool_calls, function_call(_output).
+
+    Appends the item's chat-template view (role + concatenated text parts)
+    to ``chat_messages`` when the item carries a string ``role``.
+    """
+    msg_text_parts = _walk_item_content(item, result, type_to_media)
     _walk_item_tool_calls(item, result)
     _walk_item_function_call(item, result)
+    role = item.get("role")
+    if isinstance(role, str):
+        # Chat templates expect string content. Concatenate the text parts
+        # of mixed-content messages; media parts are dropped here (they don't
+        # templatize meaningfully and the media counts already captured them).
+        chat_messages.append({"role": role, "content": "".join(msg_text_parts)})
 
 
 def _walk_item_content(
     item: dict[str, Any],
     result: ExtractedPayload,
     type_to_media: dict[str, MediaType],
-) -> None:
-    """Chat-shape ``content`` (string or content-parts array)."""
+) -> list[str]:
+    """Chat-shape ``content`` (string or content-parts array).
+
+    Returns the text fragments contributed by this item so the caller can
+    assemble the message's chat-template ``content`` string.
+    """
+    msg_text_parts: list[str] = []
     content = item.get("content")
     if isinstance(content, str):
         result.texts.append(content)
+        msg_text_parts.append(content)
     elif isinstance(content, list):
         for part in content:
             if isinstance(part, dict):
-                _walk_content_part(part, result, type_to_media)
+                _walk_content_part(part, result, type_to_media, msg_text_parts)
+    return msg_text_parts
 
 
 def _walk_content_part(
     part: dict[str, Any],
     result: ExtractedPayload,
     type_to_media: dict[str, MediaType],
+    msg_text_parts: list[str],
 ) -> None:
     """Dispatch one content part against the media-type map."""
     media = type_to_media.get(part.get("type"))
@@ -117,6 +142,7 @@ def _walk_content_part(
         text = part.get("text")
         if isinstance(text, str):
             result.texts.append(text)
+            msg_text_parts.append(text)
     elif media is MediaType.IMAGE:
         result.image_count += 1
     elif media is MediaType.AUDIO:
@@ -141,18 +167,22 @@ def _walk_item_tool_calls(item: dict[str, Any], result: ExtractedPayload) -> Non
             continue
         fn = tc.get("function") or {}
         if isinstance(fn, dict):
-            _collect_str_fields(fn, ("name", "arguments"), result.texts)
+            collected: list[str] = []
+            _collect_str_fields(fn, ("name", "arguments"), collected)
+            _append_tool_texts(result, collected)
 
 
 def _walk_item_function_call(item: dict[str, Any], result: ExtractedPayload) -> None:
     """Responses-shape replayed ``function_call`` and ``function_call_output``."""
     item_type = item.get("type")
+    collected: list[str] = []
     if item_type == "function_call":
-        _collect_str_fields(item, ("name", "arguments"), result.texts)
+        _collect_str_fields(item, ("name", "arguments"), collected)
     elif item_type == "function_call_output":
         output_text = item.get("output")
         if isinstance(output_text, str) and output_text:
-            result.texts.append(output_text)
+            collected.append(output_text)
+    _append_tool_texts(result, collected)
 
 
 def _walk_tools_schema(payload: dict[str, Any], result: ExtractedPayload) -> None:
@@ -179,13 +209,26 @@ def _walk_tools_schema(payload: dict[str, Any], result: ExtractedPayload) -> Non
 
 def _collect_tool_source(source: dict[str, Any], result: ExtractedPayload) -> None:
     """Collect ``name``/``description`` strings and serialised parameters."""
-    _collect_str_fields(source, ("name", "description"), result.texts)
+    collected: list[str] = []
+    _collect_str_fields(source, ("name", "description"), collected)
     parameters = source.get("parameters")
     if isinstance(parameters, dict):
         # Serialise once; the tokeniser sees the same JSON the server
         # would when prepending the tool schema to the prompt.
         with contextlib.suppress(TypeError):
-            result.texts.append(orjson.dumps(parameters).decode())
+            collected.append(orjson.dumps(parameters).decode())
+    _append_tool_texts(result, collected)
+
+
+def _append_tool_texts(result: ExtractedPayload, collected: list[str]) -> None:
+    """Record tool-derived strings in both text ledgers.
+
+    ``texts`` keeps the bare-text ISL path byte-identical (tool text stays
+    interleaved in walk order); ``tool_texts`` lets the chat-template ISL
+    path count tool text that the role/content ``messages`` view omits.
+    """
+    result.texts.extend(collected)
+    result.tool_texts.extend(collected)
 
 
 def _collect_str_fields(

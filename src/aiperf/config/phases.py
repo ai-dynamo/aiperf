@@ -10,7 +10,7 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -18,7 +18,6 @@ from pydantic import (
     Field,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
 from aiperf.config.base import BaseConfig
@@ -52,6 +51,7 @@ __all__ = [
     "_normalize_duration",
     "_normalize_ramp",
     "_parse_duration",
+    "get_phase_rate",
 ]
 
 
@@ -60,7 +60,7 @@ __all__ = [
 # =============================================================================
 
 
-class BasePhaseConfig(BaseConfig):
+class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     """Base configuration shared by all phase types.
 
     Not instantiated directly -- use a concrete type via the
@@ -277,7 +277,7 @@ class BasePhaseConfig(BaseConfig):
 # =============================================================================
 
 
-class ConcurrencyPhase(AdaptiveScalePhaseMixin, BasePhaseConfig):
+class ConcurrencyPhase(BasePhaseConfig):
     """Concurrency-controlled load: dispatch immediately when a slot opens.
 
     Primary control is ``concurrency`` (defaults to 1).
@@ -469,3 +469,12 @@ PhaseConfig = Annotated[
     | FixedSchedulePhase,
     Discriminator("type"),
 ]
+
+
+def get_phase_rate(phase: BasePhaseConfig) -> float | None:
+    """Return the configured request rate for a phase, or None for non-rate phases.
+
+    Single accessor for the ``rate`` field so a future rename fails fast here
+    instead of being silently swallowed by scattered ``getattr(..., None)`` reads.
+    """
+    return phase.rate if isinstance(phase, RatePhaseConfig) else None

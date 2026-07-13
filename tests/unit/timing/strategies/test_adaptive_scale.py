@@ -6,14 +6,16 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.config.sweep.adaptive import SLAFilter
-from aiperf.credit.messages import CreditReturn
+from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -24,19 +26,26 @@ from aiperf.timing.strategies.adaptive_scale import (
 from aiperf.timing.strategies.adaptive_scale_artifacts import (
     AdaptiveScaleArtifactWriter,
 )
+from aiperf.timing.strategies.adaptive_scale_types import (
+    WindowRequestSample,
+    WindowStats,
+)
 
 
-def _strategy(tmp_path, *, threshold: float = 100.0) -> AdaptiveScaleStrategy:
-    cfg = CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
-        timing_mode=TimingMode.ADAPTIVE_SCALE,
-        expected_duration_sec=60.0,
-        concurrency=10,
-        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
-        adaptive_sustain_duration_sec=10.0,
-        adaptive_assessment_period_sec=1.0,
-        adaptive_scale_min_concurrency=2,
-        adaptive_sla_filters=[
+def _strategy(
+    tmp_path: Path, *, threshold: float = 100.0, **overrides
+) -> AdaptiveScaleStrategy:
+    config_kwargs = {
+        "phase": CreditPhase.PROFILING,
+        "timing_mode": TimingMode.ADAPTIVE_SCALE,
+        "expected_duration_sec": 60.0,
+        "concurrency": 10,
+        "arrival_pattern": ArrivalPattern.CONCURRENCY_BURST,
+        "adaptive_sustain_duration_sec": 10.0,
+        "adaptive_assessment_period_sec": 1.0,
+        "adaptive_control_min": 2,
+        "adaptive_control_max": 10,
+        "adaptive_sla_filters": [
             SLAFilter(
                 metric_tag="request_latency",
                 stat="p95",
@@ -44,13 +53,15 @@ def _strategy(tmp_path, *, threshold: float = 100.0) -> AdaptiveScaleStrategy:
                 threshold=threshold,
             )
         ],
-        artifact_dir=tmp_path,
-    )
+        "artifact_dir": tmp_path,
+    }
+    config_kwargs.update(overrides)
+    cfg = CreditPhaseConfig(**config_kwargs)
     lifecycle = MagicMock()
     lifecycle.is_sending_complete = False
     progress = MagicMock()
     progress.all_credits_sent_event = asyncio.Event()
-    return AdaptiveScaleStrategy(
+    strategy = AdaptiveScaleStrategy(
         config=cfg,
         conversation_source=MagicMock(),
         scheduler=MagicMock(),
@@ -60,10 +71,12 @@ def _strategy(tmp_path, *, threshold: float = 100.0) -> AdaptiveScaleStrategy:
         concurrency_manager=MagicMock(),
         progress=progress,
     )
+    strategy._artifacts._schedule_write = lambda write: write()
+    return strategy
 
 
 def _assert_event_clock_fields(event: dict) -> None:
-    assert event["schema_version"] == 1
+    assert event["schema_version"] == 2
     assert isinstance(event["timestamp"], int)
     assert event["timestamp_ns"] == event["timestamp"]
     assert re.fullmatch(
@@ -115,7 +128,7 @@ async def test_handle_credit_result_counts_cancelled_as_error(tmp_path) -> None:
     stats = await strategy._take_window()
 
     assert stats.samples == []
-    assert stats.errors == 1
+    assert stats.cancelled == 1
 
 
 @pytest.mark.asyncio
@@ -171,10 +184,11 @@ def test_unsupported_sla_metric_fails_during_strategy_construction(tmp_path) -> 
         arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
         adaptive_sustain_duration_sec=10.0,
         adaptive_assessment_period_sec=1.0,
-        adaptive_scale_min_concurrency=2,
+        adaptive_control_min=2,
+        adaptive_control_max=10,
         adaptive_sla_filters=[
             SLAFilter(
-                metric_tag="time_to_first_token",
+                metric_tag="unsupported_metric",
                 stat="p95",
                 op="le",
                 threshold=100.0,
@@ -210,8 +224,8 @@ def test_discover_scales_up_and_writes_event(tmp_path) -> None:
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_decision"
-    assert events[-1]["concurrency_before"] == 2
-    assert events[-1]["concurrency_after"] == 10
+    assert events[-1]["control_value_before"] == 2
+    assert events[-1]["control_value_after"] == 10
     assert events[-1]["step_policy"] == "sla_margin"
     assert events[-1]["step_size"] == 8
     _assert_event_clock_fields(events[-1])
@@ -294,11 +308,11 @@ def test_sla_margin_uses_most_constrained_filter(tmp_path) -> None:
     assert strategy._step_size(100, observed) == 10
 
 
-def test_goodput_ratio_uses_successes_over_attempts(tmp_path) -> None:
+def test_success_rate_uses_successes_over_attempts(tmp_path) -> None:
     strategy = _strategy(tmp_path, threshold=100.0)
     stats = MagicMock(samples=[10_000_000, 20_000_000], errors=1, total=3)
     sla = SLAFilter(
-        metric_tag="goodput_ratio",
+        metric_tag="success_rate",
         stat="avg",
         op="ge",
         threshold=0.95,
@@ -307,28 +321,319 @@ def test_goodput_ratio_uses_successes_over_attempts(tmp_path) -> None:
     assert strategy._sla_value(sla, stats) == pytest.approx(2 / 3)
 
 
-def test_goodput_ratio_sla_participates_in_pass_fail(tmp_path) -> None:
+def test_output_token_throughput_uses_window_osl_per_second(tmp_path) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    stats = WindowStats(
+        samples=[10_000_000, 20_000_000, 30_000_000],
+        errors=0,
+        elapsed_sec=2.0,
+        successful_requests=[
+            WindowRequestSample(10_000_000, output_sequence_length=20),
+            WindowRequestSample(20_000_000, output_sequence_length=None),
+            WindowRequestSample(30_000_000, output_sequence_length=40),
+        ],
+    )
+    sla = SLAFilter(
+        metric_tag="output_token_throughput",
+        stat="avg",
+        op="ge",
+        threshold=10.0,
+    )
+
+    assert strategy._sla_value(sla, stats) == pytest.approx(30.0)
+
+
+def test_goodput_ratio_uses_quality_passes_over_attempts(tmp_path) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    latency_sla = SLAFilter(
+        metric_tag="request_latency",
+        stat="p95",
+        op="le",
+        threshold=100.0,
+    )
+    fraction_sla = SLAFilter(
+        metric_tag="goodput_ratio",
+        stat="avg",
+        op="ge",
+        threshold=0.5,
+    )
+    stats = WindowStats(
+        samples=[80_000_000, 120_000_000],
+        errors=1,
+        cancelled=1,
+        elapsed_sec=1.0,
+        successful_requests=[
+            WindowRequestSample(request_latency_ns=80_000_000),
+            WindowRequestSample(request_latency_ns=120_000_000),
+        ],
+    )
+
+    strategy._sla_filters = [latency_sla, fraction_sla]
+
+    assert strategy._sla_value(fraction_sla, stats) == pytest.approx(1 / 4)
+
+
+def test_goodput_ratio_uses_quality_fraction_semantics(tmp_path) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    latency_sla = SLAFilter(
+        metric_tag="request_latency",
+        stat="p95",
+        op="le",
+        threshold=100.0,
+    )
+    alias_sla = SLAFilter(
+        metric_tag="goodput_ratio",
+        stat="avg",
+        op="ge",
+        threshold=0.5,
+    )
+    stats = WindowStats(
+        samples=[80_000_000, 120_000_000],
+        errors=1,
+        elapsed_sec=1.0,
+        successful_requests=[
+            WindowRequestSample(request_latency_ns=80_000_000),
+            WindowRequestSample(request_latency_ns=120_000_000),
+        ],
+    )
+    strategy._sla_filters = [latency_sla, alias_sla]
+
+    assert strategy._sla_value(alias_sla, stats) == pytest.approx(1 / 3)
+
+
+def test_success_rate_sla_participates_in_pass_fail(tmp_path) -> None:
     strategy = _strategy(tmp_path, threshold=100.0)
     latency_sla = strategy._primary_sla
-    goodput_sla = SLAFilter(
-        metric_tag="goodput_ratio",
+    success_sla = SLAFilter(
+        metric_tag="success_rate",
         stat="avg",
         op="ge",
         threshold=0.95,
     )
-    strategy._sla_filters = [latency_sla, goodput_sla]
+    strategy._sla_filters = [latency_sla, success_sla]
     observed = {
         strategy._sla_key(latency_sla): 10.0,
-        strategy._sla_key(goodput_sla): 0.90,
+        strategy._sla_key(success_sla): 0.90,
     }
 
     assert strategy._passes_sla(observed) is False
 
 
+def test_inter_token_latency_aliases_use_itl_samples(tmp_path) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    stats = WindowStats(
+        samples=[100_000_000],
+        errors=0,
+        elapsed_sec=1.0,
+        itl_samples=[10_000_000, 30_000_000],
+    )
+
+    for metric_tag in ("inter_token_latency", "itl", "tpot"):
+        sla = SLAFilter(
+            metric_tag=metric_tag,
+            stat="p50",
+            op="le",
+            threshold=25.0,
+        )
+
+        assert strategy._sla_value(sla, stats) == pytest.approx(20.0)
+
+
+def test_missing_inter_token_latency_sample_fails_lower_is_better_sla(
+    tmp_path,
+) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    stats = WindowStats(samples=[100_000_000], errors=0, elapsed_sec=1.0)
+    sla = SLAFilter(
+        metric_tag="inter_token_latency",
+        stat="p95",
+        op="le",
+        threshold=25.0,
+    )
+
+    observed = {strategy._sla_key(sla): strategy._sla_value(sla, stats)}
+
+    assert strategy._passes_single_sla(sla, observed[strategy._sla_key(sla)]) is False
+
+
+def test_goodput_counts_requests_passing_quality_filters(tmp_path) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    latency_sla = SLAFilter(
+        metric_tag="request_latency", stat="p95", op="le", threshold=100.0
+    )
+    ttft_sla = SLAFilter(metric_tag="ttft", stat="p95", op="le", threshold=30.0)
+    itl_sla = SLAFilter(metric_tag="itl", stat="p95", op="le", threshold=20.0)
+    goodput_sla = SLAFilter(metric_tag="goodput", stat="avg", op="ge", threshold=1.0)
+    strategy._sla_filters = [latency_sla, ttft_sla, itl_sla, goodput_sla]
+    stats = WindowStats(
+        samples=[80_000_000, 90_000_000, 120_000_000],
+        errors=0,
+        elapsed_sec=2.0,
+        ttft_samples=[20_000_000, 35_000_000, 20_000_000],
+        itl_samples=[10_000_000, 10_000_000, 30_000_000],
+        successful_requests=[
+            WindowRequestSample(80_000_000, 20_000_000, 10_000_000),
+            WindowRequestSample(90_000_000, 35_000_000, 10_000_000),
+            WindowRequestSample(120_000_000, 20_000_000, 30_000_000),
+        ],
+    )
+
+    assert strategy._sla_value(goodput_sla, stats) == pytest.approx(0.5)
+
+
+def test_goodput_requires_quality_filter(tmp_path) -> None:
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.ADAPTIVE_SCALE,
+        expected_duration_sec=60.0,
+        concurrency=10,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        adaptive_sustain_duration_sec=10.0,
+        adaptive_assessment_period_sec=1.0,
+        adaptive_control_min=2,
+        adaptive_control_max=10,
+        adaptive_sla_filters=[
+            SLAFilter(metric_tag="goodput", stat="avg", op="ge", threshold=1.0)
+        ],
+        artifact_dir=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="quality goodput SLA requires"):
+        AdaptiveScaleStrategy(
+            config=cfg,
+            conversation_source=MagicMock(),
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+            concurrency_manager=MagicMock(),
+            progress=MagicMock(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_credit_result_records_itl_and_quality_sample(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c",
+        x_correlation_id="x",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+
+    await strategy.handle_first_token(
+        FirstToken(credit_id=1, phase=CreditPhase.PROFILING, ttft_ns=20_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(
+            credit=credit,
+            request_latency_ns=100_000_000,
+            inter_token_latency_ns=10_000_000,
+            output_sequence_length=64,
+        )
+    )
+    stats = await strategy._take_window()
+
+    assert stats.itls == [10_000_000]
+    assert stats.requests == [
+        WindowRequestSample(
+            request_latency_ns=100_000_000,
+            ttft_ns=20_000_000,
+            inter_token_latency_ns=10_000_000,
+            output_sequence_length=64,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_take_window_excludes_ttft_from_errored_requests(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    successful_credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c1",
+        x_correlation_id="x1",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+    errored_credit = Credit(
+        id=2,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c2",
+        x_correlation_id="x2",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+    cancelled_credit = Credit(
+        id=3,
+        phase=CreditPhase.PROFILING,
+        conversation_id="c3",
+        x_correlation_id="x3",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=time.time_ns() - 5_000_000,
+    )
+
+    await strategy.handle_first_token(
+        FirstToken(credit_id=1, phase=CreditPhase.PROFILING, ttft_ns=180_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=successful_credit, request_latency_ns=200_000_000)
+    )
+    await strategy.handle_first_token(
+        FirstToken(credit_id=2, phase=CreditPhase.PROFILING, ttft_ns=20_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=errored_credit, error="stream failed")
+    )
+    await strategy.handle_first_token(
+        FirstToken(credit_id=3, phase=CreditPhase.PROFILING, ttft_ns=30_000_000)
+    )
+    await strategy.handle_credit_result(
+        CreditReturn(credit=cancelled_credit, cancelled=True)
+    )
+
+    stats = await strategy._take_window()
+
+    assert stats.ttfts == [180_000_000]
+    assert stats.errors == 1
+    assert stats.cancelled == 1
+
+
+@pytest.mark.asyncio
+async def test_adaptive_window_reports_itl_and_goodput_sla_values(tmp_path) -> None:
+    strategy = _strategy(tmp_path, threshold=100.0)
+    latency_sla = strategy._primary_sla
+    itl_sla = SLAFilter(metric_tag="itl", stat="avg", op="le", threshold=20.0)
+    goodput_sla = SLAFilter(metric_tag="goodput", stat="avg", op="ge", threshold=1.0)
+    strategy._sla_filters = [latency_sla, itl_sla, goodput_sla]
+    strategy._window_latency_ns = [80_000_000]
+    strategy._window_itl_ns = [10_000_000]
+    strategy._window_successful_requests = [
+        WindowRequestSample(80_000_000, None, 10_000_000)
+    ]
+    strategy._window_started_at = time.perf_counter() - 1.0
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line)
+        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+    ]
+    window = next(event for event in events if event["event"] == "adaptive_window")
+    assert window["sla_values"][strategy._sla_key(itl_sla)] == pytest.approx(10.0)
+    assert window["sla_values"][strategy._sla_key(goodput_sla)] >= 0.9
+
+
 def test_breach_enters_sustain_at_last_good_boundary(tmp_path) -> None:
     strategy = _strategy(tmp_path, threshold=100.0)
     strategy._last_good_concurrency = 4
-    strategy._current_concurrency = 5
+    strategy._set_control(5)
     stats = MagicMock(samples=[150_000_000], errors=0, throughput=1.0)
 
     strategy._assess_discover(150.0, False, stats)
@@ -347,7 +652,7 @@ def test_breach_enters_sustain_at_last_good_boundary(tmp_path) -> None:
         "boundary_discovered",
     ]
     assert events[-1]["phase"] == "sustain"
-    assert events[-1]["concurrency_after"] == 4
+    assert events[-1]["control_value_after"] == 4
 
 
 def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
@@ -355,7 +660,7 @@ def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
     strategy._controller_phase = "sustain"
     strategy._boundary_concurrency = 4
     strategy._last_good_concurrency = 4
-    strategy._current_concurrency = 4
+    strategy._set_control(4)
     strategy._sustain_started_at = time.perf_counter() - 20.0
     strategy._sustain_started_at_ns = 123
     stats = MagicMock(samples=[50_000_000], errors=0, throughput=2.0)
@@ -368,10 +673,10 @@ def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
     ]
     assert events[-1]["event"] == "adaptive_complete"
     summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
-    assert summary["schema_version"] == 1
+    assert summary["schema_version"] == 2
     assert summary["status"] == "completed"
-    assert summary["boundary_concurrency"] == 4
-    assert summary["last_good_concurrency"] == 4
+    assert summary["boundary_value"] == 4
+    assert summary["last_passing_value"] == 4
     assert summary["sustain_started_at"] == 123
     assert summary["completed_reason"] == "sustain_duration_completed"
     assert summary["sla"] == {
@@ -389,7 +694,7 @@ def test_sustain_completion_writes_complete_event_and_summary(tmp_path) -> None:
         "sent": 1,
         "completed": 1,
         "errored": 0,
-        "cancelled": None,
+        "cancelled": 0,
     }
     assert summary["throughput"] == 2.0
     assert summary["sla_passed_during_sustain"] is True
@@ -416,7 +721,7 @@ def test_execute_finalizer_writes_summary_when_phase_stops_before_boundary(
     assert events[-1]["reason"] == "phase_stopped"
     summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
     assert summary["status"] == "completed"
-    assert summary["boundary_concurrency"] is None
+    assert summary["boundary_value"] is None
     assert summary["result"]["boundary_value"] is None
     assert summary["completed_reason"] == "phase_stopped"
 
@@ -424,7 +729,7 @@ def test_execute_finalizer_writes_summary_when_phase_stops_before_boundary(
 def test_all_failed_discover_window_enters_sustain(tmp_path) -> None:
     strategy = _strategy(tmp_path, threshold=100.0)
     strategy._last_good_concurrency = 4
-    strategy._current_concurrency = 6
+    strategy._set_control(6)
     stats = MagicMock(samples=[], errors=3, throughput=0.0)
 
     strategy._assess_failed_window(stats)
@@ -460,7 +765,7 @@ def test_minimum_breach_fails_without_sustainable_concurrency(tmp_path) -> None:
     assert events[-1]["reason"] == "no_sustainable_concurrency_found"
     assert events[-1]["first_failing_value"] == 2
     summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
-    assert summary["status"] == "completed"
+    assert summary["status"] == "failed"
     assert summary["completed_reason"] == "no_sustainable_concurrency_found"
     assert summary["result"] == {
         "last_passing_value": None,
@@ -471,7 +776,7 @@ def test_minimum_breach_fails_without_sustainable_concurrency(tmp_path) -> None:
 
 def test_max_concurrency_passing_is_incomplete_not_boundary(tmp_path) -> None:
     strategy = _strategy(tmp_path, threshold=100.0)
-    strategy._current_concurrency = 10
+    strategy._set_control(10)
     stats = MagicMock(samples=[50_000_000], errors=0, throughput=1.0)
 
     strategy._assess_discover(50.0, True, stats)
@@ -481,7 +786,7 @@ def test_max_concurrency_passing_is_incomplete_not_boundary(tmp_path) -> None:
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_incomplete"
-    assert events[-1]["reason"] == "max_concurrency_reached_without_saturation"
+    assert events[-1]["reason"] == "max_control_value_reached_without_saturation"
     assert events[-1]["last_passing_value"] == 10
 
 
@@ -514,7 +819,8 @@ def test_assessment_period_has_practical_lower_bound(tmp_path) -> None:
             arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
             adaptive_sustain_duration_sec=10.0,
             adaptive_assessment_period_sec=0.1,
-            adaptive_scale_min_concurrency=2,
+            adaptive_control_min=2,
+            adaptive_control_max=10,
             adaptive_sla_filters=[
                 SLAFilter(
                     metric_tag="request_latency",
@@ -539,10 +845,10 @@ def test_window_stats_total_and_zero_elapsed_throughput() -> None:
 @pytest.mark.parametrize(
     ("stat", "expected"),
     [
-        ("avg", 20.0),
-        ("min", 10.0),
-        ("max", 30.0),
-        ("p50", 20.0),
+        param("avg", 20.0, id="avg"),
+        param("min", 10.0, id="min"),
+        param("max", 30.0, id="max"),
+        param("p50", 20.0, id="p50"),
     ],
 )
 def test_request_latency_value_stats(stat: str, expected: float) -> None:
@@ -591,7 +897,7 @@ def test_value_helpers_reject_invalid_inputs(tmp_path) -> None:
         metric_tag="throughput", stat="p95", op="ge", threshold=1.0
     )
     unknown_sla = SLAFilter.model_construct(
-        metric_tag="time_to_first_token", stat="avg", op="le", threshold=1.0
+        metric_tag="unsupported_metric", stat="avg", op="le", threshold=1.0
     )
 
     with pytest.raises(ValueError, match="completed request samples"):
@@ -618,7 +924,7 @@ async def test_setup_phase_sets_initial_concurrency_and_event(tmp_path) -> None:
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
     ]
     assert events[-1]["event"] == "adaptive_phase_started"
-    assert events[-1]["active_concurrency"] == 2
+    assert events[-1]["control_value"] == 2
 
 
 @pytest.mark.asyncio
@@ -652,7 +958,7 @@ async def test_assess_window_evaluates_sustain_phase(tmp_path) -> None:
     strategy = _strategy(tmp_path)
     strategy._controller_phase = "sustain"
     strategy._last_good_concurrency = 4
-    strategy._current_concurrency = 4
+    strategy._set_control(4)
     strategy._window_latency_ns = [10_000_000, 20_000_000]
 
     await strategy._assess_window()
@@ -684,15 +990,42 @@ async def test_assess_window_all_failed_without_boundary_fails(tmp_path) -> None
         orjson.loads(line)
         for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
     ]
-    assert events[-2]["reason"] == "all requests failed in assessment window"
+    assert events[-2]["reason"] == "no successful requests in assessment window"
     assert events[-1]["event"] == "adaptive_failed"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_only_window_fails_and_reports_cancelled(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._window_cancelled = 2
+
+    await strategy._assess_window()
+
+    events = [
+        orjson.loads(line)
+        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+    ]
+    assert events[-2]["event"] == "adaptive_window"
+    assert events[-2]["reason"] == "no successful requests in assessment window"
+    assert events[-2]["sent"] == 2
+    assert events[-2]["cancelled"] == 2
+    assert events[-1]["event"] == "adaptive_failed"
+    assert events[-1]["cancelled"] == 2
+    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    assert summary["status"] == "failed"
+    assert summary["totals"] == {
+        "sent": 2,
+        "completed": 0,
+        "errored": 0,
+        "cancelled": 2,
+    }
 
 
 def test_all_failed_sustain_window_downshifts_with_reason(tmp_path) -> None:
     strategy = _strategy(tmp_path)
     strategy._controller_phase = "sustain"
     strategy._last_good_concurrency = 4
-    strategy._current_concurrency = 6
+    strategy._set_control(6)
     stats = MagicMock(samples=[], errors=3, throughput=0.0)
 
     strategy._assess_failed_window(stats)
@@ -708,10 +1041,33 @@ def test_all_failed_sustain_window_downshifts_with_reason(tmp_path) -> None:
     assert events[-1]["step_size"] == 2
 
 
+def test_second_sustain_breach_after_recovery_fails(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._controller_phase = "sustain"
+    strategy._set_control(6)
+    strategy._last_good_concurrency = 4
+    stats = MagicMock(samples=[150_000_000], errors=0, cancelled=0, throughput=1.0)
+
+    strategy._assess_sustain(150.0, False, stats)
+    assert strategy._completed_reason is None
+
+    strategy._assess_sustain(160.0, False, stats)
+
+    assert strategy._completed_reason == "sustain_failed_after_recovery"
+    events = [
+        orjson.loads(line)
+        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+    ]
+    assert events[-1]["event"] == "adaptive_failed"
+    summary = orjson.loads((tmp_path / "adaptive_scale_summary.json").read_bytes())
+    assert summary["status"] == "failed"
+    assert summary["completed_reason"] == "sustain_failed_after_recovery"
+
+
 def test_sustain_breach_at_minimum_fails_unrecoverably(tmp_path) -> None:
     strategy = _strategy(tmp_path)
     strategy._controller_phase = "sustain"
-    strategy._current_concurrency = 2
+    strategy._set_control(2)
     strategy._last_good_concurrency = None
     stats = MagicMock(samples=[150_000_000], errors=0, throughput=1.0)
 
@@ -730,13 +1086,13 @@ def test_sustain_breach_downshift_does_not_promote_unconfirmed_target(
 ) -> None:
     strategy = _strategy(tmp_path)
     strategy._controller_phase = "sustain"
-    strategy._current_concurrency = 6
+    strategy._set_control(6)
     strategy._last_good_concurrency = 8
     stats = MagicMock(samples=[150_000_000], errors=0, throughput=1.0)
 
     strategy._assess_sustain(150.0, False, stats)
 
-    assert strategy._current_concurrency < 6
+    assert strategy._control.current < 6
     assert strategy._last_good_concurrency == 8
 
 
@@ -752,10 +1108,10 @@ def test_enter_sustain_requires_last_good_boundary(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("op", "observed", "expected"),
     [
-        ("lt", 9.0, True),
-        ("gt", 11.0, True),
-        ("ge", 10.0, True),
-        ("lt", 10.0, False),
+        param("lt", 9.0, True, id="lt-passing"),
+        param("gt", 11.0, True, id="gt-passing"),
+        param("ge", 10.0, True, id="ge-passing"),
+        param("lt", 10.0, False, id="lt-failing-at-bound"),
     ],
 )
 def test_passes_single_sla_operator_variants(
@@ -783,6 +1139,28 @@ def test_step_size_uses_base_step_without_usable_margins(tmp_path) -> None:
         strategy._sla_margin_step_size({strategy._sla_key(zero_threshold): 1.0})
         == strategy._config.adaptive_scale_base_step
     )
+
+
+def test_emit_event_preserves_zero_candidate_value(tmp_path) -> None:
+    strategy = _strategy(tmp_path)
+    strategy._set_control(5)
+
+    strategy._emit_event(
+        event="adaptive_decision",
+        reason="zero candidate",
+        sla_value=None,
+        throughput=0.0,
+        sample_count=0,
+        error_count=0,
+        before=0,
+    )
+
+    events = [
+        orjson.loads(line)
+        for line in (tmp_path / "adaptive_scale_events.jsonl").read_text().splitlines()
+    ]
+    assert events[-1]["candidate_value"] == 0
+    assert events[-1]["accepted_value"] == 5
 
 
 def test_artifact_disabled_paths_do_not_write(tmp_path) -> None:
@@ -814,6 +1192,31 @@ def test_percentile_empty_single_and_exact_rank() -> None:
     assert _percentile([10, 20, 30], 50) == 20.0
 
 
+def test_percentile_rejects_out_of_range_values() -> None:
+    with pytest.raises(ValueError, match="between 0 and 100"):
+        _percentile([1, 2, 3], -1)
+    with pytest.raises(ValueError, match="between 0 and 100"):
+        _percentile([1, 2, 3], 101)
+
+
+def test_candidate_payload_reports_success_rate_not_goodput_ratio() -> None:
+    payload = AdaptiveScaleArtifactWriter.candidate_payload(
+        adaptive_iteration=1,
+        candidate_value=4,
+        stats=WindowStats(
+            samples=[10_000_000, 20_000_000],
+            errors=1,
+            cancelled=1,
+            elapsed_sec=2.0,
+        ),
+        accepted=True,
+        rejection_reason="",
+    )
+
+    assert payload["success_rate"] == pytest.approx(0.5)
+    assert "goodput_ratio" not in payload
+
+
 @pytest.mark.asyncio
 async def test_artifact_writer_continues_after_failed_write() -> None:
     writer = AdaptiveScaleArtifactWriter()
@@ -829,7 +1232,388 @@ async def test_artifact_writer_continues_after_failed_write() -> None:
     writer._schedule_write(fail)
     writer._schedule_write(succeed)
 
-    await asyncio.wait_for(writer.flush(), timeout=1.0)
-    await writer.close()
+    with pytest.raises(OSError, match="disk write failed"):
+        await asyncio.wait_for(writer.flush(), timeout=1.0)
+    with pytest.raises(OSError, match="disk write failed"):
+        await writer.close()
 
     assert completed == ["ok"]
+
+
+def test_artifact_writer_requires_start_before_write() -> None:
+    writer = AdaptiveScaleArtifactWriter()
+
+    with pytest.raises(RuntimeError, match="not started"):
+        writer._schedule_write(lambda: None)
+
+
+def test_prefill_control_backend_sets_prefill_limit(tmp_path) -> None:
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.ADAPTIVE_SCALE,
+        expected_duration_sec=60.0,
+        concurrency=10,
+        prefill_concurrency=8,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        adaptive_sustain_duration_sec=10.0,
+        adaptive_assessment_period_sec=1.0,
+        adaptive_control_variable="prefill_concurrency",
+        adaptive_control_min=2,
+        adaptive_control_max=8,
+        adaptive_sla_filters=[
+            SLAFilter(
+                metric_tag="request_latency", stat="p95", op="le", threshold=100.0
+            )
+        ],
+        artifact_dir=tmp_path,
+    )
+    progress = MagicMock()
+    progress.all_credits_sent_event = asyncio.Event()
+    strategy = AdaptiveScaleStrategy(
+        config=cfg,
+        conversation_source=MagicMock(),
+        scheduler=MagicMock(),
+        stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+        credit_issuer=MagicMock(),
+        lifecycle=MagicMock(is_sending_complete=False),
+        concurrency_manager=MagicMock(),
+        progress=progress,
+    )
+
+    strategy._set_control(6)
+
+    strategy._concurrency_manager.set_prefill_limit.assert_called_with(
+        CreditPhase.PROFILING, 6
+    )
+
+
+def test_request_rate_control_backend_sets_rate(tmp_path) -> None:
+    cfg = CreditPhaseConfig(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.ADAPTIVE_SCALE,
+        expected_duration_sec=60.0,
+        concurrency=10,
+        request_rate=20.0,
+        arrival_pattern=ArrivalPattern.POISSON,
+        adaptive_sustain_duration_sec=10.0,
+        adaptive_assessment_period_sec=1.0,
+        adaptive_control_variable="request_rate",
+        adaptive_control_min=2.0,
+        adaptive_control_max=20.0,
+        adaptive_sla_filters=[
+            SLAFilter(
+                metric_tag="request_latency", stat="p95", op="le", threshold=100.0
+            )
+        ],
+        artifact_dir=tmp_path,
+    )
+    progress = MagicMock()
+    progress.all_credits_sent_event = asyncio.Event()
+    strategy = AdaptiveScaleStrategy(
+        config=cfg,
+        conversation_source=MagicMock(),
+        scheduler=MagicMock(),
+        stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+        credit_issuer=MagicMock(),
+        lifecycle=MagicMock(is_sending_complete=False),
+        concurrency_manager=MagicMock(),
+        progress=progress,
+    )
+
+    strategy._set_control(12.5)
+
+    assert strategy._rate_generator.rate == pytest.approx(12.5)
+
+
+def test_control_backend_clamps_and_snapshots(tmp_path) -> None:
+    strategy = _strategy(tmp_path, adaptive_control_min=2, adaptive_control_max=10)
+
+    strategy._set_control(99)
+
+    assert strategy._control.current == 10
+    strategy._concurrency_manager.set_session_limit.assert_called_with(
+        CreditPhase.PROFILING, 10
+    )
+    assert strategy._control.snapshot() == {"target_value": 10, "actual_value": 10}
+
+
+def test_users_control_backend_uses_strategy_snapshot() -> None:
+    from aiperf.timing.strategies.adaptive_scale_backends import UsersControlBackend
+
+    strategy = MagicMock()
+    strategy.user_control_snapshot.return_value = {
+        "actual_value": 3,
+        "active_users": 3,
+    }
+    backend = UsersControlBackend(strategy=strategy, minimum=1, maximum=5)
+
+    backend.set(99)
+
+    strategy.set_target_users.assert_called_once_with(5)
+    assert backend.snapshot() == {
+        "actual_value": 3,
+        "active_users": 3,
+        "target_value": 5,
+    }
+
+
+def test_users_control_backend_snapshot_falls_back_without_snapshotter() -> None:
+    from aiperf.timing.strategies.adaptive_scale_backends import UsersControlBackend
+
+    strategy = MagicMock()
+    del strategy.user_control_snapshot
+    backend = UsersControlBackend(strategy=strategy, minimum=1, maximum=5)
+
+    assert backend.snapshot() == {"target_value": 1, "actual_value": 1}
+
+
+def test_users_control_backend_requires_setter() -> None:
+    from aiperf.timing.strategies.adaptive_scale_backends import UsersControlBackend
+
+    backend = UsersControlBackend(strategy=object(), minimum=1, maximum=5)
+
+    with pytest.raises(ValueError, match="adaptive users requires"):
+        backend.set(2)
+
+
+def test_build_backend_rejects_invalid_construction(tmp_path) -> None:
+    from aiperf.timing.strategies.adaptive_scale_backends import (
+        build_adaptive_control_backend,
+    )
+
+    strategy = MagicMock(set_request_rate=MagicMock())
+    manager = MagicMock()
+    base = dict(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.ADAPTIVE_SCALE,
+        expected_duration_sec=60.0,
+        concurrency=10,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        adaptive_sustain_duration_sec=10.0,
+        adaptive_assessment_period_sec=1.0,
+        adaptive_control_min=2,
+        adaptive_sla_filters=[
+            SLAFilter(
+                metric_tag="request_latency", stat="p95", op="le", threshold=100.0
+            )
+        ],
+        artifact_dir=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="requires a rate-controlled phase"):
+        build_adaptive_control_backend(
+            strategy=strategy,
+            concurrency_manager=manager,
+            config=CreditPhaseConfig(
+                **base,
+                adaptive_control_variable="request_rate",
+                adaptive_control_max=10,
+                request_rate=10.0,
+            ),
+        )
+
+    with pytest.raises(ValueError, match="requires prefill_concurrency"):
+        build_adaptive_control_backend(
+            strategy=strategy,
+            concurrency_manager=manager,
+            config=CreditPhaseConfig(
+                **base,
+                adaptive_control_variable="prefill_concurrency",
+                adaptive_control_max=None,
+            ),
+        )
+
+    with pytest.raises(ValueError, match="requires user-centric num_users"):
+        build_adaptive_control_backend(
+            strategy=strategy,
+            concurrency_manager=manager,
+            config=CreditPhaseConfig(
+                **base, adaptive_control_variable="users", adaptive_control_max=10
+            ),
+        )
+
+
+def test_sla_evaluator_rate_metric_aliases_and_failures() -> None:
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    stats = WindowStats(
+        samples=[100_000_000, 200_000_000],
+        errors=1,
+        cancelled=1,
+        elapsed_sec=2.0,
+    )
+
+    assert evaluator.value(
+        SLAFilter(metric_tag="request_throughput", stat="min", op="ge", threshold=1),
+        stats,
+    ) == pytest.approx(1.0)
+    assert evaluator.value(
+        SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1),
+        stats,
+    ) == pytest.approx(0.25)
+    assert evaluator.value(
+        SLAFilter(
+            metric_tag="request_cancellation_rate", stat="max", op="le", threshold=1
+        ),
+        stats,
+    ) == pytest.approx(0.25)
+    assert evaluator.value(
+        SLAFilter(metric_tag="request_success_rate", stat="avg", op="ge", threshold=0),
+        stats,
+    ) == pytest.approx(0.5)
+
+    with pytest.raises(ValueError, match="Unsupported throughput SLA stat"):
+        evaluator.validate_single_filter(
+            SLAFilter(metric_tag="throughput", stat="p95", op="ge", threshold=1)
+        )
+    with pytest.raises(ValueError, match="supports request_latency"):
+        evaluator.validate_single_filter(
+            SLAFilter(metric_tag="tokens", stat="avg", op="ge", threshold=1)
+        )
+    with pytest.raises(ValueError, match="Unsupported SLA operator"):
+        evaluator.passes_single(
+            SLAFilter.model_construct(
+                metric_tag="request_latency", stat="avg", op="eq", threshold=1
+            ),
+            1.0,
+        )
+
+
+def test_sla_evaluator_supports_ttft_error_and_cancellation_rate() -> None:
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    stats = WindowStats(
+        samples=[100_000_000, 200_000_000],
+        errors=1,
+        cancelled=1,
+        ttft_samples=[10_000_000, 20_000_000],
+        elapsed_sec=2.0,
+    )
+
+    assert evaluator.value(
+        SLAFilter(metric_tag="ttft", stat="p95", op="le", threshold=25.0),
+        stats,
+    ) == pytest.approx(19.5)
+    assert evaluator.value(
+        SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=0.5),
+        stats,
+    ) == pytest.approx(0.25)
+    assert evaluator.value(
+        SLAFilter(metric_tag="cancellation_rate", stat="avg", op="le", threshold=0.5),
+        stats,
+    ) == pytest.approx(0.25)
+
+
+def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    sla = SLAFilter(
+        metric_tag="time_to_first_token", stat="p95", op="le", threshold=25.0
+    )
+    stats = WindowStats(samples=[100_000_000], errors=0, elapsed_sec=1.0)
+    observed = {evaluator.key(sla): evaluator.value(sla, stats)}
+
+    assert observed[evaluator.key(sla)] == float("inf")
+    assert not evaluator.passes([sla], observed)
+
+
+def test_sla_evaluator_zero_total_rates_and_output_token_stat_errors() -> None:
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    empty_stats = WindowStats(samples=[], errors=0, cancelled=0, elapsed_sec=1.0)
+
+    assert (
+        evaluator.value(
+            SLAFilter(metric_tag="success_rate", stat="avg", op="ge", threshold=0),
+            empty_stats,
+        )
+        == 0.0
+    )
+    assert (
+        evaluator.value(
+            SLAFilter(metric_tag="error_rate", stat="min", op="le", threshold=1),
+            empty_stats,
+        )
+        == 0.0
+    )
+    assert (
+        evaluator.value(
+            SLAFilter(metric_tag="cancellation_rate", stat="max", op="le", threshold=1),
+            empty_stats,
+        )
+        == 0.0
+    )
+    assert evaluator.value(
+        SLAFilter(
+            metric_tag="output_token_throughput",
+            stat="avg",
+            op="ge",
+            threshold=0,
+        ),
+        WindowStats(
+            samples=[1],
+            errors=0,
+            elapsed_sec=2.0,
+            successful_requests=[WindowRequestSample(1, output_sequence_length=8)],
+        ),
+    ) == pytest.approx(4.0)
+
+    with pytest.raises(ValueError, match="Unsupported output_token_throughput"):
+        evaluator.value(
+            SLAFilter.model_construct(
+                metric_tag="output_token_throughput",
+                stat="p95",
+                op="ge",
+                threshold=1,
+            ),
+            empty_stats,
+        )
+
+
+def test_build_backend_rejects_invalid_bounds_and_unknown_variable(tmp_path) -> None:
+    from aiperf.timing.strategies.adaptive_scale_backends import (
+        build_adaptive_control_backend,
+    )
+
+    base = dict(
+        phase=CreditPhase.PROFILING,
+        timing_mode=TimingMode.ADAPTIVE_SCALE,
+        expected_duration_sec=60.0,
+        concurrency=10,
+        arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
+        adaptive_sustain_duration_sec=10.0,
+        adaptive_assessment_period_sec=1.0,
+        adaptive_sla_filters=[
+            SLAFilter(
+                metric_tag="request_latency", stat="p95", op="le", threshold=100.0
+            )
+        ],
+        artifact_dir=tmp_path,
+    )
+
+    with pytest.raises(Exception, match="must be > min"):
+        build_adaptive_control_backend(
+            strategy=MagicMock(),
+            concurrency_manager=MagicMock(),
+            config=CreditPhaseConfig(
+                **base,
+                adaptive_control_variable="concurrency",
+                adaptive_control_min=10,
+                adaptive_control_max=10,
+            ),
+        )
+
+    config = MagicMock(adaptive_control_variable="tokens")
+
+    with pytest.raises(ValueError, match="unsupported adaptive control variable"):
+        build_adaptive_control_backend(
+            strategy=MagicMock(),
+            concurrency_manager=MagicMock(),
+            config=config,
+        )

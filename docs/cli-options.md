@@ -16,6 +16,10 @@ Install shell completion for this application.
 
 Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
 
+### [`chat`](#aiperf-chat)
+
+Chat interactively with an endpoint, printing per-turn speed stats.
+
 ### [`config init`](#aiperf-config-init)
 
 Generate, list, or search bundled AIPerf config templates.
@@ -94,6 +98,57 @@ KV cache block size for analysis (default: 512).
 #### `--output-file` `<str>`
 
 Optional output path for analysis report (JSON).
+
+<hr/>
+
+## `aiperf chat`
+
+Chat interactively with an endpoint, printing per-turn speed stats.
+
+A lightweight sanity-check sibling of ``aiperf profile``: send one message at a time and see TTFT, TPS, generated tokens, and end-to-end latency for each reply. Multi-turn by default (history retained and resent each turn); pass ``--no-history`` for stateless turns, or ``--quick`` for a single request. For full benchmarking, use ``aiperf profile``.
+
+**Examples:**
+
+```bash
+# Interactive multi-turn chat
+aiperf chat --model Qwen/Qwen3-0.6B --url http://localhost:8000
+
+# Stateless turns (no history retained between messages)
+aiperf chat --model Qwen/Qwen3-0.6B --no-history
+
+# Single-shot sanity check
+aiperf chat --model Qwen/Qwen3-0.6B --quick "hello, who are you?"
+```
+
+#### `-m`, `--model` `<str>` _(Required)_
+
+Model name served by the endpoint.
+
+#### `-u`, `--url` `<str>`
+
+Base URL of the OpenAI-compatible server (e.g. http://localhost:8000), matching `aiperf profile`.
+<br/>_Default: `http://localhost:8000`_
+
+#### `--system-prompt` `<str>`
+
+Optional system prompt prepended to the conversation.
+
+#### `-q`, `--quick` `<str>`
+
+Send a single MESSAGE and print the response + stats, then exit.
+
+#### `--history`, `--no-history`
+
+Retain and resend conversation history each turn (default). Pass --no-history for stateless, completion-style turns. Ignored with --quick.
+<br/>_Default: `True`_
+
+#### `--api-key` `<str>`
+
+API key sent as a Bearer token. Defaults to the OPENAI_API_KEY environment variable.
+
+#### `--tokenizer` `<str>`
+
+Tokenizer for client-side token counts. Defaults to the model name. Pass `builtin` for a zero-network tokenizer.
 
 <hr/>
 
@@ -340,6 +395,11 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
 
+#### `--apply-chat-template`
+
+Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.
+<br/>_Flag (no value required)_
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -359,7 +419,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -863,7 +923,7 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 #### `--adaptive-scale`
 
-Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
 <br/>_Flag (no value required)_
 
 #### `--adaptive-sustain-duration` `<float>`
@@ -876,9 +936,27 @@ Duration in seconds to sustain load near the discovered adaptive scale boundary.
 Duration in seconds for each adaptive scale SLA assessment window.
 <br/>_Constraints: ≥ 1.0_
 
+#### `--adaptive-scale-control` `<str>`
+
+Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
+
+#### `--adaptive-control-variable` `<str>`
+
+Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
+
+#### `--adaptive-control-min` `<float>`
+
+Minimum adaptive scale control value.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-control-max` `<float>`
+
+Maximum adaptive scale control value. Inferred from the phase target when omitted.
+<br/>_Constraints: > 0_
+
 #### `--adaptive-scale-sla` `<list>`
 
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Warmup
 
@@ -1449,6 +1527,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
+
 ### Workers
 
 #### `--workers-max`, `--max-workers` `<int>`
@@ -1559,7 +1642,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `gpu_telemetry_processor`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `server_metrics_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -1737,6 +1820,11 @@ Specific tokenizer version to load from HuggingFace Hub. Can be a branch name (e
 Allow execution of custom Python code from HuggingFace Hub tokenizer repositories. Required for tokenizers with custom implementations not in the standard `transformers` library. **Security Warning**: Only enable for trusted repositories, as this executes arbitrary code. Unnecessary for standard tokenizers.
 <br/>_Flag (no value required)_
 
+#### `--apply-chat-template`
+
+Apply the HuggingFace tokenizer's chat template when counting input tokens. When enabled: synthetic ISL is compensated for chat-template wrapping (BOS, role headers, EOT, generation-prompt suffix) and the record processor reports ISL using `apply_chat_template(tokenize=True, add_generation_prompt=True)` for chat-shape payloads. When disabled (default), both paths use bare-text encoding, so reported ISL matches the prompt content the user asked for and ignores template overhead. Requires an HF tokenizer with a chat template configured; no-ops on tiktoken / un-templated models.
+<br/>_Flag (no value required)_
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -1756,7 +1844,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`]_
 
 #### `--hf-subset` `<str>`
 
@@ -2260,7 +2348,7 @@ Duration in seconds to ramp request rate from a proportional minimum to target. 
 
 #### `--adaptive-scale`
 
-Enable stable single-run adaptive scale control. Requires --benchmark-duration, --concurrency, --adaptive-sustain-duration, and --adaptive-scale-sla.
+Enable stable single-run adaptive scale control. Use --adaptive-scale-control variable:min,max:type to choose the controlled variable and bounds, and --adaptive-scale-sla metric:stat:op:threshold to define pass/fail criteria. Also requires --benchmark-duration and --adaptive-sustain-duration.
 <br/>_Flag (no value required)_
 
 #### `--adaptive-sustain-duration` `<float>`
@@ -2273,9 +2361,27 @@ Duration in seconds to sustain load near the discovered adaptive scale boundary.
 Duration in seconds for each adaptive scale SLA assessment window.
 <br/>_Constraints: ≥ 1.0_
 
+#### `--adaptive-scale-control` `<str>`
+
+Compact adaptive scale control spec in variable:min,max:type form. The variable is one of concurrency, prefill_concurrency, request_rate, or users; min and max are required explicit bounds; type is int for discrete controls and float for rate controls. Examples: concurrency:1,1000:int, prefill_concurrency:1,8:int, request_rate:1,200:float, users:10,500:int. Do not combine this with expanded --adaptive-control-* flags.
+
+#### `--adaptive-control-variable` `<str>`
+
+Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.
+
+#### `--adaptive-control-min` `<float>`
+
+Minimum adaptive scale control value.
+<br/>_Constraints: > 0_
+
+#### `--adaptive-control-max` `<float>`
+
+Maximum adaptive scale control value. Inferred from the phase target when omitted.
+<br/>_Constraints: > 0_
+
 #### `--adaptive-scale-sla` `<list>`
 
-SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. For request_latency, stat is one of {avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; request throughput and goodput_ratio support {avg, min, max}. op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
+SLA filter for adaptive scale. Format: 'metric_tag:stat:op:threshold'. Latency-family metrics (request_latency, time_to_first_token/ttft, inter_token_latency/itl/tpot) support percentile stats; window scalar/rate metrics (request_throughput, output_token_throughput, goodput, goodput_ratio, success_rate, error_rate, cancellation_rate) support {avg, min, max}. Full metric/stat table: [Adaptive SLA metric support](tutorials/yaml-config.md#adaptive-sla-metric-support). op in {lt, le, gt, ge}; threshold is a float. Repeatable. Example: --adaptive-scale-sla 'request_latency:p95:le:30000'.
 
 ### Warmup
 
@@ -2845,6 +2951,11 @@ AIPerf API port (enables HTTP + WebSocket endpoints).
 #### `--api-host` `<str>`
 
 AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
+
+#### `--stats-interval` `<float>`
+
+Interval in seconds between realtime stats publishes (dashboards and the per-tick log block). 0 disables the log block while dashboards continue to poll. Defaults to 5s under --ui dashboard, 30s otherwise. Overrides AIPERF_UI_REALTIME_METRICS_INTERVAL.
+<br/>_Constraints: ≥ 0.0, ≤ 1000.0_
 
 ### Workers
 

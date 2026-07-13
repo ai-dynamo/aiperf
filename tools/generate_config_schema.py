@@ -147,6 +147,11 @@ JINJA2_NUMERIC_REF_TYPES: set[str] = {
     "RampConfig",  # Accepts int/float/string via _normalize_ramp
 }
 
+# Known discriminator field names should win over unrelated const fields.
+# For example, phase schemas also contain adaptiveScaleStrategyType with a const,
+# but the phase union must still discriminate on type.
+DISCRIMINATOR_FIELD_PRIORITY = ("type",)
+
 
 # =============================================================================
 # Schema Generation
@@ -327,9 +332,16 @@ class ConfigSchemaGenerator(Generator):
             def_schema = defs.get(def_name, {})
             properties = def_schema.get("properties", {})
 
-            # Look for a property with a const value (discriminator field)
+            for field_name in DISCRIMINATOR_FIELD_PRIORITY:
+                prop_schema = properties.get(field_name)
+                if isinstance(prop_schema, dict) and "const" in prop_schema:
+                    return field_name, prop_schema["const"]
+
+            # Fall back for legacy unions that use a different const field.
             for prop_name, prop_schema in properties.items():
-                if "const" in prop_schema:
+                if prop_name in DISCRIMINATOR_FIELD_PRIORITY:
+                    continue
+                if isinstance(prop_schema, dict) and "const" in prop_schema:
                     return prop_name, prop_schema["const"]
 
             return None

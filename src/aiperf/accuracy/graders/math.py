@@ -240,7 +240,7 @@ def _sympy_parse(s: str) -> Any:
         for arg in (s.replace("\\\\", "\\"), s):
             try:
                 return f(arg)
-            except Exception:  # noqa: BLE001, S112
+            except Exception:  # noqa: S112
                 continue
     return s
 
@@ -261,21 +261,21 @@ def _symbolic_equal(a_raw: str, b_raw: str) -> bool:
     try:
         if str(a) == str(b) or a == b:
             return True
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: S110
         pass
 
     # Symbolic simplify.
     try:
         if a.equals(b) or simplify(a - b) == 0:
             return True
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: S110
         pass
 
     # Numerical evaluation.
     try:
         if isclose(float(N(a)), float(N(b)), abs_tol=_NUMERIC_ABS_TOL):
             return True
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: S110
         pass
 
     return False

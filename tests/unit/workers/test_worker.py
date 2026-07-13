@@ -13,12 +13,72 @@ from aiperf.common.models import (
     SSEMessage,
     TextResponseData,
 )
+from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
-from aiperf.workers.worker import Worker
+from aiperf.workers.worker import Worker, _phase_needs_first_token_callback
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
+
+
+@pytest.mark.parametrize(
+    ("phase_data", "expected"),
+    [
+        (
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "requests": 1,
+                "concurrency": 4,
+                "prefill_concurrency": 2,
+            },
+            True,
+        ),
+        (
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": True,
+                "adaptive_sustain_duration": 120,
+                "sla": [
+                    {
+                        "metric_tag": "time_to_first_token",
+                        "stat": "p95",
+                        "op": "le",
+                        "threshold": 30000,
+                    }
+                ],
+            },
+            True,
+        ),
+        (
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": True,
+                "adaptive_sustain_duration": 120,
+                "sla": [
+                    {
+                        "metric_tag": "request_latency",
+                        "stat": "p95",
+                        "op": "le",
+                        "threshold": 30000,
+                    }
+                ],
+            },
+            False,
+        ),
+    ],
+)
+def test_phase_needs_first_token_callback(phase_data, expected):
+    phase = ConcurrencyPhase.model_validate(phase_data)
+
+    assert _phase_needs_first_token_callback(phase) is expected
 
 
 @pytest.fixture
@@ -149,8 +209,10 @@ class TestWorkerFirstTokenCallback:
 @pytest.mark.asyncio
 class TestWorkerRequestLatency:
     async def test_request_latency_uses_last_parsed_content_response(
-        self, monkeypatch, mock_worker
-    ):
+        self: "TestWorkerRequestLatency",
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+    ) -> None:
         parse_returns = [
             ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
             ParsedResponse(perf_ns=200, data=None),
@@ -169,8 +231,10 @@ class TestWorkerRequestLatency:
         assert mock_worker._request_latency_ns_for_record(record) == 150
 
     async def test_request_latency_is_none_without_content_response(
-        self, monkeypatch, mock_worker
-    ):
+        self: "TestWorkerRequestLatency",
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+    ) -> None:
         setup_mock_endpoint(
             mock_worker,
             monkeypatch,
@@ -182,6 +246,132 @@ class TestWorkerRequestLatency:
         )
 
         assert mock_worker._request_latency_ns_for_record(record) is None
+
+    async def test_inter_token_latency_uses_output_sequence_length(
+        self: "TestWorkerRequestLatency",
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+    ) -> None:
+        parse_returns = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
+            ParsedResponse(perf_ns=200, data=None),
+            ParsedResponse(perf_ns=250, data=TextResponseData(text="middle")),
+            ParsedResponse(
+                perf_ns=350,
+                data=TextResponseData(text="last"),
+                usage={"completion_tokens": 6},
+            ),
+        ]
+        setup_mock_endpoint(mock_worker, monkeypatch, parse_returns)
+        record = RequestRecord(
+            start_perf_ns=100,
+            responses=[
+                SSEMessage(perf_ns=150),
+                SSEMessage(perf_ns=200),
+                SSEMessage(perf_ns=250),
+                SSEMessage(perf_ns=350),
+            ],
+        )
+
+        assert mock_worker._inter_token_latency_ns_for_record(record) == 40
+
+    async def test_output_sequence_length_uses_final_usage(
+        self: "TestWorkerRequestLatency",
+        mock_worker: Worker,
+    ) -> None:
+        parsed_responses = [
+            ParsedResponse(
+                perf_ns=150,
+                data=TextResponseData(text="first"),
+                usage={"completion_tokens": 3},
+            ),
+            ParsedResponse(
+                perf_ns=250,
+                data=TextResponseData(text="last"),
+                usage={"completion_tokens": 7},
+            ),
+        ]
+
+        assert mock_worker._output_sequence_length_for_responses(parsed_responses) == 7
+
+    async def test_inter_token_latency_is_none_without_two_content_chunks(
+        self: "TestWorkerRequestLatency",
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+    ) -> None:
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="only")),
+        )
+        record = RequestRecord(
+            start_perf_ns=100,
+            responses=[SSEMessage(perf_ns=150)],
+        )
+
+        assert mock_worker._inter_token_latency_ns_for_record(record) is None
+
+    async def test_inter_token_latency_is_none_without_usage(
+        self: "TestWorkerRequestLatency",
+        mock_worker: Worker,
+    ) -> None:
+        record = RequestRecord(start_perf_ns=100, responses=[])
+        parsed_responses = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
+            ParsedResponse(perf_ns=250, data=TextResponseData(text="last")),
+        ]
+        content_perf_ns = [150, 250]
+
+        assert (
+            mock_worker._inter_token_latency_ns_for_record(
+                record, content_perf_ns, parsed_responses
+            )
+            is None
+        )
+
+    async def test_inter_token_latency_is_none_for_short_output_sequence(
+        self: "TestWorkerRequestLatency",
+        mock_worker: Worker,
+    ) -> None:
+        record = RequestRecord(start_perf_ns=100, responses=[])
+        parsed_responses = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
+            ParsedResponse(
+                perf_ns=250,
+                data=TextResponseData(text="last"),
+                usage={"completion_tokens": 1},
+            ),
+        ]
+        content_perf_ns = [150, 250]
+
+        assert (
+            mock_worker._inter_token_latency_ns_for_record(
+                record, content_perf_ns, parsed_responses
+            )
+            is None
+        )
+
+    async def test_inter_token_latency_is_none_for_negative_timing(
+        self: "TestWorkerRequestLatency",
+        mock_worker: Worker,
+    ) -> None:
+        record = RequestRecord(start_perf_ns=300, responses=[])
+        parsed_responses = [
+            ParsedResponse(perf_ns=150, data=TextResponseData(text="first")),
+            ParsedResponse(
+                perf_ns=250,
+                data=TextResponseData(text="last"),
+                usage={"completion_tokens": 6},
+            ),
+        ]
+        content_perf_ns = [150, 250]
+
+        assert (
+            mock_worker._inter_token_latency_ns_for_record(
+                record, content_perf_ns, parsed_responses
+            )
+            is None
+        )
 
 
 class TestWarmupSystemMessage:

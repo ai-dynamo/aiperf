@@ -18,7 +18,11 @@ from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 
-def make_fetch_result(metrics_text: str, latency_ns: int = 1_000_000) -> FetchResult:
+def make_fetch_result(
+    metrics_text: str,
+    latency_ns: int = 1_000_000,
+    content_type: str | None = None,
+) -> FetchResult:
     """Create a FetchResult for testing."""
     return FetchResult(
         text=metrics_text,
@@ -29,6 +33,7 @@ def make_fetch_result(metrics_text: str, latency_ns: int = 1_000_000) -> FetchRe
             end_perf_ns=latency_ns,
         ),
         is_duplicate=False,
+        content_type=content_type,
     )
 
 
@@ -200,6 +205,56 @@ histogram_seconds_created 1704067200.0
         assert "requests_created" not in record.metrics
         assert "histogram_seconds" in record.metrics
         assert "histogram_seconds_created" not in record.metrics
+
+    def test_openmetrics_counter_created_sample_does_not_overwrite_total(self) -> None:
+        """OpenMetrics keeps `foo_created` alongside `foo_total` under family
+        `foo` with the same labels, so without skipping it the creation
+        timestamp would win the last-value de-dup and replace the real value."""
+        metrics_text = """# TYPE foo counter
+# HELP foo Test counter
+foo_total{label="a"} 5.0
+foo_created{label="a"} 123.0
+# EOF
+"""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+        record = collector._parse_metrics_to_records(
+            make_fetch_result(
+                metrics_text,
+                content_type="application/openmetrics-text; version=1.0.0; charset=utf-8",
+            )
+        )
+
+        assert record is not None
+        assert "foo" in record.metrics
+        assert record.metrics["foo"].type == PrometheusMetricType.COUNTER
+        samples = record.metrics["foo"].samples
+        assert len(samples) == 1
+        assert samples[0].value == 5.0
+
+    def test_openmetrics_content_type_without_eof_falls_back_to_classic_parser(
+        self,
+    ) -> None:
+        """A body advertised as OpenMetrics but missing the strict `# EOF` trailer
+        makes the OpenMetrics parser raise; the collector must fall back to the
+        lenient classic parser instead of raising (which would disable all
+        server-metrics collection for the run)."""
+        metrics_text = """# TYPE foo counter
+# HELP foo Test counter
+foo_total{label="a"} 5.0
+"""
+        collector = ServerMetricsDataCollector("http://localhost:8081/metrics")
+        record = collector._parse_metrics_to_records(
+            make_fetch_result(
+                metrics_text,
+                content_type="application/openmetrics-text; version=1.0.0; charset=utf-8",
+            )
+        )
+
+        # Classic fallback mistypes the counter into an `unknown` family named
+        # `foo_total`, but collection stays alive rather than disabling.
+        assert record is not None
+        assert "foo_total" in record.metrics
+        assert record.metrics["foo_total"].samples[0].value == 5.0
 
     def test_parse_metrics_with_labels(self):
         """Test parsing metrics with multiple label combinations."""

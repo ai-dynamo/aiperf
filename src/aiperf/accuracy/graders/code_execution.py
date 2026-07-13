@@ -40,6 +40,7 @@ import orjson
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
+from aiperf.common.utils import allow_daemon_children
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -89,10 +90,15 @@ class CodeExecutionGrader(BaseGrader):
     raised an exception during execution.
     """
 
-    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
-        super().__init__(run=run, **kwargs)
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if lighteval is missing (see ``BaseGrader.check_available``)."""
         if not _HAS_LIGHTEVAL_LCB:
             raise RuntimeError(_MISSING_LIGHTEVAL_HINT)
+
+    def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
+        super().__init__(run=run, **kwargs)
+        self.check_available()
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         """Return the code block lighteval would extract from the response.
@@ -103,7 +109,7 @@ class CodeExecutionGrader(BaseGrader):
         """
         try:
             return str(extract_code(response_text) or "")
-        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
+        except Exception as exc:  # pragma: no cover - defensive
             _log.debug("extract_code raised: %s", exc, exc_info=True)
             return ""
 
@@ -145,13 +151,9 @@ class CodeExecutionGrader(BaseGrader):
             # thread keeps the event loop free for other concurrent
             # grade() calls during a benchmark run.
             metrics, _ = await asyncio.to_thread(
-                codegen_metrics,
-                evaluation_sample,
-                generated_code,
-                k_list=list(_LCB_PASS_AT_K),
-                num_process_evaluate=_LCB_NUM_PROCESSES,
+                _run_codegen_metrics, evaluation_sample, generated_code
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
             return _grading_failure(
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
@@ -174,6 +176,33 @@ class CodeExecutionGrader(BaseGrader):
             ),
             extracted_answer=snippet,
             ground_truth="<lcb test cases>",
+        )
+
+
+def _run_codegen_metrics(
+    evaluation_sample: list[dict[str, str]], generated_code: list[list[str]]
+) -> tuple[dict[str, Any], Any]:
+    """Run lighteval's ``codegen_metrics`` with the daemon flag cleared.
+
+    ``codegen_metrics`` fans out to a ProcessPoolExecutor. AIPerf runs the
+    record processor as a daemon (every service is spawned with
+    ``daemon=True``), and Python forbids daemons from spawning child
+    processes, so the flag must be cleared for the duration of the fork or
+    grading dies with "daemonic processes are not allowed to have children"
+    — silently mislabeled as unparsed.
+
+    TODO: This flag-flipping is a pragmatic workaround. The cleaner design is
+    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon
+    executor service the record processor delegates to) so no daemon state is
+    mutated. Revisit if sandboxed grading needs to scale beyond a single
+    per-record pool.
+    """
+    with allow_daemon_children():
+        return codegen_metrics(
+            evaluation_sample,
+            generated_code,
+            k_list=list(_LCB_PASS_AT_K),
+            num_process_evaluate=_LCB_NUM_PROCESSES,
         )
 
 
@@ -310,7 +339,7 @@ def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
     ):
         try:
             return translate_private_test_cases(raw)
-        except Exception:  # noqa: BLE001 - graceful fallback to legacy plain-JSON shape
+        except Exception:  # graceful fallback to legacy plain-JSON shape
             _log.debug(
                 "translate_private_test_cases couldn't decode raw private_test_cases; "
                 "falling back to plain JSON parse",

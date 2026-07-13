@@ -335,9 +335,18 @@ class DataLoader(AIPerfLoggerMixin):
 
         if "input_config" in aggregated:
             input_config = aggregated["input_config"]
-            if "output" in input_config and "slice_duration" in input_config["output"]:
-                slice_duration = input_config["output"]["slice_duration"]
-                self.info(f"Extracted slice_duration: {slice_duration}s")
+            if isinstance(input_config, dict):
+                output_config = input_config.get("output")
+                artifacts_config = input_config.get("artifacts")
+                output_config = output_config if isinstance(output_config, dict) else {}
+                artifacts_config = (
+                    artifacts_config if isinstance(artifacts_config, dict) else {}
+                )
+                slice_duration = output_config.get("slice_duration")
+                if slice_duration is None:
+                    slice_duration = artifacts_config.get("slice_duration")
+                if slice_duration is not None:
+                    self.info(f"Extracted slice_duration: {slice_duration}s")
 
         metadata = self._extract_metadata(run_path, requests_df, aggregated)
 
