@@ -33,7 +33,7 @@ use serde_json::{Map, Value, value::RawValue};
 
 use crate::execute::distribution;
 use crate::protocol::{
-    DatasetSpec, DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
+    DistributionSpec, FileDatasetSpec, PublicDatasetSourceSpec, PublicDatasetSpec,
     TraceSynthesisSpec,
 };
 
@@ -69,22 +69,6 @@ pub trait RunnerGraphInputAdapter: fmt::Debug + Send + Sync {
         raw: &RawValue,
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
-
-    /// Load one already-strict-decoded protocol-v1 compatibility source.
-    ///
-    /// This cold compatibility hook keeps protocol v1 isolated without
-    /// creating a second resolver or lowerer. Product protocol v2 always uses
-    /// [`Self::load`] and remains the sole authored-wire contract.
-    async fn load_protocol_v1(
-        &self,
-        _dataset: DatasetSpec,
-        _context: &RunnerGraphInputContext<'_>,
-    ) -> Result<PreparedRunnerGraphInput> {
-        Err(anyhow!(
-            "direct Graph-IR input adapter {:?} does not support protocol-v1 compatibility",
-            self.format()
-        ))
-    }
 }
 
 /// Injected open resolver for direct graph-input adapters.
@@ -100,14 +84,6 @@ pub trait RunnerGraphInputAdapterResolver: fmt::Debug + Send + Sync {
     async fn load(
         &self,
         raw: &RawValue,
-        context: &RunnerGraphInputContext<'_>,
-    ) -> Result<PreparedRunnerGraphInput>;
-
-    /// Route one protocol-v1 compatibility source through the same selected
-    /// adapter and canonical compiler used by protocol v2.
-    async fn load_protocol_v1(
-        &self,
-        dataset: DatasetSpec,
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
 }
@@ -156,19 +132,6 @@ impl BuiltinRunnerGraphInputAdapterResolver {
         self.selected_format(&identity.format)
     }
 
-    fn selected_protocol_v1(&self, dataset: &DatasetSpec) -> Result<&dyn RunnerGraphInputAdapter> {
-        let format = match dataset {
-            DatasetSpec::File(spec) => spec.format.as_str(),
-            DatasetSpec::Public(spec) => spec.format.as_str(),
-            DatasetSpec::Synthetic(_) => {
-                return Err(anyhow!(
-                    "protocol-v1 synthetic datasets cannot author Graph-IR"
-                ));
-            }
-        };
-        self.selected_format(format)
-    }
-
     fn selected_format(&self, format: &str) -> Result<&dyn RunnerGraphInputAdapter> {
         self.adapters.get(format).map(Arc::as_ref).ok_or_else(|| {
             anyhow!(
@@ -191,16 +154,6 @@ impl RunnerGraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver 
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         self.selected(raw)?.load(raw, context).await
-    }
-
-    async fn load_protocol_v1(
-        &self,
-        dataset: DatasetSpec,
-        context: &RunnerGraphInputContext<'_>,
-    ) -> Result<PreparedRunnerGraphInput> {
-        self.selected_protocol_v1(&dataset)?
-            .load_protocol_v1(dataset, context)
-            .await
     }
 }
 
@@ -228,31 +181,6 @@ impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
     ) -> Result<PreparedRunnerGraphInput> {
         let input: DagJsonlDatasetInput =
             serde_json::from_str(raw.get()).context("decoding direct dag_jsonl graph input")?;
-        self.load_decoded(input, context).await
-    }
-
-    async fn load_protocol_v1(
-        &self,
-        dataset: DatasetSpec,
-        context: &RunnerGraphInputContext<'_>,
-    ) -> Result<PreparedRunnerGraphInput> {
-        let input = match dataset {
-            DatasetSpec::File(spec) => {
-                let mut spec = DagJsonlFileInput::from(*spec);
-                spec.sampling = spec.sampling.trim().to_owned();
-                DagJsonlDatasetInput::File(spec)
-            }
-            DatasetSpec::Public(spec) => {
-                let mut spec = *spec;
-                spec.sampling = spec.sampling.trim().to_owned();
-                DagJsonlDatasetInput::Public(spec)
-            }
-            DatasetSpec::Synthetic(_) => {
-                return Err(anyhow!(
-                    "protocol-v1 synthetic datasets cannot author Graph-IR"
-                ));
-            }
-        };
         self.load_decoded(input, context).await
     }
 }
@@ -313,15 +241,6 @@ impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
             serde_json::from_str(raw.get()).context("decoding direct WEKA graph input")?;
         self.load_decoded(input, context).await
     }
-
-    async fn load_protocol_v1(
-        &self,
-        dataset: DatasetSpec,
-        context: &RunnerGraphInputContext<'_>,
-    ) -> Result<PreparedRunnerGraphInput> {
-        self.load_decoded(RecordedDatasetInput::from_protocol_v1(dataset)?, context)
-            .await
-    }
 }
 
 #[async_trait(?Send)]
@@ -338,15 +257,6 @@ impl RunnerGraphInputAdapter for DynamoTraceRunnerGraphInputAdapter {
         let input: RecordedDatasetInput =
             serde_json::from_str(raw.get()).context("decoding direct Dynamo graph input")?;
         self.load_decoded(input, context).await
-    }
-
-    async fn load_protocol_v1(
-        &self,
-        dataset: DatasetSpec,
-        context: &RunnerGraphInputContext<'_>,
-    ) -> Result<PreparedRunnerGraphInput> {
-        self.load_decoded(RecordedDatasetInput::from_protocol_v1(dataset)?, context)
-            .await
     }
 }
 
@@ -419,18 +329,6 @@ impl DynamoTraceRunnerGraphInputAdapter {
 enum RecordedDatasetInput {
     File(RecordedFileInput),
     Public(PublicDatasetSpec),
-}
-
-impl RecordedDatasetInput {
-    fn from_protocol_v1(dataset: DatasetSpec) -> Result<Self> {
-        match dataset {
-            DatasetSpec::File(spec) => Ok(Self::File((*spec).into())),
-            DatasetSpec::Public(spec) => Ok(Self::Public(*spec)),
-            DatasetSpec::Synthetic(_) => Err(anyhow!(
-                "protocol-v1 synthetic datasets cannot author recorded Graph-IR"
-            )),
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -956,38 +854,6 @@ mod tests {
             .err()
             .expect("unknown adapter fields must fail");
         assert!(format!("{error:#}").contains("future_adapter_field"));
-    }
-
-    #[tokio::test]
-    async fn protocol_v1_compatibility_uses_the_same_direct_adapter() {
-        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
-        let dataset: DatasetSpec = serde_json::from_value(json!({
-            "type": "file",
-            "format": "dag_jsonl",
-            "sampling": " sequential ",
-            "records": [{
-                "session_id": "root",
-                "turns": [{"messages": [{"role": "user", "content": "hello"}]}]
-            }],
-            "random_seed": 91,
-            "osl": {"value": 4.0}
-        }))
-        .unwrap();
-        let prepared = resolver
-            .load_protocol_v1(
-                dataset,
-                &RunnerGraphInputContext {
-                    tokenizer: &TiktokenTokenizer::builtin(),
-                    run_random_seed: Some(42),
-                },
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(prepared.bundle.metadata.format, "dag_jsonl");
-        assert_eq!(prepared.bundle.metadata.root_count, 1);
-        assert_eq!(prepared.random_seed, Some(91));
-        assert_eq!(prepared.default_output_tokens, 4);
     }
 
     #[tokio::test]
