@@ -46,7 +46,7 @@
   - `npm run validate:content` ✅
   - `npm run typecheck` ✅
   - `npm run lint` ✅
-  - `npm test` ✅ (217 tests passed)
+  - `npm test` ✅ (218 tests passed)
   - `npm run build` ✅
 
 ### Notes / residual concerns
@@ -73,3 +73,11 @@
 - Reduced-motion rendering uses the same active/completed identities and channels, replacing motion with a static marker.
 - Waypoint pointer dragging now captures the pointer and releases it on pointer up or cancellation.
 - Focused Task 4 review tests pass: 5 files, 42 tests.
+
+### Completed pulse finalization
+
+- Added a failing normal-motion completed-edge regression before the fix. The RED result showed completed edges incorrectly reported `data-motion="animated"` and contained infinite `animateMotion`.
+- Only `active` edge phases now render infinite waypoint-aware `animateMotion`.
+- Completed edges preserve completed edge/channel identity and render a static green midpoint marker in both normal and reduced-motion modes.
+- Removed the dead `.graph-edge-dynamo-online` CSS selector; planned Dynamo-online paths remain dashed coral through `.graph-edge-planned`.
+- Focused pulse verification passes: 3 files, 26 tests.

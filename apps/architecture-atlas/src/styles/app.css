@@ -1660,8 +1660,7 @@
     filter: drop-shadow(0 0 6px rgb(69 199 244 / 0.62));
   }
 
-  .graph-edge-planned,
-  .graph-edge-dynamo-online {
+  .graph-edge-planned {
     stroke: var(--accent-planned) !important;
     stroke-dasharray: 8 6;
   }

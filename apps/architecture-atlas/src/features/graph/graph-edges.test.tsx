@@ -182,6 +182,50 @@ describe("runtime graph edge", () => {
     expect(container.querySelector("animateMotion")).not.toBeInTheDocument();
   });
 
+  it("renders completed normal-motion state as a static marker", () => {
+    const props = {
+      data: {
+        edge,
+        flavorClass: "shared",
+        onSelect: vi.fn(),
+        pathState: "default",
+        pulseEdgeState: {
+          channelState: "completed",
+          phase: "completed",
+          reducedMotion: false,
+        },
+      },
+      id: edge.id,
+      markerEnd: "marker",
+      sourcePosition: Position.Right,
+      sourceX: 0,
+      sourceY: 0,
+      targetPosition: Position.Left,
+      targetX: 200,
+      targetY: 0,
+    } as unknown as EdgeProps<Edge<RuntimeGraphEdgeData>>;
+
+    const { container } = render(
+      <ReactFlowProvider>
+        <svg>
+          <RuntimeGraphEdge {...props} />
+        </svg>
+      </ReactFlowProvider>,
+    );
+    const pulseMarker = container.querySelector(
+      `[data-testid="graph-edge-pulse-${edge.id}"]`,
+    );
+    const circle = pulseMarker?.querySelector("circle");
+
+    expect(pulseMarker).toHaveAttribute("data-pulse-phase", "completed");
+    expect(pulseMarker).toHaveAttribute("data-channel-state", "completed");
+    expect(pulseMarker).toHaveAttribute("data-motion", "static");
+    expect(circle).toHaveAttribute("cx", "100");
+    expect(circle).toHaveAttribute("cy", "0");
+    expect(circle).toHaveAttribute("fill", "#76B900");
+    expect(pulseMarker?.querySelector("animateMotion")).not.toBeInTheDocument();
+  });
+
   it("keeps pulse semantics while disabling movement for reduced motion", () => {
     const builtReplayEdge: GraphEdge = {
       ...edge,

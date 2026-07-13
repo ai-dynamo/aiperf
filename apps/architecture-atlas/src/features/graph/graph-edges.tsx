@@ -136,6 +136,13 @@ export function RuntimeGraphEdge({
   const pulseVisible = pulseEdgeState.phase !== "idle";
   const pulseTestId = `graph-edge-pulse-${id}`;
   const pulseRadius = pulseEdgeState.phase === "active" ? 4 : 3;
+  const pulseAnimated =
+    pulseEdgeState.phase === "active" && !pulseEdgeState.reducedMotion;
+  const pulseMotion = pulseAnimated
+    ? "animated"
+    : pulseEdgeState.reducedMotion
+      ? "reduced"
+      : "static";
 
   return (
     <>
@@ -149,11 +156,11 @@ export function RuntimeGraphEdge({
       {pulseVisible ? (
         <g
           data-channel-state={pulseEdgeState.channelState}
-          data-motion={pulseEdgeState.reducedMotion ? "reduced" : "animated"}
+          data-motion={pulseMotion}
           data-pulse-phase={pulseEdgeState.phase}
           data-testid={pulseTestId}
         >
-          {pulseEdgeState.reducedMotion ? (
+          {!pulseAnimated ? (
             <circle
               cx={labelX}
               cy={labelY}
@@ -172,7 +179,7 @@ export function RuntimeGraphEdge({
               strokeWidth={1}
             >
               <animateMotion
-                dur={pulseEdgeState.phase === "active" ? "1.4s" : "2.4s"}
+                dur="1.4s"
                 path={path}
                 repeatCount="indefinite"
                 rotate="auto"
