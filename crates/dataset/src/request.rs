@@ -28,9 +28,7 @@ use serde_json::{Map, Value};
 use crate::dataset::Dataset;
 use crate::error::{DatasetError, Result};
 use crate::materialize::Overrides;
-use crate::model::{
-    AccuracyAssociation, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
-};
+use crate::model::{Conversation, ConversationContextMode, MediaKind, SessionId, Turn};
 use crate::segment::{Handle, Payload, SegmentStore};
 
 /// One fully built dispatch request and its media-free accounting metadata.
@@ -60,8 +58,6 @@ pub struct MaterializedRequest {
     pub raw_token_ids: Option<Handle>,
     /// Audio duration used by ASR metrics.
     pub audio_duration_seconds: Option<f64>,
-    /// Opaque evaluator association propagated without positional matching.
-    pub accuracy: Option<AccuracyAssociation>,
     /// Zero-based authored turn index.
     pub turn_index: usize,
     /// Whether this is the final authored turn.
@@ -369,7 +365,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
-            accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
         })
@@ -460,7 +455,6 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 .then_some(current.raw_token_ids)
                 .flatten(),
             audio_duration_seconds: current.audio_duration_seconds,
-            accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
         })
@@ -536,7 +530,6 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             input_tokens: session.input_tokens(store)?,
             raw_token_ids: None,
             audio_duration_seconds: current.audio_duration_seconds,
-            accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
         })
@@ -604,7 +597,6 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
                 .then_some(current.raw_token_ids)
                 .flatten(),
             audio_duration_seconds: current.audio_duration_seconds,
-            accuracy: conversation.accuracy.clone(),
             turn_index,
             is_final_turn: turn_index + 1 == conversation.turns.len(),
         })
@@ -1210,7 +1202,7 @@ mod tests {
     use smallvec::smallvec;
 
     use super::*;
-    use crate::model::{ContentGroup, CorrelationId, ModelId};
+    use crate::model::{ContentGroup, ModelId};
     use crate::segment::{Role, SegmentPool};
 
     fn model_endpoint() -> ModelEndpoint {
@@ -1292,10 +1284,6 @@ mod tests {
         let mut conversation = Conversation::new("session");
         conversation.turns = turns;
         conversation.context_mode = Some(mode);
-        conversation.accuracy = Some(AccuracyAssociation {
-            correlation_id: CorrelationId::from("corr"),
-            task: "task".into(),
-        });
         Arc::new(
             Dataset::new(
                 vec![conversation],
@@ -1602,7 +1590,6 @@ mod tests {
         assert_eq!(request.input_tokens, 16);
         assert_eq!(request.max_tokens, Some(5));
         assert_eq!(request.audio_duration_seconds, Some(2.5));
-        assert_eq!(request.accuracy.unwrap().correlation_id.as_str(), "corr");
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub use generator::{
     transcode_audio_to_wav,
 };
 pub use loader::{
-    AccuracyComposer, AccuracyDatasetLoader, DagJsonlConversation, DagJsonlFork, DagJsonlProgram,
+    DagJsonlConversation, DagJsonlFork, DagJsonlProgram,
     DagJsonlSpawn, DagJsonlTurn, DatasetFormatRegistration, DatasetLoader, DatasetProbe,
     DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin, dag_jsonl_turn_token_counts,
     load_dag_jsonl_program, load_raw_rows,
@@ -54,8 +54,8 @@ pub use materialize::{
 };
 pub use media::{InlineMediaResolver, MediaResolver};
 pub use model::{
-    AccuracyAssociation, BranchId, ContentGroup, Conversation, ConversationBranch,
-    ConversationBranchMode, ConversationContextMode, ConversationMetadata, CorrelationId,
+    BranchId, ContentGroup, Conversation, ConversationBranch,
+    ConversationBranchMode, ConversationContextMode, ConversationMetadata,
     DagMetadata, DispatchTiming, MediaKind, ModelId, NodeId, PrerequisiteKind, SessionId, Turn,
     TurnMetadata, TurnPrerequisite,
 };

@@ -36,7 +36,7 @@ pub use dag::{
 };
 pub use exgentic::{ExgenticComposer, ExgenticDatasetLoader, ExgenticV2DatasetLoader};
 pub use public::{
-    AccuracyComposer, AccuracyDatasetLoader, HfConversationComposer, HfConversationDatasetLoader,
+    HfConversationComposer, HfConversationDatasetLoader,
     HfInstructionComposer, HfInstructionDatasetLoader, MmvuComposer, MmvuDatasetLoader,
     MtBenchComposer, MtBenchDatasetLoader, ShareGptComposer, ShareGptDatasetLoader,
     SpecBenchComposer, SpecBenchDatasetLoader, SpeedBenchComposer, SpeedBenchDatasetLoader,
@@ -349,10 +349,6 @@ impl LoaderRegistry {
             DatasetFormatRegistration::new(
                 Arc::new(ExgenticDatasetLoader),
                 Arc::new(ExgenticComposer),
-            ),
-            DatasetFormatRegistration::new(
-                Arc::new(AccuracyDatasetLoader),
-                Arc::new(AccuracyComposer),
             ),
             DatasetFormatRegistration::new(Arc::new(HfAsrDatasetLoader), Arc::new(HfAsrComposer)),
             DatasetFormatRegistration::new(
