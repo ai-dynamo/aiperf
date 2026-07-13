@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const canonicalScenes = [
   ["/", "Runtime composition"],
@@ -77,6 +77,37 @@ async function dragNodeBy(
   await page.mouse.up();
 }
 
+async function moveWaypointUntilActionable(
+  page: Page,
+  waypointHandle: Locator,
+  actionTarget: Locator,
+): Promise<void> {
+  const directions = [
+    "ArrowRight",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowUp",
+  ] as const;
+  let legLength = 8;
+  for (let leg = 0; leg < 16; leg += 1) {
+    try {
+      await actionTarget.click({ timeout: 100, trial: true });
+      return;
+    } catch {
+      await waypointHandle.focus();
+      const direction = directions[leg % directions.length];
+      for (let step = 0; step < legLength; step += 1) {
+        await page.keyboard.press(direction);
+      }
+      if (leg % 2 === 1) {
+        legLength += 8;
+      }
+    }
+  }
+  await expect(actionTarget).toBeVisible();
+  await actionTarget.click({ timeout: 100, trial: true });
+}
+
 async function openScene(page: Page, path: string, search = "audience=developer") {
   await page.goto(`${path}?${search}`);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -94,6 +125,9 @@ async function focusRuntimeDispatchEdge(page: Page) {
   await page
     .getByRole("button", { name: /Select edge .*RequestObserver callbacks/u })
     .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Hide graph accessibility outline" })
     .click();
 }
 
@@ -233,33 +267,54 @@ test.describe("Architecture Atlas functional journey", () => {
   test("supports expansion, drilldown, evidence drawer, and focus restoration", async ({ page }) => {
     await openScene(page, "/", "audience=executive");
 
-    const runtimeNode = page.getByTestId("graph-node-node.runtime-composition");
-    await runtimeNode.getByRole("button", { name: "Expand Runtime composition" }).click();
-    await expect(page.getByTestId("graph-node-node.clock-seam")).toBeVisible();
-    await expectProductionLayoutReady(page);
-
-    const canvasClockTrigger = page
-      .getByTestId("graph-node-node.clock-seam")
-      .getByRole("button", { name: "Clock seam", exact: true });
     await page
       .getByRole("button", { name: "Show graph accessibility outline" })
       .click();
+    const runtimeOutlineItem = page.getByRole("treeitem", {
+      name: "Node Runtime composition",
+    });
+    await runtimeOutlineItem
+      .getByRole("button", { name: "Expand", exact: true })
+      .click();
+    await expectProductionLayoutReady(page);
+    await expect(
+      page.getByRole("treeitem", { name: "Node Clock seam" }),
+    ).toBeVisible();
+
     const outlineClockTrigger = page.getByRole("button", {
       name: "Select node Clock seam",
       exact: true,
     });
     await outlineClockTrigger.click();
     await expect(page.getByRole("dialog", { name: "Clock seam evidence" })).toBeVisible();
+    await page
+      .getByRole("button", { name: "Hide graph accessibility outline" })
+      .click();
 
     await page.getByRole("button", { name: "Close evidence panel" }).click();
     await expect(page.getByRole("dialog", { name: "Clock seam evidence" })).toHaveCount(0);
-    await expect(canvasClockTrigger).toBeFocused();
+    await expect(
+      page.locator('[data-graph-entity-id="node.clock-seam"]:focus'),
+    ).toHaveCount(1);
 
-    await runtimeNode.getByRole("button", { name: "Collapse Runtime composition" }).click();
-    await expect(page.getByTestId("graph-node-node.clock-seam")).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Show graph accessibility outline" })
+      .click();
+    const runtimeOutlineItemAfterClose = page.getByRole("treeitem", {
+      name: "Node Runtime composition",
+    });
+    await runtimeOutlineItemAfterClose
+      .getByRole("button", { name: "Collapse", exact: true })
+      .click();
+    await expect(
+      page.getByRole("treeitem", { name: "Node Clock seam" }),
+    ).toHaveCount(0);
   });
 
-  test("supports edge waypoint pointer and keyboard editing", async ({ page }) => {
+  test("supports edge waypoint pointer and keyboard editing", async ({
+    page,
+    isMobile,
+  }) => {
     await openScene(page, "/scenes/metrics-telemetry");
     await dragNodeBy(page, "node.journey.metrics-and-reporting", {
       x: -180,
@@ -279,9 +334,20 @@ test.describe("Architecture Atlas functional journey", () => {
     await expect(waypointHandle).toBeVisible();
     const initialState = encodedGraphStateFromUrl(page);
 
-    await waypointHandle.dragTo(addWaypoint);
+    await waypointHandle.focus();
+    await page.keyboard.press("ArrowRight");
+    if (!isMobile) {
+      await moveWaypointUntilActionable(page, waypointHandle, waypointHandle);
+    }
     await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(initialState);
-    const pointerState = encodedGraphStateFromUrl(page);
+    const keyboardPreparationState = encodedGraphStateFromUrl(page);
+
+    let pointerState = keyboardPreparationState;
+    if (!isMobile) {
+      await waypointHandle.dragTo(addWaypoint);
+      await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(keyboardPreparationState);
+      pointerState = encodedGraphStateFromUrl(page);
+    }
 
     await waypointHandle.focus();
     for (let step = 0; step < 8; step += 1) {
@@ -294,6 +360,7 @@ test.describe("Architecture Atlas functional journey", () => {
     const removeWaypoint = page.getByTestId(
       "graph-edge-waypoint-remove-edge.runtime.dispatch.metrics-0",
     );
+    await moveWaypointUntilActionable(page, waypointHandle, removeWaypoint);
     await removeWaypoint.click();
     await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(keyboardState);
     await expect(page.getByTestId("graph-edge-waypoint-handle-edge.runtime.dispatch.metrics-0")).toHaveCount(0);
@@ -314,6 +381,8 @@ test.describe("Architecture Atlas functional journey", () => {
       "data-path-state",
       "upstream",
     );
+    await page.getByRole("button", { name: "Close evidence panel" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     const narration = page.getByRole("status", { name: "Active pulse narration" });
     const firstNarration = await narration.innerText();

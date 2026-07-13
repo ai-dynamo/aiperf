@@ -200,6 +200,12 @@ describe("graph canvas", () => {
     expect(
       screen.getByRole("region", { name: "Graph canvas minimap" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("list", { name: "Overlay partition legend" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Graph layout status" }),
+    ).toHaveClass("canvas-status-chip");
     const runnerPorts = within(screen.getByTestId("graph-node-node.runner")).getAllByRole(
       "listitem",
       { hidden: true },
@@ -280,12 +286,9 @@ describe("graph canvas", () => {
       "data-implementation-state",
       "planned",
     );
-    expect(screen.getByTestId("graph-node-node.transport")).toHaveTextContent(
-      "compare-only",
-    );
-    expect(screen.getByTestId("graph-node-node.transport")).toHaveTextContent(
-      "planned",
-    );
+    expect(
+      within(screen.getByTestId("graph-node-node.transport")).getByText("planned"),
+    ).toBeInTheDocument();
   });
 
   it("executes a typed fit-view command through the React Flow API", async () => {

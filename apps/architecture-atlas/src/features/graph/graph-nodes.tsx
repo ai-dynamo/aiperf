@@ -48,10 +48,15 @@ export function RuntimeGraphNode({
     `graph-node-relayout-${data.relayoutState}`,
   ].join(" ");
   const title = data.node.title[data.audience];
+  const detailsVisible = data.expanded || data.audience === "maintainer";
+  const badgeFlavor = data.flavorClass.replace("-", " ");
 
   return (
     <article
       className={classes}
+      data-audience={data.audience}
+      data-details-visible={detailsVisible || undefined}
+      data-expanded={data.expanded || undefined}
       data-owner={data.node.owner}
       data-flavor-class={data.flavorClass}
       data-implementation-state={data.node.status.state}
@@ -71,22 +76,24 @@ export function RuntimeGraphNode({
       <Handle position={Position.Left} type="target" />
       <button
         aria-label={title}
+        className="graph-node-trigger"
         data-graph-entity-id={data.node.id}
         data-graph-entity-trigger="true"
         onClick={() => data.onSelect(data.node.id)}
         type="button"
       >
-        <strong>{title}</strong>
-        <p>{data.node.summary[data.audience]}</p>
-        <p>
-          owner: {data.node.owner} | tier: {data.node.tier} | status:{" "}
-          {data.node.status.state}
-        </p>
-        <p>
-          flavor: {data.flavorClass} | path: {data.pathState}
-        </p>
+        <span className="graph-node-title-row">
+          <strong>{title}</strong>
+          <span className="graph-node-status-chip">{data.node.status.state}</span>
+        </span>
+        <span className="graph-node-summary">{data.node.summary[data.audience]}</span>
+        <span className="graph-node-meta-badges" aria-label={`${title} metadata badges`}>
+          <span>{data.node.owner}</span>
+          <span>tier {data.node.tier}</span>
+          <span>{badgeFlavor}</span>
+        </span>
       </button>
-      <div aria-label={`${title} graph controls`} className="nodrag">
+      <div aria-label={`${title} graph controls`} className="graph-node-actions nodrag">
         {data.node.childIds.length > 0 ? (
           <button
             aria-expanded={data.expanded}
@@ -103,6 +110,7 @@ export function RuntimeGraphNode({
         ) : null}
         {(["upstream", "downstream", "isolate"] as const).map((mode) => (
           <button
+            className="graph-node-action-trace"
             aria-label={`Trace ${mode} ${mode === "isolate" ? "" : "from "}${title}`.replace(
               "  ",
               " ",
@@ -116,13 +124,15 @@ export function RuntimeGraphNode({
           </button>
         ))}
       </div>
-      <ul aria-label={`${data.node.title[data.audience]} seam ports`}>
-        {data.ports.map((port) => (
-          <li key={port.id}>
-            {port.name} - {port.channel} - {port.direction}
-          </li>
-        ))}
-      </ul>
+      <div className="graph-node-details">
+        <ul aria-label={`${data.node.title[data.audience]} seam ports`}>
+          {data.ports.map((port) => (
+            <li key={port.id}>
+              {port.name} - {port.channel} - {port.direction}
+            </li>
+          ))}
+        </ul>
+      </div>
       <Handle position={Position.Right} type="source" />
     </article>
   );

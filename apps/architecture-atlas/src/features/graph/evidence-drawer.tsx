@@ -69,7 +69,14 @@ export function EvidenceDrawer({
     window.requestAnimationFrame(() => {
       focusTarget();
       window.setTimeout(() => {
-        focusTarget();
+        const activeElement = document.activeElement;
+        if (
+          !activeElement ||
+          activeElement === document.body ||
+          !activeElement.isConnected
+        ) {
+          focusTarget();
+        }
       }, 100);
     });
   };

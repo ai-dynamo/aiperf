@@ -5,6 +5,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
   type Edge,
   type Node,
@@ -389,7 +390,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
             draggable: true,
             id: node.id,
             position: positionsByNodeId.get(node.id) ?? { x: 0, y: 0 },
-            style: { width: 280 },
+            style: { width: 320 },
             type: "runtimeNode",
             };
           }),
@@ -484,12 +485,20 @@ export function GraphCanvas(props: GraphCanvasProps) {
   return (
     <section
       aria-label="Graph canvas"
+      className="graph-canvas-shell"
       data-active-pulse-channels={props.pulseEdges?.activeChannels.join(",") ?? ""}
       data-active-pulse-edge-ids={props.pulseEdges?.activeEdgeIds.join(",") ?? ""}
       data-reduced-motion={String(props.pulseEdges?.reducedMotion ?? false)}
     >
+      <ul aria-label="Overlay partition legend" className="overlay-partition-legend">
+        <li data-legend="built">Built</li>
+        <li data-legend="planned">Planned</li>
+        <li data-legend="active">Active</li>
+        <li data-legend="control">Control</li>
+        <li data-legend="overlay">Overlay</li>
+      </ul>
       {(props.breadcrumbNodeIds?.length ?? 0) > 0 ? (
-        <nav aria-label="Graph focus context">
+        <nav aria-label="Graph focus context" className="graph-focus-breadcrumbs">
           <ol>
             {props.breadcrumbNodeIds?.map((nodeId) => {
               const node = props.visibleNodes.find(({ id }) => id === nodeId);
@@ -511,12 +520,12 @@ export function GraphCanvas(props: GraphCanvasProps) {
           </ol>
         </nav>
       ) : null}
-      <p aria-label="Graph layout status" role="status">
+      <p aria-label="Graph layout status" className="canvas-status-chip" role="status">
         {layoutState.result.degraded
           ? `Graph layout degraded; deterministic fallback in use. ${layoutState.result.reason ?? ""}`.trim()
           : "Graph layout ready."}
       </p>
-      <div style={{ height: 620, width: "100%" }}>
+      <div className="graph-canvas-stage">
         <ReactFlow
           colorMode="dark"
           edgeTypes={edgeTypes}
@@ -532,16 +541,23 @@ export function GraphCanvas(props: GraphCanvasProps) {
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={24} size={1} />
-          <div aria-label="Graph viewport controls" role="group">
-            <Controls showInteractive={false} />
-          </div>
-          <div aria-label="Graph canvas minimap" role="region">
-            <MiniMap
-              ariaLabel="Graph canvas minimap"
-              maskColor="rgba(16, 18, 20, 0.76)"
-              nodeColor="#6f7882"
-            />
-          </div>
+          <Panel className="graph-canvas-controls-panel" position="bottom-left">
+            <div aria-label="Graph viewport controls" role="group">
+              <Controls showInteractive={false} />
+            </div>
+          </Panel>
+          <Panel className="graph-canvas-minimap-panel" position="bottom-right">
+            <div aria-label="Graph canvas minimap" role="region">
+              <MiniMap
+                ariaLabel="Graph canvas minimap"
+                className="graph-canvas-minimap"
+                maskColor="rgba(16, 18, 20, 0.36)"
+                nodeColor="#6f7882"
+                pannable={false}
+                zoomable={false}
+              />
+            </div>
+          </Panel>
         </ReactFlow>
       </div>
     </section>

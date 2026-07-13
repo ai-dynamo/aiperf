@@ -127,11 +127,11 @@ export function PulseLayer({ reducedMotion, semanticState, visibleEdges }: Pulse
     activeEdgeId === null ? null : visibleEdges.find((edge) => edge.id === activeEdgeId) ?? null;
 
   return (
-    <section aria-label="Pulse edge overlay" role="region">
-      <p aria-label="Pulse narration" role="status">
+    <section aria-label="Pulse edge overlay" className="pulse-layer-telemetry" role="region">
+      <p aria-label="Pulse narration" className="sr-only" role="status">
         {buildNarration(semanticState)}
       </p>
-      <ul aria-label="Pulse edge states">
+      <ul aria-hidden="true" aria-label="Pulse edge states" className="pulse-edge-state-inventory">
         {visibleEdges.map((edge) => (
           <li
             data-active-channel={semanticState.activeEvent.channel}
@@ -152,6 +152,7 @@ export function PulseLayer({ reducedMotion, semanticState, visibleEdges }: Pulse
         data-active-edge-id={activeEdge?.id ?? ""}
         data-active-flavor={semanticState.activeEvent.flavor}
         data-motion={reducedMotion ? "reduced" : "animated"}
+        className="pulse-active-particle-state"
         data-testid="pulse-active-particle"
       />
     </section>

@@ -105,6 +105,9 @@ describe("PulseLayer", () => {
     );
 
     const overlay = screen.getByRole("region", { name: "Pulse edge overlay" });
+    expect(
+      overlay.querySelector('ul[aria-label="Pulse edge states"]'),
+    ).toHaveAttribute("aria-hidden", "true");
     expect(within(overlay).getByTestId("pulse-edge-edge.runner.control")).toHaveAttribute(
       "data-pulse-phase",
       "completed",

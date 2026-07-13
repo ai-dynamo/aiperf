@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect } from "react";
+import { useEffect, type KeyboardEvent } from "react";
 
 import type { FlowChannel } from "../../domain/architecture";
 import type { FlowTimelineEvent, TimelineSemanticState } from "../../domain/flow-timeline";
@@ -13,6 +13,13 @@ const CHANNEL_LEGEND: readonly FlowChannel[] = [
   "telemetry",
   "report_result",
 ];
+const CHANNEL_LABELS: Record<FlowChannel, string> = {
+  control: "Control",
+  request_data: "Request data",
+  report_result: "Report/result",
+  telemetry: "Telemetry",
+  token: "Token",
+};
 
 const DEFAULT_TICK_MS = 900;
 
@@ -79,6 +86,18 @@ export function PulseControls({
   tickMs = DEFAULT_TICK_MS,
   timeline,
 }: PulseControlsProps) {
+  const handlePlaybackKey = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    if (isPlaying) {
+      onPause();
+      return;
+    }
+    onPlay();
+  };
+
   useEffect(() => {
     if (!isPlaying) {
       return;
@@ -96,25 +115,43 @@ export function PulseControls({
   }, [isPlaying, onPause, onScrub, scheduler, semanticState, tickMs, timeline]);
 
   const sliderStep = timeline.length > 1 ? 1 / (timeline.length - 1) : 1;
+  const activeChannel = semanticState.activeEvent.channel;
 
   return (
-    <section aria-label="Pulse timeline controls">
-      <div aria-label="Pulse playback actions" role="group">
+    <section
+      aria-label="Pulse timeline controls"
+      className="pulse-dock"
+      style={{ pointerEvents: "none" }}
+    >
+      <div
+        aria-label="Pulse playback actions"
+        className="pulse-dock-actions"
+        role="group"
+        style={{ pointerEvents: "auto" }}
+      >
         <button
           aria-label={isPlaying ? "Pause pulse timeline" : "Play pulse timeline"}
+          className="pulse-dock-action"
+          onKeyDown={handlePlaybackKey}
           onClick={isPlaying ? onPause : onPlay}
           type="button"
         >
           {isPlaying ? "Pause" : "Play"}
         </button>
-        <button aria-label="Restart pulse timeline" onClick={onRestart} type="button">
+        <button
+          aria-label="Restart pulse timeline"
+          className="pulse-dock-action"
+          onClick={onRestart}
+          type="button"
+        >
           Restart
         </button>
       </div>
-      <label>
+      <label className="pulse-dock-scrubber" style={{ pointerEvents: "auto" }}>
         <span>Timeline scrubber</span>
         <input
           aria-label="Pulse timeline scrubber"
+          className="pulse-dock-slider"
           max={1}
           min={0}
           onChange={(event) => onScrub(Number(event.currentTarget.value))}
@@ -123,15 +160,24 @@ export function PulseControls({
           value={semanticState.position}
         />
       </label>
-      <p aria-label="Active pulse narration" role="status">
+      <p aria-label="Active pulse narration" className="pulse-dock-narration" role="status">
         {buildNarration(timeline, semanticState)}
       </p>
-      <p>{reducedMotion ? "Motion reduced: semantic playback only." : "Motion enabled."}</p>
-      <div aria-label="Pulse channels legend" role="region">
-        <h2>Channels</h2>
-        <ul>
+      <p className="pulse-dock-motion">
+        {reducedMotion ? "Motion reduced: semantic playback only." : "Motion enabled."}
+      </p>
+      <div aria-label="Pulse channels legend" className="pulse-channel-legend" role="region">
+        <ul className="pulse-channel-chip-list">
           {CHANNEL_LEGEND.map((channel) => (
-            <li key={channel}>{channel}</li>
+            <li
+              aria-current={channel === activeChannel ? "true" : undefined}
+              className="pulse-channel-chip"
+              data-channel={channel}
+              key={channel}
+              style={{ pointerEvents: "none" }}
+            >
+              {CHANNEL_LABELS[channel]}
+            </li>
           ))}
         </ul>
       </div>

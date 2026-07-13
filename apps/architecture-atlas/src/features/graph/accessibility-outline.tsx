@@ -82,16 +82,17 @@ export function AccessibilityOutline({
   );
 
   return (
-    <section aria-label="Graph accessibility outline">
+    <section aria-label="Graph accessibility outline" className="graph-outline-overlay">
       <button
         aria-expanded={!collapsed}
+        className="graph-outline-toggle"
         onClick={() => setCollapsed((current) => !current)}
         type="button"
       >
         {collapsed ? "Show graph accessibility outline" : "Hide graph accessibility outline"}
       </button>
       {!collapsed ? (
-        <ul aria-label="Visible graph outline" role="tree">
+        <ul aria-label="Visible graph outline" className="graph-outline-tree" role="tree">
           {visibleNodes.map((node) => {
             const title = node.title[audience];
             const isExpanded = expandedNodeIds.includes(node.id);
@@ -108,7 +109,7 @@ export function AccessibilityOutline({
                     inspect: () => onInspectEntity(node.id),
                   })
                 }
-                role="listitem"
+                role="treeitem"
                 tabIndex={0}
               >
                 <button
@@ -151,7 +152,7 @@ export function AccessibilityOutline({
                     inspect: () => onInspectEntity(edge.id),
                   })
                 }
-                role="listitem"
+                role="treeitem"
                 tabIndex={0}
               >
                 <button

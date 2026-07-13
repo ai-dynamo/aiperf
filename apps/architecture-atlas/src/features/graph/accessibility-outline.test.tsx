@@ -138,7 +138,7 @@ describe("AccessibilityOutline", () => {
 
     await user.click(screen.getByRole("button", { name: "Show graph accessibility outline" }));
 
-    const runtimeNodeRow = screen.getByRole("listitem", {
+    const runtimeNodeRow = screen.getByRole("treeitem", {
       name: "Node Runtime composition",
     });
     runtimeNodeRow.focus();

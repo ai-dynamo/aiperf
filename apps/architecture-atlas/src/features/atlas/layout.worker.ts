@@ -23,8 +23,8 @@ const elk = new ELK({
   },
   workerUrl: elkWorkerUrl,
 });
-const NODE_HEIGHT = 112;
-const NODE_WIDTH = 248;
+const NODE_HEIGHT = 224;
+const NODE_WIDTH = 320;
 
 interface ElkLayoutNode {
   children?: ElkLayoutNode[];
@@ -92,8 +92,8 @@ async function layoutBand(
       "elk.direction": request.perspective === "ownership" ? "RIGHT" : "DOWN",
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-      "elk.spacing.nodeNode": "36",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "56",
+      "elk.spacing.nodeNode": "64",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "92",
     },
     children: bandHierarchyNodes(request, bandId),
     edges: request.edges

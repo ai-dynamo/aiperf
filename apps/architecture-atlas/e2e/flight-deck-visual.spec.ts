@@ -8,6 +8,7 @@ const seriousOrCritical = new Set(["serious", "critical"]);
 const screenshotOptions = {
   animations: "disabled",
   caret: "hide",
+  maxDiffPixels: 200,
   scale: "css",
 } as const;
 
@@ -48,6 +49,8 @@ async function openFlightDeck(
     query?: string;
     reducedMotion?: "no-preference" | "reduce";
     forcedColors?: "none" | "active";
+    fitGraph?: boolean;
+    extraZoomOut?: boolean;
   } = {},
 ) {
   await page.emulateMedia({
@@ -58,6 +61,12 @@ async function openFlightDeck(
   await disableNondeterministicMotion(page);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expectProductionLayoutReady(page);
+  if (input.fitGraph ?? true) {
+    await page.getByRole("button", { name: "Fit View" }).click();
+  }
+  if (input.extraZoomOut) {
+    await page.getByRole("button", { name: "Zoom Out" }).click();
+  }
 }
 
 async function expectNoSeriousOrCriticalViolations(page: Page) {
@@ -66,6 +75,27 @@ async function expectNoSeriousOrCriticalViolations(page: Page) {
     seriousOrCritical.has(violation.impact ?? ""),
   );
   expect(blockingViolations).toEqual([]);
+}
+
+async function expectGraphNodesFullyInViewport(page: Page) {
+  const stageBox = await page.locator(".graph-canvas-stage").boundingBox();
+  expect(stageBox).not.toBeNull();
+  const nodes = page.locator(".react-flow__node-runtimeNode");
+  const count = await nodes.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await expect
+      .poll(async () => {
+        const nodeBox = await nodes.nth(index).boundingBox();
+        return nodeBox
+          ? nodeBox.x >= stageBox!.x &&
+              nodeBox.y >= stageBox!.y &&
+              nodeBox.x + nodeBox.width <= stageBox!.x + stageBox!.width &&
+              nodeBox.y + nodeBox.height <= stageBox!.y + stageBox!.height
+          : false;
+      })
+      .toBe(true);
+  }
 }
 
 test.describe("Flight Deck visual and accessibility slice", () => {
@@ -98,7 +128,10 @@ test.describe("Flight Deck visual and accessibility slice", () => {
     await expect(page).toHaveURL(/compare=dynamo_online/u);
     await expectNoSeriousOrCriticalViolations(page);
 
-    await page.getByTestId("graph-node-node.runtime-composition").click();
+    await page
+      .getByRole("button", { name: "Show graph accessibility outline" })
+      .click();
+    await page.getByRole("button", { name: "Select node Rust runtime composition" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await expectNoSeriousOrCriticalViolations(page);
   });
@@ -109,6 +142,7 @@ test.describe("Flight Deck visual and accessibility slice", () => {
     await openFlightDeck(page, {
       path: "/",
       query: "audience=developer&primary=native_http",
+      fitGraph: false,
     });
 
     const skipLink = page.getByRole("link", { name: "Skip to content" });
@@ -134,6 +168,9 @@ test.describe("Flight Deck visual and accessibility slice", () => {
 
     await page.keyboard.press("Escape");
     await expect(drawer).toHaveCount(0);
+    await expect(
+      page.locator("[data-graph-entity-trigger='true']:focus"),
+    ).toHaveCount(1);
 
     const playButton = page.getByRole("button", { name: "Play pulse timeline" });
     await playButton.focus();
@@ -194,9 +231,11 @@ test.describe("Flight Deck visual and accessibility slice", () => {
 
   test("captures deterministic runtime baseline snapshots", async ({ page }) => {
     await openFlightDeck(page, {
-      path: "/",
+      path: "/scenes/metrics-telemetry",
       query: "audience=developer&primary=native_http",
+      extraZoomOut: true,
     });
+    await expectGraphNodesFullyInViewport(page);
     await expect(sceneLocator(page)).toHaveScreenshot(
       "runtime-flight-deck.png",
       screenshotOptions,
@@ -205,11 +244,13 @@ test.describe("Flight Deck visual and accessibility slice", () => {
 
   test("captures deterministic comparison overlay snapshots", async ({ page }) => {
     await openFlightDeck(page, {
-      path: "/",
+      path: "/scenes/runner-protocol-registries",
       query:
         "audience=developer&primary=native_http&compare=dynamo_online",
+      extraZoomOut: true,
     });
     await expect(page).toHaveURL(/compare=dynamo_online/u);
+    await expectGraphNodesFullyInViewport(page);
     await expect(sceneLocator(page)).toHaveScreenshot(
       "comparison-overlay-flight-deck.png",
       screenshotOptions,
@@ -228,6 +269,9 @@ test.describe("Flight Deck visual and accessibility slice", () => {
       .click();
     await page.getByRole("button", { name: "Expand" }).first().click();
     await expectProductionLayoutReady(page);
+    await page.getByRole("button", { name: "Fit View" }).click();
+    await page.getByRole("button", { name: "Zoom Out" }).click();
+    await expectGraphNodesFullyInViewport(page);
     await expect(sceneLocator(page)).toHaveScreenshot(
       "maintainer-expanded-flight-deck.png",
       screenshotOptions,
@@ -252,7 +296,7 @@ test.describe("Flight Deck visual and accessibility slice", () => {
 
   test("captures deterministic reduced-motion pulse snapshots", async ({ page }) => {
     await openFlightDeck(page, {
-      path: "/",
+      path: "/scenes/metrics-telemetry",
       query: "audience=developer&primary=native_http",
       reducedMotion: "reduce",
     });

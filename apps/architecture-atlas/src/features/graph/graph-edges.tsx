@@ -201,6 +201,7 @@ export function RuntimeGraphEdge({
         />
         <button
           aria-label={`${data.edge.protocol} ${data.edge.channel} ${data.flavorClass} ${data.edge.status.state} ${data.pathState} pulse:${pulseEdgeState.phase} channel:${pulseEdgeState.channelState}`}
+          className="graph-edge-label"
           data-flavor-class={data.flavorClass}
           data-graph-entity-id={id}
           data-graph-entity-trigger="true"

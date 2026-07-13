@@ -68,14 +68,15 @@ describe("PulseControls", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Pulse timeline controls")).toHaveClass("pulse-dock");
     expect(screen.getByRole("region", { name: "Pulse channels legend" })).toHaveTextContent(
-      "control",
+      "Control",
     );
     expect(screen.getByRole("region", { name: "Pulse channels legend" })).toHaveTextContent(
-      "request_data",
+      "Request data",
     );
     expect(screen.getByRole("region", { name: "Pulse channels legend" })).toHaveTextContent(
-      "token",
+      "Token",
     );
     expect(screen.getByRole("status", { name: "Active pulse narration" })).toHaveTextContent(
       "Step 2 of 3: HTTP dispatch",

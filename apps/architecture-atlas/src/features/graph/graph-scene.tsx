@@ -395,29 +395,16 @@ export function GraphScene({
   };
 
   return (
-    <section aria-label={`${derivation.scene.title} scene`} className="graph-scene-route">
-      <h1>{derivation.scene.title}</h1>
-      <p aria-label="Derived graph topology summary" role="status">
-        {derivation.visibleNodes.length} nodes, {derivation.visibleEdges.length} edges, timeline step{" "}
-        {timelineState.eventIndex + 1}: {timelineState.activeEvent.label}
-      </p>
-      <PulseControls
-        isPlaying={timelinePlayback.isPlaying}
-        onPause={() => setTimelinePlayback(pauseTimeline)}
-        onPlay={() => setTimelinePlayback(playTimeline)}
-        onRestart={() => {
-          setTimelinePlayback(pauseTimeline);
-          updateState({ timelinePosition: 0 });
-        }}
-        onScrub={(position) => {
-          setTimelinePlayback((current) => scrubTimeline(current, position));
-          updateState({ timelinePosition: position });
-        }}
-        reducedMotion={reducedMotion}
-        semanticState={timelineState}
-        timeline={timeline}
-      />
-      <GraphCanvas
+    <section aria-label={`${derivation.scene.title} scene`} className="graph-scene-route flight-deck-scene">
+      <header className="scene-status-hud">
+        <h1>{derivation.scene.title}</h1>
+        <p aria-label="Derived graph topology summary" role="status">
+          {derivation.visibleNodes.length} nodes, {derivation.visibleEdges.length} edges, timeline step{" "}
+          {timelineState.eventIndex + 1}: {timelineState.activeEvent.label}
+        </p>
+      </header>
+      <div className="scene-graph-stage">
+        <GraphCanvas
         activePulseNodeIds={activePulseNodeIds}
         audience={audience}
         breadcrumbNodeIds={derivation.breadcrumbNodeIds}
@@ -464,11 +451,55 @@ export function GraphScene({
         traceMode={state.traceMode}
         visibleEdges={derivation.visibleEdges}
         visibleNodes={derivation.visibleNodes}
-      />
-      <PulseLayer
+        />
+        <PulseLayer
+          reducedMotion={reducedMotion}
+          semanticState={timelineState}
+          visibleEdges={derivation.visibleEdges}
+        />
+        <AccessibilityOutline
+          audience={audience}
+          expandedNodeIds={derivation.expandedNodeIds}
+          onCollapseNode={(nodeId) =>
+            handleCollapseNode(nodeId)
+          }
+          onExpandNode={(nodeId) =>
+            updateState({
+              expandedNodeIds: toggleExpandedNode(state.expandedNodeIds, nodeId),
+            })
+          }
+          onInspectEntity={(entityId) =>
+            updateState({ focusedEntityId: entityId, traceMode: "none" })
+          }
+          onIsolateEntity={(entityId) =>
+            updateState({
+              expandedNodeIds: [],
+              focusedEntityId: entityId,
+              traceMode: entityId.startsWith("node.") ? "isolate" : "none",
+            })
+          }
+          onSelectEntity={(entityId) =>
+            updateState({ focusedEntityId: entityId, traceMode: "none" })
+          }
+          visibleEdges={derivation.visibleEdges}
+          visibleNodes={derivation.visibleNodes}
+        />
+      </div>
+      <PulseControls
+        isPlaying={timelinePlayback.isPlaying}
+        onPause={() => setTimelinePlayback(pauseTimeline)}
+        onPlay={() => setTimelinePlayback(playTimeline)}
+        onRestart={() => {
+          setTimelinePlayback(pauseTimeline);
+          updateState({ timelinePosition: 0 });
+        }}
+        onScrub={(position) => {
+          setTimelinePlayback((current) => scrubTimeline(current, position));
+          updateState({ timelinePosition: position });
+        }}
         reducedMotion={reducedMotion}
         semanticState={timelineState}
-        visibleEdges={derivation.visibleEdges}
+        timeline={timeline}
       />
 
       <EvidenceDrawer
@@ -483,33 +514,6 @@ export function GraphScene({
         onClose={() => updateState({ focusedEntityId: null })}
       />
 
-      <AccessibilityOutline
-        audience={audience}
-        expandedNodeIds={derivation.expandedNodeIds}
-        onCollapseNode={(nodeId) =>
-          handleCollapseNode(nodeId)
-        }
-        onExpandNode={(nodeId) =>
-          updateState({
-            expandedNodeIds: toggleExpandedNode(state.expandedNodeIds, nodeId),
-          })
-        }
-        onInspectEntity={(entityId) =>
-          updateState({ focusedEntityId: entityId, traceMode: "none" })
-        }
-        onIsolateEntity={(entityId) =>
-          updateState({
-            expandedNodeIds: [],
-            focusedEntityId: entityId,
-            traceMode: entityId.startsWith("node.") ? "isolate" : "none",
-          })
-        }
-        onSelectEntity={(entityId) =>
-          updateState({ focusedEntityId: entityId, traceMode: "none" })
-        }
-        visibleEdges={derivation.visibleEdges}
-        visibleNodes={derivation.visibleNodes}
-      />
     </section>
   );
 }

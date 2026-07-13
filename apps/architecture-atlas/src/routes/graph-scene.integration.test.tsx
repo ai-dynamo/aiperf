@@ -128,7 +128,7 @@ describe("graph scene routes", () => {
       screen.getByRole("button", { name: "Show graph accessibility outline" }),
     );
     const outline = screen.getByRole("tree", { name: "Visible graph outline" });
-    const runtimeNodeItem = within(outline).getByRole("listitem", {
+    const runtimeNodeItem = within(outline).getByRole("treeitem", {
       name: "Node Runtime composition",
     });
 
@@ -178,7 +178,7 @@ describe("graph scene routes", () => {
     );
     const runtimeNodeItem = within(
       screen.getByRole("tree", { name: "Visible graph outline" }),
-    ).getByRole("listitem", { name: "Node Runtime composition" });
+    ).getByRole("treeitem", { name: "Node Runtime composition" });
     await user.click(
       within(runtimeNodeItem).getByRole("button", { name: "Collapse" }),
     );
@@ -220,7 +220,7 @@ describe("graph scene routes", () => {
       screen.getByRole("button", { name: "Show graph accessibility outline" }),
     );
     const outline = screen.getByRole("tree", { name: "Visible graph outline" });
-    const metricsItem = within(outline).getByRole("listitem", {
+    const metricsItem = within(outline).getByRole("treeitem", {
       name: "Node Metrics accumulator and telemetry producers",
     });
     await user.click(within(metricsItem).getByRole("button", { name: "Isolate" }));
