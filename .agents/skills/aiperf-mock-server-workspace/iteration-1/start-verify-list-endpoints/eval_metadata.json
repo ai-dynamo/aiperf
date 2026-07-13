@@ -1,0 +1,11 @@
+{
+  "eval_id": 2,
+  "eval_name": "start-verify-list-endpoints",
+  "prompt": "Start the rust mock inference server from this repo, make sure it's really up (not just that the command returned), and then tell me which HTTP endpoints it exposes.",
+  "assertions": [
+    {"text": "Performed an active liveness check against /health on 127.0.0.1", "type": "with_skill"},
+    {"text": "Did not report 'running' from mere command return — confirmed an actual HTTP response", "type": "with_skill"},
+    {"text": "Enumerated real routes grounded in the server: /v1/chat/completions plus at least 3 others (e.g. embeddings, rerank, tgi generate, metrics)", "type": "with_skill"},
+    {"text": "Used 127.0.0.1 rather than 'localhost'", "type": "with_skill"}
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "skill_name": "aiperf-mock-server",
+  "evals": [
+    {
+      "id": 0,
+      "name": "quick-chat-target-up",
+      "prompt": "I need a fake OpenAI-compatible LLM server running locally so I can hit /v1/chat/completions with curl and get a streaming response back. Get one up and confirm it's actually serving.",
+      "expected_output": "Builds/launches aiperf-mock-rs with --fast and --no-tokenizer, binds 127.0.0.1, verifies via /health and/or a real /v1/chat/completions curl, and confirms liveness rather than assuming it booted.",
+      "assertions": [
+        "Launched aiperf-mock-rs with --no-tokenizer to avoid a Hugging Face download",
+        "Targeted 127.0.0.1 (IPv4), not the literal 'localhost'",
+        "Used --fast (or otherwise chose an instant-latency mode) for a quick smoke target",
+        "Actively verified the server responded (a successful /health curl or a real /v1/chat/completions response) rather than assuming it booted"
+      ],
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "realistic-latency-for-aiperf",
+      "prompt": "I want to run `aiperf profile` against a local stand-in inference server that has realistic latency — something like 45ms to first token and 8ms per output token. Set the server up and show me the aiperf command to benchmark it.",
+      "expected_output": "Launches aiperf-mock-rs WITHOUT --fast, sets --ttft 45 and --itl 8, uses 127.0.0.1, and gives an aiperf profile command pointing --url at the mock with --model and --endpoint-type chat --streaming.",
+      "assertions": [
+        "Launched aiperf-mock-rs WITHOUT --fast, so realistic latency is retained",
+        "Set first-token latency to 45ms (--ttft 45 or MOCK_SERVER_TTFT=45)",
+        "Set inter-token latency to 8ms (--itl 8 or MOCK_SERVER_ITL=8)",
+        "Gave an aiperf profile command pointing --url/-u at http://127.0.0.1:<port>",
+        "aiperf command includes a model (--model/-m) and --endpoint-type chat with --streaming"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "start-verify-list-endpoints",
+      "prompt": "Start the rust mock inference server from this repo, make sure it's really up (not just that the command returned), and then tell me which HTTP endpoints it exposes.",
+      "expected_output": "Launches aiperf-mock-rs, does an active liveness check against /health on 127.0.0.1, and enumerates real routes (chat/completions, embeddings, rerank, tgi, metrics, etc.) grounded in the actual server.",
+      "assertions": [
+        "Performed an active liveness check against /health on 127.0.0.1",
+        "Did not report 'running' from mere command return — confirmed an actual HTTP response",
+        "Enumerated real routes grounded in the server: /v1/chat/completions plus at least 3 others (e.g. embeddings, rerank, tgi generate, metrics)",
+        "Used 127.0.0.1 rather than 'localhost'"
+      ],
+      "files": []
+    }
+  ]
+}

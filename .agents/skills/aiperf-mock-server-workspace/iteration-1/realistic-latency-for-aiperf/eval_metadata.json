@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "realistic-latency-for-aiperf",
+  "prompt": "I want to run `aiperf profile` against a local stand-in inference server that has realistic latency — something like 45ms to first token and 8ms per output token. Set the server up and show me the aiperf command to benchmark it.",
+  "assertions": [
+    {"text": "Launched aiperf-mock-rs WITHOUT --fast, so realistic latency is retained", "type": "with_skill"},
+    {"text": "Set first-token latency to 45ms (--ttft 45 or MOCK_SERVER_TTFT=45)", "type": "with_skill"},
+    {"text": "Set inter-token latency to 8ms (--itl 8 or MOCK_SERVER_ITL=8)", "type": "with_skill"},
+    {"text": "Gave an aiperf profile command pointing --url/-u at http://127.0.0.1:<port>", "type": "with_skill"},
+    {"text": "aiperf command includes a model (--model/-m) and --endpoint-type chat with --streaming", "type": "with_skill"}
+  ]
+}

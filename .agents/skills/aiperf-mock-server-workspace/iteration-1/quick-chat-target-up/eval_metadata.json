@@ -1,0 +1,11 @@
+{
+  "eval_id": 0,
+  "eval_name": "quick-chat-target-up",
+  "prompt": "I need a fake OpenAI-compatible LLM server running locally so I can hit /v1/chat/completions with curl and get a streaming response back. Get one up and confirm it's actually serving.",
+  "assertions": [
+    {"text": "Launched aiperf-mock-rs with --no-tokenizer to avoid a Hugging Face download", "type": "with_skill"},
+    {"text": "Targeted 127.0.0.1 (IPv4), not the literal 'localhost'", "type": "with_skill"},
+    {"text": "Used --fast (or otherwise chose an instant-latency mode) for a quick smoke target", "type": "with_skill"},
+    {"text": "Actively verified the server responded (a successful /health curl or a real /v1/chat/completions response) rather than assuming it booted", "type": "with_skill"}
+  ]
+}

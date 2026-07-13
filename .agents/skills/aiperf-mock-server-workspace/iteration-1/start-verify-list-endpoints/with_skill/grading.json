@@ -1,0 +1,8 @@
+{
+  "expectations": [
+    {"text": "Performed an active liveness check against /health on 127.0.0.1", "passed": true, "evidence": "Polled http://127.0.0.1:18030/health until 200; then curl -i showed HTTP/1.1 200 OK."},
+    {"text": "Did not report 'running' from mere command return — confirmed an actual HTTP response", "passed": true, "evidence": "Verified via /health 200, ss listening socket, startup log, and /v1/models response."},
+    {"text": "Enumerated real routes grounded in the server: /v1/chat/completions plus at least 3 others", "passed": true, "evidence": "Listed all 25 routes read from crates/mock-rs/src/app.rs (chat/completions, embeddings, rerank x3, tgi x2, images/multimodal/rag, metrics family)."},
+    {"text": "Used 127.0.0.1 rather than 'localhost'", "passed": true, "evidence": "All requests use 127.0.0.1; notes the IPv4-only bind."}
+  ]
+}
