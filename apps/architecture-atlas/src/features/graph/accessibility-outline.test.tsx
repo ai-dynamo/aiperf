@@ -117,6 +117,15 @@ describe("AccessibilityOutline", () => {
   it("exposes synchronized expansion state on expandable tree items", async () => {
     const user = userEvent.setup();
     const node = buildNode({ childIds: ["node.clock-seam"] });
+    const child = buildNode({
+      id: "node.clock-seam",
+      parentId: node.id,
+      title: {
+        executive: "Clock seam",
+        developer: "Clock seam",
+        maintainer: "Clock seam",
+      },
+    });
     const { rerender } = render(
       <AccessibilityOutline
         audience="developer"
@@ -127,14 +136,20 @@ describe("AccessibilityOutline", () => {
         onIsolateEntity={() => {}}
         onSelectEntity={() => {}}
         visibleEdges={[]}
-        visibleNodes={[node]}
+        visibleNodes={[node, child]}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: "Show graph accessibility outline" }));
-    expect(
-      screen.getByRole("treeitem", { name: "Node Runtime composition" }),
-    ).toHaveAttribute("aria-expanded", "false");
+    const runtimeTreeItem = screen.getByRole("treeitem", {
+      name: "Node Runtime composition",
+    });
+    expect(runtimeTreeItem).toHaveAttribute("aria-expanded", "false");
+    expect(runtimeTreeItem).toHaveAttribute("aria-level", "1");
+    expect(screen.getByRole("treeitem", { name: "Node Clock seam" })).toHaveAttribute(
+      "aria-level",
+      "2",
+    );
 
     rerender(
       <AccessibilityOutline
@@ -146,7 +161,7 @@ describe("AccessibilityOutline", () => {
         onIsolateEntity={() => {}}
         onSelectEntity={() => {}}
         visibleEdges={[]}
-        visibleNodes={[node]}
+        visibleNodes={[node, child]}
       />,
     );
     expect(

@@ -2107,6 +2107,10 @@
     position: absolute;
     inset: 0 0 auto auto;
     z-index: 2;
+    display: grid;
+    place-items: center;
+    min-inline-size: 2.75rem;
+    min-block-size: 1.5rem;
     padding: 0.18rem 0.35rem;
     border: 1px solid var(--panel-border);
     border-radius: 0 0 0 0.35rem;
@@ -2953,21 +2957,95 @@
 
   .story-fan {
     display: grid;
-    grid-template-columns: minmax(9rem, 13rem) 1fr;
-    gap: clamp(var(--space-4), 2.5vw, var(--space-6));
-    align-items: center;
+    grid-template-columns: minmax(9rem, 12rem) minmax(2.5rem, 4rem) minmax(0, 1fr);
+    gap: 0;
+    align-items: stretch;
+    min-block-size: 12rem;
+  }
+
+  .story-config-compare {
+    display: grid;
+    grid-template-columns: minmax(9rem, 12rem) minmax(2.5rem, 4rem) minmax(0, 1fr);
+    gap: 0;
+    align-items: stretch;
+    min-block-size: 12rem;
+  }
+
+  .story-config-hub {
+    align-self: center;
+  }
+
+  .story-config-modes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: var(--space-3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    align-content: center;
+  }
+
+  .story-config-mode {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-control);
+    border: 1px solid var(--line-subtle);
+    background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  }
+
+  .story-config-mode[data-mode="cli"] .story-impl-tag {
+    color: color-mix(in srgb, var(--accent-control) 90%, white);
+    background: color-mix(in srgb, var(--accent-control) 20%, transparent);
+  }
+
+  .story-config-mode[data-mode="yaml"] .story-impl-tag {
+    color: color-mix(in srgb, var(--accent-rust) 90%, white);
+    background: color-mix(in srgb, var(--accent-rust) 20%, transparent);
+  }
+
+  .story-config-snippet {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: calc(var(--radius-control) - 0.1rem);
+    background: color-mix(in srgb, var(--surface-canvas) 88%, transparent);
+    overflow-x: auto;
+  }
+
+  .story-config-snippet code {
+    font-family: var(--font-data);
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    white-space: pre;
   }
 
   .story-hub {
     position: relative;
+    align-self: center;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
     padding: var(--space-4);
     border-radius: var(--radius-panel);
-    border: 1px solid color-mix(in srgb, var(--story-accent) 50%, transparent);
+    border: 1px solid color-mix(in srgb, var(--story-accent) 45%, var(--line-subtle));
     background: color-mix(in srgb, var(--story-accent) 14%, var(--surface-canvas));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--story-accent) 22%, transparent);
+    box-shadow: var(--shadow-1);
+  }
+
+  .story-fan-arrows {
+    inline-size: 100%;
+    block-size: 100%;
+    min-block-size: 100%;
+    color: color-mix(in srgb, var(--story-accent) 78%, white);
+    overflow: visible;
+  }
+
+  .story-fan-path {
+    stroke: currentColor;
+    stroke-width: 1.75;
+    vector-effect: non-scaling-stroke;
   }
 
   .story-hub-kind {
@@ -3007,7 +3085,6 @@
     padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-control);
     border: 1px solid var(--line-subtle);
-    border-inline-start: 3px solid var(--story-accent);
     background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
     transition:
       transform 0.16s ease,
@@ -3067,25 +3144,26 @@
     word-break: break-all;
   }
 
-  /* Narrative focus strip (chapters without a trait) */
+  /* Narrative focus flow (chapters without a trait) */
   .story-focus {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: var(--space-3);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    max-inline-size: 22rem;
+    margin-inline: auto;
   }
 
   .story-focus-node {
     display: grid;
     place-items: center;
     padding: var(--space-3) var(--space-4);
-    min-block-size: 3.5rem;
+    min-block-size: 3.25rem;
     border-radius: var(--radius-control);
     border: 1px solid var(--line-subtle);
     background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
     font-family: var(--font-data);
-    font-size: 0.82rem;
+    font-size: 0.85rem;
     font-weight: 600;
     text-align: center;
     color: var(--text-secondary);
@@ -3104,8 +3182,9 @@
   }
 
   .story-focus-arrow {
-    inline-size: 1.4rem;
-    block-size: 2px;
+    inline-size: 2px;
+    block-size: 1.3rem;
+    margin-inline: auto;
     background: var(--line-strong);
     position: relative;
   }
@@ -3113,10 +3192,10 @@
   .story-focus-arrow::after {
     content: "";
     position: absolute;
-    inset-inline-end: -1px;
-    inset-block-start: -3px;
-    border-block: 4px solid transparent;
-    border-inline-start: 6px solid var(--line-strong);
+    inset-inline-start: -3px;
+    inset-block-end: -1px;
+    border-inline: 4px solid transparent;
+    border-block-start: 6px solid var(--line-strong);
   }
 
   /* Bottom controls */

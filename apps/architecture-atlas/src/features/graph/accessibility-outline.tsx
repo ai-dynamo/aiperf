@@ -80,6 +80,21 @@ export function AccessibilityOutline({
     () => new Map(visibleNodes.map((node) => [node.id, node])),
     [visibleNodes],
   );
+  const outlineLevel = (node: GraphNode): number => {
+    const visited = new Set([node.id]);
+    let level = 1;
+    let parentId = node.parentId;
+    while (parentId) {
+      const parent = nodeById.get(parentId);
+      if (!parent || visited.has(parent.id)) {
+        break;
+      }
+      visited.add(parent.id);
+      level += 1;
+      parentId = parent.parentId;
+    }
+    return level;
+  };
 
   return (
     <section aria-label="Graph accessibility outline" className="graph-outline-overlay">
@@ -100,6 +115,7 @@ export function AccessibilityOutline({
               <li
                 aria-expanded={node.childIds.length > 0 ? isExpanded : undefined}
                 aria-label={`Node ${title}`}
+                aria-level={outlineLevel(node)}
                 key={node.id}
                 onKeyDown={(event) =>
                   keyAction(event, {
@@ -145,6 +161,7 @@ export function AccessibilityOutline({
             return (
               <li
                 aria-label={`Edge ${edgeLabel}`}
+                aria-level={1}
                 key={edge.id}
                 onKeyDown={(event) =>
                   keyAction(event, {
