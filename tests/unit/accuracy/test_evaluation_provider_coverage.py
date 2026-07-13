@@ -62,7 +62,7 @@ def test_coverage_manifest_enumerates_every_static_registry_entry() -> None:
     assert len(by_id) == len(entries)
 
     registrations = legacy_worker._REGISTRATIONS
-    assert set(by_id) == {*registrations, "mmlu-pro"}
+    assert set(by_id) == set(registrations)
     plugin_entries = tuple(
         entry
         for entry in plugins.list_entries(PluginType.ACCURACY_BENCHMARK)
@@ -81,11 +81,9 @@ def test_coverage_manifest_enumerates_every_static_registry_entry() -> None:
         assert entry["legacy_execution_path"] == registration.benchmark_class
         assert entry["legacy_grading_path"] == registration.grader_class
 
-    mmlu_pro = by_id["mmlu-pro"]
-    assert mmlu_pro["plugin_registry_id"] is None
-    assert mmlu_pro["legacy_authority"] == (
-        "aiperf.accuracy.worker:AccuracyWorker._load_mmlu_pro"
-    )
+    # MMLU-Pro is now the custom TIGER-Lab benchmark registered in
+    # _REGISTRATIONS (MMLUProBenchmark + MMLUProGrader), covered by the loop
+    # above; it is no longer the special-cased lighteval _load_mmlu_pro path.
     _assert_explicit_retention(entries)
 
 

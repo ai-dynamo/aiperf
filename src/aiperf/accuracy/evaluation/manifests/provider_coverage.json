@@ -192,13 +192,13 @@
     },
     {
       "canonical_registry_id": "mmlu-pro",
-      "deletion_gate": "A stock evaluator pair must reproduce the pinned Lighteval MMLU-Pro registry task, subject filtering, few-shot prompts, task-native metrics, aggregates, and artifacts before this special legacy path can be deleted.",
-      "legacy_authority": "aiperf.accuracy.worker:AccuracyWorker._load_mmlu_pro",
-      "legacy_execution_path": "aiperf.accuracy.worker:AccuracyWorker._load_mmlu_pro",
-      "legacy_grading_path": "lighteval.tasks.lighteval_task:LightevalTask.metrics",
+      "deletion_gate": "A stock evaluator pair must reproduce the TIGER-Lab MMLU-Pro benchmark: 14 categories, up to 10 options (A-J), chain-of-thought prompts, the answer-extraction cascade, aggregates, and artifacts before the legacy benchmark can be deleted.",
+      "legacy_authority": "aiperf.accuracy.worker:_REGISTRATIONS",
+      "legacy_execution_path": "aiperf.accuracy.benchmarks.mmlu_pro:MMLUProBenchmark",
+      "legacy_grading_path": "aiperf.accuracy.graders.mmlu_pro:MMLUProGrader",
       "migrated_canary_coverage_ids": [],
-      "plugin_registry_id": null,
-      "retention_reason": "No exact external evaluator-provider parity proof exists for the worker's special MMLU-Pro registry path.",
+      "plugin_registry_id": "mmlu_pro",
+      "retention_reason": "No exact external evaluator-provider parity proof exists for MMLU-Pro.",
       "status": "legacy_retained"
     }
   ]

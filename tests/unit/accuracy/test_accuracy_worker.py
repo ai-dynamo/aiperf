@@ -204,19 +204,45 @@ def test_locked_environment_mismatch_is_an_infrastructure_error(
 
 
 @pytest.mark.asyncio
-async def test_mmlu_pro_rejects_grader_override_before_benchmark_setup(
+async def test_mmlu_pro_routes_through_inherited_loader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # MMLU-Pro is now the custom TIGER-Lab benchmark (MMLUProBenchmark +
+    # MMLUProGrader) loaded via the standard registration path, not the old
+    # lighteval special case. It routes through _load_inherited like any
+    # other benchmark and accepts a grader override.
     monkeypatch.setattr(worker_module, "_verify_locked_environment", lambda: None)
+    captured: list[tuple[str, str | None]] = []
     worker = AccuracyWorker()
-    with pytest.raises(ValueError, match="pinned Lighteval task metrics"):
-        await worker.load(
-            {
-                "benchmark": "mmlu-pro",
-                "config": {},
-                "grader": "exact_match",
-            }
-        )
+
+    async def load_inherited(
+        benchmark: str, _config: dict[str, Any], grader: str | None
+    ) -> None:
+        captured.append((benchmark, grader))
+        worker._problems = [
+            _Problem(
+                problem_id="opaque",
+                task="math",
+                prompt="prompt",
+                messages=[{"role": "user", "content": "prompt"}],
+                generation={
+                    "max_tokens": 4000,
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                },
+                ground_truth="B",
+            )
+        ]
+        worker._dataset_identity = {
+            "provider": "fixture",
+            "revision": "fixture-revision",
+            "evaluation_splits": ["validation", "test"],
+        }
+
+    monkeypatch.setattr(worker, "_load_inherited", load_inherited)
+    result = await worker.load({"benchmark": "mmlu-pro", "config": {}})
+    assert captured == [("mmlu-pro", None)]
+    assert result["problem_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -274,99 +300,6 @@ def test_dynamic_subset_identity_is_explicit() -> None:
         worker_module._resolved_subset("bigbench", registration, None)
         == "all canonical task subsets"
     )
-
-
-@pytest.mark.asyncio
-async def test_mmlu_pro_delegates_prompt_dataset_and_metric_to_lighteval(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    doc = SimpleNamespace(
-        id="0",
-        generation_size=99,
-        stop_sequences=["Question:"],
-    )
-
-    class Metric:
-        def compute_sample(self, *, doc: Any, model_response: Any) -> dict[str, float]:
-            assert doc is not None
-            return {
-                "extractive_match": 1.0
-                if model_response.text == ["The answer is (B)"]
-                else 0.0
-            }
-
-    task = SimpleNamespace(
-        evaluation_split=("test",),
-        dataset={"test": [{"category": "math"}]},
-        metrics=[Metric()],
-        dataset_path="TIGER-Lab/MMLU-Pro",
-        dataset_config_name="default",
-        dataset_revision="3373e0b32277875b8db2aa555a333b78a08477ea",
-        version=1,
-        get_docs=lambda max_samples=None: [doc][:max_samples],
-    )
-
-    class Registry:
-        def __init__(self, *, tasks: str) -> None:
-            assert tasks == "mmlu_pro|0"
-
-        def load_tasks(self) -> dict[str, Any]:
-            return {"mmlu_pro|0": task}
-
-    class LightevalTask:
-        @staticmethod
-        def load_datasets(
-            tasks: dict[str, Any], dataset_loading_processes: int
-        ) -> None:
-            assert tasks == {"mmlu_pro|0": task}
-            assert dataset_loading_processes == 1
-
-    class PromptManager:
-        def __init__(
-            self, *, use_chat_template: bool, system_prompt: str | None
-        ) -> None:
-            assert use_chat_template is False
-            assert system_prompt is None
-
-        def prepare_prompt_api(self, _doc: Any) -> list[dict[str, str]]:
-            return [{"role": "user", "content": "canonical prompt"}]
-
-        def prepare_prompt(self, _doc: Any) -> str:
-            return "canonical prompt"
-
-    class ModelResponse:
-        def __init__(self, *, text: list[str]) -> None:
-            self.text = text
-
-    modules = {
-        "lighteval.tasks.lighteval_task": {"LightevalTask": LightevalTask},
-        "lighteval.tasks.prompt_manager": {"PromptManager": PromptManager},
-        "lighteval.tasks.registry": {"Registry": Registry},
-        "lighteval.models.model_output": {"ModelResponse": ModelResponse},
-    }
-    for name, attributes in modules.items():
-        module = ModuleType(name)
-        for attribute, value in attributes.items():
-            setattr(module, attribute, value)
-        monkeypatch.setitem(sys.modules, name, module)
-
-    worker = AccuracyWorker()
-    await worker._load_mmlu_pro({"max_problems": 1})
-    assert worker._dataset_identity["revision"] == task.dataset_revision
-    problem = worker._problems[0]
-    assert problem.problem_id.startswith("mmlu-pro:00000000:")
-    assert problem.messages == [{"role": "user", "content": "canonical prompt"}]
-    assert problem.generation["max_tokens"] == 99
-    grade = await worker._grade_one(problem, "The answer is (B)")
-    assert grade["correct"] is True
-    assert grade["confidence"] == 1.0
-
-
-@pytest.mark.asyncio
-async def test_mmlu_pro_rejects_lighteval_broken_nonzero_shot_prompts() -> None:
-    worker = AccuracyWorker()
-    with pytest.raises(ValueError, match="canonical only at n_shots=0"):
-        await worker._load_mmlu_pro({"n_shots": 5})
 
 
 @pytest.mark.asyncio

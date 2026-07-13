@@ -234,9 +234,9 @@ def test_stock_product_pairs_and_schema_fingerprints_are_exact() -> None:
         assert set(environment).isdisjoint(
             {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "OPENAI_API_KEY"}
         )
-        assert environment["HOME"].startswith("/staging/")
-        assert environment["TMPDIR"].startswith("/staging/")
-        assert environment["XDG_DATA_HOME"].startswith("/staging/")
+        assert environment["HOME"] == "/work"
+        assert environment["TMPDIR"] == "/work"
+        assert environment["XDG_DATA_HOME"] == "/work"
 
 
 def test_control_bootstrap_requires_isolated_no_site_safe_path() -> None:
@@ -258,10 +258,10 @@ def test_control_bootstrap_is_embedded_and_hashed_in_every_stock_closure() -> No
     stock = canonical_loads(_STOCK_MANIFEST.read_bytes(), max_bytes=8 * 1024 * 1024)
     expected_closures = {
         NEMO_EVALUATOR_DISTRIBUTION.distribution_id: (
-            "6e663e2e17612e015266bd7007d3b166653551ae6f60f1c3dc4768a25e51ecef"
+            "57afc1ab34aa0feb085e1fa7affa1cae88b2c367cbdd3c21b52196c9edc3f88c"
         ),
         OPENBENCH_DISTRIBUTION.distribution_id: (
-            "9c5c972df2903dbf3c01a684843b8965b8adfd5b8af17461a25c7ce094cd0768"
+            "30ed9869db359b0c7c51a7b8ab0c5929bd8b6bc9f61226dfdbb5f8d8c33b2af0"
         ),
     }
     for entry in stock["distributions"]:
@@ -275,7 +275,7 @@ def test_control_bootstrap_is_embedded_and_hashed_in_every_stock_closure() -> No
         assert embedded["artifact_content_sha256"] == digest
         assert base64.b64decode(embedded["content_base64"], validate=True) == content
         assert entry["worker_source_sha256"] == (
-            "d763d412cd3150df66bc1a0c958df309848e9a4f9c3f3fb741a57ee912f671f0"
+            "14cc2950252d6b37e05db1f253ff424913f06437ab1e92c64978f90763f8c4ad"
         )
         assert entry["launch_closure_sha256"] == expected_closures[
             entry["distribution_id"]
