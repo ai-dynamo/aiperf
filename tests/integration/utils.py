@@ -188,6 +188,36 @@ def _check_mp4_fragmentation(video_bytes: bytes) -> bool:
     return b"moof" in video_bytes[:header_size]
 
 
+def probe_container_duration_without_decode(base64_data: str) -> float | None:
+    """Return the container-level duration ffprobe reports without decoding frames.
+
+    Mirrors what a metadata-only frame sampler (e.g. vLLM's video loader) sees:
+    it omits ``-count_frames``, so the value comes purely from the muxed
+    container/stream headers rather than a full decode. Returns ``None`` when
+    no duration is recorded (the failure mode this guards against).
+    """
+    video_bytes = base64.b64decode(base64_data)
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration:stream=duration",
+        "-of",
+        "json",
+        "pipe:0",
+    ]
+    result = subprocess.run(cmd, input=video_bytes, capture_output=True, check=True)
+    probe_data = orjson.loads(result.stdout)
+
+    candidates = [probe_data.get("format", {}).get("duration")]
+    candidates += [s.get("duration") for s in probe_data.get("streams", [])]
+    for value in candidates:
+        if value not in (None, "N/A"):
+            return float(value)
+    return None
+
+
 def extract_base64_video_details(base64_data: str) -> VideoDetails:
     """Decode base64 video data and extract file details using ffprobe via stdin.
 
