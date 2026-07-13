@@ -791,6 +791,15 @@ impl MetricsAccumulator {
     }
 
     fn compute_usage_differences(&mut self, row: usize) {
+        // The client-vs-server diff metrics only mean something when the client
+        // does its own tokenization. Under `use_server_token_count` the server
+        // count is authoritative and overwrites the local input count, so every
+        // difference collapses to a meaningless zero. Python disallows the
+        // `USAGE_DIFF_ONLY` metric family in that mode
+        // (`base_metrics_processor.py`), so the tags must be absent, not zero.
+        if self.config.use_server_token_count {
+            return;
+        }
         let prompt = percent_difference(
             self.store.metric_f64(row, MetricTag::UsagePromptTokens),
             self.store.metric_f64(row, MetricTag::InputSequenceLength),

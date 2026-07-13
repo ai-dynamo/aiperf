@@ -699,9 +699,14 @@ impl OnlineTokenizerSourceResolver for HfHubOnlineTokenizerSourceResolver {
 }
 
 fn validate_repository_id(value: &str) -> Result<()> {
+    // Hugging Face repository IDs are either `namespace/name` or a bare
+    // canonical/legacy model id with no namespace (`gpt2`, `bert-base-uncased`,
+    // `t5-small`). Both are valid `hf-hub` repos, so accept one or more
+    // segments; only reject empty segments and path-traversal components (local
+    // paths and tiktoken encodings are already resolved before this point).
     let segments = value.split('/').collect::<Vec<_>>();
     ensure!(
-        segments.len() >= 2
+        !value.is_empty()
             && segments
                 .iter()
                 .all(|segment| { !segment.is_empty() && *segment != "." && *segment != ".." }),
