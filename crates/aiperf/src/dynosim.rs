@@ -458,7 +458,7 @@ impl OfflineEngineConfig {
         #[cfg(feature = "dynamo-aic-forward-pass")]
         {
             let mut args = args;
-            let estimator = dynamo_mocker::common::aic_runtime::configure_aic_runtime(&mut args)?;
+            let estimator = crate::aic_runtime::configure_aic_runtime(&mut args)?;
             Ok((args, estimator))
         }
         #[cfg(not(feature = "dynamo-aic-forward-pass"))]

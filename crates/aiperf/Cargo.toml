@@ -13,13 +13,14 @@ default = []
 # Requires the sibling `dynamo-aiperf-native/lib/mocker` checkout. Its runtime
 # integration stays out of default builds.
 dynosim = ["dep:dynamo-mocker"]
-# Forward every optional Dynamo Mocker capability independently so embedders can
-# pay only for the runtime surface they exercise. `dynamo-full` is the explicit
-# build gate used by the complete DynoSim/Mocker capability suite.
-dynamo-router-runtime = ["dynosim", "dynamo-mocker/router-runtime"]
-dynamo-zmq-events = ["dynosim", "dynamo-mocker/zmq-events"]
+# Forward the mocker's optional capabilities. The mocker now always builds with
+# the runtime router and ZMQ publisher, so `dynamo-router-runtime` /
+# `dynamo-zmq-events` are retained as no-op aliases of `dynosim` (the runner's
+# capability enum still names them). `dynamo-full` is the complete gate.
+dynamo-router-runtime = ["dynosim"]
+dynamo-zmq-events = ["dynosim"]
 dynamo-kvbm-offload = ["dynosim", "dynamo-mocker/kvbm-offload"]
-dynamo-aic-forward-pass = ["dynosim", "dynamo-mocker/aic-forward-pass"]
+dynamo-aic-forward-pass = ["dynosim", "dep:aiconfigurator-core", "dep:pyo3", "dep:dynamo-kv-router", "dep:parking_lot"]
 dynamo-profile = ["dynosim", "dynamo-mocker/profile"]
 dynamo-full = [
     "dynamo-router-runtime",
@@ -64,3 +65,9 @@ tracing.workspace = true
 uuid.workspace = true
 url.workspace = true
 dynamo-mocker = { path = "../../../../../dynamo-aiperf-native/lib/mocker", optional = true, default-features = false }
+# AIC timing bridge (feature `dynamo-aic-forward-pass`): the embedded-Python AIC
+# runtime lives here in the consumer, not in the pure-Rust mocker.
+dynamo-kv-router = { path = "../../../../../dynamo-aiperf-native/lib/kv-router", default-features = false, optional = true }
+aiconfigurator-core = { git = "https://github.com/ai-dynamo/aiconfigurator.git", rev = "ffbab15797d3a3f14c382e937c0ab0c1c5cbc530", package = "aiconfigurator-core", features = ["embed-python"], optional = true }
+pyo3 = { version = "0.23.4", features = ["auto-initialize"], optional = true }
+parking_lot = { version = "0.12", optional = true }

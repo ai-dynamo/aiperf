@@ -25,6 +25,8 @@ pub mod adaptive;
 pub mod agentic;
 pub mod agentic_gateway;
 pub mod ancillary;
+#[cfg(feature = "dynamo-aic-forward-pass")]
+pub mod aic_runtime;
 #[cfg(feature = "dynosim")]
 pub mod dynosim;
 pub mod evaluation;

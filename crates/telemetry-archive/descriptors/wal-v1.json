@@ -1,1 +1,0 @@
-{"crc32c":"castagnoli-reflected-init-ffffffff-xor-ffffffff-u32-be","frame_length":"u64-be-counts-header-through-crc","name":"wal-v1","prefix":"domain-separated-previous-prefix-record-seq-frame-digest","version":1}
