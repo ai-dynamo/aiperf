@@ -118,7 +118,7 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def scheduled_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("http", "scheduled")
+    assert "http" in installation.capabilities.get("transport", {})
     return installation
 
 
@@ -221,8 +221,8 @@ def test_python_config_v2_reaches_live_worker_without_v1_or_early_artifacts(
         assert len(captured) == 1
         request, completed = captured[0]
         assert request["protocol_version"] == 2
-        assert request["run"]["workload"]["type"] == "scheduled"
-        live = request["run"]["resources"]["sidecars"]["live_streaming"]
+        assert request["run"]["cfg"]["datasets"][0]["type"] == "synthetic"
+        live = request["run"]["cfg"]["sidecars"]["live_streaming"]
         assert live["worker_module"] == (
             "aiperf.post_processors.native_streaming_worker"
         )

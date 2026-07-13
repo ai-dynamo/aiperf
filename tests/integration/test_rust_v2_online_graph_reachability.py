@@ -115,7 +115,7 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def online_graph_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("http", "graph")
+    assert "http" in installation.capabilities.get("transport", {})
     return installation
 
 
@@ -355,8 +355,8 @@ def test_python_config_v2_graph_uses_shared_phase_ramp_adaptive_and_session_poli
         )
 
         assert request["protocol_version"] == 2
-        assert request["run"]["workload"]["type"] == "graph"
-        projected_phases = request["run"]["workload"]["config"]["phases"]
+        assert request["run"]["cfg"]["datasets"][0]["format"] == "dag_jsonl"
+        projected_phases = request["run"]["cfg"]["phases"]
         assert projected_phases[0]["seamless"] is False
         assert projected_phases[1]["seamless"] is True
         assert projected_phases[0]["concurrency_ramp"] == {

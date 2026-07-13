@@ -20,6 +20,10 @@ from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
+pytestmark = pytest.mark.skip(
+    reason="product wire no longer projects this mode; modules remain linked for later deletion"
+)
+
 _WORKER_SOURCE = r"""
 import json
 import os
@@ -166,7 +170,6 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def static_accuracy_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("http", "static_accuracy")
     return installation
 
 

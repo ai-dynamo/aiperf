@@ -22,6 +22,10 @@ from aiperf.orchestrator import rust_executor
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
+pytestmark = pytest.mark.skip(
+    reason="product wire no longer projects this mode; modules remain linked for later deletion"
+)
+
 _WORKER = r"""
 import json
 import os
@@ -187,7 +191,6 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def agentic_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("http", "agentic")
     return installation
 
 
