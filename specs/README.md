@@ -83,6 +83,23 @@ Reading order for a newcomer: the **ledger** first (it frames scope), then the
 | `2026-07-11-aiperf-rust-endpoints-design.md` | built behavior + ownership/token-native addenda | Faithful trait-backed dialect behavior includes every tier-1/tier-2 adapter plus the open protocol-v2 `vllm_generate` token-in/token-out factory, exact raw-array accounting, and non-text output-token observations. `aiperf-transport-http` owns multipart encoding, Clock-paced video polling/download, inline-media retrieval/deduplication, endpoint streaming paths, and post-send cancellation across the full lifecycle. Its static identity/table and Python-parity configuration ownership are superseded by the runner-owned endpoint-registry design. |
 | `2026-07-10-aiperf-rust-rng-derive-system-design.md` | built + addenda | Native hash-derived RNG substrate built as leaf crate `aiperf-rng`: `RngRoot::derive` + BLAKE3 seed derivation, canonical namespace constants, alloc-free `HashIdRandomGenerator`, `RandomGenerator`, generic sampler seams, five sampling distributions, and sequence distributions. Internal reproducibility uses deterministic `Pcg64` + `rand_distr`, not cross-language byte parity. Dataset composition/samplers, ancillary timing, and graph phase/arrival/node-cancellation/worker streams consume it; broader non-graph scheduler integration remains. |
 
+### Track A — measurement-path refactor (planning; not built)
+
+Implementation design set (adversarially hardened, each with a verified scratch
+compile) for lifting the product's ~100k req/s ceiling and de-duplicating the
+online measurement path, plus the cellular-ready extensibility roadmap. **Not yet
+reflected in `crates/`.** Start with the implementation plan.
+
+| Spec | Status | Purpose |
+|---|---|---|
+| `2026-07-12-track-a-implementation.md` | planning | Sequenced PR plan: PR1 `RunCapture` uuid-keyed join → PR2 A1 worker-local accumulation → PR3 A3 connector / PR4 A4 lean → PR5 A2 compat projection. Locks the single-issuer / globally-unique `request_index` / records-first decisions. **Read first.** |
+| `2026-07-12-track-a-regression-harnesses.md` | planning | Five regression gates: metric value-parity matrix (SimClock byte-exact + real-mock banded), merge determinism, throughput regression+win, connector correctness, cross-mode/transport parity. Two-tier golden fixes the RealClock determinism blocker. |
+| `2026-07-12-scheduled-worker-local-accumulation.md` | planning | **A1** (the perf lever): per-worker `NativeMetricsObserver`, records-first re-ingest in global dispatch-index order, delete the single-coordinator `BufferedObserver` replay. Load-bearing refactor is the `RunCapture` uuid-keyed join. |
+| `2026-07-12-http-connector-seam-uds-duplex.md` | planning | **A3**: extract a `Connector` trait (`Tcp`/`Uds`/`Duplex`), scheme-selected at endpoint prepare — UDS as a connection impl, not a peer transport. Escapes the TCP-loopback softirq cap; `Duplex` gives a hermetic in-process mock. |
+| `2026-07-12-lean-per-request-hotpath.md` | planning | **A4**: batched classified-token `RequestObserver` hook (one lookup/request), interned constant dimensions, retention/ICL gate. Confines to localized + one backward-compatible `loadgen-core` seam. |
+| `2026-07-12-single-observer-compat-projection.md` | planning | **A2** (last): derive the legacy `TraceSimulationReport` from the native accumulator's retained records (records-first — nearest-rank percentiles + credit-issued time base), removing the parallel `CollectorObserver`. Library/offline dedup. |
+| `2026-07-12-cellular-ready-seams-and-roadmap.md` | planning | Umbrella: five seams (`IssuanceAuthority`, `RecordsShard`/`ColumnStorePartition`, `MetricsHeartbeat` t-digest sketch, `(cell_id, cell_count)` derivation) encoded now with only the basic single-process case built; two-hop roadmap (extract seams → drop in cross-node autonomous impls) aligned to the aiperf-v2 cellular runtime. Transport/deployment-neutral. |
+
 ### Historical precursors
 
 These predate the standalone `crates/` workspace and describe a **different**
