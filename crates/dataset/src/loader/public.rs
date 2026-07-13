@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Public/Hugging Face and ShareGPT dataset formats.
+//! Public/Hugging Face, ShareGPT, and accuracy dataset formats.
 //!
 //! Converters are grounded in `src/aiperf/dataset/loader/sharegpt.py:24-217`,
 //! `hf_instruction_response.py:14-128`, `hf_conversation.py:14-282`,
-//! `mt_bench.py:13-89`, `mmvu.py:13-98`, and `spec_bench.py:15-97`.
-//! Remote Hugging Face rows use the
+//! `mt_bench.py:13-89`, `mmvu.py:13-98`, `spec_bench.py:15-97`, and
+//! `accuracy_dataset_loader.py:21-150`. Remote Hugging Face rows use the
 //! documented Dataset Viewer `/rows` API in pages of at most 100. Revision-pinned
 //! sources resolve the Hub revision to an immutable commit and decode the
 //! repository's Parquet/JSON/JSONL/CSV artifacts directly.
 
+use aiperf_endpoints::extract_payload;
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -26,10 +27,18 @@ use crate::error::{DatasetError, Result};
 use crate::loader::{
     DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow, RowOrigin, jsonl_rows,
 };
-use crate::model::{ContentGroup, Conversation, MediaKind, Turn};
+use crate::model::{
+    AccuracyAssociation, ContentGroup, Conversation, CorrelationId, MediaKind, SessionId, Turn,
+};
 use crate::segment::{Role, SegmentPool};
 use crate::tokenizer::TextTokenizer;
 
+/// Accuracy benchmark problem loader.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AccuracyDatasetLoader;
+/// Accuracy problem composer.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AccuracyComposer;
 /// ShareGPT JSON loader.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ShareGptDatasetLoader;
@@ -96,6 +105,9 @@ macro_rules! public_loader {
     };
 }
 
+public_loader!(AccuracyDatasetLoader, "accuracy", |value: &Value| {
+    value.get("prompt").is_some() && value.get("task").is_some()
+});
 public_loader!(ShareGptDatasetLoader, "sharegpt", |value: &Value| {
     value.get("conversations").is_some_and(Value::is_array)
 });
@@ -121,6 +133,120 @@ public_loader!(SpecBenchDatasetLoader, "spec_bench", |value: &Value| {
 public_loader!(SpeedBenchDatasetLoader, "speed_bench", |value: &Value| {
     is_speed_bench(value)
 });
+
+impl Composer for AccuracyComposer {
+    fn compose(
+        &self,
+        rows: Vec<RawRow>,
+        config: &ComposeConfig,
+        tokenizer: &dyn TextTokenizer,
+        segments: &mut SegmentPool,
+    ) -> Result<Vec<Conversation>> {
+        if rows.is_empty() {
+            return Err(DatasetError::Validation(
+                "accuracy benchmark returned zero problems".into(),
+            ));
+        }
+        let system_prompt = string_option(config, "accuracy_system_prompt");
+        let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
+        let mut finalizer = config.finalizer()?;
+        let mut conversations = Vec::with_capacity(rows.len());
+        for row in rows {
+            let object = require_object(&row.value, &row.origin)?;
+            let prompt = required_string(object, "prompt", &row.origin)?;
+            let task = required_string(object, "task", &row.origin)?;
+            let session_id = object
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(SessionId::from)
+                .unwrap_or_else(|| ids.next_id());
+            let correlation_id = object
+                .get("correlation_id")
+                .and_then(Value::as_str)
+                .map(CorrelationId::from)
+                .unwrap_or_else(|| CorrelationId::from(session_id.as_str()));
+            let mut messages = object
+                .get("raw_messages")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([{"role":"user","content":prompt}]));
+            let messages_array = messages.as_array_mut().ok_or_else(|| {
+                DatasetError::Validation(format!("{}: raw_messages must be an array", row.origin))
+            })?;
+            if let Some(system) = &system_prompt {
+                messages_array.insert(0, serde_json::json!({"role":"system","content":system}));
+            }
+            validate_message_values(messages_array, &row.origin)?;
+            let message_wire = Bytes::from(serde_json::to_vec(&messages)?);
+            let raw_messages = segments.intern_raw(None, message_wire)?;
+            let prompt_text = system_prompt.as_ref().map_or_else(
+                || prompt.to_string(),
+                |system| format!("{system}\n\n{prompt}"),
+            );
+            let prompt_tokens = tokenizer.encode(&prompt_text)?;
+            let text = segments.intern_text(
+                Some(raw_messages),
+                "user",
+                Bytes::from(prompt_text),
+                prompt_tokens.clone().into_boxed_slice(),
+            )?;
+            let extra_body = object
+                .get("extra_body")
+                .map(|value| {
+                    if !value.is_object() {
+                        return Err(DatasetError::Validation(format!(
+                            "{}: extra_body must be an object",
+                            row.origin
+                        )));
+                    }
+                    segments.intern_raw(Some(text), Bytes::from(serde_json::to_vec(value)?))
+                })
+                .transpose()?;
+            let body = serde_json::json!({"messages": messages});
+            let input_tokens = extracted_token_count(&body, tokenizer)?;
+            let generation_size = object
+                .get("metadata")
+                .and_then(Value::as_object)
+                .and_then(|metadata| metadata.get("generation_size"))
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .or_else(|| {
+                    object
+                        .get("generation_size")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                })
+                .unwrap_or(100);
+            if generation_size == 0 {
+                return Err(DatasetError::Validation(format!(
+                    "{}: generation_size must be positive",
+                    row.origin
+                )));
+            }
+            let mut turn = Turn {
+                role: Some(Role::from("user")),
+                max_tokens: Some(generation_size),
+                input_tokens,
+                raw_messages: Some(raw_messages),
+                extra_body,
+                content: smallvec![ContentGroup {
+                    kind: MediaKind::Text,
+                    name: String::new(),
+                    handles: smallvec![text],
+                }],
+                ..Turn::default()
+            };
+            finalizer.finalize_turn(&mut turn)?;
+            let mut conversation = Conversation::new(session_id);
+            conversation.turns.push(turn);
+            conversation.accuracy = Some(AccuracyAssociation {
+                correlation_id,
+                task: task.to_string(),
+            });
+            conversations.push(conversation);
+        }
+        Ok(conversations)
+    }
+}
 
 impl Composer for ShareGptComposer {
     fn compose(
@@ -1418,6 +1544,31 @@ fn value_text(value: &Value) -> Result<String> {
     }
 }
 
+fn extracted_token_count(value: &Value, tokenizer: &dyn TextTokenizer) -> Result<u64> {
+    let extracted = extract_payload(value);
+    extracted
+        .texts
+        .into_iter()
+        .try_fold(extracted.pretokenised_token_count, |count, text| {
+            count
+                .checked_add(tokenizer.encode(&text)?.len() as u64)
+                .ok_or_else(|| DatasetError::Validation("input token overflow".into()))
+        })
+}
+
+fn validate_message_values(messages: &[Value], origin: &impl std::fmt::Display) -> Result<()> {
+    if messages.is_empty()
+        || messages.iter().any(|message| {
+            !message.is_object() || !message.get("role").is_some_and(Value::is_string)
+        })
+    {
+        return Err(DatasetError::Validation(format!(
+            "{origin}: messages must be non-empty objects with roles"
+        )));
+    }
+    Ok(())
+}
+
 fn is_speed_bench(value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
@@ -1459,6 +1610,20 @@ fn require_object<'a>(
     value
         .as_object()
         .ok_or_else(|| DatasetError::Validation(format!("{origin}: dataset row must be an object")))
+}
+
+fn required_string<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+    origin: &impl std::fmt::Display,
+) -> Result<&'a str> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DatasetError::Validation(format!("{origin}: {field} must be a non-empty string"))
+        })
 }
 
 fn string_option(config: &ComposeConfig, key: &str) -> Option<String> {
@@ -1574,6 +1739,48 @@ mod tests {
                 &TiktokenTokenizer::builtin(),
             )
             .await
+    }
+
+    #[tokio::test]
+    async fn accuracy_carries_real_correlation_and_both_chat_completion_views() {
+        let mut options = Map::new();
+        options.insert(
+            "accuracy_system_prompt".into(),
+            Value::String("brief".into()),
+        );
+        let dataset = build(
+            Arc::new(AccuracyDatasetLoader),
+            Arc::new(AccuracyComposer),
+            json!([{"prompt":"Q?","task":"math","correlation_id":"problem-1","metadata":{"generation_size":5},"extra_body":{"temperature":0.2,"stop":["Q:"]}}]),
+            options,
+        ).await.unwrap();
+        let conversation = &dataset.conversations()[0];
+        assert_eq!(
+            conversation
+                .accuracy
+                .as_ref()
+                .unwrap()
+                .correlation_id
+                .as_str(),
+            "problem-1"
+        );
+        assert!(conversation.turns[0].raw_messages.is_some());
+        assert_eq!(conversation.turns[0].max_tokens, Some(5));
+        assert!(!conversation.turns[0].content.is_empty());
+        assert!(conversation.turns[0].extra_body.is_some());
+    }
+
+    #[tokio::test]
+    async fn accuracy_rejects_non_object_generation_extras() {
+        let error = build(
+            Arc::new(AccuracyDatasetLoader),
+            Arc::new(AccuracyComposer),
+            json!([{"prompt":"Q?","task":"math","extra_body":[]}]),
+            Map::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("extra_body must be an object"));
     }
 
     #[tokio::test]

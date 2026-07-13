@@ -4,7 +4,7 @@
 //! Handle-only conversation and turn domain model.
 //!
 //! The fields preserve every Python dataset value that affects dispatch,
-//! scheduling, context reconstruction, multimodal metrics,
+//! scheduling, context reconstruction, multimodal metrics, accuracy association,
 //! or DAG reporting. Large or wire-sensitive values are always [`Handle`]s;
 //! projection into metadata therefore never copies or strips media bytes.
 
@@ -69,6 +69,10 @@ string_id!(
 string_id!(
     /// Opaque DAG branch identifier.
     BranchId
+);
+string_id!(
+    /// Stable opaque response-to-evaluator association identifier.
+    CorrelationId
 );
 
 /// Supported content categories.
@@ -191,6 +195,15 @@ pub struct ContentGroup {
     pub name: String,
     /// Ordered batched content handles.
     pub handles: SmallVec<[Handle; 1]>,
+}
+
+/// Opaque evaluator identity for an accuracy conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccuracyAssociation {
+    /// Stable identity propagated into the dispatched request and grading record.
+    pub correlation_id: CorrelationId,
+    /// Benchmark sub-task name.
+    pub task: String,
 }
 
 /// Per-turn dispatch data; every potentially large value is a segment handle.
@@ -337,6 +350,8 @@ pub struct Conversation {
     pub user_context: Option<Handle>,
     /// Conversation-specific context behavior; absent inherits dataset default.
     pub context_mode: Option<ConversationContextMode>,
+    /// Opaque association used to return completed text to an external evaluator.
+    pub accuracy: Option<AccuracyAssociation>,
     /// DAG topology and lineage.
     pub dag: Option<DagMetadata>,
 }
@@ -350,6 +365,7 @@ impl Conversation {
             system: None,
             user_context: None,
             context_mode: None,
+            accuracy: None,
             dag: None,
         }
     }
@@ -384,6 +400,7 @@ impl Conversation {
             conversation_id: self.session_id.clone(),
             turns,
             context_mode: self.context_mode,
+            accuracy: self.accuracy.clone(),
             dag: self.dag.clone(),
         }
     }
@@ -398,6 +415,8 @@ pub struct ConversationMetadata {
     pub turns: Vec<TurnMetadata>,
     /// Conversation-specific context behavior.
     pub context_mode: Option<ConversationContextMode>,
+    /// Opaque external-evaluator association.
+    pub accuracy: Option<AccuracyAssociation>,
     /// DAG topology and lineage.
     pub dag: Option<DagMetadata>,
 }
@@ -407,13 +426,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn metadata_projects_forks_without_payload_bytes() {
+    fn metadata_projects_forks_and_accuracy_without_payload_bytes() {
         let branch_id = BranchId::from("root:0");
         let mut conversation = Conversation::new("root");
         conversation.turns.push(Turn {
             branch_ids: smallvec::smallvec![branch_id.clone()],
             audio_duration_seconds: Some(1.25),
             ..Turn::default()
+        });
+        conversation.accuracy = Some(AccuracyAssociation {
+            correlation_id: CorrelationId::from("corr-1"),
+            task: "math".into(),
         });
         conversation.dag = Some(DagMetadata {
             branches: smallvec::smallvec![ConversationBranch {
@@ -432,5 +455,6 @@ mod tests {
         let metadata = conversation.metadata();
         assert!(metadata.turns[0].has_forks);
         assert_eq!(metadata.turns[0].audio_duration_seconds, Some(1.25));
+        assert_eq!(metadata.accuracy.unwrap().correlation_id.as_str(), "corr-1");
     }
 }

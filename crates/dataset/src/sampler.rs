@@ -317,6 +317,7 @@ mod tests {
                 conversation_id,
                 turns: Vec::new(),
                 context_mode: None,
+                accuracy: None,
                 dag: None,
             })
             .collect::<Vec<_>>();
