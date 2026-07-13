@@ -111,6 +111,8 @@ navigation:
             path: ../pages-dev/tutorials/request-rate-concurrency.md
           - page: "Prefill Concurrency: Fine-Grained Benchmarking Control"
             path: ../pages-dev/tutorials/prefill-concurrency.md
+          - page: Adaptive Scale
+            path: ../pages-dev/tutorials/adaptive-scale.md
           - page: Time-Based Benchmarking
             path: ../pages-dev/tutorials/time-based-benchmarking.md
           - page: Multi-URL Load Balancing
@@ -130,6 +132,8 @@ navigation:
             path: ../pages-dev/tutorials/sweeps.md
           - page: Adaptive Search
             path: ../pages-dev/tutorials/adaptive-search.md
+          - page: Adaptive Scale
+            path: ../pages-dev/tutorials/adaptive-scale.md
           - page: Time Slicing for Performance Analysis
             path: ../pages-dev/tutorials/timeslices.md
           - page: HTTP Trace Metrics Guide
