@@ -709,6 +709,42 @@ class TestMultiTurnDatasetLoaderSystemPromptHoist:
         assert conversation.turns[1].role == "system"
         assert conversation.turns[1].texts[0].contents == ["Mid-conversation reminder."]
 
+    def test_consecutive_leading_system_turns_are_not_hoisted(self, default_cfg):
+        """Two consecutive leading system turns un-hoist so both reach the wire.
+
+        The first system turn is hoisted, then the second fails the guard and
+        stays as turn 0 (role="system"). The endpoint only merges
+        ``system_message`` into a rendered leading system message during warmup,
+        so in profiling the hoisted prompt would never be sent while ISL still
+        counts it. The loader un-hoists: both system turns stay as normal turns.
+        """
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(role="system", text="System alpha."),
+                        SingleTurn(role="system", text="System beta."),
+                        SingleTurn(text="What is AI?"),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conversation = conversations[0]
+        assert conversation.system_message is None
+        assert len(conversation.turns) == 3
+        assert conversation.turns[0].role == "system"
+        assert conversation.turns[0].texts[0].contents == ["System alpha."]
+        assert conversation.turns[1].role == "system"
+        assert conversation.turns[1].texts[0].contents == ["System beta."]
+        assert conversation.turns[2].texts[0].contents == ["What is AI?"]
+
     def test_system_turn_with_media_is_not_hoisted(self, default_cfg):
         """A system turn carrying non-text media falls through to a normal turn."""
         data = {

@@ -110,7 +110,13 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     message array, so the system prompt persists across all turns and does
     not consume a turn slot or skew per-turn metrics. Hoisting only applies to
     endpoints that send ``system_message`` (chat, responses); on others the
-    system turn is left in place rather than silently dropped.
+    system turn is left in place rather than silently dropped. A conversation
+    that leads with two or more consecutive ``role: "system"`` turns is
+    un-hoisted: the endpoint only merges ``system_message`` into a rendered
+    leading system message during warmup, so a hoisted prompt sitting in front
+    of another leading system turn would never reach the wire in profiling
+    while still counting toward ISL. Both system turns are dispatched normally
+    instead, matching pre-hoist behavior.
     """
 
     _hoist_leading_system_message: ClassVar[bool] = True
@@ -174,6 +180,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         )
 
         conversations = []
+        hoisted_count = 0
         for session_id, multi_turns in data.items():
             conversation = Conversation(session_id=session_id)
             hoisted: tuple[SingleTurn, dict[str, list[Any]]] | None = None
@@ -197,8 +204,31 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
             if hoisted is not None and not conversation.turns:
                 conversation.system_message = None
                 conversation.turns.append(self._build_turn(*hoisted))
+                hoisted = None
+
+            # A second consecutive leading system turn fails the hoist guard and
+            # stays as turn 0 (role="system"). The endpoint only merges
+            # system_message into a rendered leading system message during
+            # warmup, so in profiling the hoisted prompt never reaches the wire
+            # while ISL still counts it. Un-hoist: restore the hoisted turn as
+            # turn 0 so both system turns dispatch normally, matching pre-hoist
+            # behavior for this ambiguous input.
+            elif hoisted is not None and conversation.turns[0].role == "system":
+                conversation.system_message = None
+                conversation.turns.insert(0, self._build_turn(*hoisted))
+                hoisted = None
+
+            if hoisted is not None:
+                hoisted_count += 1
 
             conversations.append(conversation)
+
+        if hoisted_count:
+            self.info(
+                f"Hoisted leading system turn into system_message for "
+                f"{hoisted_count}/{len(conversations)} conversation(s) "
+                f"(endpoint '{self.run.cfg.endpoint.type}')"
+            )
         return conversations
 
     def _endpoint_consumes_system_message(self) -> bool:
