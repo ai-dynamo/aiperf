@@ -29,7 +29,13 @@ interface CrateDefinition {
 }
 
 function crateReference(definition: CrateDefinition): CrateReference {
-  const path = `crates/${definition.name}`;
+  // Cargo package names keep the `aiperf-` prefix, but the on-disk crate
+  // directories were shortened to `crates/<capability>`; strip the prefix for
+  // the source path while leaving the package name / ids intact.
+  const directory = definition.name.startsWith("aiperf-")
+    ? definition.name.slice("aiperf-".length)
+    : definition.name;
+  const path = `crates/${directory}`;
   return {
     id: `crate.${definition.name}`,
     kind: "crate",
