@@ -10,6 +10,7 @@ Structure:
     Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
+    Environment.CONTENT_SERVER.* - Generated multimodal content serving
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.GPU.*            - GPU telemetry collection
@@ -122,6 +123,45 @@ class _APIServerSettings(BaseSettings):
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
         "Set to 0 to skip the grace window and shut down immediately.",
+    )
+
+
+class _ContentServerSettings(BaseSettings):
+    """Run-owned native HTTP serving for generated multimodal content.
+
+    When enabled with a non-empty directory, synthetic image and video
+    generators write files and place HTTP URLs in requests instead of inline
+    base64 data. Audio remains inline. See
+    [Serve Synthetic Multimodal Content over HTTP](tutorials/content-server.md).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_CONTENT_SERVER_")
+
+    ENABLED: bool = Field(
+        default=False,
+        description="Enable the run-owned HTTP content server.",
+    )
+    HOST: str = Field(
+        default="0.0.0.0",
+        min_length=1,
+        description="Host/interface to bind and advertise in generated media URLs.",
+    )
+    PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=8090,
+        description="TCP port for /healthz and /content/*.",
+    )
+    CONTENT_DIR: str = Field(
+        default="",
+        description="Existing directory to serve. Empty uses a temporary serving root, "
+        "but synthetic media remains inline.",
+    )
+    MAX_TRACKED_RECORDS: int = Field(
+        ge=100,
+        le=1_000_000,
+        default=10_000,
+        description="Maximum recent content-request records retained in Rust.",
     )
 
 
@@ -1457,6 +1497,10 @@ class _Environment(BaseSettings):
     COMPRESSION: _CompressionSettings = Field(
         default_factory=_CompressionSettings,
         description="Compression settings for streaming file transfers",
+    )
+    CONTENT_SERVER: _ContentServerSettings = Field(
+        default_factory=_ContentServerSettings,
+        description="Native generated-content HTTP server settings",
     )
     CLI_RUNNER: _CLIRunnerSettings = Field(
         default_factory=_CLIRunnerSettings,

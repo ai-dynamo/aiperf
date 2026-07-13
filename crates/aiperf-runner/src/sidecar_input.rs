@@ -671,8 +671,8 @@ fn strict_decode<T: DeserializeOwned>(raw: &RawValue, id: &str) -> Result<T> {
     // Buffer through `serde_json::Value` so `#[serde(flatten)]`/`#[serde(untagged)]`
     // f64 fields decode correctly under the build-wide `arbitrary_precision`
     // feature (see `registry::strict_decode` for the full rationale).
-    let value: serde_json::Value =
-        serde_json::from_str(raw.get()).with_context(|| format!("decoding {id:?} sidecar input"))?;
+    let value: serde_json::Value = serde_json::from_str(raw.get())
+        .with_context(|| format!("decoding {id:?} sidecar input"))?;
     serde_json::from_value(value).with_context(|| format!("decoding {id:?} sidecar input"))
 }
 

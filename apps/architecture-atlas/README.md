@@ -54,10 +54,12 @@ Execution flavor controls morph one shared graph across:
 - `native_grpc`
 - `online_mock`
 - `dynamo_offline`
-- `dynamo_online` (planned)
+- `dynamo_online` (built, feature-gated in-process replay through the registered
+  `dynosim` backend)
 
 Primary and comparison flavor overlays are URL-backed graph state, not static
-route variants.
+route variants. Only a distinct dedicated Dynamo-online runner pair remains
+planned; the current product path selects online replay through `dynosim`.
 
 ### Interaction model
 

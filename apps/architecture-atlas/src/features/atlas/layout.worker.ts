@@ -4,6 +4,7 @@
 /// <reference lib="webworker" />
 
 import ELK from "elkjs/lib/elk.bundled.js";
+import elkWorkerUrl from "elkjs/lib/elk-worker.min.js?url";
 
 import {
   LAYOUT_PROTOCOL_VERSION,
@@ -13,7 +14,15 @@ import {
   type RelativeBandLayout,
 } from "./layout-protocol";
 
-const elk = new ELK();
+const elk = new ELK({
+  workerFactory: (url?: string) => {
+    if (!url) {
+      throw new Error("ELK worker URL is required");
+    }
+    return new Worker(url);
+  },
+  workerUrl: elkWorkerUrl,
+});
 const NODE_HEIGHT = 112;
 const NODE_WIDTH = 248;
 

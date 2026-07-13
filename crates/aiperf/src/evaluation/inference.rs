@@ -2031,6 +2031,12 @@ fn normalize_message(value: &Value) -> Result<Value> {
         }
     }
     message.insert("content".into(), content);
+    if let Some(path) = std::env::var_os("AIPERF_DEBUG_GRADED_MSG") {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{}", Value::Object(message.clone()));
+        }
+    }
     for field in ["name", "tool_call_id"] {
         if let Some(value) = source.get(field) {
             message.insert(field.into(), value.clone());

@@ -28,8 +28,8 @@ use crate::protocol_v2::{
 };
 use crate::redaction::redact_diagnostic;
 use crate::registry::{
-    PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory, RunnerRunContext,
-    validate_endpoint_profiles_v2,
+    PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
+    RunnerRunContext, validate_endpoint_profiles_v2,
 };
 use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
 
@@ -206,6 +206,7 @@ impl RunnerV2Coordinator {
             }
         };
         let context = match RunnerRunContext::new(
+            self.distribution_id.clone(),
             self.product_registry.clone(),
             self.execution_factories.clone(),
             self.graph_inputs.clone(),
@@ -328,19 +329,34 @@ impl RunnerV2Coordinator {
                         report_path: Some(report_path),
                         stage: None,
                         errors: Vec::new(),
+                        diagnostic_artifacts: Vec::new(),
                         provenance,
                     }),
                     exit_code: 0,
                 }
             }
-            Err(error) => terminal_failure(
-                self.distribution_id.clone(),
-                benchmark_id,
-                RunnerFailureStageV2::Execution,
-                "execution_failed",
-                format!("{error:#}"),
-                1,
-            ),
+            Err(error) => {
+                if let Some(failure) = error.downcast_ref::<PreparedRunFailure>() {
+                    terminal_failure_with_artifacts(
+                        self.distribution_id.clone(),
+                        benchmark_id,
+                        failure.stage,
+                        &failure.code,
+                        failure.message.clone(),
+                        failure.diagnostic_artifacts.clone(),
+                        1,
+                    )
+                } else {
+                    terminal_failure(
+                        self.distribution_id.clone(),
+                        benchmark_id,
+                        RunnerFailureStageV2::Execution,
+                        "execution_failed",
+                        format!("{error:#}"),
+                        1,
+                    )
+                }
+            }
         }
     }
 
@@ -453,6 +469,26 @@ fn terminal_failure(
     message: impl Into<String>,
     exit_code: i32,
 ) -> RunnerProcessResultV2 {
+    terminal_failure_with_artifacts(
+        distribution_id,
+        benchmark_id,
+        stage,
+        code,
+        message,
+        Vec::new(),
+        exit_code,
+    )
+}
+
+fn terminal_failure_with_artifacts(
+    distribution_id: String,
+    benchmark_id: Option<String>,
+    stage: RunnerFailureStageV2,
+    code: &str,
+    message: impl Into<String>,
+    diagnostic_artifacts: Vec<crate::protocol_v2::RunDiagnosticArtifactV2>,
+    exit_code: i32,
+) -> RunnerProcessResultV2 {
     RunnerProcessResultV2 {
         response: RunnerResponseV2::Terminal(RunTerminalV2 {
             protocol_version: RUNNER_PROTOCOL_V2,
@@ -463,6 +499,7 @@ fn terminal_failure(
             report_path: None,
             stage: Some(stage),
             errors: vec![diagnostic(code, message)],
+            diagnostic_artifacts,
             provenance: BTreeMap::new(),
         }),
         exit_code,
@@ -482,6 +519,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::protocol_v2::RunDiagnosticArtifactV2;
     use crate::registry::PreparedReportCommit;
 
     #[derive(Debug)]
@@ -594,5 +632,32 @@ mod tests {
         assert_eq!(error.code, "report_commit_failed");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(report_path.is_file());
+    }
+
+    #[test]
+    fn diagnostic_failure_never_exposes_an_authoritative_report() {
+        let artifact = RunDiagnosticArtifactV2 {
+            kind: "archive_failure_diagnostic".to_owned(),
+            relative_path: "archive-failure-diagnostic.json".into(),
+            content_hash: format!("blake3:{}", "a".repeat(64)),
+        };
+
+        let result = terminal_failure_with_artifacts(
+            format!("blake3:{}", "b".repeat(64)),
+            Some("watch-1".to_owned()),
+            RunnerFailureStageV2::Reporting,
+            "archive_remote_finalization_failed",
+            "remote archive unavailable",
+            vec![artifact.clone()],
+            1,
+        );
+
+        let RunnerResponseV2::Terminal(terminal) = result.response else {
+            panic!("expected a terminal response");
+        };
+        assert!(!terminal.success);
+        assert_eq!(terminal.report_path, None);
+        assert_eq!(terminal.stage, Some(RunnerFailureStageV2::Reporting));
+        assert_eq!(terminal.diagnostic_artifacts, vec![artifact]);
     }
 }

@@ -19,6 +19,12 @@ function sceneLocator(page: Page): Locator {
   return page.locator(".graph-scene-route");
 }
 
+async function expectProductionLayoutReady(page: Page) {
+  await expect(page.getByRole("status", { name: "Graph layout status" })).toHaveText(
+    "Graph layout ready.",
+  );
+}
+
 async function disableNondeterministicMotion(page: Page) {
   await page.addStyleTag({
     content: `
@@ -51,6 +57,7 @@ async function openFlightDeck(
   await page.goto(withQuery(input.path ?? "/", input.query ?? "audience=developer"));
   await disableNondeterministicMotion(page);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expectProductionLayoutReady(page);
 }
 
 async function expectNoSeriousOrCriticalViolations(page: Page) {
@@ -62,6 +69,22 @@ async function expectNoSeriousOrCriticalViolations(page: Page) {
 }
 
 test.describe("Flight Deck visual and accessibility slice", () => {
+  const runtimeErrors: string[] = [];
+
+  test.beforeEach(async ({ page }) => {
+    runtimeErrors.length = 0;
+    page.on("pageerror", (error) => runtimeErrors.push(error.message));
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        runtimeErrors.push(message.text());
+      }
+    });
+  });
+
+  test.afterEach(() => {
+    expect(runtimeErrors).toEqual([]);
+  });
+
   test("axe serious/critical audits pass on runtime, overlay, and evidence states", async ({
     page,
   }) => {
@@ -204,6 +227,7 @@ test.describe("Flight Deck visual and accessibility slice", () => {
       .getByRole("button", { name: "Show graph accessibility outline" })
       .click();
     await page.getByRole("button", { name: "Expand" }).first().click();
+    await expectProductionLayoutReady(page);
     await expect(sceneLocator(page)).toHaveScreenshot(
       "maintainer-expanded-flight-deck.png",
       screenshotOptions,

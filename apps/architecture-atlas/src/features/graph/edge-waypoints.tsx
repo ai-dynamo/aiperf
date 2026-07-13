@@ -159,13 +159,14 @@ export function EdgeWaypointControls({
   };
 
   return (
-    <div aria-label="Edge waypoint controls">
+    <div aria-label="Edge waypoint controls" style={{ pointerEvents: "all" }}>
       <button
         aria-label="Add waypoint"
         data-testid={`graph-edge-waypoint-add-${edgeId}`}
         onClick={() => emitPoints(appendWaypoint({ edgeId, points, source, target }).points)}
         style={{
           position: "absolute",
+          zIndex: 1000,
           transform: `translate(-50%, -50%) translate(${(source.x + target.x) / 2}px, ${Math.min(
             source.y,
             target.y,
@@ -181,6 +182,7 @@ export function EdgeWaypointControls({
         onClick={() => onReset(edgeId)}
         style={{
           position: "absolute",
+          zIndex: 1000,
           transform: `translate(-50%, -50%) translate(${(source.x + target.x) / 2 + 36}px, ${Math.min(
             source.y,
             target.y,
@@ -223,6 +225,7 @@ export function EdgeWaypointControls({
           onPointerUp={finishPointerDrag}
           style={{
             position: "absolute",
+            zIndex: 1000,
             transform: `translate(-50%, -50%) translate(${point.x}px, ${point.y}px)`,
           }}
           type="button"
@@ -238,6 +241,7 @@ export function EdgeWaypointControls({
           onClick={() => emitPoints(removeWaypointByIndex(points, index))}
           style={{
             position: "absolute",
+            zIndex: 1000,
             transform: `translate(-50%, -50%) translate(${point.x + 18}px, ${point.y - 16}px)`,
           }}
           type="button"

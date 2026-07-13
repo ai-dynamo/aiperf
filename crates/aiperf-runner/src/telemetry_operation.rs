@@ -766,11 +766,9 @@ async fn execute_collect(mut prepared: PreparedCollect) -> Result<PreparedRunOut
         return Err(archive_reporting_failure(
             &prepared.artifact_target,
             "archive_local_finalization_failed",
-            local
-                .summary
-                .first_failure
-                .clone()
-                .unwrap_or_else(|| "telemetry local finalization produced no durable head".to_owned()),
+            local.summary.first_failure.clone().unwrap_or_else(|| {
+                "telemetry local finalization produced no durable head".to_owned()
+            }),
             Some(archive_id),
             local.repository.as_ref().map(LocalArchiveRepository::head),
         ));

@@ -69,6 +69,18 @@ Compression settings for streaming file transfers. Controls chunk size and compr
 | `AIPERF_COMPRESSION_ZSTD_LEVEL` | `3` | ≥ 1, ≤ 22 | Zstandard compression level (1=fastest, 22=best compression, default: 3) |
 | `AIPERF_COMPRESSION_GZIP_LEVEL` | `6` | ≥ 1, ≤ 9 | Gzip compression level (1=fastest, 9=best compression, default: 6) |
 
+## CONTENTSERVER
+
+Run-owned native HTTP serving for generated multimodal content. When enabled with a non-empty directory, synthetic image and video generators write files and place HTTP URLs in requests instead of inline base64 data. Audio remains inline. See [Serve Synthetic Multimodal Content over HTTP](tutorials/content-server.md).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_CONTENT_SERVER_ENABLED` | `False` | — | Enable the run-owned HTTP content server. |
+| `AIPERF_CONTENT_SERVER_HOST` | `'0.0.0.0'` | min length: 1 | Host/interface to bind and advertise in generated media URLs. |
+| `AIPERF_CONTENT_SERVER_PORT` | `8090` | ≥ 1, ≤ 65535 | TCP port for /healthz and /content/*. |
+| `AIPERF_CONTENT_SERVER_CONTENT_DIR` | `''` | — | Existing directory to serve. Empty uses a temporary serving root, but synthetic media remains inline. |
+| `AIPERF_CONTENT_SERVER_MAX_TRACKED_RECORDS` | `10000` | ≥ 100, ≤ 1000000 | Maximum recent content-request records retained in Rust. |
+
 ## DAG
 
 Settings for DAG benchmark mode (`dag_jsonl` input type).

@@ -5637,6 +5637,211 @@ mod tests {
         );
     }
 
+    #[test]
+    fn zzz_print_offline_parity_table() {
+        use dynamo_mocker::replay::{
+            OfflineDisaggReplayConfig, simulate_concurrency_requests,
+            simulate_concurrency_requests_disagg_with_router_mode,
+            simulate_concurrency_requests_with_router_mode,
+        };
+        const ISL: usize = 16;
+        const OSL: usize = 4;
+        let eng = r#"{"block_size":16,"enable_prefix_caching":false,"max_num_batched_tokens":32}"#;
+        let tokens = vec![7u32; ISL];
+
+        let aiperf_run = |config: &OfflineEngineConfig, n: usize, c: usize| -> DynamoSimulationReport {
+            let clock = Rc::new(SimClock::new());
+            let host = EngineHost::new(clock.clone(), config).unwrap();
+            let encoder = Rc::new(FixedTokensEncoder {
+                tokens: tokens.clone(),
+            });
+            let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new_with_encoders(
+                host.clone(),
+                clock.clone(),
+                "m".to_string(),
+                encoder.clone(),
+                encoder,
+            );
+            let result = Rc::new(RefCell::new(None));
+            let result_for_body = result.clone();
+            let clock_for_body: Rc<dyn Clock> = clock.clone();
+            let start_ns = clock.now_ns();
+            let source: Rc<dyn SimEventSource> = host.clone();
+            drive_sim_with_source(clock.clone(), source, move |_h| async move {
+                let run = run_paced_with_backend(
+                    clock_for_body,
+                    start_ns,
+                    sink,
+                    vec!["dynosim".to_string()],
+                    SkeletonWorkload {
+                        num_requests: n,
+                        input_tokens: ISL,
+                        output_tokens: OSL,
+                        turns: 1,
+                        think_time_ms: None,
+                    },
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    Some(c),
+                    None,
+                    StopConfig {
+                        total_expected_requests: Some(n as u64),
+                        ..StopConfig::default()
+                    },
+                    7,
+                    None,
+                    AncillaryTimingConfig::default(),
+                )
+                .await;
+                *result_for_body.borrow_mut() = Some(run);
+            })
+            .unwrap();
+            let run = result.borrow_mut().take().unwrap().unwrap();
+            host.take_report_at(run.performance.throughput.wall_time_ms)
+        };
+        let requests = |n: usize| -> Vec<DirectRequest> {
+            (0..n)
+                .map(|i| DirectRequest {
+                    tokens: tokens.clone(),
+                    max_output_tokens: OSL,
+                    output_token_ids: None,
+                    uuid: Some(Uuid::from_u128(i as u128 + 1)),
+                    dp_rank: 0,
+                    arrival_timestamp_ms: None,
+                    priority: 0,
+                    strict_priority: 0,
+                    policy_class: None,
+                })
+                .collect()
+        };
+        let disagg_args = || {
+            let mut pa = MockEngineArgs::from_json_str(eng).unwrap();
+            pa.worker_type = WorkerType::Prefill;
+            let mut da = MockEngineArgs::from_json_str(eng).unwrap();
+            da.worker_type = WorkerType::Decode;
+            (pa, da)
+        };
+
+        let mut rows: Vec<(&str, DynamoSimulationReport, DynamoSimulationReport)> = Vec::new();
+
+        let (n, c) = (96usize, 12usize);
+        let cfg = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            topology: OfflineTopology::Aggregated,
+            workers: 2,
+            ..OfflineEngineConfig::default()
+        };
+        let a = aiperf_run(&cfg, n, c);
+        let native = simulate_concurrency_requests(
+            MockEngineArgs::from_json_str(eng).unwrap(),
+            requests(n),
+            c,
+            2,
+        )
+        .unwrap();
+        rows.push(("agg RR 2w", a, native));
+
+        let cfg = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            topology: OfflineTopology::Aggregated,
+            workers: 2,
+            router_mode: OfflineRouterMode::Kv,
+            router_config: Some("{}".to_string()),
+            ..OfflineEngineConfig::default()
+        };
+        let a = aiperf_run(&cfg, n, c);
+        let rc: ReplayKvRouterConfig = serde_json::from_str("{}").unwrap();
+        let native = simulate_concurrency_requests_with_router_mode(
+            MockEngineArgs::from_json_str(eng).unwrap(),
+            Some(rc),
+            None,
+            requests(n),
+            c,
+            2,
+            ReplayRouterMode::KvRouter,
+            DynamoSlaThresholds::default(),
+        )
+        .unwrap();
+        rows.push(("agg KV 2w", a, native));
+
+        let (n, c) = (80usize, 10usize);
+        let cfg = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            topology: OfflineTopology::Disaggregated,
+            prefill_workers: 1,
+            decode_workers: 1,
+            ..OfflineEngineConfig::default()
+        };
+        let a = aiperf_run(&cfg, n, c);
+        let (pa, da) = disagg_args();
+        let native = simulate_concurrency_requests_disagg_with_router_mode(
+            OfflineDisaggReplayConfig {
+                prefill_args: pa,
+                decode_args: da,
+                num_prefill_workers: 1,
+                num_decode_workers: 1,
+            },
+            None,
+            None,
+            requests(n),
+            c,
+            ReplayRouterMode::RoundRobin,
+            DynamoSlaThresholds::default(),
+        )
+        .unwrap();
+        rows.push(("disagg RR 1P1D", a, native));
+
+        let cfg = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            topology: OfflineTopology::Disaggregated,
+            prefill_workers: 1,
+            decode_workers: 1,
+            router_mode: OfflineRouterMode::Kv,
+            router_config: Some("{}".to_string()),
+            ..OfflineEngineConfig::default()
+        };
+        let a = aiperf_run(&cfg, n, c);
+        let (pa, da) = disagg_args();
+        let rc: ReplayKvRouterConfig = serde_json::from_str("{}").unwrap();
+        let native = simulate_concurrency_requests_disagg_with_router_mode(
+            OfflineDisaggReplayConfig {
+                prefill_args: pa,
+                decode_args: da,
+                num_prefill_workers: 1,
+                num_decode_workers: 1,
+            },
+            Some(rc),
+            None,
+            requests(n),
+            c,
+            ReplayRouterMode::KvRouter,
+            DynamoSlaThresholds::default(),
+        )
+        .unwrap();
+        rows.push(("disagg KV 1P1D", a, native));
+
+        let pct = |x: f64, y: f64| if y != 0.0 { (x - y).abs() / y * 100.0 } else { 0.0 };
+        println!(
+            "\nCASE            | ttft_ai   ttft_nat   d%     | e2e_ai    e2e_nat    d%     | itl_ai    itl_nat    d%"
+        );
+        for (label, a, n) in &rows {
+            let (ta, tn) = (a.latency.ttft.mean_ms, n.latency.ttft.mean_ms);
+            let (ea, en) = (a.latency.e2e.mean_ms, n.latency.e2e.mean_ms);
+            let (ia, in_) = (
+                a.latency.itl.distribution.mean_ms,
+                n.latency.itl.distribution.mean_ms,
+            );
+            println!(
+                "{label:<15} | {ta:8.3} {tn:8.3} {:6.2}% | {ea:8.3} {en:8.3} {:6.2}% | {ia:8.3} {in_:8.3} {:6.2}%",
+                pct(ta, tn),
+                pct(ea, en),
+                pct(ia, in_),
+            );
+        }
+        println!();
+    }
+
     /// Apples-to-apples gate: AIPerf's own online flow versus Dynamo's native
     /// wall-clock online replay driver, both under the real clock, on the same
     /// engine, with byte-identical request tokens produced by Dynamo's own

@@ -61,10 +61,16 @@ export function EvidenceDrawer({
   const entityId = entity?.kind === "node" ? entity.node.id : entity?.edge.id;
 
   const restoreFocus = () => {
-    window.requestAnimationFrame(() => {
+    const focusTarget = () => {
       const trigger = entityId ? getTriggerElement?.(entityId) : undefined;
       const visibleTrigger = hasVisibleTrigger(trigger) ? trigger : undefined;
       (visibleTrigger ?? fallbackFocusRef.current)?.focus();
+    };
+    window.requestAnimationFrame(() => {
+      focusTarget();
+      window.setTimeout(() => {
+        focusTarget();
+      }, 100);
     });
   };
 

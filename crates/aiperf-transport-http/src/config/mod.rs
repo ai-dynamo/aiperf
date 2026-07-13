@@ -4,4 +4,6 @@
 //! Client + socket defaults.
 
 pub mod defaults;
-pub use defaults::{ClientConfig, apply_socket_opts};
+pub use defaults::{
+    ClientConfig, PreparedTlsClientConfig, PreparedTlsClientConfigError, apply_socket_opts,
+};

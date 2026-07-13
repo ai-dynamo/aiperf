@@ -1884,9 +1884,7 @@ async fn append_frame_with_receipt(
     let header = frame.wal_frame.header();
     let frame_id = header.frame_id;
     let actual = ArchiveProjectionFootprint {
-        bytes: header
-            .payload_len
-            .saturating_add(WAL_FRAME_ENVELOPE_BYTES),
+        bytes: header.payload_len.saturating_add(WAL_FRAME_ENVELOPE_BYTES),
         files: 0,
         frames: 0,
     };

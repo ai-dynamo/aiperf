@@ -326,7 +326,10 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
 /// validation. Handshake signatures remain cryptographically verified. This is
 /// the Rust equivalent of the Python connector's `ssl=False` behavior proven in
 /// `tests/unit/transports/test_tcp_connector.py:337-422`.
-fn rustls_config(ssl_verify: bool) -> Arc<rustls::ClientConfig> {
+fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
+    if let Some(prepared) = &client.prepared_tls {
+        return prepared.rustls_config();
+    }
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     // Select the provider explicitly. The complete runner links both the HTTP
@@ -338,7 +341,7 @@ fn rustls_config(ssl_verify: bool) -> Arc<rustls::ClientConfig> {
         .expect("aws-lc supports rustls safe default protocol versions")
         .with_root_certificates(roots)
         .with_no_client_auth();
-    if !ssl_verify {
+    if !client.ssl_verify {
         cfg.dangerous()
             .set_certificate_verifier(Arc::new(NoCertificateVerification { provider }));
     }
@@ -467,7 +470,7 @@ async fn establish_inner(
 
     let sender = if is_tls {
         use tokio_rustls::TlsConnector;
-        let connector = TlsConnector::from(rustls_config(cfg.ssl_verify));
+        let connector = TlsConnector::from(rustls_config(cfg));
         let server_name =
             rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| {
                 ErrorDetails {

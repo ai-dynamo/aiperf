@@ -61,13 +61,19 @@ function buildGraphLayoutRequest(input: {
   );
   const bandByTier = new Map(tiers.map((tier, index) => [tier, `tier.${index}`]));
   const nodeIds = new Set(input.nodes.map((node) => node.id));
+  const nodeById = new Map(input.nodes.map((node) => [node.id, node]));
 
   const nodes = [...input.nodes]
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((node) => ({
       bandId: bandByTier.get(node.tier) ?? "tier.0",
       id: node.id,
-      parentId: node.parentId && nodeIds.has(node.parentId) ? node.parentId : undefined,
+      parentId:
+        node.parentId &&
+        nodeIds.has(node.parentId) &&
+        nodeById.get(node.parentId)?.tier === node.tier
+          ? node.parentId
+          : undefined,
     }));
 
   const edges = [...input.edges]

@@ -931,8 +931,10 @@ pub(crate) async fn run_graph_phases(
     input: &GraphInputBundle,
     clock: Rc<dyn Clock>,
     rng_root: RngRoot,
+    allow_dataset_wrap: bool,
     backends: &dyn RunnerGraphPhaseBackendFactory,
 ) -> Result<GraphPhaseRunOutput> {
+    validate_dataset_wrap_policy(phases, input, allow_dataset_wrap)?;
     let trace_instances = GraphTraceInstanceSequence::default();
     let session_slots = phases
         .iter()
@@ -1001,6 +1003,36 @@ pub(crate) async fn run_graph_phases(
         phases: phase_stats,
         workload,
     })
+}
+
+fn validate_dataset_wrap_policy(
+    phases: &[PhaseSpec],
+    input: &GraphInputBundle,
+    allow_dataset_wrap: bool,
+) -> Result<()> {
+    if allow_dataset_wrap {
+        return Ok(());
+    }
+    let distinct = u64::try_from(input.plans.len()).context("graph root count exceeds u64")?;
+    for phase in phases {
+        let common = phase.common();
+        let one_pass =
+            common.sessions.is_none() && common.requests.is_none() && common.duration.is_none();
+        if one_pass || common.sessions.is_some_and(|sessions| sessions <= distinct) {
+            continue;
+        }
+        let concurrency = phase.concurrency().unwrap_or(1);
+        if u64::try_from(concurrency).context("graph concurrency exceeds u64")? > distinct {
+            bail!(
+                "graph phase {:?} concurrency {} exceeds the {} distinct loaded traces while dataset wrapping is disabled; reduce concurrency to at most {}, bound sessions within the loaded corpus, or set dataset.synthesis.allow_dataset_wrap=true",
+                common.name,
+                concurrency,
+                distinct,
+                distinct
+            );
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1251,13 +1283,67 @@ mod tests {
     use std::rc::Rc;
 
     use aiperf_adaptive::{SharedWindowSampler, TumblingWindowSampler};
+    use aiperf_dataset::SegmentPool;
     use aiperf_graph::errors::TraceError;
+    use aiperf_graph::model::{GraphRecord, GraphTracePlan, TraceRecord};
     use aiperf_graph::workload::{GraphWorkloadReport, TraceAdmissionInfo};
     use aiperf_timing::{PhaseReturn, PhaseSend};
     use uuid::Uuid;
 
     use super::*;
     use crate::records::CapturedModelOutput;
+
+    fn wrap_policy_input(root_count: usize) -> GraphInputBundle {
+        let plans = (0..root_count)
+            .map(|index| GraphTracePlan {
+                graph: GraphRecord::default(),
+                trace: TraceRecord {
+                    id: format!("root-{index}"),
+                    graph_ref: None,
+                    initial_state: Default::default(),
+                },
+                arrival_offset_ns: None,
+            })
+            .collect();
+        GraphInputBundle {
+            plans,
+            segments: Arc::new(SegmentPool::new().freeze()),
+            metadata: aiperf_graph::input::GraphInputMetadata {
+                format: "weka_trace".into(),
+                root_count,
+                node_count: 0,
+            },
+        }
+    }
+
+    fn concurrency_phase(concurrency: usize, sessions: Option<u64>) -> PhaseSpec {
+        let mut value = serde_json::json!({
+            "type": "concurrency",
+            "name": "profiling",
+            "exclude_from_results": false,
+            "concurrency": concurrency,
+        });
+        if let Some(sessions) = sessions {
+            value["sessions"] = serde_json::json!(sessions);
+        }
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn recorded_graph_wrap_policy_rejects_unintentional_lane_cloning() {
+        let input = wrap_policy_input(2);
+        let phases = [concurrency_phase(3, Some(3))];
+        let error = validate_dataset_wrap_policy(&phases, &input, false).unwrap_err();
+        assert!(format!("{error:#}").contains("dataset wrapping is disabled"));
+        validate_dataset_wrap_policy(&phases, &input, true).unwrap();
+    }
+
+    #[test]
+    fn recorded_graph_wrap_policy_allows_bounded_or_one_pass_corpora() {
+        let input = wrap_policy_input(2);
+        validate_dataset_wrap_policy(&[concurrency_phase(3, Some(2))], &input, false).unwrap();
+        validate_dataset_wrap_policy(&[concurrency_phase(3, None)], &input, false).unwrap();
+    }
 
     #[derive(Default)]
     struct RecordingGraphPhaseProgressSink {

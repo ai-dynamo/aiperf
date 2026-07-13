@@ -7,6 +7,146 @@
 //! `src/aiperf/transports/http_defaults.py:131-169` and are pinned by the
 //! source tests in `tests/unit/transports/test_tcp_connector.py:32-88`.
 
+use std::fmt::{self, Debug, Formatter};
+use std::sync::Arc;
+
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+
+/// Opaque, already validated TLS client policy injected by a provider.
+///
+/// This is deliberately not a serializable configuration surface. Callers can
+/// construct it only from provider-resolved PEM entities, and its `Debug`
+/// representation never exposes certificates or private-key bytes.
+#[derive(Clone)]
+pub struct PreparedTlsClientConfig {
+    inner: Arc<rustls::ClientConfig>,
+}
+
+impl PreparedTlsClientConfig {
+    /// Build a verifying rustls client policy from provider-held material.
+    ///
+    /// `trust_roots_pem = None` selects the built-in WebPKI roots. A supplied
+    /// trust bundle replaces that set so a named private trust domain does not
+    /// silently retain public-CA authority. Client certificate and private key
+    /// must either both be supplied or both be absent.
+    pub fn from_provider_pem(
+        trust_roots_pem: Option<&[u8]>,
+        client_certificate_chain_pem: Option<&[u8]>,
+        client_private_key_pem: Option<&[u8]>,
+    ) -> Result<Self, PreparedTlsClientConfigError> {
+        let roots = match trust_roots_pem {
+            Some(pem) => provider_roots(pem)?,
+            None => {
+                let mut roots = rustls::RootCertStore::empty();
+                roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+                roots
+            }
+        };
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|_| PreparedTlsClientConfigError::UnsupportedProtocolProfile)?
+            .with_root_certificates(roots);
+        let mut config = match (client_certificate_chain_pem, client_private_key_pem) {
+            (None, None) => builder.with_no_client_auth(),
+            (Some(chain_pem), Some(key_pem)) => {
+                let chain = CertificateDer::pem_slice_iter(chain_pem)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| PreparedTlsClientConfigError::InvalidClientCertificate)?;
+                if chain.is_empty() {
+                    return Err(PreparedTlsClientConfigError::InvalidClientCertificate);
+                }
+                let key = PrivateKeyDer::from_pem_slice(key_pem)
+                    .map_err(|_| PreparedTlsClientConfigError::InvalidClientPrivateKey)?;
+                builder
+                    .with_client_auth_cert(chain, key)
+                    .map_err(|_| PreparedTlsClientConfigError::InvalidClientIdentity)?
+            }
+            _ => return Err(PreparedTlsClientConfigError::IncompleteClientIdentity),
+        };
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Ok(Self {
+            inner: Arc::new(config),
+        })
+    }
+
+    pub(crate) fn rustls_config(&self) -> Arc<rustls::ClientConfig> {
+        Arc::clone(&self.inner)
+    }
+}
+
+impl Debug for PreparedTlsClientConfig {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PreparedTlsClientConfig([REDACTED])")
+    }
+}
+
+impl PartialEq for PreparedTlsClientConfig {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Eq for PreparedTlsClientConfig {}
+
+fn provider_roots(pem: &[u8]) -> Result<rustls::RootCertStore, PreparedTlsClientConfigError> {
+    let certificates = CertificateDer::pem_slice_iter(pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| PreparedTlsClientConfigError::InvalidTrustRoots)?;
+    if certificates.is_empty() {
+        return Err(PreparedTlsClientConfigError::InvalidTrustRoots);
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in certificates {
+        roots
+            .add(certificate)
+            .map_err(|_| PreparedTlsClientConfigError::InvalidTrustRoots)?;
+    }
+    Ok(roots)
+}
+
+/// Stable, secret-free reason provider TLS material was rejected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedTlsClientConfigError {
+    /// The trust provider did not return a non-empty valid certificate bundle.
+    InvalidTrustRoots,
+    /// The mTLS provider did not return a non-empty valid certificate chain.
+    InvalidClientCertificate,
+    /// The mTLS provider did not return a supported private-key PEM entity.
+    InvalidClientPrivateKey,
+    /// The certificate and private key do not form a usable rustls identity.
+    InvalidClientIdentity,
+    /// Exactly one half of the client identity was supplied.
+    IncompleteClientIdentity,
+    /// The linked crypto provider cannot implement the required TLS profile.
+    UnsupportedProtocolProfile,
+}
+
+impl std::fmt::Display for PreparedTlsClientConfigError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidTrustRoots => "TLS trust provider returned invalid certificate material",
+            Self::InvalidClientCertificate => {
+                "mTLS provider returned invalid client certificate material"
+            }
+            Self::InvalidClientPrivateKey => {
+                "mTLS provider returned invalid client private-key material"
+            }
+            Self::InvalidClientIdentity => {
+                "mTLS provider returned an unusable client certificate identity"
+            }
+            Self::IncompleteClientIdentity => {
+                "mTLS client certificate and private key must be supplied together"
+            }
+            Self::UnsupportedProtocolProfile => {
+                "linked TLS provider cannot implement the required protocol profile"
+            }
+        })
+    }
+}
+
+impl std::error::Error for PreparedTlsClientConfigError {}
+
 use crate::models::HttpVersion;
 
 /// Client-wide configuration. Timeouts are clock-nanoseconds.
@@ -34,6 +174,11 @@ pub struct ClientConfig {
     pub max_response_body_bytes: Option<u64>,
     /// Verify the server certificate and hostname for HTTPS connections.
     pub ssl_verify: bool,
+    /// Provider-resolved custom trust and optional mTLS identity.
+    ///
+    /// This cannot be authored through endpoint configuration. When present it
+    /// is a fully verifying policy and supersedes the built-in WebPKI roots.
+    pub prepared_tls: Option<PreparedTlsClientConfig>,
     /// HTTP protocol selection and cleartext prior-knowledge policy.
     pub http_version: HttpVersion,
     /// Maximum idle lifetime of a pooled connection. `None` disables expiry.
@@ -65,6 +210,7 @@ impl Default for ClientConfig {
             total_timeout_ns: None,
             max_response_body_bytes: None,
             ssl_verify: true,
+            prepared_tls: None,
             http_version: HttpVersion::Auto,
             keepalive_ns: Some(300_000_000_000),
             max_connections_per_origin: 2_500,
@@ -102,6 +248,7 @@ mod tests {
     fn defaults_match_python_aiohttp_defaults() {
         let c = ClientConfig::default();
         assert!(c.ssl_verify);
+        assert!(c.prepared_tls.is_none());
         assert_eq!(c.http_version, HttpVersion::Auto);
         assert_eq!(c.connect_timeout_ns, None);
         assert_eq!(c.request_timeout_ns, None);

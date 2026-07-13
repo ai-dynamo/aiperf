@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use aiperf_clock::Clock;
 use aiperf_telemetry_archive::LocalCancellationSignal;
-use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::config::{
+    ClientConfig, PreparedTlsClientConfig, PreparedTlsClientConfigError,
+};
 use aiperf_transport_http::models::{
     ConnectionReuseStrategy, ErrorKind, RequestConfig, Response, TraceData,
 };
@@ -40,6 +42,15 @@ pub enum ControlPlaneCredentialReference {
     None,
     /// Provider-owned bearer token selected by stable ID.
     BearerProvider(String),
+}
+
+/// Provider references for a source's verifying TLS policy.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ControlPlaneTlsReference {
+    /// Optional provider whose roots replace the built-in public WebPKI set.
+    pub trust_provider: Option<String>,
+    /// Optional provider for a client certificate chain and private key.
+    pub mtls_provider: Option<String>,
 }
 
 /// Secret bytes whose debug output is always redacted.
@@ -71,6 +82,120 @@ impl Debug for ResolvedSecret {
 pub trait SecretProviderResolver: Debug + Send + Sync {
     /// Resolve one bearer token without logging or serializing its bytes.
     fn resolve_bearer(&self, provider_id: &str) -> Result<ResolvedSecret, SecretResolutionError>;
+}
+
+/// Provider-resolved trust-root PEM with an always-redacted debug surface.
+#[derive(Eq, PartialEq)]
+pub struct ResolvedTlsTrustRoots(Vec<u8>);
+
+impl ResolvedTlsTrustRoots {
+    /// Construct one non-empty provider result.
+    pub fn new(value: impl Into<Vec<u8>>) -> Result<Self, TlsMaterialResolutionError> {
+        let value = value.into();
+        if value.is_empty() || value.contains(&0) {
+            return Err(TlsMaterialResolutionError::InvalidTrustMaterial);
+        }
+        Ok(Self(value))
+    }
+
+    fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Debug for ResolvedTlsTrustRoots {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ResolvedTlsTrustRoots([REDACTED])")
+    }
+}
+
+/// Provider-resolved mTLS identity with an always-redacted debug surface.
+#[derive(Eq, PartialEq)]
+pub struct ResolvedMtlsIdentity {
+    certificate_chain_pem: Vec<u8>,
+    private_key_pem: Vec<u8>,
+}
+
+impl ResolvedMtlsIdentity {
+    /// Construct one non-empty provider result.
+    pub fn new(
+        certificate_chain_pem: impl Into<Vec<u8>>,
+        private_key_pem: impl Into<Vec<u8>>,
+    ) -> Result<Self, TlsMaterialResolutionError> {
+        let certificate_chain_pem = certificate_chain_pem.into();
+        let private_key_pem = private_key_pem.into();
+        if certificate_chain_pem.is_empty()
+            || private_key_pem.is_empty()
+            || certificate_chain_pem.contains(&0)
+            || private_key_pem.contains(&0)
+        {
+            return Err(TlsMaterialResolutionError::InvalidMtlsMaterial);
+        }
+        Ok(Self {
+            certificate_chain_pem,
+            private_key_pem,
+        })
+    }
+
+    fn certificate_chain_pem(&self) -> &[u8] {
+        &self.certificate_chain_pem
+    }
+
+    fn private_key_pem(&self) -> &[u8] {
+        &self.private_key_pem
+    }
+}
+
+impl Debug for ResolvedMtlsIdentity {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ResolvedMtlsIdentity([REDACTED])")
+    }
+}
+
+impl Drop for ResolvedMtlsIdentity {
+    fn drop(&mut self) {
+        self.certificate_chain_pem.fill(0);
+        self.private_key_pem.fill(0);
+    }
+}
+
+/// Deployment-owned TLS and mTLS material resolution seam.
+pub trait TlsMaterialProviderResolver: Debug + Send + Sync {
+    /// Resolve one named private trust-root bundle.
+    fn resolve_trust(
+        &self,
+        provider_id: &str,
+    ) -> Result<ResolvedTlsTrustRoots, TlsMaterialResolutionError>;
+
+    /// Resolve one named client certificate/private-key identity.
+    fn resolve_mtls(
+        &self,
+        provider_id: &str,
+    ) -> Result<ResolvedMtlsIdentity, TlsMaterialResolutionError>;
+}
+
+/// Default resolver that permits only the built-in public WebPKI policy.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RejectingTlsMaterialProviderResolver;
+
+impl TlsMaterialProviderResolver for RejectingTlsMaterialProviderResolver {
+    fn resolve_trust(
+        &self,
+        provider_id: &str,
+    ) -> Result<ResolvedTlsTrustRoots, TlsMaterialResolutionError> {
+        Err(TlsMaterialResolutionError::Unavailable(
+            provider_id.to_owned(),
+        ))
+    }
+
+    fn resolve_mtls(
+        &self,
+        provider_id: &str,
+    ) -> Result<ResolvedMtlsIdentity, TlsMaterialResolutionError> {
+        Err(TlsMaterialResolutionError::Unavailable(
+            provider_id.to_owned(),
+        ))
+    }
 }
 
 /// Default resolver that permits only credential-free sources.
@@ -110,46 +235,92 @@ impl EnvironmentSecretProviderResolver {
                 !(character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_')
             })
         {
-            return Err(SecretResolutionError::Failed(
-                "control-plane secret prefix must contain only uppercase ASCII letters, digits, and underscores"
-                    .to_owned(),
-            ));
+            return Err(SecretResolutionError::InvalidProviderConfiguration);
         }
         Ok(Self { prefix })
     }
 
     /// Return the public variable name derived from one provider reference.
     pub fn variable_name(&self, provider_id: &str) -> Result<String, SecretResolutionError> {
-        if provider_id.is_empty()
-            || provider_id.len() > 256
-            || provider_id.trim() != provider_id
-            || provider_id.chars().any(char::is_control)
-        {
-            return Err(SecretResolutionError::Unavailable(provider_id.to_owned()));
-        }
-        let suffix = provider_id
-            .bytes()
-            .map(|byte| {
-                if byte.is_ascii_alphanumeric() {
-                    char::from(byte.to_ascii_uppercase())
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
-        Ok(format!("{}{suffix}", self.prefix))
+        provider_variable_name(&self.prefix, provider_id)
+            .map_err(|_| SecretResolutionError::Unavailable(provider_id.to_owned()))
     }
 }
 
 impl SecretProviderResolver for EnvironmentSecretProviderResolver {
     fn resolve_bearer(&self, provider_id: &str) -> Result<ResolvedSecret, SecretResolutionError> {
         let variable = self.variable_name(provider_id)?;
-        let value = env::var(&variable).map_err(|_| {
-            SecretResolutionError::Failed(format!(
-                "control-plane bearer environment variable {variable} is missing or is not UTF-8"
-            ))
-        })?;
+        let value = env::var(&variable)
+            .map_err(|_| SecretResolutionError::Unavailable(provider_id.to_owned()))?;
         ResolvedSecret::new(value)
+    }
+}
+
+/// Environment-backed provider-held TLS material for the stock distribution.
+///
+/// Public reference `cluster-ca` maps to
+/// `AIPERF_CONTROL_TLS_TRUST_CLUSTER_CA`; mTLS reference `node-client` maps to
+/// `AIPERF_CONTROL_TLS_MTLS_CERT_NODE_CLIENT` and
+/// `AIPERF_CONTROL_TLS_MTLS_KEY_NODE_CLIENT`. Values contain PEM entities and
+/// never appear in diagnostics or debug output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnvironmentTlsMaterialProviderResolver {
+    trust_prefix: String,
+    mtls_certificate_prefix: String,
+    mtls_key_prefix: String,
+}
+
+impl Default for EnvironmentTlsMaterialProviderResolver {
+    fn default() -> Self {
+        Self {
+            trust_prefix: "AIPERF_CONTROL_TLS_TRUST_".to_owned(),
+            mtls_certificate_prefix: "AIPERF_CONTROL_TLS_MTLS_CERT_".to_owned(),
+            mtls_key_prefix: "AIPERF_CONTROL_TLS_MTLS_KEY_".to_owned(),
+        }
+    }
+}
+
+impl EnvironmentTlsMaterialProviderResolver {
+    fn variable_name(
+        &self,
+        prefix: &str,
+        provider_id: &str,
+    ) -> Result<String, TlsMaterialResolutionError> {
+        provider_variable_name(prefix, provider_id)
+            .map_err(|_| TlsMaterialResolutionError::Unavailable(provider_id.to_owned()))
+    }
+
+    fn read_variable(
+        &self,
+        variable: &str,
+        provider_id: &str,
+    ) -> Result<Vec<u8>, TlsMaterialResolutionError> {
+        env::var(variable)
+            .map(String::into_bytes)
+            .map_err(|_| TlsMaterialResolutionError::Unavailable(provider_id.to_owned()))
+    }
+}
+
+impl TlsMaterialProviderResolver for EnvironmentTlsMaterialProviderResolver {
+    fn resolve_trust(
+        &self,
+        provider_id: &str,
+    ) -> Result<ResolvedTlsTrustRoots, TlsMaterialResolutionError> {
+        let variable = self.variable_name(&self.trust_prefix, provider_id)?;
+        ResolvedTlsTrustRoots::new(self.read_variable(&variable, provider_id)?)
+    }
+
+    fn resolve_mtls(
+        &self,
+        provider_id: &str,
+    ) -> Result<ResolvedMtlsIdentity, TlsMaterialResolutionError> {
+        let certificate_variable =
+            self.variable_name(&self.mtls_certificate_prefix, provider_id)?;
+        let key_variable = self.variable_name(&self.mtls_key_prefix, provider_id)?;
+        ResolvedMtlsIdentity::new(
+            self.read_variable(&certificate_variable, provider_id)?,
+            self.read_variable(&key_variable, provider_id)?,
+        )
     }
 }
 
@@ -159,6 +330,7 @@ pub struct ValidatedControlPlaneProfile {
     url: Url,
     client: ClientConfig,
     credential: ControlPlaneCredentialReference,
+    tls: ControlPlaneTlsReference,
     accepted_media_types: Vec<String>,
     accepted_content_encodings: Vec<String>,
     max_encoded_bytes: usize,
@@ -170,6 +342,7 @@ impl ValidatedControlPlaneProfile {
         url: Url,
         client: ClientConfig,
         credential: ControlPlaneCredentialReference,
+        tls: ControlPlaneTlsReference,
         accepted_media_types: Vec<String>,
         accepted_content_encodings: Vec<String>,
         max_encoded_bytes: usize,
@@ -196,6 +369,11 @@ impl ValidatedControlPlaneProfile {
             return Err(ControlPlanePrepareError::InvalidProfile(
                 "a physical telemetry source must own exactly one control-plane connection slot"
                     .to_owned(),
+            ));
+        }
+        if !client.ssl_verify || client.prepared_tls.is_some() {
+            return Err(ControlPlanePrepareError::InvalidProfile(
+                "control-plane TLS must use provider-prepared certificate verification".to_owned(),
             ));
         }
         if client
@@ -238,18 +416,37 @@ impl ValidatedControlPlaneProfile {
             preceding = Some(media_type);
         }
         if let ControlPlaneCredentialReference::BearerProvider(provider_id) = &credential
-            && (provider_id.is_empty()
-                || provider_id.trim() != provider_id
-                || provider_id.chars().any(char::is_control))
+            && validate_provider_id(provider_id).is_err()
         {
             return Err(ControlPlanePrepareError::InvalidProfile(
                 "credential provider ID is invalid".to_owned(),
+            ));
+        }
+        for provider_id in [tls.trust_provider.as_deref(), tls.mtls_provider.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            validate_provider_id(provider_id).map_err(|_| {
+                ControlPlanePrepareError::InvalidProfile(
+                    "TLS material provider ID is invalid".to_owned(),
+                )
+            })?;
+        }
+        if url.scheme() != "https"
+            && (!matches!(credential, ControlPlaneCredentialReference::None)
+                || tls.trust_provider.is_some()
+                || tls.mtls_provider.is_some())
+        {
+            return Err(ControlPlanePrepareError::InvalidProfile(
+                "credentials and provider TLS material require an https control-plane URL"
+                    .to_owned(),
             ));
         }
         Ok(Self {
             url,
             client,
             credential,
+            tls,
             accepted_media_types,
             accepted_content_encodings,
             max_encoded_bytes,
@@ -309,19 +506,35 @@ impl ControlPlaneClientPolicy {
 #[derive(Clone)]
 pub struct NativeControlPlaneHttpProviderFactory {
     secrets: Arc<dyn SecretProviderResolver>,
+    tls_materials: Arc<dyn TlsMaterialProviderResolver>,
 }
 
 impl NativeControlPlaneHttpProviderFactory {
     /// Bind a deployment-owned secret resolver without resolving any source.
     #[must_use]
     pub fn new(secrets: Arc<dyn SecretProviderResolver>) -> Self {
-        Self { secrets }
+        Self::with_resolvers(secrets, Arc::new(RejectingTlsMaterialProviderResolver))
+    }
+
+    /// Bind independent deployment-owned credential and TLS material resolvers.
+    #[must_use]
+    pub fn with_resolvers(
+        secrets: Arc<dyn SecretProviderResolver>,
+        tls_materials: Arc<dyn TlsMaterialProviderResolver>,
+    ) -> Self {
+        Self {
+            secrets,
+            tls_materials,
+        }
     }
 }
 
 impl Default for NativeControlPlaneHttpProviderFactory {
     fn default() -> Self {
-        Self::new(Arc::new(EnvironmentSecretProviderResolver::default()))
+        Self::with_resolvers(
+            Arc::new(EnvironmentSecretProviderResolver::default()),
+            Arc::new(EnvironmentTlsMaterialProviderResolver::default()),
+        )
     }
 }
 
@@ -330,6 +543,7 @@ impl Debug for NativeControlPlaneHttpProviderFactory {
         formatter
             .debug_struct("NativeControlPlaneHttpProviderFactory")
             .field("secrets", &self.secrets)
+            .field("tls_materials", &self.tls_materials)
             .finish()
     }
 }
@@ -340,11 +554,14 @@ impl ControlPlaneHttpProviderFactory for NativeControlPlaneHttpProviderFactory {
         clock: Rc<dyn Clock>,
         policy: ControlPlaneClientPolicy,
     ) -> Rc<dyn ControlPlaneHttpProvider> {
-        Rc::new(NativeControlPlaneHttpProvider::with_client_policy(
-            clock,
-            Arc::clone(&self.secrets),
-            policy,
-        ))
+        Rc::new(
+            NativeControlPlaneHttpProvider::with_resolvers_and_client_policy(
+                clock,
+                Arc::clone(&self.secrets),
+                Arc::clone(&self.tls_materials),
+                policy,
+            ),
+        )
     }
 }
 
@@ -410,6 +627,7 @@ pub trait ControlPlaneHttp: Debug {
 pub struct NativeControlPlaneHttpProvider {
     clock: Rc<dyn Clock>,
     secrets: Arc<dyn SecretProviderResolver>,
+    tls_materials: Arc<dyn TlsMaterialProviderResolver>,
     client_policy: ControlPlaneClientPolicy,
 }
 
@@ -427,9 +645,26 @@ impl NativeControlPlaneHttpProvider {
         secrets: Arc<dyn SecretProviderResolver>,
         client_policy: ControlPlaneClientPolicy,
     ) -> Self {
+        Self::with_resolvers_and_client_policy(
+            clock,
+            secrets,
+            Arc::new(RejectingTlsMaterialProviderResolver),
+            client_policy,
+        )
+    }
+
+    /// Create a provider with independent material resolvers and client ceilings.
+    #[must_use]
+    pub fn with_resolvers_and_client_policy(
+        clock: Rc<dyn Clock>,
+        secrets: Arc<dyn SecretProviderResolver>,
+        tls_materials: Arc<dyn TlsMaterialProviderResolver>,
+        client_policy: ControlPlaneClientPolicy,
+    ) -> Self {
         Self {
             clock,
             secrets,
+            tls_materials,
             client_policy,
         }
     }
@@ -441,6 +676,7 @@ impl Debug for NativeControlPlaneHttpProvider {
             .debug_struct("NativeControlPlaneHttpProvider")
             .field("virtual_clock", &self.clock.is_virtual())
             .field("secrets", &self.secrets)
+            .field("tls_materials", &self.tls_materials)
             .field("client_policy", &self.client_policy)
             .finish()
     }
@@ -460,11 +696,36 @@ impl ControlPlaneHttpProvider for NativeControlPlaneHttpProvider {
                     .map_err(ControlPlanePrepareError::Secret)?,
             ),
         };
+        let trust = profile
+            .tls
+            .trust_provider
+            .as_deref()
+            .map(|provider_id| self.tls_materials.resolve_trust(provider_id))
+            .transpose()
+            .map_err(ControlPlanePrepareError::TlsMaterial)?;
+        let mtls = profile
+            .tls
+            .mtls_provider
+            .as_deref()
+            .map(|provider_id| self.tls_materials.resolve_mtls(provider_id))
+            .transpose()
+            .map_err(ControlPlanePrepareError::TlsMaterial)?;
         let mut client = profile.client.clone();
         client.connect_timeout_ns = capped_connect_timeout(
             client.connect_timeout_ns,
             self.client_policy.connect_timeout_ns,
         );
+        if trust.is_some() || mtls.is_some() {
+            client.prepared_tls = Some(
+                PreparedTlsClientConfig::from_provider_pem(
+                    trust.as_ref().map(ResolvedTlsTrustRoots::expose),
+                    mtls.as_ref()
+                        .map(ResolvedMtlsIdentity::certificate_chain_pem),
+                    mtls.as_ref().map(ResolvedMtlsIdentity::private_key_pem),
+                )
+                .map_err(ControlPlanePrepareError::TlsConfig)?,
+            );
+        }
         let transport = Rc::new(HttpTransport::new(self.clock.clone(), client));
         Ok(Rc::new(NativeControlPlaneHttp {
             clock: self.clock.clone(),
@@ -613,6 +874,35 @@ fn capped_connect_timeout(source: Option<i64>, backend: Option<i64>) -> Option<i
     }
 }
 
+fn validate_provider_id(provider_id: &str) -> Result<(), ()> {
+    if provider_id.is_empty()
+        || provider_id.len() > 128
+        || !provider_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || provider_id.starts_with('-')
+        || provider_id.ends_with('-')
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn provider_variable_name(prefix: &str, provider_id: &str) -> Result<String, ()> {
+    validate_provider_id(provider_id)?;
+    let suffix = provider_id
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(byte.to_ascii_uppercase())
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Ok(format!("{prefix}{suffix}"))
+}
+
 fn validate_sorted_tokens(
     field: &'static str,
     values: &[String],
@@ -692,6 +982,10 @@ pub enum ControlPlanePrepareError {
     InvalidProfile(String),
     /// Provider-owned credential resolution failed.
     Secret(SecretResolutionError),
+    /// Provider-owned TLS material resolution failed.
+    TlsMaterial(TlsMaterialResolutionError),
+    /// Resolved TLS material could not form a verifying rustls policy.
+    TlsConfig(PreparedTlsClientConfigError),
 }
 
 impl Display for ControlPlanePrepareError {
@@ -700,6 +994,15 @@ impl Display for ControlPlanePrepareError {
             Self::InvalidProfile(message) => formatter.write_str(message),
             Self::Secret(error) => {
                 write!(formatter, "control-plane secret resolution failed: {error}")
+            }
+            Self::TlsMaterial(error) => {
+                write!(
+                    formatter,
+                    "control-plane TLS material resolution failed: {error}"
+                )
+            }
+            Self::TlsConfig(error) => {
+                write!(formatter, "control-plane TLS policy failed: {error}")
             }
         }
     }
@@ -714,8 +1017,8 @@ pub enum SecretResolutionError {
     Unavailable(String),
     /// Provider returned an empty or header-unsafe value.
     InvalidSecret,
-    /// Provider failed with bounded redaction-safe detail.
-    Failed(String),
+    /// Resolver construction policy is invalid.
+    InvalidProviderConfiguration,
 }
 
 impl Display for SecretResolutionError {
@@ -725,12 +1028,46 @@ impl Display for SecretResolutionError {
                 write!(formatter, "secret provider {provider:?} is unavailable")
             }
             Self::InvalidSecret => formatter.write_str("secret provider returned an invalid value"),
-            Self::Failed(message) => formatter.write_str(message),
+            Self::InvalidProviderConfiguration => {
+                formatter.write_str("secret provider resolver configuration is invalid")
+            }
         }
     }
 }
 
 impl std::error::Error for SecretResolutionError {}
+
+/// Provider-owned TLS resolution failure without material bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TlsMaterialResolutionError {
+    /// Selected provider does not exist in this deployment.
+    Unavailable(String),
+    /// Trust provider returned an empty or unsafe entity.
+    InvalidTrustMaterial,
+    /// mTLS provider returned an empty or unsafe identity entity.
+    InvalidMtlsMaterial,
+}
+
+impl Display for TlsMaterialResolutionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable(provider) => {
+                write!(
+                    formatter,
+                    "TLS material provider {provider:?} is unavailable"
+                )
+            }
+            Self::InvalidTrustMaterial => {
+                formatter.write_str("TLS trust provider returned invalid material")
+            }
+            Self::InvalidMtlsMaterial => {
+                formatter.write_str("mTLS provider returned invalid identity material")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TlsMaterialResolutionError {}
 
 /// Stable control-plane execution category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -790,6 +1127,29 @@ impl std::error::Error for ControlPlaneHttpError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiperf_clock::SimClock;
+
+    #[derive(Debug)]
+    struct InvalidPemTlsResolver;
+
+    impl TlsMaterialProviderResolver for InvalidPemTlsResolver {
+        fn resolve_trust(
+            &self,
+            _provider_id: &str,
+        ) -> Result<ResolvedTlsTrustRoots, TlsMaterialResolutionError> {
+            ResolvedTlsTrustRoots::new(b"fixture-super-secret-invalid-trust".to_vec())
+        }
+
+        fn resolve_mtls(
+            &self,
+            _provider_id: &str,
+        ) -> Result<ResolvedMtlsIdentity, TlsMaterialResolutionError> {
+            ResolvedMtlsIdentity::new(
+                b"fixture-super-secret-invalid-certificate".to_vec(),
+                b"fixture-super-secret-invalid-private-key".to_vec(),
+            )
+        }
+    }
 
     fn profile(url: &str) -> ValidatedControlPlaneProfile {
         let client = ClientConfig {
@@ -800,6 +1160,7 @@ mod tests {
             Url::parse(url).unwrap(),
             client,
             ControlPlaneCredentialReference::None,
+            ControlPlaneTlsReference::default(),
             vec!["text/plain; version=0.0.4".to_owned()],
             vec!["gzip".to_owned(), "identity".to_owned()],
             1024,
@@ -818,6 +1179,7 @@ mod tests {
                 Url::parse("https://user:secret@example.test/metrics").unwrap(),
                 client.clone(),
                 ControlPlaneCredentialReference::None,
+                ControlPlaneTlsReference::default(),
                 vec!["text/plain".to_owned()],
                 vec!["identity".to_owned()],
                 1,
@@ -830,6 +1192,7 @@ mod tests {
                 Url::parse("https://example.test/metrics").unwrap(),
                 client,
                 ControlPlaneCredentialReference::None,
+                ControlPlaneTlsReference::default(),
                 vec!["text/plain".to_owned()],
                 vec!["identity".to_owned()],
                 1,
@@ -842,6 +1205,14 @@ mod tests {
     fn debug_surfaces_never_expose_secret_bytes() {
         let secret = ResolvedSecret::new("fixture-super-secret").unwrap();
         assert!(!format!("{secret:?}").contains("fixture-super-secret"));
+        let trust = ResolvedTlsTrustRoots::new(b"fixture-super-secret-trust".to_vec()).unwrap();
+        let mtls = ResolvedMtlsIdentity::new(
+            b"fixture-super-secret-certificate".to_vec(),
+            b"fixture-super-secret-private-key".to_vec(),
+        )
+        .unwrap();
+        let debug = format!("{trust:?} {mtls:?}");
+        assert!(!debug.contains("fixture-super-secret"));
         let _ = profile("http://127.0.0.1:1/metrics");
     }
 
@@ -853,6 +1224,89 @@ mod tests {
             "AIPERF_CONTROL_BEARER_NODE_METRICS"
         );
         assert!(resolver.variable_name(" padded ").is_err());
+        let tls = EnvironmentTlsMaterialProviderResolver::default();
+        assert_eq!(
+            tls.variable_name(&tls.trust_prefix, "cluster-ca").unwrap(),
+            "AIPERF_CONTROL_TLS_TRUST_CLUSTER_CA"
+        );
+        assert_eq!(
+            tls.variable_name(&tls.mtls_key_prefix, "node-client")
+                .unwrap(),
+            "AIPERF_CONTROL_TLS_MTLS_KEY_NODE_CLIENT"
+        );
+    }
+
+    #[test]
+    fn provider_tls_is_https_only_and_cannot_be_preinjected() {
+        let client = ClientConfig {
+            max_connections_per_origin: 1,
+            ..ClientConfig::default()
+        };
+        assert!(
+            ValidatedControlPlaneProfile::new(
+                Url::parse("http://example.test/metrics").unwrap(),
+                client.clone(),
+                ControlPlaneCredentialReference::None,
+                ControlPlaneTlsReference {
+                    trust_provider: Some("cluster-ca".to_owned()),
+                    mtls_provider: None,
+                },
+                vec!["text/plain".to_owned()],
+                vec!["identity".to_owned()],
+                1024,
+            )
+            .is_err()
+        );
+        assert!(
+            ValidatedControlPlaneProfile::new(
+                Url::parse("http://example.test/metrics").unwrap(),
+                client,
+                ControlPlaneCredentialReference::BearerProvider("node-token".to_owned()),
+                ControlPlaneTlsReference::default(),
+                vec!["text/plain".to_owned()],
+                vec!["identity".to_owned()],
+                1024,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unknown_tls_provider_fails_preparation_without_material_leakage() {
+        let mut tls_profile = profile("https://example.test/metrics");
+        tls_profile.tls.trust_provider = Some("missing-private-ca".to_owned());
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider =
+            NativeControlPlaneHttpProvider::new(clock, Arc::new(RejectingSecretProviderResolver));
+        let error = provider.prepare(tls_profile).unwrap_err();
+        assert!(error.to_string().contains("missing-private-ca"));
+
+        let mut invalid = profile("https://example.test/metrics");
+        invalid.tls.trust_provider = Some("invalid-private-ca".to_owned());
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider = NativeControlPlaneHttpProvider::with_resolvers_and_client_policy(
+            clock,
+            Arc::new(RejectingSecretProviderResolver),
+            Arc::new(InvalidPemTlsResolver),
+            ControlPlaneClientPolicy::default(),
+        );
+        let error = provider.prepare(invalid).unwrap_err();
+        let surfaces = format!("{error:?} {error}");
+        assert!(!surfaces.contains("fixture-super-secret"));
+        assert!(surfaces.contains("invalid certificate material"));
+    }
+
+    #[test]
+    fn unknown_bearer_provider_fails_before_transport_construction() {
+        let mut credential_profile = profile("https://example.test/metrics");
+        credential_profile.credential =
+            ControlPlaneCredentialReference::BearerProvider("missing-node-token".to_owned());
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider =
+            NativeControlPlaneHttpProvider::new(clock, Arc::new(RejectingSecretProviderResolver));
+        let error = provider.prepare(credential_profile).unwrap_err();
+        assert!(error.to_string().contains("missing-node-token"));
+        assert!(!format!("{error:?}").contains("Authorization"));
     }
 
     #[test]
@@ -894,6 +1348,7 @@ mod tests {
                     Url::parse("https://example.test/metrics").unwrap(),
                     client.clone(),
                     ControlPlaneCredentialReference::None,
+                    ControlPlaneTlsReference::default(),
                     vec!["text/plain".to_owned()],
                     encodings,
                     1024,

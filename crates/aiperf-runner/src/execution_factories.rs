@@ -12,6 +12,9 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::control_plane_http::{
+    ControlPlaneHttpProviderFactory, NativeControlPlaneHttpProviderFactory,
+};
 use crate::graph_execution::{NativeRunnerGraphPlacementFactory, RunnerGraphPlacementFactory};
 use crate::grpc_turn_execution::NativeGrpcExecutionBackendFactory;
 use crate::readiness::{
@@ -28,6 +31,7 @@ pub struct RunnerExecutionFactories {
     graph: Arc<dyn RunnerGraphPlacementFactory>,
     readiness_plans: Arc<dyn OnlineReadinessPlanFactory>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
+    control_plane_http: Arc<dyn ControlPlaneHttpProviderFactory>,
 }
 
 impl RunnerExecutionFactories {
@@ -45,6 +49,7 @@ impl RunnerExecutionFactories {
             graph,
             readiness_plans,
             readiness_transport,
+            control_plane_http: Arc::new(NativeControlPlaneHttpProviderFactory::default()),
         }
     }
 
@@ -55,6 +60,15 @@ impl RunnerExecutionFactories {
     /// composition installs the Tonic-specific factory explicitly.
     pub fn with_grpc(mut self, grpc: Arc<dyn HttpExecutionBackendFactory>) -> Self {
         self.grpc = grpc;
+        self
+    }
+
+    /// Override isolated control-plane HTTP provider preparation.
+    pub fn with_control_plane_http(
+        mut self,
+        control_plane_http: Arc<dyn ControlPlaneHttpProviderFactory>,
+    ) -> Self {
+        self.control_plane_http = control_plane_http;
         self
     }
 
@@ -106,6 +120,16 @@ impl RunnerExecutionFactories {
     /// Retain the readiness transport factory in a prepared operation.
     pub fn readiness_transport_handle(&self) -> Arc<dyn ReadinessTransportFactory> {
         self.readiness_transport.clone()
+    }
+
+    /// Borrow the factory for run-local, inference-isolated control handles.
+    pub fn control_plane_http(&self) -> &dyn ControlPlaneHttpProviderFactory {
+        self.control_plane_http.as_ref()
+    }
+
+    /// Retain the same injected control-plane factory in a prepared operation.
+    pub fn control_plane_http_handle(&self) -> Arc<dyn ControlPlaneHttpProviderFactory> {
+        self.control_plane_http.clone()
     }
 }
 

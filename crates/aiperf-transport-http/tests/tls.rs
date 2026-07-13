@@ -7,10 +7,13 @@
 mod common;
 
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_transport_http::config::ClientConfig;
+use aiperf_transport_http::client::pool::ConnectionPool;
+use aiperf_transport_http::client::resolver::{CachingDnsResolver, HostLookup};
+use aiperf_transport_http::config::{ClientConfig, PreparedTlsClientConfig};
 use aiperf_transport_http::models::{ErrorKind, HttpVersion, RequestConfig};
 use aiperf_transport_http::transport::http_transport::HttpTransport;
 use aiperf_transport_http::{Clock, RealClock};
@@ -58,15 +61,58 @@ X0vllj6GAR7hSJSwFZLfZ/pjk1HkmjwU7V/qjXdvf4W9UdEQcIZ2+mkv
 -----END PRIVATE KEY-----
 "#;
 
-async fn spawn_untrusted_https() -> (String, tokio::task::JoinHandle<()>) {
+struct FixedLookup(SocketAddr);
+
+#[async_trait::async_trait(?Send)]
+impl HostLookup for FixedLookup {
+    async fn lookup(
+        &self,
+        _host: &str,
+        _port: u16,
+    ) -> Result<SocketAddr, aiperf_transport_http::models::ErrorDetails> {
+        Ok(self.0)
+    }
+}
+
+fn transport_with_fixed_lookup(
+    clock: Rc<dyn Clock>,
+    config: ClientConfig,
+    address: SocketAddr,
+) -> HttpTransport {
+    let resolver = CachingDnsResolver::new(Rc::new(FixedLookup(address)));
+    HttpTransport::with_connection_manager(
+        clock,
+        config,
+        Rc::new(ConnectionPool::with_resolver(Rc::new(resolver))),
+    )
+}
+
+async fn spawn_untrusted_https(
+    require_client_auth: bool,
+) -> (String, SocketAddr, tokio::task::JoinHandle<()>) {
     let certificates = CertificateDer::pem_slice_iter(CHAIN.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let key = PrivateKeyDer::from_pem_slice(KEY.as_bytes()).unwrap();
-    let mut server_config = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certificates, key)
-        .unwrap();
+    let builder = rustls::ServerConfig::builder();
+    let mut server_config = if require_client_auth {
+        let mut roots = rustls::RootCertStore::empty();
+        for certificate in CertificateDer::pem_slice_iter(CHAIN.as_bytes()) {
+            roots.add(certificate.unwrap()).unwrap();
+        }
+        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
+            .build()
+            .unwrap();
+        builder
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(certificates, key)
+            .unwrap()
+    } else {
+        builder
+            .with_no_client_auth()
+            .with_single_cert(certificates, key)
+            .unwrap()
+    };
     server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -96,22 +142,27 @@ async fn spawn_untrusted_https() -> (String, tokio::task::JoinHandle<()>) {
             });
         }
     });
-    (format!("https://127.0.0.1:{}/health", address.port()), task)
+    (
+        format!("https://foobar.com:{}/health", address.port()),
+        address,
+        task,
+    )
 }
 
 #[test]
 fn ssl_verify_rejects_untrusted_chain_and_no_verify_accepts_it() {
     run_local(async {
-        let (url, server) = spawn_untrusted_https().await;
+        let (url, address, server) = spawn_untrusted_https(false).await;
         let request = RequestConfig::new(url);
         let verified_clock: Rc<dyn Clock> = RealClock::new();
-        let verified = HttpTransport::new(
+        let verified = transport_with_fixed_lookup(
             verified_clock,
             ClientConfig {
                 http_version: HttpVersion::Http1Only,
                 ssl_verify: true,
                 ..ClientConfig::default()
             },
+            address,
         )
         .get(&request)
         .await;
@@ -122,13 +173,14 @@ fn ssl_verify_rejects_untrusted_chain_and_no_verify_accepts_it() {
         assert!(verified.status.is_none());
 
         let insecure_clock: Rc<dyn Clock> = RealClock::new();
-        let insecure = HttpTransport::new(
+        let insecure = transport_with_fixed_lookup(
             insecure_clock,
             ClientConfig {
                 http_version: HttpVersion::Http1Only,
                 ssl_verify: false,
                 ..ClientConfig::default()
             },
+            address,
         )
         .get(&request)
         .await;
@@ -139,6 +191,79 @@ fn ssl_verify_rejects_untrusted_chain_and_no_verify_accepts_it() {
         );
         assert_eq!(insecure.status, Some(200));
 
+        server.abort();
+    });
+}
+
+#[test]
+fn provider_trust_roots_are_injected_into_the_live_rustls_connector() {
+    run_local(async {
+        let (url, address, server) = spawn_untrusted_https(false).await;
+        let prepared =
+            PreparedTlsClientConfig::from_provider_pem(Some(CHAIN.as_bytes()), None, None).unwrap();
+        assert!(!format!("{prepared:?}").contains("BEGIN CERTIFICATE"));
+        let transport = transport_with_fixed_lookup(
+            RealClock::new(),
+            ClientConfig {
+                http_version: HttpVersion::Http1Only,
+                prepared_tls: Some(prepared),
+                ..ClientConfig::default()
+            },
+            address,
+        );
+        let record = transport.get(&RequestConfig::new(url)).await;
+        assert!(
+            !record.has_error(),
+            "custom-trust request failed: {:?}",
+            record.error
+        );
+        assert_eq!(record.status, Some(200));
+        server.abort();
+    });
+}
+
+#[test]
+fn provider_mtls_identity_is_required_and_injected() {
+    run_local(async {
+        let (url, address, server) = spawn_untrusted_https(true).await;
+        let trust_only =
+            PreparedTlsClientConfig::from_provider_pem(Some(CHAIN.as_bytes()), None, None).unwrap();
+        let without_identity = transport_with_fixed_lookup(
+            RealClock::new(),
+            ClientConfig {
+                http_version: HttpVersion::Http1Only,
+                prepared_tls: Some(trust_only),
+                ..ClientConfig::default()
+            },
+            address,
+        )
+        .get(&RequestConfig::new(url.clone()))
+        .await;
+        assert!(without_identity.has_error());
+
+        let mtls = PreparedTlsClientConfig::from_provider_pem(
+            Some(CHAIN.as_bytes()),
+            Some(CHAIN.as_bytes()),
+            Some(KEY.as_bytes()),
+        )
+        .unwrap();
+        let with_identity = transport_with_fixed_lookup(
+            RealClock::new(),
+            ClientConfig {
+                http_version: HttpVersion::Http1Only,
+                prepared_tls: Some(mtls),
+                ..ClientConfig::default()
+            },
+            address,
+        )
+        .get(&RequestConfig::new(url))
+        .await;
+        assert!(
+            !with_identity.has_error(),
+            "mTLS request failed: {:?}",
+            with_identity.error
+        );
+        assert_eq!(with_identity.status, Some(200));
         server.abort();
     });
 }

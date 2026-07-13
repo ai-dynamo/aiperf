@@ -427,9 +427,9 @@ impl<'de> Deserialize<'de> for DistributionSpec {
         // agnostic to the number representation.
         let value = Value::deserialize(deserializer)?;
         let (has_peaks, has_points, has_median, has_stddev, has_value) = {
-            let object = value.as_object().ok_or_else(|| {
-                D::Error::custom("distribution must be a JSON object")
-            })?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| D::Error::custom("distribution must be a JSON object"))?;
             (
                 object.contains_key("peaks"),
                 object.contains_key("points"),

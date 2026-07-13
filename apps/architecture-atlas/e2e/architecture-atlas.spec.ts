@@ -26,17 +26,66 @@ const legacyRedirects = [
 
 const seededMetricsWaypointState =
   "N4IgbgpgTgzglgewHYgFwEYA0IYGMJIQCSAJmjvoQHQC2EALlHLjALT0QA2EdjAniGwBDAK4k4BfORIRInBAAdogkAqY0hUPgDFOQsAijkkQ+nEgB9ABb16ClbgQ0FmiLv2G0SEZ07YIAB4uSDIkAHIIMqQwaADaALrYAGYIuCIwECQAokhm9Hyk5JkA5hBUUCK5cHRU4jAu9LhWtAxMLCqMQvgAspEQxsj92Eh9AAoI8GbIMagJ-iSlAOpCfAoIcLkzsaAlxGSoILvllWY1dQ1NLYzMMdhrG-RboAFoAMwATO-YAqivABwAFgAvvEQdhTlwNhBxpNEChUAAGIFAA";
+const graphStateStorageKey = "aiperf-atlas:graph-state:v1";
 
 function encodedGraphStateFromUrl(page: Page): string {
   const current = new URL(page.url());
   return current.searchParams.get("s") ?? "";
 }
 
+async function storedGraphState(page: Page): Promise<string> {
+  return page.evaluate((key) => {
+    const storage = (
+      globalThis as {
+        localStorage?: { getItem: (storageKey: string) => string | null };
+      }
+    ).localStorage;
+    return storage?.getItem(key) ?? "";
+  }, graphStateStorageKey);
+}
+
+async function storedNodePosition(
+  page: Page,
+  nodeId: string,
+): Promise<{ x: number; y: number } | null> {
+  const raw = await storedGraphState(page);
+  if (!raw) {
+    return null;
+  }
+  const parsed = JSON.parse(raw) as {
+    nodePositions?: Array<{ nodeId: string; x: number; y: number }>;
+  };
+  const position = parsed.nodePositions?.find(
+    (candidate) => candidate.nodeId === nodeId,
+  );
+  return position ? { x: position.x, y: position.y } : null;
+}
+
+async function dragNodeBy(
+  page: Page,
+  nodeId: string,
+  delta: { x: number; y: number },
+): Promise<void> {
+  const node = page.getByTestId(`graph-node-${nodeId}`);
+  const box = await node.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + 3, box!.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 3 + delta.x, box!.y + 3 + delta.y, {
+    steps: 8,
+  });
+  await page.mouse.up();
+}
+
 async function openScene(page: Page, path: string, search = "audience=developer") {
   await page.goto(`${path}?${search}`);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(page.getByRole("status", { name: "Graph layout status" })).toContainText(
-    /Graph layout ready|Graph layout degraded/u,
+  await expectProductionLayoutReady(page);
+}
+
+async function expectProductionLayoutReady(page: Page) {
+  await expect(page.getByRole("status", { name: "Graph layout status" })).toHaveText(
+    "Graph layout ready.",
   );
 }
 
@@ -56,11 +105,7 @@ test.describe("Architecture Atlas functional journey", () => {
     page.on("pageerror", (error) => runtimeErrors.push(error.message));
     page.on("console", (message) => {
       if (message.type() === "error") {
-        const text = message.text();
-        if (/net::ERR_INTERNET_DISCONNECTED/u.test(text)) {
-          return;
-        }
-        runtimeErrors.push(text);
+        runtimeErrors.push(message.text());
       }
     });
   });
@@ -77,6 +122,11 @@ test.describe("Architecture Atlas functional journey", () => {
     await expect(page.getByRole("button", { name: "Fit graph" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Share graph state" })).toBeVisible();
     await expect(page.getByRole("main")).toHaveAttribute("id", "atlas-content");
+  });
+
+  test("keeps ELK layout healthy in production preview", async ({ page }) => {
+    await openScene(page, "/");
+    await expectProductionLayoutReady(page);
   });
 
   test("navigates all nine canonical graph scenes", async ({ page }) => {
@@ -121,16 +171,63 @@ test.describe("Architecture Atlas functional journey", () => {
   });
 
   test("persists dragged node layout state after reload", async ({ page }) => {
-    await openScene(
+    await openScene(page, "/scenes/metrics-telemetry");
+    const node = page.getByTestId("graph-node-node.journey.metrics-and-reporting");
+    const initialBox = await node.boundingBox();
+    expect(initialBox).not.toBeNull();
+    const initialUrlState = encodedGraphStateFromUrl(page);
+    const initialStoredState = await storedGraphState(page);
+    const initialStoredPosition = await storedNodePosition(
       page,
-      "/",
-      "audience=developer&s=N4IgbgpgTgzglgewHYgFwEYA0IYGMJIQCSAJmjvoQHRQCuSALnALYQC0uCzADgvE8hDYAhrRJwC+ciQiQANgm7QhIblBbCoATwBic4WARRySYU0gB9ABYMG3FZx6aIeg0bRJacudggAPbmEkGRIAOQQZUhg0AG0AXWwAMwRcWhgIEgBRRjgGLVIPLx8QBihhfABZCIgTZBrsJGqABT5cxCRo1HjfEgBzCAB1YS1eOEZO7pKWCDkxiBb+drQABgBfIA",
+      "node.journey.metrics-and-reporting",
     );
+
+    await dragNodeBy(page, "node.journey.metrics-and-reporting", {
+      x: 72,
+      y: 56,
+    });
+
+    await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(initialUrlState);
+    await expect.poll(() => storedGraphState(page)).not.toBe(initialStoredState);
+    await expect
+      .poll(() =>
+        storedNodePosition(page, "node.journey.metrics-and-reporting"),
+      )
+      .not.toEqual(initialStoredPosition);
+    const draggedPosition = await storedNodePosition(
+      page,
+      "node.journey.metrics-and-reporting",
+    );
+    expect(draggedPosition).not.toBeNull();
     const draggedState = encodedGraphStateFromUrl(page);
-    expect(draggedState).not.toBe("");
+    const draggedBox = await node.boundingBox();
+    expect(draggedBox).not.toBeNull();
+    expect(Math.abs(draggedBox!.x - initialBox!.x)).toBeGreaterThan(20);
+    expect(Math.abs(draggedBox!.y - initialBox!.y)).toBeGreaterThan(20);
+
     await page.reload();
+    await expectProductionLayoutReady(page);
     await expect.poll(() => encodedGraphStateFromUrl(page)).toBe(draggedState);
-    await expect(page.getByTestId("graph-node-node.runtime-composition")).toBeVisible();
+    await expect(node).toBeVisible();
+    await expect
+      .poll(() =>
+        storedNodePosition(page, "node.journey.metrics-and-reporting"),
+      )
+      .toEqual(draggedPosition);
+    await expect
+      .poll(async () => {
+        const reloadedBox = await node.boundingBox();
+        return reloadedBox
+          ? {
+              x: Math.round(reloadedBox.x),
+              y: Math.round(reloadedBox.y),
+            }
+          : null;
+      })
+      .toEqual({
+        x: Math.round(draggedBox!.x),
+        y: Math.round(draggedBox!.y),
+      });
   });
 
   test("supports expansion, drilldown, evidence drawer, and focus restoration", async ({ page }) => {
@@ -139,36 +236,24 @@ test.describe("Architecture Atlas functional journey", () => {
     const runtimeNode = page.getByTestId("graph-node-node.runtime-composition");
     await runtimeNode.getByRole("button", { name: "Expand Runtime composition" }).click();
     await expect(page.getByTestId("graph-node-node.clock-seam")).toBeVisible();
+    await expectProductionLayoutReady(page);
 
-    const clockNodeTrigger = page
+    const canvasClockTrigger = page
       .getByTestId("graph-node-node.clock-seam")
       .getByRole("button", { name: "Clock seam", exact: true });
-    await clockNodeTrigger.click();
+    await page
+      .getByRole("button", { name: "Show graph accessibility outline" })
+      .click();
+    const outlineClockTrigger = page.getByRole("button", {
+      name: "Select node Clock seam",
+      exact: true,
+    });
+    await outlineClockTrigger.click();
     await expect(page.getByRole("dialog", { name: "Clock seam evidence" })).toBeVisible();
 
-    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Close evidence panel" }).click();
     await expect(page.getByRole("dialog", { name: "Clock seam evidence" })).toHaveCount(0);
-    await expect
-      .poll(async () =>
-        page.evaluate(() => {
-          const activeElement = (
-            globalThis as {
-              document?: {
-                activeElement?: {
-                  id?: string;
-                  getAttribute?: (name: string) => string | null;
-                } | null;
-              };
-            }
-          ).document?.activeElement;
-          return (
-            activeElement?.id ??
-            activeElement?.getAttribute?.("data-graph-entity-id") ??
-            ""
-          );
-        }),
-      )
-      .toMatch(/atlas-graph-search|node\.clock-seam/u);
+    await expect(canvasClockTrigger).toBeFocused();
 
     await runtimeNode.getByRole("button", { name: "Collapse Runtime composition" }).click();
     await expect(page.getByTestId("graph-node-node.clock-seam")).toHaveCount(0);
@@ -176,28 +261,40 @@ test.describe("Architecture Atlas functional journey", () => {
 
   test("supports edge waypoint pointer and keyboard editing", async ({ page }) => {
     await openScene(page, "/scenes/metrics-telemetry");
+    await dragNodeBy(page, "node.journey.metrics-and-reporting", {
+      x: -180,
+      y: 100,
+    });
+    await dragNodeBy(page, "node.runtime-composition", {
+      x: 180,
+      y: -100,
+    });
     await focusRuntimeDispatchEdge(page);
     const addWaypoint = page.getByTestId("graph-edge-waypoint-add-edge.runtime.dispatch.metrics");
     await expect(addWaypoint).toBeVisible();
-    await addWaypoint.evaluate((element) => {
-      (element as { click: () => void }).click();
-    });
+    await addWaypoint.click();
 
     const waypointHandle = page.getByTestId("graph-edge-waypoint-handle-edge.runtime.dispatch.metrics-0");
     await expect(waypointHandle).toHaveCount(1);
     await expect(waypointHandle).toBeVisible();
     const initialState = encodedGraphStateFromUrl(page);
 
-    await waypointHandle.focus();
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("ArrowDown");
+    await waypointHandle.dragTo(addWaypoint);
     await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(initialState);
+    const pointerState = encodedGraphStateFromUrl(page);
+
+    await waypointHandle.focus();
+    for (let step = 0; step < 8; step += 1) {
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("ArrowDown");
+    }
+    await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(pointerState);
     const keyboardState = encodedGraphStateFromUrl(page);
 
     const removeWaypoint = page.getByTestId(
       "graph-edge-waypoint-remove-edge.runtime.dispatch.metrics-0",
     );
-    await removeWaypoint.click({ force: true });
+    await removeWaypoint.click();
     await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(keyboardState);
     await expect(page.getByTestId("graph-edge-waypoint-handle-edge.runtime.dispatch.metrics-0")).toHaveCount(0);
   });
