@@ -18,8 +18,9 @@
 # `dynosim_online` drives the same engine in real wall-clock time for
 # live-throughput measurement.
 #
-# All engine/topology/router/SLA knobs live under `transport.config` (mirroring
-# Dynamo's `MockEngineArgs`/router). The trace file and concurrency/rate axes reuse
+# All engine/topology/router/SLA knobs are authored inline on the `transport`
+# block (mirroring Dynamo's `MockEngineArgs`/router), the same way `dataset` and
+# `phases` carry their own fields. The trace file and concurrency/rate axes reuse
 # the SAME `dataset` and `phases` surface as an online run — switching a benchmark
 # between a real server and the simulator is just the `transport` block.
 #
@@ -45,24 +46,25 @@ benchmark:
   transport:
     # dynosim_offline = deterministic virtual clock (byte-exact-with-native).
     # dynosim_online  = same engine under a real wall clock (live throughput).
+    # Fields are authored inline (like `dataset`/`phases`), not under a nested
+    # `config:` envelope.
     type: dynosim_offline
-    config:
-      topology: single          # single | aggregated | disaggregated
-      routerMode: round_robin   # round_robin | kv
-      workers: 1
-      # Free-form MockEngineArgs object, passed through verbatim to Dynamo.
-      engine:
-        block_size: 16
-        max_num_batched_tokens: 8192
-        enable_prefix_caching: true
-      # Optional goodput thresholds (omit to disable).
-      sla:
-        ttftMs: 500
-        itlMs: 20
-      # Canonical Dynamo artifacts, relative to the run artifact target.
-      artifacts:
-        reportJson: dynamo_report.json
-        perRequestJsonl: dynamo_per_request.jsonl
+    topology: single          # single | aggregated | disaggregated
+    routerMode: round_robin   # round_robin | kv
+    workers: 1
+    # Free-form MockEngineArgs object, passed through verbatim to Dynamo.
+    engine:
+      block_size: 16
+      max_num_batched_tokens: 8192
+      enable_prefix_caching: true
+    # Optional goodput thresholds (omit to disable).
+    sla:
+      ttftMs: 500
+      itlMs: 20
+    # Canonical Dynamo artifacts, relative to the run artifact target.
+    artifacts:
+      reportJson: dynamo_report.json
+      perRequestJsonl: dynamo_per_request.jsonl
 
   dataset:
     type: file

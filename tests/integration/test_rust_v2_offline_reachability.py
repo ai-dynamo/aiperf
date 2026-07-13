@@ -43,11 +43,9 @@ def _base_benchmark(artifact_dir: Path) -> dict[str, Any]:
         },
         "transport": {
             "type": "dynamo_offline",
-            "config": {
-                "artifacts": {
-                    "report_json": "dynamo/report.json",
-                    "per_request_jsonl": "dynamo/requests.jsonl",
-                }
+            "artifacts": {
+                "report_json": "dynamo/report.json",
+                "per_request_jsonl": "dynamo/requests.jsonl",
             },
         },
         "tokenizer": {"name": "builtin"},
@@ -67,7 +65,7 @@ def _base_benchmark(artifact_dir: Path) -> dict[str, Any]:
 
 def _scheduled_run(artifact_dir: Path) -> BenchmarkRun:
     benchmark = _base_benchmark(artifact_dir)
-    benchmark["transport"]["config"].update(
+    benchmark["transport"].update(
         {
             "topology": "aggregated",
             "workers": 2,

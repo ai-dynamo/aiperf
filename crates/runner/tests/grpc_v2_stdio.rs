@@ -496,9 +496,8 @@ benchmark:
     dir: "{}"
   runtime:
     ui: none
-  backend:
-    type: online_grpc
-    config: {{}}
+  transport:
+    type: grpc
 "#,
             artifact_root.display()
         ),

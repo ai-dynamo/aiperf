@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import orjson
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from aiperf.common.environment import Environment
 from aiperf.config import (
@@ -20,12 +20,15 @@ from aiperf.config import (
     RunnerTransportConfig,
     RunnerWorkloadConfig,
 )
+from aiperf.config.execution import OpenTransport
 from aiperf.orchestrator import rust_executor
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_wire import (
     RustWireError,
     build_authored_run_request,
 )
+
+_TRANSPORT_ADAPTER = TypeAdapter(RunnerTransportConfig)
 
 _DISTRIBUTION_A = "blake3:" + "a" * 64
 _DISTRIBUTION_B = "blake3:" + "b" * 64
@@ -202,7 +205,7 @@ def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
 ) -> None:
     run = _run(
         tmp_path / "grpc-v2-only",
-        transport={"type": "grpc", "config": {}},
+        transport={"type": "grpc"},
         endpoint_url="grpc://127.0.0.1:8001",
         endpoint_type="kserve_v2_infer",
     )
@@ -233,7 +236,7 @@ def test_builtin_online_backend_url_families_fail_closed(
     with pytest.raises(ValidationError, match=message):
         _run(
             tmp_path / backend,
-            transport={"type": backend, "config": {}},
+            transport={"type": backend},
             endpoint_url=url,
             endpoint_type="kserve_v2_infer",
         )
@@ -385,7 +388,7 @@ def test_open_backend_workload_and_agentic_provider_payloads_survive(
         tmp_path,
         transport={
             "type": " acme_remote_backend ",
-            "config": {"placement": {"fabric": "zmq", "nodes": 4}},
+            "placement": {"fabric": "zmq", "nodes": 4},
         },
         workload={
             "type": " acme_agentic ",
@@ -735,21 +738,31 @@ def test_v2_custom_gpu_source_never_reads_resolved_state(tmp_path: Path) -> None
 
 
 def test_component_ids_are_open_strings_not_enums() -> None:
-    backend = RunnerTransportConfig(type="future_backend", config={"a": 1})
-    workload = RunnerWorkloadConfig(type="future_workload", config={"b": 2})
+    # An unmodelled transport ID routes to the open fallback variant, which keeps
+    # the identity an open (stripped) string and passes its own keys through.
+    transport = _TRANSPORT_ADAPTER.validate_python(
+        {"type": " future_backend ", "a": 1}
+    )
+    assert isinstance(transport, OpenTransport)
+    assert transport.type == "future_backend"
+    assert transport.model_extra == {"a": 1}
+    open_schema = OpenTransport.model_json_schema()
+    assert open_schema["properties"]["type"]["type"] == "string"
+    assert "enum" not in open_schema["properties"]["type"]
 
-    assert backend.type == "future_backend"
+    workload = RunnerWorkloadConfig(type="future_workload", config={"b": 2})
     assert workload.type == "future_workload"
-    backend_schema = RunnerTransportConfig.model_json_schema()
     workload_schema = RunnerWorkloadConfig.model_json_schema()
-    assert backend_schema["properties"]["type"]["type"] == "string"
     assert workload_schema["properties"]["type"]["type"] == "string"
-    assert "enum" not in backend_schema["properties"]["type"]
     assert "enum" not in workload_schema["properties"]["type"]
 
-    for model in (RunnerTransportConfig, RunnerWorkloadConfig, AgenticProviderConfig):
+    for model in (RunnerWorkloadConfig, AgenticProviderConfig):
         with pytest.raises(ValidationError, match="at least 1|non-empty string"):
             model(type="   ")
+    # A blank transport ID has no factory identity to strip to; the open variant
+    # rejects it just like the named-component models above.
+    with pytest.raises(ValidationError, match="at least 1|non-empty string"):
+        OpenTransport(type="   ")
 
 
 def test_runner_installation_uses_only_advertised_distribution_identity(
@@ -805,7 +818,7 @@ def test_executor_loads_only_the_advertised_v2_pair_adapter(tmp_path: Path) -> N
 def test_unsupported_pair_fails_at_exact_v2_image_preflight(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "must-not-exist",
-        transport={"type": "dynamo_offline", "config": {}},
+        transport={"type": "dynamo_offline"},
     )
     installation = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
@@ -864,7 +877,7 @@ def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
 def test_executor_never_reinterprets_an_unsupported_pair_as_v1(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "not-created",
-        transport={"type": "future_backend", "config": {"node": "remote"}},
+        transport={"type": "future_backend", "node": "remote"},
     )
     installation = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
@@ -939,7 +952,7 @@ def test_dynosim_offline_transport_projects_minimal_typed_config_snake_case(
         tmp_path,
         transport={
             "type": "dynosim_offline",
-            "config": {"engine": {"block_size": 16}},
+            "engine": {"block_size": 16},
         },
         dataset={
             "type": "file",
@@ -972,19 +985,17 @@ def test_dynosim_online_transport_normalizes_camelcase_and_sorts_features(
         tmp_path,
         transport={
             "type": "dynosim_online",
-            "config": {
-                "topology": "disaggregated",
-                "prefillWorkers": 2,
-                "decodeWorkers": 4,
-                "routerMode": "kv",
-                "router": {"opaque": True},
-                "sla": {"ttftMs": 500},
-                "requiredFeatures": [
-                    "dynamo-kvbm-offload",
-                    "dynamo-aic-forward-pass",
-                ],
-                "artifacts": {"reportJson": "dynamo/report.json"},
-            },
+            "topology": "disaggregated",
+            "prefillWorkers": 2,
+            "decodeWorkers": 4,
+            "routerMode": "kv",
+            "router": {"opaque": True},
+            "sla": {"ttftMs": 500},
+            "requiredFeatures": [
+                "dynamo-kvbm-offload",
+                "dynamo-aic-forward-pass",
+            ],
+            "artifacts": {"reportJson": "dynamo/report.json"},
         },
     )
     authored = build_authored_run_request(
@@ -1016,7 +1027,7 @@ def test_dynosim_transport_not_constrained_to_http_url_scheme(
     for transport_type in ("dynosim_offline", "dynosim_online"):
         _run(
             tmp_path / transport_type,
-            transport={"type": transport_type, "config": {}},
+            transport={"type": transport_type},
             endpoint_url="grpc://127.0.0.1:8001",
         )
 
@@ -1038,7 +1049,7 @@ def test_dynosim_transport_defaults_endpoint_dialect_to_dynosim(
                 "phases": [
                     {"name": "profiling", "type": "concurrency", "requests": 2, "concurrency": 1}
                 ],
-                "transport": {"type": "dynosim_offline", "config": {}},
+                "transport": {"type": "dynosim_offline"},
             }
         }
     )
@@ -1046,13 +1057,11 @@ def test_dynosim_transport_defaults_endpoint_dialect_to_dynosim(
 
 
 def test_typed_dynosim_config_rejected_under_non_dynosim_transport() -> None:
-    """A DynosimTransportConfig payload requires a dynosim_* transport type."""
-    from aiperf.config.dynosim import DynosimTransportConfig
+    """dynosim-only fields cannot be smuggled onto a non-dynosim transport.
 
-    with pytest.raises(
-        ValidationError, match="requires transport.type"
-    ):
-        RunnerTransportConfig(
-            type="http",
-            config=DynosimTransportConfig(workers=1),
-        )
+    Inline authoring makes this a structural guarantee: the ``http`` / ``grpc``
+    variants forbid extras, so a dynosim field (e.g. ``workers``) on a non-dynosim
+    transport is rejected as an unknown key rather than a runtime type check.
+    """
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        _TRANSPORT_ADAPTER.validate_python({"type": "http", "workers": 1})

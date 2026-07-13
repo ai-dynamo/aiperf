@@ -11,28 +11,43 @@ copy a runner catalog into a Python enum.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Self, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
-from pydantic import AfterValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    field_validator,
+    model_validator,
+)
 
 from aiperf.config.base import BaseConfig
 from aiperf.config.dynosim import DynosimTransportConfig
 
 __all__ = [
     "AgenticProviderConfig",
+    "DynosimOfflineTransport",
+    "DynosimOnlineTransport",
     "DynosimTransportConfig",
     "EvaluationProviderConfig",
     "EvaluationResourceConfig",
     "EvaluationRouteConfig",
     "EvaluationWorkloadConfig",
+    "GrpcTransport",
+    "HttpTransport",
+    "OpenTransport",
     "RunnerComponentId",
     "RunnerTransportConfig",
     "RunnerWorkloadConfig",
 ]
 
-# Transport IDs whose typed ``DynosimTransportConfig`` shape is validated and
-# normalized to a plain dict for the wire.
-_DYNOSIM_TRANSPORT_TYPES = frozenset({"dynosim_offline", "dynosim_online"})
+# Transport IDs Config v2 models with typed, inline, schema-visible fields. Any
+# other ID routes to :class:`OpenTransport` and is passed through opaquely, so
+# the open runner registry keeps owning arbitrary transport identities.
+_BUILTIN_TRANSPORT_TYPES = frozenset({"http", "grpc", "dynosim_offline", "dynosim_online"})
+_OPEN_TRANSPORT_TAG = "__open__"
 
 
 def _normalize_runner_component_id(value: str) -> str:
@@ -72,67 +87,96 @@ class _NamedRunnerComponentConfig(BaseConfig):
     ]
 
 
-class RunnerTransportConfig(_NamedRunnerComponentConfig):
-    """Orthogonal execution-transport selection for one native run.
+# =============================================================================
+# TRANSPORT SELECTION — inline discriminated union
+# =============================================================================
+#
+# Transport is authored the same way as every other discriminated Config-v2 union
+# (``dataset``, ``phases``, ``endpoint``): ``type`` plus the variant's own fields on
+# the same object, never a nested ``{type, config}`` envelope. The
+# :func:`aiperf.orchestrator.rust_wire` projector re-nests the selected variant into
+# the runner's ``{type, config}`` wire frame, so the strict ``aiperf-runner``
+# contract is unchanged.
 
-    The open runner registry owns arbitrary transport IDs, whose ``config`` stays
-    an opaque dict.  The built-in ``dynosim_offline`` / ``dynosim_online``
-    transports (in-process Dynamo mocker replay) have a documented structural
-    contract so they can be authored with typed, validated, schema-visible fields;
-    the object is normalized back to a plain dict for the wire, mirroring the
-    ``evaluation`` workload's precedent.  The clock rides on the transport ID —
-    ``dynosim_offline`` is the deterministic virtual clock, ``dynosim_online`` the
-    wall clock — so there is no ``replay_mode`` field.
+
+class HttpTransport(BaseConfig):
+    """Native HTTP/SSE transport (wall clock; ``http://`` / ``https://`` URLs).
+
+    ``type`` keeps a default so this is the zero-argument default transport when
+    ``benchmark.transport`` is omitted, and so the discriminator falls back here.
+    The other variants make ``type`` required — matching the ``phases`` / ``dataset``
+    unions — so their discriminator is never dropped by ``exclude_defaults`` dumps.
     """
 
-    type: RunnerComponentId = "http"
-    config: Annotated[
-        dict[str, Any] | DynosimTransportConfig,
-        Field(
-            default_factory=dict,
-            description=(
-                "Factory-owned authored configuration. The built-in dynosim "
-                "transport shape is documented explicitly; other open transport "
-                "factories retain opaque objects."
-            ),
-        ),
-    ]
+    model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="after")
-    def validate_builtin_dynosim_shape(self) -> Self:
-        """Normalize the typed dynosim transport envelope when selected.
+    type: Literal["http"] = "http"
 
-        Validates against :class:`DynosimTransportConfig`, then dumps back to a
-        plain snake_case dict so the wire matches the runner's
-        ``DynosimTransportSpec``.  Only authored fields are emitted
-        (``exclude_unset``); the runner fills every omitted field from its
-        ``serde`` defaults.
-        """
-        if self.type not in _DYNOSIM_TRANSPORT_TYPES:
-            if isinstance(self.config, DynosimTransportConfig):
-                raise ValueError(
-                    "DynosimTransportConfig requires transport.type "
-                    "'dynosim_offline' or 'dynosim_online'"
-                )
-            return self
-        validated = (
-            self.config
-            if isinstance(self.config, DynosimTransportConfig)
-            else DynosimTransportConfig.model_validate(self.config)
-        )
-        dumped = validated.model_dump(
-            mode="json",
-            by_alias=False,
-            exclude_unset=True,
-            exclude_none=True,
-        )
-        # Rust decodes required_features into a BTreeSet (order-independent), but the
-        # wire bytes must be deterministic across runs, so emit a sorted list rather
-        # than a nondeterministic set iteration order.
-        if "required_features" in dumped:
-            dumped["required_features"] = sorted(dumped["required_features"])
-        self.config = dumped
-        return self
+
+class GrpcTransport(BaseConfig):
+    """Native gRPC transport (wall clock; ``grpc://`` / ``grpcs://`` URLs)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["grpc"]
+
+
+class DynosimOfflineTransport(DynosimTransportConfig):
+    """In-process Dynamo mocker replay on the deterministic virtual clock.
+
+    Inherits the full typed ``dynosim`` field surface from
+    :class:`DynosimTransportConfig`; the fields sit directly on the transport
+    object, exactly like :class:`~aiperf.config.phases.PoissonPhase` lifts its own
+    knobs onto the phase object.  The clock rides on the transport ID, so there is
+    no ``replay_mode`` field.
+    """
+
+    type: Literal["dynosim_offline"]
+
+
+class DynosimOnlineTransport(DynosimTransportConfig):
+    """In-process Dynamo mocker replay driven under the wall clock."""
+
+    type: Literal["dynosim_online"]
+
+
+class OpenTransport(BaseConfig):
+    """Fallback for a runner-owned transport ID Config v2 does not model.
+
+    ``extra='allow'`` preserves the open-registry property: arbitrary
+    factory-owned keys are captured inline and passed through opaquely, without
+    Python interpreting them.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: RunnerComponentId
+
+
+def _transport_discriminator(value: Any) -> str:
+    """Route a builtin transport ID to its typed variant, else to the open one."""
+    raw = value.get("type") if isinstance(value, dict) else getattr(value, "type", None)
+    tag = raw if isinstance(raw, str) and raw.strip() else "http"
+    return tag if tag in _BUILTIN_TRANSPORT_TYPES else _OPEN_TRANSPORT_TAG
+
+
+RunnerTransportConfig: TypeAlias = Annotated[
+    Annotated[HttpTransport, Tag("http")]
+    | Annotated[GrpcTransport, Tag("grpc")]
+    | Annotated[DynosimOfflineTransport, Tag("dynosim_offline")]
+    | Annotated[DynosimOnlineTransport, Tag("dynosim_online")]
+    | Annotated[OpenTransport, Tag(_OPEN_TRANSPORT_TAG)],
+    Discriminator(_transport_discriminator),
+]
+"""Orthogonal execution-transport selection for one native run.
+
+Inline discriminated union on ``type``.  Built-in ``http`` / ``grpc`` /
+``dynosim_offline`` / ``dynosim_online`` are typed and schema-visible; any other
+ID is an :class:`OpenTransport` whose keys stay opaque, so the open runner
+registry keeps owning arbitrary transport identities.  The clock rides on the
+transport ID (``dynosim_offline`` = deterministic virtual clock, the other three
+= wall clock).
+"""
 
 
 class AgenticProviderConfig(_NamedRunnerComponentConfig):

@@ -92,12 +92,17 @@ from aiperf.config.endpoint import (
 )
 from aiperf.config.execution import (
     AgenticProviderConfig,
+    DynosimOfflineTransport,
+    DynosimOnlineTransport,
     EvaluationProviderConfig,
     EvaluationResourceConfig,
     EvaluationRouteConfig,
     EvaluationWorkloadConfig,
-    RunnerTransportConfig,
+    GrpcTransport,
+    HttpTransport,
+    OpenTransport,
     RunnerComponentId,
+    RunnerTransportConfig,
     RunnerWorkloadConfig,
 )
 from aiperf.config.gpu_telemetry import (
@@ -279,6 +284,11 @@ __all__ = [
     "RatePhaseConfig",
     "ResolvedConfig",
     "RuntimeConfig",
+    "DynosimOfflineTransport",
+    "DynosimOnlineTransport",
+    "GrpcTransport",
+    "HttpTransport",
+    "OpenTransport",
     "RunnerTransportConfig",
     "RunnerComponentId",
     "RunnerWorkloadConfig",

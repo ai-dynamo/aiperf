@@ -53,6 +53,7 @@ from aiperf.config.endpoint import (
     EndpointConfig,
 )
 from aiperf.config.execution import (
+    HttpTransport,
     RunnerTransportConfig,
     RunnerWorkloadConfig,
 )
@@ -408,7 +409,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     transport: Annotated[
         RunnerTransportConfig,
         Field(
-            default_factory=RunnerTransportConfig,
+            default_factory=HttpTransport,
             description="Orthogonal native transport selection. The open type ID and "
             "factory-owned config are validated by the selected aiperf-runner. The "
             "clock rides on the transport ID (dynosim_offline=virtual, "

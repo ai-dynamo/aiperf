@@ -130,13 +130,39 @@ def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
     return {
         "identity": identity,
         "artifact_target": str(run.artifact_dir),
-        "transport": {
-            "type": str(cfg.transport.type),
-            "config": copy.deepcopy(cfg.transport.config),
-        },
+        "transport": _authored_transport(cfg.transport),
         "workload": workload,
         "resources": resources,
     }
+
+
+def _authored_transport(transport: Any) -> dict[str, Any]:
+    """Re-nest the inline transport model into the runner's ``{type, config}`` frame.
+
+    Config v2 authors transport as an inline discriminated union (``type`` plus the
+    variant's own fields), matching ``dataset`` / ``phases`` / ``endpoint``.  The
+    strict runner, however, decodes ``NamedRunnerComponentSpecV2`` = ``{type,
+    config}`` with a deferred ``config: Box<RawValue>``.  Split the discriminator
+    back out as the frame tag and carry every remaining authored field as the
+    opaque ``config`` payload, so the wire the runner sees is byte-for-byte the
+    prior contract.
+    """
+    # ``exclude_unset`` keeps the dynosim payload to authored fields only (the
+    # runner fills omitted keys from its ``serde`` defaults); extra keys captured
+    # by ``OpenTransport(extra="allow")`` are always retained.
+    config = transport.model_dump(
+        mode="json",
+        by_alias=False,
+        exclude_unset=True,
+        exclude_none=True,
+    )
+    config.pop("type", None)
+    # Rust decodes required_features into a BTreeSet (order-independent), but the
+    # wire bytes must be deterministic across runs, so emit a sorted list rather
+    # than a nondeterministic set iteration order.
+    if "required_features" in config:
+        config["required_features"] = sorted(config["required_features"])
+    return {"type": str(transport.type), "config": config}
 
 
 def _authored_models(cfg: Any) -> dict[str, Any]:
