@@ -13,6 +13,7 @@
 
 mod anthropic;
 mod chat;
+pub mod chat_chunk;
 mod config;
 mod dynosim;
 mod endpoints;

@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Client-owned OpenAI chat-completion SSE chunk types.
+//! Typed OpenAI chat-completion SSE chunk codec.
 //!
 //! AIPerf owns its wire layer (a stable external spec), so it can benchmark any
 //! OpenAI-compatible server without depending on a specific server's internal
 //! protocol types. These structs deserialize the streaming chunk shape; unknown
 //! fields are ignored by serde. SSE byte-framing (splitting the stream into
-//! `data:` events) lives in the transport [`reader`](super::reader); callers
-//! deserialize the `data` payload straight into [`ChatChunk`]. Colocated with
-//! the SSE reader so the OpenAI chat response codec lives beside the transport
-//! that frames it.
+//! `data:` events) lives in the transport layer; callers deserialize the `data`
+//! payload straight into [`ChatChunk`]. This is the OpenAI chat *dialect* codec,
+//! so it lives in `aiperf-endpoints` beside the untyped [`crate::ChatEndpoint`]
+//! parser and the [`crate::UsageView`] token reconciler; `aiperf-transport-http`
+//! re-exports these types from `sse` for its streaming callers.
 
 use serde::Deserialize;
 
@@ -117,6 +118,11 @@ pub struct Usage {
 
 impl Usage {
     /// Return a provider cache-hit count across supported usage shapes.
+    ///
+    /// This is the typed-chunk fast path; the authoritative reconciler across
+    /// every provider dialect (Anthropic disjoint accounting, Gemini/Cohere
+    /// envelopes, nested detail objects) is [`crate::UsageView`], used by the
+    /// non-streaming/prepared response path.
     pub fn cached_tokens(&self) -> Option<u32> {
         self.prompt_tokens_details
             .as_ref()

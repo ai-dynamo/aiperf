@@ -333,7 +333,7 @@ profiler.
   `aiperf/src/metrics.rs` (runtime join) → `aiperf-metrics/src/{store,accumulator,sweepline}.rs`.
   `aiperf/src/http.rs` also translates the real transport trace into HTTP metric facts;
   `loadgen-core/src/collector.rs` remains the compact compatibility summary.
-- **Where are streamed chunks and usage parsed?** `aiperf-transport-http/src/sse/chat_chunk.rs`
+- **Where are streamed chunks and usage parsed?** `aiperf-endpoints/src/chat_chunk.rs`
   (`ChatChunk`, `Usage`) + `loadgen-core/src/observer.rs` (delta-token recorder).
   `aiperf/src/http.rs` emits terminal usage and `aiperf-metrics` reconciles
   collector-wide completion counts while retaining observed chunk timings.
