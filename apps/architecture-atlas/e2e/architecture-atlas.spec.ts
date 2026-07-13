@@ -194,7 +194,7 @@ test.describe("Architecture Atlas functional journey", () => {
     await openScene(page, "/");
     await expect(page.getByRole("heading", { level: 1, name: "Runtime composition" })).toBeVisible();
     await expect(page.getByRole("searchbox", { name: "Graph search" })).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Audience" })).toBeVisible();
+    await expect(page.getByRole("radiogroup", { name: "Audience" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Fit graph" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Share graph state" })).toBeVisible();
     await expect(page.getByRole("main")).toHaveAttribute("id", "atlas-content");
@@ -216,8 +216,8 @@ test.describe("Architecture Atlas functional journey", () => {
   test("switches audience and flavor overlays including Dynamo states", async ({ page }) => {
     await openScene(page, "/scenes/runner-protocol-registries", "audience=developer&primary=native_http");
 
-    const audience = page.getByRole("combobox", { name: "Audience" });
-    await audience.selectOption("executive");
+    const audience = page.getByRole("radiogroup", { name: "Audience" });
+    await audience.getByRole("radio", { name: "Executive" }).click();
     await expect(page).toHaveURL(/audience=executive/u);
     await expect(
       page
@@ -225,7 +225,7 @@ test.describe("Architecture Atlas functional journey", () => {
         .getByRole("button", { name: "Runner protocol and registries", exact: true }),
     ).toBeVisible();
 
-    await audience.selectOption("maintainer");
+    await audience.getByRole("radio", { name: "Maintainer" }).click();
     await expect(page).toHaveURL(/audience=maintainer/u);
     await expect(
       page
@@ -236,7 +236,7 @@ test.describe("Architecture Atlas functional journey", () => {
         }),
     ).toBeVisible();
 
-    await audience.selectOption("developer");
+    await audience.getByRole("radio", { name: "Developer" }).click();
     await page.getByRole("combobox", { name: "Compare flavor" }).selectOption("dynamo_online");
     await expect(page).toHaveURL(/compare=dynamo_online/u);
 
