@@ -123,7 +123,7 @@ Adaptive scale is a timing strategy plus CLI/YAML configuration surface. When ch
 - Compact `--adaptive-scale-control variable:min,max:type` flags and expanded `--adaptive-control-*` flags are mutually exclusive.
 - `--adaptive-scale-sla` requires `--adaptive-scale`; it must raise a configuration error rather than silently no-op.
 - Canonical YAML stores adaptive SLA filters on phase-level `sla`; CLI SLA overrides must update that phase `sla` and any compatibility `adaptive_scale.sla` mirror before YAML lowering.
-- Keep adaptive SLA docs aligned with `AdaptiveScaleSLAEvaluator.SUPPORTED_METRICS_MESSAGE`; do not document a controller SLA metric until the runtime supports it.
+- Keep adaptive SLA docs aligned with `adaptive_scale_sla.SUPPORTED_METRICS_MESSAGE`; do not document a controller SLA metric until the runtime supports it.
 - TTFT adaptive SLA requires `FirstToken` observations even when no static `prefill_concurrency` is configured.
 - Ratio metrics such as `goodput_ratio` and `success_rate` are ratios rather than throughput values.
 - Adaptive artifact fields are orchestration-facing. Renaming schema fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, or `first_failing_value` needs migration and backcompat thought.
