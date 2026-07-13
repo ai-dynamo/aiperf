@@ -31,7 +31,7 @@ use serde_json::{Map, Value, value::RawValue};
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::{EvaluationCapabilityInventory, PhaseSpec};
+use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{
     AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
     RunnerComponentId, RunnerFailureStageV2,
@@ -459,7 +459,6 @@ pub struct RunnerRegistryBuilder {
     transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
-    evaluation_capabilities: EvaluationCapabilityInventory,
 }
 
 impl RunnerRegistryBuilder {
@@ -504,26 +503,6 @@ impl RunnerRegistryBuilder {
         Ok(())
     }
 
-    /// Attach capability truth derived from the same provider, host-operation,
-    /// and pair composition being frozen by this builder.
-    pub fn set_evaluation_capabilities(
-        &mut self,
-        capabilities: EvaluationCapabilityInventory,
-    ) -> Result<()> {
-        ensure!(
-            self.evaluation_capabilities.providers.is_empty()
-                && self.evaluation_capabilities.host_operations.is_empty()
-                && self
-                    .evaluation_capabilities
-                    .supported_combinations
-                    .is_empty()
-                && self.evaluation_capabilities.unavailable.is_empty(),
-            "runner evaluation capability inventory was configured twice"
-        );
-        self.evaluation_capabilities = capabilities;
-        Ok(())
-    }
-
     /// Freeze the complete registry after reference and descriptor validation.
     pub fn freeze(self) -> Result<RunnerRegistry> {
         for ((transport_id, workload_id), pair) in &self.pairs {
@@ -557,7 +536,6 @@ impl RunnerRegistryBuilder {
             workloads: self.workloads,
             pairs: self.pairs,
             statically_compatible_pairs,
-            evaluation_capabilities: self.evaluation_capabilities,
         })
     }
 }
@@ -568,7 +546,6 @@ pub struct RunnerRegistry {
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
     statically_compatible_pairs: BTreeSet<(String, String)>,
-    evaluation_capabilities: EvaluationCapabilityInventory,
 }
 
 impl RunnerRegistry {
@@ -594,12 +571,6 @@ impl RunnerRegistry {
             .keys()
             .map(|(transport, workload)| (transport.as_str(), workload.as_str()))
             .collect()
-    }
-
-    /// Borrow provider/operation combinations derived from this exact frozen
-    /// executable composition.
-    pub fn evaluation_capabilities(&self) -> &EvaluationCapabilityInventory {
-        &self.evaluation_capabilities
     }
 
     /// Return descriptor-compatible pairs whether or not protocol-v2 execution
@@ -881,33 +852,6 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     crate::online_execution::register_http_pairs(builder)?;
     crate::online_execution::register_http_scheduled_pair(builder)?;
     crate::online_execution::register_http_static_accuracy_pair(builder)?;
-    let evaluation = crate::stock_evaluation::stock_evaluation_composition()?;
-    let executable_evaluation_pair = evaluation.providers.descriptors().any(|descriptor| {
-        !evaluation
-            .providers
-            .available_distributions(&descriptor.provider_id)
-            .is_empty()
-    });
-    let host_operations = crate::evaluation_execution::stock_evaluation_host_operation_descriptors(
-        &evaluation.operation_ids,
-    )?;
-    builder.set_evaluation_capabilities(
-        crate::evaluation_execution::build_evaluation_capability_inventory(
-            evaluation.providers.as_ref(),
-            host_operations.iter(),
-            std::iter::empty(),
-            crate::stock_evaluation::STOCK_ISOLATION_PROFILE,
-            executable_evaluation_pair,
-        )?,
-    )?;
-    if executable_evaluation_pair {
-        crate::evaluation_execution::register_http_evaluation_pair(
-            builder,
-            evaluation.providers,
-            Arc::new(crate::evaluation_execution::StockEvaluationAssetCatalog),
-            evaluation.compatibility,
-        )?;
-    }
     crate::grpc_execution::register_grpc_pairs(builder)?;
     #[cfg(feature = "dynosim")]
     crate::offline_execution::register_dynosim_transport(builder)?;
@@ -2133,10 +2077,6 @@ mod tests {
     #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
-        let evaluation_available = !registry
-            .evaluation_capabilities()
-            .supported_combinations
-            .is_empty();
         #[cfg(feature = "dynosim")]
         let expected_transports = vec!["dynosim_offline", "dynosim_online", "grpc", "http"];
         #[cfg(not(feature = "dynosim"))]
@@ -2149,16 +2089,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_transports
         );
-        let mut expected_workloads = vec![
+        let expected_workloads = vec![
             "agentic",
             "graph",
             "scheduled",
             "static_accuracy",
             "telemetry_watch",
         ];
-        if evaluation_available {
-            expected_workloads.insert(1, "evaluation");
-        }
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -2168,7 +2105,7 @@ mod tests {
             expected_workloads
         );
         #[cfg(feature = "dynosim")]
-        let mut expected_supported = vec![
+        let expected_supported = vec![
             ("dynosim_offline", "graph"),
             ("dynosim_offline", "scheduled"),
             ("dynosim_online", "graph"),
@@ -2181,7 +2118,7 @@ mod tests {
             ("http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynosim"))]
-        let mut expected_supported = vec![
+        let expected_supported = vec![
             ("grpc", "scheduled"),
             ("http", "agentic"),
             ("http", "graph"),
@@ -2189,15 +2126,8 @@ mod tests {
             ("http", "static_accuracy"),
             ("http", "telemetry_watch"),
         ];
-        if evaluation_available {
-            let index = expected_supported
-                .iter()
-                .position(|pair| *pair == ("http", "graph"))
-                .unwrap();
-            expected_supported.insert(index, ("http", "evaluation"));
-        }
         #[cfg(feature = "dynosim")]
-        let mut expected_static = vec![
+        let expected_static = vec![
             ("dynosim_offline", "graph"),
             ("dynosim_offline", "scheduled"),
             ("dynosim_online", "graph"),
@@ -2213,7 +2143,7 @@ mod tests {
             ("http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynosim"))]
-        let mut expected_static = vec![
+        let expected_static = vec![
             ("grpc", "graph"),
             ("grpc", "scheduled"),
             ("grpc", "telemetry_watch"),
@@ -2223,13 +2153,6 @@ mod tests {
             ("http", "static_accuracy"),
             ("http", "telemetry_watch"),
         ];
-        if evaluation_available {
-            let index = expected_static
-                .iter()
-                .position(|pair| *pair == ("http", "graph"))
-                .unwrap();
-            expected_static.insert(index, ("http", "evaluation"));
-        }
         assert_eq!(registry.supported_pairs(), expected_supported);
         assert_eq!(registry.statically_compatible_pairs(), expected_static);
     }
