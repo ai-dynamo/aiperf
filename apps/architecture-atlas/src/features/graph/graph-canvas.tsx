@@ -77,10 +77,12 @@ function GraphFitController({
   layoutKey,
   fitCommand,
   onFitComplete,
+  handledRequestIds,
 }: {
   layoutKey: string | null;
   fitCommand?: { requestId: number; padding?: number };
   onFitComplete?(requestId: number): void;
+  handledRequestIds: { current: Set<number> };
 }): null {
   const { fitView } = useReactFlow();
   const ready = layoutKey !== null;
@@ -97,23 +99,18 @@ function GraphFitController({
     return () => cancelAnimationFrame(frame);
   }, [ready, layoutKey, fitView]);
 
-  const handledRequestId = useRef<number | null>(null);
   useEffect(() => {
-    if (
-      !ready ||
-      !fitCommand ||
-      handledRequestId.current === fitCommand.requestId
-    ) {
+    if (!fitCommand || handledRequestIds.current.has(fitCommand.requestId)) {
       return;
     }
-    handledRequestId.current = fitCommand.requestId;
+    handledRequestIds.current.add(fitCommand.requestId);
     const requestId = fitCommand.requestId;
     void fitView({
       padding: fitCommand.padding ?? 0.16,
       maxZoom: 1.15,
       duration: 250,
     }).then(() => onFitComplete?.(requestId));
-  }, [ready, fitCommand, fitView, onFitComplete]);
+  }, [fitCommand, fitView, onFitComplete, handledRequestIds]);
 
   return null;
 }
@@ -287,6 +284,9 @@ export function GraphCanvas(props: GraphCanvasProps) {
   const [layoutState, setLayoutState] = useState<CanvasLayoutState>({
     status: "loading",
   });
+  // Owned here (a stable component) so fit-command de-duplication survives the
+  // fit controller remounting when the graph re-lays-out.
+  const handledFitRequestIds = useRef(new Set<number>());
 
   useEffect(() => {
     let active = true;
@@ -553,7 +553,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           colorMode="dark"
           edgeTypes={edgeTypes}
           edges={edges}
-          minZoom={0.08}
+          minZoom={0.4}
           nodeTypes={nodeTypes}
           nodes={nodes}
           nodesDraggable
@@ -565,6 +565,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           <Background color="#22222c" gap={26} size={1} />
           <GraphFitController
             fitCommand={props.fitViewCommand}
+            handledRequestIds={handledFitRequestIds}
             layoutKey={
               layoutState.status === "ready"
                 ? layoutState.result.positions.map(({ id }) => id).join(",")
