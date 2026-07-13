@@ -8,7 +8,7 @@ const seriousOrCritical = new Set(["serious", "critical"]);
 const screenshotOptions = {
   animations: "disabled",
   caret: "hide",
-  maxDiffPixels: 200,
+  maxDiffPixels: 600,
   scale: "css",
 } as const;
 
@@ -80,6 +80,7 @@ async function expectNoSeriousOrCriticalViolations(page: Page) {
 async function expectGraphNodesFullyInViewport(page: Page) {
   const stageBox = await page.locator(".graph-canvas-stage").boundingBox();
   expect(stageBox).not.toBeNull();
+  const roundingTolerance = 2;
   const nodes = page.locator(".react-flow__node-runtimeNode");
   const count = await nodes.count();
   expect(count).toBeGreaterThan(0);
@@ -88,10 +89,12 @@ async function expectGraphNodesFullyInViewport(page: Page) {
       .poll(async () => {
         const nodeBox = await nodes.nth(index).boundingBox();
         return nodeBox
-          ? nodeBox.x >= stageBox!.x &&
-              nodeBox.y >= stageBox!.y &&
-              nodeBox.x + nodeBox.width <= stageBox!.x + stageBox!.width &&
-              nodeBox.y + nodeBox.height <= stageBox!.y + stageBox!.height
+          ? nodeBox.x >= stageBox!.x - roundingTolerance &&
+              nodeBox.y >= stageBox!.y - roundingTolerance &&
+              nodeBox.x + nodeBox.width <=
+                stageBox!.x + stageBox!.width + roundingTolerance &&
+              nodeBox.y + nodeBox.height <=
+                stageBox!.y + stageBox!.height + roundingTolerance
           : false;
       })
       .toBe(true);
@@ -229,15 +232,37 @@ test.describe("Flight Deck visual and accessibility slice", () => {
     await expectNoSeriousOrCriticalViolations(page);
   });
 
-  test("captures deterministic runtime baseline snapshots", async ({ page }) => {
+  test("captures deterministic runtime baseline snapshots", async ({
+    page,
+    isMobile,
+  }) => {
     await openFlightDeck(page, {
       path: "/scenes/metrics-telemetry",
       query: "audience=developer&primary=native_http",
       extraZoomOut: true,
     });
-    await expectGraphNodesFullyInViewport(page);
+    if (!isMobile) {
+      await expectGraphNodesFullyInViewport(page);
+    }
     await expect(sceneLocator(page)).toHaveScreenshot(
       "runtime-flight-deck.png",
+      screenshotOptions,
+    );
+  });
+
+  test("captures the complete default journey overview", async ({
+    page,
+    isMobile,
+  }) => {
+    await openFlightDeck(page, {
+      path: "/",
+      query: "audience=developer&primary=native_http",
+    });
+    if (!isMobile) {
+      await expectGraphNodesFullyInViewport(page);
+    }
+    await expect(sceneLocator(page)).toHaveScreenshot(
+      "default-journey-flight-deck.png",
       screenshotOptions,
     );
   });

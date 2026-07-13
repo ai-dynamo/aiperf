@@ -74,6 +74,13 @@ export function RuntimeGraphNode({
       }}
     >
       <Handle position={Position.Left} type="target" />
+      <span
+        aria-hidden="true"
+        className="graph-node-drag-handle"
+        data-testid={`graph-node-drag-handle-${data.node.id}`}
+      >
+        drag
+      </span>
       <button
         aria-label={title}
         className="graph-node-trigger"

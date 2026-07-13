@@ -98,6 +98,7 @@ export function AccessibilityOutline({
             const isExpanded = expandedNodeIds.includes(node.id);
             return (
               <li
+                aria-expanded={node.childIds.length > 0 ? isExpanded : undefined}
                 aria-label={`Node ${title}`}
                 key={node.id}
                 onKeyDown={(event) =>

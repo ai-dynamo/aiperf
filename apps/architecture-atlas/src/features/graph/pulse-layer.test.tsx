@@ -12,6 +12,8 @@ function buildEdge(input: {
   id: string;
   channel: GraphEdge["channel"];
   flavors: GraphEdge["flavors"];
+  source?: GraphEdge["source"];
+  target?: GraphEdge["target"];
 }): GraphEdge {
   return {
     channel: input.channel,
@@ -20,9 +22,9 @@ function buildEdge(input: {
     footnotes: [],
     id: input.id,
     protocol: `${input.id} protocol`,
-    source: { nodeId: "node.a", portId: "port.a" },
+    source: input.source ?? { nodeId: "node.a", portId: "port.a" },
     status: { delivery: "unconditional", state: "built" },
-    target: { nodeId: "node.b", portId: "port.b" },
+    target: input.target ?? { nodeId: "node.b", portId: "port.b" },
   };
 }
 
@@ -88,6 +90,10 @@ describe("PulseLayer", () => {
         channel: "request_data",
         flavors: ["native_http"],
         id: "edge.dispatch.http",
+        source: {
+          nodeId: "node.dispatch",
+          portId: "port.dispatch.out",
+        },
       }),
       buildEdge({
         channel: "token",
@@ -126,6 +132,34 @@ describe("PulseLayer", () => {
     expect(particle).toHaveAttribute("data-active-channel", "request_data");
     expect(particle).toHaveAttribute("data-active-flavor", "native_http");
     expect(particle).toHaveAttribute("data-motion", "animated");
+  });
+
+  it("anchors node events to the referenced port instead of an unrelated channel match", () => {
+    const timeline = buildTimeline();
+    const edges = [
+      buildEdge({
+        channel: "request_data",
+        flavors: ["native_http"],
+        id: "edge.a-unrelated",
+      }),
+      buildEdge({
+        channel: "request_data",
+        flavors: ["native_http"],
+        id: "edge.dispatch.http",
+        target: {
+          nodeId: "node.dispatch",
+          portId: "port.dispatch.out",
+        },
+      }),
+    ];
+
+    const overlay = derivePulseEdgeOverlayState({
+      reducedMotion: false,
+      semanticState: semanticStateAt(timeline, 1),
+      visibleEdges: edges,
+    });
+
+    expect(overlay.activeEdgeIds).toEqual(["edge.dispatch.http"]);
   });
 
   it("keeps semantic identities and narration under reduced motion while disabling movement", () => {

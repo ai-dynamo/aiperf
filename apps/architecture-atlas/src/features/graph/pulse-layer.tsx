@@ -26,6 +26,14 @@ function resolveActiveEdgeId(
   }
   const sortedEdges = [...edges].sort((left, right) => left.id.localeCompare(right.id));
   const matching = sortedEdges.find((edge) => {
+    const touchesReferencedPort =
+      (edge.source.nodeId === reference.nodeId &&
+        edge.source.portId === reference.portId) ||
+      (edge.target.nodeId === reference.nodeId &&
+        edge.target.portId === reference.portId);
+    if (!touchesReferencedPort) {
+      return false;
+    }
     if (edge.channel !== event.channel) {
       return false;
     }

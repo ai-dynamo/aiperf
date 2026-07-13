@@ -388,6 +388,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
               traceMode,
             },
             draggable: true,
+            dragHandle: ".graph-node-drag-handle",
             id: node.id,
             position: positionsByNodeId.get(node.id) ?? { x: 0, y: 0 },
             style: { width: 320 },
@@ -530,7 +531,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           colorMode="dark"
           edgeTypes={edgeTypes}
           edges={edges}
-          minZoom={0.2}
+          minZoom={0.08}
           nodeTypes={nodeTypes}
           nodes={nodes}
           nodesDraggable

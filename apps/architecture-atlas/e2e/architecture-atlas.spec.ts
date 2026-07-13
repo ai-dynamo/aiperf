@@ -66,15 +66,57 @@ async function dragNodeBy(
   nodeId: string,
   delta: { x: number; y: number },
 ): Promise<void> {
-  const node = page.getByTestId(`graph-node-${nodeId}`);
-  const box = await node.boundingBox();
+  const box = await page
+    .getByTestId(`graph-node-drag-handle-${nodeId}`)
+    .boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + 3, box!.y + 3);
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 3 + delta.x, box!.y + 3 + delta.y, {
-    steps: 8,
-  });
+  await page.mouse.move(
+    box!.x + box!.width / 2 + delta.x,
+    box!.y + box!.height / 2 + delta.y,
+    { steps: 8 },
+  );
   await page.mouse.up();
+}
+
+async function dragNodeByTouch(
+  page: Page,
+  nodeId: string,
+  delta: { x: number; y: number },
+): Promise<void> {
+  const box = await page
+    .getByTestId(`graph-node-drag-handle-${nodeId}`)
+    .boundingBox();
+  expect(box).not.toBeNull();
+  const session = await page.context().newCDPSession(page);
+  const start = {
+    x: box!.x + box!.width / 2,
+    y: box!.y + box!.height / 2,
+  };
+  try {
+    await session.send("Input.dispatchTouchEvent", {
+      touchPoints: [start],
+      type: "touchStart",
+    });
+    for (let step = 1; step <= 8; step += 1) {
+      await session.send("Input.dispatchTouchEvent", {
+        touchPoints: [
+          {
+            x: start.x + (delta.x * step) / 8,
+            y: start.y + (delta.y * step) / 8,
+          },
+        ],
+        type: "touchMove",
+      });
+    }
+    await session.send("Input.dispatchTouchEvent", {
+      touchPoints: [],
+      type: "touchEnd",
+    });
+  } finally {
+    await session.detach();
+  }
 }
 
 async function moveWaypointUntilActionable(
@@ -204,7 +246,10 @@ test.describe("Architecture Atlas functional journey", () => {
     await expect(plannedDynamoPair).toHaveAttribute("data-implementation-state", "planned");
   });
 
-  test("persists dragged node layout state after reload", async ({ page }) => {
+  test("persists dragged node layout state after reload", async ({
+    page,
+    isMobile,
+  }) => {
     await openScene(page, "/scenes/metrics-telemetry");
     const node = page.getByTestId("graph-node-node.journey.metrics-and-reporting");
     const initialBox = await node.boundingBox();
@@ -216,10 +261,8 @@ test.describe("Architecture Atlas functional journey", () => {
       "node.journey.metrics-and-reporting",
     );
 
-    await dragNodeBy(page, "node.journey.metrics-and-reporting", {
-      x: 72,
-      y: 56,
-    });
+    const drag = isMobile ? dragNodeByTouch : dragNodeBy;
+    await drag(page, "node.journey.metrics-and-reporting", { x: 72, y: 56 });
 
     await expect.poll(() => encodedGraphStateFromUrl(page)).not.toBe(initialUrlState);
     await expect.poll(() => storedGraphState(page)).not.toBe(initialStoredState);

@@ -114,6 +114,46 @@ describe("AccessibilityOutline", () => {
     ).toBeInTheDocument();
   });
 
+  it("exposes synchronized expansion state on expandable tree items", async () => {
+    const user = userEvent.setup();
+    const node = buildNode({ childIds: ["node.clock-seam"] });
+    const { rerender } = render(
+      <AccessibilityOutline
+        audience="developer"
+        expandedNodeIds={[]}
+        onCollapseNode={() => {}}
+        onExpandNode={() => {}}
+        onInspectEntity={() => {}}
+        onIsolateEntity={() => {}}
+        onSelectEntity={() => {}}
+        visibleEdges={[]}
+        visibleNodes={[node]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Show graph accessibility outline" }));
+    expect(
+      screen.getByRole("treeitem", { name: "Node Runtime composition" }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    rerender(
+      <AccessibilityOutline
+        audience="developer"
+        expandedNodeIds={[node.id]}
+        onCollapseNode={() => {}}
+        onExpandNode={() => {}}
+        onInspectEntity={() => {}}
+        onIsolateEntity={() => {}}
+        onSelectEntity={() => {}}
+        visibleEdges={[]}
+        visibleNodes={[node]}
+      />,
+    );
+    expect(
+      screen.getByRole("treeitem", { name: "Node Runtime composition" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("supports keyboard callbacks for select, expand/collapse, isolate, and inspect", async () => {
     const user = userEvent.setup();
     const onSelectEntity = vi.fn();
