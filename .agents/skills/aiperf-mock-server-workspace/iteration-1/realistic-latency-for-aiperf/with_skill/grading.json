@@ -1,9 +1,0 @@
-{
-  "expectations": [
-    {"text": "Launched aiperf-mock-rs WITHOUT --fast, so realistic latency is retained", "passed": true, "evidence": "`--no-tokenizer --port 18020 --ttft 45 --itl 8 --random-seed 1` — no --fast."},
-    {"text": "Set first-token latency to 45ms (--ttft 45 or MOCK_SERVER_TTFT=45)", "passed": true, "evidence": "--ttft 45; /health echoed \"ttft\":45.0."},
-    {"text": "Set inter-token latency to 8ms (--itl 8 or MOCK_SERVER_ITL=8)", "passed": true, "evidence": "--itl 8; /health echoed \"itl\":8.0; measured 13-token completion = 151ms ~= 45 + 12*8."},
-    {"text": "Gave an aiperf profile command pointing --url/-u at http://127.0.0.1:<port>", "passed": true, "evidence": "aiperf profile --url http://127.0.0.1:18020 ..."},
-    {"text": "aiperf command includes a model (--model/-m) and --endpoint-type chat with --streaming", "passed": true, "evidence": "--model mock-model --endpoint-type chat --streaming --request-count 20"}
-  ]
-}

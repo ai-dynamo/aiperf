@@ -1,8 +1,0 @@
-{
-  "expectations": [
-    {"text": "Launched aiperf-mock-rs with --no-tokenizer to avoid a Hugging Face download", "passed": false, "evidence": "Launched `./target/release/aiperf-mock-rs --port 18011 --fast` — no --no-tokenizer flag. It happened to work (in-repo Shakespeare corpus loaded), but the HF-download risk on first start was not guarded."},
-    {"text": "Targeted 127.0.0.1 (IPv4), not the literal 'localhost'", "passed": true, "evidence": "All curls use http://127.0.0.1:18011."},
-    {"text": "Used --fast (or otherwise chose an instant-latency mode) for a quick smoke target", "passed": true, "evidence": "Launched with --fast."},
-    {"text": "Actively verified the server responded (a successful /health curl or a real /v1/chat/completions response) rather than assuming it booted", "passed": true, "evidence": "/health 200, /v1/models populated, streaming SSE with [DONE]; ss confirmed the listener."}
-  ]
-}

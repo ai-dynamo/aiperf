@@ -1,9 +1,0 @@
-{
-  "expectations": [
-    {"text": "Launched aiperf-mock-rs WITHOUT --fast, so realistic latency is retained", "passed": true, "evidence": "`--port 18021 --ttft 45 --itl 8` — no --fast; startup log shows fast=false."},
-    {"text": "Set first-token latency to 45ms (--ttft 45 or MOCK_SERVER_TTFT=45)", "passed": true, "evidence": "--ttft 45; /health echoed \"ttft\":45.0; measured TTFT ~45ms server-side."},
-    {"text": "Set inter-token latency to 8ms (--itl 8 or MOCK_SERVER_ITL=8)", "passed": true, "evidence": "--itl 8; measured mean ITL exactly 8.0ms over 17 gaps."},
-    {"text": "Gave an aiperf profile command pointing --url/-u at http://127.0.0.1:<port>", "passed": true, "evidence": "aiperf profile --url http://127.0.0.1:18021 ..."},
-    {"text": "aiperf command includes a model (--model/-m) and --endpoint-type chat with --streaming", "passed": true, "evidence": "--model gpt-4o --endpoint-type chat --streaming (plus tokenizer/concurrency/token-length flags)."}
-  ]
-}

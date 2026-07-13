@@ -1,8 +1,0 @@
-{
-  "expectations": [
-    {"text": "Launched aiperf-mock-rs with --no-tokenizer to avoid a Hugging Face download", "passed": true, "evidence": "`./target/release/aiperf-mock-rs --fast --no-tokenizer --port 18010`"},
-    {"text": "Targeted 127.0.0.1 (IPv4), not the literal 'localhost'", "passed": true, "evidence": "All curls use http://127.0.0.1:18010; transcript notes the mock is IPv4-only and localhost can resolve to ::1."},
-    {"text": "Used --fast (or otherwise chose an instant-latency mode) for a quick smoke target", "passed": true, "evidence": "Launched with --fast; SSE streamed back instantly."},
-    {"text": "Actively verified the server responded (a successful /health curl or a real /v1/chat/completions response) rather than assuming it booted", "passed": true, "evidence": "/health returned 200, /v1/models populated, and a streaming /v1/chat/completions returned chat.completion.chunk deltas ending in data: [DONE]; ss confirmed pid owned the socket."}
-  ]
-}
