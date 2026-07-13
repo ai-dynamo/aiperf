@@ -227,19 +227,21 @@
   }
 
   .nav-link[aria-current="page"] {
-    border-inline-start-color: var(--accent-flow);
     background: var(--surface-raised);
-    color: var(--accent-flow-strong);
+    color: var(--text-primary);
+    font-weight: 600;
   }
 
   .nav-marker {
     inline-size: 0.35rem;
     block-size: 1px;
     background: currentColor;
+    opacity: 0.5;
   }
 
   .nav-link[aria-current="page"] .nav-marker {
     inline-size: 0.65rem;
+    opacity: 1;
   }
 
   .rail-status {
@@ -1365,7 +1367,7 @@
   }
 
   .product-kicker {
-    color: var(--accent-rust);
+    color: var(--text-muted);
   }
 
   .product-name {
@@ -1400,9 +1402,9 @@
   }
 
   .nav-link[aria-current="page"] {
-    border-inline-start-color: var(--accent-rust);
-    background: rgb(148 211 64 / 0.1);
-    color: var(--accent-rust);
+    border-inline-start-color: transparent;
+    background: rgb(255 255 255 / 0.06);
+    color: var(--text-primary);
   }
 
   .command-bar {
@@ -1482,21 +1484,9 @@
     translate: 0 1px;
   }
 
-  .command-action-share {
-    border-color: rgb(148 211 64 / 0.4);
-    background: rgb(148 211 64 / 0.1);
-    color: var(--accent-rust);
-  }
-
   .command-action-share:hover {
-    border-color: var(--accent-rust);
-    background: rgb(148 211 64 / 0.16);
-    color: var(--accent-flow-strong);
-  }
-
-  .command-action-toggle {
-    border-color: rgb(255 193 7 / 0.4);
-    color: var(--accent-control);
+    border-color: var(--border-hover, #4b4b4b);
+    background: #24242b;
   }
 
   .audience-switch {
@@ -1736,6 +1726,14 @@
   .graph-node-planned {
     border-style: dashed !important;
     border-color: var(--accent-planned) !important;
+  }
+
+  /* Emphasis for the node being traced/focused (replaces the old inline width bump) */
+  .graph-node-path-focused {
+    box-shadow:
+      0 0 0 1px var(--accent-flow),
+      var(--shadow-1),
+      0 8px 20px -8px rgb(0 0 0 / 0.6) !important;
   }
 
   .graph-edge-path {

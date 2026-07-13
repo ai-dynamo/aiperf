@@ -67,10 +67,20 @@ export function RuntimeGraphNode({
       data-trace-mode={data.traceMode}
       data-testid={`graph-node-${data.node.id}`}
       style={{
-        border: `${data.pathState === "focused" ? 3 : 2}px ${
-          data.node.status.state === "planned" ? "dashed" : "solid"
-        } ${data.node.status.state === "planned" ? "#ef5350" : flavorColors[data.flavorClass]}`,
-        opacity: data.pathState === "default" ? 0.82 : 1,
+        borderColor:
+          data.node.status.state === "planned"
+            ? "rgba(239, 83, 80, 0.5)"
+            : "var(--panel-border)",
+        borderStyle: data.node.status.state === "planned" ? "dashed" : "solid",
+        borderWidth: 1,
+        borderLeftWidth: 3,
+        borderLeftStyle: "solid",
+        borderLeftColor:
+          data.node.status.state === "planned"
+            ? "#ef5350"
+            : flavorColors[data.flavorClass],
+        opacity:
+          data.traceMode !== "none" && data.pathState === "default" ? 0.35 : 1,
       }}
     >
       <Handle position={Position.Left} type="target" />
@@ -91,7 +101,9 @@ export function RuntimeGraphNode({
       >
         <span className="graph-node-title-row">
           <strong>{title}</strong>
-          <span className="graph-node-status-chip">{data.node.status.state}</span>
+          {data.node.status.state === "built" ? null : (
+            <span className="graph-node-status-chip">{data.node.status.state}</span>
+          )}
         </span>
         <span className="graph-node-summary">{data.node.summary[data.audience]}</span>
         <span className="graph-node-meta-badges" aria-label={`${title} metadata badges`}>

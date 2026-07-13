@@ -201,9 +201,6 @@ describe("graph canvas", () => {
       screen.getByRole("region", { name: "Graph canvas minimap" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("list", { name: "Overlay partition legend" }),
-    ).toBeInTheDocument();
-    expect(
       screen.getByRole("status", { name: "Graph layout status" }),
     ).toHaveClass("canvas-status-chip");
     const runnerPorts = within(screen.getByTestId("graph-node-node.runner")).getAllByRole(

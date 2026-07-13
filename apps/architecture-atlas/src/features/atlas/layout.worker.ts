@@ -92,8 +92,8 @@ async function layoutBand(
       "elk.direction": request.perspective === "ownership" ? "RIGHT" : "DOWN",
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-      "elk.spacing.nodeNode": "64",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "92",
+      "elk.spacing.nodeNode": "44",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "76",
     },
     children: bandHierarchyNodes(request, bandId),
     edges: request.edges

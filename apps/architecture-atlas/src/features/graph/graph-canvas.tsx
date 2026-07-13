@@ -491,13 +491,6 @@ export function GraphCanvas(props: GraphCanvasProps) {
       data-active-pulse-edge-ids={props.pulseEdges?.activeEdgeIds.join(",") ?? ""}
       data-reduced-motion={String(props.pulseEdges?.reducedMotion ?? false)}
     >
-      <ul aria-label="Overlay partition legend" className="overlay-partition-legend">
-        <li data-legend="built">Built</li>
-        <li data-legend="planned">Planned</li>
-        <li data-legend="active">Active</li>
-        <li data-legend="control">Control</li>
-        <li data-legend="overlay">Overlay</li>
-      </ul>
       {(props.breadcrumbNodeIds?.length ?? 0) > 0 ? (
         <nav aria-label="Graph focus context" className="graph-focus-breadcrumbs">
           <ol>
