@@ -11,7 +11,7 @@ description = "Clock-native SLA-driven adaptive load controller for AIPerf."
 [dependencies]
 aiperf-clock.workspace = true
 aiperf-metrics.workspace = true
-aiperf-timing = { path = "../aiperf-timing" }
+aiperf-timing = { path = "../timing" }
 loadgen-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

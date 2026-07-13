@@ -106,6 +106,13 @@ repos:
         always_run: true
         pass_filenames: false
         args: []
+      - id: check-crate-layout
+        name: check-crate-layout
+        entry: python tools/check_crate_layout.py
+        language: system
+        files: ^(crates/.*/Cargo\.toml|Cargo\.toml|tools/check_crate_layout\.py)$
+        pass_filenames: false
+        args: []
       - id: check-ergonomics
         name: check-ergonomics
         entry: make check-ergonomics

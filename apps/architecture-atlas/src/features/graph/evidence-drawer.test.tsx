@@ -30,7 +30,7 @@ function buildNode(overrides: Partial<GraphNode> = {}): GraphNode {
     },
     evidence: [
       {
-        path: "crates/aiperf-runner/src/application.rs",
+        path: "crates/runner/src/application.rs",
         lines: { start: 34, end: 65 },
         role: "source",
       },
@@ -115,11 +115,11 @@ describe("EvidenceDrawer", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", {
-        name: "crates/aiperf-runner/src/application.rs:34-65",
+        name: "crates/runner/src/application.rs:34-65",
       }),
     ).toHaveAttribute(
       "href",
-      "https://github.com/ai-dynamo/aiperf/blob/main/crates/aiperf-runner/src/application.rs#L34-L65",
+      "https://github.com/ai-dynamo/aiperf/blob/main/crates/runner/src/application.rs#L34-L65",
     );
     expect(
       screen.getByRole("link", {

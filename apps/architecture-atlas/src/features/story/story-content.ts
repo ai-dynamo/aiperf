@@ -113,7 +113,7 @@ export const runtimeStory: readonly StoryChapter[] = [
     kicker: "one child, protocol v2 only",
     title: "Launch the runner",
     blurb: "Python spawns one aiperf-runner and hands it a strict, authored request.",
-    evidence: "crates/aiperf-runner/src/protocol_v2.rs",
+    evidence: "crates/runner/src/protocol_v2.rs",
   },
   {
     id: "freeze",
@@ -121,7 +121,7 @@ export const runtimeStory: readonly StoryChapter[] = [
     kicker: "frozen at bootstrap",
     title: "Freeze the application",
     blurb: "One RunnerApplication locks the registries that capabilities, validation, and execution all share.",
-    evidence: "crates/aiperf-runner/src/registry.rs",
+    evidence: "crates/runner/src/registry.rs",
   },
   {
     id: "clock",

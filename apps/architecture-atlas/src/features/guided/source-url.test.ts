@@ -7,7 +7,7 @@ import type { EvidenceReference } from "../../domain/architecture";
 import { repositorySource } from "./source-url";
 
 const rangedEvidence: EvidenceReference = {
-  path: "crates/aiperf-runner/src/grpc_execution.rs",
+  path: "crates/runner/src/grpc_execution.rs",
   lines: { start: 164, end: 195 },
 };
 
@@ -19,14 +19,14 @@ describe("repository source URLs", () => {
         "https://github.com/ai-dynamo/aiperf/blob/main",
       ),
     ).toEqual({
-      label: "crates/aiperf-runner/src/grpc_execution.rs:164-195",
-      href: "https://github.com/ai-dynamo/aiperf/blob/main/crates/aiperf-runner/src/grpc_execution.rs#L164-L195",
+      label: "crates/runner/src/grpc_execution.rs:164-195",
+      href: "https://github.com/ai-dynamo/aiperf/blob/main/crates/runner/src/grpc_execution.rs#L164-L195",
     });
   });
 
   it("returns a safe plain-path fallback without a web base", () => {
     expect(repositorySource(rangedEvidence, undefined)).toEqual({
-      label: "crates/aiperf-runner/src/grpc_execution.rs:164-195",
+      label: "crates/runner/src/grpc_execution.rs:164-195",
     });
   });
 });

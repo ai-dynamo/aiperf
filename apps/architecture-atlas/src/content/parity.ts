@@ -17,7 +17,7 @@ export const parityLedger: ArchitectureRisk[] = [
       "Direct Graph-IR has no raw-token handle, rejects requires_raw_token_ids endpoints, and its online binding remains chat-shaped HTTP.",
     ),
     componentIds: ["component.graph-ir", "component.grpc-transport", "component.exact-token-ids"],
-    evidence: [evidence("crates/aiperf-graph/src/materialize.rs"), evidence("crates/aiperf-runner/src/registry.rs")],
+    evidence: [evidence("crates/graph/src/materialize.rs"), evidence("crates/runner/src/registry.rs")],
   },
   {
     id: "risk.grpc-sidecar-readiness",
@@ -32,8 +32,8 @@ export const parityLedger: ArchitectureRisk[] = [
     ),
     componentIds: ["component.grpc-transport", "component.content-server"],
     evidence: [
-      evidence("crates/aiperf-transport-grpc/src/binding.rs"),
-      rangedEvidence("crates/aiperf-runner/src/grpc_execution.rs", 164, 195),
+      evidence("crates/transport-grpc/src/binding.rs"),
+      rangedEvidence("crates/runner/src/grpc_execution.rs", 164, 195),
     ],
   },
   {
@@ -48,7 +48,7 @@ export const parityLedger: ArchitectureRisk[] = [
       "dynamo_offline uses SimClock without sockets; no evaluator text, content server, telemetry sidecar, or multiworker placement is implied.",
     ),
     componentIds: ["component.dynamo-offline", "component.worker-placement", "component.static-accuracy"],
-    evidence: [evidence("crates/aiperf/src/dynosim.rs"), evidence("crates/aiperf-runner/src/offline_execution.rs")],
+    evidence: [evidence("crates/aiperf/src/dynosim.rs"), evidence("crates/runner/src/offline_execution.rs")],
   },
   {
     id: "risk.provider-evaluation-scope",
@@ -62,7 +62,7 @@ export const parityLedger: ArchitectureRisk[] = [
       "NeMo 0.4.0 and OpenBench 0.5.3 plus Inspect 0.3.141 each expose the frozen five-record GSM8K canary; arbitrary tasks and effects fail closed.",
     ),
     componentIds: ["component.provider-evaluation"],
-    evidence: [evidence("crates/aiperf-runner/src/stock_evaluation.rs"), evidence("crates/aiperf-accuracy/src/isolation.rs")],
+    evidence: [evidence("crates/runner/src/stock_evaluation.rs"), evidence("crates/accuracy/src/isolation.rs")],
   },
   {
     id: "risk.legacy-evaluation",
@@ -76,7 +76,7 @@ export const parityLedger: ArchitectureRisk[] = [
       "Rust brokers model I/O and metrics but deliberately does not reimplement benchmark graders or environment semantics.",
     ),
     componentIds: ["component.static-accuracy", "component.agentic-evaluation", "component.python-evaluators"],
-    evidence: [evidence("crates/aiperf-accuracy/src/lib.rs"), evidence("crates/aiperf/src/agentic.rs")],
+    evidence: [evidence("crates/accuracy/src/lib.rs"), evidence("crates/aiperf/src/agentic.rs")],
   },
   {
     id: "risk.protocol-v1",
@@ -90,7 +90,7 @@ export const parityLedger: ArchitectureRisk[] = [
       "The v1 authority remains isolated in runner compatibility code while Config v2 launches strict authored protocol v2 only.",
     ),
     componentIds: ["component.python-frontend", "component.rust-runner"],
-    evidence: [evidence("crates/aiperf-runner/src/protocol.rs"), evidence("crates/aiperf-runner/src/protocol_v2.rs")],
+    evidence: [evidence("crates/runner/src/protocol.rs"), evidence("crates/runner/src/protocol_v2.rs")],
   },
   {
     id: "risk.compatibility-export",
@@ -104,6 +104,6 @@ export const parityLedger: ArchitectureRisk[] = [
       "aiperf-metrics Reporter is typed and IO-free; exporter-specific serializers beyond runner native-v2 persistence remain absent.",
     ),
     componentIds: ["component.native-metrics", "component.python-frontend"],
-    evidence: [evidence("crates/aiperf-metrics/src/report.rs"), evidence("AGENTS.md")],
+    evidence: [evidence("crates/metrics/src/report.rs"), evidence("AGENTS.md")],
   },
 ];

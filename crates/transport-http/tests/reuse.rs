@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/tests/reuse.rs
+// crates/transport-http/tests/reuse.rs
 mod common;
 use common::{MockServer, run_local};
 

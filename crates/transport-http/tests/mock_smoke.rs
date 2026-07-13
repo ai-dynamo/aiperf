@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/tests/mock_smoke.rs
+// crates/transport-http/tests/mock_smoke.rs
 mod common;
 use common::{MockServer, run_local};
 

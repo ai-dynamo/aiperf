@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/examples/rps_bench.rs
+// crates/transport-http/examples/rps_bench.rs
 //! Throughput load generator for `aiperf-transport-http`: proves sustained
 //! requests-per-second against a running OpenAI-compatible server (the
 //! `aiperf-mock-rs --fast` mock).

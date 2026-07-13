@@ -445,7 +445,7 @@ describe("graph-first catalog", () => {
     expect(
       replay?.evidence.some(
         ({ path, lines, role }) =>
-          path === "crates/aiperf-runner/src/offline_execution.rs" &&
+          path === "crates/runner/src/offline_execution.rs" &&
           role === "source" &&
           lines !== undefined,
       ),
@@ -560,13 +560,13 @@ describe("graph-first catalog", () => {
     );
 
     expect(nodeById.get("node.runtime-composition")?.evidence).toContainEqual({
-      path: "crates/aiperf-runner/src/application.rs",
+      path: "crates/runner/src/application.rs",
       lines: { start: 34, end: 65 },
       role: "source",
       symbol: "RunnerApplication",
     });
     expect(nodeById.get("node.dataset-segment-pipeline")?.evidence).toContainEqual({
-      path: "crates/aiperf-dataset/src/segment.rs",
+      path: "crates/dataset/src/segment.rs",
       lines: { start: 195, end: 205 },
       role: "source",
       symbol: "SegmentStore",
@@ -611,13 +611,13 @@ describe("graph-first catalog", () => {
     ).toEqual(
       expect.arrayContaining([
         {
-          path: "crates/aiperf-runner/src/offline_execution.rs",
+          path: "crates/runner/src/offline_execution.rs",
           lines: { start: 98, end: 103 },
           role: "source",
           symbol: "DYNOSIM_BACKEND_ID",
         },
         {
-          path: "crates/aiperf-runner/src/offline_execution.rs",
+          path: "crates/runner/src/offline_execution.rs",
           lines: { start: 830, end: 846 },
           role: "source",
           symbol: "DynosimBackendFactory",
@@ -627,13 +627,13 @@ describe("graph-first catalog", () => {
     expect(nodeById.get("node.dynamo-online-replay-mode")?.evidence).toEqual(
       expect.arrayContaining([
         {
-          path: "crates/aiperf-runner/src/offline_execution.rs",
+          path: "crates/runner/src/offline_execution.rs",
           lines: { start: 229, end: 249 },
           role: "source",
           symbol: "DynamoReplayModeSpec",
         },
         {
-          path: "crates/aiperf-runner/src/offline_execution.rs",
+          path: "crates/runner/src/offline_execution.rs",
           lines: { start: 1894, end: 1923 },
           role: "source",
           symbol: "DynosimExecutor::execute_scheduled",

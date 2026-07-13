@@ -37,9 +37,9 @@ cargo build --release -p aiperf-mock-rs --bins --examples
 cargo test --locked -p aiperf-mock-rs --all-targets
 cargo clippy --locked -p aiperf-mock-rs --all-targets -- -D warnings
 cargo doc -p aiperf-mock-rs --no-deps
-cargo machete --with-metadata crates/aiperf-mock-rs
-ruff check crates/aiperf-mock-rs/tune_to_trace.py
-ruff format --check crates/aiperf-mock-rs/tune_to_trace.py
+cargo machete --with-metadata crates/mock-rs
+ruff check crates/mock-rs/tune_to_trace.py
+ruff format --check crates/mock-rs/tune_to_trace.py
 ```
 
 The HTTP transport, graph transport, and scheduled-runtime real-network tests

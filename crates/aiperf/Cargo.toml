@@ -37,15 +37,15 @@ name = "aiperf"
 path = "src/lib.rs"
 
 [dependencies]
-aiperf-accuracy = { path = "../aiperf-accuracy" }
-aiperf-adaptive = { path = "../aiperf-adaptive" }
-aiperf-core = { path = "../aiperf-core" }
+aiperf-accuracy = { path = "../accuracy" }
+aiperf-adaptive = { path = "../adaptive" }
+aiperf-core = { path = "../core" }
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true
-aiperf-graph = { path = "../aiperf-graph" }
+aiperf-graph = { path = "../graph" }
 aiperf-metrics.workspace = true
-aiperf-timing = { path = "../aiperf-timing" }
-aiperf-transport-http = { path = "../aiperf-transport-http" }
+aiperf-timing = { path = "../timing" }
+aiperf-transport-http = { path = "../transport-http" }
 aiperf-transport-grpc.workspace = true
 aiperf-clock.workspace = true
 aiperf-rng.workspace = true

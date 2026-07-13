@@ -103,7 +103,7 @@ const journeyDefinitions: JourneyDefinition[] = [
     childIds: ["node.runner-protocol-registries"],
     evidence: [
       source(
-        "crates/aiperf-runner/src/protocol_v2.rs",
+        "crates/runner/src/protocol_v2.rs",
         101,
         186,
         "RunnerOperationV2",
@@ -117,7 +117,7 @@ const journeyDefinitions: JourneyDefinition[] = [
     childIds: ["node.crate-dependency-topology"],
     evidence: [
       source(
-        "crates/aiperf-runner/src/application.rs",
+        "crates/runner/src/application.rs",
         34,
         65,
         "RunnerApplication",
@@ -129,7 +129,7 @@ const journeyDefinitions: JourneyDefinition[] = [
     label: "Workload preparation",
     owner: "rust",
     childIds: [],
-    evidence: [source("crates/aiperf-runner/src/execute.rs", 350, 430)],
+    evidence: [source("crates/runner/src/execute.rs", 350, 430)],
   },
   {
     id: "node.journey.scheduling-or-graph-ir",
@@ -156,7 +156,7 @@ const journeyDefinitions: JourneyDefinition[] = [
     childIds: ["node.dataset-segment-pipeline"],
     evidence: [
       source(
-        "crates/aiperf-dataset/src/materialize.rs",
+        "crates/dataset/src/materialize.rs",
         110,
         180,
         "SegmentItemsMaterializer",
@@ -170,7 +170,7 @@ const journeyDefinitions: JourneyDefinition[] = [
     childIds: ["node.endpoint-bindings-transports"],
     evidence: [
       source(
-        "crates/aiperf-endpoints/src/registry.rs",
+        "crates/endpoints/src/registry.rs",
         262,
         450,
         "EndpointFactory",
@@ -212,7 +212,7 @@ const journeyDefinitions: JourneyDefinition[] = [
     childIds: ["node.metrics-telemetry", "node.accuracy-evaluator-hosting"],
     evidence: [
       source(
-        "crates/aiperf-metrics/src/report.rs",
+        "crates/metrics/src/report.rs",
         1800,
         1840,
         "NativeReporter",
@@ -292,7 +292,7 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-runner/src/application.rs",
+        "crates/runner/src/application.rs",
         34,
         65,
         "RunnerApplication",
@@ -326,13 +326,13 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-runner/src/protocol_v2.rs",
+        "crates/runner/src/protocol_v2.rs",
         101,
         186,
         "RunnerOperationV2",
       ),
       source(
-        "crates/aiperf-runner/src/application.rs",
+        "crates/runner/src/application.rs",
         34,
         65,
         "RunnerApplication",
@@ -376,7 +376,7 @@ const graphNodesRaw = [
         "ScheduledRuntime",
       ),
       source(
-        "crates/aiperf-timing/src/phase/orchestrator.rs",
+        "crates/timing/src/phase/orchestrator.rs",
         137,
         210,
         "ClockPhaseOrchestrator",
@@ -409,13 +409,13 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-dataset/src/segment.rs",
+        "crates/dataset/src/segment.rs",
         195,
         205,
         "SegmentStore",
       ),
       source(
-        "crates/aiperf-dataset/src/materialize.rs",
+        "crates/dataset/src/materialize.rs",
         110,
         180,
         "SegmentItemsMaterializer",
@@ -452,7 +452,7 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-endpoints/src/registry.rs",
+        "crates/endpoints/src/registry.rs",
         262,
         450,
         "EndpointFactory",
@@ -492,7 +492,7 @@ const graphNodesRaw = [
       maintainer: "Shared graph runtime with source-aware real and simulation pumps.",
     },
     evidence: [
-      source("crates/aiperf-graph/src/runtime.rs", 192, 430, "drive_sim"),
+      source("crates/graph/src/runtime.rs", 192, 430, "drive_sim"),
     ],
     seamPorts: [
       { id: "port.graph.in", name: "graph-plan", channel: "request_data" },
@@ -521,13 +521,13 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-metrics/src/accumulator.rs",
+        "crates/metrics/src/accumulator.rs",
         396,
         470,
         "MetricsAccumulator",
       ),
       source(
-        "crates/aiperf-metrics/src/report.rs",
+        "crates/metrics/src/report.rs",
         1800,
         1840,
         "NativeReporter",
@@ -565,7 +565,7 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-accuracy/src/worker.rs",
+        "crates/accuracy/src/worker.rs",
         139,
         190,
         "AccuracyEvaluator",
@@ -652,7 +652,7 @@ const graphNodesRaw = [
       maintainer: "Clock now_ns, sleep, and is_virtual contract.",
     },
     evidence: [
-      source("crates/aiperf-clock/src/clock.rs", 20, 41, "Clock"),
+      source("crates/clock/src/clock.rs", 20, 41, "Clock"),
     ],
     seamPorts: [{ id: "port.clock.out", name: "time", channel: "control" }],
     audience: fullAudience,
@@ -781,13 +781,13 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         98,
         103,
         "DYNOSIM_BACKEND_ID",
       ),
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         830,
         846,
         "DynosimBackendFactory",
@@ -823,13 +823,13 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         229,
         249,
         "DynamoReplayModeSpec",
       ),
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         1894,
         1923,
         "DynosimExecutor::execute_scheduled",
@@ -871,7 +871,7 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf-clock/src/sim_clock.rs",
+        "crates/clock/src/sim_clock.rs",
         56,
         100,
         "SimClock",
@@ -1054,7 +1054,7 @@ const graphEdgesRaw = [
     protocol: "Materialized request payloads",
     evidence: [
       source(
-        "crates/aiperf-dataset/src/materialize.rs",
+        "crates/dataset/src/materialize.rs",
         110,
         180,
         "SegmentItemsMaterializer",
@@ -1078,7 +1078,7 @@ const graphEdgesRaw = [
     protocol: "native-v2 report payload",
     evidence: [
       source(
-        "crates/aiperf-metrics/src/report.rs",
+        "crates/metrics/src/report.rs",
         1800,
         1840,
         "NativeReporter",
@@ -1119,13 +1119,13 @@ const graphEdgesRaw = [
     protocol: "Existing dynosim pair with replay_mode=online",
     evidence: [
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         229,
         249,
         "DynamoReplayModeSpec",
       ),
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         1894,
         1923,
         "DynosimExecutor::execute_scheduled",
@@ -1149,7 +1149,7 @@ const graphEdgesRaw = [
     protocol: "Feature-gated virtual clock construction",
     evidence: [
       source(
-        "crates/aiperf-runner/src/offline_execution.rs",
+        "crates/runner/src/offline_execution.rs",
         830,
         846,
         "DynosimBackendFactory",
@@ -1173,7 +1173,7 @@ const graphEdgesRaw = [
     protocol: "Discrete-event engine advancement",
     evidence: [
       source(
-        "crates/aiperf-graph/src/runtime.rs",
+        "crates/graph/src/runtime.rs",
         192,
         280,
         "drive_sim_with_source",

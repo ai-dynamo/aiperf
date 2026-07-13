@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/examples/k6_trace.rs
+// crates/transport-http/examples/k6_trace.rs
 //! Dump the full k6/HAR-style per-request trace for real requests via
 //! `aiperf-transport-http`. Prints every connection/request phase the transport
 //! timestamps off the Clock: blocked (conn-pool wait), DNS, connecting

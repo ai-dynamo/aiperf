@@ -313,7 +313,7 @@ profiler.
 
 ## "Which file answers…" quick map
 
-- **How is virtual time deterministic?** `crates/aiperf-clock/src/sim_clock.rs`
+- **How is virtual time deterministic?** `crates/clock/src/sim_clock.rs`
   (min-heap, `(at_ns, seq_no)`, `advance_to`) + `aiperf-graph/src/runtime.rs`
   (`drive_sim` and `drive_sim_with_source` idle-pumps).
 - **How is a request dispatched + measured?** `loadgen-core/src/sink.rs` (traits)

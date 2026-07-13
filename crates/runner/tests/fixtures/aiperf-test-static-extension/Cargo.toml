@@ -9,8 +9,8 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-aiperf-dataset = { path = "../../../../aiperf-dataset" }
-aiperf-endpoints = { path = "../../../../aiperf-endpoints" }
-aiperf-extensions = { path = "../../../../aiperf-extensions" }
-aiperf-rng = { path = "../../../../aiperf-rng" }
+aiperf-dataset = { path = "../../../../dataset" }
+aiperf-endpoints = { path = "../../../../endpoints" }
+aiperf-extensions = { path = "../../../../extensions" }
+aiperf-rng = { path = "../../../../rng" }
 serde_json = "1"

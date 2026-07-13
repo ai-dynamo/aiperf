@@ -29,7 +29,7 @@ export const oneRunLifecycle: LifecycleStage[] = [
       "Capabilities are derived from the same frozen RunnerApplication used for validation and execution.",
     ),
     componentIds: ["component.python-frontend", "component.rust-runner"],
-    evidence: [evidence("src/aiperf/cli_runner/_preflight.py"), evidence("crates/aiperf-runner/src/registry.rs")],
+    evidence: [evidence("src/aiperf/cli_runner/_preflight.py"), evidence("crates/runner/src/registry.rs")],
   },
   {
     id: "lifecycle.validate",
@@ -42,7 +42,7 @@ export const oneRunLifecycle: LifecycleStage[] = [
       "protocol_v2 uses strict serde DTOs and typed validate responses; authored validation remains side-effect free.",
     ),
     componentIds: ["component.rust-runner"],
-    evidence: [evidence("crates/aiperf-runner/src/protocol_v2.rs")],
+    evidence: [evidence("crates/runner/src/protocol_v2.rs")],
   },
   {
     id: "lifecycle.execute",
@@ -55,7 +55,7 @@ export const oneRunLifecycle: LifecycleStage[] = [
       "Online and offline factories enter pair-specific execute modules while retaining Clock and observer contracts.",
     ),
     componentIds: ["component.rust-runner", "component.rust-runtime", "component.inference-target"],
-    evidence: [evidence("crates/aiperf-runner/src/execute.rs")],
+    evidence: [evidence("crates/runner/src/execute.rs")],
   },
   {
     id: "lifecycle.present",
@@ -68,6 +68,6 @@ export const oneRunLifecycle: LifecycleStage[] = [
       "The IO-free Reporter feeds runner persistence; no native human-facing CLI or table path is canonical.",
     ),
     componentIds: ["component.rust-runtime", "component.python-frontend"],
-    evidence: [evidence("crates/aiperf/src/report.rs"), evidence("crates/aiperf-metrics/src/report.rs")],
+    evidence: [evidence("crates/aiperf/src/report.rs"), evidence("crates/metrics/src/report.rs")],
   },
 ];

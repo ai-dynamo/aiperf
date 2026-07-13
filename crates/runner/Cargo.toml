@@ -29,22 +29,22 @@ dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
 
 [dependencies]
 aiperf.workspace = true
-aiperf-adaptive = { path = "../aiperf-adaptive" }
-aiperf-accuracy = { path = "../aiperf-accuracy" }
+aiperf-adaptive = { path = "../adaptive" }
+aiperf-accuracy = { path = "../accuracy" }
 aiperf-clock.workspace = true
 aiperf-content-server.workspace = true
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true
 aiperf-extensions.workspace = true
-aiperf-gpu-telemetry = { path = "../aiperf-gpu-telemetry" }
-aiperf-graph = { path = "../aiperf-graph" }
+aiperf-gpu-telemetry = { path = "../gpu-telemetry" }
+aiperf-graph = { path = "../graph" }
 aiperf-metrics.workspace = true
 aiperf-network-latency.workspace = true
-aiperf-prometheus = { path = "../aiperf-prometheus" }
+aiperf-prometheus = { path = "../prometheus" }
 aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
-aiperf-timing = { path = "../aiperf-timing" }
-aiperf-telemetry-archive = { path = "../aiperf-telemetry-archive" }
+aiperf-timing = { path = "../timing" }
+aiperf-telemetry-archive = { path = "../telemetry-archive" }
 aiperf-transport-http.workspace = true
 aiperf-transport-grpc.workspace = true
 anyhow.workspace = true

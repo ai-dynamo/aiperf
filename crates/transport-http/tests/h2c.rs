@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/tests/h2c.rs
+// crates/transport-http/tests/h2c.rs
 mod common;
 use common::{MockServer, run_local};
 use std::collections::BTreeMap;

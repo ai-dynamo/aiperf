@@ -304,3 +304,47 @@ Additional target mappings:
 This addendum updates only the inventory. The directory migration, independent
 `loadgen-core` versioning, Dynamo consumption, and metadata conformance guard
 remain unimplemented.
+
+## Addendum — 2026-07-12 (directory migration + conformance guard implemented)
+
+The §7 directory migration has landed and the §8 conformance gate is now built
+and enabled. This addendum is authoritative where it conflicts with the top
+`Status:` line and the "remain unimplemented" note above.
+
+What changed:
+
+- Every `crates/aiperf-<capability>` directory was moved to
+  `crates/<capability>` with `git mv` (history preserved). `crates/aiperf`
+  and `crates/loadgen-core` are unchanged. All 23 `[package].name` values are
+  byte-identical before and after: package `aiperf-clock` now lives at
+  `crates/clock`, and so on across the §4/§287 mapping tables. `cargo metadata
+  --no-deps` reports the identical package set, so `cargo -p` selectors,
+  imports, and `Cargo.lock` identities are stable.
+- Root `[workspace.dependencies]` path values, sibling `../aiperf-<cap>` path
+  dependencies, the excluded test-fixture manifest's `../../../../aiperf-<cap>`
+  paths, and the `exclude` entry were repointed to the short directories. The
+  `members = ["crates/*"]` glob needed no change.
+- Non-spec source/test/doc references to the moved paths were updated:
+  in-source first-line path comments, the Python tests that read Rust source by
+  path, `llms.txt`, `docs/dev/`, `plans/`, `crates/mock-rs/PORTING.md`
+  (repo-local lines only; the external deprecated `aiperf-rs` checkout
+  reference is intentionally preserved), and the architecture-atlas content
+  evidence paths and route/slug expectations (crate routes remain keyed on the
+  unchanged package name, e.g. `/crates/aiperf-clock`).
+- The §8 gate is implemented as `tools/check_crate_layout.py`: it reads
+  `cargo metadata --no-deps` (never a directory basename) and enforces
+  `aiperf` -> `crates/aiperf`, `aiperf-<cap>` -> `crates/<cap>`, the
+  `loadgen-core` allowlisted exception, and fail-closed rejection of any other
+  un-prefixed package. It is wired into `.pre-commit-config.yaml` as
+  `check-crate-layout`. The architecture-atlas additionally enforces
+  package/path identity against `cargo metadata` in
+  `apps/architecture-atlas/src/domain/integrity.ts`.
+
+Still unbuilt (unchanged by this addendum): independent `loadgen-core`
+SemVer/versioning separate from the workspace version, and actual AI-Dynamo
+Mocker consumption of `loadgen-core` across a repository boundary. The
+`aiperf-core` responsibility-naming question (§4) also remains open; the
+directory move to `crates/core` is mechanical and does not bless the name.
+
+Spec bodies above are preserved verbatim per the repository's append-only spec
+policy; this addendum is the authoritative status.

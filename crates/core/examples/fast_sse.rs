@@ -1,4 +1,4 @@
-// crates/aiperf-core/examples/fast_sse.rs
+// crates/core/examples/fast_sse.rs
 //! A minimal, ultra-cheap OpenAI-compatible streaming server for load-testing
 //! the *client* (aiperf graph + transport) without the co-located mock eating
 //! cores. Returns a fixed pre-rendered SSE body per request — a stand-in for a

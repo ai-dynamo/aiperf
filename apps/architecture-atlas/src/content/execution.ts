@@ -21,7 +21,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Scheduling, deadlines, ramps, and observations consume one clock contract.",
       "Clock exposes now_ns, sleep, and is_virtual; SimClock alone owns heap-ordered next_event_time and advance_to controls.",
     ),
-    evidence: [evidence("crates/aiperf-clock/src/clock.rs"), evidence("crates/aiperf-clock/src/sim_clock.rs")],
+    evidence: [evidence("crates/clock/src/clock.rs"), evidence("crates/clock/src/sim_clock.rs")],
     modes: ["online_http", "online_grpc", "dynamo_offline", "online_mock"],
     contracts: ["monotonic nanosecond clock", "deterministic virtual sleepers"],
     crateIds: ["crate.aiperf-clock"],
@@ -38,7 +38,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Supports paced, request-rate, user-centric, fixed-schedule, and graph admission with explicit stop bounds.",
       "ScheduledRuntime combines workload-local futures with debt-draining session/prefill SlotPool policy and Clock-native intervals.",
     ),
-    evidence: [evidence("crates/aiperf/src/scheduled.rs"), evidence("crates/aiperf-timing/src/slots.rs")],
+    evidence: [evidence("crates/aiperf/src/scheduled.rs"), evidence("crates/timing/src/slots.rs")],
     modes: ["online_http", "online_grpc", "dynamo_offline", "online_mock"],
     contracts: ["arrival pacing", "session and prefill admission"],
     crateIds: ["crate.aiperf", "crate.aiperf-timing"],
@@ -55,7 +55,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Coordinates warmup, profiling, grace, cancel, drain, ramps, and adaptive SLA control.",
       "PhaseLifecycle escalates duration to grace, cancel, bounded drain, and force completion; controls mutate local slot/rate/user actuators.",
     ),
-    evidence: [evidence("crates/aiperf-timing/src/phase/mod.rs"), evidence("crates/aiperf-adaptive/src/runtime.rs")],
+    evidence: [evidence("crates/timing/src/phase/mod.rs"), evidence("crates/adaptive/src/runtime.rs")],
     modes: ["online_http", "dynamo_offline", "online_mock"],
     contracts: ["phase lifecycle", "adaptive actuator", "ramp and cancellation policy"],
     crateIds: ["crate.aiperf-timing", "crate.aiperf-adaptive"],
@@ -72,7 +72,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Supports h1, h2c, Unix sockets, TLS, streaming, reuse, and post-send cancellation.",
       "Low-level Hyper bindings preserve raw SSE line boundaries, aiohttp-style trace facts, SendCompletion, and endpoint-owned lifecycle parsing.",
     ),
-    evidence: [evidence("crates/aiperf-transport-http/src/lib.rs")],
+    evidence: [evidence("crates/transport-http/src/lib.rs")],
     modes: ["online_http", "online_mock"],
     contracts: ["HttpEndpointBinding", "HTTP trace and SSE lifecycle"],
     crateIds: ["crate.aiperf-transport-http"],
@@ -90,8 +90,8 @@ export const executionComponents: ArchitectureComponent[] = [
       "GrpcEndpointBinding factories own codecs; runner validation requires wait_for_model_timeout <= 0, rejects every authored sidecar, and has no graph pair.",
     ),
     evidence: [
-      evidence("crates/aiperf-transport-grpc/src/lib.rs"),
-      rangedEvidence("crates/aiperf-runner/src/grpc_execution.rs", 164, 195),
+      evidence("crates/transport-grpc/src/lib.rs"),
+      rangedEvidence("crates/runner/src/grpc_execution.rs", 164, 195),
     ],
     modes: ["online_grpc"],
     contracts: ["GrpcEndpointBinding", "Tonic status and trace mapping"],
@@ -109,7 +109,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Exposes ordinary HTTP/SSE endpoint dialects with analytic or batch-scheduler latency.",
       "The mock binary is launched independently and has no dependency edge from runner or transport crates.",
     ),
-    evidence: [evidence("crates/aiperf-mock-rs/src/lib.rs")],
+    evidence: [evidence("crates/mock-rs/src/lib.rs")],
     modes: ["online_mock"],
     contracts: ["ordinary HTTP target"],
     crateIds: ["crate.aiperf-mock-rs"],
@@ -126,7 +126,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Runs scheduled and graph workloads against an in-process virtual-clock engine.",
       "The non-default feature requires a sibling Dynamo checkout, one simulator endpoint, single worker placement, no sidecars, and no semantic accuracy.",
     ),
-    evidence: [evidence("crates/aiperf/src/dynosim.rs"), evidence("crates/aiperf-runner/src/offline_execution.rs")],
+    evidence: [evidence("crates/aiperf/src/dynosim.rs"), evidence("crates/runner/src/offline_execution.rs")],
     modes: ["dynamo_offline"],
     contracts: ["SteppableReplay", "byte-equal common summary"],
     crateIds: ["crate.aiperf"],
@@ -143,7 +143,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Each worker owns local request state and metrics, then merges once after execution.",
       "Hot paths use Rc, RefCell, !Send futures, spawn_local, and worker-local MetricsAccumulator; Arc/Mutex is excluded from per-token work.",
     ),
-    evidence: [evidence("crates/aiperf-graph/src/runtime.rs"), evidence("crates/aiperf-graph/src/placement.rs")],
+    evidence: [evidence("crates/graph/src/runtime.rs"), evidence("crates/graph/src/placement.rs")],
     modes: ["online_http", "online_grpc", "online_mock"],
     contracts: ["worker-local placement and final merge"],
     crateIds: ["crate.aiperf-graph"],
@@ -159,7 +159,7 @@ export const executionEdges: ArchitectureEdge[] = [
     label: "Pace arrivals and deadlines",
     control: "Clock sleep and monotonic timestamps",
     status: "built",
-    evidence: [evidence("crates/aiperf-timing/src/intervals.rs")],
+    evidence: [evidence("crates/timing/src/intervals.rs")],
   },
   {
     id: "edge.controls-adjust-scheduling",
@@ -169,7 +169,7 @@ export const executionEdges: ArchitectureEdge[] = [
     label: "Adjust live admission",
     control: "phase ramps and adaptive actuators",
     status: "built",
-    evidence: [evidence("crates/aiperf-adaptive/src/actuator.rs")],
+    evidence: [evidence("crates/adaptive/src/actuator.rs")],
   },
   {
     id: "edge.scheduling-http",
@@ -204,7 +204,7 @@ export const executionEdges: ArchitectureEdge[] = [
 ];
 
 const pairEvidence = [
-  rangedEvidence("crates/aiperf-runner/src/registry.rs", 2131, 2167),
+  rangedEvidence("crates/runner/src/registry.rs", 2131, 2167),
 ];
 
 export const executionPairSupport: PairSupport[] = [
@@ -278,7 +278,7 @@ export const executionPairSupport: PairSupport[] = [
     workload: "evaluation",
     status: "runtime-conditional",
     notes: copy("A tightly bounded neutral evaluation preview is available in attested deployments.", "The pair appears only when provider roots and isolation attest.", "Only NeMo 0.4.0 and OpenBench 0.5.3 five-record GSM8K canaries are registered."),
-    evidence: [evidence("crates/aiperf-runner/src/stock_evaluation.rs")],
+    evidence: [evidence("crates/runner/src/stock_evaluation.rs")],
   },
   {
     id: "pair.online-http-telemetry-watch",
@@ -291,9 +291,9 @@ export const executionPairSupport: PairSupport[] = [
       "BuiltinRunnerRegistryFactory registers telemetry_watch and the online_http pair with models, endpoints, metrics, and sidecars forbidden.",
     ),
     evidence: [
-      rangedEvidence("crates/aiperf-runner/src/registry.rs", 873, 883),
-      rangedEvidence("crates/aiperf-runner/src/registry.rs", 2131, 2167),
-      evidence("crates/aiperf-runner/src/telemetry_operation.rs"),
+      rangedEvidence("crates/runner/src/registry.rs", 873, 883),
+      rangedEvidence("crates/runner/src/registry.rs", 2131, 2167),
+      evidence("crates/runner/src/telemetry_operation.rs"),
     ],
   },
 ];

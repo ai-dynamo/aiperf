@@ -125,7 +125,7 @@ and diagnostic artifacts (screenshots/diffs/traces) from test runs.
 
 Deploy `dist/` to a static host configured to return `index.html` for unknown
 paths so deep links such as `/scenes/graph-ir-execution` and
-`/crates/aiperf-clock` resolve correctly.
+`/crates/clock` resolve correctly.
 
 The artifact is self-contained and requires no application server or runtime
 data service.

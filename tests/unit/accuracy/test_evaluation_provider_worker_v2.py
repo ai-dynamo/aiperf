@@ -317,7 +317,7 @@ def test_model_operation_schema_confines_inline_images_to_strict_raster_data() -
 
 
 def test_python_operation_fingerprints_match_rust_stock_registry() -> None:
-    rust_source = (_ROOT / "crates/aiperf-accuracy/src/provider.rs").read_text(
+    rust_source = (_ROOT / "crates/accuracy/src/provider.rs").read_text(
         encoding="utf-8"
     )
     rows = {

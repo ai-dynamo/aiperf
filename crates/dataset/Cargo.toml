@@ -9,7 +9,7 @@ license.workspace = true
 description = "Unified content-addressed dataset, segment store, loaders, and materialization for AIPerf."
 
 [dependencies]
-aiperf-endpoints = { path = "../aiperf-endpoints" }
+aiperf-endpoints = { path = "../endpoints" }
 aiperf-clock.workspace = true
 aiperf-rng.workspace = true
 aiperf-transport-http.workspace = true

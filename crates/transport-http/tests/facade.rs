@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/tests/facade.rs
+// crates/transport-http/tests/facade.rs
 mod common;
 use common::{MockServer, run_local};
 use std::rc::Rc;

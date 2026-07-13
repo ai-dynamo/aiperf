@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/tests/connect.rs
+// crates/transport-http/tests/connect.rs
 mod common;
 use common::{MockServer, run_local};
 

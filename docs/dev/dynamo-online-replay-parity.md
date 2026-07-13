@@ -111,7 +111,7 @@ the engine is a linked library on both sides.
 
 ## Tests
 
-`crates/aiperf-runner/tests/online_replay_stdio.rs`:
+`crates/runner/tests/online_replay_stdio.rs`:
 
 - `online_product_path_matches_python_dynamo_replay_subprocess_within_3pct` —
   the end-to-end **subprocess vs subprocess** gate above. Skips cleanly when the

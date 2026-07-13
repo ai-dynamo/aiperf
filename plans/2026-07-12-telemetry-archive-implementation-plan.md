@@ -59,7 +59,7 @@ It is retained as a before-state ledger entry, not current truth.
 
 ### A. Lossless exposition foundation — Ampere
 
-- [x] Add IO-free `crates/aiperf-prometheus`.
+- [x] Add IO-free `crates/prometheus`.
 - [x] Implement strict format selection.
 - [x] Preserve exact metadata, emitted sample names/roles, escaped labels,
   number/timestamp lexemes, exemplars, and source order.
@@ -73,7 +73,7 @@ It is retained as a before-state ledger entry, not current truth.
 
 ### B. Archive byte/durability authority — Descartes
 
-- [x] Add domain-neutral `crates/aiperf-telemetry-archive` without runner,
+- [x] Add domain-neutral `crates/telemetry-archive` without runner,
   metrics, GPU, or backend dependencies.
 - [x] Freeze canonical schema/descriptor/digest/JSON/row evidence APIs and
   `FrameIdentityV1`.

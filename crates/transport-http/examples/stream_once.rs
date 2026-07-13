@@ -1,4 +1,4 @@
-// crates/aiperf-transport-http/examples/stream_once.rs
+// crates/transport-http/examples/stream_once.rs
 //! Minimal driver: one streaming chat request against a server, printing the
 //! record. Usage: aiperf-mock-rs --no-tokenizer & then run with BASE_URL set.
 
