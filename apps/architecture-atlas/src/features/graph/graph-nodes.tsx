@@ -14,9 +14,9 @@ import type {
 } from "./types";
 
 const flavorColors: Record<GraphFlavorClass, string> = {
-  "compare-only": "#A78BFA",
-  "primary-only": "#45C7F4",
-  shared: "#76B900",
+  "compare-only": "#b691d4",
+  "primary-only": "#7aa9d6",
+  shared: "#94d340",
 };
 
 export interface RuntimeGraphNodeData extends Record<string, unknown> {
@@ -69,7 +69,7 @@ export function RuntimeGraphNode({
       style={{
         border: `${data.pathState === "focused" ? 3 : 2}px ${
           data.node.status.state === "planned" ? "dashed" : "solid"
-        } ${data.node.status.state === "planned" ? "#FF7A7A" : flavorColors[data.flavorClass]}`,
+        } ${data.node.status.state === "planned" ? "#ef5350" : flavorColors[data.flavorClass]}`,
         opacity: data.pathState === "default" ? 0.82 : 1,
       }}
     >

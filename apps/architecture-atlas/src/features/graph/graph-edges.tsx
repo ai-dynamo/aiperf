@@ -28,9 +28,9 @@ import type {
 } from "./types";
 
 const flavorColors: Record<GraphFlavorClass, string> = {
-  "compare-only": "#A78BFA",
-  "primary-only": "#45C7F4",
-  shared: "#76B900",
+  "compare-only": "#b691d4",
+  "primary-only": "#7aa9d6",
+  shared: "#94d340",
 };
 
 export interface RuntimeGraphEdgeData extends Record<string, unknown> {
@@ -64,7 +64,7 @@ function edgePathPresentation(data: RuntimeGraphEdgeData): {
       .join(" "),
     style: {
       opacity: data.pathState === "default" ? 0.72 : 1,
-      stroke: planned ? "#FF7A7A" : flavorColors[data.flavorClass],
+      stroke: planned ? "#ef5350" : flavorColors[data.flavorClass],
       strokeDasharray: planned ? "8 6" : undefined,
       strokeWidth:
         data.pathState === "focused"
@@ -78,10 +78,10 @@ function edgePathPresentation(data: RuntimeGraphEdgeData): {
 
 function pulseFillColor(phase: GraphPulseState): string {
   if (phase === "active") {
-    return "#45C7F4";
+    return "#26c6da";
   }
   if (phase === "completed") {
-    return "#76B900";
+    return "#94d340";
   }
   return "transparent";
 }
@@ -234,7 +234,7 @@ export function edgeMarker(
   planned: boolean,
 ) {
   return {
-    color: planned ? "#FF7A7A" : flavorColors[flavorClass],
+    color: planned ? "#ef5350" : flavorColors[flavorClass],
     height: 16,
     type: MarkerType.ArrowClosed,
     width: 16,

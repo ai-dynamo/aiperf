@@ -31,20 +31,25 @@
 
 @layer tokens {
   :root {
-    --surface-canvas: #101214;
-    --surface-rail: #171a1d;
-    --surface-raised: #202429;
-    --line-subtle: #30353b;
-    --line-strong: #4b535d;
-    --text-primary: #f0f2f4;
-    --text-secondary: #a9b0b8;
-    --text-muted: #7e8791;
-    --accent-flow: #6db6ff;
-    --accent-flow-strong: #a8d3ff;
-    --status-ready: #67c58c;
-    --status-conditional: #d6ab5f;
-    --status-gap: #dc7474;
-    --focus-ring: #f0c766;
+    /* Surfaces — NVIDIA operator graphite */
+    --surface-canvas: #0e0e10;
+    --surface-rail: #131316;
+    --surface-raised: #1c1c22;
+    --card-grad: linear-gradient(180deg, #181820 0%, #131316 100%);
+    /* Borders */
+    --line-subtle: #1f1f25;
+    --line-strong: #2c2c33;
+    /* Text scale */
+    --text-primary: #ececec;
+    --text-secondary: #c0c0c8;
+    --text-muted: #87878f;
+    /* Accents — green is the brand/interactive primary; cyan is data flow */
+    --accent-flow: #94d340;
+    --accent-flow-strong: #b6e86a;
+    --status-ready: #94d340;
+    --status-conditional: #ffc107;
+    --status-gap: #ef5350;
+    --focus-ring: #94d340;
     --rail-size: 17rem;
     --utility-size: 4.25rem;
     --space-1: 0.25rem;
@@ -54,16 +59,15 @@
     --space-5: 1.5rem;
     --space-6: 2rem;
     --space-7: 3rem;
-    --radius-control: 0.45rem;
-    --radius-panel: 0.85rem;
-    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.3);
+    --radius-control: 6px;
+    --radius-panel: 8px;
+    --shadow-1: 0 1px 0 rgb(255 255 255 / 0.03) inset;
     --shadow-2: 0 8px 24px -8px rgb(0 0 0 / 0.55);
-    --glass-blur: 0.6rem;
-    --font-interface: "Arial Narrow", "Liberation Sans Narrow", "Helvetica Neue",
-      Arial, sans-serif;
-    --font-body: "Segoe UI", "Noto Sans", "Liberation Sans", "Helvetica Neue",
-      Arial, sans-serif;
-    --font-data: "SFMono-Regular", "Liberation Mono", Consolas, monospace;
+    --glass-blur: 0.5rem;
+    --font-interface: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "JetBrains Mono", "IBM Plex Mono", ui-monospace,
+      "SFMono-Regular", Consolas, monospace;
   }
 }
 
@@ -1274,55 +1278,50 @@
 
 @layer flightdeck {
   :root {
-    --surface-canvas: #070b10;
-    --surface-rail: rgb(17 26 34 / 0.86);
-    --surface-raised: rgb(20 33 44 / 0.78);
-    --line-subtle: rgb(79 112 132 / 0.34);
-    --line-strong: rgb(99 152 180 / 0.58);
-    --text-primary: #f2f8ff;
-    --text-secondary: #c6d6e6;
-    --text-muted: #8fa6b9;
-    --accent-rust: #76b900;
-    --accent-flow: #45c7f4;
-    --accent-flow-strong: #8ae7ff;
-    --accent-control: #f5b942;
-    --accent-sim: #a78bfa;
-    --accent-planned: #ff7a7a;
-    --status-ready: #76b900;
-    --status-conditional: #f5b942;
-    --status-gap: #ff7a7a;
-    --focus-ring: #f5b942;
-    --panel-glass: rgb(12 20 28 / 0.72);
-    --panel-glass-strong: rgb(9 15 22 / 0.9);
-    --panel-border: rgb(90 140 170 / 0.32);
-    --panel-border-strong: rgb(110 170 205 / 0.5);
-    --chip-surface: rgb(120 165 195 / 0.12);
-    --shadow-2: 0 12px 32px -12px rgb(0 4 8 / 0.72);
-    --font-interface: "Saira Condensed", "Arial Narrow", "Roboto Condensed",
-      "Helvetica Neue", sans-serif;
-    --font-body: Manrope, Inter, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    --font-data: "IBM Plex Mono", "Cascadia Mono", "SFMono-Regular", Consolas,
-      monospace;
+    /* Surfaces — deeper canvas for graph depth, graphite panels */
+    --surface-canvas: #0b0b0d;
+    --surface-rail: #131316;
+    --surface-raised: #1c1c22;
+    --line-subtle: #202026;
+    --line-strong: #2c2c33;
+    --text-primary: #f2f2f4;
+    --text-secondary: #c0c0c8;
+    --text-muted: #87878f;
+    /* Semantic accents — NVIDIA green built/brand, cyan flow, categorical rest */
+    --accent-rust: #94d340;
+    --accent-flow: #26c6da;
+    --accent-flow-strong: #5fd6e6;
+    --accent-control: #ffc107;
+    --accent-sim: #ab47bc;
+    --accent-planned: #ef5350;
+    --status-ready: #94d340;
+    --status-conditional: #ffc107;
+    --status-gap: #ef5350;
+    --focus-ring: #94d340;
+    /* Panels — mostly opaque graphite for a crisp, non-glassy card read */
+    --panel-glass: rgb(24 24 30 / 0.92);
+    --panel-glass-strong: rgb(19 19 22 / 0.97);
+    --panel-border: #2c2c33;
+    --panel-border-strong: #3a3a40;
+    --chip-surface: rgb(255 255 255 / 0.04);
+    --shadow-2: 0 12px 32px -12px rgb(0 0 0 / 0.6);
+    --font-interface: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-data: "JetBrains Mono", "IBM Plex Mono", ui-monospace,
+      "SFMono-Regular", Consolas, monospace;
     --rail-size: clamp(15rem, 16vw, 18.5rem);
     --utility-size: clamp(3.9rem, 5.4vw, 4.8rem);
   }
 
   body {
-    background:
-      radial-gradient(circle at 22% 18%, rgb(118 185 0 / 0.16), transparent 36%),
-      radial-gradient(circle at 88% 82%, rgb(69 199 244 / 0.08), transparent 31%),
-      linear-gradient(180deg, #05080d 0%, var(--surface-canvas) 55%);
+    background: var(--surface-canvas);
   }
 
   .flight-deck-shell {
     position: relative;
     isolation: isolate;
     min-block-size: 100vh;
-    background: linear-gradient(
-      145deg,
-      rgb(8 14 20 / 0.84),
-      rgb(5 9 13 / 0.92) 65%
-    );
+    background: var(--surface-canvas);
   }
 
   .flight-deck-shell::before {
@@ -1334,14 +1333,13 @@
       repeating-linear-gradient(
         90deg,
         transparent 0 2.45rem,
-        rgb(69 199 244 / 0.045) 2.45rem 2.52rem
+        rgb(255 255 255 / 0.015) 2.45rem 2.52rem
       ),
       repeating-linear-gradient(
         180deg,
         transparent 0 2.45rem,
-        rgb(118 185 0 / 0.045) 2.45rem 2.52rem
+        rgb(255 255 255 / 0.015) 2.45rem 2.52rem
       );
-    opacity: 0.22;
     pointer-events: none;
   }
 
@@ -1354,12 +1352,8 @@
 
   .scene-rail {
     z-index: 12;
-    border-inline-end-color: rgb(69 199 244 / 0.2);
-    background:
-      linear-gradient(180deg, rgb(17 26 34 / 0.9), rgb(11 18 24 / 0.9)),
-      radial-gradient(circle at 0% 14%, rgb(118 185 0 / 0.14), transparent 55%);
-    backdrop-filter: blur(0.5rem);
-    box-shadow: 0 0 1.8rem rgb(6 11 16 / 0.32);
+    border-inline-end-color: var(--line-subtle);
+    background: var(--surface-rail);
   }
 
   .scene-rail-nav {
@@ -1367,11 +1361,11 @@
   }
 
   .product-mark {
-    border-block-end-color: rgb(118 185 0 / 0.38);
+    border-block-end-color: var(--line-subtle);
   }
 
   .product-kicker {
-    color: var(--accent-control);
+    color: var(--accent-rust);
   }
 
   .product-name {
@@ -1392,7 +1386,7 @@
     border: 1px solid transparent;
     border-inline-start: 2px solid transparent;
     border-radius: var(--radius-control);
-    background: rgb(9 15 20 / 0.38);
+    background: transparent;
     color: var(--text-secondary);
     transition:
       border-color 130ms ease,
@@ -1401,26 +1395,21 @@
   }
 
   .nav-link:hover {
-    border-color: rgb(69 199 244 / 0.35);
-    background: rgb(16 28 38 / 0.6);
+    background: rgb(255 255 255 / 0.04);
     color: var(--text-primary);
   }
 
   .nav-link[aria-current="page"] {
-    border-color: rgb(118 185 0 / 0.4);
     border-inline-start-color: var(--accent-rust);
-    background: rgb(15 30 22 / 0.64);
-    color: #e7ffd6;
+    background: rgb(148 211 64 / 0.1);
+    color: var(--accent-rust);
   }
 
   .command-bar {
     z-index: 24;
     gap: var(--space-3);
-    border-block-end-color: rgb(69 199 244 / 0.3);
-    background:
-      linear-gradient(180deg, rgb(9 16 22 / 0.9), rgb(7 12 18 / 0.82)),
-      radial-gradient(circle at 50% -60%, rgb(69 199 244 / 0.24), transparent 70%);
-    backdrop-filter: blur(0.5rem);
+    border-block-end-color: var(--line-subtle);
+    background: var(--surface-rail);
   }
 
   .scene-context {
@@ -1449,7 +1438,7 @@
   .command-action {
     border-radius: var(--radius-control);
     border-color: var(--panel-border);
-    background: rgb(6 12 17 / 0.78);
+    background: var(--surface-raised);
     transition:
       border-color 130ms ease,
       background 130ms ease,
@@ -1465,7 +1454,7 @@
   .command-search input:focus-visible,
   .command-field select:focus-visible,
   .command-action:focus-visible {
-    box-shadow: 0 0 0 2px rgb(245 185 66 / 0.5);
+    box-shadow: 0 0 0 2px rgb(148 211 64 / 0.5);
   }
 
   .command-action {
@@ -1473,20 +1462,20 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--panel-border);
-    background: linear-gradient(180deg, rgb(20 34 46 / 0.7), rgb(10 18 25 / 0.7));
+    background: var(--surface-raised);
     color: var(--text-primary);
     padding-inline: var(--space-4);
     font-family: var(--font-interface);
-    font-size: 0.86rem;
-    font-weight: 560;
+    font-size: 0.82rem;
+    font-weight: 550;
     letter-spacing: 0.01em;
     cursor: pointer;
   }
 
   .command-action:hover {
-    border-color: var(--accent-flow);
-    background: linear-gradient(180deg, rgb(26 44 58 / 0.85), rgb(13 24 33 / 0.85));
-    color: var(--accent-flow-strong);
+    border-color: var(--border-hover, #4b4b4b);
+    background: #24242b;
+    color: var(--text-primary);
   }
 
   .command-action:active {
@@ -1494,27 +1483,83 @@
   }
 
   .command-action-share {
-    border-color: rgb(118 185 0 / 0.55);
-    background: linear-gradient(180deg, rgb(30 52 16 / 0.7), rgb(16 28 10 / 0.72));
-    color: #e2ffc4;
+    border-color: rgb(148 211 64 / 0.4);
+    background: rgb(148 211 64 / 0.1);
+    color: var(--accent-rust);
   }
 
   .command-action-share:hover {
     border-color: var(--accent-rust);
-    color: #f1ffdd;
+    background: rgb(148 211 64 / 0.16);
+    color: var(--accent-flow-strong);
   }
 
   .command-action-toggle {
-    border-color: rgb(245 185 66 / 0.5);
-    color: #ffe9bb;
+    border-color: rgb(255 193 7 / 0.4);
+    color: var(--accent-control);
+  }
+
+  .audience-switch {
+    display: inline-flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-control);
+    background: rgb(6 12 17 / 0.78);
+  }
+
+  .audience-option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 2.35rem;
+    min-block-size: 2.35rem;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius-control) - 2px);
+    background: transparent;
+    color: var(--text-muted);
+    padding: 0.35rem;
+    cursor: pointer;
+    transition:
+      border-color 130ms ease,
+      background 130ms ease,
+      color 130ms ease,
+      box-shadow 130ms ease;
+  }
+
+  .audience-option svg {
+    inline-size: 1.25rem;
+    block-size: 1.25rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .audience-option:hover {
+    border-color: var(--panel-border-strong);
+    color: var(--text-primary);
+  }
+
+  .audience-option:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgb(148 211 64 / 0.5);
+  }
+
+  .audience-option[data-active] {
+    border-color: var(--accent-flow);
+    background: linear-gradient(180deg, rgb(26 44 58 / 0.85), rgb(13 24 33 / 0.85));
+    color: var(--accent-flow-strong);
   }
 
   .graph-state-notice {
     margin: 0;
-    border-block-end: 1px solid rgb(245 185 66 / 0.4);
+    border-block-end: 1px solid var(--line-subtle);
     border-inline-start: 3px solid var(--accent-control);
-    background: rgb(30 24 10 / 0.7);
-    color: #ffe4b0;
+    background: rgb(255 193 7 / 0.08);
+    color: var(--accent-control);
     padding: var(--space-2) var(--space-5);
     font-family: var(--font-data);
     font-size: 0.72rem;
@@ -1533,39 +1578,32 @@
     position: sticky;
     z-index: 8;
     inset-block-start: calc(var(--utility-size) + 0.6rem);
-    border-color: rgb(69 199 244 / 0.32);
-    background: rgb(8 15 20 / 0.76);
-    backdrop-filter: blur(0.38rem);
+    border-color: var(--line-subtle);
+    background: var(--surface-rail);
     padding-inline: var(--space-3);
   }
 
   .atlas-workspace {
-    border-color: rgb(69 199 244 / 0.36);
-    background:
-      linear-gradient(180deg, rgb(10 17 23 / 0.9), rgb(7 11 16 / 0.9)),
-      radial-gradient(circle at 28% 20%, rgb(118 185 0 / 0.12), transparent 55%);
+    border-color: var(--panel-border);
+    border-radius: var(--radius-panel);
+    background: var(--surface-rail);
   }
 
   .atlas-canvas {
     block-size: min(78vh, 58rem);
     min-block-size: 30rem;
-    border-inline-end: 1px solid rgb(69 199 244 / 0.18);
-    background:
-      radial-gradient(circle at 16% 24%, rgb(118 185 0 / 0.12), transparent 42%),
-      radial-gradient(circle at 88% 82%, rgb(69 199 244 / 0.08), transparent 34%),
-      linear-gradient(180deg, #070c12 0%, #05080d 100%);
+    border-inline-end: 1px solid var(--line-subtle);
+    background: var(--surface-canvas);
   }
 
   .atlas-node {
-    border-color: rgb(69 199 244 / 0.42);
-    border-inline-start: 4px solid var(--accent-rust);
-    background: linear-gradient(
-      155deg,
-      rgb(20 33 44 / 0.82),
-      rgb(11 18 24 / 0.95) 78%
-    );
-    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
-    box-shadow: inset 0 0 0 1px rgb(69 199 244 / 0.15);
+    border-color: var(--panel-border);
+    border-inline-start: 3px solid var(--accent-rust);
+    border-radius: var(--radius-panel);
+    background: var(--card-grad, var(--surface-raised));
+    box-shadow:
+      var(--shadow-1),
+      0 4px 12px -6px rgb(0 0 0 / 0.5);
   }
 
   .atlas-node[data-owner="python"] {
@@ -1582,18 +1620,18 @@
   }
 
   .atlas-node[data-selected="true"] {
-    border-color: rgb(118 185 0 / 0.7);
+    border-color: rgb(148 211 64 / 0.6);
     box-shadow:
-      inset 0 0 0 1px rgb(118 185 0 / 0.28),
-      0 0 0.9rem rgb(118 185 0 / 0.2);
+      inset 0 0 0 1px rgb(148 211 64 / 0.28),
+      0 0 0 1px rgb(148 211 64 / 0.18);
   }
 
   .atlas-node strong {
-    color: #eff8ff;
+    color: var(--text-primary);
   }
 
   .atlas-node-owner {
-    color: var(--accent-control);
+    color: var(--accent-rust);
   }
 
   .react-flow__edge-path {
@@ -1624,8 +1662,8 @@
   }
 
   .atlas-band {
-    border-color: rgb(69 199 244 / 0.24);
-    background: rgb(8 14 19 / 0.7);
+    border-color: var(--panel-border);
+    background: var(--surface-raised);
   }
 
   .atlas-band strong {
@@ -1643,22 +1681,19 @@
   }
 
   .react-flow__controls-button {
-    border-block-end-color: rgb(69 199 244 / 0.2);
-    background: rgb(9 15 22 / 0.9);
+    border-block-end-color: var(--line-subtle);
+    background: var(--surface-raised);
     fill: var(--text-primary);
     transition: background 120ms ease;
   }
 
   .react-flow__controls-button:hover {
-    background: rgb(20 34 46 / 0.95);
+    background: #24242b;
   }
 
   .atlas-drawer {
-    border-inline-start-color: rgb(69 199 244 / 0.36);
-    background:
-      linear-gradient(180deg, rgb(11 18 24 / 0.9), rgb(8 13 18 / 0.9)),
-      radial-gradient(circle at 82% 12%, rgb(69 199 244 / 0.1), transparent 46%);
-    backdrop-filter: blur(0.35rem);
+    border-inline-start-color: var(--panel-border);
+    background: var(--surface-rail);
   }
 
   .atlas-layout-notice {
@@ -1667,16 +1702,12 @@
   }
 
   .graph-node {
-    border-radius: 0;
-    background: linear-gradient(
-      155deg,
-      rgb(20 33 44 / 0.82),
-      rgb(11 18 24 / 0.95) 78%
-    );
-    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-panel);
+    background: var(--card-grad, var(--surface-raised));
     box-shadow:
-      inset 0 0 0 1px rgb(69 199 244 / 0.15),
-      0 0 0.8rem rgb(69 199 244 / 0.08);
+      var(--shadow-1),
+      0 6px 16px -8px rgb(0 0 0 / 0.55);
     color: var(--text-primary);
   }
 
@@ -1689,15 +1720,17 @@
   }
 
   .graph-node-pulse-active {
+    border-color: rgb(38 198 218 / 0.6);
     box-shadow:
-      inset 0 0 0 1px rgb(69 199 244 / 0.3),
-      0 0 1rem rgb(69 199 244 / 0.25);
+      inset 0 0 0 1px rgb(38 198 218 / 0.3),
+      0 0 0.9rem -2px rgb(38 198 218 / 0.35);
   }
 
   .graph-node-pulse-completed {
+    border-color: rgb(148 211 64 / 0.55);
     box-shadow:
-      inset 0 0 0 1px rgb(118 185 0 / 0.32),
-      0 0 0.8rem rgb(118 185 0 / 0.24);
+      inset 0 0 0 1px rgb(148 211 64 / 0.3),
+      0 0 0.8rem -2px rgb(148 211 64 / 0.3);
   }
 
   .graph-node-planned {
@@ -1712,11 +1745,11 @@
 
   .graph-edge-path-upstream,
   .graph-edge-path-downstream {
-    filter: drop-shadow(0 0 4px rgb(69 199 244 / 0.45));
+    filter: drop-shadow(0 0 3px rgb(38 198 218 / 0.4));
   }
 
   .graph-edge-path-focused {
-    filter: drop-shadow(0 0 6px rgb(69 199 244 / 0.62));
+    filter: drop-shadow(0 0 5px rgb(38 198 218 / 0.55));
   }
 
   .graph-edge-planned {
@@ -1784,7 +1817,7 @@
 
   .scene-status-hud h1 {
     margin: 0;
-    color: #f4fbff;
+    color: var(--text-primary);
     font-family: var(--font-interface);
     font-size: clamp(1.05rem, 1.8vw, 1.35rem);
     letter-spacing: 0.02em;
@@ -1809,9 +1842,7 @@
     block-size: 100%;
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-panel);
-    background:
-      linear-gradient(180deg, rgb(8 14 20 / 0.94), rgb(6 10 15 / 0.94)),
-      radial-gradient(circle at 18% 22%, rgb(118 185 0 / 0.11), transparent 42%);
+    background: var(--surface-canvas);
     overflow: hidden;
     padding-block-start: clamp(4.5rem, 8vh, 5.75rem);
   }
@@ -1830,8 +1861,8 @@
   }
 
   .graph-canvas-minimap {
-    border-color: rgb(69 199 244 / 0.24) !important;
-    background: rgb(5 10 15 / 0.46) !important;
+    border-color: var(--panel-border) !important;
+    background: rgb(11 11 13 / 0.6) !important;
   }
 
   .overlay-partition-legend {
@@ -1872,22 +1903,22 @@
   }
 
   .overlay-partition-legend li[data-legend="planned"] {
-    border-color: rgb(255 122 122 / 0.58);
+    border-color: rgb(239 83 80 / 0.58);
     color: #ffc1c1;
   }
 
   .overlay-partition-legend li[data-legend="active"] {
-    border-color: rgb(69 199 244 / 0.6);
+    border-color: rgb(38 198 218 / 0.6);
     color: #c7f3ff;
   }
 
   .overlay-partition-legend li[data-legend="control"] {
-    border-color: rgb(245 185 66 / 0.6);
+    border-color: rgb(255 193 7 / 0.6);
     color: #ffe6b6;
   }
 
   .overlay-partition-legend li[data-legend="overlay"] {
-    border-color: rgb(167 139 250 / 0.6);
+    border-color: rgb(171 71 188 / 0.6);
     color: #e4d5ff;
   }
 
@@ -1918,8 +1949,8 @@
   }
 
   .graph-focus-breadcrumbs button {
-    border: 1px solid rgb(69 199 244 / 0.22);
-    background: rgb(6 12 17 / 0.8);
+    border: 1px solid var(--panel-border);
+    background: var(--chip-surface);
     color: var(--text-secondary);
     padding: 0.15rem var(--space-2);
     font-family: var(--font-data);
@@ -1993,7 +2024,7 @@
 
   .pulse-dock-action:hover {
     border-color: var(--accent-flow);
-    background: rgb(69 199 244 / 0.16);
+    background: rgb(38 198 218 / 0.14);
     color: var(--accent-flow-strong);
   }
 
@@ -2063,11 +2094,11 @@
   }
 
   .pulse-channel-chip[data-channel="control"] {
-    border-color: rgb(245 185 66 / 0.42);
+    border-color: rgb(255 193 7 / 0.42);
   }
 
   .pulse-channel-chip[data-channel="token"] {
-    border-color: rgb(69 199 244 / 0.42);
+    border-color: rgb(38 198 218 / 0.42);
   }
 
   .pulse-channel-chip[data-channel="telemetry"] {
@@ -2075,7 +2106,7 @@
   }
 
   .pulse-channel-chip[data-channel="report_result"] {
-    border-color: rgb(167 139 250 / 0.42);
+    border-color: rgb(171 71 188 / 0.42);
   }
 
   .pulse-layer-telemetry {
@@ -2162,7 +2193,7 @@
   }
 
   .graph-node[data-implementation-state="planned"] .graph-node-status-chip {
-    border-color: rgb(255 122 122 / 0.5);
+    border-color: rgb(239 83 80 / 0.5);
     color: #ffc8c8;
   }
 
@@ -2205,13 +2236,13 @@
 
   .graph-node-actions button:hover {
     border-color: var(--accent-flow);
-    background: rgb(69 199 244 / 0.16);
+    background: rgb(38 198 218 / 0.14);
     color: var(--accent-flow-strong);
   }
 
   .graph-node-action-trace[aria-pressed="true"] {
     border-color: var(--accent-flow);
-    background: rgb(69 199 244 / 0.22);
+    background: rgb(38 198 218 / 0.2);
     color: var(--accent-flow-strong);
   }
 
@@ -2224,7 +2255,7 @@
 
   .graph-node-details {
     display: none;
-    border-top: 1px solid rgb(69 199 244 / 0.16);
+    border-top: 1px solid var(--line-subtle);
     padding-top: var(--space-2);
   }
 
@@ -2976,13 +3007,14 @@
   }
 
   .story-config-modes {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
     gap: var(--space-3);
     margin: 0;
     padding: 0;
     list-style: none;
-    align-content: center;
+    min-block-size: 100%;
   }
 
   .story-config-mode {
@@ -3070,12 +3102,14 @@
   }
 
   .story-impls {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
     gap: var(--space-3);
     margin: 0;
     padding: 0;
     list-style: none;
+    min-block-size: 100%;
   }
 
   .story-impl {
@@ -3264,9 +3298,20 @@
       grid-template-columns: 1fr;
     }
 
-    .story-fan {
+    .story-fan,
+    .story-config-compare {
       grid-template-columns: 1fr;
       gap: var(--space-4);
+      min-block-size: auto;
+    }
+
+    .story-fan-arrows {
+      display: none;
+    }
+
+    .story-impls,
+    .story-config-modes {
+      min-block-size: auto;
     }
 
     .story-rail-label {
