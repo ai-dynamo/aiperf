@@ -9,7 +9,21 @@
 //! stream. Template expansion remains behind [`templates::TemplateRenderer`],
 //! leaving the corpus vocabulary open to additional native renderers.
 
+mod cicd_docs;
+mod conversations;
+mod conversations_advanced;
+mod errors_diff;
+mod go;
+mod json_blocks;
+mod ml;
+mod prompts_conv;
+mod python;
+mod rust_lang;
+mod sql;
 mod templates;
+mod tool;
+mod tool_long;
+mod typescript;
 mod vocab;
 
 use aiperf_dataset::TextTokenizer;
@@ -75,8 +89,63 @@ mod tests {
         let first = build_coding_corpus(&tokenizer, 17).expect("first corpus");
         let repeated = build_coding_corpus(&tokenizer, 17).expect("repeated corpus");
         let different = build_coding_corpus(&tokenizer, 18).expect("different corpus");
-        assert!(first.len() > 50_000);
-        assert_eq!(first, repeated);
-        assert_ne!(first, different);
+        // The full multi-variant generator produces a much larger pool than the
+        // single-template baseline (~50k tokens) — every category now fans out
+        // across its whole family of structural variants.
+        assert!(
+            first.len() > 150_000,
+            "full corpus should be large, got {} tokens",
+            first.len()
+        );
+        assert_eq!(
+            first, repeated,
+            "same seed reproduces the corpus byte-for-byte"
+        );
+        assert_ne!(
+            first, different,
+            "a different seed yields a different corpus"
+        );
+    }
+
+    #[test]
+    fn every_template_kind_yields_structural_variety() {
+        use super::templates::{TemplateKind, TemplateRenderer};
+        // Every top-level category dispatches across its Python variant family
+        // (plus vocabulary fills), so repeated renders of one kind must differ —
+        // proving the variant dispatch actually fires rather than one fixed shape.
+        const KINDS: &[TemplateKind] = &[
+            TemplateKind::Python,
+            TemplateKind::Go,
+            TemplateKind::Rust,
+            TemplateKind::TypeScript,
+            TemplateKind::MlTraining,
+            TemplateKind::MlInference,
+            TemplateKind::MlConfig,
+            TemplateKind::BashOutput,
+            TemplateKind::MlTrainingLog,
+            TemplateKind::JsonResponse,
+            TemplateKind::ErrorTraceback,
+            TemplateKind::CudaError,
+            TemplateKind::Sql,
+            TemplateKind::UserPrompt,
+            TemplateKind::ToolUse,
+            TemplateKind::Conversation,
+            TemplateKind::GitDiff,
+            TemplateKind::Cicd,
+            TemplateKind::Config,
+            TemplateKind::Markdown,
+            TemplateKind::TestOutput,
+        ];
+        let mut renderer = TemplateRenderer::new(2026);
+        for kind in KINDS {
+            let mut seen = std::collections::HashSet::new();
+            for ordinal in 0..8 {
+                seen.insert(renderer.render(*kind, ordinal).expect("render"));
+            }
+            assert!(
+                seen.len() > 1,
+                "template kind {kind:?} produced no variety across 8 renders"
+            );
+        }
     }
 }
