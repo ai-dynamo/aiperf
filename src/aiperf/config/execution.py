@@ -16,9 +16,11 @@ from typing import Annotated, Any, Self, TypeAlias
 from pydantic import AfterValidator, ConfigDict, Field, field_validator, model_validator
 
 from aiperf.config.base import BaseConfig
+from aiperf.config.dynosim import DynosimBackendConfig
 
 __all__ = [
     "AgenticProviderConfig",
+    "DynosimBackendConfig",
     "EvaluationProviderConfig",
     "EvaluationResourceConfig",
     "EvaluationRouteConfig",
@@ -67,9 +69,61 @@ class _NamedRunnerComponentConfig(BaseConfig):
 
 
 class RunnerBackendConfig(_NamedRunnerComponentConfig):
-    """Orthogonal execution-backend selection for one native run."""
+    """Orthogonal execution-backend selection for one native run.
+
+    The open runner registry owns arbitrary backend IDs, whose ``config`` stays an
+    opaque dict.  The built-in ``dynosim`` backend (in-process Dynamo mocker
+    replay) has a documented structural contract so it can be authored with typed,
+    validated, schema-visible fields; it is normalized back to a plain dict for the
+    wire, mirroring the ``evaluation`` workload's precedent.
+    """
 
     type: RunnerComponentId = "online_http"
+    config: Annotated[
+        dict[str, Any] | DynosimBackendConfig,
+        Field(
+            default_factory=dict,
+            description=(
+                "Factory-owned authored configuration. The built-in dynosim backend "
+                "shape is documented explicitly; other open backend factories retain "
+                "opaque objects."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def validate_builtin_dynosim_shape(self) -> Self:
+        """Normalize the typed dynosim backend envelope when selected.
+
+        Validates against :class:`DynosimBackendConfig`, then dumps back to a plain
+        snake_case dict so the wire matches the runner's ``DynosimBackendSpec``.
+        Only authored fields are emitted (``exclude_unset``); the runner fills every
+        omitted field from its ``serde`` defaults.
+        """
+        if self.type != "dynosim":
+            if isinstance(self.config, DynosimBackendConfig):
+                raise ValueError(
+                    "DynosimBackendConfig requires backend.type='dynosim'"
+                )
+            return self
+        validated = (
+            self.config
+            if isinstance(self.config, DynosimBackendConfig)
+            else DynosimBackendConfig.model_validate(self.config)
+        )
+        dumped = validated.model_dump(
+            mode="json",
+            by_alias=False,
+            exclude_unset=True,
+            exclude_none=True,
+        )
+        # Rust decodes required_features into a BTreeSet (order-independent), but the
+        # wire bytes must be deterministic across runs, so emit a sorted list rather
+        # than a nondeterministic set iteration order.
+        if "required_features" in dumped:
+            dumped["required_features"] = sorted(dumped["required_features"])
+        self.config = dumped
+        return self
 
 
 class AgenticProviderConfig(_NamedRunnerComponentConfig):

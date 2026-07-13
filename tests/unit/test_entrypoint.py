@@ -1,97 +1,45 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Behavioral contract for the low-overhead AIPerf process entry point."""
+"""Behavioral contract for the AIPerf process entry point."""
 
 from __future__ import annotations
-
-import sys
 
 import pytest
 
 from aiperf import entrypoint
 
 
-def test_dynosim_run_forwards_raw_arguments_without_loading_general_cli(
+def test_main_forwards_explicit_arguments_to_cli_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delitem(sys.modules, "aiperf.cli", raising=False)
-    authored = ["trace with spaces.jsonl", "--replay-mode=online", "--x", "a,b"]
-    observed: list[list[str]] = []
+    import aiperf.cli
 
-    def canonical_main(arguments: list[str]) -> int:
+    observed: list[object] = []
+
+    def fake_app(arguments: object = None) -> int:
         observed.append(arguments)
         return 0
 
-    monkeypatch.setattr(
-        entrypoint,
-        "_import_dynamo_symbol",
-        lambda module, symbol: canonical_main
-        if (module, symbol) == ("dynamo.replay.main", "main")
-        else pytest.fail(f"unexpected import {(module, symbol)}"),
-    )
+    monkeypatch.setattr(aiperf.cli, "app", fake_app)
 
-    assert entrypoint.main(["dynosim", "run", *authored]) == 0
-    assert observed == [authored]
-    assert "aiperf.cli" not in sys.modules
+    assert entrypoint.main(["profile", "--config", "bench.yaml"]) == 0
+    assert observed == [["profile", "--config", "bench.yaml"]]
 
 
-def test_dynosim_mocker_restores_process_argv(
+def test_main_delegates_argv_to_cli_app_when_no_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    authored = ["--engine-type", "trtllm", "--event-plane=zmq"]
-    previous = ["pytest", "sentinel"]
-    observed: list[list[str]] = []
-    monkeypatch.setattr(sys, "argv", previous)
+    import aiperf.cli
 
-    def canonical_main() -> None:
-        observed.append(list(sys.argv))
+    observed: list[object] = []
 
-    monkeypatch.setattr(
-        entrypoint,
-        "_import_dynamo_symbol",
-        lambda module, symbol: canonical_main
-        if (module, symbol) == ("dynamo.mocker.main", "main")
-        else pytest.fail(f"unexpected import {(module, symbol)}"),
-    )
+    def fake_app(arguments: object = None) -> int:
+        observed.append(arguments)
+        return 7
 
-    assert entrypoint.main(["dynosim", "mocker", *authored]) is None
-    assert observed == [["aiperf dynosim mocker", *authored]]
-    assert sys.argv is previous
+    monkeypatch.setattr(aiperf.cli, "app", fake_app)
 
-
-@pytest.mark.parametrize(
-    ("operation", "module"),
-    [("run", "dynamo.replay"), ("mocker", "dynamo.mocker")],
-)
-def test_real_cli_replaces_shim_with_canonical_dynamo_process(
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-    module: str,
-) -> None:
-    authored = ["trace with spaces.jsonl", "--flag=a,b"]
-    observed: list[tuple[str, list[str]]] = []
-
-    class ExecCalled(Exception):
-        pass
-
-    def fake_execv(executable: str, arguments: list[str]) -> None:
-        observed.append((executable, arguments))
-        raise ExecCalled
-
-    monkeypatch.setattr(entrypoint.os, "execv", fake_execv)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["aiperf", "dynosim", operation, *authored],
-    )
-
-    with pytest.raises(ExecCalled):
-        entrypoint.main()
-
-    assert observed == [
-        (
-            sys.executable,
-            [sys.executable, "-m", module, *authored],
-        )
-    ]
+    # No explicit arguments -> Cyclopts reads sys.argv itself (called with none).
+    assert entrypoint.main() == 7
+    assert observed == [None]

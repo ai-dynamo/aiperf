@@ -68,12 +68,12 @@ while terminal `ObservedUsage` carries endpoint counts as optional fields.
 fan-out and collection use `Rc`/`RefCell` without per-token locks. Thread-per-core,
 `Rc`/`RefCell`, `!Send`, `spawn_local` on the hot path.
 
-The complete canonical DynoSim/Mocker surface is also exposed through the Python
-frontend: `aiperf dynosim {run,mocker,sweep,capabilities}`. `run` and `mocker`
-forward raw argv to Dynamo's owning parsers; `sweep` calls the canonical four
-`ReplayOptimizeSpec` search operations. The shipped capability manifest is
-drift-checked against both argparse schemas, engine/router fields, Rust replay
-exports, steppable methods, sweep models, and every Mocker Cargo feature.
+Offline/online Dynamo replay is authored through `aiperf profile` as a Config-v2
+backend (`backend.type: dynosim`), not a separate command. The typed
+`DynosimBackendConfig` (`src/aiperf/config/dynosim.py`) mirrors the runner's
+`DynosimBackendSpec` and projects verbatim into the protocol-v2 request; trace and
+concurrency reuse the shared `dataset`/`phases` surface. The live Dynamo mocker
+server and the replay-optimize sweep remain native `python -m dynamo.*` tools.
 
 Native recorded-graph compilation is built for recursive WEKA objects and
 `dynamo.request.trace.v1` JSONL/gzip/segmented captures. Both enter one
@@ -285,18 +285,17 @@ Requested KV offload fails closed on initialization error. Canonical accuracy
 alone remains online because the timing engine does not generate semantic answer
 text.
 
-## Run the complete canonical DynoSim/Mocker frontend
+## Run offline/online Dynamo replay through `aiperf profile`
 
 ```bash
-aiperf dynosim run trace.jsonl --replay-mode offline --report-json replay.json
-aiperf dynosim mocker --model-path Qwen/Qwen3-0.6B --endpoint dynamo.Mocker
-aiperf dynosim sweep optimize.yaml --operation compare_topologies --output sweep.json
-aiperf dynosim capabilities
+# backend.type: dynosim, replay_mode: offline|online; byte-exact with native replay.
+aiperf profile --config dynosim_offline_replay.yaml
 ```
 
-These commands require an ai-dynamo Python installation. `run` and `mocker`
-delegate to the canonical implementations, so their calculations and artifacts
-are the same implementation—not an AIPerf reimplementation.
+This requires an `aiperf-runner` built with the `dynosim` Cargo feature (and the
+sibling `dynamo-aiperf-native` checkout). The live Dynamo mocker server and the
+replay-optimize sweep remain native tools: `python -m dynamo.mocker` and Dynamo's
+profiler.
 
 ## "Which file answers…" quick map
 

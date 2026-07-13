@@ -923,3 +923,132 @@ def test_v2_envelope_rejects_unknown_operation_or_missing_identity(
             operation=operation,
             expected_distribution_id=distribution_id,
         )
+
+
+def test_dynosim_backend_projects_minimal_typed_config_snake_case(
+    tmp_path: Path,
+) -> None:
+    """Authoring ``backend.type: dynosim`` projects the exact runner schema.
+
+    Mirrors the offline replay path proven byte-exact at 50k: a minimal
+    ``{replayMode: offline, engine: {block_size}}`` config projects to snake_case
+    with only the authored fields (the runner fills every other serde default).
+    """
+    run = _run(
+        tmp_path,
+        backend={
+            "type": "dynosim",
+            "config": {"replayMode": "offline", "engine": {"block_size": 16}},
+        },
+        dataset={
+            "type": "file",
+            "format": "mooncake_trace",
+            "sampling": "sequential",
+            "path": "trace.jsonl",
+        },
+    )
+    authored = build_authored_run_request(
+        run, operation="execute", expected_distribution_id=_DISTRIBUTION_A
+    )["run"]
+    assert authored["backend"] == {
+        "type": "dynosim",
+        "config": {"replay_mode": "offline", "engine": {"block_size": 16}},
+    }
+    # Trace + concurrency reuse the shared scheduled surface, not the backend.
+    assert authored["workload"]["type"] == "scheduled"
+    assert authored["workload"]["config"]["dataset"]["format"] == "mooncake_trace"
+
+
+def test_dynosim_backend_normalizes_camelcase_and_sorts_features(
+    tmp_path: Path,
+) -> None:
+    """camelCase authoring dumps snake_case; required_features is deterministic."""
+    run = _run(
+        tmp_path,
+        backend={
+            "type": "dynosim",
+            "config": {
+                "replayMode": "online",
+                "topology": "disaggregated",
+                "prefillWorkers": 2,
+                "decodeWorkers": 4,
+                "routerMode": "kv",
+                "router": {"opaque": True},
+                "sla": {"ttftMs": 500},
+                "requiredFeatures": [
+                    "dynamo-kvbm-offload",
+                    "dynamo-aic-forward-pass",
+                ],
+                "artifacts": {"reportJson": "dynamo/report.json"},
+            },
+        },
+    )
+    config = build_authored_run_request(
+        run, operation="validate", expected_distribution_id=_DISTRIBUTION_A
+    )["run"]["backend"]["config"]
+    assert config["replay_mode"] == "online"
+    assert config["topology"] == "disaggregated"
+    assert config["prefill_workers"] == 2
+    assert config["decode_workers"] == 4
+    assert config["router_mode"] == "kv"
+    assert config["router"] == {"opaque": True}
+    assert config["sla"] == {"ttft_ms": 500.0}
+    assert config["artifacts"] == {"report_json": "dynamo/report.json"}
+    # BTreeSet on the runner side, but the wire must be deterministic → sorted.
+    assert config["required_features"] == [
+        "dynamo-aic-forward-pass",
+        "dynamo-kvbm-offload",
+    ]
+
+
+def test_dynosim_backend_not_constrained_to_online_http_url_scheme(
+    tmp_path: Path,
+) -> None:
+    """dynosim is native protocol-v2: it does not impose the online_http scheme."""
+    # A grpc:// endpoint URL would be rejected under online_http, but dynosim's
+    # in-process replay never dials it, so validation must pass.
+    _run(
+        tmp_path,
+        backend={"type": "dynosim", "config": {"replayMode": "offline"}},
+        endpoint_url="grpc://127.0.0.1:8001",
+    )
+
+
+def test_dynosim_backend_rejects_endpoint_transport(tmp_path: Path) -> None:
+    """dynosim is a native protocol-v2 backend; endpoint.transport must be unset."""
+    with pytest.raises(ValidationError, match="endpoint.transport must be unset"):
+        AIPerfConfig.model_validate(
+            {
+                "benchmark": {
+                    "models": ["mock-model"],
+                    "endpoint": {
+                        "urls": ["http://unused.invalid"],
+                        "type": "chat",
+                        "streaming": True,
+                        "transport": "http",
+                    },
+                    "dataset": {
+                        "type": "synthetic",
+                        "entries": 2,
+                        "prompts": {"isl": 8, "osl": 2},
+                    },
+                    "phases": [
+                        {"name": "profiling", "type": "concurrency", "requests": 2, "concurrency": 1}
+                    ],
+                    "backend": {"type": "dynosim", "config": {"replayMode": "offline"}},
+                }
+            }
+        )
+
+
+def test_typed_dynosim_config_rejected_under_non_dynosim_backend(
+    tmp_path: Path,
+) -> None:
+    """A DynosimBackendConfig payload requires backend.type='dynosim'."""
+    from aiperf.config.dynosim import DynosimBackendConfig
+
+    with pytest.raises(ValidationError, match="requires backend.type='dynosim'"):
+        RunnerBackendConfig(
+            type="online_http",
+            config=DynosimBackendConfig(replay_mode="offline"),
+        )

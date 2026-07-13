@@ -568,6 +568,19 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         """
         backend = str(self.backend.type)
         schemes = {urlparse(url).scheme.lower() for url in self.endpoint.urls}
+        if backend == "dynosim":
+            # dynosim is an in-process native protocol-v2 backend (Dynamo mocker
+            # co-simulation). It opens no sockets in either replay mode, so the
+            # endpoint block supplies only materialization policy (modality,
+            # tokenization) and its URL is never dialed — hence no scheme
+            # constraint. As a native v2 backend it shares online_grpc's rule that
+            # endpoint.transport must be unset.
+            if self.endpoint.transport is not None:
+                raise ValueError(
+                    "backend.type='dynosim' is a native protocol-v2 backend; "
+                    "endpoint.transport must be unset"
+                )
+            return self
         if backend == "online_http" and not schemes <= {"http", "https"}:
             raise ValueError(
                 "backend.type='online_http' requires http:// or https:// endpoint URLs; "

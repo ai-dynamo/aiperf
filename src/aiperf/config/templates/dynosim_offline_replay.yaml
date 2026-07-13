@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: DynoSim Offline Trace Replay
+# description: Deterministic in-process Dynamo co-simulation of a trace — no server, no sockets.
+# category: Advanced
+# tags: dynosim, offline, replay, mooncake, simulation
+# difficulty: advanced
+# features: dynosim backend, offline replay, mooncake format
+#
+# DynoSim Offline Replay
+# ======================
+# The `dynosim` backend runs one in-process Dynamo mocker co-simulation of the
+# trace — no inference server, no HTTP, no sockets. `replayMode: offline` fast-
+# forwards a virtual clock through the discrete-event engine for deterministic,
+# byte-exact-with-native results; `replayMode: online` drives the same engine in
+# real wall-clock time for live-throughput measurement.
+#
+# All engine/topology/router/SLA knobs live under `backend.config` (mirroring
+# Dynamo's `MockEngineArgs`/router). The trace file and concurrency/rate axes reuse
+# the SAME `dataset` and `phases` surface as an online run — switching a benchmark
+# between a real server and the simulator is just the `backend` block.
+#
+# Requires an `aiperf-runner` built with the `dynosim` Cargo feature.
+# Run: aiperf profile --config dynosim_offline_replay.yaml
+#
+# Sample data: reuses the bundled `data/production_trace.jsonl`. Replace `path:`
+# with your captured mooncake trace for real workloads.
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: meta-llama/Llama-3.1-8B-Instruct
+
+  # OFFLINE opens no sockets: the endpoint supplies only materialization policy
+  # (modality, tokenization). The URL is a placeholder and is never dialed —
+  # `.invalid` (RFC 2606) makes that explicit.
+  endpoint:
+    url: http://unused.invalid
+    type: chat
+    streaming: true
+
+  backend:
+    type: dynosim
+    config:
+      replayMode: offline       # offline (virtual clock) | online (wall clock)
+      topology: single          # single | aggregated | disaggregated
+      routerMode: round_robin   # round_robin | kv
+      workers: 1
+      # Free-form MockEngineArgs object, passed through verbatim to Dynamo.
+      engine:
+        block_size: 16
+        max_num_batched_tokens: 8192
+        enable_prefix_caching: true
+      # Optional goodput thresholds (omit to disable).
+      sla:
+        ttftMs: 500
+        itlMs: 20
+      # Canonical Dynamo artifacts, relative to the run artifact target.
+      artifacts:
+        reportJson: dynamo_report.json
+        perRequestJsonl: dynamo_per_request.jsonl
+
+  dataset:
+    type: file
+    path: ./data/production_trace.jsonl
+    format: mooncake_trace
+    sampling: sequential
+
+  # Concurrency replay (the byte-exact-with-native path). `fixed_schedule` is also
+  # supported when you want to honor the trace's recorded timestamps instead.
+  phases:
+    type: concurrency
+    requests: 1000
+    concurrency: 64
+
+  runtime:
+    workers: 1
+
+  artifacts:
+    dir: ./artifacts/dynosim_offline
+    summary: [json]
+    records: [jsonl]

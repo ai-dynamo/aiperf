@@ -8949,6 +8949,695 @@
       "title": "DualBindCommunicationConfig",
       "type": "object"
     },
+    "DynamoBuildFeature": {
+      "description": "Optional runner build capability an authored run may require.\n\nSpellings match the Cargo feature names the runner advertises\n(``DynamoBuildFeature``, kebab-case).",
+      "enum": [
+        "dynamo-router-runtime",
+        "dynamo-zmq-events",
+        "dynamo-kvbm-offload",
+        "dynamo-aic-forward-pass",
+        "dynamo-profile",
+        "dynamo-full",
+        "dynamo-parity"
+      ],
+      "title": "DynamoBuildFeature",
+      "type": "string"
+    },
+    "DynamoKvEventVisibility": {
+      "description": "KV-event publication point (mirrors ``DynamoKvEventVisibilitySpec``).",
+      "enum": [
+        "pass_start",
+        "pass_end"
+      ],
+      "title": "DynamoKvEventVisibility",
+      "type": "string"
+    },
+    "DynamoReplayMode": {
+      "description": "Clock axis for the in-process engine (mirrors ``DynamoReplayModeSpec``).\n\n``offline`` fast-forwards a virtual clock for deterministic byte-exact replay;\n``online`` drives the same engine under a wall clock for live-throughput\nmeasurement.  Both are in-process — ``online`` still opens no sockets.",
+      "enum": [
+        "offline",
+        "online"
+      ],
+      "title": "DynamoReplayMode",
+      "type": "string"
+    },
+    "DynosimAicConfig": {
+      "additionalProperties": false,
+      "description": "Structured AIConfigurator overrides (mirrors ``DynosimAicSpec``).\n\nAll fields are optional; the runner requires ``backend``, ``system``, and\n``model_path`` together once any AIC field is set.",
+      "properties": {
+        "backend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "AIC serving backend identity.",
+          "title": "Backend"
+        },
+        "system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "AIC GPU system identity.",
+          "title": "System"
+        },
+        "backendVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Performance-database backend version.",
+          "title": "Backendversion"
+        },
+        "modelPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hugging Face model path for AIC.",
+          "title": "Modelpath"
+        },
+        "tpSize": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Tensor-parallel degree.",
+          "title": "Tpsize",
+          "x-jinja2-supported": true
+        },
+        "moeTpSize": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "MoE tensor-parallel degree.",
+          "title": "Moetpsize",
+          "x-jinja2-supported": true
+        },
+        "moeEpSize": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "MoE expert-parallel degree.",
+          "title": "Moeepsize",
+          "x-jinja2-supported": true
+        },
+        "attentionDpSize": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Attention data-parallel degree.",
+          "title": "Attentiondpsize",
+          "x-jinja2-supported": true
+        },
+        "nextn": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Speculative (MTP) draft-token count.",
+          "title": "Nextn",
+          "x-jinja2-supported": true
+        },
+        "gemmDtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "GEMM quantization override.",
+          "title": "Gemmdtype"
+        },
+        "moeDtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "MoE quantization override.",
+          "title": "Moedtype"
+        },
+        "fmhaDtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Attention/FMHA quantization override.",
+          "title": "Fmhadtype"
+        },
+        "kvCacheDtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "KV-cache quantization override.",
+          "title": "Kvcachedtype"
+        },
+        "commDtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Collective/comm quantization override.",
+          "title": "Commdtype"
+        },
+        "nextnAcceptRates": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Comma-separated conditional draft acceptance rates.",
+          "title": "Nextnacceptrates"
+        }
+      },
+      "title": "DynosimAicConfig",
+      "type": "object"
+    },
+    "DynosimArtifactConfig": {
+      "additionalProperties": false,
+      "description": "Backend-owned outputs written after a successful run (mirrors ``DynosimArtifactSpec``).\n\nPaths are relative to the run artifact target.  ``kv_event_visibility`` requires\n``worker_artifacts_json`` (enforced by the runner).",
+      "properties": {
+        "reportJson": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Canonical aggregate Dynamo JSON report path.",
+          "title": "Reportjson"
+        },
+        "perRequestJsonl": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Canonical per-request Dynamo JSONL path.",
+          "title": "Perrequestjsonl"
+        },
+        "workerArtifactsJson": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Timed worker/request/KV artifact JSON for trace workloads.",
+          "title": "Workerartifactsjson"
+        },
+        "kvEventVisibility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DynamoKvEventVisibility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pass-start/pass-end KV visibility override."
+        }
+      },
+      "title": "DynosimArtifactConfig",
+      "type": "object"
+    },
+    "DynosimBackendConfig": {
+      "additionalProperties": false,
+      "description": "Typed ``backend.config`` for ``backend.type: dynosim``.\n\nMirrors the runner's ``DynosimBackendSpec`` (``deny_unknown_fields``).  The\n``engine``/``prefill_engine``/``decode_engine``/``router`` objects are opaque\n``MockEngineArgs``/``KvRouterConfig`` JSON, preserved verbatim for Dynamo to\nvalidate.",
+      "properties": {
+        "engineProfile": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON engine profile consumed by Dynamo's canonical parser.",
+          "title": "Engineprofile"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline aggregate/single MockEngineArgs object (passed through verbatim).",
+          "title": "Engine"
+        },
+        "prefillEngine": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline disaggregated prefill MockEngineArgs object.",
+          "title": "Prefillengine"
+        },
+        "decodeEngine": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline disaggregated decode MockEngineArgs object.",
+          "title": "Decodeengine"
+        },
+        "router": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline KvRouterConfig object (passed through verbatim).",
+          "title": "Router"
+        },
+        "routerPolicyConfig": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Startup router policy-family YAML path overriding the inline router field.",
+          "title": "Routerpolicyconfig"
+        },
+        "routerModelName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Model selector for a multi-model router policy document.",
+          "title": "Routermodelname"
+        },
+        "aic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DynosimAicConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional structured AIConfigurator overrides."
+        },
+        "capturePerRequest": {
+          "default": false,
+          "description": "Capture backend per-request records even without a JSONL artifact.",
+          "title": "Captureperrequest",
+          "type": "boolean"
+        },
+        "sla": {
+          "$ref": "#/$defs/DynosimSlaConfig",
+          "description": "Canonical goodput thresholds."
+        },
+        "topology": {
+          "$ref": "#/$defs/DynosimTopology",
+          "default": "single",
+          "description": "Deployment topology."
+        },
+        "workers": {
+          "default": 1,
+          "description": "Aggregate worker count.",
+          "title": "Workers",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Aggregate worker count.",
+              "exclusiveMinimum": 0,
+              "title": "Workers",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "prefillWorkers": {
+          "default": 1,
+          "description": "Disaggregated prefill worker count.",
+          "title": "Prefillworkers",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Disaggregated prefill worker count.",
+              "exclusiveMinimum": 0,
+              "title": "Prefillworkers",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "decodeWorkers": {
+          "default": 1,
+          "description": "Disaggregated decode worker count.",
+          "title": "Decodeworkers",
+          "oneOf": [
+            {
+              "default": 1,
+              "description": "Disaggregated decode worker count.",
+              "exclusiveMinimum": 0,
+              "title": "Decodeworkers",
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "x-jinja2-supported": true
+        },
+        "routerMode": {
+          "$ref": "#/$defs/DynosimRouterMode",
+          "default": "round_robin",
+          "description": "Router policy for routed topologies."
+        },
+        "replayMode": {
+          "$ref": "#/$defs/DynamoReplayMode",
+          "default": "offline",
+          "description": "Clock axis: deterministic virtual replay (offline) or wall-clock replay (online)."
+        },
+        "requiredFeatures": {
+          "description": "Optional build capabilities that must exist in the exact runner image.",
+          "items": {
+            "$ref": "#/$defs/DynamoBuildFeature"
+          },
+          "title": "Requiredfeatures",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "artifacts": {
+          "$ref": "#/$defs/DynosimArtifactConfig",
+          "description": "Backend-owned output artifacts."
+        }
+      },
+      "title": "DynosimBackendConfig",
+      "type": "object"
+    },
+    "DynosimRouterMode": {
+      "description": "Router policy for routed topologies (mirrors ``DynosimRouterSpec``).",
+      "enum": [
+        "round_robin",
+        "kv"
+      ],
+      "title": "DynosimRouterMode",
+      "type": "string"
+    },
+    "DynosimSlaConfig": {
+      "additionalProperties": false,
+      "description": "Canonical goodput thresholds owned by Dynamo's collector.\n\nMirrors ``DynosimSlaSpec``; each bound is optional and non-negative.",
+      "properties": {
+        "ttftMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum time to first token (ms).",
+          "title": "Ttftms",
+          "x-jinja2-supported": true
+        },
+        "itlMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum mean inter-token latency (ms).",
+          "title": "Itlms",
+          "x-jinja2-supported": true
+        },
+        "e2EMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum end-to-end latency (ms).",
+          "title": "E2Ems",
+          "x-jinja2-supported": true
+        }
+      },
+      "title": "DynosimSlaConfig",
+      "type": "object"
+    },
+    "DynosimTopology": {
+      "description": "Authored offline deployment topology (mirrors ``DynosimTopologySpec``).",
+      "enum": [
+        "single",
+        "aggregated",
+        "disaggregated"
+      ],
+      "title": "DynosimTopology",
+      "type": "string"
+    },
     "EmpiricalDistribution": {
       "additionalProperties": false,
       "description": "Discrete distribution sampled from weighted values.\n\nYAML:\n    isl:\n      points:\n        - {value: 128, weight: 40}\n        - {value: 512, weight: 35}\n        - {value: 2048, weight: 20}\n        - {value: 8192, weight: 5}",
@@ -13878,7 +14567,7 @@
     },
     "RunnerBackendConfig": {
       "additionalProperties": false,
-      "description": "Orthogonal execution-backend selection for one native run.",
+      "description": "Orthogonal execution-backend selection for one native run.\n\nThe open runner registry owns arbitrary backend IDs, whose ``config`` stays an\nopaque dict.  The built-in ``dynosim`` backend (in-process Dynamo mocker\nreplay) has a documented structural contract so it can be authored with typed,\nvalidated, schema-visible fields; it is normalized back to a plain dict for the\nwire, mirroring the ``evaluation`` workload's precedent.",
       "properties": {
         "type": {
           "default": "online_http",
@@ -13887,10 +14576,17 @@
           "type": "string"
         },
         "config": {
-          "additionalProperties": true,
-          "description": "Factory-owned authored configuration. Python preserves this object without interpreting implementation-specific keys.",
-          "title": "Config",
-          "type": "object"
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/DynosimBackendConfig"
+            }
+          ],
+          "description": "Factory-owned authored configuration. The built-in dynosim backend shape is documented explicitly; other open backend factories retain opaque objects.",
+          "title": "Config"
         }
       },
       "title": "RunnerBackendConfig",
