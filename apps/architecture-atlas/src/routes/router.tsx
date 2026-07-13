@@ -9,7 +9,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import type { RouterHistory } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import { AudienceProvider, useAudience } from "../app/audience-context";
@@ -94,11 +94,12 @@ function buildCanonicalDomain(defaultState: ReturnType<typeof canonicalGraphStat
 }
 
 function RootRouteComponent() {
-  const search = rootRoute.useSearch();
   const navigate = rootRoute.useNavigate();
-  const pathname = useRouterState({
-    select: (state) => state.location.pathname,
+  const location = useRouterState({
+    select: (state) => state.location,
   });
+  const pathname = location.pathname;
+  const search = parseRouterSearch(location.search as Record<string, unknown>);
   const storage = getStorage();
   const activeSceneRoute = routeCapabilities.find((route) => route.path === pathname);
   const isSceneRoutePath = activeSceneRoute !== undefined;
@@ -118,6 +119,9 @@ function RootRouteComponent() {
     storage,
     canonical: buildCanonicalDomain(defaultGraphState),
   });
+  const [sharedStateNotice, setSharedStateNotice] = useState(
+    resolvedGraphState.notice?.message,
+  );
   const effectiveGraphState = canonicalGraphState({
     ...resolvedGraphState.state,
     audience,
@@ -149,6 +153,12 @@ function RootRouteComponent() {
       }),
     });
   }, [audience, legacyRedirect, navigate]);
+
+  useEffect(() => {
+    if (resolvedGraphState.notice) {
+      setSharedStateNotice(resolvedGraphState.notice.message);
+    }
+  }, [resolvedGraphState.notice]);
 
   useEffect(() => {
     persistAudience(audience, storage);
@@ -262,7 +272,7 @@ function RootRouteComponent() {
       }}
       primaryFlavor={primaryFlavor}
       sceneRoutes={routeCapabilities}
-      sharedStateNotice={resolvedGraphState.notice?.message}
+      sharedStateNotice={sharedStateNotice}
     >
       <AudienceProvider audience={audience}>
         <Outlet />
@@ -278,8 +288,11 @@ const rootRoute = createRootRoute({
 
 function GraphSceneRouteComponent({ sceneId }: { sceneId: SceneId }) {
   const audience = useAudience();
-  const search = rootRoute.useSearch();
   const navigate = rootRoute.useNavigate();
+  const locationSearch = useRouterState({
+    select: (routerState) => routerState.location.search,
+  });
+  const search = parseRouterSearch(locationSearch as Record<string, unknown>);
   const primaryFlavor = search.primary ?? "native_http";
   const compareFlavor = search.compare ?? null;
   const defaultState = canonicalGraphState({

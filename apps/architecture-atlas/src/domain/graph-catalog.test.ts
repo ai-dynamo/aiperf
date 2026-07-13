@@ -460,6 +460,38 @@ describe("graph-first catalog", () => {
     ).toHaveLength(3);
   });
 
+  it("anchors DynoSim graph evidence to current source symbols", () => {
+    const dynosimEvidence = [
+      ...architectureCatalog.graphNodes.flatMap(({ evidence }) => evidence),
+      ...architectureCatalog.graphEdges.flatMap(({ evidence }) => evidence),
+    ].filter(({ path }) => path === "crates/aiperf/src/dynosim.rs");
+
+    expect(dynosimEvidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          lines: { start: 4124, end: 4156 },
+          symbol: "run_scheduled_backend_online",
+        }),
+        expect.objectContaining({
+          lines: { start: 556, end: 628 },
+          symbol: "OfflineEngineConfig::build_native",
+        }),
+        expect.objectContaining({
+          lines: { start: 915, end: 984 },
+          symbol: "finish_shared_metrics_enforcing",
+        }),
+      ]),
+    );
+    expect(
+      [
+        ...architectureCatalog.components.flatMap(({ evidence }) => evidence),
+        ...architectureCatalog.risks.flatMap(({ evidence }) => evidence),
+        ...architectureCatalog.graphNodes.flatMap(({ evidence }) => evidence),
+        ...architectureCatalog.graphEdges.flatMap(({ evidence }) => evidence),
+      ].some(({ path }) => path === "crates/aiperf/src/dynamo_offline.rs"),
+    ).toBe(false);
+  });
+
   it("models RequestObserver on_token as a source-grounded token edge", () => {
     const edge = architectureCatalog.graphEdges.find(
       ({ id }) => id === "edge.request-sink.token.metrics",

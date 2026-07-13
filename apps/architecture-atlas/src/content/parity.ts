@@ -48,7 +48,7 @@ export const parityLedger: ArchitectureRisk[] = [
       "dynamo_offline uses SimClock without sockets; no evaluator text, content server, telemetry sidecar, or multiworker placement is implied.",
     ),
     componentIds: ["component.dynamo-offline", "component.worker-placement", "component.static-accuracy"],
-    evidence: [evidence("crates/aiperf/src/dynamo_offline.rs"), evidence("crates/aiperf-runner/src/offline_execution.rs")],
+    evidence: [evidence("crates/aiperf/src/dynosim.rs"), evidence("crates/aiperf-runner/src/offline_execution.rs")],
   },
   {
     id: "risk.provider-evaluation-scope",

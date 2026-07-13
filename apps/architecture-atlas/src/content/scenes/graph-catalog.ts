@@ -711,9 +711,9 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf/src/dynamo_offline.rs",
-        4035,
-        4090,
+        "crates/aiperf/src/dynosim.rs",
+        4124,
+        4156,
         "run_scheduled_backend_online",
       ),
     ],
@@ -901,10 +901,10 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf/src/dynamo_offline.rs",
-        555,
-        625,
-        "SteppableReplay",
+        "crates/aiperf/src/dynosim.rs",
+        556,
+        628,
+        "OfflineEngineConfig::build_native",
       ),
     ],
     seamPorts: [
@@ -942,9 +942,9 @@ const graphNodesRaw = [
     },
     evidence: [
       source(
-        "crates/aiperf/src/dynamo_offline.rs",
-        903,
-        982,
+        "crates/aiperf/src/dynosim.rs",
+        915,
+        984,
         "finish_shared_metrics_enforcing",
       ),
     ],
@@ -1191,9 +1191,9 @@ const graphEdgesRaw = [
     protocol: "Complete common-summary byte comparison",
     evidence: [
       source(
-        "crates/aiperf/src/dynamo_offline.rs",
-        903,
-        982,
+        "crates/aiperf/src/dynosim.rs",
+        915,
+        984,
         "finish_shared_metrics_enforcing",
       ),
     ],

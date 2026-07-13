@@ -62,3 +62,29 @@ Integrated the three parallel Task 3 slices into a single graph-first route runt
 
 - Task 3 implementation and focused graph-scene integration tests are green.
 - Full-suite blockers are unrelated, pre-existing app/content drift outside Task 3 integration scope and should be addressed in follow-up cleanup.
+
+## Full-Gate Follow-Up — 2026-07-12
+
+The source and route drift above was resolved before review:
+
+- Replaced every Atlas reference to `crates/aiperf/src/dynamo_offline.rs` with `crates/aiperf/src/dynosim.rs`.
+- Re-anchored graph source evidence to current exact symbols and ranges:
+  - `OfflineEngineConfig::build_native` at lines 556-628.
+  - `finish_shared_metrics_enforcing` at lines 915-984.
+  - `run_scheduled_backend_online` at lines 4124-4156.
+- Replaced obsolete crate-related-component `selected` links with graph-first scene, search, and encoded focused-state links.
+- Fixed the route-transition state race by reading pathname and search from one router-location snapshot.
+- Preserved invalid shared-state recovery notices after canonical URL normalization.
+- Removed the unreferenced `guided-view.tsx` implementation and its obsolete `GuidedRoute` dependency.
+
+Failing-first regressions were added for exact DynoSim evidence and focused crate-to-graph drill-down. The existing invalid-state recovery test caught and now protects the route-transition notice behavior.
+
+Final gate results:
+
+- `npm --prefix apps/architecture-atlas run validate:content` — pass; 25 components, 20 edges, 23 crates.
+- `npm --prefix apps/architecture-atlas run typecheck` — pass.
+- `npm --prefix apps/architecture-atlas run lint` — pass.
+- `npm --prefix apps/architecture-atlas test` — pass; 19 files, 180 tests.
+- `npm --prefix apps/architecture-atlas run build` — pass; Vite production build completed.
+
+The build retains Vite's advisory warning that the worker and main chunks exceed 500 kB; this is non-failing and remains a Task 4/performance-polish concern.

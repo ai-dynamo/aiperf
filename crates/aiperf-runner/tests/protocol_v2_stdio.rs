@@ -107,7 +107,7 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
     let capabilities = runner_capabilities();
 
     assert_eq!(capabilities["capabilities_schema_version"], 2);
-    assert_eq!(capabilities["protocol_versions"], json!([1, 2]));
+    assert_eq!(capabilities["protocol_versions"], json!([2]));
     assert!(
         capabilities["backends"]
             .as_array()

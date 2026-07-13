@@ -5,6 +5,7 @@ import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { decompressFromEncodedURIComponent } from "lz-string";
 
 import { createAppRouter } from "./router";
 
@@ -50,6 +51,45 @@ describe("crate reference routes", () => {
     expect(screen.getByText("Virtual advance controls remain inherent on SimClock")).toBeInTheDocument();
     expect(
       screen.getByRole("navigation", { name: "Crate directory" }),
+    ).toBeInTheDocument();
+  });
+
+  it("drills related crate components into focused graph-first state", async () => {
+    const user = userEvent.setup();
+    const router = renderAtlas("/crates/aiperf-clock?audience=maintainer");
+
+    const relatedComponent = await screen.findByRole("link", {
+      name: "Clock with RealClock and SimClock",
+    });
+    const target = new URL(relatedComponent.getAttribute("href")!, window.location.origin);
+    expect(
+      JSON.parse(decompressFromEncodedURIComponent(target.searchParams.get("s")!) ?? "{}"),
+    ).toMatchObject({ focusedEntityId: "node.clock-seam" });
+    await user.click(relatedComponent);
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/");
+      expect(router.state.location.search).toMatchObject({
+        audience: "maintainer",
+        primary: "native_http",
+        q: "Clock with RealClock and SimClock",
+      });
+      expect(router.state.location.search.s).toEqual(expect.any(String));
+      expect(
+        JSON.parse(
+          decompressFromEncodedURIComponent(
+            String(router.state.location.search.s),
+          ) ?? "{}",
+        ),
+      ).toMatchObject({ focusedEntityId: "node.clock-seam" });
+    });
+    expect(
+      await screen.findByTestId("graph-node-node.clock-seam"),
+    ).toHaveAttribute("data-path-state", "focused");
+    expect(
+      await screen.findByRole("heading", {
+        name: "Clock with RealClock and SimClock",
+      }),
     ).toBeInTheDocument();
   });
 

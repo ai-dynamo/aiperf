@@ -11,9 +11,18 @@ import {
   searchCrates,
 } from "../../domain/atlas-graph";
 import type {
+  ArchitectureComponent,
   CargoDependencyKind,
   CrateReference,
 } from "../../domain/architecture";
+import {
+  canonicalGraphState,
+  encodeGraphStateForUrl,
+} from "../../domain/graph-state";
+import {
+  routeCapabilities,
+  type AtlasRoutePath,
+} from "../../domain/routes";
 import {
   EvidenceCitation,
   StatusBadge,
@@ -69,6 +78,50 @@ const dependentKindLabels: Record<CargoDependencyKind, string> = {
   build: "Build dependents",
   dev: "Development dependents",
 };
+
+function graphTargetFor(
+  component: ArchitectureComponent,
+  audience: Audience,
+): {
+  path: AtlasRoutePath;
+  search: {
+    audience: Audience;
+    primary: "native_http" | "native_grpc" | "online_mock" | "dynamo_offline" | "dynamo_online";
+    q: string;
+    s: string;
+  };
+} {
+  const evidencePaths = new Set(component.evidence.map(({ path }) => path));
+  const graphNode = architectureCatalog.graphNodes.find((node) =>
+    node.evidence.some(({ path }) => evidencePaths.has(path)),
+  );
+  const route = graphNode
+    ? routeCapabilities.find(({ sceneId }) =>
+        architectureCatalog.graphScenes
+          .find((scene) => scene.id === sceneId)
+          ?.nodeIds.includes(graphNode.id),
+      )
+    : undefined;
+  const primary = graphNode?.flavors[0] ?? "native_http";
+  const sceneId = route?.sceneId ?? "scene.runtime-composition";
+  const q = graphNode?.title[audience] ?? component.title[audience];
+  const state = canonicalGraphState({
+    audience,
+    focusedEntityId: graphNode?.id,
+    primaryFlavor: primary,
+    sceneId,
+  });
+
+  return {
+    path: route?.path ?? "/",
+    search: {
+      audience,
+      primary,
+      q,
+      s: encodeGraphStateForUrl(state),
+    },
+  };
+}
 
 function DependencySections({
   audience,
@@ -242,15 +295,14 @@ export function CrateReferenceView({
               <ul className="reference-list">
                 {components.map((component) => (
                   <li key={component.id}>
-                    <Link
-                      search={{
-                        audience,
-                        selected: component.id,
-                      }}
-                      to="/atlas"
-                    >
-                      {component.title[audience]}
-                    </Link>
+                    {(() => {
+                      const target = graphTargetFor(component, audience);
+                      return (
+                        <Link search={target.search} to={target.path}>
+                          {component.title[audience]}
+                        </Link>
+                      );
+                    })()}
                   </li>
                 ))}
               </ul>

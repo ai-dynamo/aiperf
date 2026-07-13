@@ -3332,8 +3332,6 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use aiperf_graph::errors::TraceError;
-    use aiperf_graph::execution::GraphTraceExecutionBackend;
     use serde_json::json;
 
     use super::*;
@@ -3533,13 +3531,15 @@ mod tests {
             }
         }));
         let registry = AiperfRegistry::builtin().unwrap();
-        let dataset = build_dataset(
+        let dataset = build_synthetic_dataset(
             &registry,
-            &DatasetSpec::Synthetic(Box::new(spec)),
+            &spec,
             &models(),
             RngRoot::new(Some(73)),
             &TiktokenTokenizer::builtin(),
-            EndpointType::Chat,
+            false,
+            Arc::new(aiperf_dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            false,
         )
         .await
         .unwrap();
@@ -3564,13 +3564,15 @@ mod tests {
             }
         }));
         let registry = AiperfRegistry::builtin().unwrap();
-        let dataset = build_dataset(
+        let dataset = build_synthetic_dataset(
             &registry,
-            &DatasetSpec::Synthetic(Box::new(spec)),
+            &spec,
             &models(),
             RngRoot::new(Some(3)),
             &TiktokenTokenizer::builtin(),
-            EndpointType::NimRankings,
+            true,
+            Arc::new(aiperf_dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            false,
         )
         .await
         .unwrap();

@@ -126,7 +126,7 @@ export const executionComponents: ArchitectureComponent[] = [
       "Runs scheduled and graph workloads against an in-process virtual-clock engine.",
       "The non-default feature requires a sibling Dynamo checkout, one simulator endpoint, single worker placement, no sidecars, and no semantic accuracy.",
     ),
-    evidence: [evidence("crates/aiperf/src/dynamo_offline.rs"), evidence("crates/aiperf-runner/src/offline_execution.rs")],
+    evidence: [evidence("crates/aiperf/src/dynosim.rs"), evidence("crates/aiperf-runner/src/offline_execution.rs")],
     modes: ["dynamo_offline"],
     contracts: ["SteppableReplay", "byte-equal common summary"],
     crateIds: ["crate.aiperf"],
@@ -199,7 +199,7 @@ export const executionEdges: ArchitectureEdge[] = [
     label: "Dispatch simulated work",
     protocol: "RequestSink over SteppableReplay",
     status: "feature-gated",
-    evidence: [evidence("crates/aiperf/src/dynamo_offline.rs")],
+    evidence: [evidence("crates/aiperf/src/dynosim.rs")],
   },
 ];
 
