@@ -21,6 +21,7 @@ import {
   completeNodeDrag,
   fitGraphView,
   GraphCanvas,
+  resolveCanvasPulseEdgeState,
 } from "./graph-canvas";
 import type { GraphCanvasLayoutService } from "./types";
 
@@ -509,6 +510,27 @@ describe("graph canvas", () => {
     );
     expect(screen.getByTestId("rf__node-node.python")).toHaveStyle({
       transform: "translate(777px,555px)",
+    });
+  });
+
+  it("threads typed pulse edge ids and channels into runtime edge data", () => {
+    const pulseEdges = {
+      activeChannels: ["request_data"] as const,
+      activeEdgeIds: ["edge.runner.transport"],
+      completedChannels: ["control"] as const,
+      completedEdgeIds: ["edge.python.runner"],
+      reducedMotion: true,
+    };
+
+    expect(resolveCanvasPulseEdgeState(visibleEdges[1], pulseEdges)).toEqual({
+      channelState: "active",
+      phase: "active",
+      reducedMotion: true,
+    });
+    expect(resolveCanvasPulseEdgeState(visibleEdges[0], pulseEdges)).toEqual({
+      channelState: "completed",
+      phase: "completed",
+      reducedMotion: true,
     });
   });
 });

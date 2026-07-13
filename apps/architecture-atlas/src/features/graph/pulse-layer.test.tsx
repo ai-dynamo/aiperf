@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphEdge } from "../../domain/architecture";
 import type { FlowTimelineEvent, TimelineSemanticState } from "../../domain/flow-timeline";
-import { PulseLayer } from "./pulse-layer";
+import { derivePulseEdgeOverlayState, PulseLayer } from "./pulse-layer";
 
 function buildEdge(input: {
   id: string;
@@ -164,5 +164,38 @@ describe("PulseLayer", () => {
     expect(reducedNarration).toBe(animatedNarration);
     expect(reducedPhases).toEqual(animatedPhases);
     expect(screen.getByTestId("pulse-active-particle")).toHaveAttribute("data-motion", "reduced");
+  });
+
+  it("derives typed pulse edge ids and channels for graph-edge rendering", () => {
+    const timeline = buildTimeline();
+    const edges = [
+      buildEdge({
+        channel: "control",
+        flavors: ["native_http", "native_grpc"],
+        id: "edge.runner.control",
+      }),
+      buildEdge({
+        channel: "request_data",
+        flavors: ["native_http"],
+        id: "edge.dispatch.http",
+      }),
+      buildEdge({
+        channel: "token",
+        flavors: ["native_http"],
+        id: "edge.tokens.metrics",
+      }),
+    ];
+
+    const overlay = derivePulseEdgeOverlayState({
+      reducedMotion: true,
+      semanticState: semanticStateAt(timeline, 2),
+      visibleEdges: edges,
+    });
+
+    expect(overlay.activeEdgeIds).toEqual(["edge.tokens.metrics"]);
+    expect(overlay.activeChannels).toEqual(["token"]);
+    expect(overlay.completedEdgeIds).toEqual(["edge.runner.control", "edge.tokens.metrics"]);
+    expect(overlay.completedChannels).toEqual(["control", "token"]);
+    expect(overlay.reducedMotion).toBe(true);
   });
 });

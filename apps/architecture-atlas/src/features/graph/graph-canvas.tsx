@@ -17,6 +17,7 @@ import { RuntimeGraphEdge, edgeMarker, type RuntimeGraphEdgeData } from "./graph
 import { RuntimeGraphNode, type RuntimeGraphNodeData } from "./graph-nodes";
 import type {
   GraphCanvasProps,
+  GraphPulseChannelState,
   GraphFlavorClass,
   GraphManualNodePosition,
   GraphNodePortView,
@@ -167,6 +168,53 @@ function classifyEdgePathState(
   }
 
   return "default";
+}
+
+function classifyEdgePulseState(
+  edgeId: string,
+  activeEdgeIds: ReadonlySet<string>,
+  completedEdgeIds: ReadonlySet<string>,
+): GraphPulseState {
+  if (activeEdgeIds.has(edgeId)) {
+    return "active";
+  }
+  if (completedEdgeIds.has(edgeId)) {
+    return "completed";
+  }
+  return "idle";
+}
+
+function classifyEdgePulseChannelState(
+  channel: GraphCanvasProps["visibleEdges"][number]["channel"],
+  activeChannels: ReadonlySet<GraphCanvasProps["visibleEdges"][number]["channel"]>,
+  completedChannels: ReadonlySet<GraphCanvasProps["visibleEdges"][number]["channel"]>,
+): GraphPulseChannelState {
+  if (activeChannels.has(channel)) {
+    return "active";
+  }
+  if (completedChannels.has(channel)) {
+    return "completed";
+  }
+  return "idle";
+}
+
+export function resolveCanvasPulseEdgeState(
+  edge: GraphCanvasProps["visibleEdges"][number],
+  pulseEdges: GraphCanvasProps["pulseEdges"],
+): {
+  channelState: GraphPulseChannelState;
+  phase: GraphPulseState;
+  reducedMotion: boolean;
+} {
+  const activeEdgeIds = new Set(pulseEdges?.activeEdgeIds ?? []);
+  const completedEdgeIds = new Set(pulseEdges?.completedEdgeIds ?? []);
+  const activeChannels = new Set(pulseEdges?.activeChannels ?? []);
+  const completedChannels = new Set(pulseEdges?.completedChannels ?? []);
+  return {
+    channelState: classifyEdgePulseChannelState(edge.channel, activeChannels, completedChannels),
+    phase: classifyEdgePulseState(edge.id, activeEdgeIds, completedEdgeIds),
+    reducedMotion: pulseEdges?.reducedMotion ?? false,
+  };
 }
 
 const nodeTypes = {
@@ -386,6 +434,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
           props.overlay.primaryOnlyEdgeIds,
           props.overlay.compareOnlyEdgeIds,
         );
+        const pulseEdgeState = resolveCanvasPulseEdgeState(edge, props.pulseEdges);
         return {
           className: `graph-edge-path-${pathState}`,
           data: {
@@ -395,6 +444,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
             onWaypointsChange: props.onWaypointsChange,
             onWaypointsReset: props.onWaypointsReset,
             pathState,
+            pulseEdgeState,
             waypoints: props.edgeWaypoints?.get(edge.id),
           },
           id: edge.id,
@@ -414,6 +464,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
       props.onWaypointsReset,
       props.onFocusEntity,
       props.overlay,
+      props.pulseEdges,
       traceMode,
       props.visibleEdges,
       props.edgeWaypoints,
@@ -431,7 +482,12 @@ export function GraphCanvas(props: GraphCanvasProps) {
   }
 
   return (
-    <section aria-label="Graph canvas">
+    <section
+      aria-label="Graph canvas"
+      data-active-pulse-channels={props.pulseEdges?.activeChannels.join(",") ?? ""}
+      data-active-pulse-edge-ids={props.pulseEdges?.activeEdgeIds.join(",") ?? ""}
+      data-reduced-motion={String(props.pulseEdges?.reducedMotion ?? false)}
+    >
       {(props.breadcrumbNodeIds?.length ?? 0) > 0 ? (
         <nav aria-label="Graph focus context">
           <ol>

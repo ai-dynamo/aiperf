@@ -3,6 +3,7 @@
 
 import type {
   AudienceLevel,
+  FlowChannel,
   GraphEdge,
   GraphNode,
 } from "../../domain/architecture";
@@ -19,7 +20,16 @@ export type GraphPathState = "focused" | "upstream" | "downstream" | "default";
 export type GraphFlavorClass = "shared" | "primary-only" | "compare-only";
 export type GraphTraceMode = "none" | "upstream" | "downstream" | "isolate";
 export type GraphPulseState = "idle" | "active" | "completed";
+export type GraphPulseChannelState = "idle" | "active" | "completed";
 export type GraphRelayoutState = "canonical" | "preserved" | "relaid-out";
+
+export interface GraphPulseEdges {
+  activeChannels: readonly FlowChannel[];
+  activeEdgeIds: readonly string[];
+  completedChannels: readonly FlowChannel[];
+  completedEdgeIds: readonly string[];
+  reducedMotion: boolean;
+}
 
 export interface GraphManualNodePosition {
   nodeId: string;
@@ -58,6 +68,7 @@ export interface GraphCanvasProps {
   onWaypointsChange?(update: { edgeId: string; points: { x: number; y: number }[] }): void;
   onWaypointsReset?(edgeId: string): void;
   overlay: FlavorOverlay;
+  pulseEdges?: GraphPulseEdges;
   traceMode?: GraphTraceMode;
   visibleEdges: readonly GraphEdge[];
   visibleNodes: readonly GraphNode[];

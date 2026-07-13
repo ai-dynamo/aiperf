@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -107,6 +107,11 @@ describe("edge waypoints", () => {
       />,
     );
     const handle = screen.getByRole("button", { name: "Move waypoint 1" });
+    Object.assign(handle, {
+      hasPointerCapture: vi.fn(() => true),
+      releasePointerCapture: vi.fn(),
+      setPointerCapture: vi.fn(),
+    });
 
     await user.pointer([
       {
@@ -128,5 +133,85 @@ describe("edge waypoints", () => {
       edgeId: "edge.runner.transport",
       points: [{ x: 130, y: 240 }],
     });
+  });
+
+  it("captures the pointer during drag and releases it on pointer up", () => {
+    const onChange = vi.fn();
+    render(
+      <EdgeWaypointControls
+        edgeId="edge.runner.transport"
+        onChange={onChange}
+        onReset={vi.fn()}
+        points={[{ x: 70, y: 12 }]}
+        source={{ x: 0, y: 0 }}
+        target={{ x: 200, y: 0 }}
+        visible={true}
+      />,
+    );
+    const handle = screen.getByRole("button", { name: "Move waypoint 1" });
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    Object.assign(handle, {
+      hasPointerCapture: vi.fn(() => true),
+      releasePointerCapture,
+      setPointerCapture,
+    });
+
+    fireEvent.pointerDown(handle, {
+      clientX: 70,
+      clientY: 12,
+      pointerId: 7,
+    });
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+
+    fireEvent.pointerMove(handle, {
+      clientX: 92,
+      clientY: 30,
+      pointerId: 7,
+    });
+    expect(onChange).toHaveBeenCalledWith({
+      edgeId: "edge.runner.transport",
+      points: [{ x: 92, y: 30 }],
+    });
+
+    fireEvent.pointerUp(handle, { pointerId: 7 });
+    expect(releasePointerCapture).toHaveBeenCalledWith(7);
+  });
+
+  it("releases pointer capture on cancel and clears drag state", () => {
+    const onChange = vi.fn();
+    render(
+      <EdgeWaypointControls
+        edgeId="edge.runner.transport"
+        onChange={onChange}
+        onReset={vi.fn()}
+        points={[{ x: 70, y: 12 }]}
+        source={{ x: 0, y: 0 }}
+        target={{ x: 200, y: 0 }}
+        visible={true}
+      />,
+    );
+    const handle = screen.getByRole("button", { name: "Move waypoint 1" });
+    const releasePointerCapture = vi.fn();
+    Object.assign(handle, {
+      hasPointerCapture: vi.fn(() => true),
+      releasePointerCapture,
+      setPointerCapture: vi.fn(),
+    });
+
+    fireEvent.pointerDown(handle, {
+      clientX: 70,
+      clientY: 12,
+      pointerId: 11,
+    });
+    fireEvent.pointerCancel(handle, { pointerId: 11 });
+    expect(releasePointerCapture).toHaveBeenCalledWith(11);
+
+    fireEvent.pointerMove(handle, {
+      clientX: 110,
+      clientY: 50,
+      pointerId: 11,
+    });
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

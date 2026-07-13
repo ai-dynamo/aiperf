@@ -33,7 +33,7 @@ import { AccessibilityOutline } from "./accessibility-outline";
 import { EvidenceDrawer, type EvidenceDrawerEntity } from "./evidence-drawer";
 import { GraphCanvas } from "./graph-canvas";
 import { PulseControls } from "./pulse-controls";
-import { PulseLayer } from "./pulse-layer";
+import { derivePulseEdgeOverlayState, PulseLayer } from "./pulse-layer";
 import type { GraphFitViewCommand } from "./types";
 
 interface GraphSceneProps {
@@ -270,6 +270,15 @@ export function GraphScene({
         .map((reference) => reference.nodeId),
     [timelineState.completedEvents],
   );
+  const pulseEdges = useMemo(
+    () =>
+      derivePulseEdgeOverlayState({
+        reducedMotion,
+        semanticState: timelineState,
+        visibleEdges: derivation.visibleEdges,
+      }),
+    [derivation.visibleEdges, reducedMotion, timelineState],
+  );
 
   const evidenceEntity = useMemo(
     () =>
@@ -342,14 +351,15 @@ export function GraphScene({
   }, [derivation.neighborhood.downstreamNodeIds, derivation.neighborhood.upstreamNodeIds, state.traceMode, traceNodeId]);
 
   const handleCollapseNode = (nodeId: string) => {
-    const descendants = collectDescendantNodeIds(nodeId, architectureCatalog.graphNodes);
-    descendants.add(nodeId);
+    const descendantNodeIds = collectDescendantNodeIds(
+      nodeId,
+      architectureCatalog.graphNodes,
+    );
     const collapsedExpandedNodeIds = collapseExpandedNode(
       architectureCatalog,
       state.expandedNodeIds,
       nodeId,
     );
-    const descendantNodeIds = descendants;
     const descendantEdgeIds = new Set(
       architectureCatalog.graphEdges
         .filter(
@@ -358,22 +368,23 @@ export function GraphScene({
         )
         .map((edge) => edge.id),
     );
+    const hiddenSubtreeEntityIds = new Set([
+      ...descendantNodeIds,
+      ...descendantEdgeIds,
+    ]);
+    const focusIsHidden =
+      state.focusedEntityId !== null &&
+      hiddenSubtreeEntityIds.has(state.focusedEntityId);
     updateState({
       edgeWaypoints: state.edgeWaypoints.filter(
         ({ edgeId }) => !descendantEdgeIds.has(edgeId),
       ),
       expandedNodeIds: collapsedExpandedNodeIds,
-      focusedEntityId:
-        state.focusedEntityId && descendantNodeIds.has(state.focusedEntityId)
-          ? nodeId
-          : state.focusedEntityId,
+      focusedEntityId: focusIsHidden ? nodeId : state.focusedEntityId,
       nodePositions: state.nodePositions.filter(
         ({ nodeId: positionNodeId }) => !descendantNodeIds.has(positionNodeId),
       ),
-      traceMode:
-        state.focusedEntityId && descendantNodeIds.has(state.focusedEntityId)
-          ? "none"
-          : state.traceMode,
+      traceMode: focusIsHidden ? "none" : state.traceMode,
     });
   };
 
@@ -443,6 +454,7 @@ export function GraphScene({
           })
         }
         overlay={derivation.overlay}
+        pulseEdges={pulseEdges}
         traceMode={state.traceMode}
         visibleEdges={derivation.visibleEdges}
         visibleNodes={derivation.visibleNodes}

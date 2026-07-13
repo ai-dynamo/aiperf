@@ -5,6 +5,7 @@ import { useMemo } from "react";
 
 import type { ExecutionFlavor, GraphEdge } from "../../domain/architecture";
 import type { FlowTimelineEvent, TimelineSemanticState } from "../../domain/flow-timeline";
+import type { GraphPulseEdges } from "./types";
 
 export interface PulseLayerProps {
   visibleEdges: readonly GraphEdge[];
@@ -80,15 +81,47 @@ function edgeSupportsFlavor(edge: GraphEdge, flavor: ExecutionFlavor | "shared")
   return edge.flavors.includes(flavor);
 }
 
+interface DerivePulseEdgeOverlayStateInput {
+  visibleEdges: readonly GraphEdge[];
+  semanticState: TimelineSemanticState;
+  reducedMotion: boolean;
+}
+
+export function derivePulseEdgeOverlayState({
+  reducedMotion,
+  semanticState,
+  visibleEdges,
+}: DerivePulseEdgeOverlayStateInput): GraphPulseEdges {
+  const completedEdgeIdSet = resolveCompletedEdgeIds(semanticState.completedEvents);
+  const activeEdgeId = resolveActiveEdgeId(visibleEdges, semanticState.activeEvent);
+  const edgeById = new Map(visibleEdges.map((edge) => [edge.id, edge]));
+  const completedChannels = [...completedEdgeIdSet]
+    .map((edgeId) => edgeById.get(edgeId)?.channel)
+    .filter((channel): channel is GraphEdge["channel"] => channel !== undefined);
+  return {
+    activeChannels: [semanticState.activeEvent.channel],
+    activeEdgeIds: activeEdgeId === null ? [] : [activeEdgeId],
+    completedChannels: [...new Set(completedChannels)],
+    completedEdgeIds: [...completedEdgeIdSet],
+    reducedMotion,
+  };
+}
+
 export function PulseLayer({ reducedMotion, semanticState, visibleEdges }: PulseLayerProps) {
+  const pulseEdges = useMemo(
+    () =>
+      derivePulseEdgeOverlayState({
+        reducedMotion,
+        semanticState,
+        visibleEdges,
+      }),
+    [reducedMotion, semanticState, visibleEdges],
+  );
   const completedEdgeIds = useMemo(
-    () => resolveCompletedEdgeIds(semanticState.completedEvents),
-    [semanticState.completedEvents],
+    () => new Set(pulseEdges.completedEdgeIds),
+    [pulseEdges.completedEdgeIds],
   );
-  const activeEdgeId = useMemo(
-    () => resolveActiveEdgeId(visibleEdges, semanticState.activeEvent),
-    [semanticState.activeEvent, visibleEdges],
-  );
+  const activeEdgeId = pulseEdges.activeEdgeIds[0] ?? null;
 
   const activeEdge =
     activeEdgeId === null ? null : visibleEdges.find((edge) => edge.id === activeEdgeId) ?? null;

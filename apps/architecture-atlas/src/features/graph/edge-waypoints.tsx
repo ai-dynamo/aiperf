@@ -148,9 +148,13 @@ export function EdgeWaypointControls({
     );
   };
 
-  const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (dragState.current?.pointerId === event.pointerId) {
-      dragState.current = null;
+  const finishPointerDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dragState.current?.pointerId !== event.pointerId) {
+      return;
+    }
+    dragState.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
@@ -206,6 +210,7 @@ export function EdgeWaypointControls({
             emitPoints(moveWaypointByIndex(points, index, deltaX, deltaY));
           }}
           onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
             dragState.current = {
               index,
               pointerId: event.pointerId,
@@ -213,8 +218,9 @@ export function EdgeWaypointControls({
               y: event.clientY,
             };
           }}
+          onPointerCancel={finishPointerDrag}
           onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
+          onPointerUp={finishPointerDrag}
           style={{
             position: "absolute",
             transform: `translate(-50%, -50%) translate(${point.x}px, ${point.y}px)`,

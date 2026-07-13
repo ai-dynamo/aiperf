@@ -46,10 +46,30 @@
   - `npm run validate:content` ✅
   - `npm run typecheck` ✅
   - `npm run lint` ✅
-  - `npm test` ✅ (208 tests passed)
+  - `npm test` ✅ (217 tests passed)
   - `npm run build` ✅
 
 ### Notes / residual concerns
 
 - Vite reports an existing large chunk-size warning during production build; this predates Task 4 integration and does not block correctness.
 - `npm` emits a workspace environment warning for `devdir`; it is non-blocking and does not affect Atlas test/build results.
+
+### Collapse cleanup follow-up
+
+- Added a failing integration regression test before the fix. The RED result showed collapse removed the collapsed node's own manual position (`expected node.runtime-composition, received []`).
+- Split collapse cleanup into:
+  - descendants-only node IDs for removing hidden descendant positions,
+  - descendant-connected edge IDs for removing hidden waypoint overrides,
+  - hidden-subtree entity IDs for focus and trace cleanup.
+- The collapsed node's manual position and its non-descendant-connected waypoint overrides now remain intact.
+- Focused integration verification passes: `graph-scene.integration.test.tsx` (17 tests).
+
+### Pulse-path and waypoint review fixes
+
+- Added an end-to-end failing scene regression before integration. The RED result showed the live graph canvas had no exact active edge metadata for `edge.runtime.dispatch.metrics`.
+- `GraphScene` now derives one typed pulse-edge overlay from the Task 2 timeline and passes it to `GraphCanvas`; exact edge references take precedence over channel/flavor fallback.
+- Runtime graph edges receive active/completed edge and channel state. Animated particles follow the rendered path, including persisted waypoint segments.
+- Added a second red-green regression proving edges that merely share an active channel do not animate when an exact edge reference selects another edge.
+- Reduced-motion rendering uses the same active/completed identities and channels, replacing motion with a static marker.
+- Waypoint pointer dragging now captures the pointer and releases it on pointer up or cancellation.
+- Focused Task 4 review tests pass: 5 files, 42 tests.

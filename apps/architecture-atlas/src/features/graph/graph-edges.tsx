@@ -20,7 +20,12 @@ import {
   type EdgeWaypoint,
   type EdgeWaypointUpdate,
 } from "./edge-waypoints";
-import type { GraphFlavorClass, GraphPathState } from "./types";
+import type {
+  GraphFlavorClass,
+  GraphPathState,
+  GraphPulseChannelState,
+  GraphPulseState,
+} from "./types";
 
 const flavorColors: Record<GraphFlavorClass, string> = {
   "compare-only": "#A78BFA",
@@ -35,6 +40,11 @@ export interface RuntimeGraphEdgeData extends Record<string, unknown> {
   onWaypointsChange?(update: EdgeWaypointUpdate): void;
   onWaypointsReset?(edgeId: string): void;
   pathState: GraphPathState;
+  pulseEdgeState?: {
+    channelState: GraphPulseChannelState;
+    phase: GraphPulseState;
+    reducedMotion: boolean;
+  };
   waypoints?: readonly EdgeWaypoint[];
 }
 
@@ -48,7 +58,6 @@ function edgePathPresentation(data: RuntimeGraphEdgeData): {
       "graph-edge-path",
       `graph-edge-path-${data.pathState}`,
       `graph-edge-flavor-${data.flavorClass}`,
-      data.edge.id.includes("dynamo.online") ? "graph-edge-dynamo-online" : null,
       planned ? "graph-edge-planned" : "graph-edge-built",
     ]
       .filter((value): value is string => Boolean(value))
@@ -65,6 +74,16 @@ function edgePathPresentation(data: RuntimeGraphEdgeData): {
             : 2,
     },
   };
+}
+
+function pulseFillColor(phase: GraphPulseState): string {
+  if (phase === "active") {
+    return "#45C7F4";
+  }
+  if (phase === "completed") {
+    return "#76B900";
+  }
+  return "transparent";
 }
 
 export function RuntimeGraphEdge({
@@ -109,6 +128,14 @@ export function RuntimeGraphEdge({
   const labelY = hasWaypointOverrides ? waypointLabel.y : smoothLabelY;
   const presentation = edgePathPresentation(data);
   const controlsVisible = data.pathState === "focused";
+  const pulseEdgeState = data.pulseEdgeState ?? {
+    channelState: "idle",
+    phase: "idle",
+    reducedMotion: false,
+  };
+  const pulseVisible = pulseEdgeState.phase !== "idle";
+  const pulseTestId = `graph-edge-pulse-${id}`;
+  const pulseRadius = pulseEdgeState.phase === "active" ? 4 : 3;
 
   return (
     <>
@@ -119,6 +146,41 @@ export function RuntimeGraphEdge({
         path={path}
         style={presentation.style}
       />
+      {pulseVisible ? (
+        <g
+          data-channel-state={pulseEdgeState.channelState}
+          data-motion={pulseEdgeState.reducedMotion ? "reduced" : "animated"}
+          data-pulse-phase={pulseEdgeState.phase}
+          data-testid={pulseTestId}
+        >
+          {pulseEdgeState.reducedMotion ? (
+            <circle
+              cx={labelX}
+              cy={labelY}
+              fill={pulseFillColor(pulseEdgeState.phase)}
+              opacity={pulseEdgeState.phase === "active" ? 1 : 0.78}
+              r={pulseRadius}
+              stroke="#0f1215"
+              strokeWidth={1}
+            />
+          ) : (
+            <circle
+              fill={pulseFillColor(pulseEdgeState.phase)}
+              opacity={1}
+              r={pulseRadius}
+              stroke="#0f1215"
+              strokeWidth={1}
+            >
+              <animateMotion
+                dur={pulseEdgeState.phase === "active" ? "1.4s" : "2.4s"}
+                path={path}
+                repeatCount="indefinite"
+                rotate="auto"
+              />
+            </circle>
+          )}
+        </g>
+      ) : null}
       <EdgeLabelRenderer>
         <EdgeWaypointControls
           edgeId={id}
@@ -131,12 +193,15 @@ export function RuntimeGraphEdge({
           visible={controlsVisible}
         />
         <button
-          aria-label={`${data.edge.protocol} ${data.edge.channel} ${data.flavorClass} ${data.edge.status.state} ${data.pathState}`}
+          aria-label={`${data.edge.protocol} ${data.edge.channel} ${data.flavorClass} ${data.edge.status.state} ${data.pathState} pulse:${pulseEdgeState.phase} channel:${pulseEdgeState.channelState}`}
           data-flavor-class={data.flavorClass}
           data-graph-entity-id={id}
           data-graph-entity-trigger="true"
           data-implementation-state={data.edge.status.state}
           data-path-state={data.pathState}
+          data-pulse-channel-state={pulseEdgeState.channelState}
+          data-pulse-phase={pulseEdgeState.phase}
+          data-reduced-motion={String(pulseEdgeState.reducedMotion)}
           data-testid={`graph-edge-${id}`}
           onClick={() => data.onSelect(id)}
           style={{

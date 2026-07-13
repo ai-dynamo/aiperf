@@ -4,8 +4,13 @@
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { decompressFromEncodedURIComponent } from "lz-string";
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  canonicalGraphState,
+  encodeGraphStateForUrl,
+} from "../domain/graph-state";
 import { createAppRouter } from "./router";
 
 function renderAtlas(path: string) {
@@ -140,6 +145,63 @@ describe("graph scene routes", () => {
     });
   });
 
+  it("cleans hidden descendant overrides while preserving the collapsed node position", async () => {
+    const user = userEvent.setup();
+    const initialState = encodeGraphStateForUrl(
+      canonicalGraphState({
+        audience: "executive",
+        edgeWaypoints: [
+          {
+            edgeId: "edge.request-sink.token.metrics",
+            points: [{ x: 120, y: 80 }],
+          },
+          {
+            edgeId: "edge.runtime.dispatch.metrics",
+            points: [{ x: 220, y: 180 }],
+          },
+        ],
+        expandedNodeIds: ["node.runtime-composition"],
+        focusedEntityId: "node.request-sink-seam",
+        nodePositions: [
+          { nodeId: "node.request-sink-seam", x: 440, y: 260 },
+          { nodeId: "node.runtime-composition", x: 240, y: 160 },
+        ],
+        primaryFlavor: "native_http",
+        sceneId: "scene.runtime-composition",
+        traceMode: "upstream",
+      }),
+    );
+    const router = renderAtlas(`/?audience=executive&s=${initialState}`);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Show graph accessibility outline" }),
+    );
+    const runtimeNodeItem = within(
+      screen.getByRole("tree", { name: "Visible graph outline" }),
+    ).getByRole("listitem", { name: "Node Runtime composition" });
+    await user.click(
+      within(runtimeNodeItem).getByRole("button", { name: "Collapse" }),
+    );
+
+    await waitFor(() => {
+      const encodedState = String(router.state.location.search.s);
+      const decodedState = JSON.parse(
+        decompressFromEncodedURIComponent(encodedState) ?? "{}",
+      );
+      expect(decodedState.nodePositions).toEqual([
+        { nodeId: "node.runtime-composition", x: 240, y: 160 },
+      ]);
+      expect(decodedState.edgeWaypoints).toEqual([
+        {
+          edgeId: "edge.runtime.dispatch.metrics",
+          points: [{ x: 220, y: 180 }],
+        },
+      ]);
+      expect(decodedState.focusedEntityId).toBe("node.runtime-composition");
+      expect(decodedState.traceMode).toBe("none");
+    });
+  });
+
   it("applies trace mode controls to visible path states", async () => {
     const user = userEvent.setup();
     renderAtlas("/scenes/metrics-telemetry?audience=developer");
@@ -171,6 +233,50 @@ describe("graph scene routes", () => {
       "data-path-state",
       "default",
     );
+  });
+
+  it("wires the exact active timeline edge into the live graph canvas", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: false,
+        media: "(prefers-reduced-motion: reduce)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }),
+    });
+    const state = encodeGraphStateForUrl(
+      canonicalGraphState({
+        audience: "developer",
+        edgeWaypoints: [
+          {
+            edgeId: "edge.runtime.dispatch.metrics",
+            points: [{ x: 180, y: 120 }],
+          },
+        ],
+        primaryFlavor: "native_http",
+        sceneId: "scene.metrics-telemetry",
+        timelinePosition: 5 / 6,
+      }),
+    );
+    renderAtlas(
+      `/scenes/metrics-telemetry?audience=developer&primary=native_http&s=${state}`,
+    );
+
+    const canvas = await screen.findByRole("region", { name: "Graph canvas" });
+    expect(canvas).toHaveAttribute(
+      "data-active-pulse-edge-ids",
+      "edge.runtime.dispatch.metrics",
+    );
+    expect(canvas).toHaveAttribute(
+      "data-active-pulse-channels",
+      "telemetry",
+    );
+    expect(canvas).toHaveAttribute("data-reduced-motion", "false");
   });
 
   it("renders pulse controls and reduced-motion overlay semantics", async () => {

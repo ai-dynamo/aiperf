@@ -98,4 +98,137 @@ describe("runtime graph edge", () => {
     expect(path).toHaveAttribute("d", "M 0 0 L 80 24 L 200 0");
     expect(path).toHaveClass("graph-edge-path-focused", "graph-edge-planned");
   });
+
+  it("animates a pulse particle on the resolved edge path", () => {
+    const props = {
+      data: {
+        edge,
+        flavorClass: "shared",
+        onSelect: vi.fn(),
+        pathState: "focused",
+        pulseEdgeState: {
+          channelState: "active",
+          phase: "active",
+          reducedMotion: false,
+        },
+        waypoints: [{ x: 80, y: 24 }],
+      },
+      id: edge.id,
+      markerEnd: "marker",
+      sourcePosition: Position.Right,
+      sourceX: 0,
+      sourceY: 0,
+      targetPosition: Position.Left,
+      targetX: 200,
+      targetY: 0,
+    } as unknown as EdgeProps<Edge<RuntimeGraphEdgeData>>;
+
+    const { container } = render(
+      <ReactFlowProvider>
+        <svg>
+          <RuntimeGraphEdge {...props} />
+        </svg>
+      </ReactFlowProvider>,
+    );
+    const pulseParticle = container.querySelector(
+      `[data-testid="graph-edge-pulse-${edge.id}"]`,
+    );
+    const edgePath = container.querySelector("path");
+    const animateMotion = container.querySelector("animateMotion");
+
+    expect(edgePath).toBeInTheDocument();
+    expect(pulseParticle).toBeInTheDocument();
+    expect(pulseParticle).toHaveAttribute("data-pulse-phase", "active");
+    expect(pulseParticle).toHaveAttribute("data-channel-state", "active");
+    expect(pulseParticle).toHaveAttribute("data-motion", "animated");
+    expect(edgePath).toHaveAttribute("d", "M 0 0 L 80 24 L 200 0");
+    expect(animateMotion).toHaveAttribute("path", edgePath?.getAttribute("d") ?? "");
+  });
+
+  it("does not animate a channel peer when an exact edge reference is active", () => {
+    const props = {
+      data: {
+        edge,
+        flavorClass: "shared",
+        onSelect: vi.fn(),
+        pathState: "default",
+        pulseEdgeState: {
+          channelState: "active",
+          phase: "idle",
+          reducedMotion: false,
+        },
+      },
+      id: edge.id,
+      markerEnd: "marker",
+      sourcePosition: Position.Right,
+      sourceX: 0,
+      sourceY: 0,
+      targetPosition: Position.Left,
+      targetX: 200,
+      targetY: 0,
+    } as unknown as EdgeProps<Edge<RuntimeGraphEdgeData>>;
+
+    const { container } = render(
+      <ReactFlowProvider>
+        <svg>
+          <RuntimeGraphEdge {...props} />
+        </svg>
+      </ReactFlowProvider>,
+    );
+
+    expect(
+      container.querySelector(`[data-testid="graph-edge-pulse-${edge.id}"]`),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector("animateMotion")).not.toBeInTheDocument();
+  });
+
+  it("keeps pulse semantics while disabling movement for reduced motion", () => {
+    const builtReplayEdge: GraphEdge = {
+      ...edge,
+      id: "edge.dynamo.online.replay",
+      status: { delivery: "runtime_conditional", state: "built" },
+    };
+    const props = {
+      data: {
+        edge: builtReplayEdge,
+        flavorClass: "compare-only",
+        onSelect: vi.fn(),
+        pathState: "default",
+        pulseEdgeState: {
+          channelState: "completed",
+          phase: "completed",
+          reducedMotion: true,
+        },
+      },
+      id: builtReplayEdge.id,
+      markerEnd: "marker",
+      sourcePosition: Position.Right,
+      sourceX: 0,
+      sourceY: 0,
+      targetPosition: Position.Left,
+      targetX: 200,
+      targetY: 0,
+    } as unknown as EdgeProps<Edge<RuntimeGraphEdgeData>>;
+
+    const { container } = render(
+      <ReactFlowProvider>
+        <svg>
+          <RuntimeGraphEdge {...props} />
+        </svg>
+      </ReactFlowProvider>,
+    );
+    const path = container.querySelector("path");
+    const pulseParticle = container.querySelector(
+      `[data-testid="graph-edge-pulse-${builtReplayEdge.id}"]`,
+    );
+    const animateMotion = container.querySelector("animateMotion");
+
+    expect(path).toHaveClass("graph-edge-built");
+    expect(path).not.toHaveClass("graph-edge-planned", "graph-edge-dynamo-online");
+    expect(path).toHaveStyle({ strokeDasharray: "" });
+    expect(pulseParticle).toHaveAttribute("data-pulse-phase", "completed");
+    expect(pulseParticle).toHaveAttribute("data-channel-state", "completed");
+    expect(pulseParticle).toHaveAttribute("data-motion", "reduced");
+    expect(animateMotion).not.toBeInTheDocument();
+  });
 });
