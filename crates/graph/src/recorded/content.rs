@@ -38,19 +38,15 @@ pub(crate) trait RecordedContentSynthesizer {
     fn decode(&self, tokens: &[u32]) -> Result<String, RecordedTraceError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct BlockCacheKey {
-    scope: String,
-    hash: BlockHash,
-    block_size: usize,
-}
-
 /// Corpus-backed implementation shared by WEKA and Dynamo.
 pub(crate) struct CorpusContentSynthesizer<'a> {
     tokenizer: &'a dyn TextTokenizer,
     corpus: Vec<u32>,
     hash_seed: u64,
-    blocks: HashMap<BlockCacheKey, Vec<u32>>,
+    // Two-level so a cache-hit probe on the lowering hot path allocates nothing:
+    // the scope `String` is owned only once per newly seen scope, and per-block
+    // lookups key off the `Copy` `(hash, block_size)` tuple.
+    blocks: HashMap<String, HashMap<(BlockHash, usize), Vec<u32>>>,
 }
 
 impl<'a> CorpusContentSynthesizer<'a> {
@@ -93,16 +89,15 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
         trace_scope: Option<&str>,
     ) -> Result<Vec<u32>, RecordedTraceError> {
         let scope = trace_scope.unwrap_or_default();
+        // Own the scope string at most once per newly seen scope; subsequent
+        // probes borrow it via `&str` and never re-allocate.
+        if !self.blocks.contains_key(scope) {
+            self.blocks.insert(scope.to_string(), HashMap::new());
+        }
         let mut out = Vec::with_capacity(hashes.len().saturating_mul(block_size));
         for hash in hashes {
-            let key = BlockCacheKey {
-                scope: scope.to_string(),
-                hash: *hash,
-                block_size,
-            };
-            let block = if let Some(cached) = self.blocks.get(&key) {
-                cached
-            } else {
+            let key = (*hash, block_size);
+            if !self.blocks[scope].contains_key(&key) {
                 let seed = derive_seed_u64(&format!("{}:{scope}:{hash}", self.hash_seed));
                 let mut random = RandomGenerator::from_seed(Some(seed));
                 let upper = i64::try_from(self.corpus.len()).map_err(|_| {
@@ -115,10 +110,12 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
                 )
                 .expect("non-negative corpus offset");
                 let block = wrapping_window(&self.corpus, start, block_size);
-                self.blocks.insert(key.clone(), block);
-                self.blocks.get(&key).expect("inserted block cache entry")
-            };
-            out.extend_from_slice(block);
+                self.blocks
+                    .get_mut(scope)
+                    .expect("scope cache present")
+                    .insert(key, block);
+            }
+            out.extend_from_slice(&self.blocks[scope][&key]);
         }
         Ok(out)
     }

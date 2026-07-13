@@ -2453,8 +2453,6 @@ dependencies = [
  "ndarray",
  "ndarray-interp",
  "ndarray-npy",
- "parking_lot",
- "pyo3",
  "rand 0.9.4",
  "rmp-serde",
  "rustc-hash 2.1.3",

@@ -2440,7 +2440,9 @@ fn verified_source_path(path: &Path, expected_digest: &str) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-fn verify_regular_file_digest(path: &Path, expected_digest: &str) -> Result<()> {
+// Returns the verified bytes so a caller that needs the content (read_verified_source)
+// reuses this single read instead of re-reading the whole (hundreds-of-MB) rootfs.
+fn verify_regular_file_digest(path: &Path, expected_digest: &str) -> Result<Vec<u8>> {
     let metadata = std::fs::symlink_metadata(path)
         .with_context(|| format!("inspecting closure source {}", path.display()))?;
     ensure!(
@@ -2454,12 +2456,11 @@ fn verify_regular_file_digest(path: &Path, expected_digest: &str) -> Result<()> 
         "closure source digest drift for {}",
         path.display()
     );
-    Ok(())
+    Ok(content)
 }
 
 fn read_verified_source(path: &Path, expected_digest: &str) -> Result<Vec<u8>> {
-    verify_regular_file_digest(path, expected_digest)?;
-    read_file(path)
+    verify_regular_file_digest(path, expected_digest)
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>> {

@@ -76,17 +76,25 @@ impl Scheduler {
     }
 
     /// Node ids that fire at trace start (successors of START; END suppressed).
-    pub fn entry_nodes(&self) -> Vec<String> {
-        self.entry.clone()
+    ///
+    /// Borrows the precomputed entry list; hot scheduling path, so no per-call
+    /// allocation or id clone.
+    pub fn entry_nodes(&self) -> impl Iterator<Item = &str> {
+        self.entry.iter().map(String::as_str)
     }
 
     /// Static successors after `node_id` completes (start-anchored excluded; END
     /// suppressed).
-    pub fn successors_after(&self, node_id: &str) -> Vec<String> {
+    ///
+    /// Borrows the immutable adjacency; hot scheduling path, so no per-call
+    /// allocation or id clone.
+    pub fn successors_after(&self, node_id: &str) -> impl Iterator<Item = &str> {
         self.static_succ
             .get(node_id)
-            .map(|v| v.iter().filter(|t| *t != END_NODE_ID).cloned().collect())
-            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .filter(|t| *t != END_NODE_ID)
+            .map(String::as_str)
     }
 
     /// StaticEdge objects targeting `node_id` (for gate computation).
@@ -99,11 +107,16 @@ impl Scheduler {
 
     /// Successors wired via start-anchored edges; scheduled at `node_id`'s
     /// DISPATCH, not completion. END suppressed.
-    pub fn start_anchored_successors(&self, node_id: &str) -> Vec<String> {
+    ///
+    /// Borrows the immutable adjacency; hot scheduling path, so no per-call
+    /// allocation or id clone.
+    pub fn start_anchored_successors(&self, node_id: &str) -> impl Iterator<Item = &str> {
         self.start_anchored_succ
             .get(node_id)
-            .map(|v| v.iter().filter(|t| *t != END_NODE_ID).cloned().collect())
-            .unwrap_or_default()
+            .into_iter()
+            .flatten()
+            .filter(|t| *t != END_NODE_ID)
+            .map(String::as_str)
     }
 }
 
@@ -199,9 +212,9 @@ mod tests {
         }"#,
         );
         let sched = Scheduler::new(&g).unwrap();
-        assert_eq!(sched.entry_nodes(), vec!["a".to_string()]);
-        assert_eq!(sched.successors_after("a"), vec!["b".to_string()]);
-        assert!(sched.successors_after("b").is_empty()); // END suppressed
+        assert_eq!(sched.entry_nodes().collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(sched.successors_after("a").collect::<Vec<_>>(), vec!["b"]);
+        assert_eq!(sched.successors_after("b").count(), 0); // END suppressed
     }
 
     #[test]
@@ -217,8 +230,11 @@ mod tests {
         }"#,
         );
         let sched = Scheduler::new(&g).unwrap();
-        assert!(sched.successors_after("a").is_empty());
-        assert_eq!(sched.start_anchored_successors("a"), vec!["b".to_string()]);
+        assert_eq!(sched.successors_after("a").count(), 0);
+        assert_eq!(
+            sched.start_anchored_successors("a").collect::<Vec<_>>(),
+            vec!["b"]
+        );
     }
 
     #[test]
