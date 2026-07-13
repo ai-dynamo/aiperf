@@ -74,8 +74,22 @@ impl NetworkLatencyAccumulator {
 
     /// Retain one success or failure sample.
     pub fn add_sample(&mut self, sample: NetworkLatencySample) {
+        Self::tally(&mut self.targets, &mut self.errors, &sample);
+        self.samples.push(sample);
+    }
+
+    /// Fold one borrowed sample into per-target and per-error tallies.
+    ///
+    /// Shared by live accumulation and the filtered `export_results` pass so the
+    /// latter can aggregate in-range samples by reference without cloning whole
+    /// samples into a throwaway accumulator.
+    fn tally(
+        targets: &mut BTreeMap<String, TargetState>,
+        errors: &mut BTreeMap<ErrorKey, ErrorCount>,
+        sample: &NetworkLatencySample,
+    ) {
         let key = format!("{}:{}", sample.target_host, sample.target_port);
-        let target = self.targets.entry(key).or_insert_with(|| TargetState {
+        let target = targets.entry(key).or_insert_with(|| TargetState {
             target_url: sample.target_url.clone(),
             target_host: sample.target_host.clone(),
             target_port: sample.target_port,
@@ -92,13 +106,12 @@ impl NetworkLatencyAccumulator {
             target.failure_count += 1;
             if let Some(error) = &sample.error {
                 let key = (error.code, error.error_type.clone(), error.message.clone());
-                self.errors
+                errors
                     .entry(key)
                     .and_modify(|(_, count)| *count += 1)
                     .or_insert_with(|| (error.clone(), 1));
             }
         }
-        self.samples.push(sample);
     }
 
     /// Every retained sample in issuance/completion order.
@@ -208,7 +221,10 @@ impl Accumulator<NetworkLatencySample> for NetworkLatencyAccumulator {
                         .end_ns
                         .is_none_or(|end_ns| sample.timestamp_ns < end_ns)
                 {
-                    filtered.add_sample(sample.clone());
+                    // Aggregate the borrowed sample directly; the summary reads
+                    // only the target/error tallies, so no sample clone or
+                    // samples-Vec growth is needed on this hot export path.
+                    Self::tally(&mut filtered.targets, &mut filtered.errors, sample);
                 }
             }
         }

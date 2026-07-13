@@ -578,6 +578,43 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         );
         self.occupied_count += other_rows;
 
+        // Remap each categorical column's dense codes once per unique value.
+        // `values()` is in dense first-appearance order, which matches the
+        // row-walk first-appearance order, so interning it up front yields the
+        // same self codes as per-row interning would — but at one clone/lookup
+        // per unique value instead of per row (~1M clones for low-cardinality
+        // columns over 1M rows).
+        let phase_remap: Vec<u32> = other
+            .phases
+            .values()
+            .iter()
+            .map(|phase| self.phases.intern_ref(phase))
+            .collect();
+        let correlation_remap: Vec<u32> = other
+            .correlations
+            .values()
+            .iter()
+            .map(|correlation| self.correlations.intern_ref(correlation))
+            .collect();
+        let dimension_remap: Vec<u32> = other
+            .dimensions
+            .values()
+            .iter()
+            .map(|dimensions| self.dimensions.intern_ref(dimensions))
+            .collect();
+        let worker_remap: Vec<u32> = other
+            .workers
+            .values()
+            .iter()
+            .map(|worker| self.workers.intern_ref(worker))
+            .collect();
+        let conversation_remap: Vec<u32> = other
+            .conversations
+            .values()
+            .iter()
+            .map(|conversation| self.conversations.intern_ref(conversation))
+            .collect();
+
         for row in 0..other_rows {
             self.occupied.push(true);
             self.start_ns.push(other.start_ns[row]);
@@ -589,43 +626,18 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             self.session_nums.push(other.session_nums[row]);
             self.turn_indices.push(other.turn_indices[row]);
 
-            let phase = other
-                .phases
-                .value(other.phase_codes[row])
-                .copied()
-                .expect("phase codes must resolve");
-            self.phase_codes.push(self.phases.intern(phase));
-            let correlation = other
-                .correlations
-                .value(other.correlation_codes[row])
-                .cloned()
-                .expect("correlation codes must resolve");
+            self.phase_codes
+                .push(phase_remap[other.phase_codes[row] as usize]);
             self.correlation_codes
-                .push(self.correlations.intern(correlation));
-            let dimensions = other
-                .dimensions
-                .value(other.dimension_codes[row])
-                .cloned()
-                .expect("inference dimension codes must resolve");
+                .push(correlation_remap[other.correlation_codes[row] as usize]);
             self.dimension_codes
-                .push(self.dimensions.intern(dimensions));
-            self.worker_codes.push(other.worker_codes[row].map(|code| {
-                let worker = other
-                    .workers
-                    .value(code)
-                    .cloned()
-                    .expect("worker codes must resolve");
-                self.workers.intern(worker)
-            }));
-            self.conversation_codes
-                .push(other.conversation_codes[row].map(|code| {
-                    let conversation = other
-                        .conversations
-                        .value(code)
-                        .cloned()
-                        .expect("conversation codes must resolve");
-                    self.conversations.intern(conversation)
-                }));
+                .push(dimension_remap[other.dimension_codes[row] as usize]);
+            self.worker_codes.push(
+                other.worker_codes[row].map(|code| worker_remap[code as usize]),
+            );
+            self.conversation_codes.push(
+                other.conversation_codes[row].map(|code| conversation_remap[code as usize]),
+            );
             self.errored.push(other.errored[row]);
             self.canceled.push(other.canceled[row]);
         }

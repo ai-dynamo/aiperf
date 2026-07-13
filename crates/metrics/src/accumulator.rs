@@ -24,12 +24,24 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::sync::LazyLock;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 const DEFAULT_USAGE_DIFF_THRESHOLD_PCT: f64 = 10.0;
 const DEFAULT_OSL_MISMATCH_THRESHOLD_PCT: f64 = 5.0;
 const DEFAULT_OSL_MISMATCH_MAX_TOKENS: f64 = 50.0;
 const PARALLEL_SUMMARY_MIN_ROWS: usize = 4_096;
+
+/// Derived-metric topological order over the immutable catalog.
+///
+/// `validate_catalog` builds a petgraph `DiGraphMap` and toposorts it. The
+/// catalog is static, so that graph construction runs once here rather than on
+/// every `compute_result_map` call — which fans out per export, per
+/// inference-series dimension, and per timeslice. The `expect` also fail-fasts
+/// on a malformed catalog at first accumulator construction, preserving the
+/// prior `with_config` validation contract.
+static DERIVED_TOPO_ORDER: LazyLock<Vec<MetricTag>> =
+    LazyLock::new(|| validate_catalog().expect("the static metric catalog must be valid"));
 
 /// Extension seam for request-index-addressed record accumulation and windowed export.
 pub trait Accumulator<Record> {
@@ -414,7 +426,8 @@ impl MetricsAccumulator {
 
     /// Builds an accumulator with explicit runtime-independent configuration.
     pub fn with_config(config: MetricsConfig) -> Self {
-        validate_catalog().expect("the static metric catalog must be valid");
+        // Forces one-time catalog validation; the topo order is cached for reuse.
+        LazyLock::force(&DERIVED_TOPO_ORDER);
         Self {
             store: ColumnStore::new(),
             config,
@@ -959,8 +972,7 @@ impl MetricsAccumulator {
 
         let observation_duration_ns =
             observation_duration(&scalars, window_start_ns, window_end_ns);
-        let order = validate_catalog().expect("catalog validated during construction");
-        for tag in order {
+        for &tag in DERIVED_TOPO_ORDER.iter() {
             let Some(spec) = spec_for(tag) else {
                 continue;
             };

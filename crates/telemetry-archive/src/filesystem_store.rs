@@ -18,6 +18,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -33,6 +34,18 @@ const LOCK_NAME: &str = ".aiperf-archive-store.lock";
 
 /// Local directory implementing the authoritative archive object-store seam.
 pub struct FileArchiveObjectStore {
+    inner: Arc<FileArchiveStoreInner>,
+}
+
+/// Owned `Send + 'static` durable core executed on the blocking pool.
+///
+/// Every `flock(LOCK_EX)`, `fs::read`, and `sync_all` runs from inside
+/// [`tokio::task::spawn_blocking`] through an `Arc` clone of this core, so
+/// advisory-lock contention from a competing process or an fsync stall can
+/// never park the runner's `current_thread` + `LocalSet` reactor thread. This
+/// mirrors the sink's spawn_blocking discipline; the store shares (rather than
+/// moves) the core because its `&self` trait methods are called concurrently.
+struct FileArchiveStoreInner {
     root: PathBuf,
     next_temporary: AtomicU64,
 }
@@ -57,21 +70,23 @@ impl FileArchiveObjectStore {
         reject_symlink_components(path)?;
         let root =
             fs::canonicalize(path).map_err(|error| file_error("canonicalize store root", error))?;
-        let store = Self {
+        let inner = Arc::new(FileArchiveStoreInner {
             root,
             next_temporary: AtomicU64::new(0),
-        };
-        let _guard = store.lock()?;
-        sync_directory(&store.root)?;
-        Ok(store)
+        });
+        let _guard = inner.lock()?;
+        sync_directory(&inner.root)?;
+        Ok(Self { inner })
     }
 
     /// Canonical credential-free local store root.
     #[must_use]
     pub fn root(&self) -> &Path {
-        &self.root
+        &self.inner.root
     }
+}
 
+impl FileArchiveStoreInner {
     fn lock(&self) -> Result<FileStoreLock, ArchiveStoreError> {
         let path = self.root.join(LOCK_NAME);
         let file = OpenOptions::new()
@@ -254,7 +269,7 @@ impl Debug for FileArchiveObjectStore {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("FileArchiveObjectStore")
-            .field("root", &self.root)
+            .field("root", &self.inner.root)
             .finish()
     }
 }
@@ -276,25 +291,49 @@ impl ArchiveObjectStore for FileArchiveObjectStore {
         body: Bytes,
         digest: Digest,
     ) -> Result<CreateReceipt, ArchiveStoreError> {
-        let _guard = self.lock()?;
-        self.put_immutable_locked(key, body, digest)
+        let inner = Arc::clone(&self.inner);
+        let key = key.to_owned();
+        spawn_blocking_store(
+            ArchiveStoreError::Transport,
+            move || {
+                let _guard = inner.lock()?;
+                inner.put_immutable_locked(&key, body, digest)
+            },
+        )
+        .await
     }
 
     async fn get_verified(&self, key: &str, expected: Digest) -> Result<Bytes, ArchiveStoreError> {
-        let _guard = self.lock()?;
-        let path = self.object_path(key)?;
-        let body = self.read_object(&path)?;
-        Self::verify_supplied(key, &body, expected)?;
-        Ok(body)
+        let inner = Arc::clone(&self.inner);
+        let key = key.to_owned();
+        spawn_blocking_store(
+            ArchiveStoreError::Transport,
+            move || {
+                let _guard = inner.lock()?;
+                let path = inner.object_path(&key)?;
+                let body = inner.read_object(&path)?;
+                FileArchiveStoreInner::verify_supplied(&key, &body, expected)?;
+                Ok(body)
+            },
+        )
+        .await
     }
 
     async fn read_head(&self, key: &str) -> Result<Option<VersionedHead>, ArchiveStoreError> {
-        let _guard = self.lock()?;
-        let path = self.object_path(key)?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        self.verified_head(&path).map(Some)
+        let inner = Arc::clone(&self.inner);
+        let key = key.to_owned();
+        spawn_blocking_store(
+            ArchiveStoreError::Transport,
+            move || {
+                let _guard = inner.lock()?;
+                let path = inner.object_path(&key)?;
+                if !path.exists() {
+                    return Ok(None);
+                }
+                inner.verified_head(&path).map(Some)
+            },
+        )
+        .await
     }
 
     async fn create_head_if_absent(
@@ -303,16 +342,26 @@ impl ArchiveObjectStore for FileArchiveObjectStore {
         replacement: Bytes,
         digest: Digest,
     ) -> Result<CreateReceipt, HeadUpdateError> {
-        let _guard = self.lock().map_err(HeadUpdateError::Store)?;
-        Self::verify_supplied(key, &replacement, digest).map_err(HeadUpdateError::Store)?;
-        let path = self.object_path(key).map_err(HeadUpdateError::Store)?;
-        if path.exists() {
-            return Err(HeadUpdateError::Conflict {
-                current: Some(self.verified_head(&path).map_err(HeadUpdateError::Store)?),
-            });
-        }
-        self.put_immutable_locked(key, replacement, digest)
-            .map_err(HeadUpdateError::Store)
+        let inner = Arc::clone(&self.inner);
+        let key = key.to_owned();
+        spawn_blocking_store(
+            |message| HeadUpdateError::Store(ArchiveStoreError::Transport(message)),
+            move || {
+                let _guard = inner.lock().map_err(HeadUpdateError::Store)?;
+                FileArchiveStoreInner::verify_supplied(&key, &replacement, digest)
+                    .map_err(HeadUpdateError::Store)?;
+                let path = inner.object_path(&key).map_err(HeadUpdateError::Store)?;
+                if path.exists() {
+                    return Err(HeadUpdateError::Conflict {
+                        current: Some(inner.verified_head(&path).map_err(HeadUpdateError::Store)?),
+                    });
+                }
+                inner
+                    .put_immutable_locked(&key, replacement, digest)
+                    .map_err(HeadUpdateError::Store)
+            },
+        )
+        .await
     }
 
     async fn compare_and_swap_head(
@@ -322,21 +371,54 @@ impl ArchiveObjectStore for FileArchiveObjectStore {
         replacement: Bytes,
         digest: Digest,
     ) -> Result<StableObjectVersion, HeadUpdateError> {
-        let _guard = self.lock().map_err(HeadUpdateError::Store)?;
-        Self::verify_supplied(key, &replacement, digest).map_err(HeadUpdateError::Store)?;
-        let path = self.object_path(key).map_err(HeadUpdateError::Store)?;
-        if !path.exists() {
-            return Err(HeadUpdateError::Conflict { current: None });
-        }
-        let current = self.verified_head(&path).map_err(HeadUpdateError::Store)?;
-        if &current.version != expected_version {
-            return Err(HeadUpdateError::Conflict {
-                current: Some(current),
-            });
-        }
-        self.replace_head_locked(&path, &replacement)
-            .map_err(HeadUpdateError::Store)?;
-        Ok(Self::version(digest))
+        let inner = Arc::clone(&self.inner);
+        let key = key.to_owned();
+        let expected_version = expected_version.clone();
+        spawn_blocking_store(
+            |message| HeadUpdateError::Store(ArchiveStoreError::Transport(message)),
+            move || {
+                let _guard = inner.lock().map_err(HeadUpdateError::Store)?;
+                FileArchiveStoreInner::verify_supplied(&key, &replacement, digest)
+                    .map_err(HeadUpdateError::Store)?;
+                let path = inner.object_path(&key).map_err(HeadUpdateError::Store)?;
+                if !path.exists() {
+                    return Err(HeadUpdateError::Conflict { current: None });
+                }
+                let current = inner.verified_head(&path).map_err(HeadUpdateError::Store)?;
+                if current.version != expected_version {
+                    return Err(HeadUpdateError::Conflict {
+                        current: Some(current),
+                    });
+                }
+                inner
+                    .replace_head_locked(&path, &replacement)
+                    .map_err(HeadUpdateError::Store)?;
+                Ok(FileArchiveStoreInner::version(digest))
+            },
+        )
+        .await
+    }
+}
+
+/// Runs one lock-and-fsync-bearing store operation on the blocking pool.
+///
+/// The `flock(LOCK_EX)` + `sync_all`/`fs::read` body would otherwise park the
+/// runner's `current_thread` reactor for the full duration of a competing
+/// process's advisory lock; offloading it keeps co-located telemetry sources
+/// and timers live. A join failure (a panic inside the blocking body) is
+/// surfaced through `join_error` as an uncertain transport outcome.
+async fn spawn_blocking_store<T, E, F, J>(join_error: J, operation: F) -> Result<T, E>
+where
+    F: FnOnce() -> Result<T, E> + Send + 'static,
+    T: Send + 'static,
+    E: Send + 'static,
+    J: FnOnce(String) -> E,
+{
+    match tokio::task::spawn_blocking(operation).await {
+        Ok(result) => result,
+        Err(error) => Err(join_error(format!(
+            "archive store blocking task join failed: {error}"
+        ))),
     }
 }
 
@@ -555,8 +637,8 @@ mod tests {
     fn relative_roots_and_traversal_keys_fail_closed() {
         assert!(FileArchiveObjectStore::open("relative").is_err());
         let (_temporary, store) = store();
-        assert!(store.object_path("../escape").is_err());
-        assert!(store.object_path("a//b").is_err());
-        assert!(store.object_path("/absolute").is_err());
+        assert!(store.inner.object_path("../escape").is_err());
+        assert!(store.inner.object_path("a//b").is_err());
+        assert!(store.inner.object_path("/absolute").is_err());
     }
 }

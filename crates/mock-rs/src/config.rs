@@ -17,7 +17,9 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_HOST", default_value = "127.0.0.1")]
     pub host: String,
 
-    #[arg(short = 'w', long, env = "MOCK_SERVER_WORKERS", default_value_t = 1)]
+    /// Tokio worker-thread count. `0` (the default) means auto = nproc; any
+    /// explicit value, including `1`, is honored verbatim.
+    #[arg(short = 'w', long, env = "MOCK_SERVER_WORKERS", default_value_t = 0)]
     pub workers: usize,
 
     #[arg(short = 't', long, env = "MOCK_SERVER_TTFT", default_value_t = 20.0)]

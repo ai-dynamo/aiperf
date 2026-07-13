@@ -551,13 +551,31 @@ fn parse_non_finite(
             _ => None,
         },
         ExpositionFormat::OpenMetricsText100 => {
-            let lowercase = lexeme.to_ascii_lowercase();
-            match lowercase.as_str() {
-                "inf" | "+inf" | "infinity" | "+infinity" => Some(NumberKind::PositiveInfinity),
-                "-inf" | "-infinity" => Some(NumberKind::NegativeInfinity),
-                "nan" => Some(NumberKind::NaN),
-                value if value.ends_with("nan") => return Err(NumberError::InvalidNonFinite),
-                _ => None,
+            let bytes = lexeme.as_bytes();
+            // A digit- or signed-digit-led lexeme cannot spell any exact non-finite
+            // token, so only the trailing-"nan" rejection can still apply. Resolve it
+            // on the raw bytes to avoid allocating a lowercased copy of every number.
+            let numeric_start = match bytes.first().copied() {
+                Some(b'0'..=b'9') => true,
+                Some(b'+' | b'-') => matches!(bytes.get(1).copied(), Some(b'0'..=b'9')),
+                _ => false,
+            };
+            if numeric_start {
+                if bytes.len() >= 3 && bytes[bytes.len() - 3..].eq_ignore_ascii_case(b"nan") {
+                    return Err(NumberError::InvalidNonFinite);
+                }
+                None
+            } else {
+                let lowercase = lexeme.to_ascii_lowercase();
+                match lowercase.as_str() {
+                    "inf" | "+inf" | "infinity" | "+infinity" => {
+                        Some(NumberKind::PositiveInfinity)
+                    }
+                    "-inf" | "-infinity" => Some(NumberKind::NegativeInfinity),
+                    "nan" => Some(NumberKind::NaN),
+                    value if value.ends_with("nan") => return Err(NumberError::InvalidNonFinite),
+                    _ => None,
+                }
             }
         }
     };

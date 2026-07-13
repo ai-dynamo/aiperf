@@ -1373,6 +1373,10 @@ fn chat_stream(
 
         let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
 
+        // OpenAI holds `created` constant across a stream (the fast path samples
+        // once too); sample once here rather than per token.
+        let created = now_secs();
+
         let mut idx = 0usize;
         let mut first_emit: Option<Instant> = None;
         let mut last_emit: Option<Instant> = None;
@@ -1393,7 +1397,7 @@ fn chat_stream(
             let chunk = ChatStreamChunk {
                 id: &ctx.request_id,
                 object: "chat.completion.chunk",
-                created: now_secs(),
+                created,
                 model: &ctx.model,
                 choices: [ChatChoiceDelta {
                     index: 0,
@@ -1427,7 +1431,7 @@ fn chat_stream(
             let chunk = ChatStreamChunk {
                 id: &ctx.request_id,
                 object: "chat.completion.chunk",
-                created: now_secs(),
+                created,
                 model: &ctx.model,
                 choices: [ChatChoiceDelta {
                     index: 0,
@@ -1446,7 +1450,7 @@ fn chat_stream(
             let usage_chunk = ChatStreamUsageChunk {
                 id: &ctx.request_id,
                 object: "chat.completion.chunk",
-                created: now_secs(),
+                created,
                 model: &ctx.model,
                 choices: [],
                 usage: &ctx.usage,
@@ -1508,6 +1512,9 @@ fn text_stream(
         }
 
         let num = ctx.tokenized.tokens.len();
+        // OpenAI holds `created` constant across a stream (the fast path samples
+        // once too); sample once here rather than per token.
+        let created = now_secs();
         let mut first_emit: Option<Instant> = None;
         let mut last_emit: Option<Instant> = None;
         for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
@@ -1526,7 +1533,7 @@ fn text_stream(
             let chunk = TextStreamChunk {
                 id: &ctx.request_id,
                 object: "text_completion",
-                created: now_secs(),
+                created,
                 model: &ctx.model,
                 choices: [TextChoiceDelta {
                     index: 0,
@@ -1540,7 +1547,7 @@ fn text_stream(
             let usage_chunk = TextStreamUsageChunk {
                 id: &ctx.request_id,
                 object: "text_completion",
-                created: now_secs(),
+                created,
                 model: &ctx.model,
                 choices: [],
                 usage: &ctx.usage,

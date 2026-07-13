@@ -32,11 +32,7 @@ const MESSAGE: &str = "message";
 const MESSAGE_START: &str = "message_start";
 const CONTENT_BLOCK_START: &str = "content_block_start";
 const CONTENT_BLOCK_DELTA: &str = "content_block_delta";
-const CONTENT_BLOCK_STOP: &str = "content_block_stop";
 const MESSAGE_DELTA: &str = "message_delta";
-const MESSAGE_STOP: &str = "message_stop";
-const PING: &str = "ping";
-const ERROR: &str = "error";
 
 const TEXT: &str = "text";
 const THINKING: &str = "thinking";
@@ -377,18 +373,6 @@ fn parse_streaming_event(
             usage: Some(usage),
             sources: None,
         });
-    }
-    if [
-        PING,
-        CONTENT_BLOCK_START,
-        CONTENT_BLOCK_STOP,
-        MESSAGE_STOP,
-        ERROR,
-    ]
-    .iter()
-    .any(|known| normalized_eq(event_type, known))
-    {
-        return None;
     }
     None
 }

@@ -1243,8 +1243,24 @@ impl<'a> LocalWalWriter<'a> {
         if self.poisoned {
             return Err(SpoolError::WalPoisoned);
         }
-        let mut next = self.builder.clone();
-        next.append(frame).map_err(SpoolError::Wal)?;
+        // Validate sequence contiguity in place instead of cloning the whole
+        // builder per frame: the builder retains every encoded frame in its
+        // frame_bytes accumulator, so a per-append clone was O(n) in the
+        // accumulated bytes and O(n^2) over a segment. This reproduces the only
+        // check WalSegmentBuilder::append performs, so an out-of-order frame is
+        // still rejected before any write and without poisoning the handle.
+        let expected = self
+            .builder
+            .last_record_seq()
+            .map_or(self.builder.header().first_record_seq, |sequence| {
+                sequence + 1
+            });
+        if frame.header().record_seq != expected {
+            return Err(SpoolError::Wal(WalError::RecordSequence {
+                expected,
+                actual: frame.header().record_seq,
+            }));
+        }
         let encoded = frame.encode().map_err(SpoolError::Wal)?;
         let result = (|| {
             self.file
@@ -1264,7 +1280,13 @@ impl<'a> LocalWalWriter<'a> {
             self.poisoned = true;
             return Err(error);
         }
-        self.builder = next;
+        // The frame is durably fsynced; advance the in-memory chain. The sequence
+        // was already validated and the frame already encoded, so this cannot
+        // fail; poison the handle defensively on any unexpected error.
+        if let Err(error) = self.builder.append(frame) {
+            self.poisoned = true;
+            return Err(SpoolError::Wal(error));
+        }
         Ok(())
     }
 
@@ -1439,8 +1461,24 @@ impl OwnedLocalWalWriter {
         if self.poisoned {
             return Err(SpoolError::WalPoisoned);
         }
-        let mut next = self.builder.clone();
-        next.append(frame).map_err(SpoolError::Wal)?;
+        // Validate sequence contiguity in place instead of cloning the whole
+        // builder per frame: the builder retains every encoded frame in its
+        // frame_bytes accumulator, so a per-append clone was O(n) in the
+        // accumulated bytes and O(n^2) over a segment. This reproduces the only
+        // check WalSegmentBuilder::append performs, so an out-of-order frame is
+        // still rejected before any write and without poisoning the handle.
+        let expected = self
+            .builder
+            .last_record_seq()
+            .map_or(self.builder.header().first_record_seq, |sequence| {
+                sequence + 1
+            });
+        if frame.header().record_seq != expected {
+            return Err(SpoolError::Wal(WalError::RecordSequence {
+                expected,
+                actual: frame.header().record_seq,
+            }));
+        }
         let encoded = frame.encode().map_err(SpoolError::Wal)?;
         let result = (|| {
             self.file
@@ -1460,7 +1498,13 @@ impl OwnedLocalWalWriter {
             self.poisoned = true;
             return Err(error);
         }
-        self.builder = next;
+        // The frame is durably fsynced; advance the in-memory chain. The sequence
+        // was already validated and the frame already encoded, so this cannot
+        // fail; poison the handle defensively on any unexpected error.
+        if let Err(error) = self.builder.append(frame) {
+            self.poisoned = true;
+            return Err(SpoolError::Wal(error));
+        }
         Ok(())
     }
 

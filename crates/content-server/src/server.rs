@@ -143,21 +143,27 @@ impl ContentServerRuntime for NativeContentServerRuntime {
         if let Some(shutdown) = self.shutdown_tx.take() {
             let _ = shutdown.send(());
         }
-        if let Some(task) = self.task.take() {
-            let serving = task
-                .await
-                .map_err(|error| ContentServerError::Task(error.to_string()))?;
-            serving.map_err(|source| {
-                ContentServerError::io("serving content-server connections", source)
-            })?;
-        }
+        // Capture the serving outcome without short-circuiting: a join/serve
+        // failure must still mark the server disabled and drop the run-scoped
+        // temporary directory, otherwise a failed shutdown leaves
+        // `status.enabled == true` and leaks the temp dir on disk.
+        let serving_result = match self.task.take() {
+            Some(task) => match task.await {
+                Ok(serving) => serving.map_err(|source| {
+                    ContentServerError::io("serving content-server connections", source)
+                }),
+                Err(error) => Err(ContentServerError::Task(error.to_string())),
+            },
+            None => Ok(()),
+        };
         self.status.enabled = false;
-        if let Some(temporary_directory) = self._temporary_directory.take() {
-            temporary_directory.close().map_err(|source| {
+        let cleanup_result = match self._temporary_directory.take() {
+            Some(temporary_directory) => temporary_directory.close().map_err(|source| {
                 ContentServerError::io("removing temporary content-server directory", source)
-            })?;
-        }
-        Ok(())
+            }),
+            None => Ok(()),
+        };
+        serving_result.and(cleanup_result)
     }
 }
 

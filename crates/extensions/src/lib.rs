@@ -155,7 +155,7 @@ impl AiperfRegistry {
         &mut self,
         extension: &dyn AiperfExtension,
     ) -> Result<(), ExtensionError> {
-        let name = normalize_extension_name(extension.name())?;
+        let name = validate_extension_name(extension.name())?;
         if self.extension_names.contains(&name) {
             return Err(ExtensionError::DuplicateExtension(name));
         }
@@ -267,11 +267,14 @@ impl DatasetEndpointResolver for LegacyDatasetEndpointResolver {
     }
 }
 
-fn normalize_extension_name(name: &str) -> Result<String, ExtensionError> {
-    let normalized = name.trim().to_ascii_lowercase().replace('_', "-");
-    if normalized.is_empty() {
+// Preserve the declared name verbatim for duplicate detection and diagnostics:
+// case/separator normalization would false-collide distinct names (e.g.
+// `foo_bar` vs `foo-bar`, `Foo` vs `foo`) and report a name the extension never
+// declared. Only reject a name that is empty (or whitespace-only).
+fn validate_extension_name(name: &str) -> Result<String, ExtensionError> {
+    if name.trim().is_empty() {
         Err(ExtensionError::EmptyExtensionName)
     } else {
-        Ok(normalized)
+        Ok(name.to_string())
     }
 }

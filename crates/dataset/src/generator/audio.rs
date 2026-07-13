@@ -351,8 +351,27 @@ fn run_filter(program: &str, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
                 format!("failed to launch {program}: {error}"),
             ))
         })?;
-    child.stdin.take().expect("piped stdin").write_all(input)?;
+    // Write stdin on a dedicated thread so the parent can drain stdout/stderr
+    // concurrently: FFmpeg output larger than a pipe buffer (~64 KiB, i.e. any
+    // audio longer than a couple of seconds) would otherwise deadlock, with the
+    // child blocked writing stdout while we block writing stdin.
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let owned_input = input.to_vec();
+    let writer = std::thread::spawn(move || -> std::io::Result<()> {
+        stdin.write_all(&owned_input)?;
+        // Drop `stdin` to send EOF so the child can finish and close stdout.
+        drop(stdin);
+        Ok(())
+    });
     let output = child.wait_with_output()?;
+    // A BrokenPipe here means the child closed stdin early (typically because it
+    // failed); surface its stderr from the status check below instead of masking
+    // it with the write error.
+    if let Err(error) = writer.join().expect("stdin writer thread panicked")
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(DatasetError::Io(error));
+    }
     if !output.status.success() {
         return Err(DatasetError::Validation(format!(
             "{program} failed: {}",

@@ -217,9 +217,19 @@ impl RandomGenerator {
         }
 
         if replace {
-            return (0..size)
-                .map(|_| self.weighted_choice(values, weights))
-                .collect();
+            let Some(weights) = weights else {
+                return (0..size)
+                    .map(|_| self.weighted_choice(values, None))
+                    .collect();
+            };
+            // The replace path draws `size` samples from an unchanging, already
+            // validated weight vector; caching the cumulative sums once keeps
+            // sampling O(n + size*log n) instead of the O(n*size) that per-draw
+            // `weighted_choice` (re-summing + re-validating each draw) incurs.
+            let cumulative = cumulative_weights(weights);
+            return Ok((0..size)
+                .map(|_| values[self.weighted_index_cached(&cumulative)].clone())
+                .collect());
         }
         if weights.is_none() {
             return self.sample(values, size);
@@ -420,6 +430,25 @@ impl RandomGenerator {
         Ok(cumulative_weight_index(weights, r))
     }
 
+    /// Sample one index against precomputed cumulative weights, consuming a
+    /// single uniform draw. `cumulative` must be the running sums produced by
+    /// [`cumulative_weights`] over already-validated weights; its last element
+    /// is the total. This mirrors `weighted_index` bit-for-bit (same draw, same
+    /// selected index) while skipping that method's per-draw O(n) validation and
+    /// re-accumulation, so repeated draws over a fixed weight vector stay cheap.
+    fn weighted_index_cached(&mut self, cumulative: &[f64]) -> usize {
+        let total = *cumulative
+            .last()
+            .expect("cumulative weights are validated non-empty");
+        let r = self.random() * total;
+        // First index whose running total exceeds `r`, matching
+        // `cumulative_weight_index`'s strict `r < cumulative` boundary; falls
+        // back to the last index when floating-point drift leaves `r >= total`.
+        cumulative
+            .partition_point(|c| *c <= r)
+            .min(cumulative.len() - 1)
+    }
+
     fn uniform_index(&mut self, len: u128) -> u128 {
         debug_assert!((1..=U64_CARDINALITY).contains(&len));
         if len == U64_CARDINALITY {
@@ -439,6 +468,21 @@ fn cumulative_weight_index(weights: &[f64], r: f64) -> usize {
         }
     }
     weights.len() - 1
+}
+
+/// Left-to-right running sums of `weights`; the final element is the total.
+/// The accumulation order matches `cumulative_weight_index` and
+/// `validated_weight_total` so cached sampling stays bit-identical to the
+/// per-draw path.
+fn cumulative_weights(weights: &[f64]) -> Vec<f64> {
+    let mut running = 0.0;
+    weights
+        .iter()
+        .map(|weight| {
+            running += *weight;
+            running
+        })
+        .collect()
 }
 
 pub(crate) fn positive_integer_from_f64(value: f64, what: &'static str) -> Result<i64> {

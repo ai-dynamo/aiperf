@@ -290,9 +290,11 @@ impl HttpTransport {
                 )
                 .await;
             // A successful fully-drained response makes an HTTP/1 lease reusable.
-            // The lease itself owns cleanup, so cancellation/error paths cannot
-            // leak pool capacity.
-            if res.is_ok() {
+            // A non-2xx response whose body was fully drained is equally clean
+            // (`reusable_connection`), so it is pooled too rather than forcing a
+            // reconnect per 4xx/5xx. The lease itself owns cleanup, so
+            // cancellation/error paths cannot leak pool capacity.
+            if res.is_ok() || record.reusable_connection {
                 let keep = match reuse {
                     ConnectionReuseStrategy::StickyUserSessions => !cfg.is_final_turn,
                     _ => true,

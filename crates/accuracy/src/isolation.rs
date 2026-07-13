@@ -945,9 +945,6 @@ fn capture_linux_process_tree(
     }
     processes.insert(root);
 
-    // Reading the namespace metadata above follows the procfs magic symlink;
-    // pin its kernel object identity rather than trusting its display text.
-    let _ = std::fs::metadata("/proc/self/ns/pid").map(|metadata| metadata.ino());
     Ok(IsolationProcessTreeIdentity {
         root,
         outer_uid,

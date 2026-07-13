@@ -45,6 +45,11 @@ pub struct RequestRecord {
     pub trace: Option<TraceData>,
     /// Clock-ns when the request was cancelled, if applicable.
     pub cancellation_ns: Option<i64>,
+    /// The response body was fully drained even though dispatch returned an
+    /// error (a non-2xx status), so the underlying HTTP/1 connection is clean
+    /// and may be returned to the pool. Lets the transport reuse a lease on
+    /// 4xx/5xx instead of forcing a fresh connect during error storms.
+    pub reusable_connection: bool,
 }
 
 impl RequestRecord {

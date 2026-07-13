@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
     //   - worker_threads = nproc by default (override via --workers)
     //   - max_blocking_threads large enough for bursty I/O
     //   - enable_all: timers + I/O drivers
-    let worker_threads = if config.workers > 1 {
+    let worker_threads = if config.workers > 0 {
         config.workers
     } else {
         num_cpus::get()
@@ -39,15 +39,15 @@ fn main() -> anyhow::Result<()> {
         .thread_name("aiperf-mock")
         .build()?;
 
-    runtime.block_on(async move { serve(config).await })
+    runtime.block_on(async move { serve(config, worker_threads).await })
 }
 
-async fn serve(config: MockServerConfig) -> anyhow::Result<()> {
+async fn serve(config: MockServerConfig, worker_threads: usize) -> anyhow::Result<()> {
     tracing::info!(
         host = %config.host,
         port = config.port,
         fast = config.fast,
-        workers = num_cpus::get(),
+        workers = worker_threads,
         "Starting AIPerf Mock Server (Rust)"
     );
 

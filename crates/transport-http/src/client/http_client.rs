@@ -727,6 +727,9 @@ impl HttpClient {
                 body,
                 content_type,
             }));
+            // Body fully drained above, so the H1 connection is clean and can be
+            // pooled even though we surface the HTTP failure to the caller.
+            record.reusable_connection = true;
             return Err(ErrorDetails::http(status.as_u16(), text));
         }
 

@@ -158,12 +158,19 @@ impl ServerMetricsAccumulator {
 
     /// Retain one complete parsed scrape.
     pub fn ingest_record(&mut self, record: ServerMetricsRecord) {
-        self.records.push(record);
-        self.records.sort_by(|left, right| {
-            left.timestamp_ns
-                .cmp(&right.timestamp_ns)
-                .then_with(|| left.endpoint_url.cmp(&right.endpoint_url))
+        // Insert in sorted position rather than re-sorting the whole Vec on
+        // every scrape: keeps `records` ordered by (timestamp, endpoint) at
+        // O(n) per insert instead of O(n log n), avoiding O(n^2 log n) growth
+        // over a run. `partition_point` with `<=` places new records after any
+        // existing equal-keyed record, preserving stable insertion order.
+        let index = self.records.partition_point(|existing| {
+            existing
+                .timestamp_ns
+                .cmp(&record.timestamp_ns)
+                .then_with(|| existing.endpoint_url.cmp(&record.endpoint_url))
+                .is_le()
         });
+        self.records.insert(index, record);
     }
 
     /// Every retained scrape in deterministic timestamp/endpoint order.
@@ -718,7 +725,8 @@ fn gauge_series(
             SeriesValue::Histogram(_) => None,
         })
         .collect::<Vec<_>>();
-    let stats = linear_distribution(&key.name, values.clone(), values.iter().sum(), 1)?;
+    let sum: f64 = values.iter().sum();
+    let stats = linear_distribution(&key.name, values, sum, 1)?;
     let timeslices = slice_duration_ns
         .filter(|duration| *duration > 0)
         .map(|duration| gauge_timeslices(key, state, boundary, duration))
@@ -879,7 +887,8 @@ fn gauge_timeslices(
                     SeriesValue::Histogram(_) => None,
                 })
                 .collect::<Vec<_>>();
-            let stats = linear_distribution(&key.name, values.clone(), values.iter().sum(), 1)?;
+            let sum: f64 = values.iter().sum();
+            let stats = linear_distribution(&key.name, values, sum, 1)?;
             Some(SidecarTimeslice {
                 start_ns,
                 end_ns,

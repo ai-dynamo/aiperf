@@ -18,7 +18,7 @@ use aiperf_clock::Clock;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
@@ -233,8 +233,16 @@ impl PythonWorker {
         self.stdin.write_all(b"\n").await.map_err(worker_io)?;
         self.stdin.flush().await.map_err(worker_io)?;
 
-        let mut line = String::new();
-        let bytes = self.stdout.read_line(&mut line).await.map_err(worker_io)?;
+        // Cap the read at the reader level (MAX+1 bytes) before allocating:
+        // read_line grows the buffer to the full line first and only checks the
+        // limit afterward, so a hostile/oversized worker line could OOM us. A
+        // line that fills the +1 slack byte is over the limit and rejected.
+        let mut line = Vec::new();
+        let bytes = (&mut self.stdout)
+            .take(MAX_PROTOCOL_LINE_BYTES as u64 + 1)
+            .read_until(b'\n', &mut line)
+            .await
+            .map_err(worker_io)?;
         if bytes == 0 {
             let status = self
                 .child
@@ -251,7 +259,7 @@ impl PythonWorker {
                 "worker response exceeded {MAX_PROTOCOL_LINE_BYTES} bytes"
             )));
         }
-        let response: WorkerResponse = serde_json::from_str(&line)
+        let response: WorkerResponse = serde_json::from_slice(&line)
             .map_err(|error| GpuTelemetryError::Worker(format!("decoding response: {error}")))?;
         if response.id != expected_id {
             return Err(GpuTelemetryError::Worker(format!(

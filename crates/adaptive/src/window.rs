@@ -216,8 +216,10 @@ impl WindowSampler for TumblingWindowSampler {
             .expect("a first token implies a last token");
         let started_ns = record.admit_ns.unwrap_or(record.start_ns);
         let output_sequence_length = record.usage.completion_tokens.and_then(count_to_usize);
+        // Match on_terminal: a meaningful ITL needs both authoritative OSL > 1 and
+        // more than one observed token, otherwise first == last yields a bogus 0.0.
         let inter_token_latency_ns = output_sequence_length
-            .filter(|count| *count > 1)
+            .filter(|count| *count > 1 && record.token_arrival_ns.len() > 1)
             .map(|count| last.saturating_sub(first).max(0) as f64 / (count - 1) as f64);
         self.completed.push(RequestSample {
             request_latency_ns: last.saturating_sub(started_ns).max(0),

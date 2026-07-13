@@ -290,6 +290,7 @@ pub struct MemoryArchiveSink {
     targets: BTreeMap<ReceiptTargetId, ReceiptTargetV1>,
     events: Vec<ReceiptEventV1>,
     fault: MemoryArchiveSinkFault,
+    poisoned: bool,
 }
 
 impl MemoryArchiveSink {
@@ -319,6 +320,7 @@ impl MemoryArchiveSink {
             targets: BTreeMap::new(),
             events: Vec::new(),
             fault: MemoryArchiveSinkFault::None,
+            poisoned: false,
         })
     }
 
@@ -333,8 +335,15 @@ impl MemoryArchiveSink {
         &self.events
     }
 
+    fn ensure_operable(&self) -> Result<(), ArchiveSinkError> {
+        if self.poisoned {
+            return Err(ArchiveSinkError::Poisoned);
+        }
+        ensure_operable(self.state, self.recovery_required)
+    }
+
     fn checkpoint_sync(&mut self) -> Result<CheckpointCompletion, ArchiveSinkError> {
-        ensure_operable(self.state, self.recovery_required)?;
+        self.ensure_operable()?;
         let next_checkpoint_seq = self
             .checkpoint_seq
             .checked_add(1)
@@ -378,21 +387,27 @@ impl ArchiveSink for MemoryArchiveSink {
         &mut self,
         frame: ArchiveWalFrame,
     ) -> Result<DurabilityCompletion, ArchiveSinkError> {
-        ensure_operable(self.state, self.recovery_required)?;
+        self.ensure_operable()?;
         let wal = self.wal.as_ref().ok_or(ArchiveSinkError::Finalized)?;
         validate_archive_frame(&frame, wal.header(), &self.schemas)?;
-        let mut next_wal = wal.clone();
-        next_wal.append(&frame.wal_frame)?;
+        // Append the physical projections, then the WAL frame in place, matching
+        // LocalParquetArchiveSink. A WAL failure after the parquet mutation
+        // poisons the sink rather than forcing a full segment-buffer clone on
+        // every append.
         let output = self
             .parquet
             .as_mut()
             .ok_or(ArchiveSinkError::Finalized)?
             .append_frame(frame.table_projections)?;
         merge_physical(&mut self.pending_physical, output);
-        let completion = durability_completion(&next_wal, &frame.wal_frame);
+        let wal = self.wal.as_mut().ok_or(ArchiveSinkError::Finalized)?;
+        if let Err(error) = wal.append(&frame.wal_frame) {
+            self.poisoned = true;
+            return Err(ArchiveSinkError::from(error));
+        }
+        let completion = durability_completion(wal, &frame.wal_frame);
         self.frames.push(frame.wal_frame);
         self.completions.push(completion.clone());
-        self.wal = Some(next_wal);
         if self.fault == MemoryArchiveSinkFault::AppendUncertainAfterApply {
             self.fault = MemoryArchiveSinkFault::None;
             self.uncertain_frames.insert(completion.frame_id);
@@ -408,7 +423,7 @@ impl ArchiveSink for MemoryArchiveSink {
         &mut self,
         draft: ReceiptEventDraft,
     ) -> Result<AppendReceipt, ArchiveSinkError> {
-        ensure_operable(self.state, self.recovery_required)?;
+        self.ensure_operable()?;
         validate_receipt_draft(
             self.archive_id,
             &draft,
@@ -452,7 +467,7 @@ impl ArchiveSink for MemoryArchiveSink {
         &mut self,
         reason: TerminationReason,
     ) -> Result<FinalizeCompletion, ArchiveSinkError> {
-        ensure_operable(self.state, self.recovery_required)?;
+        self.ensure_operable()?;
         if self.frames.is_empty() {
             return Err(ArchiveSinkError::EmptyFinalization);
         }

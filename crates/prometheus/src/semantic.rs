@@ -127,8 +127,11 @@ pub(crate) fn assemble_exposition(
     let mut metric_count = 0_usize;
     let mut point_count = 0_usize;
     let mut output = Vec::with_capacity(families.len());
-    for family in families {
-        let metrics = build_metrics(format, &family, limits)?;
+    for mut family in families {
+        // Move the family's wire samples into assembly so build_metrics consumes them
+        // once instead of deep-cloning every sample (its labels were then cloned again).
+        let samples = std::mem::take(&mut family.samples);
+        let metrics = build_metrics(format, &family, samples, limits)?;
         metric_count = metric_count.checked_add(metrics.len()).ok_or_else(|| {
             ParseError::body(
                 ParseErrorKind::LimitExceeded(LimitKind::Metrics),
@@ -276,13 +279,31 @@ fn resolve_sample_role(
     families: &mut Vec<FamilyDraft>,
     family_by_name: &mut BTreeMap<String, usize>,
 ) -> Result<(usize, WireSampleRole), ParseError> {
-    let candidates = families
-        .iter()
-        .enumerate()
-        .filter_map(|(index, family)| {
-            role_for(format, family, &sample.emitted_name).map(|role| (index, role))
-        })
-        .collect::<Vec<_>>();
+    // A family can only produce a role when its declared name equals the emitted name
+    // or the emitted name minus one known role suffix, so probe the name index for
+    // those few candidates instead of scanning every family for every sample — the
+    // latter is O(families*samples) and defeats the crate's bounded-parse guarantee.
+    const ROLE_SUFFIXES: [&str; 8] = [
+        "_total", "_created", "_info", "_bucket", "_sum", "_count", "_gsum", "_gcount",
+    ];
+    let emitted_name = sample.emitted_name.as_str();
+    let mut candidate_names = Vec::<&str>::with_capacity(ROLE_SUFFIXES.len() + 1);
+    candidate_names.push(emitted_name);
+    for suffix in ROLE_SUFFIXES {
+        if let Some(prefix) = emitted_name.strip_suffix(suffix)
+            && !candidate_names.contains(&prefix)
+        {
+            candidate_names.push(prefix);
+        }
+    }
+    let mut candidates = Vec::<(usize, WireSampleRole)>::new();
+    for name in candidate_names {
+        if let Some(&index) = family_by_name.get(name)
+            && let Some(role) = role_for(format, &families[index], emitted_name)
+        {
+            candidates.push((index, role));
+        }
+    }
     match candidates.as_slice() {
         [(index, role)] => Ok((*index, *role)),
         [] => {
@@ -345,10 +366,11 @@ fn role_for(
         (ExpositionFormat::OpenMetricsText100, SemanticType::StateSet) if emitted_name == name => {
             Some(WireSampleRole::State)
         }
-        (ExpositionFormat::OpenMetricsText100, SemanticType::Info)
-            if emitted_name == format!("{name}_info") =>
-        {
-            Some(WireSampleRole::Info)
+        (ExpositionFormat::OpenMetricsText100, SemanticType::Info) => {
+            match emitted_name.strip_prefix(name) {
+                Some("_info") => Some(WireSampleRole::Info),
+                _ => None,
+            }
         }
         (_, SemanticType::Histogram) => match emitted_name.strip_prefix(name) {
             Some("_bucket") => Some(WireSampleRole::HistogramBucket),
@@ -544,13 +566,14 @@ struct MetricSamples {
 fn build_metrics(
     format: ExpositionFormat,
     family: &FamilyDraft,
+    samples: Vec<WireSample>,
     limits: &ParseLimits,
 ) -> Result<Vec<Metric>, ParseError> {
     let mut metrics = Vec::<MetricSamples>::new();
     let mut metric_by_labels = BTreeMap::<Vec<(String, String)>, usize>::new();
     let mut previous_openmetrics_metric = None::<Vec<(String, String)>>;
     let mut closed_openmetrics_metrics = BTreeSet::<Vec<(String, String)>>::new();
-    for wire in family.samples.iter().cloned() {
+    for wire in samples {
         let labels = metric_labels(family, &wire)?;
         let key = labels
             .iter()

@@ -658,7 +658,7 @@ fn parse_label_set(
             ));
         }
         *cursor += 1;
-        let value = parse_quoted_value(format, line_number, line, cursor)?;
+        let value = parse_quoted_value(line_number, line, cursor)?;
         if value.len() > limits.max_label_value_bytes {
             return Err(ParseError::line(
                 line_number,
@@ -724,7 +724,6 @@ fn parse_label_set(
 }
 
 fn parse_quoted_value(
-    format: ExpositionFormat,
     line_number: usize,
     line: &str,
     cursor: &mut usize,
@@ -760,34 +759,22 @@ fn parse_quoted_value(
                         decoded.push('\\');
                         *cursor += 1;
                     }
-                    _ if format == ExpositionFormat::OpenMetricsText100 => {
-                        // `line` is a validated &str and the cursor sits on a char boundary, so a
-                        // tail char is present today; return a parse error instead of panicking if
-                        // this untrusted-input path is ever reached with an exhausted cursor.
-                        let character = line[*cursor..].chars().next().ok_or_else(|| {
-                            ParseError::line(
-                                line_number,
-                                *cursor + 1,
-                                ParseErrorKind::Label,
-                                "label value ends in an incomplete escape",
-                            )
-                        })?;
-                        decoded.push(character);
-                        *cursor += character.len_utf8();
-                    }
+                    // Both dialects allow only \\, \", and \n in a quoted label value. Reject any
+                    // other escape symmetrically instead of dropping the backslash for OpenMetrics,
+                    // which would be asymmetric leniency for a strict parser.
                     _ => {
                         return Err(ParseError::line(
                             line_number,
                             *cursor,
                             ParseErrorKind::Label,
-                            "Prometheus label value contains an undefined escape",
+                            "label value contains an undefined escape",
                         ));
                     }
                 }
             }
             _ => {
-                // See the escape branch above: the cursor is on a char boundary of a validated
-                // &str, so this is defensive against a future refactor on the untrusted path.
+                // `line` is a validated &str and the cursor sits on a char boundary, so a char is
+                // present today; this is defensive against a future refactor on the untrusted path.
                 let character = line[*cursor..].chars().next().ok_or_else(|| {
                     ParseError::line(
                         line_number,
@@ -847,20 +834,9 @@ fn decode_escaped(
             b'n' => decoded.push('\n'),
             b'\\' => decoded.push('\\'),
             b'\"' if format == ExpositionFormat::OpenMetricsText100 => decoded.push('\"'),
-            _ if format == ExpositionFormat::OpenMetricsText100 => {
-                // See the non-escape branch above: defensive parse error on the untrusted path.
-                let character = raw[cursor..].chars().next().ok_or_else(|| {
-                    ParseError::line(
-                        line_number,
-                        column + cursor,
-                        ParseErrorKind::Metadata,
-                        "metadata value ends in an incomplete escape",
-                    )
-                })?;
-                decoded.push(character);
-                cursor += character.len_utf8();
-                continue;
-            }
+            // Both dialects define a closed escape set (Prometheus: \\ \n; OpenMetrics: \\ \n \").
+            // Reject any other escape symmetrically rather than silently dropping the backslash and
+            // keeping the trailing char, which would be asymmetric leniency for a strict parser.
             _ => {
                 return Err(ParseError::line(
                     line_number,

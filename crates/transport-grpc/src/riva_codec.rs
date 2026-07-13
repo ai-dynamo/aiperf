@@ -545,9 +545,11 @@ fn bool_field(object: &Map<String, Value>, name: &str, default: bool) -> Result<
 
 fn audio_bytes(value: &Value) -> Result<Vec<u8>, CodecError> {
     if let Some(encoded) = value.as_str() {
-        return Ok(STANDARD
+        // Reject malformed base64 rather than reinterpreting the raw string bytes
+        // as audio, which would silently smuggle invalid input into the RPC.
+        return STANDARD
             .decode(encoded)
-            .unwrap_or_else(|_| encoded.as_bytes().to_vec()));
+            .map_err(|error| CodecError::new(format!("Riva audio is not valid base64: {error}")));
     }
     if let Some(values) = value.as_array() {
         return values

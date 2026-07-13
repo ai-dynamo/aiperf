@@ -219,11 +219,13 @@ impl PrefixCache {
             .clamp(1, MAX_BLOCKS_PER_REQUEST);
         let block_bytes = bytes.len().div_ceil(target_blocks).max(1);
 
-        let mut cache = self.cache.lock();
+        // Chain-hash every block up front, outside the cache lock: blake2 is the
+        // expensive per-request work and needs no shared state, so serializing it
+        // under the lock would bottleneck all requests. Only the cheap
+        // contains/touch bookkeeping below holds the lock, and it stays interleaved
+        // to preserve mid-scan self-eviction fidelity under tight capacity.
         let mut chained: u64 = 0xcbf2_9ce4_8422_2325; // FNV offset basis, just a seed
-        let mut matched = 0usize;
-        let mut total = 0usize;
-        let mut still_matching = true;
+        let mut hashes: Vec<u64> = Vec::with_capacity(target_blocks);
         let mut lo = 0usize;
         while lo < bytes.len() {
             let hi = (lo + block_bytes).min(bytes.len());
@@ -232,14 +234,21 @@ impl PrefixCache {
             hasher.update(&bytes[lo..hi]);
             let digest = hasher.finalize();
             chained = u64::from_le_bytes(digest[..8].try_into().unwrap());
-            if still_matching && cache.contains(chained) {
+            hashes.push(chained);
+            lo = hi;
+        }
+
+        let mut matched = 0usize;
+        let mut still_matching = true;
+        let total = hashes.len();
+        let mut cache = self.cache.lock();
+        for &hash in &hashes {
+            if still_matching && cache.contains(hash) {
                 matched += 1;
             } else {
                 still_matching = false;
             }
-            cache.touch(chained, priority);
-            total += 1;
-            lo = hi;
+            cache.touch(hash, priority);
         }
         let cached = prompt_tokens * matched / total.max(1);
         cached.min(prompt_tokens - 1)

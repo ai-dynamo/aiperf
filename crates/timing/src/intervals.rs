@@ -19,7 +19,9 @@ use rand_distr::{Distribution, Exp, Gamma};
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 /// Convert a non-negative interval in seconds to integer nanoseconds, rounding
-/// half-to-even. Non-finite or negative inputs clamp to 0 (an immediate arrival).
+/// to the nearest nanosecond with ties away from zero (`f64::round`; not Python
+/// `round`'s half-to-even). Non-finite or negative inputs clamp to 0 (an
+/// immediate arrival).
 fn secs_to_ns(secs: f64) -> i64 {
     if !secs.is_finite() || secs <= 0.0 {
         return 0;
@@ -89,6 +91,9 @@ impl IntervalGenerator for Poisson {
 pub struct GammaProcess {
     rate: f64,
     smoothness: f64,
+    // Cached distribution: `Gamma::new` precomputes the Marsaglia-Tsang constants,
+    // so it is rebuilt only when the rate changes, never per sample on the hot path.
+    dist: Gamma<f64>,
     rng: StdRng,
 }
 
@@ -103,22 +108,27 @@ impl GammaProcess {
         Self {
             rate,
             smoothness,
+            dist: Self::make_dist(rate, smoothness),
             rng: StdRng::seed_from_u64(seed),
         }
+    }
+
+    /// shape = smoothness, scale = 1/(rate*smoothness) -> mean = shape*scale = 1/rate.
+    fn make_dist(rate: f64, smoothness: f64) -> Gamma<f64> {
+        let scale = 1.0 / (rate * smoothness);
+        Gamma::new(smoothness, scale)
+            .expect("shape and scale > 0 checked at construction/set_rate")
     }
 }
 
 impl IntervalGenerator for GammaProcess {
     fn next_interval_ns(&mut self) -> i64 {
-        // shape = smoothness, scale = 1/(rate*smoothness) -> mean = shape*scale = 1/rate.
-        let scale = 1.0 / (self.rate * self.smoothness);
-        let dist = Gamma::new(self.smoothness, scale)
-            .expect("shape and scale > 0 checked at construction/set_rate");
-        secs_to_ns(dist.sample(&mut self.rng))
+        secs_to_ns(self.dist.sample(&mut self.rng))
     }
     fn set_rate(&mut self, rate: f64) {
         assert!(rate > 0.0, "Gamma rate must be > 0, got {rate}");
         self.rate = rate;
+        self.dist = Self::make_dist(rate, self.smoothness);
     }
     fn rate(&self) -> f64 {
         self.rate

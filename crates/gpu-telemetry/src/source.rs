@@ -172,13 +172,18 @@ impl GpuTelemetrySource for DcgmTelemetrySource {
             .borrow()
             .as_ref()
             .is_some_and(|last| last == &body);
-        *self.last_body.borrow_mut() = Some(body.clone());
         if duplicate && mode == GpuScrapeMode::Continuous {
+            // A duplicate cadence body carries no new counters; skip decode
+            // without cloning or re-storing the identical body already held.
             return Ok(None);
         }
         let timestamp_ns = self.clock.now_ns();
+        // Store the fetched body first, then decode it by reference so the
+        // cadence path never clones the full Prometheus exposition.
+        let mut last_body = self.last_body.borrow_mut();
+        let body: &str = last_body.insert(body);
         self.decoder
-            .decode(&self.display_url, timestamp_ns, &body)
+            .decode(&self.display_url, timestamp_ns, body)
             .map(Some)
     }
 }
