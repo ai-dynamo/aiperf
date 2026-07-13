@@ -4,7 +4,7 @@
 //! Protocol-v2 adapters for the native online HTTP transport.
 //!
 //! Authored protocol-v2 values lower directly into the protocol-neutral
-//! [`NativeRunPlan`] consumed by the same coordinator as protocol v1. The
+//! [`NativeRunSpec`] consumed by the same coordinator as protocol v1. The
 //! adapter never constructs or serializes a protocol-v1 `RunRequest`. Direct
 //! `dag_jsonl` input remains an authored graph program: the common coordinator
 //! passes it once to the selected runner-owned authored-input adapter, which
@@ -30,7 +30,7 @@ use url::Url;
 
 use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
-    NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunPlan, NativeRunSpec,
+    NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
     NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
     StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
     execute_prepared_native_plan_uncommitted_with_execution_factories, load_tokenizer,
@@ -41,9 +41,10 @@ use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
 use crate::registry::{
-    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
-    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
-    StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
+    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome,
+    PreparedRunnerOperation, RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext,
+    ScheduledWorkloadConfigV2, StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig,
+    ValidatedWorkloadConfig,
 };
 use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
@@ -64,9 +65,7 @@ pub fn register_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
 
 /// Register static accuracy after sidecar parity or an exact frontend gate is
 /// present in the same distribution.
-pub fn register_http_static_accuracy_pair(
-    builder: &mut RunnerRegistryBuilder,
-) -> Result<()> {
+pub fn register_http_static_accuracy_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     register_http_static_accuracy_pair_with_factories(
         builder,
         Arc::new(NativeOnlineTokenizerSourceResolver::default()),
@@ -426,13 +425,6 @@ fn validate_online_run(context: &RunnerRunContext) -> Result<()> {
             ensure!(
                 matches!(scheme.as_str(), "http" | "https"),
                 "http endpoint profile {profile_id:?} requires http:// or https:// URLs, got {url:?}"
-            );
-        }
-        if profile.config.wait_for_model_timeout > 0.0 {
-            ensure!(
-                profile.config.wait_for_model_mode == "models",
-                "endpoint profile {profile_id:?} readiness mode {:?} is not executable yet; only endpoint-owned models/health readiness is implemented",
-                profile.config.wait_for_model_mode
             );
         }
     }
@@ -819,7 +811,7 @@ pub(crate) fn lower_scheduled(
     context: &RunnerRunContext,
     workload: &ScheduledWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
-) -> Result<NativeRunPlan> {
+) -> Result<NativeRunSpec> {
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
     let profile = context.default_endpoint_profile()?;
@@ -893,7 +885,7 @@ fn lower_graph(
     context: &RunnerRunContext,
     workload: &GraphWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
-) -> Result<NativeRunPlan> {
+) -> Result<NativeRunSpec> {
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -937,7 +929,7 @@ fn lower_static_accuracy(
     workload: &StaticAccuracyWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
-) -> Result<NativeRunPlan> {
+) -> Result<NativeRunSpec> {
     validate_static_accuracy_endpoint(context)?;
     let accuracy = StaticAccuracyConfigV2::decode(&workload.accuracy)?.lower(evaluator_factory);
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
@@ -977,28 +969,26 @@ fn build_common_plan(
     phases: &[PhaseSpec],
     endpoint: NativeEndpointPlan,
     sidecars: NativeSidecarPlan,
-) -> Result<NativeRunPlan> {
-    Ok(NativeRunPlan {
-        run: NativeRunSpec {
-            benchmark_id: run.identity.benchmark_id.clone(),
-            random_seed: run.identity.random_seed,
-            workers,
-            artifact_dir: run.artifact_target.clone(),
-            models: run.models.clone(),
-            endpoint,
-            dataset,
-            tokenizer,
-            phases: phases.to_vec(),
-            metrics: run.metrics.clone(),
-            artifacts: ArtifactSpec {
-                records_path: run.artifacts.records_path.clone(),
-                raw_path: run.artifacts.raw_path.clone(),
-                outputs_path: run.artifacts.outputs_path.clone(),
-                trace: run.artifacts.trace,
-            },
-            sidecars,
-            user_files: run.artifacts.user_files.clone(),
+) -> Result<NativeRunSpec> {
+    Ok(NativeRunSpec {
+        benchmark_id: run.identity.benchmark_id.clone(),
+        random_seed: run.identity.random_seed,
+        workers,
+        artifact_dir: run.artifact_target.clone(),
+        models: run.models.clone(),
+        endpoint,
+        dataset,
+        tokenizer,
+        phases: phases.to_vec(),
+        metrics: run.metrics.clone(),
+        artifacts: ArtifactSpec {
+            records_path: run.artifacts.records_path.clone(),
+            raw_path: run.artifacts.raw_path.clone(),
+            outputs_path: run.artifacts.outputs_path.clone(),
+            trace: run.artifacts.trace,
         },
+        sidecars,
+        user_files: run.artifacts.user_files.clone(),
     })
 }
 
@@ -1023,14 +1013,14 @@ fn validate_graph_endpoint_profile_references(
 }
 
 struct NativePlanHarness {
-    plan: NativeRunPlan,
+    plan: NativeRunSpec,
 }
 
 impl fmt::Debug for NativePlanHarness {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NativePlanHarness")
-            .field("benchmark_id", &self.plan.run.benchmark_id)
+            .field("benchmark_id", &self.plan.benchmark_id)
             .finish_non_exhaustive()
     }
 }
@@ -1053,16 +1043,16 @@ impl PreparedOnlineHarness for NativePlanHarness {
     }
 }
 
-fn native_plan_report_facts(plan: &NativeRunPlan) -> Result<ReportPairRunFacts> {
-    let NativeDatasetPlan::Graph(graph) = &plan.run.dataset else {
+fn native_plan_report_facts(plan: &NativeRunSpec) -> Result<ReportPairRunFacts> {
+    let NativeDatasetPlan::Graph(graph) = &plan.dataset else {
         return Ok(ReportPairRunFacts::new());
     };
     let graph = ReportGraphRunInfo::new(
         graph.input.metadata.format.clone(),
         graph.input.metadata.root_count,
         graph.input.metadata.node_count,
-        plan.run.workers,
-        plan.run.phases.len(),
+        plan.workers,
+        plan.phases.len(),
     )?;
     Ok(ReportPairRunFacts::new().with_graph(graph))
 }

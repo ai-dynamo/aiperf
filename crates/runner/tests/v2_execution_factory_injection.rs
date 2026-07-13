@@ -13,15 +13,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf::http::{HttpTurnDispatchResult, HttpTurnExecutionBackend, PreparedHttpTurn};
+use aiperf::http::{
+    HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
+};
 use aiperf::multiturn::TurnToSend;
-use aiperf::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 use aiperf_clock::Clock;
 use aiperf_extensions::BuiltinAiperfRegistryFactory;
 use aiperf_graph::errors::TraceError;
 use aiperf_graph::execution::GraphTraceExecutionBackend;
 use aiperf_graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
-use aiperf_metrics::{HttpTrace, InferenceDimensions};
+use aiperf_metrics::InferenceDimensions;
 use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
 use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
 use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
@@ -35,11 +36,8 @@ use aiperf_runner::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
     NativeRunnerGraphPlacementFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
 };
-use aiperf_transport_http::models::RequestRecord;
 use anyhow::{Result, anyhow, ensure};
 use async_trait::async_trait;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{ObservedUsage, RequestObserver};
 use serde_json::{Value, json};
 
 const DISTRIBUTION_ID: &str =
@@ -98,53 +96,17 @@ impl HttpTurnExecutionBackend for FakeRemoteBackend {
         }
     }
 
-    async fn execute_turn(
+    async fn execute_turn_measured(
         &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
+        _turn: PreparedHttpTurn,
+        _context: MeasuredTurnContext,
+        _on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredTurnOutcome> {
+        // Stub for the #[ignore]d remote-placement test; metrics accumulate in
+        // the worker-local NativeMetricsObserver via dispatch_prepared_turn_measured
+        // on a real backend, not here.
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let start_ns = self
-            .run_origin_ns
-            .get()
-            .expect("run origin is configured before dispatch");
-        let uuid = turn.request.uuid;
-        observer.on_admit(uuid, 0.0, 0);
-        on_first_token(100_000);
-        observer.on_token(uuid, 0.1);
-        observer.on_usage(
-            uuid,
-            ObservedUsage {
-                prompt_tokens: Some(turn.request.input_length),
-                completion_tokens: Some(1),
-                ..ObservedUsage::default()
-            },
-        );
-        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
-
-        let request_payload = turn.request.request_body_bytes.clone().unwrap_or_default();
-        Ok(HttpTurnDispatchResult {
-            outcome: TurnDispatchOutcome {
-                start_ns,
-                end_ns: start_ns + 200_000,
-                terminal: ReplayTerminalStatus::Completed,
-                response_text: "remote response".into(),
-                model_response: ModelResponseMetadata::default(),
-                prompt_tokens: Some(turn.request.input_length as u64),
-                completion_tokens: Some(1),
-                http: HttpTrace::default(),
-            },
-            request_payload: request_payload.clone(),
-            record: RequestRecord {
-                start_ns,
-                request_body: request_payload,
-                request_headers: turn.request.headers,
-                end_ns: Some(start_ns + 200_000),
-                status: Some(200),
-                ..RequestRecord::default()
-            },
-        })
+        Err(anyhow!("FakeRemoteBackend does not implement measured dispatch"))
     }
 
     fn shutdown(&self) -> Result<()> {
@@ -212,12 +174,12 @@ impl HttpTurnExecutionBackend for FailingOriginBackend {
         unreachable!("origin failure prevents dispatch")
     }
 
-    async fn execute_turn(
+    async fn execute_turn_measured(
         &self,
         _turn: PreparedHttpTurn,
-        _observer: &dyn RequestObserver,
+        _context: MeasuredTurnContext,
         _on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
+    ) -> Result<MeasuredTurnOutcome> {
         unreachable!("origin failure prevents dispatch")
     }
 

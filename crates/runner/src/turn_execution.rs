@@ -30,10 +30,6 @@ use aiperf_endpoints::{ParsedResponse, PreparedEndpointTable};
 use aiperf_metrics::{InferenceDimensions, MetricsConfig, RecordIngest};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
-use loadgen_core::collector::ReplayTerminalStatus;
-use loadgen_core::sink::{
-    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
-};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::sync::PollSender;
@@ -111,123 +107,8 @@ impl HttpExecutionBackendFactory for NativeHttpExecutionBackendFactory {
     }
 }
 
-#[derive(Debug)]
-enum ObserverEvent {
-    Admit {
-        uuid: Uuid,
-        at_ms: f64,
-        reused_input_tokens: usize,
-    },
-    Token {
-        uuid: Uuid,
-        at_ms: f64,
-    },
-    ClassifiedToken {
-        uuid: Uuid,
-        at_ms: f64,
-        kind: ObservedTokenKind,
-    },
-    Usage {
-        uuid: Uuid,
-        usage: ObservedUsage,
-    },
-    EndpointMetrics {
-        uuid: Uuid,
-        metrics: ObservedEndpointMetrics,
-    },
-    Terminal {
-        uuid: Uuid,
-        status: ReplayTerminalStatus,
-    },
-}
-
-impl ObserverEvent {
-    fn replay(self, observer: &dyn RequestObserver, origin_ms: f64) {
-        match self {
-            Self::Admit {
-                uuid,
-                at_ms,
-                reused_input_tokens,
-            } => observer.on_admit(uuid, at_ms - origin_ms, reused_input_tokens),
-            Self::Token { uuid, at_ms } => observer.on_token(uuid, at_ms - origin_ms),
-            Self::ClassifiedToken { uuid, at_ms, kind } => {
-                observer.on_classified_token(uuid, at_ms - origin_ms, kind);
-            }
-            Self::Usage { uuid, usage } => observer.on_usage(uuid, usage),
-            Self::EndpointMetrics { uuid, metrics } => {
-                observer.on_endpoint_metrics(uuid, metrics);
-            }
-            Self::Terminal { uuid, status } => observer.on_terminal(uuid, status),
-        }
-    }
-}
-
-#[derive(Default)]
-struct BufferedObserver {
-    events: RefCell<Vec<ObserverEvent>>,
-}
-
-impl BufferedObserver {
-    fn take(&self) -> Vec<ObserverEvent> {
-        self.events.take()
-    }
-}
-
-impl RequestObserver for BufferedObserver {
-    fn on_arrival(
-        &self,
-        _uuid: Uuid,
-        _arrival_ms: f64,
-        _input_length: usize,
-        _requested_output_length: usize,
-    ) {
-        // Arrival is owned by the one coordinator-side dispatcher.
-    }
-
-    fn on_admit(&self, uuid: Uuid, at_ms: f64, reused_input_tokens: usize) {
-        self.events.borrow_mut().push(ObserverEvent::Admit {
-            uuid,
-            at_ms,
-            reused_input_tokens,
-        });
-    }
-
-    fn on_token(&self, uuid: Uuid, at_ms: f64) {
-        self.events
-            .borrow_mut()
-            .push(ObserverEvent::Token { uuid, at_ms });
-    }
-
-    fn on_classified_token(&self, uuid: Uuid, at_ms: f64, kind: ObservedTokenKind) {
-        self.events
-            .borrow_mut()
-            .push(ObserverEvent::ClassifiedToken { uuid, at_ms, kind });
-    }
-
-    fn on_usage(&self, uuid: Uuid, usage: ObservedUsage) {
-        self.events
-            .borrow_mut()
-            .push(ObserverEvent::Usage { uuid, usage });
-    }
-
-    fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
-        self.events
-            .borrow_mut()
-            .push(ObserverEvent::EndpointMetrics { uuid, metrics });
-    }
-
-    fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
-        self.events
-            .borrow_mut()
-            .push(ObserverEvent::Terminal { uuid, status });
-    }
-}
-
 struct WorkerReply {
     result: Result<HttpTurnDispatchResult>,
-    /// Buffered observations for the legacy `execute_turn(observer)` replay path
-    /// (agentic/evaluation); empty for the worker-local measured path.
-    events: Vec<ObserverEvent>,
     /// Non-consuming cloned record for a live sink, when the measured command
     /// requested one; the authoritative record stays in the worker observer.
     live_record: Option<RecordIngest>,
@@ -235,9 +116,7 @@ struct WorkerReply {
 
 struct WorkerCommand {
     turn: PreparedHttpTurn,
-    /// Present when this command accumulates into the worker-local observer;
-    /// absent for the legacy buffered `execute_turn(observer)` path.
-    context: Option<MeasuredTurnContext>,
+    context: MeasuredTurnContext,
     first_token: oneshot::Sender<i64>,
     responses: Option<mpsc::Sender<ParsedResponse>>,
     completed: oneshot::Sender<WorkerReply>,
@@ -439,39 +318,6 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         true
     }
 
-    async fn execute_turn(
-        &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
-        let run_origin_ns = self.origin()?;
-        let reply = self
-            .execute_command(turn, None, on_first_token, None)
-            .await?;
-        for event in reply.events {
-            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
-        }
-        reply.result
-    }
-
-    async fn execute_turn_streaming(
-        &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-        responses: &dyn TurnResponseObserver,
-    ) -> Result<HttpTurnDispatchResult> {
-        let run_origin_ns = self.origin()?;
-        let reply = self
-            .execute_command(turn, None, on_first_token, Some(responses))
-            .await?;
-        for event in reply.events {
-            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
-        }
-        reply.result
-    }
-
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
         let senders = self.senders.borrow();
         let senders = senders
@@ -495,7 +341,7 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         on_first_token: &dyn Fn(i64),
     ) -> Result<MeasuredTurnOutcome> {
         let reply = self
-            .execute_command(turn, Some(context), on_first_token, None)
+            .execute_command(turn, context, on_first_token, None)
             .await?;
         Ok(MeasuredTurnOutcome {
             result: reply.result?,
@@ -511,7 +357,7 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         responses: &dyn TurnResponseObserver,
     ) -> Result<MeasuredTurnOutcome> {
         let reply = self
-            .execute_command(turn, Some(context), on_first_token, Some(responses))
+            .execute_command(turn, context, on_first_token, Some(responses))
             .await?;
         Ok(MeasuredTurnOutcome {
             result: reply.result?,
@@ -565,7 +411,7 @@ impl ThreadPerCoreHttpExecutionBackend {
     async fn execute_command(
         &self,
         turn: PreparedHttpTurn,
-        context: Option<MeasuredTurnContext>,
+        context: MeasuredTurnContext,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<WorkerReply> {
@@ -819,28 +665,12 @@ async fn execute_worker_command(
         }
     };
     let response_observer = responses.map(WorkerResponseObserver::new);
-    // Measured commands accumulate into the shared worker observer; legacy
-    // buffered commands (agentic/evaluation) collect replayable events instead.
-    let buffered = context.is_none().then(BufferedObserver::default);
-    let reply = match &context {
-        Some(context) => {
-            let observer = match &worker_observer {
-                Some(observer) => observer,
-                None => {
-                    let _ = completed.send(WorkerReply {
-                        result: Err(anyhow!(
-                            "worker-local measurement was not configured before a measured command"
-                        )),
-                        events: Vec::new(),
-                        live_record: None,
-                    });
-                    return;
-                }
-            };
+    let reply = match &worker_observer {
+        Some(observer) => {
             let dispatch = sink.dispatch_prepared_turn_measured(
                 observer,
                 turn,
-                context,
+                &context,
                 &on_first_token,
                 response_observer
                     .as_ref()
@@ -858,46 +688,16 @@ async fn execute_worker_command(
                 .wants_live_record
                 .then(|| observer.snapshot_record(uuid, 0))
                 .flatten();
-            WorkerReply {
-                result,
-                events: Vec::new(),
-                live_record,
-            }
+            WorkerReply { result, live_record }
         }
         None => {
-            let observer = buffered
-                .as_ref()
-                .expect("buffered observer exists when no measured context is present");
-            let dispatch = async {
-                match response_observer.as_ref() {
-                    Some(responses) => {
-                        sink.dispatch_prepared_turn_collect_record_streaming(
-                            turn,
-                            observer,
-                            &on_first_token,
-                            responses,
-                        )
-                        .await
-                    }
-                    None => {
-                        sink.dispatch_prepared_turn_collect_record(turn, observer, &on_first_token)
-                            .await
-                    }
-                }
-            };
-            tokio::pin!(dispatch);
-            let result = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => {
-                    Err(anyhow!("HTTP execution command cancelled by its coordinator"))
-                }
-                result = &mut dispatch => result,
-            };
-            WorkerReply {
-                result,
-                events: observer.take(),
+            let _ = completed.send(WorkerReply {
+                result: Err(anyhow!(
+                    "worker-local measurement was not configured before a measured command"
+                )),
                 live_record: None,
-            }
+            });
+            return;
         }
     };
     drop(first_token.borrow_mut().take());
@@ -936,44 +736,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-
-    #[test]
-    fn buffered_observer_events_replay_in_order() {
-        #[derive(Default)]
-        struct Observer {
-            events: RefCell<Vec<&'static str>>,
-        }
-        impl RequestObserver for Observer {
-            fn on_arrival(&self, _: Uuid, _: f64, _: usize, _: usize) {}
-            fn on_admit(&self, _: Uuid, _: f64, _: usize) {
-                self.events.borrow_mut().push("admit");
-            }
-            fn on_token(&self, _: Uuid, _: f64) {
-                self.events.borrow_mut().push("token");
-            }
-            fn on_usage(&self, _: Uuid, _: ObservedUsage) {
-                self.events.borrow_mut().push("usage");
-            }
-            fn on_terminal(&self, _: Uuid, _: ReplayTerminalStatus) {
-                self.events.borrow_mut().push("terminal");
-            }
-        }
-
-        let uuid = Uuid::nil();
-        let buffered = BufferedObserver::default();
-        buffered.on_admit(uuid, 1.0, 0);
-        buffered.on_token(uuid, 2.0);
-        buffered.on_usage(uuid, ObservedUsage::default());
-        buffered.on_terminal(uuid, ReplayTerminalStatus::Completed);
-        let observer = Observer::default();
-        for event in buffered.take() {
-            event.replay(&observer, 0.0);
-        }
-        assert_eq!(
-            observer.events.borrow().as_slice(),
-            &["admit", "token", "usage", "terminal"]
-        );
-    }
 
     #[derive(Clone)]
     struct StreamingEndpointTableFactory {
@@ -1037,7 +799,9 @@ mod tests {
                 prepared_endpoints: Some(table_factory),
             })
             .unwrap();
-        backend.set_run_origin(clock.now_ns()).unwrap();
+        let origin_ns = clock.now_ns();
+        backend.set_run_origin(origin_ns).unwrap();
+        backend.configure_measurement(MetricsConfig::default(), origin_ns).unwrap();
         backend
     }
 
@@ -1156,12 +920,11 @@ mod tests {
                 collected_for_task.lock().unwrap().push(response);
             }
         });
-        let observer = BufferedObserver::default();
         let first_tokens = Cell::new(0_usize);
-        let result = backend
-            .execute_turn_streaming(
+        let outcome = backend
+            .execute_turn_measured_streaming(
                 turn,
-                &observer,
+                MeasuredTurnContext::default(),
                 &|_| first_tokens.set(first_tokens.get() + 1),
                 &responses,
             )
@@ -1170,7 +933,7 @@ mod tests {
         drop(responses);
         consumer.await.unwrap();
         assert_eq!(
-            result.outcome.response_text,
+            outcome.result.unwrap().outcome.response_text,
             format!("hel{}", "x".repeat(300))
         );
         assert_eq!(first_tokens.get(), 1);
@@ -1221,10 +984,13 @@ mod tests {
         let responses = FirstResponseObserver {
             observed: first_response.clone(),
         };
-        let observer = BufferedObserver::default();
         {
-            let dispatch =
-                backend.execute_turn_streaming(streaming_turn(), &observer, &|_| {}, &responses);
+            let dispatch = backend.execute_turn_measured_streaming(
+                streaming_turn(),
+                MeasuredTurnContext::default(),
+                &|_| {},
+                &responses,
+            );
             tokio::pin!(dispatch);
             tokio::select! {
                 biased;

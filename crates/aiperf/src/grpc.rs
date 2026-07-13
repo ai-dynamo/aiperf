@@ -533,16 +533,6 @@ impl HttpTurnExecutionBackend for GrpcTransportSink {
         }
     }
 
-    async fn execute_turn(
-        &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
-        self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
-            .await
-    }
-
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
         let observer = NativeMetricsObserver::new(self.clock.clone(), origin_ns, config);
         *self.measurement.borrow_mut() = Some(Rc::new(observer));
@@ -572,7 +562,10 @@ impl HttpTurnExecutionBackend for GrpcTransportSink {
 
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
         match self.measurement.borrow_mut().take() {
-            Some(observer) => Ok(observer.take_finalizer_at(end_ns).finish_with_records().records),
+            Some(observer) => Ok(observer
+                .take_finalizer_at(end_ns)
+                .finish_with_records()
+                .records),
             None => Ok(Vec::new()),
         }
     }

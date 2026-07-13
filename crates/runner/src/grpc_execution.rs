@@ -197,7 +197,7 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
 }
 
 struct PreparedGrpcScheduledOperation {
-    plan: crate::execute::NativeRunPlan,
+    plan: crate::execute::NativeRunSpec,
     product_registry: Arc<aiperf_extensions::AiperfRegistry>,
     execution_factories: RunnerExecutionFactories,
 }
@@ -206,7 +206,7 @@ impl fmt::Debug for PreparedGrpcScheduledOperation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedGrpcScheduledOperation")
-            .field("benchmark_id", &self.plan.run.benchmark_id)
+            .field("benchmark_id", &self.plan.benchmark_id)
             .finish_non_exhaustive()
     }
 }

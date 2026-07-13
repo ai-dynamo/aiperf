@@ -193,15 +193,6 @@ pub(crate) fn native_scheduled_resources(phases: &[PhaseSpec]) -> NativeSchedule
     }
 }
 
-/// Protocol-neutral execution plan consumed by the one native coordinator.
-///
-/// Protocol v1 and protocol v2 lower into this structure without serializing
-/// through one another's wire DTOs. The nested policy values are shared Rust
-/// value types; the process protocol discriminator is deliberately absent.
-pub(crate) struct NativeRunPlan {
-    pub(crate) run: NativeRunSpec,
-}
-
 /// Fully typed inputs required after a protocol implementation has validated
 /// and lowered its authored request.
 pub(crate) struct NativeRunSpec {
@@ -221,10 +212,6 @@ pub(crate) struct NativeRunSpec {
 }
 
 /// Protocol-neutral retention of one run's already decoded sidecar inputs.
-///
-/// Protocol v1 keeps its compatibility values directly. Protocol v2 retains
-/// the exact adapter-produced bundle from [`RunnerRunContext`](crate::registry::RunnerRunContext)
-/// without projecting through v1 or decoding any body a second time.
 pub(crate) enum NativeSidecarPlan {
     /// Protocol-v2 direct adapter outputs retained through execution.
     Prepared(Arc<PreparedSidecarInputs>),
@@ -263,10 +250,6 @@ impl NativeSidecarPlan {
 }
 
 /// Endpoint preparation selected by the source protocol.
-///
-/// Protocol v1 retains its closed compatibility value. Protocol v2 carries
-/// normalized open endpoint profiles directly into worker-local preparation;
-/// it is never projected through [`EndpointSpec`] or an [`EndpointType`].
 #[derive(Clone)]
 pub(crate) enum NativeEndpointPlan {
     /// Protocol-v2 open endpoint profiles.
@@ -473,7 +456,7 @@ pub(crate) struct NativeGraphDatasetPlan {
 /// canonical [`GraphInputBundle`], the execution harness cannot load or
 /// reinterpret the authored source a second time.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
-    plan: NativeRunPlan,
+    plan: NativeRunSpec,
     transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
@@ -493,7 +476,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
 /// pair preparation. Activation happens on the run-owned Clock before the
 /// exclusive artifact target is created.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
-    plan: NativeRunPlan,
+    plan: NativeRunSpec,
     factories: &RunnerExecutionFactories,
     registry: &AiperfRegistry,
     readiness: Box<dyn PreparedOnlineReadiness>,
@@ -510,7 +493,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 
 /// Execute one fully prepared plan with sidecar resource construction injected.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
-    plan: NativeRunPlan,
+    plan: NativeRunSpec,
     transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
@@ -527,7 +510,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
 }
 
 fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
-    plan: NativeRunPlan,
+    plan: NativeRunSpec,
     transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
@@ -641,38 +624,37 @@ fn materialize_user_files(
     Ok(())
 }
 
-fn validate_plan(request: &NativeRunPlan) -> Result<()> {
-    let _content_server = request.run.sidecars.content_server()?;
-    let gpu_telemetry = request.run.sidecars.gpu_telemetry()?;
-    let network_latency = request.run.sidecars.network_latency()?;
-    let server_metrics = request.run.sidecars.server_metrics()?;
-    let live_streaming = request.run.sidecars.live_streaming()?;
+fn validate_plan(request: &NativeRunSpec) -> Result<()> {
+    let _content_server = request.sidecars.content_server()?;
+    let gpu_telemetry = request.sidecars.gpu_telemetry()?;
+    let network_latency = request.sidecars.network_latency()?;
+    let server_metrics = request.sidecars.server_metrics()?;
+    let live_streaming = request.sidecars.live_streaming()?;
     ensure!(
-        !request.run.benchmark_id.trim().is_empty(),
+        !request.benchmark_id.trim().is_empty(),
         "benchmark_id cannot be empty"
     );
     ensure!(
-        !request.run.models.items.is_empty(),
+        !request.models.items.is_empty(),
         "at least one model is required"
     );
     ensure!(
-        !request.run.endpoint.default_urls()?.is_empty(),
+        !request.endpoint.default_urls()?.is_empty(),
         "at least one endpoint URL is required"
     );
     ensure!(
-        !request.run.phases.is_empty(),
+        !request.phases.is_empty(),
         "at least one phase is required"
     );
-    ensure!(request.run.workers > 0, "workers must be greater than zero");
+    ensure!(request.workers > 0, "workers must be greater than zero");
     ensure!(
         request
-            .run
             .phases
             .iter()
             .any(|phase| phase.common().name == "profiling"),
         "a profiling phase is required"
     );
-    for (index, phase) in request.run.phases.iter().enumerate() {
+    for (index, phase) in request.phases.iter().enumerate() {
         let common = phase.common();
         ensure!(
             matches!(common.name.as_str(), "warmup" | "profiling"),
@@ -687,7 +669,6 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
     if gpu_telemetry.is_some() {
         ensure!(
             request
-                .run
                 .phases
                 .iter()
                 .filter(|phase| phase.common().name == "profiling")
@@ -699,7 +680,6 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
     if network_latency.is_some() {
         ensure!(
             request
-                .run
                 .phases
                 .iter()
                 .filter(|phase| phase.common().name == "profiling")
@@ -711,7 +691,6 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
     if let Some(spec) = server_metrics {
         ensure!(
             request
-                .run
                 .phases
                 .iter()
                 .filter(|phase| phase.common().name == "profiling")
@@ -760,9 +739,9 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
             "live streaming requires an OTel or MLflow destination"
         );
     }
-    if let NativeDatasetPlan::StaticAccuracy(accuracy) = &request.run.dataset {
+    if let NativeDatasetPlan::StaticAccuracy(accuracy) = &request.dataset {
         accuracy.validate()?;
-        for phase in &request.run.phases {
+        for phase in &request.phases {
             ensure!(
                 !matches!(
                     phase,
@@ -965,7 +944,7 @@ impl PreparedNativeSidecarResources {
 }
 
 async fn prepare_and_execute_native(
-    request: NativeRunPlan,
+    request: NativeRunSpec,
     transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
@@ -975,11 +954,11 @@ async fn prepare_and_execute_native(
         &dyn ReadinessTransportFactory,
     )>,
 ) -> Result<NativeReport> {
-    if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
+    if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
         validate_graph_request(&request)?;
     }
     let mut accuracy = prepare_static_accuracy(&request).await?;
-    let mut sidecars = match sidecar_factory.prepare(&request.run).await {
+    let mut sidecars = match sidecar_factory.prepare(&request).await {
         Ok(sidecars) => sidecars,
         Err(error) => {
             return finish_accuracy_lifecycle(
@@ -1027,14 +1006,14 @@ fn create_run_artifacts(run: &NativeRunSpec) -> Result<()> {
 }
 
 async fn execute_native(
-    request: NativeRunPlan,
+    request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
+    if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
         ensure!(
             accuracy.is_none(),
             "graph execution received prepared static-accuracy state"
@@ -1045,7 +1024,7 @@ async fn execute_native(
 }
 
 async fn execute_scheduled_native(
-    request: NativeRunPlan,
+    request: NativeRunSpec,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: &dyn HttpExecutionBackendFactory,
@@ -1054,27 +1033,27 @@ async fn execute_scheduled_native(
     execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
 }
 
-fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
+fn validate_graph_request(request: &NativeRunSpec) -> Result<()> {
     ensure!(
-        request.run.sidecars.contains_only_content_server(),
+        request.sidecars.contains_only_content_server(),
         "authored Graph-IR runs support the content server but not GPU, network, server, or live-streaming telemetry"
     );
     ensure!(
-        request.run.models.items.len() == 1,
+        request.models.items.len() == 1,
         "authored Graph-IR runs currently require exactly one configured default model; per-node model overrides remain supported"
     );
     ensure!(
         matches!(
-            request.run.models.strategy,
+            request.models.strategy,
             ModelSelectionStrategy::RoundRobin
         ),
         "authored Graph-IR runs currently require round_robin model selection; other policies need a graph model-selection trait implementation"
     );
     ensure!(
-        matches!(request.run.dataset, NativeDatasetPlan::Graph(_)),
+        matches!(request.dataset, NativeDatasetPlan::Graph(_)),
         "graph execution requires a direct graph input plan"
     );
-    validate_graph_phases(&request.run.phases)
+    validate_graph_phases(&request.phases)
 }
 
 struct OnlineGraphPhaseBackendFactory<'a> {
@@ -1121,12 +1100,12 @@ impl RunnerGraphPhaseBackendFactory for OnlineGraphPhaseBackendFactory<'_> {
 }
 
 async fn execute_graph_native(
-    request: NativeRunPlan,
+    request: NativeRunSpec,
     sidecars: &PreparedNativeSidecarResources,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    let graph = match &request.run.dataset {
+    let graph = match &request.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
         NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::StaticAccuracy(_) => {
             bail!("graph execution received a non-graph dataset plan")
@@ -1136,20 +1115,20 @@ async fn execute_graph_native(
     let graph_default_output_tokens = graph.default_output_tokens;
     let allow_dataset_wrap = graph.allow_dataset_wrap;
     let metrics_config = metrics_config(
-        &request.run.metrics,
-        request.run.endpoint.use_server_token_count(),
+        &request.metrics,
+        request.endpoint.use_server_token_count(),
     )?;
-    let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
+    let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
     let input_token_counter =
-        select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
+        select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
     let input = graph.input.clone();
     ensure!(
         !input.plans.is_empty(),
         "authored Graph-IR input contains no root traces after root limiting"
     );
-    let primary_model = request.run.models.items[0].name.clone();
+    let primary_model = request.models.items[0].name.clone();
     let default_output_tokens = graph_default_output_tokens;
-    let NativeEndpointPlan::Prepared(configured_profiles) = &request.run.endpoint;
+    let NativeEndpointPlan::Prepared(configured_profiles) = &request.endpoint;
     let endpoints_configured = configured_profiles
         .iter()
         .flat_map(|profile| profile.config.urls.iter().cloned())
@@ -1157,7 +1136,7 @@ async fn execute_graph_native(
         .into_iter()
         .collect();
     let endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory> = {
-        let NativeEndpointPlan::Prepared(profiles) = &request.run.endpoint;
+        let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
         Arc::new(PreparedRunnerGraphEndpointRuntimeFactory::new(
             registry.endpoints().clone(),
             profiles.clone(),
@@ -1167,10 +1146,10 @@ async fn execute_graph_native(
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
     let start_ns = clock.now_ns();
-    let rng_root = RngRoot::new(graph_random_seed.or(request.run.random_seed));
+    let rng_root = RngRoot::new(graph_random_seed.or(request.random_seed));
     let backends = OnlineGraphPhaseBackendFactory {
         placement: graph_placement,
-        worker_count: request.run.workers,
+        worker_count: request.workers,
         real_clock_anchor,
         run_origin_ns: start_ns,
         model: primary_model.clone(),
@@ -1178,13 +1157,13 @@ async fn execute_graph_native(
         endpoint_runtime_factory,
         segments: input.segments.clone(),
         metrics: metrics_config.clone(),
-        raw_enabled: request.run.artifacts.raw_path.is_some(),
+        raw_enabled: request.artifacts.raw_path.is_some(),
     };
-    create_run_artifacts(&request.run)?;
+    create_run_artifacts(&request)?;
     let phased = run_graph_phases(
-        &request.run.phases,
-        &request.run.benchmark_id,
-        &request.run.artifact_dir,
+        &request.phases,
+        &request.benchmark_id,
+        &request.artifact_dir,
         input.as_ref(),
         clock.clone(),
         rng_root,
@@ -1248,37 +1227,36 @@ async fn execute_graph_native(
 }
 
 fn write_graph_artifacts(
-    request: &NativeRunPlan,
+    request: &NativeRunSpec,
     captured: &[CapturedRecord],
     metrics_config: &MetricsConfig,
 ) -> Result<()> {
-    if let Some(records_path) = &request.run.artifacts.records_path {
-        let path = artifact_path(&request.run.artifact_dir, records_path, "records_path")?;
-        write_records_jsonl(&path, captured, metrics_config, request.run.artifacts.trace)?;
+    if let Some(records_path) = &request.artifacts.records_path {
+        let path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
+        write_records_jsonl(&path, captured, metrics_config, request.artifacts.trace)?;
     }
-    if let Some(raw_path) = &request.run.artifacts.raw_path {
-        let path = artifact_path(&request.run.artifact_dir, raw_path, "raw_path")?;
+    if let Some(raw_path) = &request.artifacts.raw_path {
+        let path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
         write_raw_records_jsonl(&path, captured)?;
     }
-    if let Some(outputs_path) = &request.run.artifacts.outputs_path {
-        let path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
+    if let Some(outputs_path) = &request.artifacts.outputs_path {
+        let path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&path, captured, metrics_config)?;
     }
     Ok(())
 }
 
-async fn prepare_static_accuracy(request: &NativeRunPlan) -> Result<Option<PreparedAccuracy>> {
-    let NativeDatasetPlan::StaticAccuracy(spec) = &request.run.dataset else {
+async fn prepare_static_accuracy(request: &NativeRunSpec) -> Result<Option<PreparedAccuracy>> {
+    let NativeDatasetPlan::StaticAccuracy(spec) = &request.dataset else {
         return Ok(None);
     };
     let model = request
-        .run
         .models
         .items
         .first()
         .map(|item| item.name.as_str())
         .ok_or_else(|| anyhow!("at least one model is required"))?;
-    let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
+    let tokenizer = load_tokenizer(Some(&request.tokenizer.name))?;
     let mut evaluator = spec.evaluator_factory.spawn(&spec.process).await?;
     let preparation = async {
         let evaluator_config = EvaluatorLoadConfig {
@@ -1288,7 +1266,7 @@ async fn prepare_static_accuracy(request: &NativeRunPlan) -> Result<Option<Prepa
             system_prompt: spec.system_prompt.clone(),
             max_problems: None,
             max_tokens: None,
-            seed: request.run.random_seed.unwrap_or(0),
+            seed: request.random_seed.unwrap_or(0),
         };
         let (loaded, problems) = load_evaluator_problems_with_grader(
             evaluator.as_mut(),
@@ -1356,18 +1334,18 @@ fn finish_execution_backend_shutdown<T>(result: Result<T>, shutdown: Result<()>)
 }
 
 async fn execute_native_inner(
-    request: NativeRunPlan,
+    request: NativeRunSpec,
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
-    let rng_root = RngRoot::new(request.run.random_seed);
-    if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
+    let rng_root = RngRoot::new(request.random_seed);
+    if matches!(request.dataset, NativeDatasetPlan::Graph(_)) {
         bail!("scheduled execution received a direct graph dataset plan");
     }
-    let dataset_rng_root = match &request.run.dataset {
+    let dataset_rng_root = match &request.dataset {
         NativeDatasetPlan::PreparedLinear(dataset) => dataset
             .random_seed
             .map_or(rng_root, |seed| RngRoot::new(Some(seed))),
@@ -1375,11 +1353,10 @@ async fn execute_native_inner(
         NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
     };
     let metrics_config = metrics_config(
-        &request.run.metrics,
-        request.run.endpoint.use_server_token_count(),
+        &request.metrics,
+        request.endpoint.use_server_token_count(),
     )?;
     let model_names = request
-        .run
         .models
         .items
         .iter()
@@ -1391,12 +1368,12 @@ async fn execute_native_inner(
         .ok_or_else(|| anyhow!("at least one model is required"))?;
     let tokenizer = match accuracy.as_ref() {
         Some(accuracy) => accuracy.tokenizer.clone(),
-        None => load_tokenizer(Some(&request.run.tokenizer.name))?,
+        None => load_tokenizer(Some(&request.tokenizer.name))?,
     };
     let input_token_counter =
-        select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
+        select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
     let (endpoint_urls, transport_config, prepared_endpoints, source_factory): NativeEndpointExecutionParts<'_> = {
-        let NativeEndpointPlan::Prepared(profiles) = &request.run.endpoint;
+        let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
         let profile = default_prepared_endpoint_profile(profiles)?;
         let table_factory = Arc::new(NativePreparedEndpointTableFactory::new(
             registry.endpoints().clone(),
@@ -1420,7 +1397,7 @@ async fn execute_native_inner(
     let dataset = if let Some(accuracy) = accuracy.as_ref() {
         accuracy.dataset.dataset().as_ref().clone()
     } else {
-        match &request.run.dataset {
+        match &request.dataset {
             NativeDatasetPlan::PreparedLinear(dataset) => dataset.dataset.clone(),
             NativeDatasetPlan::StaticAccuracy(_) => {
                 bail!("evaluator dataset plan requires an accuracy evaluator")
@@ -1433,7 +1410,7 @@ async fn execute_native_inner(
     let default_output_tokens = if accuracy.is_some() {
         dataset_default_output_tokens(&dataset)?
     } else {
-        match &request.run.dataset {
+        match &request.dataset {
             NativeDatasetPlan::PreparedLinear(dataset) => dataset.default_output_tokens,
             NativeDatasetPlan::StaticAccuracy(_) => {
                 unreachable!("evaluator without accuracy rejected above")
@@ -1445,7 +1422,7 @@ async fn execute_native_inner(
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
     let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
-        workers: request.run.workers,
+        workers: request.workers,
         coordinator_clock: clock.clone(),
         real_clock_anchor,
         base_urls: endpoint_urls.clone(),
@@ -1458,7 +1435,7 @@ async fn execute_native_inner(
         clock.clone(),
         start_ns,
         metrics_config.clone(),
-        request.run.artifacts.raw_path.is_some(),
+        request.artifacts.raw_path.is_some(),
         live_sink.is_some(),
     ));
     let execution_result = async {
@@ -1473,14 +1450,14 @@ async fn execute_native_inner(
             capture: capture.clone(),
         });
 
-        let shared_resources = native_scheduled_resources(&request.run.phases);
+        let shared_resources = native_scheduled_resources(&request.phases);
 
-        let mut plans = Vec::with_capacity(request.run.phases.len());
-        for (phase_index, phase) in request.run.phases.iter().enumerate() {
+        let mut plans = Vec::with_capacity(request.phases.len());
+        for (phase_index, phase) in request.phases.iter().enumerate() {
             let mut plan = build_native_scheduled_phase_plan_with_source_factory(
                 phase_index,
                 phase,
-                phase_seamless_to_next(&request.run.phases, phase_index),
+                phase_seamless_to_next(&request.phases, phase_index),
                 &dataset,
                 &primary_model,
                 default_output_tokens,
@@ -1491,8 +1468,8 @@ async fn execute_native_inner(
                 input_token_counter.clone(),
                 clock.clone(),
                 start_ns,
-                &request.run.benchmark_id,
-                &request.run.artifact_dir,
+                &request.benchmark_id,
+                &request.artifact_dir,
                 &endpoint_urls,
                 &shared_resources,
             )?;
@@ -1530,7 +1507,7 @@ async fn execute_native_inner(
             plans.push(plan);
         }
 
-        create_run_artifacts(&request.run)?;
+        create_run_artifacts(&request)?;
         sidecars.activate_live_streaming().await;
 
         let observer: Rc<dyn PhaseObserver> = if let Some(sink) = live_sink {
@@ -1589,7 +1566,6 @@ async fn execute_native_inner(
     if let Some(gpu_telemetry) = gpu_telemetry {
         let total_output_tokens = profiling_metrics.finite_value(MetricTag::TotalOutputTokens);
         let concurrency = request
-            .run
             .phases
             .iter()
             .find(|phase| phase.common().name == "profiling")
@@ -1612,21 +1588,21 @@ async fn execute_native_inner(
         .map(|server_metrics| {
             server_metrics.summarize(MetricsPhase::Warmup, metrics_config.slice_duration_ns)
         });
-    if let Some(records_path) = &request.run.artifacts.records_path {
-        let records_path = artifact_path(&request.run.artifact_dir, records_path, "records_path")?;
+    if let Some(records_path) = &request.artifacts.records_path {
+        let records_path = artifact_path(&request.artifact_dir, records_path, "records_path")?;
         write_records_jsonl(
             &records_path,
             &captured,
             &metrics_config,
-            request.run.artifacts.trace,
+            request.artifacts.trace,
         )?;
     }
-    if let Some(raw_path) = &request.run.artifacts.raw_path {
-        let raw_path = artifact_path(&request.run.artifact_dir, raw_path, "raw_path")?;
+    if let Some(raw_path) = &request.artifacts.raw_path {
+        let raw_path = artifact_path(&request.artifact_dir, raw_path, "raw_path")?;
         write_raw_records_jsonl(&raw_path, &captured)?;
     }
-    if let Some(outputs_path) = &request.run.artifacts.outputs_path {
-        let outputs_path = artifact_path(&request.run.artifact_dir, outputs_path, "outputs_path")?;
+    if let Some(outputs_path) = &request.artifacts.outputs_path {
+        let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&outputs_path, &captured, &metrics_config)?;
     }
     if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {

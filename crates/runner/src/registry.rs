@@ -1421,16 +1421,6 @@ pub static GRAPH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadD
     required_transport_features: &[],
 };
 
-/// Built-in static Python-evaluated accuracy workload descriptor.
-pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
-    RunnerWorkloadDescriptor {
-        id: "static_accuracy",
-        description: "Canonical supervised Python static evaluator with Rust inference",
-        requires_semantic_responses: true,
-        clock_kinds: &[RunnerClockKind::Real],
-        required_transport_features: &["http"],
-    };
-
 #[derive(Debug)]
 struct OnlineHttpTransportFactoryV2;
 
@@ -1525,42 +1515,6 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             &config.tokenizer,
             &config.phases,
         )?;
-        Ok(Box::new(config))
-    }
-
-    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
-        Ok(requirements_from_descriptor(self.descriptor()))
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)] // Linked but off the BenchmarkRun product wire for this cut.
-struct StaticAccuracyWorkloadFactoryV2;
-
-impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
-        &STATIC_ACCURACY_WORKLOAD_DESCRIPTOR
-    }
-
-    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
-        let config = strict_decode::<StaticAccuracyWorkloadConfigV2>(
-            authored,
-            "static_accuracy workload config",
-        )?;
-        validate_common_workload(
-            config.worker_count,
-            &config.dataset,
-            &config.tokenizer,
-            &config.phases,
-        )?;
-        let accuracy = raw_object(&config.accuracy, "static_accuracy accuracy config")?;
-        ensure!(
-            accuracy
-                .get("benchmark")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty()),
-            "static_accuracy accuracy.benchmark must be a non-empty string"
-        );
         Ok(Box::new(config))
     }
 

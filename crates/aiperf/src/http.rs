@@ -24,11 +24,11 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
-use aiperf_endpoints::chat_request_body;
-use aiperf_transport_http::sse::ChatChunk;
 use aiperf_dataset::EndpointResolver;
+use aiperf_endpoints::chat_request_body;
 use aiperf_endpoints::{EndpointConfig, PreparedEndpointTable};
 use aiperf_metrics::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use aiperf_transport_http::sse::ChatChunk;
 
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf_transport_http::config::ClientConfig;
@@ -616,30 +616,6 @@ pub trait HttpTurnExecutionBackend {
 
     /// Resolve labels using the same endpoint/model selection as execution.
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
-
-    /// Execute one prepared request and replay its observations into the local
-    /// dispatcher observer. `on_first_token` must be delivered promptly because
-    /// it releases prefill admission before terminal completion.
-    async fn execute_turn(
-        &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult>;
-
-    /// Execute one prepared request while forwarding endpoint-normalized
-    /// response frames before terminal completion.
-    async fn execute_turn_streaming(
-        &self,
-        _turn: PreparedHttpTurn,
-        _observer: &dyn RequestObserver,
-        _on_first_token: &dyn Fn(i64),
-        _responses: &dyn TurnResponseObserver,
-    ) -> Result<HttpTurnDispatchResult> {
-        Err(anyhow::anyhow!(
-            "selected HTTP execution placement does not support response streaming"
-        ))
-    }
 
     /// Configure worker-local metric accumulation.
     ///
@@ -1432,32 +1408,6 @@ impl HttpTurnExecutionBackend for TransportSink {
         <Self as TurnDispatcher>::inference_dimensions(self, turn)
     }
 
-    async fn execute_turn(
-        &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-    ) -> Result<HttpTurnDispatchResult> {
-        self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
-            .await
-    }
-
-    async fn execute_turn_streaming(
-        &self,
-        turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
-        on_first_token: &dyn Fn(i64),
-        responses: &dyn TurnResponseObserver,
-    ) -> Result<HttpTurnDispatchResult> {
-        self.dispatch_prepared_turn_collect_record_streaming(
-            turn,
-            observer,
-            on_first_token,
-            responses,
-        )
-        .await
-    }
-
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
         // The workers==1 sink runs on the coordinator reactor, so its single
         // observer accumulates on the coordinator thread exactly as the
@@ -1518,7 +1468,10 @@ impl HttpTurnExecutionBackend for TransportSink {
 
     fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
         match self.measurement.borrow_mut().take() {
-            Some(observer) => Ok(observer.take_finalizer_at(end_ns).finish_with_records().records),
+            Some(observer) => Ok(observer
+                .take_finalizer_at(end_ns)
+                .finish_with_records()
+                .records),
             None => Ok(Vec::new()),
         }
     }
@@ -2019,7 +1972,11 @@ mod tests {
         assert_eq!(binding.config.api_key.as_deref(), Some(endpoint_secret));
         assert_eq!(binding.config.headers["anthropic-beta"], "secret-beta");
         assert_eq!(
-            binding.endpoint.descriptor().legacy_type().expect("legacy endpoint type"),
+            binding
+                .endpoint
+                .descriptor()
+                .legacy_type()
+                .expect("legacy endpoint type"),
             EndpointType::Messages
         );
         assert!(rehydrated.endpoint_aware);
