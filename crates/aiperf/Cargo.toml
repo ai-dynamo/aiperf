@@ -66,7 +66,7 @@ rayon.workspace = true
 regex.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
-serde_json = { workspace = true, features = ["preserve_order", "raw_value", "arbitrary_precision"] }
+serde_json = { workspace = true, features = ["preserve_order", "raw_value"] }
 sha2.workspace = true
 smallvec.workspace = true
 tiktoken-rs.workspace = true

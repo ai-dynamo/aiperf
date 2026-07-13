@@ -366,15 +366,15 @@ fn extract_prepared_responses(
 /// Lower a `serde_json::Value` into a `minijinja::Value` without routing numbers
 /// through serde.
 ///
-/// The workspace builds `serde_json` with the `arbitrary_precision` feature
-/// (required by the graph recorded-trace path for byte-exact number
-/// preservation). Under that feature a `serde_json::Number` serializes through a
-/// private `$serde_json::private::Number` marker that only serde_json's own
-/// deserializer understands. Handing such a value straight to minijinja's
-/// serializer (as `template.render` does) renders that marker verbatim — e.g.
-/// `{{ max_tokens }}` emits `{"$serde_json::private::Number":"12"}` — so the
-/// rendered text is no longer valid JSON. Converting numbers to native integer
-/// or float `minijinja::Value`s here sidesteps the serde bridge entirely.
+/// This directly maps each JSON number to a native integer or float
+/// `minijinja::Value`, so template output stays valid JSON regardless of how
+/// serde_json is configured. It also guards against the `arbitrary_precision`
+/// feature, which the workspace no longer enables: under that feature a
+/// `serde_json::Number` serializes through a private `$serde_json::private::Number`
+/// marker that only serde_json's own deserializer understands, and handing such a
+/// value straight to minijinja's serializer (as `template.render` does) would
+/// render the marker verbatim — e.g. `{{ max_tokens }}` emitting
+/// `{"$serde_json::private::Number":"12"}`.
 fn json_to_minijinja(value: &Value) -> minijinja::Value {
     match value {
         Value::Null => minijinja::Value::from(()),

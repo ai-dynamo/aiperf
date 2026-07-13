@@ -159,19 +159,18 @@ impl BuiltinRunnerGraphInputAdapterResolver {
     }
 }
 
-/// Strictly decode an authored graph-input object through an owned [`Value`].
+/// Strictly decode an authored graph-input object from its raw JSON text.
 ///
-/// `aiperf-graph` links serde_json with the `arbitrary_precision` feature, which
-/// makes streaming `from_str` represent every JSON number as an internal map and
-/// breaks direct deserialization into structs carrying `f64` fields (e.g. the
-/// recorded-trace `max_osl`/`idle_gap_cap_seconds` knobs). Round-tripping through
-/// an owned `Value` first — mirroring `dataset_input::decode_dataset_source` —
-/// restores exact numeric decoding under that global feature.
+/// `aiperf` no longer links serde_json with the globally side-effecting
+/// `arbitrary_precision` feature (recorded-trace hash ids above `u64::MAX` are
+/// now captured token-by-token via `RawValue` inside `aiperf-graph`), so
+/// streaming `from_str` decodes struct `f64` fields — the recorded-trace
+/// `max_osl`/`idle_gap_cap_seconds` knobs — directly again.
 fn decode_graph_input<T>(raw: &RawValue) -> serde_json::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    serde_json::from_value(serde_json::from_str::<Value>(raw.get())?)
+    serde_json::from_str(raw.get())
 }
 
 #[async_trait(?Send)]

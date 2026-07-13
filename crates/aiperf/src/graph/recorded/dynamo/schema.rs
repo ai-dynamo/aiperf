@@ -4,9 +4,56 @@
 //! Typed Dynamo request-trace record schema with ignored forward fields.
 
 use num_bigint::BigInt;
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 use crate::graph::recorded::RecordedTraceError;
+
+/// Untouched hash skeleton parsed alongside the [`Value`] tree.
+///
+/// Dynamo `input_sequence_hashes` routinely exceed `u64::MAX`, so they are
+/// captured as raw JSON tokens and coerced through
+/// `scalar::hash_i128_from_raw_text` rather than the lossy `Value` number path.
+/// Both the direct record shape (`request.replay`) and the sink-envelope shape
+/// (`event.request.replay`) are covered so the extraction matches
+/// [`unwrap_sink_envelope`].
+#[derive(serde::Deserialize)]
+struct DynamoReplayRaw {
+    #[serde(default, rename = "input_sequence_hashes")]
+    hashes: Vec<Box<RawValue>>,
+}
+
+#[derive(serde::Deserialize)]
+struct DynamoRequestRaw {
+    replay: Option<DynamoReplayRaw>,
+}
+
+#[derive(serde::Deserialize)]
+struct DynamoEventRaw {
+    request: Option<DynamoRequestRaw>,
+}
+
+#[derive(serde::Deserialize)]
+struct DynamoRecordRaw {
+    request: Option<DynamoRequestRaw>,
+    event: Option<DynamoEventRaw>,
+}
+
+/// Pull the raw `input_sequence_hashes` tokens out of an untouched record,
+/// preferring the direct `request` and falling back to the sink-envelope's
+/// `event.request` exactly as [`unwrap_sink_envelope`] resolves the `Value` side.
+fn extract_raw_hashes(raw: &RawValue) -> Result<Vec<Box<RawValue>>, RecordedTraceError> {
+    let record: DynamoRecordRaw = serde_json::from_str(raw.get()).map_err(|error| {
+        RecordedTraceError(format!(
+            "Dynamo trace record has invalid structure: {error}"
+        ))
+    })?;
+    let replay = record
+        .request
+        .or_else(|| record.event.and_then(|event| event.request))
+        .and_then(|request| request.replay);
+    Ok(replay.map(|replay| replay.hashes).unwrap_or_default())
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct TraceRecord {
@@ -70,9 +117,16 @@ pub(super) fn unwrap_sink_envelope(value: Value) -> Value {
 }
 
 pub(super) fn parse_record(
-    value: Value,
+    raw: &RawValue,
     source_order: usize,
 ) -> Result<Option<TraceRecord>, RecordedTraceError> {
+    let value: Value = serde_json::from_str(raw.get()).map_err(|error| {
+        RecordedTraceError(format!(
+            "Dynamo trace line {} is invalid JSON: {error}",
+            source_order + 1
+        ))
+    })?;
+    let raw_hashes = extract_raw_hashes(raw)?;
     let value = unwrap_sink_envelope(value);
     let Some(object) = value.as_object() else {
         return Err(RecordedTraceError(format!(
@@ -119,7 +173,7 @@ pub(super) fn parse_record(
     let request = object
         .get("request")
         .filter(|value| !value.is_null())
-        .map(parse_request)
+        .map(|value| parse_request(value, &raw_hashes))
         .transpose()?;
     let tool = object
         .get("tool")
@@ -152,7 +206,10 @@ fn parse_context(value: &Value) -> Result<AgentContext, RecordedTraceError> {
     })
 }
 
-fn parse_request(value: &Value) -> Result<RequestMetrics, RecordedTraceError> {
+fn parse_request(
+    value: &Value,
+    raw_hashes: &[Box<RawValue>],
+) -> Result<RequestMetrics, RecordedTraceError> {
     let object = value
         .as_object()
         .ok_or_else(|| RecordedTraceError("Dynamo request must be an object".into()))?;
@@ -180,12 +237,15 @@ fn parse_request(value: &Value) -> Result<RequestMetrics, RecordedTraceError> {
         replay: object
             .get("replay")
             .filter(|value| !value.is_null())
-            .map(parse_replay)
+            .map(|value| parse_replay(value, raw_hashes))
             .transpose()?,
     })
 }
 
-fn parse_replay(value: &Value) -> Result<ReplayMetrics, RecordedTraceError> {
+fn parse_replay(
+    value: &Value,
+    raw_hashes: &[Box<RawValue>],
+) -> Result<ReplayMetrics, RecordedTraceError> {
     let object = value
         .as_object()
         .ok_or_else(|| RecordedTraceError("Dynamo request.replay must be an object".into()))?;
@@ -207,15 +267,26 @@ fn parse_replay(value: &Value) -> Result<ReplayMetrics, RecordedTraceError> {
         .ok_or_else(|| {
             RecordedTraceError("Dynamo replay input_sequence_hashes must be a list".into())
         })?;
-    let hashes = values
+    // The raw skeleton reads the same `input_sequence_hashes` array, so lengths
+    // match; guard rather than index blindly. The raw tokens preserve digits past
+    // `u64::MAX` that the `Value` array above has already coerced through `f64`.
+    if values.len() != raw_hashes.len() {
+        return Err(RecordedTraceError(format!(
+            "Dynamo replay input_sequence_hashes raw/value counts diverged ({} vs {})",
+            raw_hashes.len(),
+            values.len()
+        )));
+    }
+    let hashes = raw_hashes
         .iter()
         .enumerate()
-        .map(|(index, value)| {
-            let hash = super::super::scalar::hash_i128(value).ok_or_else(|| {
-                RecordedTraceError(format!(
-                    "Dynamo request.replay.input_sequence_hashes[{index}] must be an integer"
-                ))
-            })?;
+        .map(|(index, raw)| {
+            let hash =
+                super::super::scalar::hash_i128_from_raw_text(raw.get()).ok_or_else(|| {
+                    RecordedTraceError(format!(
+                        "Dynamo request.replay.input_sequence_hashes[{index}] must be an integer"
+                    ))
+                })?;
             if hash < 0 {
                 return Err(RecordedTraceError(
                     "Dynamo recorded replay hashes must be non-negative".into(),
@@ -368,9 +439,16 @@ mod tests {
 
     use super::*;
 
+    /// Re-serialize a `json!`-built `Value` into a raw token for `parse_record`.
+    /// Only safe for fixtures whose hashes already fit through `Value` decoding.
+    fn raw(value: &Value) -> Box<RawValue> {
+        serde_json::value::to_raw_value(value).unwrap()
+    }
+
     #[test]
     fn current_schema_accepts_envelopes_extras_coercions_and_u64_hash_domain() {
-        let value: Value = serde_json::from_str(
+        // Build the RawValue from text so the >u64::MAX hash keeps every digit.
+        let raw = RawValue::from_string(
             r#"{
                 "timestamp": 1,
                 "event": {
@@ -391,10 +469,11 @@ mod tests {
                         }
                     }
                 }
-            }"#,
+            }"#
+            .to_string(),
         )
         .unwrap();
-        let record = parse_record(value, 0).unwrap().unwrap();
+        let record = parse_record(&raw, 0).unwrap().unwrap();
         assert_eq!(record.event_time_ms, 1000);
         let request = record.request.unwrap();
         assert_eq!(request.input_tokens, Some(16));
@@ -409,12 +488,12 @@ mod tests {
     #[test]
     fn marker_lines_skip_and_replay_only_records_remain_typed() {
         assert!(
-            parse_record(json!({"verification": "trace-s3-uploader"}), 0)
+            parse_record(&raw(&json!({"verification": "trace-s3-uploader"})), 0)
                 .unwrap()
                 .is_none()
         );
         let record = parse_record(
-            json!({
+            &raw(&json!({
                 "schema": "dynamo.request.trace.v1",
                 "event_type": "request_end",
                 "event_time_unix_ms": 1,
@@ -426,7 +505,7 @@ mod tests {
                         "input_sequence_hashes": [1, 2]
                     }
                 }
-            }),
+            })),
             1,
         )
         .unwrap()
@@ -449,13 +528,13 @@ mod tests {
             "timeout",
         ] {
             let record = parse_record(
-                json!({
+                &raw(&json!({
                     "schema": "dynamo.request.trace.v1",
                     "event_type": "tool_end",
                     "event_time_unix_ms": 1,
                     "agent_context": {"session_id": "s"},
                     "tool": {"tool_call_id": "c", "tool_class": "shell", "status": status}
-                }),
+                })),
                 0,
             )
             .unwrap()
@@ -463,12 +542,12 @@ mod tests {
             assert_eq!(record.tool.unwrap().status.as_deref(), Some(status));
         }
         let error = parse_record(
-            json!({
+            &raw(&json!({
                 "schema": "dynamo.request.trace.v1",
                 "event_type": "tool_error",
                 "event_time_unix_ms": 1,
                 "tool": {"tool_call_id": "c", "tool_class": "shell", "status": "unknown"}
-            }),
+            })),
             0,
         )
         .unwrap_err();
@@ -483,7 +562,7 @@ mod tests {
             "request": {"request_id": "r", "ttft_ms": "nan"}
         });
         assert!(
-            parse_record(invalid_ttft, 0)
+            parse_record(&raw(&invalid_ttft), 0)
                 .unwrap_err()
                 .to_string()
                 .contains("finite")
@@ -498,7 +577,7 @@ mod tests {
             }}
         });
         assert!(
-            parse_record(negative_hash, 0)
+            parse_record(&raw(&negative_hash), 0)
                 .unwrap_err()
                 .to_string()
                 .contains("non-negative")
@@ -518,7 +597,7 @@ mod tests {
             }
         });
         assert!(
-            parse_record(invalid, 0)
+            parse_record(&raw(&invalid), 0)
                 .unwrap_err()
                 .to_string()
                 .contains("trajectory_id must be a string")

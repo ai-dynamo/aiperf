@@ -38,7 +38,7 @@ pub async fn compile_weka_trace_input(
         !source_is_single && (config.root_limit.is_some() || config.max_context_length.is_some());
     let mut parsed = Vec::new();
     let mut ids = HashSet::new();
-    for document in documents {
+    for document in &documents {
         let trace = parse_trace(document)?;
         if selection_enabled
             && config

@@ -6,29 +6,26 @@
 use num_bigint::BigInt;
 use serde_json::Value;
 
-/// Fast recorded cache-block hash coercion into a machine `i128`.
+/// Parse a raw JSON number token (as emitted by a serde_json [`RawValue`]) into
+/// an `i128` hash without ever coercing through `f64`.
 ///
-/// Recorded hashes are u64 in Dynamo/WEKA captures and small negative virtual
-/// ids for non-replay turns, so `i128` losslessly covers the entire realistic
-/// domain without a per-hash heap allocation. The common `Value::Number`
-/// integer path never touches `num_bigint`; the rare string/boolean/oversized
-/// forms fall back through [`integer`] so Pydantic-compatible coercion and the
-/// arbitrary-precision parity edge cases stay byte-exact. `i128::Display`
-/// equals `BigInt::Display` for every in-range value, so content-seed strings
-/// are unchanged.
-pub(super) fn hash_i128(value: &Value) -> Option<i128> {
-    if let Value::Number(number) = value {
-        if let Some(unsigned) = number.as_u64() {
-            return Some(i128::from(unsigned));
-        }
-        if let Some(signed) = number.as_i64() {
-            return Some(i128::from(signed));
-        }
-        if let Ok(parsed) = number.to_string().parse::<i128>() {
-            return Some(parsed);
-        }
+/// Recorded WEKA/Dynamo cache-block hash ids routinely exceed `u64::MAX` (e.g.
+/// `184467440737095516170`). Decoding the enclosing document into a plain
+/// [`Value`] would round those tokens through `f64` and silently lose the low
+/// digits unless `serde_json`'s global `arbitrary_precision` feature is on; that
+/// feature has broad side effects (it turns every number into an internal map),
+/// so instead callers capture the untouched hash token via [`RawValue`] and hand
+/// its text here. Bare integer strings parse directly; Pydantic-compatible
+/// integral decimal-float tokens (`"1.2e3"`, `"16.0"`) fall through
+/// [`decimal_integer`] to stay byte-exact with the [`integer`] coercion path.
+///
+/// [`RawValue`]: serde_json::value::RawValue
+pub(super) fn hash_i128_from_raw_text(text: &str) -> Option<i128> {
+    let text = text.trim();
+    if let Ok(value) = text.parse::<i128>() {
+        return Some(value);
     }
-    i128::try_from(integer(value)?).ok()
+    i128::try_from(decimal_integer(text)?).ok()
 }
 
 pub(super) fn integer(value: &Value) -> Option<BigInt> {
@@ -118,5 +115,19 @@ mod tests {
         assert_eq!(integer(&json!(" 42 ")), Some(BigInt::from(42)));
         assert_eq!(integer(&json!("1.2e3")), None);
         assert_eq!(integer(&json!(true)), Some(BigInt::from(1)));
+    }
+
+    #[test]
+    fn hash_from_raw_text_preserves_wide_ids_without_f64_coercion() {
+        assert_eq!(
+            hash_i128_from_raw_text("184467440737095516170"),
+            Some(184467440737095516170_i128)
+        );
+        assert_eq!(hash_i128_from_raw_text(" 42 "), Some(42));
+        assert_eq!(hash_i128_from_raw_text("-1"), Some(-1));
+        assert_eq!(hash_i128_from_raw_text("16.0"), Some(16));
+        assert_eq!(hash_i128_from_raw_text("1.2e3"), Some(1200));
+        assert_eq!(hash_i128_from_raw_text("1.25"), None);
+        assert_eq!(hash_i128_from_raw_text("\"42\""), None);
     }
 }

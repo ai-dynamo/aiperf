@@ -6,9 +6,31 @@
 use std::collections::HashSet;
 
 use num_bigint::BigInt;
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 use crate::graph::recorded::RecordedTraceError;
+
+/// Untouched hash-carrying skeleton parsed alongside the [`Value`] tree.
+///
+/// WEKA cache-block hash ids can exceed `u64::MAX`, so `hash_ids` are captured as
+/// raw JSON tokens ([`RawValue`]) and coerced through
+/// `scalar::hash_i128_from_raw_text`, never through the lossy `Value` number path.
+/// Every entry aligns positionally with the `Value`-side `requests` array because
+/// both decode the same JSON list.
+#[derive(serde::Deserialize)]
+struct RawHashEntry {
+    #[serde(default)]
+    hash_ids: Vec<Box<RawValue>>,
+    #[serde(default)]
+    requests: Vec<RawHashEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawHashTrace {
+    #[serde(default)]
+    requests: Vec<RawHashEntry>,
+}
 
 #[derive(Debug)]
 pub(super) struct WekaTrace {
@@ -43,7 +65,12 @@ pub(super) struct WekaSubagent {
     pub requests: Vec<WekaEntry>,
 }
 
-pub(super) fn parse_trace(value: Value) -> Result<WekaTrace, RecordedTraceError> {
+pub(super) fn parse_trace(raw: &RawValue) -> Result<WekaTrace, RecordedTraceError> {
+    let value: Value = serde_json::from_str(raw.get())
+        .map_err(|error| RecordedTraceError(format!("WEKA trace: invalid JSON: {error}")))?;
+    let raw_hashes: RawHashTrace = serde_json::from_str(raw.get()).map_err(|error| {
+        RecordedTraceError(format!("WEKA trace: invalid hash structure: {error}"))
+    })?;
     let object = into_object(value, "WEKA trace")?;
     reject_unknown(
         &object,
@@ -83,7 +110,11 @@ pub(super) fn parse_trace(value: Value) -> Result<WekaTrace, RecordedTraceError>
             "WEKA totals must be an object or null".into(),
         ));
     }
-    let requests = entry_list(required(&object, "requests", "WEKA trace")?, "requests")?;
+    let requests = entry_list(
+        required(&object, "requests", "WEKA trace")?,
+        "requests",
+        &raw_hashes.requests,
+    )?;
     if requests.is_empty() {
         return Err(RecordedTraceError(
             "WEKA trace requests cannot be empty".into(),
@@ -100,22 +131,43 @@ pub(super) fn parse_trace(value: Value) -> Result<WekaTrace, RecordedTraceError>
     })
 }
 
-fn entry_list(value: &Value, label: &str) -> Result<Vec<WekaEntry>, RecordedTraceError> {
-    value
+fn entry_list(
+    value: &Value,
+    label: &str,
+    raw_entries: &[RawHashEntry],
+) -> Result<Vec<WekaEntry>, RecordedTraceError> {
+    let entries = value
         .as_array()
-        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be a list")))?
+        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be a list")))?;
+    // Both parses read the same JSON list, so positional alignment holds; guard
+    // it explicitly rather than risk an out-of-bounds index on a malformed input.
+    if entries.len() != raw_entries.len() {
+        return Err(RecordedTraceError(format!(
+            "WEKA {label} raw/value entry counts diverged ({} vs {})",
+            entries.len(),
+            raw_entries.len()
+        )));
+    }
+    entries
         .iter()
+        .zip(raw_entries)
         .enumerate()
-        .map(|(index, value)| parse_entry(value.clone(), &format!("{label}[{index}]")))
+        .map(|(index, (value, raw_entry))| {
+            parse_entry(value.clone(), &format!("{label}[{index}]"), raw_entry)
+        })
         .collect()
 }
 
-fn parse_entry(value: Value, label: &str) -> Result<WekaEntry, RecordedTraceError> {
+fn parse_entry(
+    value: Value,
+    label: &str,
+    raw_entry: &RawHashEntry,
+) -> Result<WekaEntry, RecordedTraceError> {
     let object = into_object(value, label)?;
     match required_string(&object, "type", label)?.as_str() {
-        "n" => parse_leaf(object, label, false).map(WekaEntry::Leaf),
-        "s" => parse_leaf(object, label, true).map(WekaEntry::Leaf),
-        "subagent" => parse_subagent(object, label).map(WekaEntry::Subagent),
+        "n" => parse_leaf(object, label, false, raw_entry).map(WekaEntry::Leaf),
+        "s" => parse_leaf(object, label, true, raw_entry).map(WekaEntry::Leaf),
+        "subagent" => parse_subagent(object, label, raw_entry).map(WekaEntry::Subagent),
         other => Err(RecordedTraceError(format!(
             "WEKA {label}.type must be n, s, or subagent, got {other:?}"
         ))),
@@ -126,6 +178,7 @@ fn parse_leaf(
     object: Map<String, Value>,
     label: &str,
     streaming: bool,
+    raw_entry: &RawHashEntry,
 ) -> Result<WekaLeaf, RecordedTraceError> {
     let mut allowed = vec![
         "t",
@@ -148,11 +201,7 @@ fn parse_leaf(
     reject_unknown(&object, &allowed, label)?;
     let input = aliased_required(&object, "in", "input_length", label)?;
     let output = aliased_required(&object, "out", "output_length", label)?;
-    let hashes = object
-        .get("hash_ids")
-        .map(|value| nonnegative_bigint_list(value, &format!("{label}.hash_ids")))
-        .transpose()?
-        .unwrap_or_default();
+    let hashes = parse_raw_hashes(raw_entry, label)?;
     string_list_default(&object, "input_types", label)?;
     string_list_default(&object, "output_types", label)?;
     if let Some(stop) = object.get("stop") {
@@ -180,6 +229,7 @@ fn parse_leaf(
 fn parse_subagent(
     object: Map<String, Value>,
     label: &str,
+    raw_entry: &RawHashEntry,
 ) -> Result<WekaSubagent, RecordedTraceError> {
     reject_unknown(
         &object,
@@ -218,6 +268,7 @@ fn parse_subagent(
         requests: entry_list(
             required(&object, "requests", label)?,
             &format!("{label}.requests"),
+            &raw_entry.requests,
         )?,
     })
 }
@@ -337,19 +388,21 @@ fn string_list_default(
         .map(drop)
 }
 
-fn nonnegative_bigint_list(value: &Value, label: &str) -> Result<Vec<i128>, RecordedTraceError> {
-    value
-        .as_array()
-        .ok_or_else(|| RecordedTraceError(format!("WEKA {label} must be a list")))?
+/// Coerce a leaf's raw `hash_ids` tokens into non-negative `i128`s straight from
+/// the untouched JSON text, so ids beyond `u64::MAX` keep every digit.
+fn parse_raw_hashes(entry: &RawHashEntry, label: &str) -> Result<Vec<i128>, RecordedTraceError> {
+    entry
+        .hash_ids
         .iter()
         .enumerate()
-        .map(|(index, value)| {
-            let integer = super::super::scalar::hash_i128(value).ok_or_else(|| {
-                RecordedTraceError(format!("WEKA {label}[{index}] must be an integer"))
-            })?;
+        .map(|(index, raw)| {
+            let integer =
+                super::super::scalar::hash_i128_from_raw_text(raw.get()).ok_or_else(|| {
+                    RecordedTraceError(format!("WEKA {label}.hash_ids[{index}] must be an integer"))
+                })?;
             if integer < 0 {
                 return Err(RecordedTraceError(format!(
-                    "WEKA {label}[{index}] must be non-negative"
+                    "WEKA {label}.hash_ids[{index}] must be non-negative"
                 )));
             }
             Ok(integer)
@@ -422,9 +475,18 @@ mod tests {
 
     use super::*;
 
+    /// Re-serialize a `json!`-built `Value` into a raw token for `parse_trace`.
+    /// Only safe for fixtures whose hashes already fit through `Value` decoding.
+    fn raw(value: &Value) -> Box<RawValue> {
+        serde_json::value::to_raw_value(value).unwrap()
+    }
+
     #[test]
     fn schema_accepts_python_integer_coercions_nullable_subagent_stats_and_wide_hashes() {
-        let value: Value = serde_json::from_str(
+        // Build the RawValue straight from text so the >u64::MAX hash keeps every
+        // digit — round-tripping through a `Value` would lose it without the
+        // (now removed) `arbitrary_precision` feature.
+        let raw = RawValue::from_string(
             r#"{
                 "id":"trace","models":["m"],"block_size":"16.0",
                 "hash_id_scope":"global","requests":[{
@@ -437,10 +499,11 @@ mod tests {
                         "hash_ids":[184467440737095516170],"ttft":"0.25"
                     }],"models":["m"]
                 }]
-            }"#,
+            }"#
+            .to_string(),
         )
         .unwrap();
-        let trace = parse_trace(value).unwrap();
+        let trace = parse_trace(&raw).unwrap();
         assert_eq!(trace.block_size, 16);
         let WekaEntry::Subagent(subagent) = &trace.requests[0] else {
             panic!("subagent")
@@ -471,7 +534,7 @@ mod tests {
         let mut unknown = base.clone();
         unknown["foreign"] = json!(true);
         assert!(
-            parse_trace(unknown)
+            parse_trace(&raw(&unknown))
                 .unwrap_err()
                 .to_string()
                 .contains("unknown field")
@@ -480,7 +543,7 @@ mod tests {
         let mut aliases = base.clone();
         aliases["requests"][0]["input_length"] = json!(16);
         assert!(
-            parse_trace(aliases)
+            parse_trace(&raw(&aliases))
                 .unwrap_err()
                 .to_string()
                 .contains("cannot provide both")
@@ -492,7 +555,7 @@ mod tests {
             "subagent_type": "x", "status": "completed", "requests": [], "models": []
         }]);
         assert!(
-            parse_trace(collision)
+            parse_trace(&raw(&collision))
                 .unwrap_err()
                 .to_string()
                 .contains("collides")
@@ -511,9 +574,9 @@ mod tests {
                 "models": []
             }]
         });
-        parse_trace(accepted.clone()).unwrap();
+        parse_trace(&raw(&accepted)).unwrap();
         let mut rejected = accepted;
         rejected["requests"][0]["tool_tokens"] = Value::Null;
-        assert!(parse_trace(rejected).is_err());
+        assert!(parse_trace(&raw(&rejected)).is_err());
     }
 }

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::dataset::{SegmentPool, TextTokenizer};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 use super::BlockHash;
@@ -98,11 +99,11 @@ fn reject_loader_options(config: &RecordedTraceInputConfig) -> Result<(), Record
     Ok(())
 }
 
-fn collect_records(documents: Vec<Value>) -> Result<Vec<TraceRecord>, RecordedTraceError> {
+fn collect_records(documents: Vec<Box<RawValue>>) -> Result<Vec<TraceRecord>, RecordedTraceError> {
     let mut seen = HashSet::<DedupKey>::new();
     let mut records = Vec::new();
     for (source_order, value) in documents.into_iter().enumerate() {
-        let Some(record) = parse_record(value, source_order)? else {
+        let Some(record) = parse_record(&value, source_order)? else {
             continue;
         };
         let key = record
@@ -643,6 +644,14 @@ mod tests {
     use super::*;
     use crate::graph::recorded::PromptCorpus;
 
+    /// Re-serialize `json!`-built records into raw tokens for `collect_records`.
+    fn raws(values: Vec<Value>) -> Vec<Box<RawValue>> {
+        values
+            .iter()
+            .map(|value| serde_json::value::to_raw_value(value).unwrap())
+            .collect()
+    }
+
     fn inline_config(records: Vec<Value>) -> RecordedTraceInputConfig {
         RecordedTraceInputConfig {
             load: LoadConfig::new(DatasetSource::Inline(Value::Array(records))),
@@ -755,7 +764,7 @@ mod tests {
             fallback_record("a", "a1", 2_000, 16),
             fallback_record("a", "a2", 3_000, 32),
         ];
-        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        let chains = build_chains(collect_records(raws(records)).unwrap()).unwrap();
         let requests = build_tree_requests(&chains, &["a".into(), "b".into()], 16).unwrap();
         let hashes = requests
             .iter()
@@ -826,7 +835,7 @@ mod tests {
                 "tool": {"tool_call_id": "t2", "tool_class": "shell"}
             }),
         ];
-        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        let chains = build_chains(collect_records(raws(records)).unwrap()).unwrap();
         assert_eq!(chains["child"].parent.as_deref(), Some("root"));
         let trees = select_trees(&chains, None, None).unwrap();
         assert_eq!(
@@ -844,7 +853,7 @@ mod tests {
             "parent_session_id": "root"
         });
         let records = vec![fallback_record("root", "r0", 0, 16), child];
-        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        let chains = build_chains(collect_records(raws(records)).unwrap()).unwrap();
         assert_eq!(chains["child"].parent, None);
         assert_eq!(
             select_trees(&chains, None, None).unwrap(),
@@ -866,7 +875,7 @@ mod tests {
             }),
             fallback_record("root", "r0", 1, 16),
         ];
-        let chains = build_chains(collect_records(records).unwrap()).unwrap();
+        let chains = build_chains(collect_records(raws(records)).unwrap()).unwrap();
         assert_eq!(
             chains.keys().map(String::as_str).collect::<Vec<_>>(),
             ["root"]
