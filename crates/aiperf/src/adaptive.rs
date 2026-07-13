@@ -161,8 +161,7 @@ pub fn build_adaptive(
 ///
 /// A phased run keeps all transport timestamps on one benchmark timeline, but
 /// each adaptive sampler must begin at its own phase boundary. Python starts
-/// window state with phase strategy setup
-/// (`src/aiperf/timing/strategies/adaptive_scale.py:125-132,193-222`); this
+/// window state with phase strategy setup; this
 /// split preserves that behavior after a warmup phase without changing the
 /// observer wire contract.
 #[allow(clippy::too_many_arguments)]

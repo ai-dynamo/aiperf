@@ -3,9 +3,8 @@
 
 //! Conversation sampling strategies.
 //!
-//! These preserve Python AIPerf's replacement and wraparound semantics from
-//! `src/aiperf/dataset/dataset_samplers.py:15-86`, while consuming the native
-//! BLAKE3-derived [`aiperf_rng`] streams.
+//! These preserve Python AIPerf's replacement and wraparound semantics while
+//! consuming the native BLAKE3-derived [`aiperf_rng`] streams.
 
 use std::collections::HashMap;
 use std::sync::Arc;

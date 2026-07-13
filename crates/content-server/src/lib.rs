@@ -3,10 +3,7 @@
 
 //! Rust-native HTTP serving for generated multimodal content.
 //!
-//! The implementation ports the complete feature source from
-//! `src/aiperf/content_server/{models,request_tracker,server}.py` and the
-//! image/video file-output path in `src/aiperf/dataset/generator/` on
-//! `ajc/content-server`. One run-owned server streams a path-confined directory,
+//! One run-owned server streams a path-confined directory,
 //! exposes `/healthz`, and retains bounded full-lifecycle request records. The
 //! separate [`ContentServerMediaPublisher`] implements AIPerf's synthetic-media
 //! publication seam so generated images and videos become small HTTP URLs while

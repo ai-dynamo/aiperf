@@ -4,9 +4,9 @@
 //! Profiling-bounded network RTT calibration for one native run.
 //!
 //! The scheduled phase supplies the start/end barriers. Interval probes are
-//! fire-and-forget (`src/aiperf/network_latency/probe.py:118-125`), while the
-//! final barrier tops every target up to the configured successful-sample
-//! floor (`manager.py:144-188`) before the metrics accumulator is summarized.
+//! fire-and-forget, while the final barrier tops every target up to the
+//! configured successful-sample floor before the metrics accumulator is
+//! summarized.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;

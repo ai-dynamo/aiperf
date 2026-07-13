@@ -3,8 +3,6 @@
 
 //! Corpus sampling for recorded trace reconstruction through `aiperf-rng`.
 //!
-//! Block/tail selection follows
-//! `../aiperf-graph-ir/src/aiperf/dataset/graph/adapters/shared/content.py:241-433`.
 //! Stream derivation deliberately uses AIPerf's canonical BLAKE3/PCG64
 //! substrate, so recorded adapters obey the same native reproducibility
 //! contract as dataset composition and graph scheduling.

@@ -4,8 +4,7 @@
 //! Provider usage-field normalization.
 //!
 //! Anthropic and Bedrock use disjoint input accounting: their ordinary input
-//! count excludes cache reads and writes. The normalization follows
-//! `src/aiperf/common/models/usage_models.py:56-401` from PR 731 so
+//! count excludes cache reads and writes. The normalization ensures
 //! `prompt_tokens` retains one meaning across endpoint dialects.
 
 use serde_json::{Map, Value};

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! DCGM Prometheus metrics faker - port of `tests/aiperf_mock_server/dcgm_faker.py`.
+//! DCGM Prometheus metrics faker.
 
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU32, Ordering};

@@ -3,11 +3,7 @@
 
 //! Stateful conversation reconstruction and endpoint request materialization.
 //!
-//! The history rules are ported from
-//! `src/aiperf/workers/session_manager.py:85-122`; raw payload bypass and endpoint
-//! formatting are ported from `src/aiperf/workers/inference_client.py:114-126`;
-//! current-turn header precedence follows
-//! `src/aiperf/transports/base_transports.py:113-127`. The Python-reserved
+//! The Python-reserved
 //! `message_array_without_responses` case is completed here by prefix-diffing
 //! successive authored snapshots and interleaving each captured live reply.
 

@@ -24,8 +24,7 @@ impl NetworkLatencyTarget {
     /// Parse an endpoint using the Python manager's scheme/default-port rules.
     ///
     /// Sources without a host, such as Unix-domain socket URLs, return `None`
-    /// and are not probe targets. This ports
-    /// `src/aiperf/network_latency/manager.py:88-96`.
+    /// and are not probe targets.
     pub fn from_endpoint_url(
         endpoint_url: &str,
     ) -> Result<Option<Self>, NetworkLatencyTargetParseError> {
@@ -127,7 +126,7 @@ pub struct NetworkLatencyErrorDetails {
 /// One fresh TCP-handshake RTT observation.
 ///
 /// Optional fields are omitted to match the Python buffered JSONL writer's
-/// `exclude_none=True` behavior (`buffered_jsonl_writer_mixin.py:94-113`).
+/// `exclude_none=True` behavior.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NetworkLatencySample {
     /// Clock timestamp immediately before connect issuance.

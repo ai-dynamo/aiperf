@@ -3,11 +3,9 @@
 
 //! Clock-injected DNS resolution and caching.
 //!
-//! This preserves the aiohttp event contract from
-//! `src/aiperf/transports/aiohttp_trace.py:43-54,168-203`: a cache hit skips
+//! This preserves the aiohttp event contract: a cache hit skips
 //! lookup timing, while a miss records both the cache event and the resolver
-//! bracket. Cache defaults come from
-//! `src/aiperf/transports/http_defaults.py:131-169`.
+//! bracket.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

@@ -3,9 +3,8 @@
 
 //! Adaptive SLA filters and window evaluation.
 //!
-//! Metric families, aliases, nanosecond-to-millisecond conversion, empty
-//! TTFT/ITL behavior, goodput quality gates, and operators are ported from
-//! `src/aiperf/timing/strategies/adaptive_scale_sla.py:19-349`.
+//! This module implements metric families, aliases, nanosecond-to-millisecond
+//! conversion, empty TTFT/ITL behavior, goodput quality gates, and operators.
 
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};

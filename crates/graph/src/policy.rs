@@ -3,8 +3,7 @@
 
 //! Trait-injected graph admission, ancillary timing, and failure policy.
 //!
-//! Python's default and fail-fast behavior is grounded in
-//! `src/aiperf/timing/branch_orchestrator.py:415-480`: resilient mode treats an
+//! Python's default and fail-fast behavior: resilient mode treats an
 //! errored child as completed for join accounting; fail-fast aborts the trace
 //! and tells the phase to stop admitting unrelated roots. Here those choices
 //! are independent traits around the one [`crate::executor::TraceExecutor`]

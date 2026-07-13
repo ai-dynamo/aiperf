@@ -3,21 +3,24 @@
 
 //! One-pass parsing of the canonical agentic DAG JSONL source schema.
 //!
-//! The schema/desugaring is ported from
-//! `src/aiperf/dataset/loader/dag_jsonl_models.py:22-204`,
-//! `src/aiperf/dataset/loader/dag_jsonl.py:181-503`, and
-//! `src/aiperf/dataset/loader/_dag_jsonl_helpers.py:24-301`. This leaf parser
-//! preserves owned exact wires and normalized branch declarations. Graph
-//! lowering lives above the dataset crate; no linear `Dataset`, conversation
-//! composition, or Python credit-orchestrator protocol is constructed here.
+//! This leaf parser validates one authored `dag_jsonl` source, preserving owned
+//! exact JSON wires and normalizing FORK/SPAWN branch declarations, then hands
+//! the validated program to [`crate::input::compile_dag_jsonl_input`] for direct
+//! Graph-IR lowering. It deliberately lives in the graph crate — beside its sole
+//! consumer — rather than in the linear dataset loader registry: `dag_jsonl` is a
+//! graph source, never a linear `Dataset`, conversation, or credit-orchestrator
+//! program.
+//!
+//! Source acquisition reuses the dataset crate's registry-free
+//! [`aiperf_dataset::load_raw_rows`] seam; no [`aiperf_dataset::DatasetLoader`]
+//! registration or linear composer is involved.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::error::{DatasetError, Result};
-use crate::loader::public::load_public_rows;
-use crate::loader::{DatasetSource, LoadConfig, RowOrigin};
-use crate::tokenizer::TextTokenizer;
-use aiperf_endpoints::extract_payload;
+use aiperf_dataset::{
+    DatasetError, DatasetSource, LoadConfig, Result, RowOrigin, TextTokenizer, load_raw_rows,
+};
+use aiperf_endpoints::{ExtractedPayload, extract_payload};
 use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -105,8 +108,7 @@ pub async fn load_dag_jsonl_program(config: &LoadConfig) -> Result<DagJsonlProgr
     if let DatasetSource::HuggingFace { max_rows, .. } = &mut complete.source {
         *max_rows = None;
     }
-    complete.validate()?;
-    let rows = load_public_rows(&complete).await?;
+    let rows = load_raw_rows(&complete).await?;
     if rows.is_empty() {
         return Err(DatasetError::Validation(
             "DAG JSONL source contains no conversations".into(),
@@ -476,7 +478,7 @@ fn validate_optional_string_object(
 }
 
 fn input_tokens_excluding_tools(
-    extracted: &aiperf_endpoints::ExtractedPayload,
+    extracted: &ExtractedPayload,
     tokenizer: &dyn TextTokenizer,
 ) -> Result<u64> {
     let mut excluded = HashMap::<&str, usize>::new();
@@ -507,7 +509,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::loader::{DatasetSource, LoaderRegistry};
 
     async fn program(value: Value) -> Result<DagJsonlProgram> {
         load_dag_jsonl_program(&LoadConfig::new(DatasetSource::Inline(value))).await
@@ -568,11 +569,5 @@ mod tests {
         ])));
         config.max_rows = Some(1);
         assert!(load_dag_jsonl_program(&config).await.is_err());
-    }
-
-    #[test]
-    fn dag_jsonl_is_not_a_generic_dataset_registration() {
-        let registry = LoaderRegistry::with_builtin_formats().unwrap();
-        assert!(registry.get("dag_jsonl").is_err());
     }
 }

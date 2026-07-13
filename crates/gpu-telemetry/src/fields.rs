@@ -3,10 +3,8 @@
 
 //! Static GPU signal, unit, and collector-scale tables.
 //!
-//! These tables port `src/aiperf/gpu_telemetry/constants.py:22-79`, the DCGM
-//! scaling constants in `src/aiperf/gpu_telemetry/dcgm_collector.py:19-25`, and
-//! the AMD units/scales documented by
-//! `src/aiperf/gpu_telemetry/amdsmi_collector.py:51-60`.
+//! These tables define the DCGM signal set and scaling constants plus the AMD
+//! units/scales.
 
 use aiperf_metrics::Unit;
 

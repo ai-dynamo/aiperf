@@ -3,9 +3,7 @@
 
 //! `discover -> sustain -> complete` adaptive controller.
 //!
-//! The transition order and terminal reasons are ported from
-//! `src/aiperf/timing/strategies/adaptive_scale_controller.py:20-328` and
-//! `adaptive_scale_runtime.py:96-140`. In particular, the discovered boundary
+//! The discovered boundary
 //! is the last passing value, sustain allows one recovery until a subsequent
 //! passing window resets it, and an inconclusive window changes no control
 //! state.

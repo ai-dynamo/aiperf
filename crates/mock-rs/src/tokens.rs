@@ -3,10 +3,9 @@
 
 //! Tokenization and response generation.
 //!
-//! Ports the character-based ~4-chars-per-token scheme from
-//! `tests/aiperf_mock_server/tokens.py`, including:
+//! The character-based ~4-chars-per-token scheme, including:
 //! - LRU-cached tokenize()
-//! - corpus loading (from `src/aiperf/dataset/generator/assets/shakespeare.txt`)
+//! - corpus loading (Shakespeare text asset)
 //! - token budget logic (min/max, ignore_eos, default 0.8–1.2× prompt)
 //! - deterministic prompt-seeded selection
 //! - reasoning tokens for gpt-oss / qwen models

@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Native Dynamo request-trace compiler.
-//!
-//! The reader, tree construction, replay fallback, and request normalization
-//! port the complete Python authorities at
-//! `../aiperf-graph-ir/src/aiperf/dataset/graph/adapters/dynamo/trace_reader.py`,
-//! `dynamo/trace.py`, and `dynamo/trie_lowering.py`.
 
 mod schema;
 

@@ -3,8 +3,7 @@
 
 //! Hash-ID-scoped RNG for order-independent parallel trace synthesis.
 //!
-//! This ports the canonical Python
-//! `aiperf-graph-ir/src/aiperf/common/hash_id_random_generator.py` semantics: a
+//! Semantics: a
 //! base seed is preserved without consuming state when present, seed `0` is legal,
 //! and each `(trace_id, hash_id)` pair deterministically reseeds the inner
 //! generator so worker scheduling cannot perturb generated content.

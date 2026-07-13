@@ -3,8 +3,7 @@
 
 //! Ordered warmup → profiling orchestration with optional seamless overlap.
 //!
-//! Ownership and handoff policy follow Python
-//! `src/aiperf/timing/phase_orchestrator.py:127-285`. A fresh [`PhaseRunner`]
+//! A fresh [`PhaseRunner`]
 //! owns each phase's counters and lifecycle. The shared [`PhaseRunnerFactory`]
 //! owns long-lived execution state such as the conversation source, slot pools,
 //! cancellation policy, and endpoint selector, so debt-draining capacity and

@@ -3,11 +3,7 @@
 
 //! Mooncake, Bailian, BurstGPT, and SageMaker trace formats.
 //!
-//! Shared filtering and trace-to-turn behavior follows
-//! `src/aiperf/dataset/loader/base_trace_loader.py:159-380`. Format-specific
-//! rules are ported from `mooncake_trace.py:22-148`,
-//! `bailian_trace.py:11-159`, `burst_gpt.py:15-146`, and
-//! `sagemaker_data_capture.py:25-303`. Literal payload/message slices are
+//! Literal payload/message slices are
 //! retained with [`RawValue`] rather than decoded and serialized again.
 
 use std::collections::{HashMap, HashSet};

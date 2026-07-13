@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Inter-arrival interval generators — ported from Python `timing/intervals.py`.
+//! Inter-arrival interval generators.
 //!
 //! Each generator yields successive inter-arrival intervals in **integer
 //! nanoseconds** (the `Clock`'s native unit), drawn from a **seeded** RNG so a run

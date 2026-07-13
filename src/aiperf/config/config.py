@@ -639,12 +639,11 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
-    def validate_endpoint_profile_names_and_evaluation_routes(self) -> Self:
-        """Keep named route references structural and side-effect free.
+    def validate_endpoint_profile_names(self) -> Self:
+        """Keep named endpoint-profile references structural and side-effect free.
 
-        Provider packages still own evaluator configuration and dynamic route
-        requirements. Python checks only identities that are already present in
-        Config v2; endpoint dialect capability remains a runner-factory rule.
+        Python checks only identities that are already present in Config v2;
+        endpoint dialect capability remains a runner-factory rule.
         """
         for profile_id in self.endpoint_profiles:
             if not profile_id.strip() or profile_id != profile_id.strip():
@@ -656,27 +655,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 raise ValueError(
                     "endpoint_profiles cannot redefine reserved profile 'default'; "
                     "use benchmark.endpoint for that profile"
-                )
-
-        if self.workload is None or self.workload.type != "evaluation":
-            return self
-
-        routes = self.workload.config["routes"]
-        available_profiles = {"default", *self.endpoint_profiles}
-        available_models = {item.name for item in self.models.items}
-        for service_id, route in routes.items():
-            profile_id = route["endpoint_profile"]
-            if profile_id not in available_profiles:
-                raise ValueError(
-                    f"evaluation route {service_id!r} references endpoint profile "
-                    f"{profile_id!r}, which is not defined; available profiles: "
-                    f"{sorted(available_profiles)}"
-                )
-            model = route["model"]
-            if model not in available_models:
-                raise ValueError(
-                    f"evaluation route {service_id!r} references model {model!r}, "
-                    f"which is not present in benchmark.models"
                 )
         return self
 

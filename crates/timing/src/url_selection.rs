@@ -3,7 +3,7 @@
 
 //! Endpoint selection policy for multi-URL runs.
 //!
-//! Ported from Python `src/aiperf/timing/url_samplers.py:14-81`. The selector
+//! The selector
 //! deliberately knows nothing about turns or sessions: the issuer advances it
 //! on turn zero only, and session state pins that selected index for every
 //! continuation turn.

@@ -3,11 +3,9 @@
 
 //! Raw and Jinja-compatible template endpoint implementations.
 //!
-//! This ports `src/aiperf/endpoints/raw_endpoint.py:12-49`,
-//! `src/aiperf/endpoints/response_mixin.py:9-113`, and
-//! `src/aiperf/endpoints/template_endpoint.py:17-194`. JMESPath compilation is
-//! deliberately failure-soft for raw responses; an explicitly valid template
-//! selector that does not match is a hard parse miss, matching Python.
+//! JMESPath compilation is deliberately failure-soft for raw responses; an
+//! explicitly valid template selector that does not match is a hard parse miss,
+//! matching Python.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

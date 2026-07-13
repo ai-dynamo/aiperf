@@ -3,8 +3,7 @@
 
 //! Direct phase lifecycle observation without a message bus.
 //!
-//! This trait retains the event content of Python
-//! `src/aiperf/timing/phase/publisher.py:29-104` while deleting its ZMQ wire
+//! This trait retains the phase event content while deleting the ZMQ wire
 //! envelopes. Calls are synchronous and local because phase state is already
 //! serialized on one `LocalSet`.
 

@@ -3,8 +3,8 @@
 
 //! Runner-owned direct Graph-IR input adapters.
 //!
-//! Python projects the authored file source without acquisition or parsing in
-//! `src/aiperf/orchestrator/rust_wire.py:220-262`. This module performs an
+//! Python projects the authored file source without acquisition or parsing.
+//! This module performs an
 //! identity-only format lookup, then gives the untouched object to exactly one
 //! selected adapter. The adapter owns the sole strict full decode and lowers
 //! directly to [`GraphInputBundle`]; no protocol-v1 DTO, linear

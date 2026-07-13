@@ -313,8 +313,8 @@ fn is_inline_image_url_path(path: &[ControlPathSegment<'_>]) -> bool {
 
 /// Validate the sole inline locator admitted by the stock operation schema.
 ///
-/// This is the executable counterpart of `_INLINE_RASTER_DATA_URI_PATTERN` in
-/// `src/aiperf/accuracy/evaluation/operation_schemas.py`. Request, response,
+/// This is the executable counterpart of `_INLINE_RASTER_DATA_URI_PATTERN`.
+/// Request, response,
 /// and stream validators share it so their advertised schema fingerprints
 /// cannot conceal a broader transport-authority surface.
 pub fn is_safe_inline_image_data_url(value: &str) -> bool {

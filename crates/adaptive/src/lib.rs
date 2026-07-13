@@ -10,10 +10,6 @@
 //! [`ControlActuator`]. The same controller can therefore drive live HTTP, a
 //! socket-backed mock, or an in-process simulated sink without branching on the
 //! execution mode.
-//!
-//! The behavior is grounded in the complete Python adaptive subsystem, notably
-//! `src/aiperf/timing/strategies/adaptive_scale_controller.py:20-328`,
-//! `adaptive_scale_sla.py:19-349`, and `adaptive_scale.py:93-435`.
 
 pub mod actuator;
 pub mod artifacts;

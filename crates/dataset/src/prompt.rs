@@ -3,13 +3,10 @@
 
 //! Exact-length synthetic prompt generation for trace and synthetic datasets.
 //!
-//! The block-cache algorithm follows
-//! `src/aiperf/dataset/generator/prompt.py:174-343`: each hash id owns one token
+//! The block-cache algorithm works as follows: each hash id owns one token
 //! block, the final block may be shorter, a BOS/EOS separator occupies the first
 //! token when available, and sampled corpus tokens wrap at the corpus boundary.
-//! The no-decode token path follows
-//! `src/aiperf/dataset/generator/prompt.py:152-200` on
-//! `ajc/in-engine-transport`: raw-token endpoints receive the sampled IDs
+//! The no-decode token path: raw-token endpoints receive the sampled IDs
 //! directly, with EOS replaced before engine admission.
 
 use std::collections::HashMap;

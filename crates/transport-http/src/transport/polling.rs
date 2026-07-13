@@ -3,10 +3,8 @@
 
 //! Clock-driven submit/poll/optional-download request lifecycle.
 //!
-//! The state machine is ported from
-//! `src/aiperf/transports/aiohttp_transport.py:489-700`. Protocol parsing is a
-//! trait so future asynchronous inference APIs can reuse the lifecycle without
-//! inheriting the OpenAI/SGLang video JSON shape.
+//! Protocol parsing is a trait so future asynchronous inference APIs can reuse
+//! the lifecycle without inheriting the OpenAI/SGLang video JSON shape.
 
 use std::rc::Rc;
 

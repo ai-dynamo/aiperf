@@ -4,10 +4,8 @@
 //! Product-path proofs for protocol-v2 HTTP client policy.
 //!
 //! These tests execute the ordinary scheduled pair through the sole runner
-//! subprocess. The asserted defaults and insecure TLS behavior preserve
-//! `src/aiperf/transports/http_defaults.py:131-169` and
-//! `tests/unit/transports/test_tcp_connector.py:251-265,304-422` without
-//! routing through protocol v1 or a leaf-only transport API.
+//! subprocess. The asserted defaults and insecure TLS behavior are verified
+//! without routing through protocol v1 or a leaf-only transport API.
 
 use std::convert::Infallible;
 use std::io::Write;

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Ordered stop-condition chain — ported from Python
-//! `timing/phase/stop_conditions.py`.
+//! Ordered stop-condition chain.
 //!
 //! Decides whether the load generator may send more requests. Each
 //! [`StopCondition`] is a pure, read-only predicate over a [`RunState`] snapshot

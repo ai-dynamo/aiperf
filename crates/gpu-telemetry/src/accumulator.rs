@@ -3,10 +3,8 @@
 
 //! GPU gauge accumulation, boundary-counter attribution, and efficiency joins.
 //!
-//! Per-GPU distributions and cross-GPU rollups port
-//! `src/aiperf/gpu_telemetry/accumulator.py:185-241,243-345,348-539` and the
-//! NaN-aware `ddof=1` kernel at
-//! `src/aiperf/common/models/telemetry_models.py:423-538`. Counter lookup is
+//! Per-GPU distributions and cross-GPU rollups use a NaN-aware `ddof=1` kernel.
+//! Counter lookup is
 //! intentionally replaced by the telemetry design addendum's exact synchronous
 //! phase snapshots; only the source-grounded reset clamp and MJ-to-J rollup
 //! remain.

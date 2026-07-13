@@ -57,12 +57,7 @@ pub use report::{
     ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
     ReportProvenanceError, ReportRun, ReportRunInfo, ReportRunProvenance, ReportScalarStats,
     ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata, ReportServerMetricsPhaseRange,
-    ReportStats, ReportSummary, ReportTelemetryArchive, ReportTelemetryArchiveHead,
-    ReportTelemetryArchiveHealth, ReportTelemetryArchiveSpoolBudget,
-    ReportTelemetryArchiveState, ReportTelemetryBoundaryReference,
-    ReportTelemetryBoundaryRole, ReportTelemetryLossKind, ReportTelemetryLossRange,
-    ReportTelemetryLossReason, ReportTelemetryLossSaturationSummary, ReportTimeslice, ReportValue,
-    Reporter, RunOutcome, TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION,
+    ReportStats, ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
 pub use store::{

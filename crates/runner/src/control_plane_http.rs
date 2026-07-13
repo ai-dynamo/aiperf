@@ -8,6 +8,7 @@
 //! preparation and never enter authored DTOs, durable source descriptors, or
 //! returned attempt facts.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::{self, Debug, Display, Formatter};
@@ -15,7 +16,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf_clock::Clock;
-use aiperf_telemetry_archive::LocalCancellationSignal;
 use aiperf_transport_http::config::{
     ClientConfig, PreparedTlsClientConfig, PreparedTlsClientConfigError,
 };
@@ -25,7 +25,92 @@ use aiperf_transport_http::models::{
 use aiperf_transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use bytes::Bytes;
+use tokio::sync::Notify;
 use url::Url;
+
+#[derive(Debug)]
+struct CancellationState {
+    revision: u64,
+    deadline_ns: i64,
+    stopped: bool,
+}
+
+/// LocalSet-owned cancellation and deadline-lowering signal.
+///
+/// Clones stay on the caller's local thread. An active transport races its own
+/// future against [`Self::changed`] and the injected Clock, so shutdown never
+/// waits for an originally longer request timeout. This is a general
+/// execution-factory seam: any Clock-injected control-plane consumer can hold a
+/// signal, lower its deadline, and stop future issuance.
+#[derive(Clone, Debug)]
+pub struct LocalCancellationSignal {
+    state: Rc<RefCell<CancellationState>>,
+    notify: Rc<Notify>,
+}
+
+impl Default for LocalCancellationSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalCancellationSignal {
+    /// Build an open signal with no lowered deadline and no stop request.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(CancellationState {
+                revision: 0,
+                deadline_ns: i64::MAX,
+                stopped: false,
+            })),
+            notify: Rc::new(Notify::new()),
+        }
+    }
+
+    /// Close future issuance and lower the effective deadline monotonically.
+    pub fn stop(&self, shutdown_deadline_ns: i64) {
+        let mut state = self.state.borrow_mut();
+        let next_deadline = state.deadline_ns.min(shutdown_deadline_ns);
+        if !state.stopped || next_deadline != state.deadline_ns {
+            state.stopped = true;
+            state.deadline_ns = next_deadline;
+            state.revision = state.revision.wrapping_add(1);
+            drop(state);
+            self.notify.notify_waiters();
+        }
+    }
+
+    /// Returns the current effective lifecycle cap.
+    #[must_use]
+    pub fn deadline_ns(&self) -> i64 {
+        self.state.borrow().deadline_ns
+    }
+
+    /// Whether a stop request has closed future issuance.
+    #[must_use]
+    pub fn is_stopped(&self) -> bool {
+        self.state.borrow().stopped
+    }
+
+    /// Monotone local change token used to await a later deadline update.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
+    }
+
+    /// Waits until the signal changes beyond `observed_revision`.
+    pub async fn changed(&self, observed_revision: u64) -> u64 {
+        loop {
+            let notified = self.notify.notified();
+            let revision = self.state.borrow().revision;
+            if revision != observed_revision {
+                return revision;
+            }
+            notified.await;
+        }
+    }
+}
 
 const ALLOWLISTED_RESPONSE_HEADERS: &[&str] = &[
     "cache-control",

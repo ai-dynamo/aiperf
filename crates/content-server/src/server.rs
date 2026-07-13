@@ -3,9 +3,8 @@
 
 //! Run-owned HTTP server and full-response lifecycle instrumentation.
 //!
-//! Routes, startup, directory validation, and traversal confinement follow
-//! `src/aiperf/content_server/server.py:30-199`; captured fields and interval
-//! definitions follow `request_tracker.py:78-206` on `ajc/content-server`.
+//! Routes, startup, directory validation, traversal confinement, captured
+//! fields, and interval definitions are implemented here.
 
 use std::collections::BTreeMap;
 use std::fmt;

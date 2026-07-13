@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Defaults. Port of `AioHttpDefaults` / `SocketDefaults`.
-//!
-//! The pool, DNS, keepalive, and TLS defaults follow
-//! `src/aiperf/transports/http_defaults.py:131-169` and are pinned by the
-//! source tests in `tests/unit/transports/test_tcp_connector.py:32-88`.
 
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;

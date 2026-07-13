@@ -62,8 +62,7 @@ pub trait TextTokenizer: Send + Sync {
     ///
     /// `None` means that chat-template accounting is unavailable. Callers must
     /// then use the ordinary bare-text path, matching Python AIPerf's
-    /// best-effort `apply_chat_template` policy in
-    /// `src/aiperf/records/inference_result_parser.py:394-428`.
+    /// best-effort `apply_chat_template` policy.
     fn apply_chat_template(
         &self,
         _messages: &[Value],

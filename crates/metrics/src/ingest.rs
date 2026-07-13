@@ -15,10 +15,9 @@ use serde::Serialize;
 /// Stable model and selected-endpoint dimensions for one inference request.
 ///
 /// Python keeps the configured model list and endpoint URL list as independent
-/// dimensions (`src/aiperf/common/models/model_endpoint_info.py:29-69`). The
-/// native collector additionally retains the *selected* pair per request so a
-/// multi-model or multi-endpoint run can emit honest labeled series instead of
-/// folding every request into one unlabeled aggregate.
+/// dimensions. The native collector additionally retains the *selected* pair per
+/// request so a multi-model or multi-endpoint run can emit honest labeled series
+/// instead of folding every request into one unlabeled aggregate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct InferenceDimensions {
     /// Fully resolved endpoint URL selected for the request.

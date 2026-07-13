@@ -3,8 +3,7 @@
 
 //! Summary window and phase filters shared by accumulators and analyzers.
 //!
-//! Authoritative phase selection ports `src/aiperf/metrics/accumulator.py:180-214`;
-//! half-open timeslice construction ports the same file at lines 520-614.
+//! Authoritative phase selection and half-open timeslice construction live here.
 
 use serde::Serialize;
 

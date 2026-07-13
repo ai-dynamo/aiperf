@@ -359,10 +359,8 @@ pub struct PhaseCommonSpec {
 
 /// Fully resolved adaptive-scale policy for one profiling phase.
 ///
-/// Config v2 validation and defaulting are grounded in
-/// `src/aiperf/config/adaptive_scale_phase.py:140-383`; the wire carries the
-/// effective maximum rather than asking the native runner to rediscover an
-/// omitted-field default.
+/// The wire carries the effective maximum rather than asking the native runner
+/// to rediscover an omitted-field default.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdaptiveScaleSpec {

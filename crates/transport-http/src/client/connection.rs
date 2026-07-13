@@ -52,7 +52,7 @@ where
 /// Cancellation waits on this signal before arming its deadline. The timestamp
 /// is retained so a woken task schedules against the actual send-complete
 /// instant rather than the later instant at which the executor happened to poll
-/// it, preserving `src/aiperf/timing/request_cancellation.py:53-82`.
+/// it.
 pub struct SendCompletion {
     headers_ns: Cell<Option<i64>>,
     sent_ns: Rc<Cell<Option<i64>>>,
@@ -102,8 +102,7 @@ impl SendCompletion {
     ///
     /// Hyper exposes no request-head callback. The first body poll is its
     /// closest lifecycle boundary to aiohttp's distinct
-    /// `on_request_headers_sent` event
-    /// (`src/aiperf/transports/aiohttp_trace.py:269-276`).
+    /// `on_request_headers_sent` event.
     pub fn headers_ns(&self) -> Option<i64> {
         self.headers_ns.get()
     }
@@ -324,8 +323,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
 ///
 /// `ssl_verify=false` deliberately disables only certificate-chain and hostname
 /// validation. Handshake signatures remain cryptographically verified. This is
-/// the Rust equivalent of the Python connector's `ssl=False` behavior proven in
-/// `tests/unit/transports/test_tcp_connector.py:337-422`.
+/// the Rust equivalent of the Python connector's `ssl=False` behavior.
 fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
     if let Some(prepared) = &client.prepared_tls {
         return prepared.rustls_config();
@@ -488,8 +486,6 @@ async fn establish_inner(
         trace.tls_connect_end_ns = Some(connected_ns);
         // Python's connection-create trace folds TLS into tcp_connect_*.
         // Preserve that public span while retaining the Rust-only TLS bracket.
-        // Source: `src/aiperf/transports/aiohttp_trace.py:140-155` and
-        // `src/aiperf/common/models/trace_models.py:304-310`.
         trace.tcp_connect_end_ns = Some(connected_ns);
         let alpn_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
         let use_h2 = force_h2 || (alpn_h2 && !force_h1);

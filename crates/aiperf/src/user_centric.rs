@@ -4,11 +4,10 @@
 //! Per-user open-loop pacing with virtual-history steady-state seeding.
 //!
 //! The pure setup math lives in `aiperf_timing::plan_user_centric`; this module
-//! completes `src/aiperf/timing/strategies/user_centric_rate.py:183-418`: bind
-//! the plan to sampled sessions, schedule initial users, maintain a deterministic
-//! absolute spawn heap, pace each continuation at
-//! `max(now, previous_send + turn_gap)`, hold an optional session slot from
-//! turn 0 through the final response, and expose passive adaptive user control.
+//! binds the plan to sampled sessions, schedules initial users, maintains a
+//! deterministic absolute spawn heap, paces each continuation at
+//! `max(now, previous_send + turn_gap)`, holds an optional session slot from
+//! turn 0 through the final response, and exposes passive adaptive user control.
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;

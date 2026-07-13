@@ -5,7 +5,7 @@
 //!
 //! The supported-field filtering, one-timestamp-per-scrape rule, `_total`
 //! normalization, metadata extraction, finite-value filtering, and collector
-//! scaling port `src/aiperf/gpu_telemetry/dcgm_collector.py:99-205`.
+//! scaling are implemented here.
 
 use std::collections::BTreeMap;
 

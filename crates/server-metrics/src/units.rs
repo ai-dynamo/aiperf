@@ -4,7 +4,7 @@
 //! Priority-ordered Prometheus unit inference.
 //!
 //! The scale override, exact DCGM parenthetical tags, phrase patterns, and
-//! longest-suffix rules port `src/aiperf/server_metrics/units.py:22-379`.
+//! longest-suffix rules are implemented here.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};

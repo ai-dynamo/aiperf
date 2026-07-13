@@ -9,11 +9,8 @@
 //! the same scheduler, endpoint materializer, transport, response parser,
 //! observer, and metrics pipeline as every other online run.
 //!
-//! Ownership is grounded in the complete inherited Python flow at
-//! `src/aiperf/dataset/loader/accuracy_dataset_loader.py:21-150`,
-//! `src/aiperf/accuracy/benchmark_loader.py:14-45`, and
-//! `src/aiperf/accuracy/accuracy_record_processor.py:21-147`; only the process
-//! boundary changes, so canonical semantics stay on the Python side.
+//! Only the process boundary changes, so canonical semantics stay on the
+//! Python side.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -281,8 +278,8 @@ pub async fn load_evaluator_problems(
 
 /// Load opaque evaluator problems with an optional Python grader override.
 ///
-/// Config v2 has always allowed explicit grader selection
-/// (`src/aiperf/config/accuracy.py:168-177`). The override crosses the stdio
+/// Config v2 has always allowed explicit grader selection. The override
+/// crosses the stdio
 /// control plane, but dataset loading, answer extraction, and scoring remain
 /// entirely inside the Python plugin implementation.
 pub async fn load_evaluator_problems_with_grader(
@@ -572,8 +569,7 @@ pub async fn grade_and_finalize_accuracy_report(
 ///
 /// The processor records one row per issued request rather than one row per
 /// dataset problem. Sequential cycling therefore preserves Python's
-/// `session_num % len(conversations)` multi-pass behavior from
-/// `src/aiperf/accuracy/accuracy_record_processor.py:70-93` while retaining a
+/// `session_num % len(conversations)` multi-pass behavior while retaining a
 /// unique request correlation ID for every native accuracy record.
 pub async fn grade_accuracy_responses(
     processor: &AccuracyRecordProcessor,
@@ -676,9 +672,8 @@ pub async fn grade_accuracy_responses(
     let mut summary_context = SummaryContext::new();
     summary_context.insert_accumulator(AccumulatorType::Accuracy, accuracy_summary);
     summary_context.insert_accumulator(AccumulatorType::MetricResults, native_summary.clone());
-    // Python owns total-GPU-energy production as an externally injected metric
-    // (`src/aiperf/metrics/types/power_efficiency_metrics.py:43-67`). When the
-    // native telemetry sidecar has attached that same joule scalar to the metric
+    // Python owns total-GPU-energy production as an externally injected metric.
+    // When the native telemetry sidecar has attached that same joule scalar to the metric
     // summary, expose it through the analyzer's existing optional energy seam;
     // accuracy must not scrape or independently recompute telemetry.
     if let Some(total_energy_j) = native_summary.finite_value(MetricTag::TotalGpuEnergy) {

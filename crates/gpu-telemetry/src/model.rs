@@ -3,10 +3,8 @@
 
 //! GPU telemetry records and exact phase-boundary snapshots.
 //!
-//! The metadata/record split follows
-//! `src/aiperf/common/models/telemetry_models.py:113-164`; the Rust record keeps
-//! a dynamic metric map so later source implementations do not require a wire
-//! schema change.
+//! The Rust record keeps a dynamic metric map so later source implementations
+//! do not require a wire schema change.
 
 use std::collections::BTreeMap;
 

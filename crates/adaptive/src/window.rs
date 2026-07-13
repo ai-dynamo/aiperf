@@ -3,13 +3,10 @@
 
 //! Tumbling returned-request windows.
 //!
-//! The sampler follows
-//! `src/aiperf/timing/strategies/adaptive_scale.py:272-357`: token observations
+//! The sampler works as follows: token observations
 //! are joined to a request by id, successful requests enter the window only at
 //! terminal return, and [`take`](WindowSampler::take) resets completed-window
-//! aggregates while retaining still-in-flight request state. Authoritative
-//! output length and the ITL denominator follow
-//! `src/aiperf/workers/worker.py:539-632`.
+//! aggregates while retaining still-in-flight request state.
 
 use std::collections::HashMap;
 

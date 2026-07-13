@@ -3,10 +3,9 @@
 
 //! Clock-injected TCP-connect RTT calibration.
 //!
-//! This is the native form of `src/aiperf/network_latency/probe.py:20-172`,
-//! `manager.py:67-188`, and `accumulator.py:21-127`: resolve once, open a fresh
-//! plain TCP connection for every sample, retain failures without failing the
-//! benchmark, and compute one flat mean over successful samples.
+//! This resolves once, opens a fresh plain TCP connection for every sample,
+//! retains failures without failing the benchmark, and computes one flat mean
+//! over successful samples.
 
 mod accumulator;
 mod model;

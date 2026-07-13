@@ -124,8 +124,7 @@ impl StepFn {
 
     /// Looks up the value held at `query_ns`, returning zero before the first event.
     ///
-    /// This is the `searchsorted(..., side="right") - 1` behavior from
-    /// `src/aiperf/analysis/sweepline.py:264-271`.
+    /// This is the `searchsorted(..., side="right") - 1` behavior.
     pub fn value_at(&self, query_ns: f64) -> f64 {
         let upper = upper_bound(&self.timestamps_ns, query_ns);
         upper
@@ -198,8 +197,7 @@ impl StepFn {
 /// Sorts events, applies the end-before-start tie-break, and cumulatively sums deltas.
 ///
 /// Events with non-positive deltas sort before positive deltas at equal timestamps.
-/// Residuals below `1e-9 * max_abs` are snapped to zero after the sum. These are the
-/// behavior-exact scars from `src/aiperf/analysis/sweepline.py:241-261`.
+/// Residuals below `1e-9 * max_abs` are snapped to zero after the sum.
 pub fn sweep_line_cumsum(mut events: Vec<SweepEvent>) -> StepFn {
     sort_sweep_events(&mut events);
 
@@ -349,8 +347,7 @@ fn snapped_residual(value: f64, threshold: f64) -> f64 {
 
 /// Computes exact request concurrency from aligned start/end columns.
 ///
-/// NaN rows are absent. The implementation follows
-/// `src/aiperf/analysis/sweepline.py:375-401`.
+/// NaN rows are absent.
 pub fn concurrency_sweep_line(start_ns: &[f64], end_ns: &[f64]) -> StepFn {
     assert_aligned(start_ns.len(), &[end_ns.len()]);
     let mut events = Vec::with_capacity(start_ns.len() * 2);
@@ -365,8 +362,7 @@ pub fn concurrency_sweep_line(start_ns: &[f64], end_ns: &[f64]) -> StepFn {
 
 /// Computes weighted concurrency, such as request-level tokens in flight.
 ///
-/// NaN rows are absent. The implementation follows
-/// `src/aiperf/analysis/sweepline.py:404-430`.
+/// NaN rows are absent.
 pub fn weighted_concurrency_sweep_line(
     start_ns: &[f64],
     end_ns: &[f64],
@@ -386,8 +382,7 @@ pub fn weighted_concurrency_sweep_line(
 /// Computes uniform decode throughput in tokens/ns.
 ///
 /// Each valid request contributes `(output_tokens - 1) / generation_duration` over
-/// `[generation_start, end)`. The first token is not a decode step. This follows
-/// `src/aiperf/analysis/sweepline.py:433-467`.
+/// `[generation_start, end)`. The first token is not a decode step.
 pub fn throughput_sweep_line(
     generation_start_ns: &[f64],
     end_ns: &[f64],
@@ -412,8 +407,7 @@ pub fn throughput_sweep_line(
 /// Computes uniform prefill throughput in tokens/ns.
 ///
 /// Each valid request contributes `input_tokens / prefill_duration` over
-/// `[start, generation_start)`, with no token subtraction. This follows
-/// `src/aiperf/analysis/sweepline.py:470-506`.
+/// `[start, generation_start)`, with no token subtraction.
 pub fn prefill_throughput_sweep_line(
     start_ns: &[f64],
     generation_start_ns: &[f64],
@@ -439,8 +433,8 @@ pub fn prefill_throughput_sweep_line(
 
 /// Computes combined prefill and decode throughput in one sweep pass.
 ///
-/// The phase validity predicates and decode `-1` match
-/// `src/aiperf/analysis/sweepline.py:509-570`.
+/// Each phase applies its own validity predicate; the decode phase subtracts `1`
+/// from the output-token count so the first token is not counted as a decode step.
 pub fn total_throughput_sweep_line(
     start_ns: &[f64],
     generation_start_ns: &[f64],

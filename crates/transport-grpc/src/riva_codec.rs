@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Riva canonical-JSON/protobuf conversion.
-//!
-//! This ports the complete serializers from reference commit `a391cfe27`:
-//! `src/aiperf/transports/grpc/riva_asr_serializers.py:16-224`,
-//! `riva_tts_serializers.py:16-94`, and `riva_nlp_serializers.py:16-271`.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;

@@ -130,18 +130,6 @@ impl ResourceRequirementsV2 {
         }
     }
 
-    /// Source-only standalone workload matrix.
-    #[must_use]
-    pub const fn telemetry_watch() -> Self {
-        Self {
-            models: ResourceRequirementV2::Forbidden,
-            endpoints: ResourceRequirementV2::Forbidden,
-            metrics: ResourceRequirementV2::Forbidden,
-            artifacts: ResourceRequirementV2::Optional,
-            sidecars: ResourceRequirementV2::Forbidden,
-        }
-    }
-
     fn entries(self) -> [(RunResourceV2, ResourceRequirementV2); 5] {
         [
             (RunResourceV2::Models, self.models),
@@ -847,8 +835,6 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // base build prevents capability code from growing mode string branches.
     crate::agentic_execution::register_agentic_workload(builder)?;
     crate::agentic_execution::register_agentic_online_pair(builder)?;
-    crate::telemetry_execution::register_telemetry_watch_workload(builder)?;
-    crate::telemetry_operation::register_http_telemetry_watch_pair(builder)?;
     crate::online_execution::register_http_pairs(builder)?;
     crate::online_execution::register_http_scheduled_pair(builder)?;
     crate::online_execution::register_http_static_accuracy_pair(builder)?;
@@ -1884,10 +1870,16 @@ mod tests {
         let source_only = authored_run(serde_json::json!({
             "models": {"items": [{"name": "model"}]}
         }));
-        let error =
-            validate_resource_requirements(&source_only, ResourceRequirementsV2::telemetry_watch())
-                .unwrap_err()
-                .to_string();
+        let models_forbidden = ResourceRequirementsV2 {
+            models: ResourceRequirementV2::Forbidden,
+            endpoints: ResourceRequirementV2::Forbidden,
+            metrics: ResourceRequirementV2::Forbidden,
+            artifacts: ResourceRequirementV2::Optional,
+            sidecars: ResourceRequirementV2::Forbidden,
+        };
+        let error = validate_resource_requirements(&source_only, models_forbidden)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("forbids run.resources.models"), "{error}");
 
         let inference = authored_run(serde_json::json!({
@@ -2089,13 +2081,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_transports
         );
-        let expected_workloads = vec![
-            "agentic",
-            "graph",
-            "scheduled",
-            "static_accuracy",
-            "telemetry_watch",
-        ];
+        let expected_workloads = vec!["agentic", "graph", "scheduled", "static_accuracy"];
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -2115,7 +2101,6 @@ mod tests {
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynosim"))]
         let expected_supported = vec![
@@ -2124,7 +2109,6 @@ mod tests {
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
         #[cfg(feature = "dynosim")]
         let expected_static = vec![
@@ -2132,26 +2116,21 @@ mod tests {
             ("dynosim_offline", "scheduled"),
             ("dynosim_online", "graph"),
             ("dynosim_online", "scheduled"),
-            ("dynosim_online", "telemetry_watch"),
             ("grpc", "graph"),
             ("grpc", "scheduled"),
-            ("grpc", "telemetry_watch"),
             ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynosim"))]
         let expected_static = vec![
             ("grpc", "graph"),
             ("grpc", "scheduled"),
-            ("grpc", "telemetry_watch"),
             ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
             ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
         assert_eq!(registry.supported_pairs(), expected_supported);
         assert_eq!(registry.statically_compatible_pairs(), expected_static);

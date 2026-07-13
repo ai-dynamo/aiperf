@@ -249,9 +249,6 @@ pub struct Turn {
     /// Preformatted tool definitions.
     pub tools: Option<Handle>,
     /// Preformatted vendor-shaped top-level system content blocks.
-    ///
-    /// Python parity: `src/aiperf/common/models/dataset_models.py:184-190`
-    /// from PR 731.
     pub raw_system: Option<Handle>,
     /// Earliest prior turn included when walking backward for the most recent tools.
     pub tool_walk_start: Option<u32>,

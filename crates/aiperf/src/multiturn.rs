@@ -3,9 +3,7 @@
 
 //! Dataset-backed multi-turn conversation sourcing and prompt materialization.
 //!
-//! This is the native counterpart of
-//! `src/aiperf/timing/conversation_source.py:23-198` and
-//! `src/aiperf/credit/structs.py:113-163`. A [`ConversationSource`] samples
+//! A [`ConversationSource`] samples
 //! reusable templates, mints a distinct runtime correlation id for each session,
 //! caps virtual-history sessions safely to the sampled template length, and
 //! builds continuation turns. Static user messages live in the unified
@@ -100,8 +98,7 @@ impl InputTokenCounter for AuthoredInputTokenCounter {
 
 /// Exact wire-body token accounting with optional Hugging Face chat templates.
 ///
-/// This is the native counterpart of
-/// `src/aiperf/records/inference_result_parser.py:320-428`: endpoint-specific
+/// Endpoint-specific
 /// extraction runs against the final request body, chat templates are
 /// best-effort, tool text is added outside the role/content template, and the
 /// ordinary path joins extracted text with one space.

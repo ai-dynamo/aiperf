@@ -3,9 +3,7 @@
 
 //! Adaptive control actuators.
 //!
-//! These are the Rust equivalents of
-//! `src/aiperf/timing/strategies/adaptive_scale_backends.py:15-226`. The
-//! controller depends only on [`ControlActuator`]; changing from session
+//! The controller depends only on [`ControlActuator`]; changing from session
 //! concurrency to prefill concurrency, request rate, or target users does not
 //! alter controller logic.
 

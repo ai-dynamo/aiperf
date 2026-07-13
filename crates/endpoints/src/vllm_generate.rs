@@ -3,8 +3,7 @@
 
 //! Token-native vLLM/Dynamo `/inference/v1/generate` endpoint.
 //!
-//! Request and response behavior ports
-//! `src/aiperf/endpoints/vllm_generate.py:21-142` from PR 1113. The Rust port
+//! The Rust port
 //! deliberately tightens the boundary: dataset composition validates and owns
 //! the raw token IDs, so formatting maps a typed [`crate::Turn`] field to the
 //! vLLM wire field without inspecting arbitrary JSON values.

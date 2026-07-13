@@ -113,7 +113,6 @@ fn all_nine_riva_endpoints_are_open_protocol_v2_dialects() {
 
 #[test]
 fn asr_formats_unary_and_configured_chunked_audio_and_parses_transcripts() {
-    // Python parity: riva_asr.py:16-131.
     let audio = [0_u8, 1, 2, 3, 4];
     let turns = [Turn {
         audios: vec![Media::new(vec![STANDARD.encode(audio)])],
@@ -210,7 +209,6 @@ fn asr_rejects_missing_audio_and_non_positive_chunk_sizes() {
 
 #[test]
 fn tts_joins_first_turn_text_and_preserves_audio_geometry() {
-    // Python parity: riva_tts.py:16-113.
     let endpoint = prepared(
         "riva_tts",
         true,
@@ -272,7 +270,6 @@ fn tts_joins_first_turn_text_and_preserves_audio_geometry() {
 
 #[test]
 fn nlp_endpoints_match_text_list_query_and_response_rules() {
-    // Python parity: riva_nlp.py:16-198.
     let turns = [text_turn(&["hello", "", "world"])];
     for id in [
         "riva_text_classify",

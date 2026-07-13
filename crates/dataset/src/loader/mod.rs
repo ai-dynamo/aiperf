@@ -20,7 +20,6 @@ use crate::segment::SegmentPool;
 use crate::tokenizer::TextTokenizer;
 
 pub mod asr;
-pub mod dag;
 pub mod exgentic;
 pub mod public;
 pub mod random_pool;
@@ -30,10 +29,6 @@ pub mod synthetic;
 pub mod trace;
 
 pub use asr::{HfAsrComposer, HfAsrDatasetLoader};
-pub use dag::{
-    DagJsonlConversation, DagJsonlFork, DagJsonlProgram, DagJsonlSpawn, DagJsonlTurn,
-    dag_jsonl_turn_token_counts, load_dag_jsonl_program,
-};
 pub use exgentic::{ExgenticComposer, ExgenticDatasetLoader, ExgenticV2DatasetLoader};
 pub use public::{
     AccuracyComposer, AccuracyDatasetLoader, HfConversationComposer, HfConversationDatasetLoader,
@@ -674,6 +669,15 @@ mod tests {
             registry.get("missing"),
             Err(DatasetError::LoaderNotFound(_))
         ));
+    }
+
+    #[test]
+    fn dag_jsonl_is_not_a_generic_dataset_registration() {
+        // `dag_jsonl` is a graph source owned by `aiperf-graph`, never a linear
+        // loader. It must stay absent from this registry so a scheduled run can
+        // never accidentally parse it as a linear dataset.
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        assert!(registry.get("dag_jsonl").is_err());
     }
 
     #[tokio::test]

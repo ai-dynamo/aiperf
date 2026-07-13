@@ -456,7 +456,7 @@ impl<C: HttpEndpointConfigView + ?Sized> MetadataHttpEndpointBinding<'_, C> {
                     .flatten()
             })
             .or(self.descriptor.endpoint_path);
-        // Python PR 664 parity: `aiohttp_transport.py:172-208` expands this
+        // The source transport expands this
         // transport-owned placeholder in both custom and metadata paths before
         // applying URL-prefix de-duplication. Keep expansion at the binding
         // boundary so endpoint dialects remain transport agnostic.

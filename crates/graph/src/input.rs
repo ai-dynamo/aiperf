@@ -16,12 +16,12 @@ use std::fmt::{self, Display};
 use std::sync::Arc;
 
 use aiperf_dataset::{
-    ConversationBranchMode, ConversationContextMode, DagJsonlProgram, DispatchTiming, LoadConfig,
-    PrerequisiteKind, SegmentPool, SegmentStore, TextTokenizer, dag_jsonl_turn_token_counts,
-    load_dag_jsonl_program,
+    ConversationBranchMode, ConversationContextMode, DispatchTiming, LoadConfig, PrerequisiteKind,
+    SegmentPool, SegmentStore, TextTokenizer,
 };
 use bytes::Bytes;
 
+use crate::dag_source::{DagJsonlProgram, dag_jsonl_turn_token_counts, load_dag_jsonl_program};
 use crate::lowering::{
     CatalogBranch, CatalogConversation, CatalogPrerequisite, CatalogTurn, GraphCatalog,
     lower_catalog,

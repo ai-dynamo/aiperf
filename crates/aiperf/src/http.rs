@@ -9,9 +9,8 @@
 //! admit/token times are stamped from the same clock origin the run loop uses for
 //! arrival, so all events share one timeline.
 //!
-//! Per-request cancellation and endpoint resolution consume the scalars ported
-//! from `src/aiperf/credit/issuer.py:197-238` and preserve the full-send timer
-//! invariant from `src/aiperf/timing/request_cancellation.py:53-82`.
+//! Per-request cancellation and endpoint resolution consume the timing scalars
+//! and preserve the full-send timer invariant.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -56,9 +55,9 @@ mod endpoint_dispatch;
 use endpoint_dispatch::EndpointDispatchHooks;
 
 /// Return true only for an SSE message that the current OpenAI-chat parser
-/// would record as a token. This mirrors the Python worker callback at
-/// `src/aiperf/workers/worker.py:474-487`: role-only, usage-only, finish-only,
-/// malformed, and `[DONE]` messages do not release prefill capacity.
+/// would record as a token. This mirrors the Python worker callback: role-only,
+/// usage-only, finish-only, malformed, and `[DONE]` messages do not release
+/// prefill capacity.
 fn is_meaningful_chat_token(message: &SseMessage) -> bool {
     let Some(data) = message.data() else {
         return false;
@@ -914,9 +913,8 @@ impl TransportSink {
         match endpoint_path {
             None => Ok(selected_url.clone()),
             Some(path) if path.starts_with('/') => {
-                // Python parity: `src/aiperf/transports/aiohttp_transport.py:170-199`
-                // at commit `530c6db43` expands the sole supported path
-                // template and removes a duplicate `/v1` prefix.
+                // Python parity: expand the sole supported path template and
+                // remove a duplicate `/v1` prefix.
                 let template_remainder = path.replace("{model_name}", "");
                 anyhow::ensure!(
                     !template_remainder.contains('{') && !template_remainder.contains('}'),

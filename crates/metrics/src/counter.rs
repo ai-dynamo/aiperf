@@ -6,9 +6,7 @@
 //! AIPerf owns phase transitions, so cumulative GPU and server counters are
 //! sampled synchronously at the start and end barriers. This replaces the
 //! inherited timestamp-search reconstruction while preserving the important
-//! reset clamp from `src/aiperf/common/models/telemetry_models.py:430-504`
-//! (called by `src/aiperf/gpu_telemetry/accumulator.py:300-320`) and
-//! `src/aiperf/server_metrics/export_stats.py:286-359`.
+//! reset clamp.
 
 /// A validated phase-boundary counter delta.
 #[derive(Debug, Clone, Copy, PartialEq)]

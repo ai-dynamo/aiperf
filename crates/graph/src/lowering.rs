@@ -3,11 +3,6 @@
 
 //! Canonical authored DAG to Graph-IR lowering.
 //!
-//! The semantic source is the complete Python DAG loader and branch runtime:
-//! `src/aiperf/dataset/loader/dag_jsonl.py:189-503`,
-//! `src/aiperf/dataset/loader/_dag_jsonl_helpers.py:52-301`,
-//! `src/aiperf/timing/branch_orchestrator.py:128-480`, and
-//! `src/aiperf/timing/_branch_orchestrator_spawn.py:45-315`.
 //! The lowering keeps the behavior while deleting the credit protocol:
 //!
 //! - a post-turn branch is an out-edge from the declaring turn;
@@ -321,9 +316,9 @@ impl<'a> GraphBuilder<'a> {
             .collect::<HashMap<_, _>>();
         let mut expanded_branches = HashMap::<String, BranchExpansion>::new();
 
-        // Python dispatches pre-session SPAWNs before root turn zero
-        // (`branch_orchestrator.py:128-163`). Insertion order is the LocalSet's
-        // deterministic same-instant order, so expand these START entries first.
+        // Python dispatches pre-session SPAWNs before root turn zero. Insertion
+        // order is the LocalSet's deterministic same-instant order, so expand
+        // these START entries first.
         for branch_id in &conversation.turns[0].branch_ids {
             let branch = branches.get(branch_id.as_str()).ok_or_else(|| {
                 GraphLoweringError::Branch(format!(

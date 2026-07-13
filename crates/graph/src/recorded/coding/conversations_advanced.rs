@@ -3,7 +3,7 @@
 
 //! Higher-level conversation renderers: migration, deploy, security,
 //! distributed, observability, db optimize, architecture review, and incident
-//! response. Port of `_coding_conversations_advanced.py`.
+//! response.
 //!
 //! Like the base conversations, each renderer joins `[User]`/`[Assistant]` turns
 //! with `\n\n` and draws bridge phrases, embedded tool/config/error blocks, and

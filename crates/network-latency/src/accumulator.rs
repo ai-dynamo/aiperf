@@ -27,9 +27,6 @@ struct TargetState {
 }
 
 /// Run-local accumulator for all probe targets.
-///
-/// The flat mean and population statistics port
-/// `src/aiperf/network_latency/accumulator.py:21-127`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NetworkLatencyAccumulator {
     benchmark_id: Option<String>,

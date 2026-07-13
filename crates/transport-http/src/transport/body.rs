@@ -3,10 +3,8 @@
 
 //! Pluggable request-body encoding, including multipart file descriptors.
 //!
-//! Multipart behavior is ported from
-//! `src/aiperf/transports/aiohttp_transport.py:460`. Endpoint formatters keep
-//! binary data JSON-safe as `{b64_data, filename, content_type}` until this
-//! final wire boundary.
+//! Endpoint formatters keep binary data JSON-safe as
+//! `{b64_data, filename, content_type}` until this final wire boundary.
 
 use std::hash::{Hash, Hasher};
 

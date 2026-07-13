@@ -3,8 +3,7 @@
 
 //! Duration-weighted statistics over sweep-line step functions.
 //!
-//! Clipping, active masks, and duration-CDF percentiles port
-//! `src/aiperf/analysis/sweepline_stats.py:20-188`.
+//! Covers clipping, active masks, and duration-CDF percentiles.
 
 use super::{StepFn, lower_bound, upper_bound};
 
@@ -55,8 +54,7 @@ pub struct ClippedSegment {
 /// Clips a step function to `[window_start_ns, window_end_ns]`.
 ///
 /// The predecessor value is carried across the left boundary and zero is used
-/// before the first event. This ports
-/// `src/aiperf/analysis/sweepline_stats.py:20-52`.
+/// before the first event.
 pub fn build_clipped_segments(
     curve: &StepFn,
     window_start_ns: f64,
@@ -99,8 +97,7 @@ pub fn build_clipped_segments(
 ///
 /// Average and population variance use the full window span, including idle
 /// zero-valued segments. Percentiles sort by value and locate the first
-/// cumulative-duration fraction at or above 50/90/95/99 percent. This ports
-/// `src/aiperf/analysis/sweepline_stats.py:55-98`.
+/// cumulative-duration fraction at or above 50/90/95/99 percent.
 pub fn compute_time_weighted_stats(
     curve: &StepFn,
     window_start_ns: f64,
@@ -120,8 +117,7 @@ pub fn compute_time_weighted_stats(
 /// Computes duration-weighted rate statistics only while `mask` is positive.
 ///
 /// Idle segments do not enter the average, variance, or percentile CDF. The
-/// merged grid includes only in-window rate/mask events plus exact window edges,
-/// matching `src/aiperf/analysis/sweepline_stats.py:101-188`.
+/// merged grid includes only in-window rate/mask events plus exact window edges.
 pub fn compute_active_weighted_stats(
     rate: &StepFn,
     mask: &StepFn,

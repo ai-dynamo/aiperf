@@ -29,7 +29,7 @@ pub trait NetworkLatencyProbe {
     /// Resolve and cache one address before timed probes begin.
     ///
     /// Failure is diagnostic only: [`probe_once`](Self::probe_once) falls back
-    /// to per-connect resolution, matching `probe.py:91-116`.
+    /// to per-connect resolution.
     fn resolve(&self) -> LocalProbeFuture<'_, io::Result<()>>;
 
     /// Open one fresh connection and always return one success/failure sample.

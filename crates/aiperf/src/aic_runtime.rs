@@ -7,8 +7,7 @@
 //! `MockEngineArgs::perf_model`, keeping the embedded-Python AIC bridge in the
 //! consumer rather than in the pure-Rust simulator. The one-time Python compile
 //! and pure-Rust prediction behavior is ported from dynamo's
-//! `lib/bindings/python/rust/llm/aic_callback.rs`; quant-mode normalization is
-//! source-grounded in `lib/bindings/python/src/dynamo/_internal/aic.py:47-104`.
+//! `lib/bindings/python/rust/llm/aic_callback.rs`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -220,7 +219,6 @@ fn build_engine(args: &MockEngineArgs) -> Result<Arc<AicEngine>> {
 ///
 /// The helper returns a rank-local count. Offline replay owns one global engine
 /// pool, so attention-DP scales the result exactly as in
-/// `components/src/dynamo/replay/main.py:110-174` and
 /// `lib/bindings/python/rust/llm/replay.rs:1668-1715`.
 fn estimate_engine_num_gpu_blocks(args: &MockEngineArgs) -> Result<usize> {
     let backend = args
@@ -299,9 +297,8 @@ fn estimate_engine_num_gpu_blocks(args: &MockEngineArgs) -> Result<usize> {
 
 /// Populate offload byte sizing from the model only when the user omitted it.
 ///
-/// This is the native counterpart of
-/// `components/src/dynamo/replay/main.py:176-197` and deliberately preserves
-/// that helper's `None` result rather than inventing a fallback size.
+/// This deliberately preserves the canonical helper's `None` result rather
+/// than inventing a fallback size.
 fn populate_missing_offload_kv_bytes_per_token(args: &mut MockEngineArgs) -> Result<()> {
     if args.kv_bytes_per_token.is_some() {
         return Ok(());

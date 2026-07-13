@@ -3,9 +3,7 @@
 
 //! Native replay parity for the two Python-recorded trace formats.
 //!
-//! The logical fixture mirrors
-//! `../aiperf-graph-ir/tests/unit/dataset/graph/adapters/test_weka_dynamo_parity.py`.
-//! Its one intentional RNG amendment is the repository's canonical
+//! The fixture's one intentional RNG amendment is the repository's canonical
 //! `aiperf-rng` BLAKE3/PCG64 stream. With that stream held common, both source
 //! formats must lower to the same topology and exact materialized message bytes.
 

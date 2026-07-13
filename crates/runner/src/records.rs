@@ -4,10 +4,9 @@
 //! Legacy-compatible per-request JSONL generated from native metric records.
 //!
 //! Python's convergence and detailed-aggregation consumers read the
-//! `MetricRecordInfo` shape written by
-//! `src/aiperf/post_processors/record_export_jsonl_writer.py:17-123`. Rust
-//! retains that wire shape, but every value is produced by the same
-//! [`aiperf_metrics::MetricsAccumulator`] used for native-v2 aggregation.
+//! `MetricRecordInfo` shape. Rust retains that wire shape, but every value is
+//! produced by the same [`aiperf_metrics::MetricsAccumulator`] used for
+//! native-v2 aggregation.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -263,10 +262,9 @@ pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -
 /// Write profiling response and reasoning text with selected metric values.
 ///
 /// This collapses Python's per-processor fragment/aggregation implementation
-/// (`src/aiperf/post_processors/outputs_json_record_processor.py:83-108` and
-/// `src/aiperf/exporters/outputs_json_exporter.py:58-100`) into one post-run
-/// write because the native runner already owns every finalized record. Schema
-/// 1.1 keeps provider reasoning separate from user-visible response text.
+/// into one post-run write because the native runner already owns every
+/// finalized record. Schema 1.1 keeps provider reasoning separate from
+/// user-visible response text.
 pub(crate) fn write_outputs_json(
     path: &Path,
     records: &[CapturedRecord],

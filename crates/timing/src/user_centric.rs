@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! User-centric rate schedule — the pure virtual-history math ported from
-//! Python `timing/strategies/user_centric_rate.py` (`setup_phase`,
-//! `_find_alternate_spacing_step`, `_recompute_turn_gap`).
+//! User-centric rate schedule — the pure virtual-history math.
 //!
 //! The user-centric strategy simulates a realistic multi-turn chat scenario:
 //! at `t=0` there is already a **steady-state** of users at varying stages of

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Error-traceback and git-diff template renderers. Port of `_coding_errors_diff.py`.
+//! Error-traceback and git-diff template renderers.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;

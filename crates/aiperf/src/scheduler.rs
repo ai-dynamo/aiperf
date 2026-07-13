@@ -4,8 +4,7 @@
 //! Clock-backed local-task scheduling for timing workloads.
 //!
 //! Python's `LoopScheduler` is the common scheduling seam used by request-rate,
-//! user-centric, and fixed-schedule strategies
-//! (`src/aiperf/common/loop_scheduler.py:113-226`). This module carries the
+//! user-centric, and fixed-schedule strategies. This module carries the
 //! same three verbs over AIPerf's injected [`Clock`]: absolute scheduling,
 //! relative scheduling, and immediate execution. Futures stay `!Send` and run
 //! on the caller's `LocalSet`; the injected clock makes the implementation work

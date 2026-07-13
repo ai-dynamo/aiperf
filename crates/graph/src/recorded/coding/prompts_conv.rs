@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! User-prompt, context, and coding-conversation renderers. Port of
-//! `_coding_prompts_conv.py`.
+//! User-prompt, context, and coding-conversation renderers.
 //!
 //! This module also hosts the shared conversation scaffolding used by the two
 //! conversation renderers (`conversations` and `conversations_advanced`): the
-//! natural-language bridge/request pools inlined from `_coding_text.py`, the
+//! natural-language bridge/request pools, the
 //! per-conversation identifier bundle (`ConvIds`, Python `_conv_ids`), the
 //! `conv_bridge`/`conv_user_msg` fillers (Python `_conv_bridge`/`_conv_user_msg`
 //! backed by `_SafeFormatMap`), and the 18-way `coding_conversation` dispatch.
@@ -16,7 +15,7 @@ use super::vocab::*;
 use super::{conversations, conversations_advanced};
 use crate::recorded::RecordedTraceError;
 
-// -- Natural-language pools inlined from `_coding_text.py` --
+// -- Natural-language pools --
 
 /// `_USER_REQUESTS`: natural-language coding request templates.
 const USER_REQUESTS: &[&str] = &[

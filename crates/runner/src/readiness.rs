@@ -9,12 +9,9 @@
 //! runner creates its exclusive artifact directory. No fallback inference
 //! payload or endpoint-kind match lives in the driver.
 //!
-//! Retry pacing and request-deadline floors follow
-//! `src/aiperf/common/readiness_probe.py:65-67,86-125,313-354`; target ordering
-//! and per-target timeout scope follow
-//! `src/aiperf/common/readiness_probe.py:357-425`. Request construction
-//! deliberately does not port that file's endpoint tables: the selected Rust
-//! endpoint adapter is authoritative.
+//! Request construction deliberately does not port the Python readiness
+//! probe's endpoint tables: the selected Rust endpoint adapter is
+//! authoritative.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;

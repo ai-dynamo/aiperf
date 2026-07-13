@@ -11,14 +11,10 @@
 //! against those already validated case projections.
 //!
 //! The stock binary projection follows the pinned provider semantics rather
-//! than recreating either grader: NeMo Evaluator produces its numeric reward in
-//! `nemo_evaluator/environments/custom.py:227-249`, while OpenBench produces an
-//! exact `0.0` or `1.0` in
-//! `openbench/scorers/grade_school_math.py:11-38`. Inspect's owning accuracy
-//! metric is the arithmetic mean in
-//! `inspect_ai/scorer/_metrics/accuracy.py:14-35`; its reducer, score filtering,
-//! and count construction remain Python-owned in
-//! `inspect_ai/_eval/task/results.py:120-165,237-245,272-330`.
+//! than recreating either grader: NeMo Evaluator produces its numeric reward,
+//! while OpenBench produces an exact `0.0` or `1.0`. Inspect's owning accuracy
+//! metric is the arithmetic mean; its reducer, score filtering, and count
+//! construction remain Python-owned.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display};
@@ -621,9 +617,8 @@ impl PublicAggregateProjectionValidator for ExactBinaryMeanAggregateValidator {
 /// Factory-owned validator for stock OpenBench GSM8K epoch reduction.
 ///
 /// The pinned Inspect implementation first applies `statistics.mean` per
-/// sample across epochs (`inspect_ai/scorer/_reducer/reducer.py:39-54,332-354`)
-/// and then its accuracy metric sums those reduced sample values in order
-/// (`inspect_ai/scorer/_metrics/accuracy.py:14-35`). The frozen stock config
+/// sample across epochs and then its accuracy metric sums those reduced sample
+/// values in order. The frozen stock config
 /// permits one through five samples and one through eight epochs. Exhaustive
 /// enumeration proves the resulting value stays within two ULPs of the flat
 /// binary-case mean. Any incomplete case set remains restricted because

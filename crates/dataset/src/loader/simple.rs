@@ -3,8 +3,7 @@
 
 //! Canonical single-turn and multi-turn JSONL loaders.
 //!
-//! Ported from `src/aiperf/dataset/loader/{single_turn,multi_turn}.py` and
-//! `src/aiperf/dataset/loader/mixins.py`, including modality validation,
+//! These loaders provide modality validation,
 //! session grouping, per-turn timing/output overrides, named batches, local
 //! media encoding, and insertion-order preservation.
 

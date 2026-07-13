@@ -35,14 +35,6 @@ pub mod redaction;
 pub mod registry;
 mod server_metrics;
 pub mod sidecar_input;
-pub mod telemetry_archive_components;
-pub mod telemetry_archive_owner;
-pub mod telemetry_attachment;
-pub mod telemetry_execution;
-pub mod telemetry_operation;
-pub mod telemetry_pipeline;
-pub mod telemetry_source;
-pub mod telemetry_watch;
 pub mod turn_execution;
 
 pub use application::RunnerApplication;

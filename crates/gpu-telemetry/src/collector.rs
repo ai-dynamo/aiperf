@@ -3,10 +3,9 @@
 
 //! One-source sequential GPU telemetry collector.
 //!
-//! Explicit baseline/final collection mirrors the intent of
-//! `src/aiperf/gpu_telemetry/manager.py:266-292,381-409`, while the native
-//! runtime calls these methods directly at phase barriers instead of routing
-//! records through services or messages.
+//! Explicit baseline/final collection is driven directly by the native runtime,
+//! which calls these methods at phase barriers instead of routing records
+//! through services or messages.
 
 use std::rc::Rc;
 

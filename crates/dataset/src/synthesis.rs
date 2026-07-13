@@ -3,11 +3,8 @@
 
 //! Native trace-synthesis policy.
 //!
-//! The transform order and edge behavior port
-//! `src/aiperf/dataset/synthesis/synthesizer.py:42-282` and the Config-v2
-//! parameter surface in `src/aiperf/config/dataset/trace.py:20-117`. Loaders
-//! retain ownership of format-specific grouping and reconstruction; this module
-//! owns the shared prefix-width/depth, timestamp, ISL, and OSL transforms.
+//! Loaders retain ownership of format-specific grouping and reconstruction; this
+//! module owns the shared prefix-width/depth, timestamp, ISL, and OSL transforms.
 
 use std::collections::{HashMap, HashSet};
 

@@ -327,7 +327,7 @@ impl GpuTelemetryState {
 
     async fn collect_continuously(self: Rc<Self>) {
         // Python's canonical collector starts its cadence task with
-        // `immediate=True` (`src/aiperf/common/mixins/base_metrics_collector_mixin.py:345`).
+        // `immediate=True`.
         // The forced baseline belongs just before the phase; this first ordinary
         // scrape belongs just after the common phase-start barrier and ensures a
         // short phase still has an in-window gauge sample.

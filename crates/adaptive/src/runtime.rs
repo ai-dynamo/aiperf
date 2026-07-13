@@ -3,8 +3,7 @@
 
 //! Clock-paced adaptive assessment runtime.
 //!
-//! The assessment task mirrors
-//! `src/aiperf/timing/strategies/adaptive_scale.py:300-322`: it sleeps for one
+//! The assessment task sleeps for one
 //! assessment period on the injected clock, takes a tumbling window, applies
 //! controller decisions, and asks the issuer to stop once the controller is
 //! terminal.

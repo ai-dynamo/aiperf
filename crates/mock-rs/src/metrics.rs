@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! High-level metric recording functions - port of `metrics_utils.py`.
+//! High-level metric recording functions.
 
 use std::collections::HashSet;
 use std::sync::Arc;

@@ -304,7 +304,6 @@ impl HttpClient {
         let mut record = RequestRecord::started(start_ns);
         let mut trace = TraceData {
             // aiohttp emits on_request_start before connection acquisition.
-            // Source: `src/aiperf/transports/aiohttp_trace.py:14-23,208-215`.
             request_send_start_ns: Some(start_ns),
             ..TraceData::default()
         };

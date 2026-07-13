@@ -25,9 +25,7 @@ pub use histogram::{
 pub use model::{
     HistogramValue, MetricFamily, MetricSample, PrometheusMetricType, ServerMetricsRecord,
 };
-pub use parser::{
-    MetricsParseError, MetricsTextParser, NativeServerMetricsProjection, PrometheusTextParser,
-};
+pub use parser::{MetricsParseError, MetricsTextParser, PrometheusTextParser};
 pub use source::{
     PrometheusHttpSource, ServerMetricsError, ServerMetricsScrapeMode, ServerMetricsScrapeOutcome,
     ServerMetricsSource,

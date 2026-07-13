@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Bounded request tracking and injectable wall/monotonic time.
-//!
-//! Counter and eviction behavior follows
-//! `src/aiperf/content_server/request_tracker.py:25-64` on
-//! `ajc/content-server`.
 
 use std::collections::VecDeque;
 use std::fmt;

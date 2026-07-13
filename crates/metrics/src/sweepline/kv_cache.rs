@@ -78,8 +78,7 @@ impl<'a> IclSeries<'a> {
 /// Computes coarse tokens in flight for prefill and generation phases.
 ///
 /// Input tokens enter at request start and remain until request end. Output tokens
-/// enter together at generation start. Addition/subtraction masks follow
-/// `src/aiperf/analysis/sweepline_kv_cache.py:18-97`.
+/// enter together at generation start.
 pub fn tokens_in_flight_sweep_line(
     start_ns: &[f64],
     generation_start_ns: &[f64],
@@ -134,8 +133,7 @@ pub fn tokens_in_flight_sweep_line(
 /// One token enters at TTFT. The remaining `osl - 1` tokens are distributed across
 /// all non-negative ICL entries, including zero-duration back-to-back chunks. Chunk
 /// timestamps at or after `end_ns` are clamped to the adjacent representable float
-/// below the end so the end-before-start tie-break cannot unbalance the curve. This
-/// ports `src/aiperf/analysis/sweepline_kv_cache.py:100-265`.
+/// below the end so the end-before-start tie-break cannot unbalance the curve.
 pub fn tokens_in_flight_sweep_line_icl(
     start_ns: &[f64],
     generation_start_ns: &[f64],
@@ -245,7 +243,7 @@ pub fn tokens_in_flight_sweep_line_icl(
 ///
 /// Zero ICLs cannot carry a rate and are excluded from both the event set and the
 /// per-record divisor. The remaining `osl - 1` tokens are spread across positive
-/// intervals, matching `src/aiperf/analysis/sweepline_kv_cache.py:268-353`.
+/// intervals.
 pub fn throughput_sweep_line_icl(
     generation_start_ns: &[f64],
     output_tokens: &[f64],
@@ -467,9 +465,8 @@ mod tests {
 
     #[test]
     fn multi_record_icl_curves_match_independent_reference_enumeration() {
-        // This is the native twin of the brute-force oracle in
-        // `tests/unit/analysis/test_sweep.py:1389-1622`. It deliberately uses
-        // overlapping records, unequal gaps, and a zero-duration gap so the
+        // This is the native twin of the brute-force oracle. It deliberately
+        // uses overlapping records, unequal gaps, and a zero-duration gap so the
         // reference does not merely restate the event-generation loop.
         let start = [0.0, 17.0, 53.0];
         let generation_start = [10.0, 30.0, 70.0];

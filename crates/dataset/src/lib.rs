@@ -8,12 +8,6 @@
 //! multimodal content are interned once in a prefix-dependent content-addressed
 //! [`SegmentPool`]. [`Conversation`] and [`Turn`] contain only dense [`Handle`]s,
 //! so sharing a [`Dataset`] across worker threads shares the payload bytes too.
-//!
-//! Python behavior ported by this crate is grounded in
-//! `src/aiperf/common/models/dataset_models.py:69-511`,
-//! `src/aiperf/dataset/dataset_samplers.py:1-86`, and the loader files cited by
-//! their respective modules. The dense-handle fast path follows
-//! `aiperf-graph-ir/src/aiperf/dataset/graph_segment_unified_store.py:130-534`.
 
 pub mod compose;
 pub mod dataset;
@@ -43,10 +37,8 @@ pub use generator::{
     transcode_audio_to_wav,
 };
 pub use loader::{
-    AccuracyComposer, AccuracyDatasetLoader, DagJsonlConversation, DagJsonlFork, DagJsonlProgram,
-    DagJsonlSpawn, DagJsonlTurn, DatasetFormatRegistration, DatasetLoader, DatasetProbe,
-    DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin, dag_jsonl_turn_token_counts,
-    load_dag_jsonl_program, load_raw_rows,
+    AccuracyComposer, AccuracyDatasetLoader, DatasetFormatRegistration, DatasetLoader,
+    DatasetProbe, DatasetSource, LoadConfig, LoaderRegistry, RawRow, RowOrigin, load_raw_rows,
 };
 pub use materialize::{
     AssemblyItem, MessageSpliceResolver, Overrides, SegmentItemsMaterializer,

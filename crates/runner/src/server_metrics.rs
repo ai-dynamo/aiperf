@@ -3,9 +3,7 @@
 
 //! Phase-bounded inference-server Prometheus collection.
 //!
-//! Source activation and scrape classification port
-//! `src/aiperf/server_metrics/manager.py:78-170` and
-//! `data_collector.py:133-361`. The native telemetry design addendum replaces
+//! The native telemetry design addendum replaces
 //! the inherited asynchronous scrape races with one sequential Clock-driven
 //! loop and forces exact snapshots at every warmup/profiling barrier.
 

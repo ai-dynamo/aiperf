@@ -3,10 +3,9 @@
 
 //! Backend-neutral derived inference-server metric atlas.
 //!
-//! The vLLM-first, SGLang-fallback mapping and its type guards port
-//! `src/aiperf/server_metrics/accumulator.py:408-837`. The native view replaces
-//! Python's reconstructed counter windows with the exact phase-boundary deltas
-//! required by the telemetry design addendum.
+//! The vLLM-first, SGLang-fallback mapping and its type guards are defined here.
+//! The native view replaces Python's reconstructed counter windows with the
+//! exact phase-boundary deltas required by the telemetry design addendum.
 
 use std::collections::BTreeMap;
 

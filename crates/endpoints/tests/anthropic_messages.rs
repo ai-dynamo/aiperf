@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Byte and behavior parity fixtures for Python PR 731's Messages endpoint.
+//! Byte and behavior parity fixtures for the Messages endpoint.
 
 use std::collections::BTreeMap;
 

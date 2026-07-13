@@ -3,9 +3,8 @@
 
 //! Absolute-timestamp trace replay workload.
 //!
-//! This ports `src/aiperf/timing/strategies/fixed_schedule.py:68-171` end to
-//! end: validate and stable-sort first-turn timestamps, resolve the schedule
-//! zero, schedule every first turn up front, then select absolute
+//! This validates and stable-sorts first-turn timestamps, resolves the schedule
+//! zero, schedules every first turn up front, then selects absolute
 //! `timestamp_ms`, relative `delay_ms`, or immediate dispatch (in that
 //! precedence order) for each continuation. The workload intentionally ignores
 //! stop bounds: the trace is the run plan.

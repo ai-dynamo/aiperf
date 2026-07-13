@@ -2497,7 +2497,7 @@ fn artifact_path(root: &Path, relative: &Path, field: &str) -> Result<PathBuf> {
 /// Resolve the current phase's outbound handoff from authored phase order.
 // Config v2 authors `seamless` on the subsequent phase, while the native
 // PhaseConfig owns the current -> next handoff. Preserve that direction once
-// at the adapter seam. Source: `src/aiperf/config/config.py:522-530`.
+// at the adapter seam.
 pub(crate) fn phase_seamless_to_next(phases: &[PhaseSpec], phase_index: usize) -> bool {
     phases
         .get(phase_index + 1)

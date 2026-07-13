@@ -40,11 +40,9 @@ aiperf-gpu-telemetry = { path = "../gpu-telemetry" }
 aiperf-graph = { path = "../graph" }
 aiperf-metrics.workspace = true
 aiperf-network-latency.workspace = true
-aiperf-prometheus = { path = "../prometheus" }
 aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../timing" }
-aiperf-telemetry-archive = { path = "../telemetry-archive" }
 aiperf-transport-http.workspace = true
 aiperf-transport-grpc.workspace = true
 anyhow.workspace = true

@@ -3,8 +3,7 @@
 
 //! Parsed server-metrics records.
 //!
-//! The family/sample representation ports
-//! `src/aiperf/common/models/server_metrics_models.py:88-249`, while using Rust
+//! The family/sample representation uses Rust
 //! enums to make scalar and histogram payloads mutually exclusive by type.
 
 use std::collections::BTreeMap;

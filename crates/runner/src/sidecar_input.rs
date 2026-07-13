@@ -33,9 +33,6 @@ pub const SERVER_METRICS_SIDECAR_ID: &str = "server_metrics";
 pub const LIVE_STREAMING_SIDECAR_ID: &str = "live_streaming";
 
 /// Run-owned HTTP content-server and synthetic-media publication policy.
-///
-/// This is the strict native projection of
-/// `src/aiperf/common/environment.py:53-96` on `ajc/content-server`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContentServerSpec {

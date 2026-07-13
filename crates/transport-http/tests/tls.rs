@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-loopback parity for Python's SSL verification switch, source-tested in
-//! `tests/unit/transports/test_tcp_connector.py:337-445`.
+//! Real-loopback parity for Python's SSL verification switch.
 
 mod common;
 

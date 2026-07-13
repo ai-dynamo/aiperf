@@ -3,10 +3,8 @@
 
 //! Clock-injected telemetry-source seam and DCGM HTTP implementation.
 //!
-//! Fetch deduplication and typed response metadata follow
-//! `src/aiperf/common/mixins/base_metrics_collector_mixin.py:150-176,230-268`;
-//! DCGM's fetch/decode flow follows
-//! `src/aiperf/gpu_telemetry/dcgm_collector.py:80-97`. Forced boundary scrapes
+//! Fetch deduplication and typed response metadata, along with DCGM's
+//! fetch/decode flow, are implemented here. Forced boundary scrapes
 //! deliberately bypass dedup so unchanged counters still form an exact snapshot.
 
 use std::cell::RefCell;

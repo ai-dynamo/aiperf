@@ -4,9 +4,7 @@
 //! Bounded connection management and reuse leases.
 //!
 //! Python's shared connector is bounded and queues when exhausted, while its
-//! sticky connector owns exactly one connection per correlation id
-//! (`src/aiperf/transports/http_defaults.py:131-169` and
-//! `src/aiperf/transports/aiohttp_transport.py:56-113,332-381`). This module
+//! sticky connector owns exactly one connection per correlation id. This module
 //! preserves that policy without putting synchronization on the token path:
 //! state is local `Rc`/`RefCell`, a request acquires one RAII lease, HTTP/1
 //! leases are exclusive, and HTTP/2 leases clone one live multiplexed sender.

@@ -5,9 +5,7 @@
 //!
 //! The report kernel intentionally uses manual linear interpolation over the fixed
 //! genai-perf percentile band. Error-adjusted distributions use nearest-rank so a
-//! finite-to-`+inf` boundary never computes `inf - inf`. These rules port
-//! `src/aiperf/metrics/metric_dicts.py:50-103` and
-//! `src/aiperf/metrics/derived_latency.py:188-249`.
+//! finite-to-`+inf` boundary never computes `inf - inf`.
 
 use crate::MetricValue;
 use rustc_hash::FxHashMap;

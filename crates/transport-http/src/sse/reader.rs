@@ -37,10 +37,8 @@ pub trait SseMessageHandler {
 /// error as `Err`.
 ///
 /// Python's `AsyncSSEStreamReader` yields every framed message until its input
-/// iterator ends; neither it nor `AioHttpClient` exits on `[DONE]`
-/// (`src/aiperf/transports/sse_utils.py:106-189` and
-/// `src/aiperf/transports/aiohttp_client.py:175-232`). Draining is also what
-/// makes an HTTP/1 response safe to return to the shared pool.
+/// iterator ends; neither it nor `AioHttpClient` exits on `[DONE]`. Draining is
+/// also what makes an HTTP/1 response safe to return to the shared pool.
 pub async fn read_sse<S>(
     stream: S,
     clock: Rc<dyn Clock>,

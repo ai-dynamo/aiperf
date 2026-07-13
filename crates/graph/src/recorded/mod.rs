@@ -3,11 +3,6 @@
 
 //! Native recorded-trace adapters shared by WEKA and Dynamo inputs.
 //!
-//! This is a Rust port of the complete Python adapter seam at
-//! `../aiperf-graph-ir/src/aiperf/dataset/graph/adapters/weka/trace.py`,
-//! `../aiperf-graph-ir/src/aiperf/dataset/graph/adapters/dynamo/trace.py`, and
-//! the shared lowering in
-//! `../aiperf-graph-ir/src/aiperf/dataset/graph/segment_ir/trie_content.py`.
 //! Both formats normalize into one [`RecordedRequest`] list and traverse the
 //! same content-parent, idle-warp, interval-order, message, and segment path.
 //! Format selection remains runner-owned; this module contains no registry.

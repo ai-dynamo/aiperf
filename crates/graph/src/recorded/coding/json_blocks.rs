@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! JSON-response template renderers. Port of `_coding_json.py`.
+//! JSON-response template renderers.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;

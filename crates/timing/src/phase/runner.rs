@@ -3,8 +3,7 @@
 
 //! Clock-native single-phase execution driver.
 //!
-//! The ordering in [`ClockPhaseRunner`] is ported from Python
-//! `src/aiperf/timing/phase/runner.py:352-455,588-786`: configure → setup →
+//! The ordering in [`ClockPhaseRunner`] is: configure → setup →
 //! start → progress → ramps → issuance → sending timeout/freeze → return grace
 //! → cancel → drain → force completion. Transport, workload, scheduler, and
 //! ramp ownership stay behind [`PhaseExecution`], so the same driver works with

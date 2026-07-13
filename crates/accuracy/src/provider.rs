@@ -57,8 +57,7 @@ pub struct EvaluationOperationDescriptor {
 
 /// Cross-language canonical schema digests for one stock inference operation.
 ///
-/// These values are computed from the exact canonical schema components in
-/// `src/aiperf/accuracy/evaluation/operation_schemas.py:15-409`. A terminal-only
+/// These values are computed from the exact canonical schema components. A terminal-only
 /// operation still pins its canonical null-stream schema here while its public
 /// descriptor advertises no true-streaming adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

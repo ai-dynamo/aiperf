@@ -92,9 +92,6 @@ pub struct Turn {
     /// Preformatted OpenAI-compatible tools.
     pub raw_tools: Option<Vec<Value>>,
     /// Preformatted vendor-shaped top-level system content blocks.
-    ///
-    /// Python parity: `src/aiperf/common/models/dataset_models.py:184-190`
-    /// from PR 731.
     pub raw_system: Option<Vec<Value>>,
     /// Text items.
     pub texts: Vec<Media>,
@@ -258,9 +255,6 @@ impl ResponseData {
 }
 
 /// Synthesized-audio response data.
-///
-/// Python reference: `src/aiperf/common/models/record_models.py:743-751` at
-/// Riva reference commit `a391cfe27`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioResponseData {
     /// Raw audio bytes returned by the service.

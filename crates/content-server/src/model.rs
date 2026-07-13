@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Serializable content-server status and request facts.
-//!
-//! Field names and defaults follow
-//! `src/aiperf/content_server/models.py:10-124` on `ajc/content-server`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

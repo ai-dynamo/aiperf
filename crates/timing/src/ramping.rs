@@ -3,8 +3,7 @@
 
 //! Clock-driven value ramping with pluggable curves.
 //!
-//! Ported from Python `src/aiperf/timing/ramping.py:65-487` and its phase
-//! wiring in `src/aiperf/timing/phase/runner.py:457-534`. Discrete mode asks a
+//! Discrete mode asks a
 //! strategy when to apply its next step; continuous mode samples `value_at` on
 //! a fixed cadence. Both modes force the exact target on natural completion.
 //! Dropping or aborting the spawned task freezes the last applied value.

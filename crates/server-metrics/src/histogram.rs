@@ -3,11 +3,10 @@
 
 //! Polynomial percentile estimation for classic Prometheus histograms.
 //!
-//! This is a direct algorithmic port of
-//! `src/aiperf/server_metrics/histogram_percentiles.py:31-1250`: continuous
-//! scrape intervals learn single-bucket means/variance, phase boundaries supply
-//! total cumulative-bucket deltas, and generated observations use the exact
-//! histogram sum before NumPy-compatible linear percentiles are evaluated.
+//! Continuous scrape intervals learn single-bucket means/variance, phase
+//! boundaries supply total cumulative-bucket deltas, and generated observations
+//! use the exact histogram sum before NumPy-compatible linear percentiles are
+//! evaluated.
 
 use std::collections::{BTreeMap, BTreeSet};
 

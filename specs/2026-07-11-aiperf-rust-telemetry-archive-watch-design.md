@@ -3426,3 +3426,37 @@ reverted; `control_plane_http.rs` again imports the shared
 `aiperf_telemetry_archive::LocalCancellationSignal`, eliminating the
 two-distinct-types collision. Original design intent in the body remains the
 "runner-reachable, final validation pending" state.
+
+## Addendum — 2026-07-13 (feature removed; supersedes the restoration addendum above)
+
+The telemetry archive/watch feature is removed for good, superseding the
+restoration addendum immediately above. The decision: the durable
+operational-history plane (immutable WAL/Parquet archive, loss ledger, receipts,
+object-store sync, query surfaces) was over-engineered for the product's needs,
+and its `aiperf-prometheus` strict parser dependency stood in the way of a
+slimmer server-telemetry ("tachometer") pipeline. Deleted:
+
+- The `aiperf-telemetry-archive` crate (`crates/telemetry-archive/`) in full.
+- The `aiperf-prometheus` crate (`crates/prometheus/`) in full — it had no
+  remaining consumer once `aiperf-server-metrics` re-embedded its own parser and
+  the archive was gone.
+- The runner integration modules (`telemetry_archive_components.rs`,
+  `telemetry_archive_owner.rs`, `telemetry_attachment.rs`,
+  `telemetry_execution.rs`, `telemetry_operation.rs`, `telemetry_pipeline.rs`,
+  `telemetry_source.rs`, `telemetry_watch.rs`) and the `telemetry_watch_v2.rs`
+  runner test.
+- The `telemetry_watch` workload and its transport/workload pair registration and
+  resource requirements in `registry.rs`; capabilities no longer advertise
+  `http + telemetry_watch`.
+- The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its
+  test, and its CLI registration in `src/aiperf/cli.py`.
+- The native-v2 telemetry-archive report block in `crates/metrics/src/report.rs`
+  (`ReportTelemetryArchive*`, loss-ledger/boundary report types, and
+  `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`) plus the two archive golden fixtures.
+
+Reconciliation: `aiperf-server-metrics` reverts to its self-contained embedded
+Prometheus/OpenMetrics parser (pre-extraction state). `control_plane_http.rs` no
+longer imports the deleted crate; its `LocalCancellationSignal` is now defined
+locally in that module. Live GPU/server/network telemetry producers that feed the
+run's metrics report are unaffected. This addendum is authoritative where it
+conflicts with the body or any earlier addendum.

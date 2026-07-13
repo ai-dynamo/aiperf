@@ -243,7 +243,7 @@ impl GrpcBindingRegistry {
     }
 }
 
-/// Factory for all PR-664 KServe v2 OIP bindings.
+/// Factory for all KServe v2 OIP bindings.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct KServeV2GrpcBindingFactory;
 

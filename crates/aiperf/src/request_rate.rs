@@ -3,10 +3,9 @@
 
 //! Continuation-priority request-rate scheduling.
 //!
-//! This module ports the policy in
-//! `src/aiperf/timing/strategies/request_rate.py:132-252` onto the native
-//! [`Workload`] and [`ScheduledRuntime`] seams. One interval generator tick
-//! admits at most one turn. A FIFO continuation queued by a returned request
+//! This module realizes the continuation-priority request-rate policy on the
+//! native [`Workload`] and [`ScheduledRuntime`] seams. One interval generator
+//! tick admits at most one turn. A FIFO continuation queued by a returned request
 //! always wins over the cached first turn of a new sampled session. New-session
 //! admission is nonblocking, while a continuation may wait for prefill capacity
 //! because it already owns a session slot.

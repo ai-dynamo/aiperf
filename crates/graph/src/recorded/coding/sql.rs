@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! SQL query template renderers. Port of `_coding_sql.py`.
+//! SQL query template renderers.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;

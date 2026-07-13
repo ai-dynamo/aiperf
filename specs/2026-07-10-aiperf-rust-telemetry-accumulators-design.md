@@ -528,3 +528,17 @@ owned directly by `aiperf-server-metrics`. The dependency direction remains from
 the telemetry producers and archive/watch surfaces toward the IO-free parsing
 and metrics leaves; `aiperf-metrics` remains runtime-neutral and does not depend
 back on any producer.
+
+## Addendum — 2026-07-13 (Prometheus parser re-embedded; extraction reverted)
+
+The 2026-07-12 extraction above is reverted. When the telemetry archive/watch
+feature was removed (see
+`2026-07-11-aiperf-rust-telemetry-archive-watch-design.md`, 2026-07-13 removal
+addendum), the `aiperf-prometheus` crate lost its only remaining consumer and was
+deleted. `aiperf-server-metrics` again owns a self-contained Prometheus/OpenMetrics
+exposition parser in `crates/server-metrics/src/parser.rs`; there is no separate
+parsing leaf. The three live producer leaves (`aiperf-gpu-telemetry`,
+`aiperf-server-metrics`, `aiperf-network-latency`) still implement the shared
+side-channel accumulator seam and depend toward the IO-free `aiperf-metrics`
+crate, which remains runtime-neutral. This addendum is authoritative where it
+conflicts with the 2026-07-12 addendum.

@@ -3,11 +3,10 @@
 
 //! Inline-media preparation above the HTTP byte transport.
 //!
-//! The lifecycle is ported from
-//! `src/aiperf/dataset/dataset_manager.py:172`: unique HTTP(S) image URLs are
-//! fetched once, validated, and replaced with data URLs before inference
-//! dispatch. Fetching and encoding are separate traits so alternate object
-//! stores, credential policies, and media codecs do not fork endpoint logic.
+//! Unique HTTP(S) image URLs are fetched once, validated, and replaced with
+//! data URLs before inference dispatch. Fetching and encoding are separate
+//! traits so alternate object stores, credential policies, and media codecs do
+//! not fork endpoint logic.
 
 use std::collections::{BTreeMap, BTreeSet};
 

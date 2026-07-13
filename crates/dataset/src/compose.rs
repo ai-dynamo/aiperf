@@ -4,8 +4,7 @@
 //! Composition seam and shared finalization policy.
 //!
 //! Format-specific composers lower parsed rows into handle-only conversations.
-//! This module owns the cross-format policy Python kept in
-//! `src/aiperf/dataset/composer/base.py:28-370`: model selection, output-length
+//! This module owns the cross-format policy: model selection, output-length
 //! sampling, deterministic session IDs, tokenizer injection, and conversation
 //! context prompts.
 

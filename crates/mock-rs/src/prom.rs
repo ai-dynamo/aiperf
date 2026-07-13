@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Prometheus metric registries - one per exposed endpoint.
-//!
-//! Mirrors `tests/aiperf_mock_server/metrics.py`.
 
 use prometheus::{
     Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,

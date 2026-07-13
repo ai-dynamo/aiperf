@@ -8,9 +8,8 @@
 //! selected provider factory and bound to an immutable schema fingerprint.
 //!
 //! The stock direct binary projection follows the pinned providers rather than
-//! recreating either grader: NeMo Evaluator produces its numeric reward in
-//! `nemo_evaluator/environments/custom.py:227-249`, and OpenBench returns exact
-//! `0.0`/`1.0` scores in `openbench/scorers/grade_school_math.py:11-38`.
+//! recreating either grader: NeMo Evaluator produces its numeric reward, and
+//! OpenBench returns exact `0.0`/`1.0` scores.
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};

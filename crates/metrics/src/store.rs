@@ -5,9 +5,8 @@
 //!
 //! Numeric columns keep absolute request-index alignment with NaN absence sentinels.
 //! Metadata dimensions are stored separately and categorical values receive dense
-//! first-appearance codes. The sparse-column
-//! and query semantics port `src/aiperf/metrics/column_store.py:59-503`; the
-//! exact CSR list replay ports `src/aiperf/metrics/ragged_series.py:13-107`.
+//! first-appearance codes. The sparse-column and query semantics and the exact
+//! CSR list replay are implemented in this module.
 
 use crate::catalog::MetricTag;
 use crate::ingest::{HttpTrace, InferenceDimensions, RecordIngest, UsageMetrics};
@@ -1033,11 +1032,9 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             );
             // Python's server-count path reads every token field from one final
             // usage object, treats completion_tokens as OSL, and subtracts
-            // reasoning only for the visible-output count
-            // (`src/aiperf/records/inference_result_parser.py:431-501`, pinned by
-            // `tests/unit/records/test_inference_result_parser.py:289-410`). Keep
-            // the observed count in its private column for discrepancy reporting,
-            // but make endpoint usage authoritative wherever it exists.
+            // reasoning only for the visible-output count. Keep the observed
+            // count in its private column for discrepancy reporting, but make
+            // endpoint usage authoritative wherever it exists.
             let output_sequence_length = record
                 .usage
                 .completion_tokens
@@ -1064,8 +1061,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             );
             // ICL remains an observed content-chunk metric. Endpoint usage may
             // change OSL/TPOT/throughput but never pads this timestamp vector;
-            // this preserves Python's adjacent-content-response definition at
-            // `src/aiperf/metrics/types/inter_chunk_latency_metric.py:40-74`.
+            // this preserves Python's adjacent-content-response definition.
             let arrivals = token_arrivals_ns;
             if arrivals.windows(2).all(|pair| pair[1] >= pair[0]) {
                 self.set_ragged_values_iter(

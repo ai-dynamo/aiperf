@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! KServe OIP v2 canonical-JSON/protobuf conversion.
-//!
-//! Behavior is ported from the complete PR-664 Python serializer at
-//! `src/aiperf/transports/grpc/kserve_v2_serializers.py:18-284`.
 
 use std::error::Error;
 use std::fmt;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Long-form tool generators (read-long, search-verbose, bash-verbose). Port of `_coding_tool_long.py`.
+//! Long-form tool generators (read-long, search-verbose, bash-verbose).
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;

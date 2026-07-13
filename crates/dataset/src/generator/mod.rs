@@ -3,9 +3,6 @@
 
 //! Synthetic multimodal generation seams and native implementations.
 //!
-//! The behavior is grounded in the complete Python generators at
-//! `src/aiperf/dataset/generator/base.py:12-55`,
-//! `audio.py:21-193`, `image.py:18-180`, and `video.py:20-507`.
 //! Generators return endpoint-ready wire values and never retain payload bytes;
 //! the composer interns each result immediately into the shared segment pool.
 
@@ -102,9 +99,7 @@ impl SyntheticMediaFormat {
 /// This is intentionally separate from [`SyntheticMediaGeneratorFactory`]: a
 /// distribution may replace image generation, media publication, or both.
 /// Implementations return the exact endpoint-ready bytes interned by the
-/// composer. Python source parity:
-/// `src/aiperf/dataset/generator/base.py:12-67`,
-/// `image.py:65-103`, and `video.py:75-145` on `ajc/content-server`.
+/// composer.
 pub trait SyntheticMediaPublisher: Send + Sync {
     /// Publish one complete encoded media object.
     fn publish(&self, format: SyntheticMediaFormat, encoded: Bytes) -> Result<Bytes>;

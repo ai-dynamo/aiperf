@@ -4,9 +4,7 @@
 //! Fine-grained connection/request trace timing. Behavioral port of
 //! `AioHttpTraceData` — all timestamps are `Clock::now_ns()` clock-nanoseconds.
 //!
-//! Field parity follows `src/aiperf/common/models/trace_models.py:379-463` and
-//! `:532-636`. Per-chunk vectors are opt-in at collection time, matching
-//! `src/aiperf/transports/aiohttp_trace.py:67-114,216-230`.
+//! Per-chunk vectors are opt-in at collection time.
 
 /// Per-request trace timing. All `_ns` fields are clock-nanoseconds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -93,8 +93,7 @@ impl HttpTransport {
     /// Send JSON while inspecting successive SSE messages until the callback
     /// returns `true` for meaningful first-token content.
     ///
-    /// This is the live prefill-release contract ported from
-    /// `src/aiperf/transports/aiohttp_client.py:210-224`: role-only, usage-only,
+    /// This is the live prefill-release contract: role-only, usage-only,
     /// or otherwise non-token messages return `false`, so the callback is tried
     /// again on the next SSE message. The ordinary [`send_request`](Self::send_request)
     /// wrapper preserves its first-message callback behavior.
@@ -235,7 +234,6 @@ impl HttpTransport {
         let mut trace = TraceData {
             // Match aiohttp's request lifecycle: request start precedes pool
             // queueing/reuse/connection creation.
-            // Source: `src/aiperf/transports/aiohttp_trace.py:14-40`.
             request_send_start_ns: Some(start_ns),
             ..TraceData::default()
         };

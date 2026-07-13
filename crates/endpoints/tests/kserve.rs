@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native parity tests for the complete PR-664 KServe endpoint family.
+//! Native parity tests for the KServe endpoint family.
 
 use std::collections::BTreeSet;
 
@@ -101,7 +101,6 @@ fn openai_compatible_kserve_factories_override_paths_without_v1_adapters() {
 
 #[test]
 fn kserve_v1_predict_matches_instances_predictions_and_autodetection() {
-    // Python parity: kserve_v1_predict.py:23-35,47-59,75-109.
     let endpoint = prepared(
         "kserve_v1_predict",
         Some(
@@ -153,7 +152,6 @@ fn kserve_v1_predict_matches_instances_predictions_and_autodetection() {
 
 #[test]
 fn kserve_v2_infer_and_vlm_match_tensor_payloads_and_text_fallback() {
-    // Python parity: kserve_v2_infer.py:84-155 and kserve_v2_vlm.py:25-111.
     let infer = prepared(
         "kserve_v2_infer",
         Some(
@@ -213,8 +211,6 @@ fn kserve_v2_infer_and_vlm_match_tensor_payloads_and_text_fallback() {
 
 #[test]
 fn kserve_v2_embeddings_and_rankings_preserve_shape_and_numeric_rules() {
-    // Python parity: kserve_v2_embeddings.py:50-130 and
-    // kserve_v2_rankings.py:53-132.
     let embeddings = prepared("kserve_v2_embeddings", None);
     let turns = [text_turn(&["a", "b"], Some(4))];
     assert_eq!(
@@ -285,7 +281,6 @@ fn kserve_v2_embeddings_and_rankings_preserve_shape_and_numeric_rules() {
 
 #[test]
 fn kserve_v2_images_separates_typed_tensors_and_generic_parameters() {
-    // Python parity: kserve_v2_images.py:17-23,60-146.
     let endpoint = prepared(
         "kserve_v2_images",
         Some(

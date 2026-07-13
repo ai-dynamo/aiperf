@@ -3,8 +3,7 @@
 
 //! Typed adaptive events and summary artifacts.
 //!
-//! The schema carries the event/candidate/summary fields from
-//! `src/aiperf/timing/strategies/adaptive_scale_artifacts.py:22-313`. File I/O
+//! The schema carries the event/candidate/summary fields. File I/O
 //! sits behind [`AdaptiveArtifactSink`] so a future unified report exporter can
 //! consume the same typed records without changing the controller.
 

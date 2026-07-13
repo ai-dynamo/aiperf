@@ -3,12 +3,11 @@
 
 //! Hugging Face automatic-speech-recognition dataset format.
 //!
-//! This ports the complete behavior in
-//! `src/aiperf/dataset/loader/hf_asr.py:17-155`: configurable audio column,
-//! decode-disabled raw bytes, WAV normalization, exact duration metadata, the
-//! fixed transcription prompt, a 30-second default cap, and row skipping for
-//! absent/invalid/long audio. Remote audio assets use the injected dataset
-//! fetcher and therefore the same Clock-injected hyper stack as row downloads.
+//! Provides a configurable audio column, decode-disabled raw bytes, WAV
+//! normalization, exact duration metadata, the fixed transcription prompt, a
+//! 30-second default cap, and row skipping for absent/invalid/long audio. Remote
+//! audio assets use the injected dataset fetcher and therefore the same
+//! Clock-injected hyper stack as row downloads.
 
 use std::path::Path;
 

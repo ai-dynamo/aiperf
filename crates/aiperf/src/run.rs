@@ -164,8 +164,8 @@ pub(crate) fn start_ramps(
     if let Some(duration_ns) = ancillary.request_rate_ramp_duration_ns {
         let target = rate.expect("validated request-rate ramp target");
         let update_interval_ns = ancillary.rate_ramp_update_interval_ns;
-        // Python `phase/runner.py:512-514`: one proportional update increment,
-        // deliberately not a fixed 1 QPS start.
+        // Python starts from one proportional update increment, deliberately
+        // not a fixed 1 QPS start.
         let start = target * update_interval_ns as f64 / duration_ns as f64;
         let config = RamperConfig::new(start, target, duration_ns)?
             .with_update_interval_ns(update_interval_ns)?;

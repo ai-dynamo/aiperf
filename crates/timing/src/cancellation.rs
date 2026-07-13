@@ -3,7 +3,6 @@
 
 //! Per-request client-disconnect policy.
 //!
-//! Ported from Python `src/aiperf/timing/request_cancellation.py:17-140`.
 //! The policy makes one Bernoulli decision at issuance time and returns a fixed
 //! delay. The transport consumes that scalar only after the complete request body
 //! has been sent. Warmup returns before drawing from the RNG, so warmup traffic

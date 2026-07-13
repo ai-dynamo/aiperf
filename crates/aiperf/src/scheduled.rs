@@ -9,11 +9,9 @@
 //! trace. Strategy modules decide only when to call
 //! [`issue_turn`](ScheduledRuntime::issue_turn) and what continuation to
 //! schedule when the dispatch completes. Its synchronous counter mutation and
-//! asynchronous return callback mirror `src/aiperf/credit/issuer.py:89-242` and
-//! `src/aiperf/credit/callback_handler.py:196-244` without their IPC routing.
-//! Ancillary cancellation and URL issuance preserve `issuer.py:197-238`; the
-//! per-session endpoint pin replaces the Python worker/session split at
-//! `src/aiperf/workers/worker.py:490-501,744-748`.
+//! asynchronous return callback preserve the credit policy without any IPC
+//! routing. Ancillary cancellation and URL issuance are preserved, and the
+//! per-session endpoint pin replaces the Python worker/session split.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -53,8 +51,7 @@ pub type CompletionHandler =
 ///
 /// Admission policies use this edge to release prefill capacity while the
 /// request continues decoding. The terminal callback remains responsible for
-/// the no-token fallback, matching
-/// `src/aiperf/credit/callback_handler.py:454-485`.
+/// the no-token fallback.
 pub type FirstTokenHandler = Box<dyn Fn(i64) + 'static>;
 
 /// Replaceable cancellation latch for one admitted dispatch.
@@ -196,8 +193,8 @@ pub trait TurnDispatcher {
 /// Post-dispatch record-processing seam shared by ordinary workloads.
 ///
 /// Python AIPerf routes parsed inference records through record processors after
-/// workers return them (`records/record_processor_service.py:218-384`). Native
-/// consumers such as accuracy grading attach here; they never own transport or
+/// workers return them. Native consumers such as accuracy grading attach here;
+/// they never own transport or
 /// issuance policy.
 #[async_trait(?Send)]
 pub trait TurnRecordProcessor {

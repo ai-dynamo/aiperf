@@ -3,12 +3,9 @@
 
 //! Sampling distributions backed by [`RandomGenerator`].
 //!
-//! These types port the Python distribution control flow from
-//! `src/aiperf/config/distributions.py:109` (post-draw clamping and integer
-//! ceiling), `src/aiperf/config/distributions.py:219` / `:269` / `:355` / `:417`
-//! (normal, log-normal, multimodal, and empirical raw sampling), and
-//! `src/aiperf/common/models/sequence_distribution.py:150` / `:156` / `:188`
-//! (cumulative probabilities, right-side search, and batch validation).
+//! These types implement the distribution control flow: post-draw clamping and
+//! integer ceiling; normal, log-normal, multimodal, and empirical raw sampling;
+//! and cumulative probabilities, right-side search, and batch validation.
 
 use crate::error::{Result, RngError};
 use crate::generator::{RandomGenerator, positive_integer_from_f64};

@@ -3,8 +3,7 @@
 
 //! Adaptive ramp step policies.
 //!
-//! The formulas are ported from
-//! `src/aiperf/timing/strategies/adaptive_scale.py:399-435`: fixed-percent uses
+//! The formulas are: fixed-percent uses
 //! `ceil(current * percent / 100)`, while SLA-margin scaling is governed by the
 //! tightest filter's normalized headroom.
 

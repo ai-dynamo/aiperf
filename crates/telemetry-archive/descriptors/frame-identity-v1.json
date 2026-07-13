@@ -1,1 +1,0 @@
-{"batch_kinds":{"exact_loss":3,"lifecycle_marker":2,"loss_saturation":4,"source_scrape":1},"digest_fields":"u64-be-length-prefixed-with-explicit-null-tag","fingerprint_domain":"aiperf.archive.descriptor.v1","name":"frame-identity-v1","terminal_kinds":{"lifecycle_marker":2,"loss_exact":3,"loss_saturation":4,"source_projection_failed":5,"source_scrape":1},"version":1}

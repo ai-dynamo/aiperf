@@ -3,11 +3,8 @@
 
 //! Runner-protocol-v2-only NVIDIA Riva endpoint factories.
 //!
-//! Request and response behavior is ported from the complete Python reference
-//! at commit `a391cfe27`: `src/aiperf/endpoints/riva_asr.py:16-131`,
-//! `riva_tts.py:16-113`, and `riva_nlp.py:16-198`. The factories stay on the
-//! open [`crate::EndpointFactory`] seam; protobuf RPC bindings live in
-//! `aiperf-transport-grpc`.
+//! The factories stay on the open [`crate::EndpointFactory`] seam; protobuf RPC
+//! bindings live in `aiperf-transport-grpc`.
 
 use std::collections::BTreeMap;
 use std::fmt;

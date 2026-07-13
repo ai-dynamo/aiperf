@@ -111,8 +111,7 @@ pub struct FileDatasetSpec {
     pub options: Map<String, Value>,
 }
 
-/// Trace synthesis configuration from
-/// `src/aiperf/config/dataset/trace.py:20-117`.
+/// Trace synthesis configuration.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TraceSynthesisSpec {
@@ -155,11 +154,6 @@ fn default_sampling_strategy() -> String {
 }
 
 /// Native synthetic dataset configuration.
-///
-/// This is the process-boundary projection of
-/// `src/aiperf/config/dataset/config.py:62-245`; content sub-shapes follow
-/// `src/aiperf/config/dataset/content.py:50-459` and
-/// `src/aiperf/config/dataset/video.py:41-205`.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SyntheticDatasetSpec {

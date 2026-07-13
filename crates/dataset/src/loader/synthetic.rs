@@ -3,15 +3,11 @@
 
 //! Synthetic conversation and rankings formats.
 //!
-//! The composition order and independent RNG streams follow
-//! `src/aiperf/dataset/composer/synthetic.py:33-265` and
-//! `synthetic_rankings.py:24-114`. Prompt generation, paired ISL/OSL sampling,
+//! Prompt generation, paired ISL/OSL sampling,
 //! reusable prefixes, per-session context, multimodal batches, turn delays, and
 //! final model/max-token selection are all resolved before the pool is frozen.
-//! Token-native composition ports the no-decode branch from
-//! `src/aiperf/dataset/composer/synthetic.py:143-164` on
-//! `ajc/in-engine-transport`: exact IDs enter the segment arena directly and no
-//! temporary text payload is constructed.
+//! Token-native composition uses a no-decode branch: exact IDs enter the segment
+//! arena directly and no temporary text payload is constructed.
 
 use aiperf_rng::{RandomGenerator, RngRoot};
 use async_trait::async_trait;

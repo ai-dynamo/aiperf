@@ -6,10 +6,7 @@
 //! Curve math and policy traits live in `aiperf-timing`; this module owns only
 //! CLI/runtime composition: phase ramp durations, the canonical 100ms rate-ramp
 //! cadence, seeded cancellation construction, and comma-separated endpoint
-//! normalization. The wiring follows Python
-//! `src/aiperf/timing/phase/runner.py:457-534`,
-//! `src/aiperf/credit/issuer.py:197-238`, and
-//! `src/aiperf/common/environment.py:875-879`.
+//! normalization.
 
 use aiperf_timing::{BernoulliFixedDelay, CancellationPolicy, RoundRobinUrlSelector, UrlSelector};
 use anyhow::{Result, bail};

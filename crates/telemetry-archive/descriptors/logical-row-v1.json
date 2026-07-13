@@ -1,1 +1,0 @@
-{"field_count":"u32-be","float64":"finite-ieee754-bits-u64-be","integers":"fixed-width-big-endian","magic":"AIPERFROW\\u0001","maps":"duplicate-rejecting-utf8-byte-sort","name":"logical-row-v1","nullable":"00-null-01-present","projection_multiset":"sorted-row-digests","table_id":"u8","version":1}

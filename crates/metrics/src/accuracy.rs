@@ -105,9 +105,9 @@ impl GradingResult {
     /// Builds a grading result from a lighteval-style numeric score.
     pub fn from_score(score: f64, unparsed: bool, ground_truth: impl Into<String>) -> Self {
         Self {
-            // Python's lighteval bridge uses a strict `score > 0.5` decision
-            // (`accuracy/graders/lighteval_grader.py:116-131`). Keeping that
-            // boundary here makes every native score consumer share one policy.
+            // Python's lighteval bridge uses a strict `score > 0.5` decision.
+            // Keeping that boundary here makes every native score consumer share
+            // one policy.
             correct: score.is_finite() && score > LIGHTEVAL_CORRECTNESS_THRESHOLD,
             unparsed,
             confidence: score.is_finite().then_some(score),

@@ -3,15 +3,7 @@
 
 //! Tier-2 endpoint dialects.
 //!
-//! Payload and response behavior is ported from the complete Python modules at
-//! `src/aiperf/endpoints/base_rankings_endpoint.py:14`,
-//! `src/aiperf/endpoints/nim_embeddings.py:13`,
-//! `src/aiperf/endpoints/huggingface_generate.py:12`,
-//! `src/aiperf/endpoints/openai_image_generation.py:14`,
-//! `src/aiperf/endpoints/openai_image_edit.py:47`,
-//! `src/aiperf/endpoints/openai_video_generation.py:14`,
-//! `src/aiperf/endpoints/nim_image_retrieval.py:14`, and
-//! `src/aiperf/endpoints/solido_rag.py:19`. Raw/template behavior lives in the
+//! Raw/template behavior lives in the
 //! sibling `flexible` module so its Jinja/JMESPath dependency boundary remains
 //! explicit. HTTP multipart, polling, and inline-media execution is deliberately
 //! implemented against transport traits outside this decoded-JSON layer.

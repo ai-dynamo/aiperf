@@ -6,8 +6,7 @@
 //! The catalog is data over the columnar engine: each row declares identity,
 //! units, flags, kind, aggregation, and true metric dependencies. Computation is
 //! implemented in [`crate::accumulator`]. Registry validation and dependency
-//! ordering port `src/aiperf/metrics/metric_registry.py:38-324`; row-level
-//! source locations are recorded in
+//! ordering are handled here; row-level source locations are recorded in
 //! `specs/2026-07-10-aiperf-rust-metric-catalog-appendix.md`.
 
 use crate::{MetricValueType, Unit};

@@ -6,15 +6,6 @@
 //! These factories deliberately omit the protocol-v1 [`crate::Endpoint`]
 //! compatibility hook. They are therefore selectable only through the open
 //! endpoint registry and prepared-profile path used by runner protocol v2.
-//!
-//! Request and response parity is grounded in the complete Python endpoint
-//! implementations from PR 664:
-//! `src/aiperf/endpoints/kserve_v1_predict.py:16-109`,
-//! `src/aiperf/endpoints/kserve_v2_infer.py:16-155`,
-//! `src/aiperf/endpoints/kserve_v2_embeddings.py:17-130`,
-//! `src/aiperf/endpoints/kserve_v2_rankings.py:12-132`,
-//! `src/aiperf/endpoints/kserve_v2_vlm.py:17-111`, and
-//! `src/aiperf/endpoints/kserve_v2_images.py:17-146`.
 
 use std::collections::BTreeMap;
 use std::fmt;

@@ -10,6 +10,7 @@ description = "Graph-IR async-dataflow workload driver for AIPerf — online (li
 
 [dependencies]
 aiperf-dataset.workspace = true
+aiperf-endpoints.workspace = true
 aiperf-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-clock.workspace = true

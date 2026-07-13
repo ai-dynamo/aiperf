@@ -3,10 +3,7 @@
 
 //! Public/Hugging Face, ShareGPT, and accuracy dataset formats.
 //!
-//! Converters are grounded in `src/aiperf/dataset/loader/sharegpt.py:24-217`,
-//! `hf_instruction_response.py:14-128`, `hf_conversation.py:14-282`,
-//! `mt_bench.py:13-89`, `mmvu.py:13-98`, `spec_bench.py:15-97`, and
-//! `accuracy_dataset_loader.py:21-150`. Remote Hugging Face rows use the
+//! Remote Hugging Face rows use the
 //! documented Dataset Viewer `/rows` API in pages of at most 100. Revision-pinned
 //! sources resolve the Hub revision to an immutable commit and decode the
 //! repository's Parquet/JSON/JSONL/CSV artifacts directly.

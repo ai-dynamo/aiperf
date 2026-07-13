@@ -3,9 +3,7 @@
 
 //! Anthropic Messages request, response, usage, and replay dialect.
 //!
-//! This is a behavior port of PR 731's
-//! `src/aiperf/endpoints/anthropic_messages.py:17-834`, guarded against its
-//! `tests/unit/endpoints/test_messages_endpoint.py:1-1781` contract. The
+//! This dialect is guarded against a byte and behavior test contract. The
 //! adapter stays behind [`Endpoint`], so additional Messages-compatible
 //! providers can replace the dialect without changing scheduling or transport.
 

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Cancellation timing. Port of
-//! `src/aiperf/timing/request_cancellation.py:53-82` and
 //! `AioHttpClient._request_with_cancellation`: the cancel timer starts once the
 //! request body is sent, and on timeout the request future is dropped and
 //! recorded as a 499 cancellation.

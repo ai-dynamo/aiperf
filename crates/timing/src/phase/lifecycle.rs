@@ -3,8 +3,7 @@
 
 //! Transition-validated phase lifecycle over an injected clock.
 //!
-//! The transition order and time-left arithmetic are ported from Python
-//! `src/aiperf/timing/phase/lifecycle.py:35-175`. Rust intentionally removes
+//! Rust intentionally removes
 //! Python's wall-clock/performance-clock duality: every timestamp and deadline
 //! comes from the same [`Clock`](aiperf_clock::Clock).
 

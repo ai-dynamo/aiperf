@@ -10,9 +10,7 @@
 //! string branch or alternate executable is introduced here.
 //!
 //! The strict authored projection mirrors the canonical Python wire producer
-//! in `src/aiperf/orchestrator/rust_wire.py:81` and consumes its dataset and
-//! phase shapes as defined by `src/aiperf/config/dataset/config.py:280` and
-//! `src/aiperf/config/phases.py:63`. The graph adapter resolves `dag_jsonl`
+//! and consumes its dataset and phase shapes. The graph adapter resolves `dag_jsonl`
 //! directly into Graph-IR once; it never constructs an intermediate linear
 //! dataset or re-projects the authored object through protocol v1.
 

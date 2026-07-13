@@ -71,7 +71,7 @@ impl BlockTag {
 /// every shared-prefix message reuse the content-parent's segment verbatim
 /// instead of re-decoding (tokenizer) and re-hashing (blake3) it per node. This
 /// is the linear-time equivalent of the Python driver's prefix-path splice
-/// (`segment_ir/trie_content.py`) and yields byte-identical pool output.
+/// and yields byte-identical pool output.
 #[derive(PartialEq, Eq, Hash)]
 pub(super) struct PromptMessageKey {
     parent: Option<u32>,

@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Native WEKA trace compiler.
-//!
-//! Semantics are ported from the complete Python sources
-//! `../aiperf-graph-ir/src/aiperf/dataset/graph/adapters/weka/trace.py:162-681`,
-//! `weka/trace_models.py:54-235`, and `weka/trie_build.py:183-383`.
 
 mod schema;
 

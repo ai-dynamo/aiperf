@@ -3,8 +3,7 @@
 
 //! Native Clock-injected gRPC transport on Tonic channels.
 //!
-//! The lifecycle follows the complete PR-664 Python transport at
-//! `src/aiperf/transports/grpc/grpc_transport.py:72-750`: pooled, never, and
+//! The lifecycle supports pooled, never, and
 //! sticky-user-session channels; lowercase metadata; a 30-second capped
 //! channel-ready stage; cancellation armed only after the RPC is submitted;
 //! unary, server-streaming, and bidirectional calls; in-band stream errors; and

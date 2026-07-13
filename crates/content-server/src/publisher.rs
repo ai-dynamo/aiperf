@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Synthetic image/video persistence with endpoint-ready URL results.
-//!
-//! Naming and modality behavior follow
-//! `src/aiperf/dataset/generator/base.py:34-67`,
-//! `image.py:83-103`, and `video.py:116-145` on `ajc/content-server`.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

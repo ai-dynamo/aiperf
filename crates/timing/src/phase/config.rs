@@ -3,9 +3,7 @@
 
 //! Per-phase lifecycle configuration.
 //!
-//! The warmup grace default follows Python
-//! `src/aiperf/timing/config.py:347-375`; profiling follows
-//! `src/aiperf/timing/config.py:378-447`. Workload-specific arrival and dataset
+//! Workload-specific arrival and dataset
 //! knobs remain behind the injected execution strategy rather than becoming a
 //! string/enum switch in this policy layer.
 

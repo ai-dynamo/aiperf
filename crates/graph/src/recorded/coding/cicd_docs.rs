@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! CI/CD, config-file, markdown-doc, and test-output renderers. Port of `_coding_cicd_docs.py`.
+//! CI/CD, config-file, markdown-doc, and test-output renderers.
 
 use super::templates::TemplateRenderer;
 use super::vocab::*;

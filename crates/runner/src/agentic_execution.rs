@@ -9,13 +9,8 @@
 //! model call enters one [`AgenticWorkload`], one [`TurnDispatcher`], and an
 //! injected [`HttpExecutionBackendFactory`]. No Python model URL is exposed.
 //!
-//! The evaluator behavior is grounded in the complete current implementations
-//! at `src/aiperf/accuracy/worker.py:1-1229`,
-//! `src/aiperf/accuracy/agentic.py:1-410`,
-//! `src/aiperf/accuracy/model_broker.py:1-190`, and the canonical provider
-//! adapters in `harbor.py`, `browsergym.py`, and `mcpmark.py`. This runner
-//! composition replaces only the removed native-CLI assembly formerly covered
-//! by `crates/aiperf/tests/agentic_cli.rs` and
+//! This runner composition replaces only the removed native-CLI assembly
+//! formerly covered by `crates/aiperf/tests/agentic_cli.rs` and
 //! `crates/aiperf/tests/agentic_gateway_cli.rs` before commit `697b66f9f`.
 
 use std::collections::{BTreeMap, BTreeSet};

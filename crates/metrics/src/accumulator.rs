@@ -4,8 +4,8 @@
 //! Columnar inference-metric accumulation, derivation, windowing, and timeslicing.
 //!
 //! The dispatch order, authoritative phase masks, sweep injection, and half-open
-//! timeslicing port `src/aiperf/metrics/accumulator.py:54-618`; the Rust runtime
-//! supplies the transport-neutral [`RecordIngest`] facts consumed here.
+//! timeslicing are implemented in this module; the Rust runtime supplies the
+//! transport-neutral [`RecordIngest`] facts consumed here.
 
 use crate::catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
@@ -131,9 +131,8 @@ pub struct MetricsConfig {
     pub osl_mismatch_max_tokens: f64,
     /// Source input-token accounting from server-reported `usage.prompt_tokens`
     /// instead of client-side tokenization. Mirrors the endpoint
-    /// `use_server_token_count` flag and Python's
-    /// `records/inference_result_parser.py::_compute_server_token_counts`, which
-    /// sets `TokenCounts.input = usage.prompt_tokens` (tokenizer-free); output
+    /// `use_server_token_count` flag and Python's server-token-count computation,
+    /// which sets `TokenCounts.input = usage.prompt_tokens` (tokenizer-free); output
     /// is already server-authoritative in the accumulator regardless.
     pub use_server_token_count: bool,
 }
@@ -591,10 +590,9 @@ impl MetricsAccumulator {
         aggregate_timeslices: &[MetricTimeslice],
     ) -> Vec<InferenceMetricSeriesSummary> {
         // Python's accumulator stores categorical metadata separately from
-        // numeric metrics and exposes exact masks for grouped analysis
-        // (`src/aiperf/metrics/accumulator.py:144-169` and
-        // `src/aiperf/metrics/column_store.py:216-263`). Native reports apply
-        // that same masking seam to the request's selected model/endpoint pair.
+        // numeric metrics and exposes exact masks for grouped analysis. Native
+        // reports apply that same masking seam to the request's selected
+        // model/endpoint pair.
         let dimensions = self
             .store
             .inference_dimensions()

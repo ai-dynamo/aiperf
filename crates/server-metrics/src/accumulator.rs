@@ -3,8 +3,7 @@
 
 //! Phase-boundary server counter attribution and continuous gauge aggregation.
 //!
-//! Domain math is grounded in `src/aiperf/server_metrics/accumulator.py:55-837`
-//! and `export_stats.py:35-852`. Boundary snapshots intentionally implement
+//! Boundary snapshots intentionally implement
 //! the native telemetry-spec addendum: counters and histogram totals use exact
 //! phase start/end values, while continuous records supply gauge distributions,
 //! timeslices, and histogram bucket-mean learning.

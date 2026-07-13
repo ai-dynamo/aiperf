@@ -3,9 +3,9 @@
 
 //! Vocabulary tuples shared by native coding-corpus template renderers.
 //!
-//! Ported from the Python `_coding_vocab.py` identifier vocabularies so the
-//! native renderers draw from the same breadth of modules, classes, methods,
-//! file paths, routes, error messages, language imports, and ML/CUDA content.
+//! Identifier vocabularies so the native renderers draw from a wide breadth of
+//! modules, classes, methods, file paths, routes, error messages, language
+//! imports, and ML/CUDA content.
 
 pub(super) const MODULES: &[&str] = &[
     "auth",

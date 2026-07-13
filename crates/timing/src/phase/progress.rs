@@ -3,9 +3,7 @@
 
 //! Lock-free-by-serialization phase progress and one-shot notifications.
 //!
-//! Counter and freeze ordering follows Python
-//! `src/aiperf/timing/phase/credit_counter.py:19-297` and
-//! `src/aiperf/timing/phase/progress_tracker.py:23-220`. Mutations are
+//! Mutations are
 //! synchronous on one local executor; only event waits are async.
 
 use std::cell::{Cell, RefCell};

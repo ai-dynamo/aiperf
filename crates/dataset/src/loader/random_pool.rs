@@ -3,10 +3,10 @@
 
 //! Independent-pool multimodal sampling.
 //!
-//! Ported from `src/aiperf/dataset/loader/random_pool.py:27-440`. Each file or
-//! named inline collection is a pool. With unit batch sizes one entry is sampled
-//! with replacement from every pool and merged; with any non-unit batch size,
-//! modality associations are deliberately flattened before sampling.
+//! Each file or named inline collection is a pool. With unit batch sizes one
+//! entry is sampled with replacement from every pool and merged; with any
+//! non-unit batch size, modality associations are deliberately flattened before
+//! sampling.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;

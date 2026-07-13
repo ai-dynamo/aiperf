@@ -3,11 +3,9 @@
 
 //! Exgentic v1/v2 agent LLM trace replay.
 //!
-//! Ported from `src/aiperf/dataset/loader/exgentic.py:22-495`,
-//! `exgentic_filters.py:12-122`, and `exgentic_v2.py:6-13`. Recorded request
-//! snapshots are normalized into OpenAI message/tool shapes, sorted by span
-//! time, and replayed either as one delayed session or as independent absolute
-//! fixed-schedule requests.
+//! Recorded request snapshots are normalized into OpenAI message/tool shapes,
+//! sorted by span time, and replayed either as one delayed session or as
+//! independent absolute fixed-schedule requests.
 
 use std::collections::HashSet;
 

@@ -28,10 +28,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::MockServerConfig;
 
-/// KV-cache eviction policy, mirroring SGLang's `--radix-eviction-policy`
-/// (`srt/mem_cache/evict_policy.py`). Under capacity pressure the block with the
-/// smallest "eviction key" is removed first; each variant matches the
-/// corresponding SGLang `EvictionStrategy.get_priority`. `lru` is the default.
+/// KV-cache eviction policy, mirroring SGLang's `--radix-eviction-policy`. Under
+/// capacity pressure the block with the smallest "eviction key" is removed
+/// first; each variant matches the corresponding SGLang
+/// `EvictionStrategy.get_priority`. `lru` is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lower")]

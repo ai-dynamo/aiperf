@@ -227,14 +227,6 @@ def _authored_workload(run: BenchmarkRun, dataset: Any) -> dict[str, Any]:
         workload_type = ""
         workload_config = {}
 
-    # Evaluation owns a deliberately different provider-neutral authored
-    # shape. In particular, legacy dataset/tokenizer/phase fields are not
-    # smuggled into its strict factory config, and Python never adds worker
-    # launch coordinates. The selected runner provider factory is the only
-    # authority that decodes ``evaluation``.
-    if workload_type == "evaluation":
-        return {"type": workload_type, "config": workload_config}
-
     authored_dataset = _authored_dataset_v2(run, dataset)
     if not workload_type:
         workload_type = _default_workload_type(cfg, authored_dataset)

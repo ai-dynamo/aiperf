@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Base multi-turn conversation renderers. Port of `_coding_conversations.py`.
+//! Base multi-turn conversation renderers.
 //!
 //! Each renderer stitches `[User]`/`[Assistant]` turns together with `\n\n`
 //! (Python `"\n\n".join(turns)`), drawing bridge phrases and per-language tool

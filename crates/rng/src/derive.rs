@@ -3,8 +3,7 @@
 
 //! Hash-derived seed algebra for order-independent random streams.
 //!
-//! This ports the derivation semantics from Python
-//! `src/aiperf/common/random_generator.py`: components name their stream and the
+//! Components name their stream and the
 //! child seed depends only on `(root_seed, identifier)`. The Rust port deliberately
 //! uses BLAKE3 rather than Python's SHA-256 because the project does not require
 //! cross-language byte parity; the stable contract is BLAKE3's first eight digest
