@@ -225,8 +225,8 @@ impl RequestObserver for BufferedObserver {
 
 struct WorkerReply {
     result: Result<HttpTurnDispatchResult>,
-    /// Buffered observations for the legacy `execute_turn(observer)` replay path
-    /// (agentic/evaluation); empty for the worker-local measured path.
+    /// Buffered observations for the `execute_turn(observer)` replay path;
+    /// empty for the worker-local measured path.
     events: Vec<ObserverEvent>,
     /// Non-consuming cloned record for a live sink, when the measured command
     /// requested one; the authoritative record stays in the worker observer.
@@ -812,8 +812,8 @@ async fn execute_worker_command(
         }
     };
     let response_observer = responses.map(WorkerResponseObserver::new);
-    // Measured commands accumulate into the shared worker observer; legacy
-    // buffered commands (agentic/evaluation) collect replayable events instead.
+    // Measured commands accumulate into the shared worker observer; buffered
+    // commands collect replayable events instead.
     let buffered = context.is_none().then(BufferedObserver::default);
     let reply = match &context {
         Some(context) => {
@@ -1053,7 +1053,7 @@ mod tests {
                 parameters: BTreeMap::new(),
                 endpoint_path: None,
                 streaming: true,
-                x_correlation_id: Some("evaluation-unit".to_string()),
+                x_correlation_id: Some("turn-unit".to_string()),
                 is_final_turn: true,
                 cancel_after_ns: None,
                 url_index: None,

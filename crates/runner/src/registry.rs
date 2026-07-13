@@ -31,7 +31,7 @@ use serde_json::{Map, Value, value::RawValue};
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::{EvaluationCapabilityInventory, PhaseSpec};
+use crate::protocol::PhaseSpec;
 use crate::protocol_v2::{
     AuthoredRunSpecV2, NamedRunnerComponentSpecV2, RunDiagnosticArtifactV2, RunResourceV2,
     RunnerComponentId, RunnerFailureStageV2,
@@ -130,18 +130,6 @@ impl ResourceRequirementsV2 {
         }
     }
 
-    /// Source-only standalone workload matrix.
-    #[must_use]
-    pub const fn telemetry_watch() -> Self {
-        Self {
-            models: ResourceRequirementV2::Forbidden,
-            endpoints: ResourceRequirementV2::Forbidden,
-            metrics: ResourceRequirementV2::Forbidden,
-            artifacts: ResourceRequirementV2::Optional,
-            sidecars: ResourceRequirementV2::Forbidden,
-        }
-    }
-
     fn entries(self) -> [(RunResourceV2, ResourceRequirementV2); 5] {
         [
             (RunResourceV2::Models, self.models),
@@ -230,8 +218,8 @@ pub trait RunnerWorkloadFactory: Debug + Send + Sync {
 
 /// One-shot lifecycle acknowledgement after durable report persistence.
 pub trait PreparedReportCommit: Debug {
-    /// Acknowledge evaluator lifecycle completion after the authoritative
-    /// native report has been atomically persisted.
+    /// Acknowledge lifecycle completion after the authoritative native report
+    /// has been atomically persisted.
     fn commit(self: Box<Self>) -> Result<()>;
 }
 
@@ -459,7 +447,6 @@ pub struct RunnerRegistryBuilder {
     transports: BTreeMap<String, Arc<dyn RunnerTransportFactory>>,
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
-    evaluation_capabilities: EvaluationCapabilityInventory,
 }
 
 impl RunnerRegistryBuilder {
@@ -504,26 +491,6 @@ impl RunnerRegistryBuilder {
         Ok(())
     }
 
-    /// Attach capability truth derived from the same provider, host-operation,
-    /// and pair composition being frozen by this builder.
-    pub fn set_evaluation_capabilities(
-        &mut self,
-        capabilities: EvaluationCapabilityInventory,
-    ) -> Result<()> {
-        ensure!(
-            self.evaluation_capabilities.providers.is_empty()
-                && self.evaluation_capabilities.host_operations.is_empty()
-                && self
-                    .evaluation_capabilities
-                    .supported_combinations
-                    .is_empty()
-                && self.evaluation_capabilities.unavailable.is_empty(),
-            "runner evaluation capability inventory was configured twice"
-        );
-        self.evaluation_capabilities = capabilities;
-        Ok(())
-    }
-
     /// Freeze the complete registry after reference and descriptor validation.
     pub fn freeze(self) -> Result<RunnerRegistry> {
         for ((transport_id, workload_id), pair) in &self.pairs {
@@ -557,7 +524,6 @@ impl RunnerRegistryBuilder {
             workloads: self.workloads,
             pairs: self.pairs,
             statically_compatible_pairs,
-            evaluation_capabilities: self.evaluation_capabilities,
         })
     }
 }
@@ -568,7 +534,6 @@ pub struct RunnerRegistry {
     workloads: BTreeMap<String, Arc<dyn RunnerWorkloadFactory>>,
     pairs: BTreeMap<(String, String), Arc<dyn RunnerPairFactory>>,
     statically_compatible_pairs: BTreeSet<(String, String)>,
-    evaluation_capabilities: EvaluationCapabilityInventory,
 }
 
 impl RunnerRegistry {
@@ -594,12 +559,6 @@ impl RunnerRegistry {
             .keys()
             .map(|(transport, workload)| (transport.as_str(), workload.as_str()))
             .collect()
-    }
-
-    /// Borrow provider/operation combinations derived from this exact frozen
-    /// executable composition.
-    pub fn evaluation_capabilities(&self) -> &EvaluationCapabilityInventory {
-        &self.evaluation_capabilities
     }
 
     /// Return descriptor-compatible pairs whether or not protocol-v2 execution
@@ -864,7 +823,6 @@ impl RunnerRegistryFactory for BuiltinRunnerRegistryFactory {
         builder.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
         builder.register_workload(Arc::new(ScheduledWorkloadFactoryV2))?;
         builder.register_workload(Arc::new(GraphWorkloadFactoryV2))?;
-        builder.register_workload(Arc::new(StaticAccuracyWorkloadFactoryV2))?;
         register_optional_builtin_components(&mut builder)?;
         builder.freeze()
     }
@@ -874,40 +832,8 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // Feature-bearing modules add registrations here without changing lookup,
     // validation, or dispatch. Keeping the composition function even in the
     // base build prevents capability code from growing mode string branches.
-    crate::agentic_execution::register_agentic_workload(builder)?;
-    crate::agentic_execution::register_agentic_online_pair(builder)?;
-    crate::telemetry_execution::register_telemetry_watch_workload(builder)?;
-    crate::telemetry_operation::register_http_telemetry_watch_pair(builder)?;
     crate::online_execution::register_http_pairs(builder)?;
     crate::online_execution::register_http_scheduled_pair(builder)?;
-    crate::online_execution::register_http_static_accuracy_pair(builder)?;
-    let evaluation = crate::stock_evaluation::stock_evaluation_composition()?;
-    let executable_evaluation_pair = evaluation.providers.descriptors().any(|descriptor| {
-        !evaluation
-            .providers
-            .available_distributions(&descriptor.provider_id)
-            .is_empty()
-    });
-    let host_operations = crate::evaluation_execution::stock_evaluation_host_operation_descriptors(
-        &evaluation.operation_ids,
-    )?;
-    builder.set_evaluation_capabilities(
-        crate::evaluation_execution::build_evaluation_capability_inventory(
-            evaluation.providers.as_ref(),
-            host_operations.iter(),
-            std::iter::empty(),
-            crate::stock_evaluation::STOCK_ISOLATION_PROFILE,
-            executable_evaluation_pair,
-        )?,
-    )?;
-    if executable_evaluation_pair {
-        crate::evaluation_execution::register_http_evaluation_pair(
-            builder,
-            evaluation.providers,
-            Arc::new(crate::evaluation_execution::StockEvaluationAssetCatalog),
-            evaluation.compatibility,
-        )?;
-    }
     crate::grpc_execution::register_grpc_pairs(builder)?;
     #[cfg(feature = "dynosim")]
     crate::offline_execution::register_dynosim_transport(builder)?;
@@ -918,8 +844,8 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
 ///
 /// Endpoint profiles own inference transport policy. The optional client block
 /// is accepted only when a workload requests the isolated control-plane HTTP
-/// capability, so no transport field can become inert on ordinary inference or
-/// source-free archive synchronization paths.
+/// capability, so no transport field can become inert on ordinary inference
+/// paths.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct OnlineHttpTransportConfigV2 {
@@ -987,32 +913,6 @@ impl Debug for GraphWorkloadConfigV2 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("GraphWorkloadConfigV2")
-            .field("worker_count", &self.worker_count)
-            .field("phase_count", &self.phases.len())
-            .finish_non_exhaustive()
-    }
-}
-
-/// Strict built-in static-accuracy workload authored config.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct StaticAccuracyWorkloadConfigV2 {
-    /// Number of local inference workers.
-    pub worker_count: usize,
-    /// Evaluator dataset intent retained for canonical worker preparation.
-    pub dataset: Box<RawValue>,
-    /// Tokenizer-factory-owned authored object.
-    pub tokenizer: Box<RawValue>,
-    /// Ordered scheduled inference phase objects.
-    pub phases: Vec<PhaseSpec>,
-    /// Canonical evaluator-owned authored accuracy object.
-    pub accuracy: Box<RawValue>,
-}
-
-impl Debug for StaticAccuracyWorkloadConfigV2 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("StaticAccuracyWorkloadConfigV2")
             .field("worker_count", &self.worker_count)
             .field("phase_count", &self.phases.len())
             .finish_non_exhaustive()
@@ -1493,16 +1393,6 @@ pub static GRAPH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadD
     required_transport_features: &[],
 };
 
-/// Built-in static Python-evaluated accuracy workload descriptor.
-pub static STATIC_ACCURACY_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
-    RunnerWorkloadDescriptor {
-        id: "static_accuracy",
-        description: "Canonical supervised Python static evaluator with Rust inference",
-        requires_semantic_responses: true,
-        clock_kinds: &[RunnerClockKind::Real],
-        required_transport_features: &["http"],
-    };
-
 #[derive(Debug)]
 struct OnlineHttpTransportFactoryV2;
 
@@ -1595,41 +1485,6 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
             &config.tokenizer,
             &config.phases,
         )?;
-        Ok(Box::new(config))
-    }
-
-    fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
-        Ok(requirements_from_descriptor(self.descriptor()))
-    }
-}
-
-#[derive(Debug)]
-struct StaticAccuracyWorkloadFactoryV2;
-
-impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
-    fn descriptor(&self) -> &'static RunnerWorkloadDescriptor {
-        &STATIC_ACCURACY_WORKLOAD_DESCRIPTOR
-    }
-
-    fn validate(&self, authored: &RawValue) -> Result<Box<dyn ValidatedWorkloadConfig>> {
-        let config = strict_decode::<StaticAccuracyWorkloadConfigV2>(
-            authored,
-            "static_accuracy workload config",
-        )?;
-        validate_common_workload(
-            config.worker_count,
-            &config.dataset,
-            &config.tokenizer,
-            &config.phases,
-        )?;
-        let accuracy = raw_object(&config.accuracy, "static_accuracy accuracy config")?;
-        ensure!(
-            accuracy
-                .get("benchmark")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty()),
-            "static_accuracy accuracy.benchmark must be a non-empty string"
-        );
         Ok(Box::new(config))
     }
 
@@ -1852,7 +1707,7 @@ mod tests {
     impl PreparedRunnerOperation for Operation {
         fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
             Ok(PreparedRunOutcome {
-                native_report: NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None),
+                native_report: NativeReport::new(&aiperf_metrics::AccumulatorSummary::new()),
                 report_facts: ReportPairRunFacts::new(),
                 provenance: BTreeMap::from([(
                     "fixture".into(),
@@ -1936,10 +1791,16 @@ mod tests {
         let source_only = authored_run(serde_json::json!({
             "models": {"items": [{"name": "model"}]}
         }));
-        let error =
-            validate_resource_requirements(&source_only, ResourceRequirementsV2::telemetry_watch())
-                .unwrap_err()
-                .to_string();
+        let models_forbidden = ResourceRequirementsV2 {
+            models: ResourceRequirementV2::Forbidden,
+            endpoints: ResourceRequirementV2::Forbidden,
+            metrics: ResourceRequirementV2::Forbidden,
+            artifacts: ResourceRequirementV2::Optional,
+            sidecars: ResourceRequirementV2::Forbidden,
+        };
+        let error = validate_resource_requirements(&source_only, models_forbidden)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("forbids run.resources.models"), "{error}");
 
         let inference = authored_run(serde_json::json!({
@@ -2126,10 +1987,6 @@ mod tests {
     #[test]
     fn builtin_inventory_does_not_claim_protocol_v1_or_library_only_execution() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
-        let evaluation_available = !registry
-            .evaluation_capabilities()
-            .supported_combinations
-            .is_empty();
         #[cfg(feature = "dynosim")]
         let expected_transports = vec!["dynosim_offline", "dynosim_online", "grpc", "http"];
         #[cfg(not(feature = "dynosim"))]
@@ -2142,16 +1999,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_transports
         );
-        let mut expected_workloads = vec![
-            "agentic",
-            "graph",
-            "scheduled",
-            "static_accuracy",
-            "telemetry_watch",
-        ];
-        if evaluation_available {
-            expected_workloads.insert(1, "evaluation");
-        }
+        let expected_workloads = vec!["graph", "scheduled"];
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -2161,68 +2009,39 @@ mod tests {
             expected_workloads
         );
         #[cfg(feature = "dynosim")]
-        let mut expected_supported = vec![
+        let expected_supported = vec![
             ("dynosim_offline", "graph"),
             ("dynosim_offline", "scheduled"),
             ("dynosim_online", "graph"),
             ("dynosim_online", "scheduled"),
             ("grpc", "scheduled"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynosim"))]
-        let mut expected_supported = vec![
+        let expected_supported = vec![
             ("grpc", "scheduled"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
-        if evaluation_available {
-            let index = expected_supported
-                .iter()
-                .position(|pair| *pair == ("http", "graph"))
-                .unwrap();
-            expected_supported.insert(index, ("http", "evaluation"));
-        }
         #[cfg(feature = "dynosim")]
-        let mut expected_static = vec![
+        let expected_static = vec![
             ("dynosim_offline", "graph"),
             ("dynosim_offline", "scheduled"),
             ("dynosim_online", "graph"),
             ("dynosim_online", "scheduled"),
-            ("dynosim_online", "telemetry_watch"),
             ("grpc", "graph"),
             ("grpc", "scheduled"),
-            ("grpc", "telemetry_watch"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
         #[cfg(not(feature = "dynosim"))]
-        let mut expected_static = vec![
+        let expected_static = vec![
             ("grpc", "graph"),
             ("grpc", "scheduled"),
-            ("grpc", "telemetry_watch"),
-            ("http", "agentic"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
-            ("http", "telemetry_watch"),
         ];
-        if evaluation_available {
-            let index = expected_static
-                .iter()
-                .position(|pair| *pair == ("http", "graph"))
-                .unwrap();
-            expected_static.insert(index, ("http", "evaluation"));
-        }
         assert_eq!(registry.supported_pairs(), expected_supported);
         assert_eq!(registry.statically_compatible_pairs(), expected_static);
     }

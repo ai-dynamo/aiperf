@@ -115,7 +115,7 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
             .iter()
             .any(|entry| entry["id"] == "http")
     );
-    for workload in ["scheduled", "graph", "static_accuracy", "agentic"] {
+    for workload in ["scheduled", "graph"] {
         assert!(
             capabilities["workloads"]
                 .as_array()
@@ -137,13 +137,6 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
             .unwrap()
             .contains(&json!(["http", "scheduled"])),
         "the protocol-v2 scheduled adapter must be product-reachable"
-    );
-    assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["http", "agentic"])),
-        "the registered agentic pair must be product-reachable"
     );
 }
 

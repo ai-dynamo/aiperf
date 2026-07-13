@@ -646,7 +646,7 @@ pub enum RunnerFailureStageV2 {
     Protocol,
     /// Side-effect-free static validation failure.
     Validation,
-    /// Dataset, endpoint, evaluator, or transport preparation failure.
+    /// Dataset, endpoint, or transport preparation failure.
     Preparation,
     /// Workload execution failure.
     Execution,

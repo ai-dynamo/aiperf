@@ -39,16 +39,6 @@ pub struct RunnerCapabilities {
     pub statically_compatible_pairs: Vec<[String; 2]>,
     /// Pairs with a registered executable protocol-v2 adapter.
     pub supported_pairs: Vec<[String; 2]>,
-    /// Evaluator providers whose registered launch distributions passed
-    /// factory attestation and mandatory isolation availability checks.
-    pub evaluation_providers: Vec<EvaluationProviderCapability>,
-    /// Host operations with linked executable Rust adapters.
-    pub evaluation_host_operations: Vec<EvaluationHostOperationCapability>,
-    /// Fully executable transport/workload/provider/distribution combinations.
-    pub supported_evaluation_combinations: Vec<SupportedEvaluationCombination>,
-    /// Known stock provider/distribution selections that this exact image
-    /// cannot execute, expressed only with closed path-free reason codes.
-    pub evaluation_unavailable: Vec<EvaluationUnavailableCapability>,
     /// Dataset variants accepted by the current protocol.
     pub dataset_types: &'static [&'static str],
     /// Phase variants accepted by the current protocol.
@@ -71,21 +61,6 @@ impl RunnerCapabilities {
         distribution_id: String,
         runner_registry: &RunnerRegistry,
         product_registry: &aiperf_extensions::AiperfRegistry,
-    ) -> Self {
-        Self::from_registries_with_evaluation(
-            distribution_id,
-            runner_registry,
-            product_registry,
-            runner_registry.evaluation_capabilities().clone(),
-        )
-    }
-
-    /// Build capabilities with an executable evaluator/provider inventory.
-    pub fn from_registries_with_evaluation(
-        distribution_id: String,
-        runner_registry: &RunnerRegistry,
-        product_registry: &aiperf_extensions::AiperfRegistry,
-        evaluation: EvaluationCapabilityInventory,
     ) -> Self {
         let endpoints = product_registry
             .endpoints()
@@ -116,10 +91,6 @@ impl RunnerCapabilities {
                 .into_iter()
                 .map(|(transport, workload)| [transport.to_owned(), workload.to_owned()])
                 .collect(),
-            evaluation_providers: evaluation.providers,
-            evaluation_host_operations: evaluation.host_operations,
-            supported_evaluation_combinations: evaluation.supported_combinations,
-            evaluation_unavailable: evaluation.unavailable,
             dataset_types: &["synthetic", "file", "public"],
             phase_types: &[
                 "concurrency",
@@ -134,7 +105,6 @@ impl RunnerCapabilities {
                 "gpu_telemetry",
                 "python_live_streaming",
                 "outputs_json",
-                "python_accuracy_evaluator",
                 "raw_records",
                 "http_transport_policy",
                 "thread_per_core_execution",
@@ -146,135 +116,6 @@ impl RunnerCapabilities {
             runner_version: env!("CARGO_PKG_VERSION"),
         }
     }
-}
-
-/// Safe exact identity for one factory-attested evaluator distribution.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct EvaluationDistributionCapability {
-    /// Immutable selectable deployment ID.
-    pub id: String,
-    /// Exact provider package name.
-    pub package: String,
-    /// Exact package version.
-    pub package_version: String,
-    /// Provider source/commit SHA-256.
-    pub provider_source_sha256: String,
-    /// Worker bootstrap source SHA-256.
-    pub worker_source_sha256: String,
-    /// Complete dependency-lock SHA-256.
-    pub dependency_lock_sha256: String,
-    /// Factory-attested executable closure SHA-256.
-    pub launch_closure_sha256: String,
-    /// Optional immutable OCI identity.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub oci_digest: Option<String>,
-}
-
-/// Safe capability projection for one executable evaluator-provider factory.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct EvaluationProviderCapability {
-    /// Open provider factory ID.
-    pub id: String,
-    /// Safe human-facing label.
-    pub display_name: String,
-    /// Supported evaluator-worker protocol versions.
-    pub worker_protocol_versions: Vec<u32>,
-    /// Supported unit granularities.
-    pub execution_granularities: Vec<String>,
-    /// Supported occurrence scheduling modes.
-    pub scheduling_modes: Vec<String>,
-    /// Factory-owned authored-schema version.
-    pub config_schema_version: u32,
-    /// Factory-owned authored-schema SHA-256.
-    pub config_schema_sha256: String,
-    /// Enforceable runner isolation implementation identity.
-    pub isolation_profile_id: String,
-    /// Provider-declared semantic operations; executable combinations publish
-    /// only their intersection with linked host adapters.
-    pub declared_operations: Vec<String>,
-    /// Factory-attested immutable launch distributions.
-    pub distributions: Vec<EvaluationDistributionCapability>,
-}
-
-/// One linked Rust host-operation adapter in the executing image.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct EvaluationHostOperationCapability {
-    /// Open semantic operation ID.
-    pub id: String,
-    /// Executor family ID.
-    pub family: String,
-    /// Request-schema SHA-256.
-    pub request_schema_sha256: String,
-    /// Terminal-response schema SHA-256.
-    pub response_schema_sha256: String,
-    /// Incremental-event schema SHA-256 when true streaming is executable.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stream_schema_sha256: Option<String>,
-    /// Whether the adapter emits real incremental typed events.
-    pub true_streaming: bool,
-    /// Endpoint capabilities required for route compatibility.
-    pub endpoint_capabilities: Vec<String>,
-}
-
-/// One provider selection that the exact image can execute end to end.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct SupportedEvaluationCombination {
-    /// Registered transport pair half.
-    pub transport: String,
-    /// Registered workload pair half; currently `evaluation`.
-    pub workload: String,
-    /// Exact provider factory ID.
-    pub provider: String,
-    /// Exact immutable launch distribution ID.
-    pub distribution: String,
-    /// Linked operations executable for this combination.
-    pub operations: Vec<String>,
-    /// Linked resource adapter IDs available to authored bindings.
-    pub resources: Vec<String>,
-    /// Enforceable process-tree isolation implementation.
-    pub isolation_profile_id: String,
-}
-
-/// Closed, secret-free reason why one known evaluator distribution is absent
-/// from the executable capability combinations.
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum EvaluationUnavailableReasonCode {
-    /// The deployment supplied no complete exact-content source-root closure.
-    ProviderRootsUnavailable,
-    /// The compiled host OS/architecture cannot execute the stock closure.
-    UnsupportedPlatform,
-    /// The mandatory process-tree isolation implementation did not attest.
-    IsolationUnavailable,
-}
-
-/// One known provider/distribution selection unavailable in this exact image.
-///
-/// Deliberately no detail string exists: capabilities must never publish host
-/// paths, environment contents, package errors, or other deployment secrets.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EvaluationUnavailableCapability {
-    /// Exact provider factory ID.
-    pub provider: String,
-    /// Exact immutable launch distribution ID.
-    pub distribution: String,
-    /// Closed machine-readable unavailability reason.
-    pub reason_code: EvaluationUnavailableReasonCode,
-}
-
-/// Evaluator capability inputs composed from the same frozen registries used
-/// for strict validation and execution.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EvaluationCapabilityInventory {
-    /// Executable provider descriptors.
-    pub providers: Vec<EvaluationProviderCapability>,
-    /// Linked host-operation adapters.
-    pub host_operations: Vec<EvaluationHostOperationCapability>,
-    /// Exact executable combinations.
-    pub supported_combinations: Vec<SupportedEvaluationCombination>,
-    /// Known selections omitted from executable combinations with stable,
-    /// path-free reason codes.
-    pub unavailable: Vec<EvaluationUnavailableCapability>,
 }
 
 pub use crate::sidecar_input::{LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec};
@@ -693,40 +534,3 @@ impl PhaseSpec {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{EvaluationUnavailableCapability, EvaluationUnavailableReasonCode};
-
-    #[test]
-    fn evaluation_unavailability_serializes_only_closed_reason_codes() {
-        for (reason_code, expected) in [
-            (
-                EvaluationUnavailableReasonCode::ProviderRootsUnavailable,
-                "provider_roots_unavailable",
-            ),
-            (
-                EvaluationUnavailableReasonCode::UnsupportedPlatform,
-                "unsupported_platform",
-            ),
-            (
-                EvaluationUnavailableReasonCode::IsolationUnavailable,
-                "isolation_unavailable",
-            ),
-        ] {
-            let value = serde_json::to_value(EvaluationUnavailableCapability {
-                provider: "provider".to_owned(),
-                distribution: "distribution".to_owned(),
-                reason_code,
-            })
-            .unwrap();
-            assert_eq!(
-                value,
-                serde_json::json!({
-                    "provider": "provider",
-                    "distribution": "distribution",
-                    "reason_code": expected,
-                })
-            );
-        }
-    }
-}

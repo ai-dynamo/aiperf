@@ -9,10 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf::accuracy::{
-    AccuracyDataset, AccuracyRecordProcessor, accuracy_report_errors, grade_accuracy_responses,
-    load_evaluator_problems_with_grader,
-};
 use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
     positive_seconds_to_ns,
@@ -42,10 +38,6 @@ use aiperf::scheduled::{
     TurnRecordProcessor, Workload,
 };
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
-use aiperf_accuracy::{
-    AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
-    WorkerProcessConfig,
-};
 use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_content_server::{
@@ -367,95 +359,8 @@ impl HttpPreparedEndpointTableFactory for NativePreparedEndpointTableFactory {
 pub(crate) enum NativeDatasetPlan {
     /// Canonical linear dataset loaded once during protocol-v2 preparation.
     PreparedLinear(PreparedDatasetInput),
-    /// Canonical evaluator selection and dataset-load policy.
-    StaticAccuracy(NativeStaticAccuracyPlan),
     /// Canonical Graph-IR bundle returned directly by the selected adapter.
     Graph(Box<NativeGraphDatasetPlan>),
-}
-
-/// Process coordinates selected for one static-accuracy evaluator.
-///
-/// This protocol-neutral value keeps protocol-v2 adapters from projecting
-/// through the protocol-v1 [`AccuracySpec`] wire DTO. A future remote or
-/// embedded evaluator may ignore these local-process coordinates behind
-/// [`StaticAccuracyEvaluatorFactory`].
-#[derive(Clone, Debug)]
-pub struct StaticAccuracyEvaluatorProcessSpec {
-    /// Absolute Python executable selected by the Python orchestrator.
-    pub python_executable: PathBuf,
-    /// Importable evaluator worker module.
-    pub worker_module: String,
-}
-
-impl StaticAccuracyEvaluatorProcessSpec {
-    fn validate(&self) -> Result<()> {
-        ensure!(
-            self.python_executable.is_absolute(),
-            "accuracy python_executable must be an absolute path"
-        );
-        ensure!(
-            !self.worker_module.trim().is_empty(),
-            "accuracy worker_module cannot be empty"
-        );
-        Ok(())
-    }
-}
-
-/// Construction seam for the canonical static-accuracy evaluator.
-///
-/// The stock implementation supervises one Python JSONL worker. Alternate
-/// distributions can inject a remote or embedded evaluator without changing
-/// benchmark loading, scheduling, grading, or report composition.
-#[async_trait(?Send)]
-pub trait StaticAccuracyEvaluatorFactory: Send + Sync {
-    /// Start and negotiate exactly one evaluator instance.
-    async fn spawn(
-        &self,
-        process: &StaticAccuracyEvaluatorProcessSpec,
-    ) -> Result<Box<dyn AccuracyEvaluator>>;
-}
-
-/// Native supervised-Python static evaluator factory.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NativeStaticAccuracyEvaluatorFactory;
-
-#[async_trait(?Send)]
-impl StaticAccuracyEvaluatorFactory for NativeStaticAccuracyEvaluatorFactory {
-    async fn spawn(
-        &self,
-        process: &StaticAccuracyEvaluatorProcessSpec,
-    ) -> Result<Box<dyn AccuracyEvaluator>> {
-        let worker = WorkerProcessConfig::new(process.python_executable.as_os_str())
-            .arg("-u")
-            .arg("-m")
-            .arg(&process.worker_module);
-        let evaluator = PythonEvaluator::spawn(worker)
-            .await
-            .context("starting canonical Python accuracy evaluator")?;
-        Ok(Box::new(evaluator))
-    }
-}
-
-/// Protocol-neutral static evaluator selection and benchmark-load policy.
-pub(crate) struct NativeStaticAccuracyPlan {
-    pub(crate) benchmark: String,
-    pub(crate) tasks: Option<Vec<String>>,
-    pub(crate) n_shots: Option<usize>,
-    pub(crate) enable_cot: Option<bool>,
-    pub(crate) grader: Option<String>,
-    pub(crate) system_prompt: Option<String>,
-    pub(crate) process: StaticAccuracyEvaluatorProcessSpec,
-    pub(crate) evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
-}
-
-impl NativeStaticAccuracyPlan {
-    fn validate(&self) -> Result<()> {
-        ensure!(
-            !self.benchmark.trim().is_empty(),
-            "accuracy benchmark cannot be empty"
-        );
-        self.process.validate()
-    }
 }
 
 /// Fully prepared Graph-IR execution input.
@@ -760,27 +665,7 @@ fn validate_plan(request: &NativeRunPlan) -> Result<()> {
             "live streaming requires an OTel or MLflow destination"
         );
     }
-    if let NativeDatasetPlan::StaticAccuracy(accuracy) = &request.run.dataset {
-        accuracy.validate()?;
-        for phase in &request.run.phases {
-            ensure!(
-                !matches!(
-                    phase,
-                    PhaseSpec::UserCentric { .. } | PhaseSpec::FixedSchedule { .. }
-                ),
-                "accuracy evaluator datasets are single-turn and require a concurrency or request-rate phase"
-            );
-        }
-    }
     Ok(())
-}
-
-struct PreparedAccuracy {
-    evaluator: Box<dyn AccuracyEvaluator>,
-    loaded: EvaluatorLoadResult,
-    dataset: AccuracyDataset,
-    processor: Rc<AccuracyRecordProcessor>,
-    tokenizer: Arc<dyn TextTokenizer>,
 }
 
 /// Startup seam for native sidecar resources.
@@ -978,17 +863,10 @@ async fn prepare_and_execute_native(
     if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
         validate_graph_request(&request)?;
     }
-    let mut accuracy = prepare_static_accuracy(&request).await?;
-    let mut sidecars = match sidecar_factory.prepare(&request.run).await {
-        Ok(sidecars) => sidecars,
-        Err(error) => {
-            return finish_accuracy_lifecycle(
-                Err(error.context("preparing native sidecar resources")),
-                accuracy.as_mut(),
-            )
-            .await;
-        }
-    };
+    let mut sidecars = sidecar_factory
+        .prepare(&request.run)
+        .await
+        .context("preparing native sidecar resources")?;
     if let Some((readiness, transport_factory)) = readiness
         && !readiness.is_empty()
     {
@@ -996,16 +874,11 @@ async fn prepare_and_execute_native(
         let transport = transport_factory.build(clock.clone());
         if let Err(error) = readiness.wait(clock, transport).await {
             sidecars.shutdown_run_resources().await;
-            return finish_accuracy_lifecycle(
-                Err(error.context("waiting for endpoint readiness")),
-                accuracy.as_mut(),
-            )
-            .await;
+            return Err(error.context("waiting for endpoint readiness"));
         }
     }
     let result = execute_native(
         request,
-        accuracy.as_mut(),
         &mut sidecars,
         transport_factory,
         graph_placement,
@@ -1013,7 +886,7 @@ async fn prepare_and_execute_native(
     )
     .await;
     sidecars.shutdown_run_resources().await;
-    finish_accuracy_lifecycle(result, accuracy.as_mut()).await
+    result
 }
 
 fn create_run_artifacts(run: &NativeRunSpec) -> Result<()> {
@@ -1028,30 +901,24 @@ fn create_run_artifacts(run: &NativeRunSpec) -> Result<()> {
 
 async fn execute_native(
     request: NativeRunPlan,
-    accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     if matches!(request.run.dataset, NativeDatasetPlan::Graph(_)) {
-        ensure!(
-            accuracy.is_none(),
-            "graph execution received prepared static-accuracy state"
-        );
         return execute_graph_native(request, sidecars, graph_placement, registry).await;
     }
-    execute_scheduled_native(request, accuracy, sidecars, transport_factory, registry).await
+    execute_scheduled_native(request, sidecars, transport_factory, registry).await
 }
 
 async fn execute_scheduled_native(
     request: NativeRunPlan,
-    accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
+    execute_native_inner(request, sidecars, transport_factory, registry).await
 }
 
 fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
@@ -1128,7 +995,7 @@ async fn execute_graph_native(
 ) -> Result<NativeReport> {
     let graph = match &request.run.dataset {
         NativeDatasetPlan::Graph(graph) => graph,
-        NativeDatasetPlan::PreparedLinear(_) | NativeDatasetPlan::StaticAccuracy(_) => {
+        NativeDatasetPlan::PreparedLinear(_) => {
             bail!("graph execution received a non-graph dataset plan")
         }
     };
@@ -1267,83 +1134,6 @@ fn write_graph_artifacts(
     Ok(())
 }
 
-async fn prepare_static_accuracy(request: &NativeRunPlan) -> Result<Option<PreparedAccuracy>> {
-    let NativeDatasetPlan::StaticAccuracy(spec) = &request.run.dataset else {
-        return Ok(None);
-    };
-    let model = request
-        .run
-        .models
-        .items
-        .first()
-        .map(|item| item.name.as_str())
-        .ok_or_else(|| anyhow!("at least one model is required"))?;
-    let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
-    let mut evaluator = spec.evaluator_factory.spawn(&spec.process).await?;
-    let preparation = async {
-        let evaluator_config = EvaluatorLoadConfig {
-            tasks: spec.tasks.clone(),
-            n_shots: spec.n_shots,
-            enable_cot: spec.enable_cot,
-            system_prompt: spec.system_prompt.clone(),
-            max_problems: None,
-            max_tokens: None,
-            seed: request.run.random_seed.unwrap_or(0),
-        };
-        let (loaded, problems) = load_evaluator_problems_with_grader(
-            evaluator.as_mut(),
-            &spec.benchmark,
-            &evaluator_config,
-            spec.grader.as_deref(),
-        )
-        .await?;
-        let dataset =
-            AccuracyDataset::from_evaluator_problems(model, problems, tokenizer.as_ref())?;
-        let processor = Rc::new(dataset.record_processor());
-        Ok::<_, anyhow::Error>((loaded, dataset, processor))
-    }
-    .await;
-    match preparation {
-        Ok((loaded, dataset, processor)) => Ok(Some(PreparedAccuracy {
-            evaluator,
-            loaded,
-            dataset,
-            processor,
-            tokenizer,
-        })),
-        Err(error) => {
-            let shutdown = evaluator.shutdown().await.map_err(anyhow::Error::from);
-            finish_accuracy_shutdown(Err(error), shutdown)
-        }
-    }
-}
-
-async fn finish_accuracy_lifecycle<T>(
-    result: Result<T>,
-    accuracy: Option<&mut PreparedAccuracy>,
-) -> Result<T> {
-    let shutdown = match accuracy {
-        Some(accuracy) => accuracy
-            .evaluator
-            .shutdown()
-            .await
-            .map_err(anyhow::Error::from),
-        None => Ok(()),
-    };
-    finish_accuracy_shutdown(result, shutdown)
-}
-
-fn finish_accuracy_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Result<T> {
-    match (result, shutdown) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error.context("shutting down accuracy evaluator")),
-        (Err(error), Err(shutdown)) => Err(error.context(format!(
-            "accuracy evaluator also failed during shutdown: {shutdown:#}"
-        ))),
-    }
-}
-
 fn finish_execution_backend_shutdown<T>(result: Result<T>, shutdown: Result<()>) -> Result<T> {
     match (result, shutdown) {
         (Ok(value), Ok(())) => Ok(value),
@@ -1357,7 +1147,6 @@ fn finish_execution_backend_shutdown<T>(result: Result<T>, shutdown: Result<()>)
 
 async fn execute_native_inner(
     request: NativeRunPlan,
-    mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
     transport_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
@@ -1371,7 +1160,6 @@ async fn execute_native_inner(
         NativeDatasetPlan::PreparedLinear(dataset) => dataset
             .random_seed
             .map_or(rng_root, |seed| RngRoot::new(Some(seed))),
-        NativeDatasetPlan::StaticAccuracy(_) => rng_root,
         NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
     };
     let metrics_config = metrics_config(
@@ -1389,10 +1177,7 @@ async fn execute_native_inner(
         .first()
         .cloned()
         .ok_or_else(|| anyhow!("at least one model is required"))?;
-    let tokenizer = match accuracy.as_ref() {
-        Some(accuracy) => accuracy.tokenizer.clone(),
-        None => load_tokenizer(Some(&request.run.tokenizer.name))?,
-    };
+    let tokenizer = load_tokenizer(Some(&request.run.tokenizer.name))?;
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.run.tokenizer.apply_chat_template);
     let (endpoint_urls, transport_config, prepared_endpoints, source_factory): NativeEndpointExecutionParts<'_> = {
@@ -1417,29 +1202,15 @@ async fn execute_native_inner(
             }),
         )
     };
-    let dataset = if let Some(accuracy) = accuracy.as_ref() {
-        accuracy.dataset.dataset().as_ref().clone()
-    } else {
-        match &request.run.dataset {
-            NativeDatasetPlan::PreparedLinear(dataset) => dataset.dataset.clone(),
-            NativeDatasetPlan::StaticAccuracy(_) => {
-                bail!("evaluator dataset plan requires an accuracy evaluator")
-            }
-            NativeDatasetPlan::Graph(_) => {
-                unreachable!("graph rejected above")
-            }
+    let dataset = match &request.run.dataset {
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset.dataset.clone(),
+        NativeDatasetPlan::Graph(_) => {
+            unreachable!("graph rejected above")
         }
     };
-    let default_output_tokens = if accuracy.is_some() {
-        dataset_default_output_tokens(&dataset)?
-    } else {
-        match &request.run.dataset {
-            NativeDatasetPlan::PreparedLinear(dataset) => dataset.default_output_tokens,
-            NativeDatasetPlan::StaticAccuracy(_) => {
-                unreachable!("evaluator without accuracy rejected above")
-            }
-            NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
-        }
+    let default_output_tokens = match &request.run.dataset {
+        NativeDatasetPlan::PreparedLinear(dataset) => dataset.default_output_tokens,
+        NativeDatasetPlan::Graph(_) => unreachable!("graph rejected above"),
     };
 
     let real_clock_anchor = sidecars.real_clock_anchor;
@@ -1502,13 +1273,7 @@ async fn execute_native_inner(
                 has_credit_timestamp: !matches!(phase, PhaseSpec::FixedSchedule { .. }),
                 live_sink: live_sink.clone(),
             });
-            let mut record_processors = vec![record_processor];
-            if phase.common().name == "profiling"
-                && let Some(accuracy) = accuracy.as_ref()
-            {
-                let processor: Rc<dyn TurnRecordProcessor> = accuracy.processor.clone();
-                record_processors.push(processor);
-            }
+            let record_processors = vec![record_processor];
             plan = plan.with_record_processors(record_processors);
             let mut phase_sidecars = Vec::new();
             if let Some(server_metrics) = sidecars.server_metrics.as_ref() {
@@ -1648,7 +1413,7 @@ async fn execute_native_inner(
             server_metrics.report_metadata(profiling, warmup_server_summary.as_ref())
         })
     });
-    let mut outcome = RunOutcome {
+    let outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
             model: Some(primary_model),
@@ -1669,34 +1434,7 @@ async fn execute_native_inner(
             .unwrap_or_default(),
         ..RunOutcome::default()
     };
-    if let Some(accuracy) = accuracy.as_mut() {
-        let evaluation = grade_accuracy_responses(
-            accuracy.processor.as_ref(),
-            accuracy.evaluator.as_mut(),
-            &accuracy.loaded,
-            &profiling_metrics,
-        )
-        .await?;
-        outcome.run.mode = Some("accuracy".to_string());
-        outcome.accuracy = Some(evaluation.accuracy);
-        outcome.accuracy_records = evaluation.records;
-        outcome.evaluator = Some(evaluation.evaluator_report);
-        outcome.errors = accuracy_report_errors(&evaluation.failures);
-    }
     Ok(NativeReport::from_outcome(&profiling_metrics, &outcome))
-}
-
-fn dataset_default_output_tokens(dataset: &Dataset) -> Result<usize> {
-    dataset
-        .conversations()
-        .iter()
-        .flat_map(|conversation| conversation.turns.iter())
-        .filter_map(|turn| turn.max_tokens)
-        .map(|value| usize::try_from(value).map_err(Into::into))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .max()
-        .ok_or_else(|| anyhow!("accuracy evaluator dataset has no output-token limit"))
 }
 
 /// Prepared conversation-source construction behind the shared scheduled
