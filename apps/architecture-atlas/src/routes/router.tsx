@@ -11,8 +11,11 @@ import {
 import type { RouterHistory } from "@tanstack/react-router";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
+  useRef,
   useState,
 } from "react";
 import { z } from "zod";
@@ -52,7 +55,15 @@ import {
 import type { GraphFitViewCommand } from "../features/graph/types";
 
 const GRAPH_SEARCH_INPUT_ID = "atlas-graph-search";
-const GraphFitRequestContext = createContext<GraphFitViewCommand | null>(null);
+interface GraphFitLifecycle {
+  command: GraphFitViewCommand | null;
+  complete(requestId: number): void;
+}
+
+const GraphFitRequestContext = createContext<GraphFitLifecycle>({
+  command: null,
+  complete: () => undefined,
+});
 
 const unavailableStorage: GraphStateStorage = {
   getItem: () => null,
@@ -135,6 +146,16 @@ function RootRouteComponent() {
   );
   const [fitViewCommand, setFitViewCommand] =
     useState<GraphFitViewCommand | null>(null);
+  const fitRequestSequence = useRef(0);
+  const completeFitView = useCallback((requestId: number) => {
+    setFitViewCommand((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }, []);
+  const fitLifecycle = useMemo(
+    () => ({ command: fitViewCommand, complete: completeFitView }),
+    [completeFitView, fitViewCommand],
+  );
   const effectiveGraphState = canonicalGraphState({
     ...resolvedGraphState.state,
     audience,
@@ -238,9 +259,8 @@ function RootRouteComponent() {
         });
       }}
       onFitGraph={() => {
-        setFitViewCommand((previous) => ({
-          requestId: (previous?.requestId ?? 0) + 1,
-        }));
+        fitRequestSequence.current += 1;
+        setFitViewCommand({ requestId: fitRequestSequence.current });
       }}
       onGraphSearchChange={(query) => {
         void navigate({
@@ -291,7 +311,7 @@ function RootRouteComponent() {
       sharedStateNotice={sharedStateNotice}
     >
       <AudienceProvider audience={audience}>
-        <GraphFitRequestContext.Provider value={fitViewCommand}>
+        <GraphFitRequestContext.Provider value={fitLifecycle}>
           <Outlet />
         </GraphFitRequestContext.Provider>
       </AudienceProvider>
@@ -306,7 +326,7 @@ const rootRoute = createRootRoute({
 
 function GraphSceneRouteComponent({ sceneId }: { sceneId: SceneId }) {
   const audience = useAudience();
-  const fitViewCommand = useContext(GraphFitRequestContext);
+  const fitLifecycle = useContext(GraphFitRequestContext);
   const navigate = rootRoute.useNavigate();
   const locationSearch = useRouterState({
     select: (routerState) => routerState.location.search,
@@ -336,7 +356,8 @@ function GraphSceneRouteComponent({ sceneId }: { sceneId: SceneId }) {
       audience={audience}
       compareFlavor={compareFlavor}
       fallbackFocusElementId={GRAPH_SEARCH_INPUT_ID}
-      fitViewCommand={fitViewCommand}
+      fitViewCommand={fitLifecycle.command}
+      onFitViewComplete={fitLifecycle.complete}
       onGraphStateChange={(nextState) => {
         void navigate({
           replace: true,

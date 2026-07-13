@@ -127,3 +127,22 @@ Final verification:
 - `npm --prefix apps/architecture-atlas run build` — pass.
 
 The non-failing Vite large-chunk warning remains unchanged.
+
+## Fit Lifecycle Follow-Up — 2026-07-12
+
+- `GraphCanvas` acknowledges a completed fit through `GraphScene` to the root route.
+- The root clears a command only when the acknowledged request ID matches the currently live command, so stale completions cannot erase newer work.
+- Fit request sequencing is independent from live-command storage; clearing request 1 does not reuse its ID, and the next request is 2.
+- Local canvas dedup remains as a second guard while route-level acknowledgement prevents replay after scene unmount/remount.
+- A failing-first route regression acknowledges request 1, advances to request 2, acknowledges it, navigates scenes, and verifies the remounted canvas receives no completed command.
+
+Final verification:
+
+- Focused lifecycle tests — pass; 2 files, 3 tests.
+- `npm --prefix apps/architecture-atlas run validate:content` — pass; 25 components, 20 edges, 23 crates.
+- `npm --prefix apps/architecture-atlas run typecheck` — pass.
+- `npm --prefix apps/architecture-atlas run lint` — pass.
+- `npm --prefix apps/architecture-atlas test` — pass; 22 files, 188 tests.
+- `npm --prefix apps/architecture-atlas run build` — pass.
+
+The non-failing Vite large-chunk warning remains unchanged.

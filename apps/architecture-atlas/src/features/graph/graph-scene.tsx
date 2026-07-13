@@ -38,6 +38,7 @@ interface GraphSceneProps {
   sceneId: string;
   searchQuery: string;
   state: GraphState;
+  onFitViewComplete(requestId: number): void;
   onGraphStateChange(nextState: GraphState): void;
 }
 
@@ -148,6 +149,7 @@ export function GraphScene({
   sceneId,
   searchQuery,
   state,
+  onFitViewComplete,
   onGraphStateChange,
 }: GraphSceneProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -258,6 +260,7 @@ export function GraphScene({
         layoutRequest={layoutRequest}
         layoutService={{ layout: layoutAtlas }}
         neighborhood={derivation.neighborhood}
+        onFitViewComplete={onFitViewComplete}
         onFocusEntity={(entityId) => updateState({ focusedEntityId: entityId })}
         overlay={derivation.overlay}
         visibleEdges={derivation.visibleEdges}
