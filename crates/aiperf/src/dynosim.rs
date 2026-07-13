@@ -55,7 +55,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use dynamo_mocker::common::protocols::{DirectRequest, MockEngineArgs, WorkerType};
 use dynamo_mocker::loadgen::{
-    AgenticTrace, DynamoRequestTrace, EngineEvent, SteppableAgg, SteppableDisagg, SteppableReplay,
+    AgenticTrace, DynamoRequestTrace, EngineEvent, SteppableAgg, SteppableDisagg, SteppableEngine,
+    SteppableReplay,
     Trace, TraceFileFormat, TurnTrace, WorkloadDriver,
 };
 use dynamo_mocker::replay::{
@@ -65,7 +66,7 @@ use dynamo_mocker::replay::{
     SlaThresholds as DynamoSlaThresholds, TraceDistributionStats as DynamoDistributionStats,
     TraceSimulationReport as DynamoSimulationReport, generate_trace_worker_artifacts_offline,
     generate_trace_worker_artifacts_offline_with_kv_event_visibility,
-    simulate_concurrency_live_requests, simulate_offline_trace_files,
+    simulate_concurrency_live_requests, simulate_concurrency_requests, simulate_offline_trace_files,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
@@ -330,6 +331,23 @@ pub struct OfflineEngineConfig {
     pub decode_workers: usize,
     /// Router policy for routed topologies.
     pub router_mode: OfflineRouterMode,
+    /// Drive a single worker with Dynamo's `execute_pass` engine
+    /// ([`SteppableEngine`]) instead of the `AggRuntime` (`SteppableAgg`).
+    ///
+    /// This matches Dynamo's own offline replay, which uses the single-runtime
+    /// (`single.rs`, `execute_pass`) whenever `num_workers == 1 && !KvRouter`.
+    /// `execute_pass` prefills a request admitted mid-run at its arrival instant,
+    /// whereas `AggRuntime`'s dynamic admission defers that prefill to the next
+    /// batch boundary — a divergence that only surfaces under prefill saturation.
+    /// Selecting the same engine as Dynamo makes offline replay byte-exact at any
+    /// concurrency.
+    ///
+    /// `execute_pass` cannot stop at a finite deadline, so it is only valid when
+    /// the run schedules no clock events during engine processing (closed-loop
+    /// concurrency with no arrival/cancellation/ramp timing). The run path sets
+    /// this only for eligible workloads; it is ignored unless the topology
+    /// resolves to a single round-robin worker with no router/estimator/AIC.
+    pub single_pass_engine: bool,
 }
 
 impl Default for OfflineEngineConfig {
@@ -350,6 +368,7 @@ impl Default for OfflineEngineConfig {
             prefill_workers: 1,
             decode_workers: 1,
             router_mode: OfflineRouterMode::RoundRobin,
+            single_pass_engine: false,
         }
     }
 }
@@ -563,13 +582,20 @@ impl OfflineEngineConfig {
                 let (args, estimator) = Self::configure_aic(self.engine_args()?)?;
                 let estimator =
                     self.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
-                Box::new(SteppableAgg::new_with_router_config(
-                    args,
-                    1,
-                    ReplayRouterMode::RoundRobin,
-                    router_config,
-                    estimator,
-                )?)
+                if self.single_pass_engine && router_config.is_none() && estimator.is_none() {
+                    // Dynamo's own offline single-runtime path: `execute_pass`
+                    // prefills a mid-run arrival at its arrival instant, keeping
+                    // saturated concurrency byte-exact with `dynamo.replay`.
+                    Box::new(SteppableEngine::new(args))
+                } else {
+                    Box::new(SteppableAgg::new_with_router_config(
+                        args,
+                        1,
+                        ReplayRouterMode::RoundRobin,
+                        router_config,
+                        estimator,
+                    )?)
+                }
             }
             OfflineTopology::Aggregated => {
                 anyhow::ensure!(
@@ -579,13 +605,22 @@ impl OfflineEngineConfig {
                 let (args, estimator) = Self::configure_aic(self.engine_args()?)?;
                 let estimator =
                     self.validate_prefill_load_estimator(router_config.as_ref(), estimator)?;
-                Box::new(SteppableAgg::new_with_router_config(
-                    args,
-                    self.workers,
-                    self.router_mode.into(),
-                    router_config,
-                    estimator,
-                )?)
+                if self.single_pass_engine
+                    && self.workers == 1
+                    && self.router_mode == OfflineRouterMode::RoundRobin
+                    && router_config.is_none()
+                    && estimator.is_none()
+                {
+                    Box::new(SteppableEngine::new(args))
+                } else {
+                    Box::new(SteppableAgg::new_with_router_config(
+                        args,
+                        self.workers,
+                        self.router_mode.into(),
+                        router_config,
+                        estimator,
+                    )?)
+                }
             }
             OfflineTopology::Disaggregated => {
                 anyhow::ensure!(
@@ -4943,6 +4978,130 @@ mod tests {
         fn encode_graph_messages(&self, _wires: &[Bytes], _requested: usize) -> Result<Vec<u32>> {
             Ok(self.tokens.clone())
         }
+    }
+
+    /// The `single_pass_engine` path (Dynamo's own `execute_pass` single-runtime)
+    /// makes AIPerf's offline concurrency replay **byte-exact** with Dynamo's
+    /// native offline driver even under prefill saturation — the regime where the
+    /// `AggRuntime` dynamic-admission path defers a re-admitted request's prefill
+    /// by one step and diverges. Engine args force saturation (small
+    /// `max_num_batched_tokens`, prefix caching off so every request prefills in
+    /// full); both drivers consume byte-identical tokens.
+    #[test]
+    fn offline_single_pass_engine_is_byte_exact_with_native_under_saturation() {
+        const N: usize = 64;
+        const ISL: usize = 16;
+        const OSL: usize = 4;
+        const C: usize = 8;
+        let eng = r#"{"block_size":16,"enable_prefix_caching":false,"max_num_batched_tokens":32}"#;
+        let tokens = vec![7u32; ISL];
+
+        let config = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            single_pass_engine: true,
+            ..OfflineEngineConfig::default()
+        };
+        let aiperf = {
+            let clock = Rc::new(SimClock::new());
+            let host = EngineHost::new(clock.clone(), &config).unwrap();
+            let encoder = Rc::new(FixedTokensEncoder {
+                tokens: tokens.clone(),
+            });
+            let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new_with_encoders(
+                host.clone(),
+                clock.clone(),
+                "m".to_string(),
+                encoder.clone(),
+                encoder,
+            );
+            let result = Rc::new(RefCell::new(None));
+            let result_for_body = result.clone();
+            let clock_for_body: Rc<dyn Clock> = clock.clone();
+            let start_ns = clock.now_ns();
+            let source: Rc<dyn SimEventSource> = host.clone();
+            let outcome = drive_sim_with_source(clock.clone(), source, move |_h| async move {
+                let run = run_paced_with_backend(
+                    clock_for_body,
+                    start_ns,
+                    sink,
+                    vec!["dynosim".to_string()],
+                    SkeletonWorkload {
+                        num_requests: N,
+                        input_tokens: ISL,
+                        output_tokens: OSL,
+                        turns: 1,
+                        think_time_ms: None,
+                    },
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    Some(C),
+                    None,
+                    StopConfig {
+                        total_expected_requests: Some(N as u64),
+                        ..StopConfig::default()
+                    },
+                    7,
+                    None,
+                    AncillaryTimingConfig::default(),
+                )
+                .await;
+                *result_for_body.borrow_mut() = Some(run);
+            })
+            .unwrap();
+            assert!(!outcome.deadlocked);
+            let run = result.borrow_mut().take().unwrap().unwrap();
+            host.take_report_at(run.performance.throughput.wall_time_ms)
+        };
+
+        let requests: Vec<_> = (0..N)
+            .map(|i| DirectRequest {
+                tokens: tokens.clone(),
+                max_output_tokens: OSL,
+                output_token_ids: None,
+                uuid: Some(Uuid::from_u128(i as u128 + 1)),
+                dp_rank: 0,
+                arrival_timestamp_ms: None,
+                priority: 0,
+                strict_priority: 0,
+                policy_class: None,
+            })
+            .collect();
+        let native = simulate_concurrency_requests(
+            MockEngineArgs::from_json_str(eng).unwrap(),
+            requests,
+            C,
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(
+            aiperf.request_counts.completed_requests,
+            native.request_counts.completed_requests
+        );
+        assert_eq!(
+            aiperf.request_counts.total_output_tokens,
+            native.request_counts.total_output_tokens
+        );
+        // Byte-exact latency under saturation — the property that failed with the
+        // AggRuntime dynamic-admission path. Equal to within a few ULP: the only
+        // residual is floating-point accumulation order between the two
+        // collectors, not a scheduling divergence (which was tens of percent).
+        let within_1_ulp = |name: &str, a: f64, n: f64| {
+            let tol = n.abs() * 8.0 * f64::EPSILON;
+            assert!(
+                (a - n).abs() <= tol,
+                "{name} not byte-exact: aiperf={a} native={n} delta={}",
+                (a - n).abs()
+            );
+        };
+        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
+        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "itl",
+            aiperf.latency.itl.distribution.mean_ms,
+            native.latency.itl.distribution.mean_ms,
+        );
     }
 
     /// Apples-to-apples gate: AIPerf's own online flow versus Dynamo's native
