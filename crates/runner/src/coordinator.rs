@@ -544,7 +544,7 @@ mod tests {
         ReportRunProvenance::new(
             format!("blake3:{}", "a".repeat(64)),
             "http",
-            "scheduled",
+            "evaluation",
             Vec::new(),
             vec![aiperf_metrics::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
         )
@@ -555,6 +555,7 @@ mod tests {
         PreparedRunOutcome {
             native_report: aiperf_metrics::NativeReport::new(
                 &aiperf_metrics::AccumulatorSummary::new(),
+                None,
             ),
             report_facts: aiperf_metrics::ReportPairRunFacts::new(),
             provenance: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
@@ -608,7 +609,7 @@ mod tests {
         assert!(report_path.is_file());
         let report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
-        assert_eq!(report["run"]["workload"], "scheduled");
+        assert_eq!(report["run"]["workload"], "evaluation");
         assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
             !entry
                 .unwrap()

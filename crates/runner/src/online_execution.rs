@@ -31,8 +31,9 @@ use url::Url;
 use crate::dataset_input::RunnerDatasetInputContext;
 use crate::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunPlan, NativeRunSpec,
-    NativeSidecarPlan, execute_prepared_native_plan_uncommitted_with_execution_factories,
-    load_tokenizer,
+    NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
+    StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
+    execute_prepared_native_plan_uncommitted_with_execution_factories, load_tokenizer,
 };
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputContext;
@@ -40,9 +41,9 @@ use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
 use crate::registry::{
-    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome,
-    PreparedRunnerOperation, RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext,
-    ScheduledWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
+    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
+    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
+    StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
 };
 use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
@@ -58,6 +59,37 @@ pub fn register_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
         Arc::new(NativeOnlineTokenizerSourceResolver::default());
     builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
         OnlineGraphAdapter { tokenizers },
+    ))))
+}
+
+/// Register static accuracy after sidecar parity or an exact frontend gate is
+/// present in the same distribution.
+pub fn register_http_static_accuracy_pair(
+    builder: &mut RunnerRegistryBuilder,
+) -> Result<()> {
+    register_http_static_accuracy_pair_with_factories(
+        builder,
+        Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+        Arc::new(NativeStaticAccuracyEvaluatorFactory),
+    )
+}
+
+/// Register static accuracy with distribution-selected preparation factories.
+///
+/// Both factories are retained by the pair adapter and used exactly once when
+/// an authored run becomes its prepared operation. This is the compile-time
+/// extension point for non-Hugging-Face tokenizer stores or non-local
+/// evaluator processes.
+pub fn register_http_static_accuracy_pair_with_factories(
+    builder: &mut RunnerRegistryBuilder,
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+    evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
+) -> Result<()> {
+    builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
+        OnlineStaticAccuracyAdapter {
+            tokenizers,
+            evaluator_factory,
+        },
     ))))
 }
 
@@ -226,6 +258,18 @@ impl fmt::Debug for OnlineGraphAdapter {
     }
 }
 
+#[derive(Clone)]
+struct OnlineStaticAccuracyAdapter {
+    tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
+    evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
+}
+
+impl fmt::Debug for OnlineStaticAccuracyAdapter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OnlineStaticAccuracyAdapter")
+    }
+}
+
 impl OnlineWorkloadAdapter for OnlineScheduledAdapter {
     fn workload_id(&self) -> &'static str {
         "scheduled"
@@ -300,6 +344,54 @@ impl OnlineWorkloadAdapter for OnlineGraphAdapter {
         let workload =
             workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), self.workload_id())?;
         let plan = lower_graph(run, context, workload, self.tokenizers.as_ref())?;
+        Ok(Box::new(NativePlanHarness { plan }))
+    }
+}
+
+impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
+    fn workload_id(&self) -> &'static str {
+        "static_accuracy"
+    }
+
+    fn validate_workload(&self, workload: &dyn ValidatedWorkloadConfig) -> Result<()> {
+        workload_config::<StaticAccuracyWorkloadConfigV2>(workload, self.workload_id()).map(drop)
+    }
+
+    fn validate_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: &dyn ValidatedWorkloadConfig,
+    ) -> Result<()> {
+        validate_online_run(context)?;
+        validate_static_accuracy_endpoint(context)?;
+        ensure!(
+            run.models.items.len() == 1,
+            "static accuracy execution currently requires exactly one model"
+        );
+        let workload =
+            workload_config::<StaticAccuracyWorkloadConfigV2>(workload, self.workload_id())?;
+        validate_authored_tokenizer(&workload.tokenizer)?;
+        StaticAccuracyConfigV2::decode(&workload.accuracy).map(drop)
+    }
+
+    fn prepare(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunnerRunContext,
+        workload: Box<dyn ValidatedWorkloadConfig>,
+    ) -> Result<Box<dyn PreparedOnlineHarness>> {
+        let workload = workload_config::<StaticAccuracyWorkloadConfigV2>(
+            workload.as_ref(),
+            self.workload_id(),
+        )?;
+        let plan = lower_static_accuracy(
+            run,
+            context,
+            workload,
+            self.tokenizers.as_ref(),
+            self.evaluator_factory.clone(),
+        )?;
         Ok(Box::new(NativePlanHarness { plan }))
     }
 }
@@ -654,6 +746,74 @@ pub(crate) fn lower_authored_tokenizer(
     AuthoredTokenizerV2::decode(raw)?.lower(resolver)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StaticAccuracyConfigV2 {
+    benchmark: String,
+    #[serde(default)]
+    tasks: Option<Vec<String>>,
+    #[serde(default)]
+    n_shots: Option<usize>,
+    #[serde(default)]
+    enable_cot: Option<bool>,
+    #[serde(default)]
+    grader: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    python_executable: PathBuf,
+    #[serde(default = "default_accuracy_worker_module")]
+    worker_module: String,
+    #[serde(default)]
+    verbose: bool,
+}
+
+fn default_accuracy_worker_module() -> String {
+    "aiperf.accuracy.worker".into()
+}
+
+impl StaticAccuracyConfigV2 {
+    fn decode(raw: &RawValue) -> Result<Self> {
+        let config: Self = serde_json::from_str(raw.get())
+            .context("decoding protocol-v2 static accuracy policy")?;
+        ensure!(
+            !config.benchmark.trim().is_empty(),
+            "accuracy.benchmark must not be empty"
+        );
+        ensure!(
+            config.python_executable.is_absolute(),
+            "accuracy.python_executable must be absolute"
+        );
+        ensure!(
+            !config.worker_module.trim().is_empty(),
+            "accuracy.worker_module must not be empty"
+        );
+        ensure!(
+            !config.verbose,
+            "accuracy.verbose is presentation policy and is not accepted by the native evaluator adapter"
+        );
+        Ok(config)
+    }
+
+    fn lower(
+        self,
+        evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
+    ) -> NativeStaticAccuracyPlan {
+        NativeStaticAccuracyPlan {
+            benchmark: self.benchmark,
+            tasks: self.tasks,
+            n_shots: self.n_shots,
+            enable_cot: self.enable_cot,
+            grader: self.grader,
+            system_prompt: self.system_prompt,
+            process: StaticAccuracyEvaluatorProcessSpec {
+                python_executable: self.python_executable,
+                worker_module: self.worker_module,
+            },
+            evaluator_factory,
+        }
+    }
+}
+
 pub(crate) fn lower_scheduled(
     run: &AuthoredRunSpecV2,
     context: &RunnerRunContext,
@@ -769,6 +929,43 @@ fn lower_graph(
         NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
         NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
     )
+}
+
+fn lower_static_accuracy(
+    run: &AuthoredRunSpecV2,
+    context: &RunnerRunContext,
+    workload: &StaticAccuracyWorkloadConfigV2,
+    tokenizers: &dyn OnlineTokenizerSourceResolver,
+    evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
+) -> Result<NativeRunPlan> {
+    validate_static_accuracy_endpoint(context)?;
+    let accuracy = StaticAccuracyConfigV2::decode(&workload.accuracy)?.lower(evaluator_factory);
+    let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
+    build_common_plan(
+        run,
+        workload.worker_count,
+        NativeDatasetPlan::StaticAccuracy(accuracy),
+        tokenizer,
+        &workload.phases,
+        NativeEndpointPlan::Prepared(context.endpoint_profiles_handle()),
+        NativeSidecarPlan::Prepared(context.sidecar_inputs_handle()),
+    )
+}
+
+fn validate_static_accuracy_endpoint(context: &RunnerRunContext) -> Result<()> {
+    let profile = context.default_endpoint_profile()?;
+    let descriptor = context
+        .product_registry()
+        .endpoints()
+        .resolve_factory(&profile.endpoint_id)
+        .context("resolving static-accuracy endpoint")?
+        .descriptor();
+    ensure!(
+        !descriptor.requires_raw_token_ids,
+        "static accuracy endpoint {:?} requires raw token IDs, but evaluator-authored problems provide semantic text",
+        descriptor.id
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -913,6 +1110,18 @@ mod tests {
 
     use super::*;
 
+    struct NeverEvaluatorFactory;
+
+    #[async_trait(?Send)]
+    impl StaticAccuracyEvaluatorFactory for NeverEvaluatorFactory {
+        async fn spawn(
+            &self,
+            _process: &StaticAccuracyEvaluatorProcessSpec,
+        ) -> Result<Box<dyn aiperf_accuracy::AccuracyEvaluator>> {
+            panic!("config lowering must retain, not invoke, the selected evaluator factory")
+        }
+    }
+
     #[derive(Default)]
     struct FixtureFetcher {
         urls: Mutex<Vec<String>>,
@@ -962,11 +1171,55 @@ mod tests {
     }
 
     #[test]
+    fn accuracy_verbose_fails_closed_in_execution_adapter() {
+        let raw = RawValue::from_string(
+            serde_json::json!({
+                "benchmark": "fixture",
+                "python_executable": if cfg!(windows) { "C:\\python.exe" } else { "/usr/bin/python3" },
+                "verbose": true
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(
+            StaticAccuracyConfigV2::decode(&raw)
+                .unwrap_err()
+                .to_string()
+                .contains("presentation policy")
+        );
+    }
+
+    #[test]
+    fn static_accuracy_lowers_directly_with_selected_evaluator_factory() {
+        let raw = RawValue::from_string(
+            serde_json::json!({
+                "benchmark": "fixture",
+                "tasks": ["task-a"],
+                "python_executable": if cfg!(windows) { "C:\\python.exe" } else { "/usr/bin/python3" },
+                "worker_module": "fixture.worker"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let factory: Arc<dyn StaticAccuracyEvaluatorFactory> = Arc::new(NeverEvaluatorFactory);
+
+        let plan = StaticAccuracyConfigV2::decode(&raw)
+            .unwrap()
+            .lower(factory.clone());
+
+        assert_eq!(plan.benchmark, "fixture");
+        assert_eq!(plan.tasks.as_deref().unwrap(), ["task-a"]);
+        assert_eq!(plan.process.worker_module, "fixture.worker");
+        assert!(Arc::ptr_eq(&plan.evaluator_factory, &factory));
+    }
+
+    #[test]
     fn registration_adds_only_real_online_pairs() {
         let mut builder = RunnerRegistryBuilder::new();
         // The builder intentionally rejects dangling pairs at freeze time;
         // registration itself proves the function has no hidden mode switch.
         register_http_pairs(&mut builder).unwrap();
+        register_http_static_accuracy_pair(&mut builder).unwrap();
         register_http_scheduled_pair(&mut builder).unwrap();
     }
 

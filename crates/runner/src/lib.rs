@@ -8,11 +8,13 @@
 //! dataset construction, phase scheduling, HTTP dispatch, measurement, and the
 //! authoritative native-v2 report.
 
+pub mod agentic_execution;
 pub mod application;
 pub mod control_plane_http;
 pub mod coordinator;
 pub mod dataset_input;
 pub mod distribution_identity;
+pub mod evaluation_execution;
 pub mod execute;
 pub mod execution_factories;
 mod gpu_telemetry;
@@ -34,6 +36,15 @@ pub mod redaction;
 pub mod registry;
 mod server_metrics;
 pub mod sidecar_input;
+mod stock_evaluation;
+pub mod telemetry_archive_components;
+pub mod telemetry_archive_owner;
+pub mod telemetry_attachment;
+pub mod telemetry_execution;
+pub mod telemetry_operation;
+pub mod telemetry_pipeline;
+pub mod telemetry_source;
+pub mod telemetry_watch;
 pub mod turn_execution;
 
 pub use application::RunnerApplication;
