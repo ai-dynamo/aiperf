@@ -28,18 +28,6 @@ fn one_line(output: &Output) -> Value {
     serde_json::from_slice(lines[0]).unwrap()
 }
 
-fn distribution_id() -> String {
-    let output = Command::new(binary())
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    one_line(&output)["distribution_id"]
-        .as_str()
-        .unwrap()
-        .to_owned()
-}
-
 fn run(input: &Value) -> Output {
     let mut child = Command::new(binary())
         .stdin(Stdio::piped())
@@ -65,10 +53,27 @@ fn protocol_diagnostics_redact_secret_assignments_and_url_userinfo() {
         let output = run(&json!({
             "protocol_version": 2,
             "operation": "execute",
-            "expected_distribution_id": distribution_id(),
             "run": {
+                "benchmark_id": "redaction-proof",
+                "artifact_dir": "/tmp/aiperf-redaction-never-created",
                 authored_field: true,
-                "identity": {"benchmark_id": "redaction-proof"}
+                "cfg": {
+                    "models": {"items": [{"name": "mock-model"}]},
+                    "endpoint": {
+                        "type": "chat",
+                        "urls": ["http://127.0.0.1:9"],
+                        "streaming": true
+                    },
+                    "datasets": [{"type": "synthetic", "entries": 1}],
+                    "phases": [{
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "exclude_from_results": false,
+                        "concurrency": 1
+                    }],
+                    "transport": {"type": "http"},
+                    "runtime": {"workers": 1}
+                }
             }
         }));
         assert_eq!(output.status.code(), Some(2));

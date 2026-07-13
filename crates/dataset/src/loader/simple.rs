@@ -842,7 +842,7 @@ mod tests {
             use_server_token_count: true,
             ..EndpointConfig::default()
         };
-        endpoint_config.endpoint_type = endpoint.metadata().endpoint_type;
+        endpoint_config.endpoint_type = endpoint.descriptor().legacy_type().expect("legacy endpoint type");
         let request = EndpointRequestMaterializer
             .materialize(
                 &session,

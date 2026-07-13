@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use aiperf_endpoints::{
     CreditPhase, Endpoint, EndpointConfig, EndpointType, Media, MessagesEndpoint, ModelEndpoint,
-    RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn, metadata_for,
+    Modality, RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
 };
 use serde_json::{Map, Value, json};
 
@@ -425,9 +425,9 @@ fn text_only_replay_falls_back_to_plain_turn_and_metadata_is_registered() {
         .unwrap();
     assert!(turn.raw_messages.is_none());
     assert_eq!(turn.texts[0].contents, ["hello"]);
-    let metadata = metadata_for(EndpointType::Messages);
+    let metadata = MessagesEndpoint.descriptor();
     assert_eq!(metadata.endpoint_path, Some("/v1/messages"));
     assert!(metadata.supports_streaming);
-    assert!(metadata.supports_images);
-    assert!(!metadata.supports_audio);
+    assert!(metadata.supports_input(Modality::Image));
+    assert!(!metadata.supports_input(Modality::Audio));
 }

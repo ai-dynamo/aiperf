@@ -136,6 +136,7 @@ fn envelope(artifact_dir: &Path) -> RunnerEnvelopeV2 {
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn statically_linked_extension_is_selected_in_a_fresh_runner_process() {
     let root = tempfile::tempdir().unwrap();
     let output = Command::new(std::env::current_exe().unwrap())
@@ -172,7 +173,6 @@ fn statically_linked_extension_is_selected_in_a_fresh_runner_process() {
         proof["advertised_extensions"],
         serde_json::json!([EXTENSION_NAME])
     );
-    assert_eq!(proof["distribution_id"], DISTRIBUTION_ID);
     assert_eq!(proof["transport"], "dynosim_offline");
     assert_eq!(proof["workload"], "scheduled");
     assert_eq!(proof["report_distribution_id"], DISTRIBUTION_ID);
@@ -216,7 +216,6 @@ fn statically_linked_extension_child() {
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(dataset_loads.load(Ordering::SeqCst), 0);
     let capabilities = application.capabilities();
-    assert_eq!(capabilities.distribution_id, DISTRIBUTION_ID);
     assert_eq!(capabilities.extensions, [EXTENSION_NAME]);
     assert!(
         capabilities
@@ -286,7 +285,6 @@ fn statically_linked_extension_child() {
             "endpoint_id": PREPARED_ONLY_ENDPOINT_ID,
             "extension_name": EXTENSION_NAME,
             "advertised_extensions": capabilities.extensions,
-            "distribution_id": capabilities.distribution_id,
             "transport": terminal.provenance["transport"],
             "workload": terminal.provenance["workload"],
             "report_distribution_id": report["run"]["distribution_id"],

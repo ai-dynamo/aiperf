@@ -140,399 +140,49 @@ impl EndpointType {
             Self::Template => "template",
         }
     }
+
+    /// Resolve a closed-enum type from a canonical open id.
+    ///
+    /// Open-registry-only factories (KServe, Riva, `vllm_generate`, dynosim) have
+    /// no [`EndpointType`] variant and return `None`.
+    pub fn from_canonical_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "chat" | "chat_completions" => Self::Chat,
+            "completions" => Self::Completions,
+            "responses" => Self::Responses,
+            "messages" => Self::Messages,
+            "embeddings" => Self::Embeddings,
+            "chat_embeddings" => Self::ChatEmbeddings,
+            "nim_embeddings" => Self::NimEmbeddings,
+            "cohere_rankings" => Self::CohereRankings,
+            "hf_tei_rankings" => Self::HfTeiRankings,
+            "nim_rankings" => Self::NimRankings,
+            "huggingface_generate" => Self::HuggingfaceGenerate,
+            "image_generation" => Self::ImageGeneration,
+            "image_edit" => Self::ImageEdit,
+            "video_generation" => Self::VideoGeneration,
+            "image_retrieval" => Self::ImageRetrieval,
+            "solido_rag" => Self::SolidoRag,
+            "raw" => Self::Raw,
+            "template" => Self::Template,
+            _ => return None,
+        })
+    }
 }
 
-/// Static endpoint capability metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EndpointMetadata {
-    /// Endpoint type.
-    pub endpoint_type: EndpointType,
-    /// Default endpoint path, if any.
-    pub endpoint_path: Option<&'static str>,
-    /// Streaming endpoint path override, if any.
-    pub streaming_path: Option<&'static str>,
-    /// Whether streaming is supported.
-    pub supports_streaming: bool,
-    /// Whether output tokens are produced.
-    pub produces_tokens: bool,
-    /// Whether input tokenization is enabled.
-    pub tokenizes_input: bool,
-    /// Whether multipart form data is required.
-    pub requires_form_data: bool,
-    /// Whether submit/poll lifecycle is required.
-    pub requires_polling: bool,
-    /// Whether media must be inlined before dispatch.
-    pub requires_inline_media: bool,
-    /// Whether audio input is supported.
-    pub supports_audio: bool,
-    /// Whether image input is supported.
-    pub supports_images: bool,
-    /// Whether video input is supported.
-    pub supports_videos: bool,
-    /// Whether image output is produced.
-    pub produces_images: bool,
-    /// Whether video output is produced.
-    pub produces_videos: bool,
-    /// Metrics group title.
-    pub metrics_title: &'static str,
-    /// Presentation service kind.
-    pub service_kind: &'static str,
-}
+impl EndpointDescriptor {
+    /// Closed-enum view for legacy [`EndpointConfig`] / dataset paths.
+    pub fn legacy_type(self) -> Option<EndpointType> {
+        EndpointType::from_canonical_id(self.id)
+    }
 
-macro_rules! m {
-    ($ty:ident, $path:expr, $stream_path:expr, $stream:expr, $out_tok:expr, $in_tok:expr, $form:expr, $poll:expr, $inline:expr, $audio:expr, $image:expr, $video:expr, $out_img:expr, $out_vid:expr, $title:expr, $kind:expr) => {
-        EndpointMetadata {
-            endpoint_type: EndpointType::$ty,
-            endpoint_path: $path,
-            streaming_path: $stream_path,
-            supports_streaming: $stream,
-            produces_tokens: $out_tok,
-            tokenizes_input: $in_tok,
-            requires_form_data: $form,
-            requires_polling: $poll,
-            requires_inline_media: $inline,
-            supports_audio: $audio,
-            supports_images: $image,
-            supports_videos: $video,
-            produces_images: $out_img,
-            produces_videos: $out_vid,
-            metrics_title: $title,
-            service_kind: $kind,
-        }
-    };
-}
+    /// Whether this descriptor accepts the given input modality.
+    pub fn supports_input(self, modality: Modality) -> bool {
+        self.input_modalities.contains(&modality)
+    }
 
-const METADATA: [EndpointMetadata; 18] = [
-    m!(
-        Chat,
-        Some("/v1/chat/completions"),
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        true,
-        true,
-        true,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-    m!(
-        Completions,
-        Some("/v1/completions"),
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-    m!(
-        Responses,
-        Some("/v1/responses"),
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        true,
-        true,
-        false,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-    m!(
-        Messages,
-        Some("/v1/messages"),
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-    m!(
-        Embeddings,
-        Some("/v1/embeddings"),
-        None,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "Embeddings Metrics",
-        "embeddings"
-    ),
-    m!(
-        ChatEmbeddings,
-        Some("/v1/embeddings"),
-        None,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        "Embeddings Metrics",
-        "embeddings"
-    ),
-    m!(
-        NimEmbeddings,
-        Some("/v1/embeddings"),
-        None,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        "NIM Embeddings Metrics",
-        "embeddings"
-    ),
-    m!(
-        CohereRankings,
-        Some("/v2/rerank"),
-        None,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "Ranking Metrics",
-        "rankings"
-    ),
-    m!(
-        HfTeiRankings,
-        Some("/rerank"),
-        None,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "Ranking Metrics",
-        "rankings"
-    ),
-    m!(
-        NimRankings,
-        Some("/v1/ranking"),
-        None,
-        false,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "Rankings Metrics",
-        "rankings"
-    ),
-    m!(
-        HuggingfaceGenerate,
-        Some("/generate"),
-        Some("/generate_stream"),
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-    m!(
-        ImageGeneration,
-        Some("/v1/images/generations"),
-        None,
-        true,
-        false,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        true,
-        false,
-        "Image Generation Metrics",
-        "image_generation"
-    ),
-    m!(
-        ImageEdit,
-        Some("/v1/images/edits"),
-        None,
-        false,
-        false,
-        true,
-        true,
-        false,
-        false,
-        false,
-        true,
-        false,
-        true,
-        false,
-        "Image Edit Metrics",
-        "image_edit"
-    ),
-    m!(
-        VideoGeneration,
-        Some("/v1/videos"),
-        None,
-        false,
-        false,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        true,
-        "Video Generation Metrics",
-        "video_generation"
-    ),
-    m!(
-        ImageRetrieval,
-        Some("/v1/infer"),
-        None,
-        false,
-        false,
-        false,
-        false,
-        false,
-        true,
-        false,
-        true,
-        false,
-        false,
-        false,
-        "Image Retrieval Metrics",
-        "image_retrieval"
-    ),
-    m!(
-        SolidoRag,
-        Some("/rag/api/prompt"),
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        "SOLIDO RAG Metrics",
-        "llm"
-    ),
-    m!(
-        Raw,
-        None,
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        true,
-        true,
-        true,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-    m!(
-        Template,
-        None,
-        None,
-        true,
-        true,
-        true,
-        false,
-        false,
-        false,
-        true,
-        true,
-        true,
-        false,
-        false,
-        "LLM Metrics",
-        "llm"
-    ),
-];
-
-/// Return static metadata for an endpoint type.
-pub fn metadata_for(endpoint_type: EndpointType) -> &'static EndpointMetadata {
-    METADATA
-        .iter()
-        .find(|metadata| metadata.endpoint_type == endpoint_type)
-        .expect("metadata table covers all EndpointType variants")
+    /// Whether this descriptor produces the given output modality.
+    pub fn supports_output(self, modality: Modality) -> bool {
+        self.output_modalities.contains(&modality)
+    }
 }

@@ -3,8 +3,9 @@
 
 use aiperf_endpoints::{
     ChatEndpoint, CompletionsEndpoint, CreditPhase, EmbeddingsEndpoint, Endpoint, EndpointConfig,
-    EndpointType, Media, ModelEndpoint, RequestContentType, RequestInfo, RequestRecord,
-    ResponseData, ResponsesEndpoint, ServerResponse, Turn, metadata_for,
+    EndpointType, ImageEditEndpoint, ImageRetrievalEndpoint, Media, ModelEndpoint,
+    RequestContentType, RequestInfo, RequestRecord, ResponseData, ResponsesEndpoint,
+    ServerResponse, Turn, VideoGenerationEndpoint,
 };
 use serde_json::{Map, json};
 
@@ -43,9 +44,9 @@ fn text_turn(text: &str) -> Turn {
 
 #[test]
 fn metadata_and_config_validation_cover_registry_rules() {
-    assert!(metadata_for(EndpointType::VideoGeneration).requires_polling);
-    assert!(metadata_for(EndpointType::ImageEdit).requires_form_data);
-    assert!(!metadata_for(EndpointType::ImageRetrieval).tokenizes_input);
+    assert!(VideoGenerationEndpoint.descriptor().requires_polling);
+    assert!(ImageEditEndpoint.descriptor().requires_form_data);
+    assert!(!ImageRetrievalEndpoint.descriptor().tokenizes_input);
     assert_eq!(EndpointConfig::default().polling_interval_seconds, 0.1);
 
     let mut embeddings = cfg(EndpointType::Embeddings);

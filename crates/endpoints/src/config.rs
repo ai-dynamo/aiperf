@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::metadata::{EndpointDescriptor, EndpointType, metadata_for};
+use crate::metadata::{EndpointDescriptor, EndpointType};
 use crate::models::{EndpointError, EndpointResult};
+use crate::registry::legacy_descriptor_for;
 
 /// Wire request content type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -297,10 +298,10 @@ impl EndpointConfig {
             self.endpoint_type = EndpointType::Template;
         }
         let endpoint_type = self.endpoint_type;
-        let metadata = metadata_for(endpoint_type);
+        let descriptor = legacy_descriptor_for(endpoint_type);
         let raw = RawEndpointConfig::from(self).validate_against(
-            metadata.supports_streaming,
-            metadata.requires_form_data,
+            descriptor.supports_streaming,
+            descriptor.requires_form_data,
             endpoint_type.canonical_id(),
             endpoint_type == EndpointType::Template,
         )?;

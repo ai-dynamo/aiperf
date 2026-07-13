@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Discovery and exact-binary capability checks for ``aiperf-runner``.
+"""Discovery and exact-binary catalog checks for ``aiperf-runner``.
 
 Endpoint identity is owned by the selected native runner. This module is the
-only Python authority for locating that runner, verifying its advertised
-identity against the selected executable's complete bytes, and reading its
-catalog; it deliberately has no plugin-registry or endpoint-metadata fallback.
+only Python authority for locating that runner and reading its linked
+plugins.yaml-shaped catalog; it deliberately has no plugin-registry or
+endpoint-metadata fallback. Distribution-id pinning is not part of the wire
+contract.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import stat
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
-from hmac import compare_digest
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -64,15 +64,21 @@ _EVALUATION_UNAVAILABLE_REASON_CODES = frozenset(
         "isolation_unavailable",
     }
 )
-_NATIVE_REPORT_SCHEMA_VERSION = "2.0"
 _DISTRIBUTION_ID_DOMAIN = b"aiperf-runner-distribution-v1\0"
 _DISTRIBUTION_ID_PREFIX = "blake3:"
 _DISTRIBUTION_ID_HEX_LENGTH = 64
+_REQUIRED_CATALOG_CATEGORIES = ("endpoint", "transport")
+_OPTIONAL_CATALOG_CATEGORIES = (
+    "custom_dataset_loader",
+    "public_dataset_loader",
+    "dataset_sampler",
+    "synthetic",
+)
 
 
 @dataclass(frozen=True, slots=True)
 class RunnerInstallation:
-    """One selected runner binary and the capabilities read from that binary."""
+    """One selected runner binary and the catalog read from that binary."""
 
     binary: Path
     capabilities: dict[str, Any]
@@ -85,7 +91,7 @@ class RunnerInstallation:
         *,
         provider_roots: Sequence[Path] | None = None,
     ) -> RunnerInstallation:
-        """Discover one runner and negotiate its capability contract once.
+        """Discover one runner and negotiate its catalog once.
 
         ``provider_roots`` is an explicit test/deployment injection for
         mutually independent evaluator environments.  Product discovery does
@@ -109,13 +115,11 @@ class RunnerInstallation:
 
     def preflight_endpoint(self, endpoint_id: str) -> None:
         """Reject an endpoint absent from this exact compiled runner catalog."""
-        available = self.capabilities.get("endpoint_types")
-        if not isinstance(available, list) or not all(
-            isinstance(value, str) and value for value in available
-        ):
+        available = self.capabilities.get("endpoint")
+        if not isinstance(available, dict) or not available:
             raise ValueError(
                 f"selected aiperf-runner {self.binary} does not publish a usable "
-                "endpoint_types catalog; install a compatible runner. Python "
+                "endpoint catalog; install a compatible runner. Python "
                 "endpoint metadata is not used as a fallback."
             )
         if endpoint_id in available:
@@ -130,29 +134,12 @@ class RunnerInstallation:
 
     @property
     def distribution_id(self) -> str | None:
-        """Return the exact identity advertised by this binary, if available.
-
-        Capability negotiation verifies this value against the complete bytes
-        of the selected executable. Directly constructed test installations may
-        omit it, but discovered installations never do.
-        """
+        """Optional diagnostic hash; not part of the wire pin contract."""
         value = self.capabilities.get("distribution_id")
         return value if isinstance(value, str) and value else None
 
     def verify_distribution_identity(self) -> None:
-        """Reject replacement of the negotiated runner image before launch."""
-        advertised = self.distribution_id
-        if advertised is None:
-            raise RuntimeError(
-                f"selected aiperf-runner {self.binary} omitted distribution_id; "
-                "install a runner that publishes executable-content identity"
-            )
-        actual = _runner_distribution_id(self.binary)
-        if not compare_digest(advertised, actual):
-            raise RuntimeError(
-                f"selected aiperf-runner {self.binary} no longer matches its "
-                "negotiated distribution_id; the executable was replaced"
-            )
+        """No-op: distribution-id is not a wire pin for BenchmarkRun requests."""
 
     def project_authored_request(
         self,
@@ -160,35 +147,13 @@ class RunnerInstallation:
         *,
         operation: RunnerOperationV2,
     ) -> dict[str, Any]:
-        """Build a v2 request bound to this installation without executing it."""
-        versions = self.capabilities.get("protocol_versions")
-        if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
-            raise RuntimeError(
-                f"selected aiperf-runner {self.binary} does not support protocol "
-                f"{RUNNER_PROTOCOL_V2}; advertised {versions!r}"
-            )
-        distribution_id = self.distribution_id
-        if distribution_id is None:
-            raise RuntimeError(
-                f"selected aiperf-runner {self.binary} advertises protocol "
-                f"{RUNNER_PROTOCOL_V2} without distribution_id; upgrade the runner. "
-                "Python will not invent a fallback identity."
-            )
-        return build_authored_run_request(
-            run,
-            operation=operation,
-            expected_distribution_id=distribution_id,
-        )
+        """Build a v2 BenchmarkRun envelope without executing it."""
+        return build_authored_run_request(run, operation=operation)
 
     def supports_pair(self, transport_id: str, workload_id: str) -> bool:
-        """Return whether this exact image advertises an executable v2 pair."""
-        versions = self.capabilities.get("protocol_versions")
-        if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
-            return False
-        supported = self.capabilities.get("supported_pairs")
-        if not isinstance(supported, list):
-            return False
-        return [transport_id, workload_id] in supported
+        """Unused legacy pair check; catalog preflight replaced supported_pairs."""
+        del transport_id, workload_id
+        return False
 
     def preflight_plan(self, plan: BenchmarkPlan) -> None:
         """Validate every distinct fixed-plan endpoint before its first run."""
@@ -202,7 +167,7 @@ class RunnerInstallation:
             self.preflight_endpoint(endpoint_id)
 
     def preflight_request(self, request: dict[str, Any]) -> None:
-        """Validate a projected request against this installation's inventory."""
+        """Validate a projected request against this installation's catalog."""
         protocol_version = request.get("protocol_version")
         if protocol_version != RUNNER_PROTOCOL_V2:
             raise ValueError(
@@ -223,16 +188,14 @@ class RunnerInstallation:
         )
 
     def spawn(self, request: dict[str, Any]) -> subprocess.Popen[bytes]:
-        """Start one verified request so a lifecycle owner can forward signals.
+        """Start one request so a lifecycle owner can forward signals.
 
         The returned child has private stdin/stdout/stderr pipes. Callers must
-        send exactly ``orjson.dumps(request)`` to ``communicate`` and must not
-        launch a second executable after this method re-verifies distribution
-        identity. Lifecycle owners use this seam to forward the first
-        SIGINT/SIGTERM for native graceful shutdown.
+        send exactly ``orjson.dumps(request)`` to ``communicate``. Lifecycle
+        owners use this seam to forward the first SIGINT/SIGTERM for native
+        graceful shutdown.
         """
         self.preflight_request(request)
-        self.verify_distribution_identity()
         return subprocess.Popen(
             [str(self.binary)],
             stdin=subprocess.PIPE,
@@ -264,7 +227,6 @@ class RunnerInstallation:
         response = _parse_validation_response(
             completed.stdout,
             benchmark_id=benchmark_id,
-            distribution_id=request["expected_distribution_id"],
             returncode=completed.returncode,
             stderr=completed.stderr,
         )
@@ -650,7 +612,6 @@ def _runner_subprocess_environment(provider_roots: tuple[Path, ...]) -> dict[str
 def _load_capabilities(
     binary: Path, provider_roots: tuple[Path, ...] = ()
 ) -> dict[str, Any]:
-    expected_distribution_id = _runner_distribution_id(binary)
     try:
         completed = subprocess.run(
             [str(binary), "--capabilities"],
@@ -684,111 +645,70 @@ def _load_capabilities(
         ) from error
     if not isinstance(capabilities, dict):
         raise ValueError("aiperf-runner capabilities must be an object")
-    if capabilities.get("event") != "runner_capabilities":
-        raise ValueError("aiperf-runner returned an unknown capability response")
-    distribution_id = capabilities.get("distribution_id")
-    if not _is_distribution_id(distribution_id):
+    if _is_legacy_capabilities(capabilities) and not _is_catalog_shape(capabilities):
         raise ValueError(
-            "aiperf-runner capability distribution_id must be 'blake3:' followed "
-            "by exactly 64 lowercase hexadecimal characters"
-        )
-    if not compare_digest(distribution_id, expected_distribution_id):
-        raise RuntimeError(
-            f"aiperf-runner capability distribution_id does not match the exact "
-            f"selected executable bytes at {binary}; refusing a mixed runner "
-            "distribution"
-        )
-    versions = capabilities.get("protocol_versions")
-    if not isinstance(versions, list) or RUNNER_PROTOCOL_V2 not in versions:
-        raise RuntimeError(
-            f"aiperf-runner does not support protocol {RUNNER_PROTOCOL_V2}: "
-            f"advertised {versions!r}"
+            "aiperf-runner returned legacy runner_capabilities; expected a "
+            "plugins.yaml-shaped catalog with schema_version, endpoint, and transport"
         )
     _validate_v2_capabilities(capabilities)
-    schema = capabilities.get("report_schema_version")
-    if schema != _NATIVE_REPORT_SCHEMA_VERSION:
-        raise RuntimeError(
-            f"aiperf-runner report schema {schema!r} is incompatible; "
-            f"expected {_NATIVE_REPORT_SCHEMA_VERSION!r}"
-        )
-    for field in (
-        "endpoint_types",
-        "dataset_types",
-        "phase_types",
-        "phase_features",
-        "run_features",
-        "telemetry_source_types",
-        "server_metrics_formats",
-    ):
-        values = capabilities.get(field)
-        if not isinstance(values, list) or not all(
-            isinstance(value, str) and value for value in values
-        ):
-            detail = (
-                "; install a compatible catalog-publishing runner because Python "
-                "endpoint metadata is not used as a fallback"
-                if field == "endpoint_types"
-                else ""
-            )
-            raise ValueError(
-                f"aiperf-runner capability {field} must be an array of "
-                f"non-empty strings{detail}"
-            )
     return capabilities
 
 
+def _is_legacy_capabilities(capabilities: dict[str, Any]) -> bool:
+    return (
+        capabilities.get("event") == "runner_capabilities"
+        or "supported_pairs" in capabilities
+    )
+
+
+def _is_catalog_shape(capabilities: dict[str, Any]) -> bool:
+    return (
+        isinstance(capabilities.get("schema_version"), str)
+        and bool(capabilities["schema_version"])
+        and isinstance(capabilities.get("endpoint"), dict)
+        and isinstance(capabilities.get("transport"), dict)
+    )
+
+
 def _validate_v2_capabilities(capabilities: dict[str, Any]) -> None:
-    """Validate inventories required to select a protocol-v2 execution pair."""
-    if capabilities.get("capabilities_schema_version") != 2:
-        raise RuntimeError(
-            "aiperf-runner advertises protocol 2 without capability schema 2"
-        )
-    for field in ("supported_pairs", "statically_compatible_pairs"):
-        pairs = capabilities.get(field)
-        if not isinstance(pairs, list) or not all(
-            isinstance(pair, list)
-            and len(pair) == 2
-            and all(isinstance(value, str) and value for value in pair)
-            for pair in pairs
-        ):
-            raise ValueError(
-                f"aiperf-runner capability {field} must be an array of "
-                "[transport, workload] string pairs"
-            )
-    for field in ("transports", "workloads", "endpoints"):
-        descriptors = capabilities.get(field)
-        if not isinstance(descriptors, list) or not all(
-            isinstance(descriptor, dict)
-            and isinstance(descriptor.get("id"), str)
-            and bool(descriptor["id"])
-            for descriptor in descriptors
-        ):
-            raise ValueError(
-                f"aiperf-runner capability {field} must be an array of "
-                "descriptors with non-empty id fields"
-            )
-    extensions = capabilities.get("extensions")
-    if not isinstance(extensions, list) or not all(
-        isinstance(extension, str) and extension for extension in extensions
-    ):
+    """Validate the plugins.yaml-shaped linked runner catalog."""
+    if not _is_catalog_shape(capabilities):
         raise ValueError(
-            "aiperf-runner capability extensions must be an array of non-empty strings"
+            "aiperf-runner catalog must include non-empty schema_version plus "
+            "endpoint and transport category maps"
         )
+    for category in _REQUIRED_CATALOG_CATEGORIES:
+        _require_category_map(capabilities, category, required=True)
+    for category in _OPTIONAL_CATALOG_CATEGORIES:
+        if category in capabilities:
+            _require_category_map(capabilities, category, required=False)
 
 
-def _require_nonempty_strings(
-    value: dict[str, Any], fields: tuple[str, ...], label: str
+def _require_category_map(
+    capabilities: dict[str, Any], category: str, *, required: bool
 ) -> None:
-    for field in fields:
-        if not isinstance(value.get(field), str) or not value[field]:
-            raise ValueError(f"{label} {field} must be a non-empty string")
+    value = capabilities.get(category)
+    if not isinstance(value, dict):
+        raise ValueError(f"aiperf-runner catalog {category} must be an object")
+    if required and not value:
+        raise ValueError(
+            f"aiperf-runner catalog {category} must contain at least one type id"
+        )
+    for type_id, entry in value.items():
+        if not isinstance(type_id, str) or not type_id:
+            raise ValueError(
+                f"aiperf-runner catalog {category} keys must be non-empty strings"
+            )
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"aiperf-runner catalog {category}.{type_id} must be an object"
+            )
 
 
 def _parse_validation_response(
     stdout: bytes,
     *,
     benchmark_id: str,
-    distribution_id: str,
     returncode: int,
     stderr: bytes = b"",
 ) -> dict[str, Any]:
@@ -812,7 +732,6 @@ def _parse_validation_response(
     expected: dict[str, object] = {
         "protocol_version": RUNNER_PROTOCOL_V2,
         "event": "run_validation",
-        "distribution_id": distribution_id,
         "benchmark_id": benchmark_id,
     }
     for field, value in expected.items():
@@ -860,7 +779,10 @@ def _parse_validation_response(
 
 
 def _runner_distribution_id(binary: Path) -> str:
-    """Hash one opened runner image with the native versioned BLAKE3 contract."""
+    """Hash one opened runner image with the native versioned BLAKE3 contract.
+
+    Retained for release/packaging diagnostics; not used as a wire pin.
+    """
     digest = blake3()
     digest.update(_DISTRIBUTION_ID_DOMAIN)
     try:
@@ -887,46 +809,91 @@ def _is_distribution_id(value: object) -> bool:
 def _require_v2_request_capabilities(
     capabilities: dict[str, Any], request: dict[str, Any]
 ) -> None:
-    """Fail before launch unless this image advertises the exact v2 pair."""
+    """Fail before launch unless this image catalogs the requested Config ids."""
     run = request.get("run")
     if not isinstance(run, dict):
         raise ValueError("protocol-v2 request omitted its run object")
-    transport = run.get("transport")
-    workload = run.get("workload")
+    cfg = run.get("cfg")
+    if not isinstance(cfg, dict):
+        raise ValueError("protocol-v2 request omitted run.cfg")
+
+    transport = cfg.get("transport")
     if not isinstance(transport, dict) or not isinstance(transport.get("type"), str):
-        raise ValueError("protocol-v2 request omitted run.transport.type")
-    if not isinstance(workload, dict) or not isinstance(workload.get("type"), str):
-        raise ValueError("protocol-v2 request omitted run.workload.type")
+        raise ValueError("protocol-v2 request omitted run.cfg.transport.type")
+    _require_catalog_id(capabilities, "transport", transport["type"])
 
-    pair = [transport["type"], workload["type"]]
-    supported = capabilities.get("supported_pairs")
-    if not isinstance(supported, list) or pair not in supported:
-        raise RuntimeError(
-            "selected aiperf-runner does not contain executable protocol-v2 pair "
-            f"({pair[0]!r}, {pair[1]!r}); advertised {supported!r}"
-        )
+    endpoint = cfg.get("endpoint")
+    if not isinstance(endpoint, dict) or not isinstance(endpoint.get("type"), str):
+        raise ValueError("protocol-v2 request omitted run.cfg.endpoint.type")
+    _require_catalog_id(capabilities, "endpoint", endpoint["type"])
 
-    resources = run.get("resources")
-    if not isinstance(resources, dict):
-        raise ValueError("protocol-v2 request omitted run.resources")
-    endpoints = resources.get("endpoints")
-    if endpoints is None:
-        return
-    profiles = endpoints.get("profiles") if isinstance(endpoints, dict) else None
-    if not isinstance(profiles, list) or not profiles:
-        raise ValueError("protocol-v2 request requires at least one endpoint profile")
-    for index, profile in enumerate(profiles):
+    profiles = cfg.get("endpoint_profiles")
+    if profiles is None:
+        profiles = {}
+    if not isinstance(profiles, dict):
+        raise ValueError("protocol-v2 run.cfg.endpoint_profiles must be an object")
+    for profile_id, profile in profiles.items():
         if not isinstance(profile, dict) or not isinstance(profile.get("type"), str):
-            raise ValueError(f"protocol-v2 endpoint profile {index} omitted type")
-        _require_capability(capabilities, "endpoint_types", profile["type"])
+            raise ValueError(
+                f"protocol-v2 endpoint profile {profile_id!r} omitted type"
+            )
+        _require_catalog_id(capabilities, "endpoint", profile["type"])
+
+    datasets = cfg.get("datasets")
+    if datasets is None:
+        return
+    if not isinstance(datasets, list):
+        raise ValueError("protocol-v2 run.cfg.datasets must be an array")
+    for index, dataset in enumerate(datasets):
+        if not isinstance(dataset, dict):
+            raise ValueError(f"protocol-v2 dataset {index} must be an object")
+        _require_dataset_catalog(capabilities, dataset, index)
 
 
-def _require_capability(
-    capabilities: dict[str, Any], field: str, required: str
+def _require_dataset_catalog(
+    capabilities: dict[str, Any], dataset: dict[str, Any], index: int
 ) -> None:
-    advertised = capabilities[field]
+    dataset_type = dataset.get("type")
+    if dataset_type == "file":
+        format_id = dataset.get("format")
+        if isinstance(format_id, str) and format_id:
+            _require_optional_catalog_id(
+                capabilities, "custom_dataset_loader", format_id
+            )
+        return
+    if dataset_type == "public":
+        public_id = dataset.get("dataset")
+        if isinstance(public_id, str) and public_id:
+            _require_optional_catalog_id(
+                capabilities, "public_dataset_loader", public_id
+            )
+        return
+    if dataset_type == "synthetic":
+        _require_optional_catalog_id(capabilities, "synthetic", "synthetic")
+        return
+    if not isinstance(dataset_type, str) or not dataset_type:
+        raise ValueError(f"protocol-v2 dataset {index} omitted type")
+
+
+def _require_optional_catalog_id(
+    capabilities: dict[str, Any], category: str, required: str
+) -> None:
+    advertised = capabilities.get(category)
+    if not isinstance(advertised, dict) or not advertised:
+        return
     if required not in advertised:
         raise RuntimeError(
-            f"aiperf-runner does not support {field}.{required}; "
-            f"advertised {advertised!r}"
+            f"aiperf-runner does not support {category}.{required}; "
+            f"advertised {sorted(advertised)!r}"
+        )
+
+
+def _require_catalog_id(
+    capabilities: dict[str, Any], category: str, required: str
+) -> None:
+    advertised = capabilities.get(category)
+    if not isinstance(advertised, dict) or required not in advertised:
+        raise RuntimeError(
+            f"aiperf-runner does not support {category}.{required}; "
+            f"advertised {sorted(advertised) if isinstance(advertised, dict) else advertised!r}"
         )

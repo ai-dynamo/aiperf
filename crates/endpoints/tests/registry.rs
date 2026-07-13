@@ -9,7 +9,7 @@ use aiperf_endpoints::{
     CreditPhase, EffectiveEndpointConfig, EndpointConfig, EndpointDescriptor, EndpointFactory,
     EndpointId, EndpointRegistry, EndpointRegistryBuilder, EndpointRegistryError, EndpointResult,
     EndpointType, Media, Modality, PreparedEndpoint, PreparedEndpointTable, PreparedRequest,
-    RawEndpointConfig, ReadinessPolicy, ResponseData, ServerResponse, Turn, metadata_for,
+    RawEndpointConfig, ReadinessPolicy, ResponseData, ServerResponse, Turn,
 };
 use serde_json::{Value, json};
 
@@ -296,7 +296,7 @@ fn flexible_endpoints_compile_and_reuse_profile_state_during_preparation() {
 }
 
 #[test]
-fn adapter_descriptors_remain_exactly_compatible_with_v1_metadata() {
+fn adapter_descriptors_round_trip_closed_endpoint_types() {
     let registry = EndpointRegistry::builtin().unwrap();
     let endpoint_types = [
         EndpointType::Chat,
@@ -322,50 +322,10 @@ fn adapter_descriptors_remain_exactly_compatible_with_v1_metadata() {
     for endpoint_type in endpoint_types {
         let id = EndpointId::new(endpoint_type.canonical_id()).unwrap();
         let descriptor = registry.resolve_factory(&id).unwrap().descriptor();
-        let legacy = metadata_for(endpoint_type);
-        assert_eq!(descriptor.endpoint_path, legacy.endpoint_path, "{id}");
-        assert_eq!(descriptor.streaming_path, legacy.streaming_path, "{id}");
-        assert_eq!(
-            descriptor.supports_streaming, legacy.supports_streaming,
-            "{id}"
-        );
-        assert_eq!(descriptor.produces_tokens, legacy.produces_tokens, "{id}");
-        assert_eq!(descriptor.tokenizes_input, legacy.tokenizes_input, "{id}");
-        assert_eq!(
-            descriptor.requires_form_data, legacy.requires_form_data,
-            "{id}"
-        );
-        assert_eq!(descriptor.requires_polling, legacy.requires_polling, "{id}");
-        assert_eq!(
-            descriptor.requires_inline_media, legacy.requires_inline_media,
-            "{id}"
-        );
-        assert_eq!(
-            descriptor.input_modalities.contains(&Modality::Audio),
-            legacy.supports_audio,
-            "{id}"
-        );
-        assert_eq!(
-            descriptor.input_modalities.contains(&Modality::Image),
-            legacy.supports_images,
-            "{id}"
-        );
-        assert_eq!(
-            descriptor.input_modalities.contains(&Modality::Video),
-            legacy.supports_videos,
-            "{id}"
-        );
-        assert_eq!(
-            descriptor.output_modalities.contains(&Modality::Image),
-            legacy.produces_images,
-            "{id}"
-        );
-        assert_eq!(
-            descriptor.output_modalities.contains(&Modality::Video),
-            legacy.produces_videos,
-            "{id}"
-        );
-        assert_eq!(descriptor.metrics_title, legacy.metrics_title, "{id}");
-        assert_eq!(descriptor.service_kind, legacy.service_kind, "{id}");
+        assert_eq!(descriptor.legacy_type(), Some(endpoint_type), "{id}");
+        assert_eq!(descriptor.id, endpoint_type.canonical_id(), "{id}");
+        assert!(!descriptor.description.is_empty(), "{id}");
+        assert!(!descriptor.metrics_title.is_empty(), "{id}");
+        assert!(!descriptor.service_kind.is_empty(), "{id}");
     }
 }

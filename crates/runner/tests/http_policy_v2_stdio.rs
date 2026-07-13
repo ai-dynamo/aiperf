@@ -121,15 +121,6 @@ fn chat_response() -> Response<Full<Bytes>> {
         .unwrap()
 }
 
-fn capabilities() -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap()
-}
-
 fn run_child(request: Value) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
         .stdin(Stdio::piped())
@@ -147,15 +138,13 @@ fn run_child(request: Value) -> Output {
 }
 
 fn scheduled_request(
-    artifact_target: &std::path::Path,
+    artifact_dir: &std::path::Path,
     endpoint_url: &str,
     requests: usize,
     concurrency: usize,
     policy: Map<String, Value>,
 ) -> Value {
-    let capabilities = capabilities();
     let mut profile = Map::from_iter([
-        ("id".into(), json!("default")),
         ("type".into(), json!("chat")),
         ("urls".into(), json!([endpoint_url])),
         ("streaming".into(), json!(true)),
@@ -166,23 +155,18 @@ fn scheduled_request(
     json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "http-policy-v2"},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "http-policy-v2",
+            "artifact_dir": artifact_dir,
+            "cfg": {
                 "models": {"items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [profile]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 1,
-                "dataset": {
+                "endpoint": profile,
+                "datasets": [{
                     "type": "synthetic",
                     "entries": requests,
                     "sampling": "sequential",
                     "prompts": {"isl": {"value": 4.0}, "osl": {"value": 1.0}}
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -195,8 +179,10 @@ fn scheduled_request(
                     "exclude_from_results": false,
                     "requests": requests,
                     "concurrency": concurrency
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     })
 }
@@ -368,19 +354,16 @@ async fn spawn_untrusted_https() -> LoopbackServer {
     }
 }
 
-fn tls_request(artifact_target: &std::path::Path, endpoint_url: &str, ssl_verify: bool) -> Value {
-    let capabilities = capabilities();
+fn tls_request(artifact_dir: &std::path::Path, endpoint_url: &str, ssl_verify: bool) -> Value {
     json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "http-tls-policy-v2"},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "http-tls-policy-v2",
+            "artifact_dir": artifact_dir,
+            "cfg": {
                 "models": {"items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
+                "endpoint": {
                     "type": "kserve_v1_predict",
                     "urls": [endpoint_url],
                     "streaming": false,
@@ -388,17 +371,13 @@ fn tls_request(artifact_target: &std::path::Path, endpoint_url: &str, ssl_verify
                     "wait_for_model_timeout": 0.1,
                     "wait_for_model_interval": 0.01,
                     "wait_for_model_mode": "models"
-                }]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "synthetic",
                     "entries": 1,
                     "sampling": "sequential",
                     "prompts": {"isl": {"value": 4.0}, "osl": {"value": 1.0}}
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -411,8 +390,10 @@ fn tls_request(artifact_target: &std::path::Path, endpoint_url: &str, ssl_verify
                     "exclude_from_results": false,
                     "requests": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     })
 }

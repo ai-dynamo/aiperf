@@ -18,6 +18,10 @@ from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.orchestrator.runner_installation import RunnerInstallation
 from aiperf.orchestrator.rust_executor import RustSubprocessExecutor
 
+pytestmark = pytest.mark.skip(
+    reason="product wire no longer projects this mode; modules remain linked for later deletion"
+)
+
 
 def _runner_binary() -> Path:
     default = Path(__file__).resolve().parents[2] / "target/debug/aiperf-runner"

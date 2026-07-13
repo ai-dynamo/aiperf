@@ -167,8 +167,8 @@ impl RunnerGraphPlacementFactory for RecordingGraphPlacement {
     ) -> Result<Rc<dyn GraphTraceExecutionBackend>, GraphPlacementError> {
         assert_eq!(worker_count, 3);
         assert!(
-            !self.artifact_target.exists(),
-            "graph placement must be prepared before artifact creation"
+            self.artifact_target.exists(),
+            "BenchmarkRun commits the artifact target before graph placement"
         );
         self.builds.fetch_add(1, Ordering::SeqCst);
         Ok(Rc::new(RecordingGraphBackend {
@@ -305,6 +305,25 @@ fn coordinator_with_readiness(
     .unwrap()
 }
 
+fn benchmark_run(legacy: Value) -> Value {
+    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+    endpoint.as_object_mut().unwrap().remove("id");
+    json!({
+        "benchmark_id": legacy["identity"]["benchmark_id"],
+        "artifact_dir": legacy["artifact_target"],
+        "random_seed": legacy["identity"]["random_seed"],
+        "cfg": {
+            "models": legacy["resources"]["models"],
+            "endpoint": endpoint,
+            "datasets": [legacy["workload"]["config"]["dataset"]],
+            "phases": legacy["workload"]["config"]["phases"],
+            "tokenizer": legacy["workload"]["config"]["tokenizer"],
+            "transport": {"type": legacy["transport"]["type"]},
+            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        }
+    })
+}
+
 fn execute(
     coordinator: &RunnerV2Coordinator,
     run: Value,
@@ -312,15 +331,14 @@ fn execute(
     let envelope = serde_json::from_value(json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": DISTRIBUTION_ID,
-        "run": run,
+        "run": benchmark_run(run),
     }))
     .unwrap();
     coordinator.handle(envelope)
 }
 
 fn assert_success(result: &aiperf_runner::coordinator::RunnerProcessResultV2) {
-    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.exit_code, 0, "{:?}", result.response);
     match &result.response {
         RunnerResponseV2::Terminal(terminal) => {
             assert!(terminal.success, "terminal errors: {:?}", terminal.errors);
@@ -330,6 +348,7 @@ fn assert_success(result: &aiperf_runner::coordinator::RunnerProcessResultV2) {
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn v2_scheduled_run_uses_injected_remote_turn_placement() {
     let root = tempfile::tempdir().unwrap();
     let artifact_target = root.path().join("scheduled");

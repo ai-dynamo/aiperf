@@ -234,13 +234,9 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
 
         assert request["protocol_version"] == 2
         assert request["operation"] == "execute"
-        assert (
-            request["expected_distribution_id"]
-            == online_graph_installation.distribution_id
-        )
-        assert request["run"]["transport"] == {"type": "http", "config": {}}
-        assert request["run"]["workload"]["type"] == "graph"
-        dataset = request["run"]["workload"]["config"]["dataset"]
+        assert "expected_distribution_id" not in request
+        assert request["run"]["cfg"]["transport"] == {"type": "http"}
+        dataset = request["run"]["cfg"]["datasets"][0]
         assert dataset["format"] == "dag_jsonl"
         assert dataset["records"] == _graph_rows()
         assert "conversation" not in dataset
@@ -249,7 +245,6 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
         terminal = orjson.loads(completed.stdout)
         assert completed.returncode == 0, completed.stderr.decode(errors="replace")
         assert terminal["success"] is True
-        assert terminal["distribution_id"] == online_graph_installation.distribution_id
         assert terminal["provenance"] == {
             "transport": "http",
             "workload": "graph",

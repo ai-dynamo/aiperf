@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for Rust-runner capability negotiation."""
+"""Unit tests for Rust-runner catalog negotiation."""
 
 from __future__ import annotations
 
@@ -14,8 +14,6 @@ import pytest
 
 from aiperf.orchestrator import runner_installation, rust_executor
 
-_TEST_DISTRIBUTION_ID = "blake3:" + "a" * 64
-
 
 def _completed(payload: object, *, returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
@@ -26,37 +24,30 @@ def _completed(payload: object, *, returncode: int = 0) -> subprocess.CompletedP
     )
 
 
-def _capabilities(*endpoint_types: str) -> dict[str, object]:
+def _catalog(*endpoint_types: str) -> dict[str, object]:
+    endpoints = endpoint_types or ("chat",)
     return {
-        "event": "runner_capabilities",
-        "protocol_versions": [2],
-        "capabilities_schema_version": 2,
-        "report_schema_version": "2.0",
-        "distribution_id": _TEST_DISTRIBUTION_ID,
-        "endpoint_types": list(endpoint_types),
-        "supported_pairs": [["http", "scheduled"]],
-        "statically_compatible_pairs": [["http", "scheduled"]],
-        "transports": [{"id": "http"}],
-        "workloads": [{"id": "scheduled"}],
-        "endpoints": [{"id": endpoint} for endpoint in endpoint_types],
-        "extensions": [],
-        "dataset_types": ["synthetic"],
-        "phase_types": ["concurrency"],
-        "phase_features": [],
-        "run_features": ["http_transport_policy", "thread_per_core_execution"],
-        "telemetry_source_types": [],
-        "server_metrics_formats": [],
-        "runner_version": "0.0.0",
+        "schema_version": "1.0",
+        "endpoint": {endpoint: {"description": endpoint} for endpoint in endpoints},
+        "transport": {
+            "http": {"metadata": {"transport_type": "http"}},
+            "grpc": {"metadata": {"transport_type": "grpc"}},
+        },
+        "custom_dataset_loader": {
+            "single_turn": {},
+            "dag_jsonl": {},
+        },
+        "public_dataset_loader": {
+            "sharegpt": {},
+        },
+        "synthetic": {
+            "synthetic": {},
+        },
     }
 
 
-def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) -> None:
-    response = _capabilities("chat")
-    monkeypatch.setattr(
-        runner_installation,
-        "_runner_distribution_id",
-        lambda _binary: _TEST_DISTRIBUTION_ID,
-    )
+def test_capabilities_accept_plugins_catalog(monkeypatch) -> None:
+    response = _catalog("chat")
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
 
     assert runner_installation._load_capabilities(Path("runner")) == response
@@ -65,7 +56,7 @@ def test_capabilities_accept_matching_protocol_and_report_schema(monkeypatch) ->
 def test_capability_child_receives_only_the_selected_provider_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    response = _capabilities("chat")
+    response = _catalog("chat")
     root = tmp_path / "provider-root"
     root.mkdir()
     observed: dict[str, str] = {}
@@ -75,11 +66,6 @@ def test_capability_child_receives_only_the_selected_provider_roots(
         return _completed(response)
 
     monkeypatch.setenv("AIPERF_EVALUATOR_PROVIDER_ROOTS", "/attacker/ambient")
-    monkeypatch.setattr(
-        runner_installation,
-        "_runner_distribution_id",
-        lambda _binary: _TEST_DISTRIBUTION_ID,
-    )
     monkeypatch.setattr(subprocess, "run", run)
 
     assert runner_installation._load_capabilities(Path("runner"), (root,)) == response
@@ -106,7 +92,7 @@ def test_resolve_accepts_independent_explicit_provider_roots(
     monkeypatch.setattr(
         runner_installation,
         "_load_capabilities",
-        lambda _binary, roots: selected.append(roots) or _capabilities("chat"),
+        lambda _binary, roots: selected.append(roots) or _catalog("chat"),
     )
 
     installation = runner_installation.RunnerInstallation.resolve(
@@ -120,35 +106,35 @@ def test_resolve_accepts_independent_explicit_provider_roots(
 
 
 @pytest.mark.parametrize(
-    ("field", "value", "match"),
+    ("payload", "match"),
     [
-        ("protocol_versions", [1], "does not support protocol 2"),
-        ("report_schema_version", "3.0", "report schema '3.0' is incompatible"),
-        ("event", "something_else", "unknown capability response"),
+        (
+            {
+                "event": "runner_capabilities",
+                "supported_pairs": [["http", "scheduled"]],
+            },
+            "legacy runner_capabilities",
+        ),
+        (
+            {"schema_version": "1.0", "endpoint": {}, "transport": {"http": {}}},
+            "endpoint must contain at least one",
+        ),
+        (
+            {"event": "something_else"},
+            "schema_version",
+        ),
     ],
 )
 def test_capabilities_reject_incompatible_runner(
-    monkeypatch, field: str, value: object, match: str
+    monkeypatch, payload: dict[str, object], match: str
 ) -> None:
-    response = _capabilities()
-    response[field] = value
-    monkeypatch.setattr(
-        runner_installation,
-        "_runner_distribution_id",
-        lambda _binary: _TEST_DISTRIBUTION_ID,
-    )
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(payload))
 
     with pytest.raises((RuntimeError, ValueError), match=match):
         runner_installation._load_capabilities(Path("runner"))
 
 
 def test_capabilities_surface_process_failure(monkeypatch) -> None:
-    monkeypatch.setattr(
-        runner_installation,
-        "_runner_distribution_id",
-        lambda _binary: _TEST_DISTRIBUTION_ID,
-    )
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -176,18 +162,17 @@ def test_distribution_identity_algorithm_is_pinned(tmp_path: Path) -> None:
     )
 
 
-def test_protocol_v2_validation_response_is_bound_to_image_and_exit() -> None:
+def test_protocol_v2_validation_response_is_bound_to_exit() -> None:
     payload = {
         "protocol_version": 2,
         "event": "run_validation",
-        "distribution_id": _TEST_DISTRIBUTION_ID,
         "benchmark_id": "validate-me",
         "success": True,
         "completeness": "static",
         "deferred_checks": [
             {
                 "code": "dataset_load",
-                "path": "run.workload",
+                "path": "run.cfg.datasets",
                 "reason": "requires execution preparation",
             }
         ],
@@ -196,7 +181,6 @@ def test_protocol_v2_validation_response_is_bound_to_image_and_exit() -> None:
     response = runner_installation._parse_validation_response(
         orjson.dumps(payload) + b"\n",
         benchmark_id="validate-me",
-        distribution_id=_TEST_DISTRIBUTION_ID,
         returncode=0,
     )
 
@@ -205,7 +189,6 @@ def test_protocol_v2_validation_response_is_bound_to_image_and_exit() -> None:
         runner_installation._parse_validation_response(
             orjson.dumps(payload) + b"\n",
             benchmark_id="validate-me",
-            distribution_id=_TEST_DISTRIBUTION_ID,
             returncode=1,
         )
 
@@ -214,7 +197,6 @@ def test_protocol_v2_validation_failure_requires_typed_errors() -> None:
     payload = {
         "protocol_version": 2,
         "event": "run_validation",
-        "distribution_id": _TEST_DISTRIBUTION_ID,
         "benchmark_id": "validate-me",
         "success": False,
         "completeness": "static",
@@ -225,45 +207,25 @@ def test_protocol_v2_validation_failure_requires_typed_errors() -> None:
         runner_installation._parse_validation_response(
             orjson.dumps(payload) + b"\n",
             benchmark_id="validate-me",
-            distribution_id=_TEST_DISTRIBUTION_ID,
             returncode=1,
         )
 
 
-def test_capabilities_reject_distribution_identity_mismatch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    binary = tmp_path / "aiperf-runner"
-    binary.write_bytes(b"selected-runner-image")
-    response = _capabilities()
-    response["distribution_id"] = "blake3:" + "0" * 64
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
-
-    with pytest.raises(RuntimeError, match="does not match.*exact selected"):
-        runner_installation._load_capabilities(binary)
-
-
-def test_installation_rejects_binary_replacement_before_execution(
-    tmp_path: Path,
-) -> None:
+def test_installation_verify_distribution_identity_is_noop(tmp_path: Path) -> None:
     binary = tmp_path / "aiperf-runner"
     binary.write_bytes(b"negotiated-runner-image")
     installation = runner_installation.RunnerInstallation(
         binary=binary,
-        capabilities={
-            "distribution_id": runner_installation._runner_distribution_id(binary)
-        },
+        capabilities=_catalog("chat"),
     )
     binary.write_bytes(b"replacement-runner-image")
-
-    with pytest.raises(RuntimeError, match="no longer matches|was replaced"):
-        installation.verify_distribution_identity()
+    installation.verify_distribution_identity()
 
 
 def test_runner_installation_accepts_runner_owned_endpoint_ids() -> None:
     installation = runner_installation.RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
-        capabilities=_capabilities("chat", "messages", "acme_chat"),
+        capabilities=_catalog("chat", "messages", "acme_chat"),
     )
 
     installation.preflight_endpoint("messages")
@@ -273,7 +235,7 @@ def test_runner_installation_accepts_runner_owned_endpoint_ids() -> None:
 def test_runner_installation_rejects_unavailable_endpoint_clearly() -> None:
     installation = runner_installation.RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
-        capabilities=_capabilities("chat", "messages"),
+        capabilities=_catalog("chat", "messages"),
     )
 
     with pytest.raises(RuntimeError, match="not compiled.*chat, messages") as raised:
@@ -287,7 +249,7 @@ def test_runner_installation_rejects_unavailable_endpoint_clearly() -> None:
 def test_runner_installation_preflights_every_fixed_plan_endpoint() -> None:
     installation = runner_installation.RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
-        capabilities=_capabilities("chat", "messages"),
+        capabilities=_catalog("chat", "messages"),
     )
     plan = SimpleNamespace(
         configs=[
@@ -305,33 +267,29 @@ def test_runner_installation_preflights_every_fixed_plan_endpoint() -> None:
         installation.preflight_plan(plan)
 
 
-def test_executor_rejects_v1_only_runner_without_reading_config_secrets(
-    tmp_path: Path,
-) -> None:
-    capabilities = _capabilities("chat", "messages")
-    capabilities["protocol_versions"] = [1]
+def test_executor_rejects_unavailable_endpoint_without_reading_config_secrets() -> None:
     installation = runner_installation.RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
-        capabilities=capabilities,
+        capabilities=_catalog("chat", "messages"),
     )
-    executor = rust_executor.RustSubprocessExecutor(
-        base_dir=tmp_path,
-        installation=installation,
-    )
-    run = SimpleNamespace(
-        cfg=SimpleNamespace(
-            endpoint=SimpleNamespace(type="acme_chat", api_key="sk-never-log-me")
-        ),
-        label="custom-endpoint",
-        trial=0,
-        artifact_dir=tmp_path,
-    )
+    request = {
+        "protocol_version": 2,
+        "operation": "execute",
+        "run": {
+            "benchmark_id": "custom-endpoint",
+            "cfg": {
+                "transport": {"type": "http"},
+                "endpoint": {"type": "acme_chat", "api_key": "sk-never-log-me"},
+                "endpoint_profiles": {},
+                "datasets": [],
+            },
+        },
+    }
 
-    result = executor.execute_sync(run)
+    with pytest.raises(RuntimeError, match="acme_chat") as raised:
+        installation.preflight_request(request)
 
-    assert result.success is False
-    assert "does not support protocol 2" in result.error
-    assert "sk-never-log-me" not in result.error
+    assert "sk-never-log-me" not in str(raised.value)
 
 
 def test_missing_terminal_surfaces_exit_and_redacted_stderr() -> None:
@@ -371,65 +329,56 @@ def test_terminal_failure_redacts_runner_error_and_stderr(tmp_path: Path) -> Non
     assert result.error.count("<redacted>") == 2
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
-        "endpoint_types",
-        "dataset_types",
-        "phase_types",
-        "phase_features",
-        "run_features",
-        "telemetry_source_types",
-        "server_metrics_formats",
-    ],
-)
-def test_capabilities_require_every_typed_feature_inventory(
-    monkeypatch, field: str
-) -> None:
-    response = _capabilities()
-    response.pop(field)
-    monkeypatch.setattr(
-        runner_installation,
-        "_runner_distribution_id",
-        lambda _binary: _TEST_DISTRIBUTION_ID,
+def test_terminal_does_not_require_distribution_id() -> None:
+    terminal = rust_executor._parse_terminal(
+        orjson.dumps(
+            {
+                "protocol_version": 2,
+                "event": "run_terminal",
+                "benchmark_id": "run",
+                "success": True,
+                "report_path": "/tmp/native-v2.json",
+            }
+        )
+        + b"\n",
+        SimpleNamespace(benchmark_id="run"),
+        protocol_version=2,
+        returncode=0,
     )
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _completed(response))
-
-    with pytest.raises(ValueError, match=field):
-        runner_installation._load_capabilities(Path("runner"))
+    assert terminal["success"] is True
 
 
-def test_v2_request_capabilities_read_endpoint_profiles_from_resources() -> None:
-    capabilities = {
-        "supported_pairs": [["grpc", "scheduled"]],
-        "endpoint_types": ["kserve_v2_infer"],
-    }
+def test_v2_request_capabilities_read_benchmark_run_cfg() -> None:
+    capabilities = _catalog("kserve_v2_infer")
     request = {
+        "protocol_version": 2,
         "run": {
-            "transport": {"type": "grpc"},
-            "workload": {"type": "scheduled"},
-            "resources": {
-                "endpoints": {
-                    "profiles": [{"id": "default", "type": "kserve_v2_infer"}]
-                }
-            },
-        }
+            "cfg": {
+                "transport": {"type": "grpc"},
+                "endpoint": {"type": "kserve_v2_infer"},
+                "endpoint_profiles": {},
+                "datasets": [{"type": "synthetic", "entries": 1}],
+            }
+        },
     }
 
     runner_installation._require_v2_request_capabilities(capabilities, request)
 
 
-def test_v2_request_capabilities_defer_resource_presence_to_workload_registry() -> None:
-    capabilities = {
-        "supported_pairs": [["synthetic_transport", "synthetic_workload"]],
-        "endpoint_types": [],
-    }
+def test_v2_request_capabilities_check_optional_dataset_categories() -> None:
+    capabilities = _catalog("chat")
     request = {
+        "protocol_version": 2,
         "run": {
-            "transport": {"type": "synthetic_transport"},
-            "workload": {"type": "synthetic_workload"},
-            "resources": {},
-        }
+            "cfg": {
+                "transport": {"type": "http"},
+                "endpoint": {"type": "chat"},
+                "datasets": [
+                    {"type": "file", "format": "unknown_format", "path": "x.jsonl"}
+                ],
+            }
+        },
     }
 
-    runner_installation._require_v2_request_capabilities(capabilities, request)
+    with pytest.raises(RuntimeError, match="custom_dataset_loader.unknown_format"):
+        runner_installation._require_v2_request_capabilities(capabilities, request)

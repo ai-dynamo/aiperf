@@ -77,6 +77,7 @@ async fn chat_handler() -> impl IntoResponse {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 async fn live_worker_activates_only_after_rust_owns_artifact_target() {
     let app = Router::new().route("/v1/chat/completions", post(chat_handler));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

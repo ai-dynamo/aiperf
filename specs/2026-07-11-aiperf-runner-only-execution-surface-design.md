@@ -913,3 +913,19 @@ operational history plane:
 Exact deployment-owned evaluator roots may still conditionally add
 `http + evaluation`. Capability truth remains exact-image-specific, and
 `protocol_versions` remains `[2]`.
+
+## Addendum — 2026-07-13 (BenchmarkRun wire + runner catalog)
+
+The strict request envelope, `supported_pairs` / backend-workload capabilities
+shape, and distribution-id pinning described in this spec are superseded by
+`specs/2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` (decided / not
+yet implemented).
+
+Authoritative replacement: BenchmarkRun-shaped `run` (including `resolved`),
+plugins.yaml-like JSON catalog discovery from the linked binary, no
+`workload`/`backend` wire dialect, no `expected_distribution_id`. The
+performance-only cut keeps scheduled/graph execution selected from Config
+shape and `transport.type` (`http` / `grpc` / `dynosim_offline` /
+`dynosim_online`). Agentic / static-accuracy / evaluation / telemetry-watch
+pairs leave the product wire as Config sheds them. Sole-runner ownership and
+fail-closed unknown combinations remain.

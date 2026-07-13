@@ -15,21 +15,21 @@ use std::sync::Arc;
 use aiperf::report::finalize_and_write_native_report_json;
 use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory};
 use aiperf_metrics::ReportRunProvenance;
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use serde::Serialize;
 
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
 use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
-use crate::protocol::RunnerCapabilities;
+use crate::protocol::{RunnerCapabilities, RunnerCatalog};
 use crate::protocol_v2::{
-    DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
-    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    DeferredCheckV2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
+    RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2, RUNNER_PROTOCOL_V2,
 };
 use crate::redaction::redact_diagnostic;
 use crate::registry::{
-    PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
-    RunnerRunContext, validate_endpoint_profiles_v2,
+    validate_endpoint_profiles_v2, PreparedRunFailure, PreparedRunOutcome, RunnerRegistry,
+    RunnerRegistryFactory, RunnerRunContext,
 };
 use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
 
@@ -116,10 +116,14 @@ impl RunnerV2Coordinator {
     /// registry factory is invoked a second time.
     pub fn capabilities(&self) -> RunnerCapabilities {
         RunnerCapabilities::from_registries(
-            self.distribution_id.clone(),
             &self.runner_registry,
             self.product_registry.as_ref(),
         )
+    }
+
+    /// Return the plugins.yaml-shaped catalog from this process's frozen registries.
+    pub fn catalog(&self) -> RunnerCatalog {
+        RunnerCatalog::from_registries(&self.runner_registry, self.product_registry.as_ref())
     }
 
     /// Borrow the single authored graph-input resolver shared by protocol-v2
@@ -131,34 +135,44 @@ impl RunnerV2Coordinator {
     /// Validate or execute one strict authored envelope through the frozen registries.
     pub fn handle(&self, envelope: RunnerEnvelopeV2) -> RunnerProcessResultV2 {
         let operation = envelope.operation;
-        let benchmark_id = Some(envelope.run.identity.benchmark_id.clone());
-        if envelope.expected_distribution_id != self.distribution_id {
-            return failure(
-                operation,
-                self.distribution_id.clone(),
-                benchmark_id,
-                RunnerFailureStageV2::Protocol,
-                "distribution_mismatch",
-                "expected_distribution_id does not match the image executing this process",
-                2,
-            );
-        }
+        let benchmark_id = Some(envelope.run.benchmark_id.clone());
         if let Err(error) = envelope.validate_outer() {
-            return failure(
+            let message = format!("{error:#}");
+            let path = message
+                .strip_prefix("run.cfg.workload")
+                .map(|_| "run.cfg.workload")
+                .or_else(|| {
+                    message
+                        .strip_prefix("run.cfg.accuracy")
+                        .map(|_| "run.cfg.accuracy")
+                });
+            return failure_with_path(
                 operation,
                 self.distribution_id.clone(),
                 benchmark_id,
                 RunnerFailureStageV2::Validation,
                 "invalid_run",
-                format!("{error:#}"),
+                message,
+                path,
                 1,
             );
         }
+        let run = match envelope.run.into_authored() {
+            Ok(run) => run,
+            Err(error) => {
+                return failure(
+                    operation,
+                    self.distribution_id.clone(),
+                    benchmark_id,
+                    RunnerFailureStageV2::Validation,
+                    "invalid_run",
+                    format!("{error:#}"),
+                    1,
+                );
+            }
+        };
 
-        let selection = match self
-            .runner_registry
-            .validate_selection_for_run(&envelope.run)
-        {
+        let selection = match self.runner_registry.validate_selection_for_run(&run) {
             Ok(selection) => selection,
             Err(error) => {
                 return failure(
@@ -174,7 +188,7 @@ impl RunnerV2Coordinator {
         };
 
         let endpoint_profiles =
-            match validate_endpoint_profiles_v2(&envelope.run, self.product_registry.endpoints()) {
+            match validate_endpoint_profiles_v2(&run, self.product_registry.endpoints()) {
                 Ok(profiles) => profiles,
                 Err(error) => {
                     return failure(
@@ -188,10 +202,7 @@ impl RunnerV2Coordinator {
                     );
                 }
             };
-        let sidecar_inputs = match self
-            .sidecar_inputs
-            .prepare(&envelope.run.sidecars.authored_inputs())
-        {
+        let sidecar_inputs = match self.sidecar_inputs.prepare(&run.sidecars.authored_inputs()) {
             Ok(sidecars) => Arc::new(sidecars),
             Err(error) => {
                 return failure(
@@ -229,7 +240,7 @@ impl RunnerV2Coordinator {
         };
         if let Err(error) = self
             .runner_registry
-            .validate_run(&envelope.run, &context, &selection)
+            .validate_run(&run, &context, &selection)
         {
             return failure(
                 operation,
@@ -267,13 +278,12 @@ impl RunnerV2Coordinator {
                 response: RunnerResponseV2::Validation(RunValidationV2 {
                     protocol_version: RUNNER_PROTOCOL_V2,
                     event: "run_validation",
-                    distribution_id: self.distribution_id.clone(),
                     benchmark_id,
                     success: true,
                     completeness: ValidationCompletenessV2::Static,
                     deferred_checks: vec![DeferredCheckV2 {
                         code: "workload_preparation".to_owned(),
-                        path: "run.workload".to_owned(),
+                        path: "run.cfg".to_owned(),
                         reason: "dataset, tokenizer, endpoint-profile references, and transport resources require execution preparation"
                             .to_owned(),
                     }],
@@ -283,24 +293,23 @@ impl RunnerV2Coordinator {
             };
         }
 
-        let report_path = envelope.run.artifact_target.join("native-v2.json");
-        let operation =
-            match self
-                .runner_registry
-                .prepare_with_context(&envelope.run, &context, selection)
-            {
-                Ok(operation) => operation,
-                Err(error) => {
-                    return terminal_failure(
-                        self.distribution_id.clone(),
-                        benchmark_id,
-                        RunnerFailureStageV2::Preparation,
-                        "preparation_failed",
-                        format!("{error:#}"),
-                        1,
-                    );
-                }
-            };
+        let report_path = run.artifact_target.join("native-v2.json");
+        let operation = match self
+            .runner_registry
+            .prepare_with_context(&run, &context, selection)
+        {
+            Ok(operation) => operation,
+            Err(error) => {
+                return terminal_failure(
+                    self.distribution_id.clone(),
+                    benchmark_id,
+                    RunnerFailureStageV2::Preparation,
+                    "preparation_failed",
+                    format!("{error:#}"),
+                    1,
+                );
+            }
+        };
         match operation.execute() {
             Ok(outcome) => {
                 let mut provenance =
@@ -323,7 +332,6 @@ impl RunnerV2Coordinator {
                     response: RunnerResponseV2::Terminal(RunTerminalV2 {
                         protocol_version: RUNNER_PROTOCOL_V2,
                         event: "run_terminal",
-                        distribution_id: self.distribution_id.clone(),
                         benchmark_id,
                         success: true,
                         report_path: Some(report_path),
@@ -440,7 +448,6 @@ fn failure(
             response: RunnerResponseV2::Validation(RunValidationV2 {
                 protocol_version: RUNNER_PROTOCOL_V2,
                 event: "run_validation",
-                distribution_id,
                 benchmark_id,
                 success: false,
                 completeness: ValidationCompletenessV2::Static,
@@ -458,6 +465,46 @@ fn failure(
             message,
             exit_code,
         )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn failure_with_path(
+    operation: RunnerOperationV2,
+    distribution_id: String,
+    benchmark_id: Option<String>,
+    stage: RunnerFailureStageV2,
+    code: &str,
+    message: impl Into<String>,
+    path: Option<&str>,
+    exit_code: i32,
+) -> RunnerProcessResultV2 {
+    let message = message.into();
+    if operation != RunnerOperationV2::Validate {
+        return terminal_failure(
+            distribution_id,
+            benchmark_id,
+            stage,
+            code,
+            message,
+            exit_code,
+        );
+    }
+    RunnerProcessResultV2 {
+        response: RunnerResponseV2::Validation(RunValidationV2 {
+            protocol_version: RUNNER_PROTOCOL_V2,
+            event: "run_validation",
+            benchmark_id,
+            success: false,
+            completeness: ValidationCompletenessV2::Static,
+            deferred_checks: Vec::new(),
+            errors: vec![RunnerDiagnosticV2 {
+                code: code.to_owned(),
+                message: redact_diagnostic(message),
+                path: path.map(str::to_owned),
+            }],
+        }),
+        exit_code,
     }
 }
 
@@ -481,7 +528,7 @@ fn terminal_failure(
 }
 
 fn terminal_failure_with_artifacts(
-    distribution_id: String,
+    _distribution_id: String,
     benchmark_id: Option<String>,
     stage: RunnerFailureStageV2,
     code: &str,
@@ -493,7 +540,6 @@ fn terminal_failure_with_artifacts(
         response: RunnerResponseV2::Terminal(RunTerminalV2 {
             protocol_version: RUNNER_PROTOCOL_V2,
             event: "run_terminal",
-            distribution_id,
             benchmark_id,
             success: false,
             report_path: None,

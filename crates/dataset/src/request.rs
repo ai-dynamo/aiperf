@@ -226,7 +226,7 @@ impl BuiltinEndpointResolver {
                 "duplicate endpoint registration {authored:?}"
             )));
         }
-        let endpoint_type = endpoint.metadata().endpoint_type;
+        let endpoint_type = endpoint.descriptor().legacy_type().expect("legacy endpoint type");
         let endpoint: Arc<dyn Endpoint> = Arc::new(endpoint);
         self.endpoint_types
             .entry(endpoint_type)
@@ -300,7 +300,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                     streaming: effective_streaming(
                         current,
                         model_endpoint.endpoint.streaming,
-                        endpoint.metadata().supports_streaming,
+                        endpoint.descriptor().supports_streaming,
                         overrides,
                     )?,
                 },
@@ -309,7 +309,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             let streaming = effective_streaming(
                 current,
                 model_endpoint.endpoint.streaming,
-                endpoint.metadata().supports_streaming,
+                endpoint.descriptor().supports_streaming,
                 overrides,
             )?;
             let mut effective_model_endpoint = model_endpoint.clone();
@@ -332,7 +332,7 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 current,
                 &model_endpoint.primary_model_name,
                 model_endpoint.endpoint.streaming,
-                endpoint.metadata().supports_streaming,
+                endpoint.descriptor().supports_streaming,
                 overrides,
             )?;
             (Bytes::from(serde_json::to_vec(&value)?), effective)
@@ -340,11 +340,11 @@ impl RequestMaterializer for EndpointRequestMaterializer {
 
         let endpoint_path = model_endpoint.endpoint.path.clone().or_else(|| {
             if effective.streaming {
-                endpoint.metadata().streaming_path
+                endpoint.descriptor().streaming_path
             } else {
                 None
             }
-            .or(endpoint.metadata().endpoint_path)
+            .or(endpoint.descriptor().endpoint_path)
             .map(str::to_string)
         });
         let mut headers = endpoint.format_headers(&model_endpoint.endpoint);
@@ -501,17 +501,17 @@ impl RequestMaterializer for TraceHashAwareRequestMaterializer {
             streaming: effective_streaming(
                 current,
                 model_endpoint.endpoint.streaming,
-                endpoint.metadata().supports_streaming,
+                endpoint.descriptor().supports_streaming,
                 overrides,
             )?,
         };
         let endpoint_path = model_endpoint.endpoint.path.clone().or_else(|| {
             if effective.streaming {
-                endpoint.metadata().streaming_path
+                endpoint.descriptor().streaming_path
             } else {
                 None
             }
-            .or(endpoint.metadata().endpoint_path)
+            .or(endpoint.descriptor().endpoint_path)
             .map(str::to_string)
         });
         let mut headers = endpoint.format_headers(&model_endpoint.endpoint);
@@ -1262,8 +1262,9 @@ mod tests {
             resolver
                 .resolve_type(EndpointType::Messages)
                 .unwrap()
-                .metadata()
-                .endpoint_type,
+                .descriptor()
+                .legacy_type()
+                .expect("legacy endpoint type"),
             EndpointType::Messages
         );
     }
@@ -1846,7 +1847,7 @@ mod tests {
             .resolve(session.endpoint_override().unwrap())
             .unwrap();
         let mut configured = model_endpoint();
-        configured.endpoint.endpoint_type = endpoint.metadata().endpoint_type;
+        configured.endpoint.endpoint_type = endpoint.descriptor().legacy_type().expect("legacy endpoint type");
         let request = session
             .materialize(
                 &EndpointRequestMaterializer,

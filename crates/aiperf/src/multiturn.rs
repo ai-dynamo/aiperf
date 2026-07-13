@@ -1012,7 +1012,7 @@ impl fmt::Debug for LegacyTurnEndpointBinding {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("LegacyTurnEndpointBinding")
-            .field("endpoint", &self.endpoint.metadata().endpoint_type)
+            .field("endpoint", &self.endpoint.descriptor().id)
             .field("config", &self.config)
             .finish()
     }
@@ -1446,9 +1446,11 @@ impl NativeSessionBackend {
                         .resolve_type(legacy.model_endpoint.endpoint.endpoint_type)?,
                 };
                 let mut effective_model_endpoint = legacy.model_endpoint.clone();
-                let endpoint_metadata = endpoint.metadata();
-                effective_model_endpoint.endpoint.endpoint_type = endpoint_metadata.endpoint_type;
-                effective_model_endpoint.endpoint.streaming &= endpoint_metadata.supports_streaming;
+                let descriptor = endpoint.descriptor();
+                effective_model_endpoint.endpoint.endpoint_type = descriptor
+                    .legacy_type()
+                    .expect("legacy endpoint type");
+                effective_model_endpoint.endpoint.streaming &= descriptor.supports_streaming;
                 let materialized = self.materializer.materialize(
                     &session,
                     endpoint.as_ref(),
@@ -1493,7 +1495,7 @@ impl NativeSessionBackend {
             template_index: self.template_index,
             endpoint: match &turn_endpoint {
                 TurnEndpoint::Legacy(binding) => {
-                    StaticInputCountEndpoint::Legacy(binding.endpoint.metadata().endpoint_type)
+                    StaticInputCountEndpoint::Legacy(binding.endpoint.descriptor().legacy_type().expect("legacy endpoint type"))
                 }
                 TurnEndpoint::Prepared(reference) => {
                     StaticInputCountEndpoint::Prepared(reference.key)

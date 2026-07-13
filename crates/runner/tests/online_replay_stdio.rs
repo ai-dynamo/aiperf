@@ -152,6 +152,7 @@ fn target(name: &str) -> PathBuf {
 /// exact deterministic request count the engine served — proving the wall-clock
 /// driver reproduces the native engine's served-request accounting.
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn online_scheduled_runs_in_process_under_real_clock_with_exact_counts() {
     let distribution_id = distribution_id();
     let target = target("scheduled");
@@ -203,6 +204,7 @@ fn online_scheduled_runs_in_process_under_real_clock_with_exact_counts() {
 /// `offline` reports the virtual clock and byte-exact provenance, while `online`
 /// reports the real clock. Both serve the identical request count.
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn offline_and_online_agree_on_served_counts_and_differ_only_on_clock() {
     let distribution_id = distribution_id();
     let phases = json!([{
@@ -263,6 +265,7 @@ fn offline_and_online_agree_on_served_counts_and_differ_only_on_clock() {
 /// args. Both measure real wall-clock latency, so the comparison is exact:
 /// counts identical, every latency stat within 3%, throughput >= native.
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn online_product_path_matches_native_live_replay_within_3pct() {
     const REQUESTS: usize = 16;
     const BLOCK_SIZE: usize = 16;
@@ -472,6 +475,7 @@ fn python_bin() -> Option<&'static str> {
 /// AIPerf product throughput >= native. Skips when the native checkout/python is
 /// unavailable (cross-repo integration gate).
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
     let Some(native_dir) = dynamo_native_dir() else {
         eprintln!("SKIP: no dynamo-aiperf-native checkout (set AIPERF_DYNAMO_NATIVE_DIR)");
@@ -674,6 +678,7 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
 /// precision — the parity that failed (tens of percent) before the single-engine
 /// fix under prefill saturation. Skips when the native checkout/python is absent.
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn offline_product_path_is_byte_exact_with_python_dynamo_replay() {
     let Some(native_dir) = dynamo_native_dir() else {
         eprintln!("SKIP: no dynamo-aiperf-native checkout");

@@ -7,13 +7,13 @@ use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
 use aiperf_runner::protocol_v2::{
-    RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
-    RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
+    RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2, RunnerFailureStageV2,
+    RunnerOperationV2, ValidationCompletenessV2, RUNNER_PROTOCOL_V2,
 };
 use aiperf_runner::redaction::redact_diagnostic;
-use aiperf_runner::{RunnerApplication, current_distribution_id};
+use aiperf_runner::{current_distribution_id, RunnerApplication};
 use serde::Deserialize;
-use serde_json::{Value, value::RawValue};
+use serde_json::{value::RawValue, Value};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -45,7 +45,7 @@ fn main() {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.len() == 1 && arguments[0] == "--capabilities" {
         let application = compose_stock_application();
-        write_json_line(&application.capabilities(), 0);
+        write_json_line(&application.catalog(), 0);
     }
     if !arguments.is_empty() {
         eprintln!("usage: aiperf-runner [--capabilities]");
@@ -88,7 +88,7 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     };
     if !matches!(
         envelope
-            .pointer("/run/transport/type")
+            .pointer("/run/cfg/transport/type")
             .and_then(Value::as_str),
         Some("dynosim_offline" | "dynosim_online")
     ) {
@@ -142,7 +142,6 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
 struct EnvelopeBootstrapV2 {
     protocol_version: u32,
     operation: RunnerOperationV2,
-    expected_distribution_id: String,
     run: Box<RawValue>,
 }
 
@@ -172,16 +171,6 @@ fn run_v2(input: &[u8], application: &RunnerApplication) -> ! {
             ),
         );
     }
-    if bootstrap.expected_distribution_id != distribution_id {
-        write_v2_protocol_failure(
-            Some(bootstrap.operation),
-            distribution_id,
-            benchmark_id_from_raw(&bootstrap.run),
-            "distribution_mismatch",
-            "expected_distribution_id does not match the image executing this process".to_owned(),
-        );
-    }
-
     let envelope = match serde_json::from_slice::<RunnerEnvelopeV2>(input) {
         Ok(envelope) => envelope,
         Err(error) => write_v2_protocol_failure(
@@ -239,7 +228,6 @@ fn write_v2_internal_panic(
             &RunValidationV2 {
                 protocol_version: RUNNER_PROTOCOL_V2,
                 event: "run_validation",
-                distribution_id,
                 benchmark_id,
                 success: false,
                 completeness: ValidationCompletenessV2::Static,
@@ -271,17 +259,14 @@ fn operation_hint(input: &[u8]) -> Option<RunnerOperationV2> {
 fn benchmark_id_hint(input: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(input).ok()?;
     value
-        .pointer("/run/identity/benchmark_id")?
+        .pointer("/run/benchmark_id")?
         .as_str()
         .map(str::to_owned)
 }
 
 fn benchmark_id_from_raw(run: &RawValue) -> Option<String> {
     let value: Value = serde_json::from_str(run.get()).ok()?;
-    value
-        .pointer("/identity/benchmark_id")?
-        .as_str()
-        .map(str::to_owned)
+    value.pointer("/benchmark_id")?.as_str().map(str::to_owned)
 }
 
 fn write_v2_protocol_failure(
@@ -296,7 +281,6 @@ fn write_v2_protocol_failure(
             &RunValidationV2 {
                 protocol_version: RUNNER_PROTOCOL_V2,
                 event: "run_validation",
-                distribution_id,
                 benchmark_id,
                 success: false,
                 completeness: ValidationCompletenessV2::Static,
@@ -317,7 +301,7 @@ fn write_v2_protocol_failure(
 }
 
 fn write_v2_terminal_failure(
-    distribution_id: String,
+    _distribution_id: String,
     benchmark_id: Option<String>,
     stage: RunnerFailureStageV2,
     code: &str,
@@ -328,7 +312,6 @@ fn write_v2_terminal_failure(
         &RunTerminalV2 {
             protocol_version: RUNNER_PROTOCOL_V2,
             event: "run_terminal",
-            distribution_id,
             benchmark_id,
             success: false,
             report_path: None,

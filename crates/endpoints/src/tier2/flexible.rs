@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 
 use crate::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
 use crate::endpoints::{Endpoint, number_array, try_extract_embeddings};
-use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
+use crate::metadata::{EndpointDescriptor, EndpointType, Modality};
 use crate::models::{
     EndpointError, EndpointResult, ExtractedPayload, Media, ParsedResponse, RequestInfo,
     RequestRecord, ResponseData, ServerResponse, Turn,
@@ -97,9 +97,6 @@ impl Endpoint for RawEndpoint {
         &RAW_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Raw)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -127,9 +124,6 @@ impl Endpoint for TemplateEndpoint {
         &TEMPLATE_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Template)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)

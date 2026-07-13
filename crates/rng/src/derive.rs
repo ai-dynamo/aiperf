@@ -4,18 +4,15 @@
 //! Hash-derived seed algebra for order-independent random streams.
 //!
 //! Components name their stream and the
-//! child seed depends only on `(root_seed, identifier)`. The Rust port deliberately
-//! uses BLAKE3 rather than Python's SHA-256 because the project does not require
-//! cross-language byte parity; the stable contract is BLAKE3's first eight digest
-//! bytes interpreted as a big-endian `u64`.
+//! child seed depends only on `(root_seed, identifier)`. The stable contract is
+//! BLAKE3's first eight digest bytes interpreted as a big-endian `u64`.
 
 use crate::generator::RandomGenerator;
 
 /// Root seed for a reproducible run.
 ///
 /// `Some(seed)` produces deterministic child streams. `None` makes every derived
-/// generator seed from OS/thread entropy, matching Python's seedless pass-through
-/// semantics without a global singleton.
+/// generator seed from OS/thread entropy without a global singleton.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RngRoot(pub Option<u64>);
 
@@ -60,10 +57,9 @@ impl RngRoot {
 
     /// Derive the deterministic child seed for `identifier`.
     ///
-    /// Returns `None` when this root is seedless. For seeded roots, this is the
-    /// BLAKE3 port of Python `_RNGManager.derive`: hash the UTF-8 bytes of
-    /// `"{root}:{identifier}"` and read the first eight digest bytes as a
-    /// big-endian `u64`.
+    /// Returns `None` when this root is seedless. For seeded roots, hashes the
+    /// UTF-8 bytes of `"{root}:{identifier}"` and reads the first eight digest
+    /// bytes as a big-endian `u64`.
     pub fn derive_seed(self, identifier: &str) -> Option<u64> {
         self.0.map(|root| {
             let mut root_buf = itoa::Buffer::new();
@@ -106,8 +102,7 @@ impl RngRoot {
 
     /// Derive an adaptive-sweep variation seed for `label`.
     ///
-    /// Mirrors Python `derive_variation_seed(root, label)` with the BLAKE3 hash
-    /// selected by the Rust RNG spec: `"{root}:variation:{label}"`.
+    /// For seeded roots, hashes `"{root}:variation:{label}"` with BLAKE3.
     pub fn derive_variation_seed(self, label: &str) -> Option<u64> {
         self.0.map(|root| {
             let mut root_buf = itoa::Buffer::new();

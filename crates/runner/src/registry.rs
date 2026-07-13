@@ -823,7 +823,6 @@ impl RunnerRegistryFactory for BuiltinRunnerRegistryFactory {
         builder.register_transport(Arc::new(OnlineHttpTransportFactoryV2))?;
         builder.register_workload(Arc::new(ScheduledWorkloadFactoryV2))?;
         builder.register_workload(Arc::new(GraphWorkloadFactoryV2))?;
-        builder.register_workload(Arc::new(StaticAccuracyWorkloadFactoryV2))?;
         register_optional_builtin_components(&mut builder)?;
         builder.freeze()
     }
@@ -835,7 +834,6 @@ fn register_optional_builtin_components(builder: &mut RunnerRegistryBuilder) -> 
     // base build prevents capability code from growing mode string branches.
     crate::online_execution::register_http_pairs(builder)?;
     crate::online_execution::register_http_scheduled_pair(builder)?;
-    crate::online_execution::register_http_static_accuracy_pair(builder)?;
     crate::grpc_execution::register_grpc_pairs(builder)?;
     #[cfg(feature = "dynosim")]
     crate::offline_execution::register_dynosim_transport(builder)?;
@@ -1536,6 +1534,7 @@ impl RunnerWorkloadFactory for GraphWorkloadFactoryV2 {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // Linked but off the BenchmarkRun product wire for this cut.
 struct StaticAccuracyWorkloadFactoryV2;
 
 impl RunnerWorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
@@ -2079,7 +2078,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected_transports
         );
-        let expected_workloads = vec!["graph", "scheduled", "static_accuracy"];
+        let expected_workloads = vec!["graph", "scheduled"];
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -2097,14 +2096,12 @@ mod tests {
             ("grpc", "scheduled"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
         ];
         #[cfg(not(feature = "dynosim"))]
         let expected_supported = vec![
             ("grpc", "scheduled"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
         ];
         #[cfg(feature = "dynosim")]
         let expected_static = vec![
@@ -2116,7 +2113,6 @@ mod tests {
             ("grpc", "scheduled"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
         ];
         #[cfg(not(feature = "dynosim"))]
         let expected_static = vec![
@@ -2124,7 +2120,6 @@ mod tests {
             ("grpc", "scheduled"),
             ("http", "graph"),
             ("http", "scheduled"),
-            ("http", "static_accuracy"),
         ];
         assert_eq!(registry.supported_pairs(), expected_supported);
         assert_eq!(registry.statically_compatible_pairs(), expected_static);

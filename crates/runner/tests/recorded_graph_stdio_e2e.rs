@@ -64,7 +64,27 @@ fn capabilities() -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-fn run_child(request: Value) -> Output {
+fn benchmark_run(legacy: Value) -> Value {
+    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+    endpoint.as_object_mut().unwrap().remove("id");
+    json!({
+        "benchmark_id": legacy["identity"]["benchmark_id"],
+        "artifact_dir": legacy["artifact_target"],
+        "random_seed": legacy["identity"]["random_seed"],
+        "cfg": {
+            "models": legacy["resources"]["models"],
+            "endpoint": endpoint,
+            "datasets": [legacy["workload"]["config"]["dataset"]],
+            "phases": legacy["workload"]["config"]["phases"],
+            "tokenizer": legacy["workload"]["config"]["tokenizer"],
+            "transport": {"type": legacy["transport"]["type"]},
+            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        }
+    })
+}
+
+fn run_child(mut request: Value) -> Output {
+    request["run"] = benchmark_run(request["run"].take());
     let bytes = serde_json::to_vec(&request).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
         .stdin(Stdio::piped())
@@ -89,7 +109,6 @@ fn synthesis() -> Value {
 }
 
 fn request(
-    distribution_id: &Value,
     endpoint: &str,
     artifact_target: &std::path::Path,
     benchmark_id: &str,
@@ -98,7 +117,6 @@ fn request(
     json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": distribution_id,
         "run": {
             "identity": {"benchmark_id": benchmark_id, "random_seed": 2_026_070_7_u64},
             "artifact_target": artifact_target,
@@ -164,10 +182,8 @@ async fn config_v2_weka_and_dynamo_dispatch_byte_identical_http_bodies() {
 
     let capabilities = capabilities();
     assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["http", "graph"]))
+        capabilities["transport"].get("http").is_some(),
+        "{capabilities}"
     );
     let endpoint = format!("http://{address}");
     let temporary = tempfile::tempdir().unwrap();
@@ -228,9 +244,7 @@ async fn config_v2_weka_and_dynamo_dispatch_byte_identical_http_bodies() {
     let weka_artifacts = temporary.path().join("weka-artifacts");
     let dynamo_artifacts = temporary.path().join("dynamo-artifacts");
 
-    let distribution_id = &capabilities["distribution_id"];
     let weka = request(
-        distribution_id,
         &endpoint,
         &weka_artifacts,
         "weka-recorded-parity",
@@ -242,7 +256,6 @@ async fn config_v2_weka_and_dynamo_dispatch_byte_identical_http_bodies() {
             .unwrap(),
     );
     let dynamo = request(
-        distribution_id,
         &endpoint,
         &dynamo_artifacts,
         "dynamo-recorded-parity",
@@ -268,7 +281,7 @@ async fn config_v2_weka_and_dynamo_dispatch_byte_identical_http_bodies() {
 
     let body: Value = serde_json::from_slice(&weka.body).unwrap();
     assert_eq!(body["model"], "recorded-model");
-    assert_eq!(body["max_tokens"], 1);
+    assert_eq!(body["max_completion_tokens"], 1);
     assert_eq!(body["stream"], true);
     assert_eq!(body["messages"].as_array().unwrap().len(), 1);
     assert_eq!(body["messages"][0]["role"], "user");

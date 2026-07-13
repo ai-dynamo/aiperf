@@ -16,7 +16,7 @@ use crate::endpoints::{
     non_empty_field, require_prepared_turns,
 };
 use crate::extraction::{PartTypes, extract_inputs};
-use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
+use crate::metadata::{EndpointDescriptor, Modality};
 use crate::models::{
     EndpointResult, ExtractedPayload, ParsedResponse, RequestInfo, RequestRecord, ResponseData,
     ServerResponse, Turn,
@@ -70,9 +70,6 @@ impl Endpoint for MessagesEndpoint {
         &MESSAGES_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Messages)
-    }
 
     fn format_headers(&self, config: &EndpointConfig) -> BTreeMap<String, String> {
         let mut headers =

@@ -226,6 +226,7 @@ fn assert_success(
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn warmup_and_profiling_share_one_engine_clock_and_exact_live_parity_collector() {
     let distribution_id = distribution_id();
     let target = target("warmup-profiling");
@@ -286,6 +287,7 @@ fn warmup_and_profiling_share_one_engine_clock_and_exact_live_parity_collector()
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn vllm_token_native_dataset_reaches_dynamo_without_request_reencoding() {
     let distribution_id = distribution_id();
     let target = target("vllm-token-native");
@@ -332,6 +334,7 @@ fn vllm_token_native_dataset_reaches_dynamo_without_request_reencoding() {
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn every_scheduled_phase_family_and_ramp_curve_executes_through_the_pair() {
     let distribution_id = distribution_id();
     let cases = [
@@ -464,6 +467,7 @@ fn adaptive(control_variable: &str, minimum: f64, maximum: f64) -> Value {
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn every_adaptive_actuator_executes_and_commits_schema_v2_artifacts() {
     let distribution_id = distribution_id();
     let cases = [

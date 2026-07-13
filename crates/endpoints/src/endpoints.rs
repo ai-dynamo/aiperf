@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::config::{EndpointConfig, RawEndpointConfig};
 use crate::extraction::{PartTypes, extract_inputs};
-use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
+use crate::metadata::{EndpointDescriptor, Modality};
 use crate::models::{
     CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media, ParsedResponse,
     RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
@@ -25,15 +25,7 @@ pub const WARMUP_SYSTEM_MESSAGE_PREFIX: &str =
 /// Endpoint adapter contract.
 pub trait Endpoint: std::fmt::Debug + Send + Sync {
     /// Return the canonical open-ID descriptor registered with the runner.
-    fn descriptor(&self) -> &'static EndpointDescriptor {
-        crate::registry::legacy_descriptor_for(self.metadata().endpoint_type)
-    }
-    /// Return static capability metadata.
-    ///
-    /// This closed-enum view is retained only for protocol-v1 callers. New
-    /// endpoint implementations register an [`crate::EndpointFactory`] and do
-    /// not require an [`EndpointType`] variant.
-    fn metadata(&self) -> &'static EndpointMetadata;
+    fn descriptor(&self) -> &'static EndpointDescriptor;
     /// Build a decoded JSON request body.
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value>;
     /// Build endpoint-owned request headers before per-turn overrides.
@@ -236,9 +228,6 @@ impl Endpoint for ChatEndpoint {
         &CHAT_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Chat)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -363,9 +352,6 @@ impl Endpoint for ResponsesEndpoint {
         &RESPONSES_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Responses)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -518,9 +504,6 @@ impl Endpoint for CompletionsEndpoint {
         &COMPLETIONS_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Completions)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -602,9 +585,6 @@ impl Endpoint for EmbeddingsEndpoint {
         &EMBEDDINGS_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::Embeddings)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -651,9 +631,6 @@ impl Endpoint for ChatEmbeddingsEndpoint {
         &CHAT_EMBEDDINGS_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::ChatEmbeddings)
-    }
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
     }

@@ -43,16 +43,27 @@ async fn chat() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
 }
 
-fn capabilities() -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap()
+fn benchmark_run(legacy: Value) -> Value {
+    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+    endpoint.as_object_mut().unwrap().remove("id");
+    json!({
+        "benchmark_id": legacy["identity"]["benchmark_id"],
+        "artifact_dir": legacy["artifact_target"],
+        "random_seed": legacy["identity"]["random_seed"],
+        "cfg": {
+            "models": legacy["resources"]["models"],
+            "endpoint": endpoint,
+            "datasets": [legacy["workload"]["config"]["dataset"]],
+            "phases": legacy["workload"]["config"]["phases"],
+            "tokenizer": legacy["workload"]["config"]["tokenizer"],
+            "transport": {"type": legacy["transport"]["type"]},
+            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        }
+    })
 }
 
-fn run_child(request: Value) -> Output {
+fn run_child(mut request: Value) -> Output {
+    request["run"] = benchmark_run(request["run"].take());
     let bytes = serde_json::to_vec(&request).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
         .stdin(Stdio::piped())
@@ -65,13 +76,12 @@ fn run_child(request: Value) -> Output {
 }
 
 /// Run the fixed scenario at `worker_count` and return the native-v2 report.
-fn run_scenario(distribution_id: &Value, address: SocketAddr, worker_count: u64) -> Value {
+fn run_scenario(address: SocketAddr, worker_count: u64) -> Value {
     let artifacts = tempfile::tempdir().unwrap();
     let artifact_target = artifacts.path().join("run");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": distribution_id,
         "run": {
             "identity": {
                 "benchmark_id": "worker-local-accumulation-parity",
@@ -171,17 +181,13 @@ async fn worker_local_accumulation_is_byte_identical_across_worker_counts() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    let distribution_id = capabilities()["distribution_id"].clone();
-
     let single = {
-        let distribution_id = distribution_id.clone();
-        tokio::task::spawn_blocking(move || run_scenario(&distribution_id, address, 1))
+        tokio::task::spawn_blocking(move || run_scenario(address, 1))
             .await
             .unwrap()
     };
     let split = {
-        let distribution_id = distribution_id.clone();
-        tokio::task::spawn_blocking(move || run_scenario(&distribution_id, address, 4))
+        tokio::task::spawn_blocking(move || run_scenario(address, 4))
             .await
             .unwrap()
     };

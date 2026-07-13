@@ -183,8 +183,11 @@ class EndpointConfig(BaseConfig):
     ]
 
     @field_serializer("api_key", when_used="json")
-    def _redact_api_key(self, value: str | None) -> str | None:
+    def _redact_api_key(self, value: str | None, info: Any) -> str | None:
         """Never serialize the raw API key into exported JSON artifacts."""
+        context = getattr(info, "context", None)
+        if isinstance(context, dict) and context.get("include_secrets"):
+            return value
         from aiperf.common.redact import REDACTED_VALUE
 
         if value is None:
@@ -304,13 +307,16 @@ class EndpointConfig(BaseConfig):
     ]
 
     @field_serializer("headers", when_used="json")
-    def _redact_headers(self, value: dict[str, str]) -> dict[str, str]:
+    def _redact_headers(self, value: dict[str, str], info: Any) -> dict[str, str]:
         """Redact credential-bearing header values in exported JSON artifacts.
 
         Mirrors the api_key serializer above: profile_export_aiperf.json and
         server_metrics_export.json otherwise leak Authorization / X-API-Key /
         api-key etc. verbatim into on-disk artifacts.
         """
+        context = getattr(info, "context", None)
+        if isinstance(context, dict) and context.get("include_secrets"):
+            return value
         from aiperf.common.redact import redact_headers
 
         return redact_headers(value) or {}

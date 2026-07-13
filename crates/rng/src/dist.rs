@@ -609,8 +609,8 @@ pub struct SequenceLengthDistribution {
 }
 
 impl SequenceLengthDistribution {
-    /// Construct a distribution. Probabilities must match Python's `np.isclose`
-    /// check against 100.0 with `rtol=1e-6, atol=1e-6`.
+    /// Construct a distribution. Probabilities must be close to 100.0 with
+    /// `rtol=1e-6, atol=1e-6`.
     pub fn new(pairs: Vec<SequenceLengthPair>) -> Result<Self> {
         if pairs.is_empty() {
             return Err(RngError::EmptySequence {
@@ -1336,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn sequence_distribution_probability_sum_matches_python_isclose_tolerance() {
+    fn sequence_distribution_probability_sum_uses_isclose_tolerance() {
         let accepted = SequenceLengthDistribution::new(vec![
             SequenceLengthPair::new(10, 20, 50.0).unwrap(),
             SequenceLengthPair::new(30, 40, 50.000_05).unwrap(),

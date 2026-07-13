@@ -55,32 +55,25 @@ fn run_child(request: Value, environment: &[(&str, &str)]) -> Output {
 
 #[test]
 fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
-    let capabilities = capabilities();
     let artifacts = tempfile::tempdir().unwrap();
-    let artifact_target = artifacts.path().join("must-not-exist");
+    let artifact_dir = artifacts.path().join("must-not-exist");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "online-v2-invalid-graph"},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "online-v2-invalid-graph",
+            "artifact_dir": artifact_dir,
+            "cfg": {
                 "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
+                "endpoint": {
                     "type": "chat",
                     "urls": ["http://127.0.0.1:1"],
                     "streaming": true,
                     "wait_for_model_timeout": 0.0,
                     "wait_for_model_interval": 5.0,
                     "wait_for_model_mode": "inference"
-                }]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "graph", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "file",
                     "format": "dag_jsonl",
                     "sampling": "sequential",
@@ -92,7 +85,7 @@ fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
                             "max_tokens": 1
                         }]
                     }]
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -105,8 +98,10 @@ fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
                     "exclude_from_results": false,
                     "sessions": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     });
     let output = run_child(request, &[]);
@@ -119,7 +114,7 @@ fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
             .unwrap()
             .contains("missing-profile")
     );
-    assert!(!artifact_target.exists());
+    assert!(!artifact_dir.exists());
 }
 
 async fn model_metadata() -> impl IntoResponse {
@@ -221,36 +216,28 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    let capabilities = capabilities();
     assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["http", "scheduled"]))
+        capabilities()["transport"].get("http").is_some(),
+        "catalog must expose the HTTP transport"
     );
     let artifacts = tempfile::tempdir().unwrap();
-    let artifact_target = artifacts.path().join("kserve-v1-run");
+    let artifact_dir = artifacts.path().join("kserve-v1-run");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "online-v2-kserve-v1", "random_seed": 9},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "online-v2-kserve-v1",
+            "artifact_dir": artifact_dir,
+            "random_seed": 9,
+            "cfg": {
                 "models": {"items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
+                "endpoint": {
                     "type": "kserve_v1_predict",
                     "urls": [format!("http://{address}")],
                     "streaming": false,
                     "wait_for_model_timeout": 0.0
-                }]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "synthetic",
                     "entries": 1,
                     "sampling": "sequential",
@@ -258,7 +245,7 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
                         "isl": {"value": 4.0},
                         "osl": {"value": 1.0}
                     }
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -271,8 +258,10 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
                     "exclude_from_results": false,
                     "requests": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     });
     let output = tokio::task::spawn_blocking(move || run_child(request, &[]))
@@ -290,7 +279,7 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
     assert_eq!(terminal["provenance"]["transport"], "http");
     assert_eq!(terminal["provenance"]["workload"], "scheduled");
     let report: Value =
-        serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
+        serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
     assert_eq!(
         report["run"]["endpoint_profiles"],
@@ -309,40 +298,29 @@ async fn scheduled_pair_executes_vllm_token_arrays_without_text_round_trip() {
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    let capabilities = capabilities();
-    let descriptor = capabilities["endpoints"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|descriptor| descriptor["id"] == "vllm_generate")
-        .expect("vllm_generate is in the exact-image endpoint catalog");
+    let descriptor = &capabilities()["endpoint"]["vllm_generate"]["metadata"];
     assert_eq!(descriptor["requires_raw_token_ids"], true);
     assert_eq!(descriptor["tokenizes_input"], false);
     assert_eq!(descriptor["produces_tokens"], true);
 
     let artifacts = tempfile::tempdir().unwrap();
-    let artifact_target = artifacts.path().join("vllm-generate-run");
+    let artifact_dir = artifacts.path().join("vllm-generate-run");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "online-v2-vllm-generate", "random_seed": 19},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "online-v2-vllm-generate",
+            "artifact_dir": artifact_dir,
+            "random_seed": 19,
+            "cfg": {
                 "models": {"items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
+                "endpoint": {
                     "type": "vllm_generate",
                     "urls": [format!("http://{address}")],
                     "streaming": false,
                     "wait_for_model_timeout": 0.0
-                }]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "synthetic",
                     "entries": 1,
                     "sampling": "sequential",
@@ -350,7 +328,7 @@ async fn scheduled_pair_executes_vllm_token_arrays_without_text_round_trip() {
                         "isl": {"value": 4.0},
                         "osl": {"value": 3.0}
                     }
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -363,8 +341,10 @@ async fn scheduled_pair_executes_vllm_token_arrays_without_text_round_trip() {
                     "exclude_from_results": false,
                     "requests": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     });
     let output = tokio::task::spawn_blocking(move || run_child(request, &[]))
@@ -379,7 +359,7 @@ async fn scheduled_pair_executes_vllm_token_arrays_without_text_round_trip() {
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["success"], true);
     let report: Value =
-        serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
+        serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
     assert_eq!(
         report["run"]["endpoint_profiles"],
@@ -411,35 +391,28 @@ async fn scheduled_pair_executes_vllm_token_arrays_without_text_round_trip() {
 
 #[test]
 fn vllm_token_requirement_fails_during_dataset_preparation() {
-    let capabilities = capabilities();
     let artifacts = tempfile::tempdir().unwrap();
-    let artifact_target = artifacts.path().join("must-not-exist");
+    let artifact_dir = artifacts.path().join("must-not-exist");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "vllm-generate-invalid-dataset"},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "vllm-generate-invalid-dataset",
+            "artifact_dir": artifact_dir,
+            "cfg": {
                 "models": {"items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
+                "endpoint": {
                     "type": "vllm_generate",
                     "urls": ["http://127.0.0.1:1"],
                     "streaming": false,
                     "wait_for_model_timeout": 0.0
-                }]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "file",
                     "format": "single_turn",
                     "sampling": "sequential",
                     "records": [{"text": "this must not be tokenized on dispatch"}]
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -452,8 +425,10 @@ fn vllm_token_requirement_fails_during_dataset_preparation() {
                     "exclude_from_results": false,
                     "requests": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     });
 
@@ -467,7 +442,7 @@ fn vllm_token_requirement_fails_during_dataset_preparation() {
             .unwrap()
             .contains("raw_token_ids")
     );
-    assert!(!artifact_target.exists());
+    assert!(!artifact_dir.exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -480,38 +455,32 @@ async fn scheduled_pair_serves_generated_image_urls_for_the_full_run_lifecycle()
     let port_reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let content_port = port_reservation.local_addr().unwrap().port();
     drop(port_reservation);
-    let capabilities = capabilities();
     let artifacts = tempfile::tempdir().unwrap();
-    let artifact_target = artifacts.path().join("content-server-run");
+    let artifact_dir = artifacts.path().join("content-server-run");
     let content_dir = artifacts.path().join("content");
     std::fs::create_dir(&content_dir).unwrap();
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "online-v2-content-server", "random_seed": 9},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "online-v2-content-server",
+            "artifact_dir": artifact_dir,
+            "random_seed": 9,
+            "cfg": {
                 "models": {"items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
+                "endpoint": {
                     "type": "chat",
                     "urls": [format!("http://{address}")],
                     "streaming": true,
                     "wait_for_model_timeout": 0.0
-                }]},
-                "sidecars": {"content_server": {
+                },
+                "content_server": {
                     "host": "127.0.0.1",
                     "port": content_port,
                     "content_dir": content_dir,
                     "max_tracked_records": 100
-                }}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "synthetic",
                     "entries": 1,
                     "sampling": "sequential",
@@ -527,7 +496,7 @@ async fn scheduled_pair_serves_generated_image_urls_for_the_full_run_lifecycle()
                         "source": "noise",
                         "source_sampling": "random-with-replacement"
                     }
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -540,8 +509,10 @@ async fn scheduled_pair_serves_generated_image_urls_for_the_full_run_lifecycle()
                     "exclude_from_results": false,
                     "requests": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     });
     let output = tokio::task::spawn_blocking(move || run_child(request, &[]))
@@ -588,29 +559,34 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-    let capabilities = capabilities();
     assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["http", "graph"]))
+        capabilities()["transport"].get("http").is_some(),
+        "catalog must expose the HTTP transport"
     );
     let artifacts = tempfile::tempdir().unwrap();
-    let artifact_target = artifacts.path().join("graph-run");
+    let artifact_dir = artifacts.path().join("graph-run");
     let cache = artifacts.path().join("cache");
     let endpoint = format!("http://{address}");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
-            "identity": {"benchmark_id": "online-v2-graph", "random_seed": 7},
-            "artifact_target": artifact_target,
-            "resources": {
+            "benchmark_id": "online-v2-graph",
+            "artifact_dir": artifact_dir,
+            "random_seed": 7,
+            "cfg": {
                 "models": {"strategy": "round_robin", "items": [{"name": "fixture-model"}]},
-                "endpoints": {"profiles": [
-                    {
-                        "id": "judge",
+                "endpoint": {
+                    "type": "chat",
+                    "urls": [endpoint],
+                    "streaming": true,
+                    "use_server_token_count": true,
+                    "wait_for_model_timeout": 0.0,
+                    "wait_for_model_interval": 5.0,
+                    "wait_for_model_mode": "inference"
+                },
+                "endpoint_profiles": {
+                    "judge": {
                         "type": "chat_completions",
                         "urls": [endpoint],
                         "streaming": true,
@@ -618,23 +594,9 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
                         "wait_for_model_timeout": 0.0,
                         "wait_for_model_interval": 5.0,
                         "wait_for_model_mode": "inference"
-                    },
-                    {
-                        "id": "default",
-                        "type": "chat",
-                        "urls": [endpoint],
-                        "streaming": true,
-                        "use_server_token_count": true,
-                        "wait_for_model_timeout": 0.0,
-                        "wait_for_model_interval": 5.0,
-                        "wait_for_model_mode": "inference"
                     }
-                ]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "graph", "config": {
-                "worker_count": 1,
-                "dataset": {
+                },
+                "datasets": [{
                     "type": "file",
                     "format": "dag_jsonl",
                     "sampling": "sequential",
@@ -645,7 +607,7 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
                             "max_tokens": 1
                         }]
                     }]
-                },
+                }],
                 "tokenizer": {
                     "name": "fixture/model",
                     "revision": "locked",
@@ -658,8 +620,10 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
                     "exclude_from_results": false,
                     "sessions": 1,
                     "concurrency": 1
-                }]
-            }}
+                }],
+                "transport": {"type": "http"},
+                "runtime": {"workers": 1}
+            }
         }
     });
     let output = tokio::task::spawn_blocking(move || {
@@ -685,20 +649,16 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
     assert_eq!(terminal["provenance"]["transport"], "http");
     assert_eq!(terminal["provenance"]["workload"], "graph");
     let report: Value =
-        serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
+        serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
-    assert_eq!(
-        report["run"]["distribution_id"],
-        capabilities["distribution_id"]
-    );
     assert_eq!(report["run"]["transport"], "http");
     assert_eq!(report["run"]["workload"], "graph");
     assert_eq!(report["run"]["extensions"], json!([]));
     assert_eq!(
         report["run"]["endpoint_profiles"],
         json!([
-            {"profile_id": "judge", "endpoint_id": "chat"},
-            {"profile_id": "default", "endpoint_id": "chat"}
+            {"profile_id": "default", "endpoint_id": "chat"},
+            {"profile_id": "judge", "endpoint_id": "chat"}
         ])
     );
     assert_eq!(report["run"]["mode"], "graph");

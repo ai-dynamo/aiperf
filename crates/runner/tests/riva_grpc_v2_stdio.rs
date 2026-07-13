@@ -70,7 +70,28 @@ fn capabilities() -> Value {
     one_json_line(&output)
 }
 
+fn benchmark_run(legacy: Value) -> Value {
+    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+    endpoint.as_object_mut().unwrap().remove("id");
+    json!({
+        "benchmark_id": legacy["identity"]["benchmark_id"],
+        "artifact_dir": legacy["artifact_target"],
+        "random_seed": legacy["identity"]["random_seed"],
+        "cfg": {
+            "models": legacy["resources"]["models"],
+            "endpoint": endpoint,
+            "datasets": [legacy["workload"]["config"]["dataset"]],
+            "phases": legacy["workload"]["config"]["phases"],
+            "tokenizer": legacy["workload"]["config"]["tokenizer"],
+            "transport": {"type": legacy["transport"]["type"]},
+            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        }
+    })
+}
+
 fn run_child(request: &Value) -> Output {
+    let mut request = request.clone();
+    request["run"] = benchmark_run(request["run"].take());
     let mut child = Command::new(binary())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -81,12 +102,12 @@ fn run_child(request: &Value) -> Output {
         .stdin
         .take()
         .unwrap()
-        .write_all(serde_json::to_string(request).unwrap().as_bytes())
+        .write_all(serde_json::to_string(&request).unwrap().as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
 }
 
-fn operation(distribution_id: &str, operation: &str, target: &std::path::Path, url: &str) -> Value {
+fn operation(operation: &str, target: &std::path::Path, url: &str) -> Value {
     // Valid mono 16-bit PCM WAV containing four silent 16 kHz samples.
     let wav = STANDARD.encode(
         b"RIFF,\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x80>\0\0\0}\0\0\x02\0\x10\0data\x08\0\0\0\0\0\0\0\0\0\0\0",
@@ -94,7 +115,6 @@ fn operation(distribution_id: &str, operation: &str, target: &std::path::Path, u
     json!({
         "protocol_version": 2,
         "operation": operation,
-        "expected_distribution_id": distribution_id,
         "run": {
             "identity": {"benchmark_id": "native-riva-asr-v2", "random_seed": 11},
             "artifact_target": target,
@@ -293,24 +313,20 @@ impl StreamingService<Bytes> for StreamingRecognizeSvc {
 async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
     let (url, captured, shutdown, server) = start_server().await;
     let capabilities = capabilities();
-    let endpoint_types = capabilities["endpoint_types"].as_array().unwrap();
     for endpoint in RIVA_ENDPOINTS {
         assert!(
-            endpoint_types.contains(&json!(endpoint)),
-            "missing {endpoint} from {endpoint_types:?}"
+            capabilities["endpoint"].get(endpoint).is_some(),
+            "missing {endpoint} from {capabilities}"
         );
     }
     assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["grpc", "scheduled"]))
+        capabilities["transport"].get("grpc").is_some(),
+        "{capabilities}"
     );
 
     let temporary = tempfile::tempdir().unwrap();
     let target = temporary.path().join("riva-run");
-    let distribution_id = capabilities["distribution_id"].as_str().unwrap();
-    let validation = operation(distribution_id, "validate", &target, &url);
+    let validation = operation("validate", &target, &url);
     let validation_output = tokio::task::spawn_blocking(move || run_child(&validation))
         .await
         .unwrap();
@@ -324,7 +340,7 @@ async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
     assert_eq!(validation_response["success"], true);
     assert!(!target.exists(), "validation created artifacts");
 
-    let execution = operation(distribution_id, "execute", &target, &url);
+    let execution = operation("execute", &target, &url);
     let output = tokio::task::spawn_blocking(move || run_child(&execution))
         .await
         .unwrap();

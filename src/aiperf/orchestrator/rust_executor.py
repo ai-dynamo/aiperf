@@ -23,7 +23,6 @@ from aiperf.orchestrator.native_report import (
     project_native_summary,
 )
 from aiperf.orchestrator.runner_installation import RunnerInstallation
-from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_V2
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
@@ -73,7 +72,6 @@ class RustSubprocessExecutor(RunExecutor):
                 completed.stdout,
                 run,
                 protocol_version=request["protocol_version"],
-                distribution_id=self.installation.distribution_id,
                 returncode=completed.returncode,
                 stderr=completed.stderr,
             )
@@ -113,7 +111,6 @@ def _parse_terminal(
     run: BenchmarkRun,
     *,
     protocol_version: int,
-    distribution_id: str | None = None,
     returncode: int | None = None,
     stderr: bytes = b"",
 ) -> dict[str, Any]:
@@ -139,10 +136,6 @@ def _parse_terminal(
         "event": "run_terminal",
         "benchmark_id": run.benchmark_id,
     }
-    if protocol_version == RUNNER_PROTOCOL_V2:
-        if distribution_id is None:
-            raise ValueError("protocol-v2 terminal validation requires distribution_id")
-        expected["distribution_id"] = distribution_id
     for field, value in expected.items():
         if terminal.get(field) != value:
             raise ValueError(

@@ -97,18 +97,31 @@ fn find_files(root: &Path, name: &str, found: &mut Vec<PathBuf>) {
     }
 }
 
-fn request(distribution_id: &str, operation: &str, target: &std::path::Path, url: &str) -> Value {
+fn request(operation: &str, artifact_dir: &std::path::Path, url: &str) -> Value {
     json!({
         "protocol_version": 2,
         "operation": operation,
-        "expected_distribution_id": distribution_id,
         "run": {
-            "identity": {"benchmark_id": "native-grpc-v2", "random_seed": 7},
-            "artifact_target": target,
-            "transport": {"type": "grpc", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 2,
-                "dataset": {
+            "benchmark_id": "native-grpc-v2",
+            "artifact_dir": artifact_dir,
+            "random_seed": 7,
+            "cfg": {
+                "models": {
+                    "strategy": "round_robin",
+                    "items": [{"name": "fixture-model"}, {"name": "second-model"}]
+                },
+                "endpoint": {
+                    "type": "kserve_v2_infer",
+                    "urls": [url],
+                    "streaming": true,
+                    "use_server_token_count": false,
+                    "timeout": 10.0,
+                    "connection_reuse": "pooled",
+                    "headers": {"authorization": "Bearer fixture"},
+                    "http2": false,
+                    "wait_for_model_timeout": 0.0
+                },
+                "datasets": [{
                     "type": "synthetic",
                     "entries": 2,
                     "sampling": "sequential",
@@ -116,7 +129,7 @@ fn request(distribution_id: &str, operation: &str, target: &std::path::Path, url
                         "isl": {"value": 4.0},
                         "osl": {"value": 1.0}
                     }
-                },
+                }],
                 "tokenizer": {
                     "name": "cl100k_base",
                     "revision": "main",
@@ -129,28 +142,9 @@ fn request(distribution_id: &str, operation: &str, target: &std::path::Path, url
                     "exclude_from_results": false,
                     "requests": 2,
                     "concurrency": 2
-                }]
-            }},
-            "resources": {
-                "models": {
-                    "strategy": "round_robin",
-                    "items": [{"name": "fixture-model"}, {"name": "second-model"}]
-                },
-                "endpoints": {"profiles": [{
-                    "id": "default",
-                    "type": "kserve_v2_infer",
-                    "urls": [url],
-                    "streaming": true,
-                    "use_server_token_count": false,
-                    "timeout_seconds": 10.0,
-                    "connection_reuse": "pooled",
-                    "headers": {"authorization": "Bearer fixture"},
-                    "http2": false,
-                    "wait_for_model_timeout": 0.0
-                }]},
-                "metrics": {},
-                "artifacts": {},
-                "sidecars": {}
+                }],
+                "transport": {"type": "grpc"},
+                "runtime": {"workers": 2}
             }
         }
     })
@@ -363,28 +357,18 @@ async fn start_server() -> (
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     let (url, captured, shutdown, server) = start_server().await;
-    let capabilities = capabilities();
     assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["grpc", "scheduled"]))
+        capabilities()["transport"].get("grpc").is_some(),
+        "catalog must expose the gRPC transport"
     );
     assert!(
-        capabilities["endpoint_types"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("kserve_v2_infer"))
+        capabilities()["endpoint"].get("kserve_v2_infer").is_some(),
+        "catalog must expose the KServe v2 endpoint"
     );
 
     let temporary = tempfile::tempdir().unwrap();
     let target = temporary.path().join("grpc-run");
-    let validation = request(
-        capabilities["distribution_id"].as_str().unwrap(),
-        "validate",
-        &target,
-        &url,
-    );
+    let validation = request("validate", &target, &url);
     let validation_output = tokio::task::spawn_blocking(move || run_child(&validation))
         .await
         .unwrap();
@@ -398,12 +382,7 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     assert_eq!(validation_response["success"], true);
     assert!(!target.exists(), "v2 validation created artifacts");
 
-    let execution = request(
-        capabilities["distribution_id"].as_str().unwrap(),
-        "execute",
-        &target,
-        &url,
-    );
+    let execution = request("execute", &target, &url);
     let output = tokio::task::spawn_blocking(move || run_child(&execution))
         .await
         .unwrap();

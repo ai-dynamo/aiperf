@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 
 use crate::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::{Endpoint, merge_extra, parse_embeddings_response, turn_texts};
-use crate::metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
+use crate::metadata::{EndpointDescriptor, Modality};
 use crate::models::{
     EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,
     ParsedResponse, RequestInfo, ResponseData, ServerResponse, VideoResponseData,
@@ -258,9 +258,6 @@ impl Endpoint for NimEmbeddingsEndpoint {
         &NIM_EMBEDDINGS_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::NimEmbeddings)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -449,14 +446,10 @@ fn ranking_inputs(body: &Value, flavor: RankingFlavor) -> ExtractedPayload {
 }
 
 macro_rules! ranking_endpoint {
-    ($ty:ty, $endpoint_type:ident, $flavor:ident, $descriptor:ident) => {
+    ($ty:ty, $flavor:ident, $descriptor:ident) => {
         impl Endpoint for $ty {
             fn descriptor(&self) -> &'static EndpointDescriptor {
                 &$descriptor
-            }
-
-            fn metadata(&self) -> &'static EndpointMetadata {
-                metadata_for(EndpointType::$endpoint_type)
             }
 
             fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
@@ -487,33 +480,15 @@ macro_rules! ranking_endpoint {
     };
 }
 
-ranking_endpoint!(
-    NimRankingsEndpoint,
-    NimRankings,
-    Nim,
-    NIM_RANKINGS_DESCRIPTOR
-);
-ranking_endpoint!(
-    CohereRankingsEndpoint,
-    CohereRankings,
-    Cohere,
-    COHERE_RANKINGS_DESCRIPTOR
-);
-ranking_endpoint!(
-    HfTeiRankingsEndpoint,
-    HfTeiRankings,
-    HfTei,
-    HF_TEI_RANKINGS_DESCRIPTOR
-);
+ranking_endpoint!(NimRankingsEndpoint, Nim, NIM_RANKINGS_DESCRIPTOR);
+ranking_endpoint!(CohereRankingsEndpoint, Cohere, COHERE_RANKINGS_DESCRIPTOR);
+ranking_endpoint!(HfTeiRankingsEndpoint, HfTei, HF_TEI_RANKINGS_DESCRIPTOR);
 
 impl Endpoint for HuggingFaceGenerateEndpoint {
     fn descriptor(&self) -> &'static EndpointDescriptor {
         &HUGGINGFACE_GENERATE_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::HuggingfaceGenerate)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -601,9 +576,6 @@ impl Endpoint for ImageGenerationEndpoint {
         &IMAGE_GENERATION_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::ImageGeneration)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -652,9 +624,6 @@ impl Endpoint for ImageEditEndpoint {
         &IMAGE_EDIT_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::ImageEdit)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -833,9 +802,6 @@ impl Endpoint for VideoGenerationEndpoint {
         &VIDEO_GENERATION_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::VideoGeneration)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -924,9 +890,6 @@ impl Endpoint for ImageRetrievalEndpoint {
         &IMAGE_RETRIEVAL_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::ImageRetrieval)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)
@@ -1005,9 +968,6 @@ impl Endpoint for SolidoRagEndpoint {
         &SOLIDO_RAG_DESCRIPTOR
     }
 
-    fn metadata(&self) -> &'static EndpointMetadata {
-        metadata_for(EndpointType::SolidoRag)
-    }
 
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
         format_legacy_payload(self, request_info)

@@ -14,8 +14,6 @@ import yaml
 from aiperf.cli_commands.config import expand, init, validate
 from aiperf.orchestrator.rust_wire import build_authored_run_request
 
-_DISTRIBUTION_ID = "blake3:" + "a" * 64
-
 _VALID_BENCHMARK = textwrap.dedent("""\
 benchmark:
   models: [llama]
@@ -35,12 +33,19 @@ benchmark:
 class _RecordingRunnerInstallation:
     """Exact-image stand-in that records authored validation without I/O."""
 
-    def __init__(self, supported_pairs: list[list[str]], *, protocol_v2: bool = True):
-        self.capabilities = {
-            "protocol_versions": [1, 2] if protocol_v2 else [1],
-            "distribution_id": _DISTRIBUTION_ID,
-            "supported_pairs": supported_pairs,
+    def __init__(
+        self,
+        *,
+        catalog: dict | None = None,
+        accept_preflight: bool = True,
+    ):
+        self.capabilities = catalog or {
+            "schema_version": "1.0",
+            "endpoint": {"chat": {}},
+            "transport": {"http": {}},
+            "synthetic": {"synthetic": {}},
         }
+        self.accept_preflight = accept_preflight
         self.projected_runs = []
         self.validated_runs = []
         self.validation_error: Exception | None = None
@@ -50,11 +55,15 @@ class _RecordingRunnerInstallation:
         return build_authored_run_request(
             run,
             operation=operation,
-            expected_distribution_id=_DISTRIBUTION_ID,
         )
 
+    def preflight_request(self, request):
+        if not self.accept_preflight:
+            raise RuntimeError("catalog does not advertise requested ids")
+
     def supports_pair(self, backend_id: str, workload_id: str) -> bool:
-        return [backend_id, workload_id] in self.capabilities["supported_pairs"]
+        del backend_id, workload_id
+        return False
 
     def validate_authored_run(self, run):
         self.validated_runs.append(run)
@@ -64,7 +73,7 @@ class _RecordingRunnerInstallation:
 
     def validate_authored_request(self, request, *, benchmark_id: str):
         assert request["operation"] == "validate"
-        assert request["run"]["identity"]["benchmark_id"] == benchmark_id
+        assert request["run"]["benchmark_id"] == benchmark_id
         self.validated_runs.append(self.projected_runs[-1])
         if self.validation_error is not None:
             raise self.validation_error
@@ -463,7 +472,7 @@ class TestConfigValidate:
                 """),
             encoding="utf-8",
         )
-        installation = _RecordingRunnerInstallation([["http", "scheduled"]])
+        installation = _RecordingRunnerInstallation()
         resolutions = _select_runner(monkeypatch, installation)
         monkeypatch.setattr(
             "aiperf.config.resolution.resolvers.build_default_resolver_chain",
@@ -489,10 +498,10 @@ class TestConfigValidate:
     @pytest.mark.parametrize(
         "installation",
         [
-            _RecordingRunnerInstallation([], protocol_v2=False),
-            _RecordingRunnerInstallation([["dynamo_offline", "graph"]]),
+            _RecordingRunnerInstallation(catalog={"endpoint": {"chat": {}}}),
+            _RecordingRunnerInstallation(accept_preflight=False),
         ],
-        ids=["v1-only", "unmatched-v2-pair"],
+        ids=["unusable-catalog", "catalog-miss"],
     )
     def test_native_validation_preserves_python_only_compatibility_without_pair(
         self,
@@ -508,7 +517,7 @@ class TestConfigValidate:
         validate(config_file)
 
         assert installation.validated_runs == []
-        if installation.capabilities["protocol_versions"] == [1]:
+        if "schema_version" not in installation.capabilities:
             assert installation.projected_runs == []
         else:
             assert len(installation.projected_runs) == 1
@@ -522,7 +531,7 @@ class TestConfigValidate:
     ) -> None:
         config_file = tmp_path / "benchmark.yaml"
         config_file.write_text(_VALID_BENCHMARK, encoding="utf-8")
-        installation = _RecordingRunnerInstallation([["http", "scheduled"]])
+        installation = _RecordingRunnerInstallation()
         installation.validation_error = RuntimeError("authored phase rejected")
         _select_runner(monkeypatch, installation)
 

@@ -186,7 +186,7 @@ fn huggingface_generate_uses_streaming_path_and_incremental_token_text() {
     assert_eq!(body["parameters"]["temperature"], 0.2);
     assert_eq!(body["details"], true);
     assert_eq!(
-        HuggingFaceGenerateEndpoint.metadata().streaming_path,
+        HuggingFaceGenerateEndpoint.descriptor().streaming_path,
         Some("/generate_stream")
     );
 
@@ -260,7 +260,7 @@ fn image_generation_and_edit_cover_streaming_full_and_multipart_descriptor_shape
     assert_eq!(body["image"]["content_type"], "image/png");
     assert_eq!(body["image"]["filename"], "image.png");
     assert_eq!(body["seed"], 5);
-    assert!(ImageEditEndpoint.metadata().requires_form_data);
+    assert!(ImageEditEndpoint.descriptor().requires_form_data);
 
     let full = ImageEditEndpoint
         .parse_response(&ServerResponse::from_json(
@@ -288,7 +288,7 @@ fn video_image_retrieval_and_solido_preserve_non_text_response_data() {
         ))
         .unwrap();
     assert_eq!(video["seconds"], 8);
-    assert!(VideoGenerationEndpoint.metadata().requires_polling);
+    assert!(VideoGenerationEndpoint.descriptor().requires_polling);
     let parsed = VideoGenerationEndpoint
         .parse_response(&ServerResponse::from_json(
             14,
@@ -320,7 +320,7 @@ fn video_image_retrieval_and_solido_preserve_non_text_response_data() {
             .image_count,
         2
     );
-    assert!(ImageRetrievalEndpoint.metadata().requires_inline_media);
+    assert!(ImageRetrievalEndpoint.descriptor().requires_inline_media);
     let parsed = ImageRetrievalEndpoint
         .parse_response(&ServerResponse::from_json(
             15,

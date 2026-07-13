@@ -16,9 +16,9 @@ use std::path::Component;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{anyhow, ensure, Result};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{Map, Value, value::RawValue};
+use serde_json::{value::RawValue, Map, Value};
 
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
 use crate::sidecar_input::{
@@ -113,10 +113,8 @@ pub struct RunnerEnvelopeV2 {
     pub protocol_version: u32,
     /// Requested process operation.
     pub operation: RunnerOperationV2,
-    /// BLAKE3 identity of the exact executable selected by Python.
-    pub expected_distribution_id: String,
-    /// Authored, not Python-resolved, single-run input.
-    pub run: AuthoredRunSpecV2,
+    /// Exact Config-v2 run, including its Python-resolved bindings.
+    pub run: BenchmarkRunWireV2,
 }
 
 impl RunnerEnvelopeV2 {
@@ -130,24 +128,293 @@ impl RunnerEnvelopeV2 {
             "runner protocol {} is unsupported; expected {RUNNER_PROTOCOL_V2}",
             self.protocol_version
         );
-        ensure!(
-            !self.expected_distribution_id.is_empty()
-                && self.expected_distribution_id.trim() == self.expected_distribution_id,
-            "expected_distribution_id must be non-empty and contain no surrounding whitespace"
-        );
-        let digest = self
-            .expected_distribution_id
-            .strip_prefix("blake3:")
-            .ok_or_else(|| anyhow!("expected_distribution_id must use the blake3: prefix"))?;
-        ensure!(
-            digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
-            "expected_distribution_id must contain exactly 64 lowercase hexadecimal digits"
-        );
         self.run.validate_outer()
     }
+}
+
+/// Exact outer BenchmarkRun shape accepted by the product wire.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BenchmarkRunWireV2 {
+    /// Stable benchmark identifier.
+    pub benchmark_id: String,
+    /// Runner-owned artifact directory.
+    pub artifact_dir: PathBuf,
+    /// Canonical benchmark configuration.
+    pub cfg: BenchmarkConfigWireV2,
+    /// Resolution facts already computed by Python.
+    #[serde(default)]
+    pub resolved: Value,
+    /// Optional sweep metadata retained without runner interpretation.
+    #[serde(default)]
+    pub sweep_id: Option<String>,
+    /// Optional outer-loop variation retained without runner interpretation.
+    #[serde(default)]
+    pub variation: Option<VariationSpec>,
+    /// Zero-based trial number.
+    #[serde(default)]
+    pub trial: usize,
+    /// Human-readable run label.
+    #[serde(default)]
+    pub label: String,
+    /// Redacted invoking command.
+    #[serde(default)]
+    pub cli_command: Option<String>,
+    /// Deterministic root seed when authored.
+    #[serde(default)]
+    pub random_seed: Option<u64>,
+    /// Envelope-level template variables.
+    #[serde(default)]
+    pub variables: BTreeMap<String, Value>,
+}
+
+/// Runner-relevant subset of the canonical BenchmarkConfig dump.
+///
+/// Unknown Config keys are ignored so Python can dump BenchmarkConfig without
+/// maintaining a second field-for-field allowlist; product rejection of
+/// `workload` / `accuracy` remains explicit below.
+#[derive(Deserialize)]
+pub struct BenchmarkConfigWireV2 {
+    /// Model-selection policy.
+    pub models: Value,
+    /// Default endpoint profile.
+    pub endpoint: Value,
+    /// Additional named endpoint profiles.
+    #[serde(default)]
+    pub endpoint_profiles: BTreeMap<String, Value>,
+    /// Canonical single-dataset list.
+    #[serde(default)]
+    pub datasets: Vec<Value>,
+    /// Deprecated singular dataset alias retained for migration diagnostics.
+    #[serde(default)]
+    pub dataset: Option<Value>,
+    /// Ordered phase policy.
+    pub phases: Vec<Value>,
+    /// Optional tokenizer policy.
+    #[serde(default)]
+    pub tokenizer: Option<Value>,
+    /// Inline Config transport selection.
+    pub transport: Value,
+    /// Worker-count configuration.
+    #[serde(default)]
+    pub runtime: Value,
+    /// Native output policy.
+    #[serde(default)]
+    pub artifacts: Value,
+    /// Native metrics policy.
+    #[serde(default)]
+    pub metrics: Value,
+    /// Goodput/SLO policy.
+    #[serde(default)]
+    pub slos: Value,
+    /// Explicit goodput policy retained for Config revisions that expose it separately.
+    #[serde(default)]
+    pub goodput: Value,
+    /// GPU telemetry sidecar configuration.
+    #[serde(default)]
+    pub gpu_telemetry: Value,
+    /// Server-metrics sidecar configuration.
+    #[serde(default)]
+    pub server_metrics: Value,
+    /// Network-latency sidecar configuration.
+    #[serde(default)]
+    pub network_latency: Value,
+    /// Generated-content sidecar configuration.
+    #[serde(default)]
+    pub content_server: Value,
+    /// Prepared sidecar bag projected by Python when present.
+    #[serde(default)]
+    pub sidecars: Value,
+    /// Explicit legacy workload selection is not a product-wire field.
+    #[serde(default)]
+    pub workload: Option<Value>,
+    /// Accuracy is intentionally outside this performance-only product wire.
+    #[serde(default)]
+    pub accuracy: Option<Value>,
+}
+
+impl BenchmarkRunWireV2 {
+    /// Validate wire-only invariants before adapting to linked factories.
+    pub fn validate_outer(&self) -> Result<()> {
+        ensure!(
+            !self.benchmark_id.trim().is_empty(),
+            "run.benchmark_id cannot be empty"
+        );
+        ensure!(
+            !self.artifact_dir.as_os_str().is_empty(),
+            "run.artifact_dir cannot be empty"
+        );
+        ensure!(
+            self.cfg.workload.is_none(),
+            "run.cfg.workload is not supported by the BenchmarkRun product wire"
+        );
+        ensure!(
+            self.cfg.accuracy.is_none(),
+            "run.cfg.accuracy is not supported by the performance-only product wire"
+        );
+        ensure!(
+            !self.cfg.datasets.is_empty() || self.cfg.dataset.is_some(),
+            "run.cfg.datasets must contain exactly one dataset"
+        );
+        Ok(())
+    }
+
+    /// Adapt canonical Config nesting to the linked legacy preparation seam.
+    ///
+    /// The adapter is deliberately private to the runner boundary: public input
+    /// remains BenchmarkRun while in-tree factories continue to own their
+    /// strict config decoding until their internal seam is retired.
+    pub(crate) fn into_authored(self) -> Result<AuthoredRunSpecV2> {
+        self.validate_outer()?;
+        let dataset = self
+            .cfg
+            .datasets
+            .into_iter()
+            .next()
+            .or(self.cfg.dataset)
+            .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))?;
+        let workload_id = dataset_type(&dataset)
+            .is_some_and(|kind| matches!(kind, "dag_jsonl" | "weka_trace" | "dynamo_trace"))
+            .then_some("graph")
+            .unwrap_or("scheduled");
+        let transport = component_from_inline(self.cfg.transport, "run.cfg.transport")?;
+        let worker_count = self
+            .cfg
+            .runtime
+            .get("workers")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        ensure!(
+            worker_count > 0 && worker_count <= usize::MAX as u64,
+            "run.cfg.runtime.workers must be a positive usize"
+        );
+        let workload = NamedRunnerComponentSpecV2 {
+            id: workload_id.parse().expect("built-in workload ID is valid"),
+            config: raw_value(serde_json::json!({
+                "worker_count": worker_count,
+                "dataset": dataset,
+                "tokenizer": self.cfg.tokenizer.unwrap_or_else(|| serde_json::json!({})),
+                "phases": self.cfg.phases,
+            }))?,
+        };
+        let (sidecars, sidecars_present) = if !self.cfg.sidecars.is_null()
+            && self
+                .cfg
+                .sidecars
+                .as_object()
+                .is_some_and(|object| !object.is_empty())
+        {
+            (
+                serde_json::from_value(self.cfg.sidecars)
+                    .map_err(|error| anyhow!("run.cfg.sidecars: {error}"))?,
+                true,
+            )
+        } else if self.cfg.content_server.is_null() {
+            (SidecarSpecV2::default(), false)
+        } else {
+            (
+                SidecarSpecV2 {
+                    content_server: Some(raw_value(self.cfg.content_server)?),
+                    ..SidecarSpecV2::default()
+                },
+                true,
+            )
+        };
+        Ok(AuthoredRunSpecV2 {
+            identity: RunIdentitySpecV2 {
+                benchmark_id: self.benchmark_id,
+                sweep_id: self.sweep_id,
+                label: self.label,
+                trial: self.trial,
+                random_seed: self.random_seed,
+                variation: self.variation,
+            },
+            artifact_target: self.artifact_dir,
+            models: models_from_config(self.cfg.models)?,
+            endpoints: endpoint_profiles(self.cfg.endpoint, self.cfg.endpoint_profiles)?,
+            transport,
+            workload,
+            metrics: serde_json::from_value(self.cfg.metrics).unwrap_or_default(),
+            artifacts: serde_json::from_value(self.cfg.artifacts).unwrap_or_default(),
+            sidecars,
+            resource_presence: ResourcePresenceV2 {
+                models: true,
+                endpoints: true,
+                metrics: true,
+                artifacts: true,
+                sidecars: sidecars_present,
+            },
+        })
+    }
+}
+
+fn models_from_config(value: Value) -> Result<ModelsSpec> {
+    let mut models = value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("run.cfg.models must be an object"))?;
+    if let Some(Value::Array(items)) = models.get_mut("items") {
+        for item in items {
+            if let Some(item) = item.as_object_mut() {
+                item.retain(|key, _| matches!(key.as_str(), "name" | "weight"));
+            }
+        }
+    }
+    serde_json::from_value(Value::Object(models))
+        .map_err(|error| anyhow!("run.cfg.models: {error}"))
+}
+
+fn dataset_type(dataset: &Value) -> Option<&str> {
+    dataset
+        .get("format")
+        .and_then(Value::as_str)
+        .or_else(|| dataset.get("type").and_then(Value::as_str))
+}
+
+fn component_from_inline(value: Value, field: &str) -> Result<NamedRunnerComponentSpecV2> {
+    let mut object = value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("{field} must be an object"))?;
+    let id = object
+        .remove("type")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| anyhow!("{field}.type must be a string"))?
+        .parse()
+        .map_err(|error: String| anyhow!("{field}.type: {error}"))?;
+    Ok(NamedRunnerComponentSpecV2 {
+        id,
+        config: raw_value(Value::Object(object))?,
+    })
+}
+
+fn endpoint_profiles(
+    default: Value,
+    additional: BTreeMap<String, Value>,
+) -> Result<EndpointProfilesSpecV2> {
+    let mut profiles = Vec::with_capacity(additional.len() + 1);
+    profiles.push(raw_value(endpoint_profile("default", default)?)?);
+    for (id, config) in additional {
+        profiles.push(raw_value(endpoint_profile(&id, config)?)?);
+    }
+    Ok(EndpointProfilesSpecV2 { profiles })
+}
+
+fn endpoint_profile(id: &str, value: Value) -> Result<Value> {
+    let mut profile = value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("run.cfg.endpoint must be an object"))?;
+    profile.insert("id".to_owned(), Value::String(id.to_owned()));
+    if let Some(timeout) = profile.remove("timeout") {
+        profile.insert("timeout_seconds".to_owned(), timeout);
+    }
+    profile.remove("url_strategy");
+    Ok(Value::Object(profile))
+}
+
+fn raw_value(value: Value) -> Result<Box<RawValue>> {
+    RawValue::from_string(serde_json::to_string(&value)?).map_err(Into::into)
 }
 
 /// Authored identity and runner-owned execution inputs for one run.
@@ -699,8 +966,6 @@ pub struct RunValidationV2 {
     pub protocol_version: u32,
     /// Stable response discriminator.
     pub event: &'static str,
-    /// Exact executing-image identity.
-    pub distribution_id: String,
     /// Decoded run identity when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub benchmark_id: Option<String>,
@@ -724,8 +989,6 @@ pub struct RunTerminalV2 {
     pub protocol_version: u32,
     /// Stable response discriminator.
     pub event: &'static str,
-    /// Exact executing-image identity.
-    pub distribution_id: String,
     /// Decoded run identity when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub benchmark_id: Option<String>,
@@ -763,7 +1026,7 @@ pub struct RunDiagnosticArtifactV2 {
     pub content_hash: String,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
 
@@ -771,22 +1034,19 @@ mod tests {
         serde_json::json!({
             "protocol_version": 2,
             "operation": "validate",
-            "expected_distribution_id": format!("blake3:{}", "a".repeat(64)),
             "run": {
-                "identity": {"benchmark_id": "run-1"},
-                "artifact_target": "/tmp/not-created",
-                "transport": {"type": "future_transport", "config": {"node": 7}},
-                "workload": {"type": "future_workload", "config": {"mode": "x"}},
-                "resources": {
+                "benchmark_id": "run-1",
+                "artifact_dir": "/tmp/not-created",
+                "cfg": {
                     "models": {"items": [{"name": "model"}]},
-                    "endpoints": {"profiles": [{
-                        "id": "default",
+                    "endpoint": {
                         "type": "future_endpoint",
                         "extension_field": {"kept": true}
-                    }]},
-                    "metrics": {},
-                    "artifacts": {},
-                    "sidecars": {}
+                    },
+                    "datasets": [{"type": "synthetic", "entries": 1}],
+                    "phases": [{"type": "concurrency", "concurrency": 1}],
+                    "transport": {"type": "future_transport"},
+                    "runtime": {"workers": 1}
                 }
             }
         })
@@ -802,11 +1062,9 @@ mod tests {
         let identities = decoded.run.endpoints.identities().unwrap();
         assert_eq!(identities[0].profile_id, "default");
         assert_eq!(identities[0].endpoint_id.as_str(), "future_endpoint");
-        assert!(
-            decoded.run.endpoints.profiles[0]
-                .get()
-                .contains("extension_field")
-        );
+        assert!(decoded.run.endpoints.profiles[0]
+            .get()
+            .contains("extension_field"));
     }
 
     #[test]

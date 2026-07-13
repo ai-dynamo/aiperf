@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Projection from Config v2 into the strict protocol-v2 single-run contract.
+"""Serialize BenchmarkRun into the strict protocol-v2 runner envelope.
 
-Config v2 remains the user-facing and orchestration schema; protocol v2 has a
-side-effect-free authored projection. Raw Pydantic dumps are deliberately not
-the outer process boundary.
+The wire ``run`` body uses BenchmarkRun field names (``artifact_dir``, ``cfg``,
+``resolved``, …). Nested factory inputs inside ``cfg`` (phases, datasets,
+tokenizer) are lowered into the shapes linked runner factories already decode;
+Python-only presentation sections are stripped via an explicit exclude set.
 """
 
 from __future__ import annotations
@@ -35,134 +36,97 @@ if TYPE_CHECKING:
 RUNNER_PROTOCOL_V2 = 2
 SERVER_METRICS_PARQUET_WIRE_PATH = Path(".aiperf-server-metrics-parquet-wire.jsonl")
 RunnerOperationV2 = Literal["validate", "execute"]
-_DISTRIBUTION_ID_PREFIX = "blake3:"
-_DISTRIBUTION_ID_HEX_LENGTH = 64
+
+# Presentation / Python-orchestration sections that must not cross the wire.
+_CFG_WIRE_EXCLUDE = frozenset(
+    {
+        "logging",
+        "wandb",
+        "otel",
+        "mlflow",
+    }
+)
 
 
 class RustWireError(ValueError):
-    """Raised when a resolved Config v2 run cannot enter the native ABI."""
+    """Raised when a BenchmarkRun cannot enter the native wire envelope."""
 
 
 def build_authored_run_request(
     run: BenchmarkRun,
     *,
     operation: RunnerOperationV2,
-    expected_distribution_id: str,
 ) -> dict[str, Any]:
-    """Project one Config-v2 run into the strict protocol-v2 envelope.
-
-    This projection reads authored/structurally normalized configuration only:
-    it never reads ``BenchmarkRun.resolved``, loads a dataset, inspects the
-    filesystem, warms a tokenizer, creates artifacts, or starts a worker. The
-    Factory selection remains open, while every built-in policy object is
-    explicitly lowered into its stable runner-owned shape.
-    """
+    """Build the protocol-v2 envelope around a BenchmarkRun-shaped dump."""
     if operation not in ("validate", "execute"):
         raise RustWireError(
             f"protocol-v2 operation must be 'validate' or 'execute', got {operation!r}"
         )
-    if not _is_distribution_id(expected_distribution_id):
-        raise RustWireError(
-            "protocol-v2 expected_distribution_id must be 'blake3:' followed by "
-            "exactly 64 lowercase hexadecimal characters"
-        )
-
     return {
         "protocol_version": RUNNER_PROTOCOL_V2,
         "operation": operation,
-        "expected_distribution_id": expected_distribution_id,
-        "run": _authored_run_v2(run),
+        "run": dump_benchmark_run(run),
     }
 
 
-def _is_distribution_id(value: object) -> bool:
-    if not isinstance(value, str) or not value.startswith(_DISTRIBUTION_ID_PREFIX):
-        return False
-    hexadecimal = value[len(_DISTRIBUTION_ID_PREFIX) :]
-    return len(hexadecimal) == _DISTRIBUTION_ID_HEX_LENGTH and all(
-        character in "0123456789abcdef" for character in hexadecimal
+def dump_benchmark_run(run: BenchmarkRun) -> dict[str, Any]:
+    """Serialize one BenchmarkRun for the runner with nested factory lowering."""
+    payload = run.model_dump(
+        mode="json",
+        by_alias=False,
+        exclude_none=False,
+        context={"include_secrets": True},
     )
+    cfg = payload.get("cfg")
+    if not isinstance(cfg, dict):
+        raise RustWireError("BenchmarkRun.cfg must dump to an object")
 
+    for key in _CFG_WIRE_EXCLUDE:
+        cfg.pop(key, None)
+    if cfg.get("workload") is None:
+        cfg.pop("workload", None)
 
-def _authored_run_v2(run: BenchmarkRun) -> dict[str, Any]:
-    """Assemble the provisional v2 run body in one alignment point."""
-    cfg = run.cfg
-    dataset = cfg.get_default_dataset()
-    identity: dict[str, Any] = {
-        "benchmark_id": run.benchmark_id,
-        "label": run.label,
-        "trial": run.trial,
+    # Nested factory inputs keep their runner-owned shapes until PhaseSpec /
+    # dataset adapters accept raw Config dumps directly.
+    dataset = run.cfg.get_default_dataset()
+    cfg["models"] = _authored_models(run.cfg)
+    cfg["endpoint"] = _authored_endpoint(run.cfg.endpoint, include_readiness=True)
+    cfg["endpoint_profiles"] = {
+        profile_id: _authored_endpoint(profile, include_readiness=True)
+        for profile_id, profile in run.cfg.endpoint_profiles.items()
     }
-    _set_optional(identity, "random_seed", run.random_seed)
-    if run.variation is not None:
-        identity["variation"] = {
-            "index": run.variation.index,
-            "label": run.variation.label,
-            "values": copy.deepcopy(run.variation.values),
-        }
-
-    workload = _authored_workload(run, dataset)
-    endpoint_profiles = [
-        {
-            "id": "default",
-            **_authored_endpoint(cfg.endpoint, include_readiness=True),
-        }
-    ]
-    endpoint_profiles.extend(
-        {
-            "id": profile_id,
-            **_authored_endpoint(profile, include_readiness=True),
-        }
-        for profile_id, profile in cfg.endpoint_profiles.items()
-    )
-    resources: dict[str, Any] = {
-        "models": _authored_models(cfg),
-        "endpoints": {"profiles": endpoint_profiles},
-        "metrics": _authored_metrics(cfg),
-        "artifacts": _authored_artifacts(run),
+    cfg["datasets"] = [_authored_dataset_v2(run, dataset)]
+    cfg.pop("dataset", None)
+    cfg["phases"] = [_phase(phase) for phase in run.cfg.phases]
+    cfg["tokenizer"] = _authored_tokenizer_v2(run.cfg)
+    cfg["transport"] = _inline_transport(run.cfg.transport)
+    cfg["runtime"] = {
+        key: value
+        for key, value in (cfg.get("runtime") or {}).items()
+        if key in {"workers", "workers_max", "workers_min"}
     }
-    # Evaluation host effects are selected inside the provider-neutral
-    # workload object. Its runner descriptor forbids the generic sidecar
-    # resource, so an empty compatibility block must not turn into authored
-    # sidecar presence on the strict v2 wire.
-    if workload["type"] != "evaluation":
-        resources["sidecars"] = _authored_sidecars(run)
-    return {
-        "identity": identity,
-        "artifact_target": str(run.artifact_dir),
-        "transport": _authored_transport(cfg.transport),
-        "workload": workload,
-        "resources": resources,
-    }
+    cfg["metrics"] = _authored_metrics(run.cfg)
+    cfg["artifacts"] = _authored_artifacts(run)
+    if "sidecars" not in cfg:
+        # Sidecar presence remains Config-section driven; the runner adapter
+        # materializes them from these lowered blocks when present.
+        cfg["sidecars"] = _authored_sidecars(run)
+    return payload
 
 
-def _authored_transport(transport: Any) -> dict[str, Any]:
-    """Re-nest the inline transport model into the runner's ``{type, config}`` frame.
-
-    Config v2 authors transport as an inline discriminated union (``type`` plus the
-    variant's own fields), matching ``dataset`` / ``phases`` / ``endpoint``.  The
-    strict runner, however, decodes ``NamedRunnerComponentSpecV2`` = ``{type,
-    config}`` with a deferred ``config: Box<RawValue>``.  Split the discriminator
-    back out as the frame tag and carry every remaining authored field as the
-    opaque ``config`` payload, so the wire the runner sees is byte-for-byte the
-    prior contract.
-    """
-    # ``exclude_unset`` keeps the dynosim payload to authored fields only (the
-    # runner fills omitted keys from its ``serde`` defaults); extra keys captured
-    # by ``OpenTransport(extra="allow")`` are always retained.
+def _inline_transport(transport: Any) -> dict[str, Any]:
+    """Keep Config's inline discriminated transport object on the wire."""
     config = transport.model_dump(
         mode="json",
         by_alias=False,
         exclude_unset=True,
         exclude_none=True,
     )
-    config.pop("type", None)
-    # Rust decodes required_features into a BTreeSet (order-independent), but the
-    # wire bytes must be deterministic across runs, so emit a sorted list rather
-    # than a nondeterministic set iteration order.
+    # Discriminator must always be present even when it is the model default.
+    config["type"] = str(transport.type)
     if "required_features" in config:
         config["required_features"] = sorted(config["required_features"])
-    return {"type": str(transport.type), "config": config}
+    return config
 
 
 def _authored_models(cfg: Any) -> dict[str, Any]:

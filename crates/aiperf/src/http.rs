@@ -2019,7 +2019,7 @@ mod tests {
         assert_eq!(binding.config.api_key.as_deref(), Some(endpoint_secret));
         assert_eq!(binding.config.headers["anthropic-beta"], "secret-beta");
         assert_eq!(
-            binding.endpoint.metadata().endpoint_type,
+            binding.endpoint.descriptor().legacy_type().expect("legacy endpoint type"),
             EndpointType::Messages
         );
         assert!(rehydrated.endpoint_aware);

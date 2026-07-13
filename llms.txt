@@ -433,26 +433,22 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   prepared-binding convergence remains. The addendum also
   pins authored preflight, completeness, the strict v2 envelope, and exact image identity;
   mode reachability is intentionally delegated to the next spec.
-- `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **decided /
-  canonical pair matrix built; authoritative for native product reachability**:
-  one strict image-bound v2 runner envelope composes registered transports
-  (`http`, `grpc`, `dynosim_offline`, `dynosim_online`) with scheduled,
-  Graph-IR, static-accuracy, or stateful-agentic workloads. The
-  decoder, typed terminals, factory-owned strict config decode, registry-derived
-  static compatibility, and executable-only `supported_pairs` are built. HTTP
-  agentic/graph/scheduled/static-accuracy and gRPC scheduled
-  adapters have execution and subprocess proofs; exact deployment-owned evaluator
-  roots conditionally add the stock `http + evaluation` GSM8K adapter, while
-  unavailable and remaining combinations stay unregistered.
-  `dag_jsonl`, `weka_trace`, and `dynamo_trace` are direct-loaded by the graph
-  pair and lowered once through the runner-owned Graph-IR authored-input adapter
-  and exactly one format-specific compiler.
+- `specs/2026-07-11-aiperf-runner-only-execution-surface-design.md` — **canonical
+  pair matrix built; wire/discovery superseded 2026-07-13**: sole native runner
+  and fail-closed reachability remain; request envelope, `supported_pairs`, and
+  distribution pinning are superseded by the BenchmarkRun wire + catalog design.
 - `specs/2026-07-11-python-orchestrator-rust-single-run-design.md` — **built
-  protocol-v2-only product path**: Python `aiperf` is the only human frontend
-  and `aiperf-runner` the only Rust executable. Python owns structural Config v2 and
-  outer/presentation loops; the authored v2 request avoids resolved state and side
-  effects. Rust owns strict image-bound static validation and direct pair
-  preparation; Python never resolves or converts to protocol v1.
+  protocol-v2-only product path; wire/projection superseded 2026-07-13**: Python
+  CLI/Config ownership and sole `aiperf-runner` child remain; authored
+  `transport`/`workload` projection and “no resolved” rule are superseded by the
+  BenchmarkRun wire + catalog design.
+- `specs/2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` — **built
+  (performance wire + catalog; dead-mode modules linked but off product wire)**:
+  `run` is BenchmarkRun-shaped JSON including `resolved`; thin
+  `{protocol_version, operation, run}` envelope; `--capabilities` emits a
+  linked-inventory JSON catalog in `plugins.yaml` category shape; no
+  distribution pin / workload / backend dialect; path selection from
+  `cfg.transport` + dataset format.
 - `specs/2026-07-10-unified-graph-runtime-design.md` — **the realization design**:
   every load mode reduces to one dispatch verb on the clock-scheduled graph
   executor; strategies become `Workload` schedule generators. Supersedes the

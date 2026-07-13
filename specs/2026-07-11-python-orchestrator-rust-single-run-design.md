@@ -307,3 +307,19 @@ between `transport.type: dynosim_offline` and `transport.type:
 dynosim_online`, with no `replay_mode` field. The core process claim remains:
 Python projects one side-effect-free protocol-v2 request and never resolves or
 falls back through protocol v1.
+
+## Addendum — 2026-07-13 (BenchmarkRun wire + runner catalog)
+
+The Python↔runner request body and discovery contract are redesigned in
+`specs/2026-07-13-benchmarkrun-wire-and-runner-catalog-design.md` (decided / not
+yet implemented). That design supersedes this spec's authored-projection
+dialect, `expected_distribution_id` pinning, `transport`/`workload` `{type,
+config}` framing, side-effect-free “no resolved” projection rule, and
+pair-matrix preflight against `supported_pairs`.
+
+Authoritative replacement claims: `run` is exact `BenchmarkRun` JSON including
+`resolved` (Config resolution product, not private cache); discovery is a
+linked-inventory JSON catalog shaped like `plugins.yaml` categories; no
+`workload` selection axis; performance-only product path for the cut. The
+process ownership claim (Python CLI/Config, single-run `aiperf-runner`) is
+unchanged.

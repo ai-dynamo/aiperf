@@ -12,6 +12,92 @@ use serde_json::Value;
 use crate::protocol_v2::RUNNER_PROTOCOL_V2;
 use crate::registry::{RunnerRegistry, RunnerTransportDescriptor, RunnerWorkloadDescriptor};
 
+/// One plugins.yaml-shaped catalog entry.
+#[derive(Debug, Serialize)]
+pub struct RunnerCatalogEntry {
+    /// Human-readable factory description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'static str>,
+    /// Factory metadata consumed by Config preflight.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub metadata: Value,
+}
+
+/// Linked runner inventory emitted by `--capabilities`.
+#[derive(Debug, Serialize)]
+pub struct RunnerCatalog {
+    /// Catalog document version.
+    pub schema_version: &'static str,
+    /// Endpoint dialect inventory.
+    pub endpoint: BTreeMap<String, RunnerCatalogEntry>,
+    /// Transport inventory.
+    pub transport: BTreeMap<String, RunnerCatalogEntry>,
+    /// Linked custom dataset loaders.
+    pub custom_dataset_loader: BTreeMap<String, RunnerCatalogEntry>,
+    /// Linked public dataset loaders.
+    pub public_dataset_loader: BTreeMap<String, RunnerCatalogEntry>,
+    /// Linked dataset samplers.
+    pub dataset_sampler: BTreeMap<String, RunnerCatalogEntry>,
+}
+
+impl RunnerCatalog {
+    /// Serialize the exact endpoint and transport registries linked into this binary.
+    pub fn from_registries(
+        runner_registry: &RunnerRegistry,
+        product_registry: &aiperf_extensions::AiperfRegistry,
+    ) -> Self {
+        let endpoint = product_registry
+            .endpoints()
+            .descriptors()
+            .map(|descriptor| {
+                (
+                    descriptor.id.to_owned(),
+                    RunnerCatalogEntry {
+                        description: Some(descriptor.description),
+                        metadata: serde_json::to_value(descriptor)
+                            .expect("static endpoint descriptors are serializable"),
+                    },
+                )
+            })
+            .collect();
+        let transport = runner_registry
+            .transport_descriptors()
+            .into_iter()
+            .map(|descriptor| {
+                (
+                    descriptor.id.to_owned(),
+                    RunnerCatalogEntry {
+                        description: Some(descriptor.description),
+                        metadata: serde_json::json!({
+                            "transport_type": descriptor.id,
+                            "clock": descriptor.clock,
+                            "features": descriptor.features,
+                            "url_schemes": transport_url_schemes(descriptor.id),
+                        }),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            schema_version: "1.0",
+            endpoint,
+            transport,
+            custom_dataset_loader: BTreeMap::new(),
+            public_dataset_loader: BTreeMap::new(),
+            dataset_sampler: BTreeMap::new(),
+        }
+    }
+}
+
+fn transport_url_schemes(id: &str) -> &'static [&'static str] {
+    match id {
+        "http" => &["http", "https"],
+        "grpc" => &["grpc", "grpcs"],
+        "dynosim_offline" | "dynosim_online" => &["dynosim"],
+        _ => &[],
+    }
+}
+
 /// Machine-readable runner capabilities returned by `--capabilities`.
 #[derive(Debug, Serialize)]
 pub struct RunnerCapabilities {
@@ -23,8 +109,6 @@ pub struct RunnerCapabilities {
     pub protocol_versions: &'static [u32],
     /// Native report schema written after a successful run.
     pub report_schema_version: &'static str,
-    /// BLAKE3 identity of the complete executable image serving this response.
-    pub distribution_id: String,
     /// Endpoint dialects accepted by the native formatter/parser registry.
     pub endpoint_types: Vec<&'static str>,
     /// Canonical endpoint descriptors from the frozen endpoint registry.
@@ -58,7 +142,6 @@ pub struct RunnerCapabilities {
 impl RunnerCapabilities {
     /// Build a deterministic capability document from already frozen registries.
     pub fn from_registries(
-        distribution_id: String,
         runner_registry: &RunnerRegistry,
         product_registry: &aiperf_extensions::AiperfRegistry,
     ) -> Self {
@@ -72,7 +155,6 @@ impl RunnerCapabilities {
             capabilities_schema_version: 2,
             protocol_versions: &[RUNNER_PROTOCOL_V2],
             report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
-            distribution_id,
             endpoint_types,
             endpoints,
             extensions: product_registry
@@ -532,4 +614,3 @@ impl PhaseSpec {
         }
     }
 }
-

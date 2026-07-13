@@ -41,7 +41,7 @@ pub use kserve::{
     KServeV2EmbeddingsFactory, KServeV2ImagesFactory, KServeV2InferFactory,
     KServeV2RankingsFactory, KServeV2VlmFactory,
 };
-pub use metadata::{EndpointDescriptor, EndpointMetadata, EndpointType, Modality, metadata_for};
+pub use metadata::{EndpointDescriptor, EndpointType, Modality};
 pub use models::{
     AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem,
     ImageResponseData, Media, ModelEndpoint, ParsedResponse, RequestInfo, RequestRecord,

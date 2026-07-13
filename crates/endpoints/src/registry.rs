@@ -493,8 +493,13 @@ where
         &self,
         config: EffectiveEndpointConfig,
     ) -> EndpointResult<Box<dyn PreparedEndpoint>> {
-        let legacy_config =
-            EndpointConfig::from_raw(self.endpoint.metadata().endpoint_type, config.to_raw());
+        let legacy_config = EndpointConfig::from_raw(
+            self.endpoint
+                .descriptor()
+                .legacy_type()
+                .expect("legacy Endpoint factory must map to EndpointType"),
+            config.to_raw(),
+        );
         let headers = self.endpoint.format_headers(&legacy_config);
         Ok(Box::new(StatelessPreparedEndpoint {
             endpoint: self.endpoint.clone(),

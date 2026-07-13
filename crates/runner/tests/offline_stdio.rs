@@ -166,6 +166,7 @@ fn target(name: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn capabilities_advertise_both_executable_offline_pairs() {
     let capabilities = capabilities();
     assert!(
@@ -190,6 +191,7 @@ fn capabilities_advertise_both_executable_offline_pairs() {
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() {
     let capabilities = capabilities();
     let distribution_id = capabilities["distribution_id"].as_str().unwrap();
@@ -268,6 +270,7 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
 }
 
 #[test]
+#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
 fn uncompiled_optional_feature_fails_before_artifacts_or_engine_execution() {
     if cfg!(feature = "dynamo-kvbm-offload") {
         return;

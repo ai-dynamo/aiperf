@@ -106,18 +106,17 @@ def run_validate(*, config_file: Path) -> None:
 
 
 def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
-    """Validate executable v2 variations against one exact runner image.
+    """Validate executable BenchmarkRun variations against one exact runner image.
 
-    A missing runner or an image with no matching protocol-v2 pair leaves the
-    established Python/v1 validation path unchanged. For matching pairs, this
-    function constructs only authored ``BenchmarkRun`` wrappers: no resolver,
+    A missing runner or an image without a usable catalog leaves the established
+    Python validation path unchanged. For catalog-backed images, this function
+    constructs only authored ``BenchmarkRun`` wrappers: no resolver,
     dataset/tokenizer load, artifact creation, readiness probe, or worker start
     occurs before the runner's side-effect-free ``validate`` operation.
     """
     from aiperf.config.loader.errors import ConfigurationError
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.orchestrator.runner_installation import RunnerInstallation
-    from aiperf.orchestrator.rust_wire import RUNNER_PROTOCOL_V2
 
     try:
         installation = RunnerInstallation.resolve()
@@ -129,13 +128,12 @@ def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
             file_path=config_file,
         ) from error
 
-    versions = installation.capabilities.get("protocol_versions")
-    supported_pairs = installation.capabilities.get("supported_pairs")
-    if (
-        not isinstance(versions, list)
-        or RUNNER_PROTOCOL_V2 not in versions
-        or not isinstance(supported_pairs, list)
-        or not supported_pairs
+    catalog = installation.capabilities
+    if not (
+        isinstance(catalog.get("schema_version"), str)
+        and catalog["schema_version"]
+        and isinstance(catalog.get("endpoint"), dict)
+        and isinstance(catalog.get("transport"), dict)
     ):
         return
 
@@ -162,10 +160,10 @@ def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
                 run,
                 operation="validate",
             )
-            authored = projected["run"]
-            transport_id = authored["transport"]["type"]
-            workload_id = authored["workload"]["type"]
-            if not installation.supports_pair(transport_id, workload_id):
+            try:
+                installation.preflight_request(projected)
+            except RuntimeError:
+                # Catalog does not advertise this Config's ids; keep Python-only.
                 continue
             installation.validate_authored_request(
                 projected,

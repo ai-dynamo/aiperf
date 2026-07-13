@@ -3,10 +3,9 @@
 
 //! Rust-native random generator wrapper used by AIPerf workload components.
 //!
-//! The generator intentionally preserves Python AIPerf's *method semantics* rather
-//! than Python's exact byte streams. One `rand_pcg::Pcg64` instance drives scalar
-//! and batch operations, while wrapper code preserves bounds, replacement, and
-//! rejection-sampling behavior that shapes benchmark workloads.
+//! One `rand_pcg::Pcg64` instance drives scalar and batch operations, while
+//! wrapper code preserves bounds, replacement, and rejection-sampling behavior
+//! that shapes benchmark workloads.
 
 use rand::{Rng, RngCore, SeedableRng};
 use rand_distr::{Distribution, Exp, Gamma, Normal};
@@ -76,8 +75,8 @@ impl RandomGenerator {
             });
         }
 
-        // Python integers do not overflow. Widen before subtracting so the full
-        // i64 domain retains Python's range semantics in debug and release builds.
+        // Widen before subtracting so the full i64 domain keeps range arithmetic
+        // overflow-free in debug and release builds.
         let start = i128::from(start);
         let stop = i128::from(stop);
         let step = i128::from(step);
@@ -131,7 +130,7 @@ impl RandomGenerator {
             .expect("an inclusive i64 sample must remain representable"))
     }
 
-    /// Uniform float in `[a, b)` or `[b, a)` when `b < a`, matching Python's formula.
+    /// Uniform float in `[a, b)` or `[b, a)` when `b < a`.
     pub fn uniform(&mut self, a: f64, b: f64) -> f64 {
         a + (b - a) * self.random()
     }
@@ -302,7 +301,7 @@ impl RandomGenerator {
             .sample(&mut self.rng))
     }
 
-    /// Sample a bounded normal using Python AIPerf's rejection cap and clamp fallback.
+    /// Sample a bounded normal using the configured rejection cap and clamp fallback.
     pub fn sample_normal(&mut self, mean: f64, stddev: f64, lower: f64, upper: f64) -> Result<f64> {
         if lower.is_nan() {
             return Err(RngError::InvalidParameter {
@@ -585,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn integer_ranges_match_python_bound_conventions() {
+    fn integer_ranges_follow_bound_conventions() {
         let mut rng = RandomGenerator::from_seed(Some(7));
         for _ in 0..1000 {
             let x = rng.randrange(2, 10, 2).unwrap();

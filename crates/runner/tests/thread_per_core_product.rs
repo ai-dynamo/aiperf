@@ -41,16 +41,27 @@ async fn chat(
     ([(header::CONTENT_TYPE, "text/event-stream")], body)
 }
 
-fn capabilities() -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap()
+fn benchmark_run(legacy: Value) -> Value {
+    let mut endpoint = legacy["resources"]["endpoints"]["profiles"][0].clone();
+    endpoint.as_object_mut().unwrap().remove("id");
+    json!({
+        "benchmark_id": legacy["identity"]["benchmark_id"],
+        "artifact_dir": legacy["artifact_target"],
+        "random_seed": legacy["identity"]["random_seed"],
+        "cfg": {
+            "models": legacy["resources"]["models"],
+            "endpoint": endpoint,
+            "datasets": [legacy["workload"]["config"]["dataset"]],
+            "phases": legacy["workload"]["config"]["phases"],
+            "tokenizer": legacy["workload"]["config"]["tokenizer"],
+            "transport": {"type": legacy["transport"]["type"]},
+            "runtime": {"workers": legacy["workload"]["config"]["worker_count"]}
+        }
+    })
 }
 
-fn run_child(request: Value) -> Output {
+fn run_child(mut request: Value) -> Output {
+    request["run"] = benchmark_run(request["run"].take());
     let bytes = serde_json::to_vec(&request).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
         .stdin(Stdio::piped())
@@ -79,13 +90,11 @@ async fn v2_workers_own_transport_pools_below_one_phase_coordinator() {
         .unwrap()
     });
 
-    let capabilities = capabilities();
     let artifacts = tempfile::tempdir().unwrap();
     let artifact_target = artifacts.path().join("thread-per-core");
     let request = json!({
         "protocol_version": 2,
         "operation": "execute",
-        "expected_distribution_id": capabilities["distribution_id"],
         "run": {
             "identity": {
                 "benchmark_id": "thread-per-core-product-proof",
