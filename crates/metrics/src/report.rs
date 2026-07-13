@@ -11,12 +11,10 @@ use crate::catalog::{
     AggregationKind, MetricConsoleGroup, MetricFlags, MetricTag, MetricType, spec_for,
 };
 use crate::{
-    AccumulatorSummary, AccuracyAnalysis, AccuracyRecord, MetricResult, MetricResultData,
-    MetricValue, SidecarMetric, SidecarStats,
+    AccumulatorSummary, MetricResult, MetricResultData, MetricValue, SidecarMetric, SidecarStats,
 };
 use serde::ser::{Serialize, Serializer};
 use serde::{Deserialize as DeriveDeserialize, Serialize as DeriveSerialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display};
@@ -651,81 +649,6 @@ impl ReportDynamoRunInfo {
     }
 }
 
-/// Exact secret-free post-plan authority for a compatibility proxy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
-pub struct ReportEvaluationCompatibilityGrantLimits {
-    pub max_operations: u64,
-    pub max_concurrent_operations: u64,
-    pub max_request_bytes: u64,
-    pub max_response_bytes: u64,
-    pub max_stream_events: u64,
-    pub expires_after_ms: u64,
-}
-
-impl ReportEvaluationCompatibilityGrantLimits {
-    /// Reject an empty or internally inconsistent effective grant.
-    pub fn validate(self) -> Result<Self, ReportProvenanceError> {
-        if self.max_operations == 0
-            || self.max_concurrent_operations == 0
-            || self.max_concurrent_operations > self.max_operations
-            || self.max_request_bytes == 0
-            || self.max_response_bytes == 0
-            || self.expires_after_ms == 0
-        {
-            return Err(ReportProvenanceError::new(
-                "evaluation compatibility effective grant was empty or inconsistent",
-            ));
-        }
-        Ok(self)
-    }
-}
-
-/// Exact local adapter-policy identity for one proxy-enabled evaluation run.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct ReportEvaluationCompatibilityInfo {
-    /// Sorted frozen compatibility-dialect factory IDs.
-    pub dialect_ids: Vec<String>,
-    /// SHA-256 of exact dialect IDs, allowed routes, effective adapters, and grant limits.
-    pub descriptor_sha256: String,
-    /// Exact post-plan authority installed in both worker binding and Rust runtime.
-    pub effective_grant: ReportEvaluationCompatibilityGrantLimits,
-}
-
-impl ReportEvaluationCompatibilityInfo {
-    /// Validate and freeze one proxy-enabled evaluation compatibility identity.
-    pub fn new(
-        mut dialect_ids: Vec<String>,
-        descriptor_sha256: impl Into<String>,
-        effective_grant: ReportEvaluationCompatibilityGrantLimits,
-    ) -> Result<Self, ReportProvenanceError> {
-        if dialect_ids.is_empty() {
-            return Err(ReportProvenanceError::new(
-                "evaluation compatibility dialect IDs cannot be empty",
-            ));
-        }
-        dialect_ids.sort();
-        for dialect in &dialect_ids {
-            validate_component_id(dialect, "evaluation compatibility dialect ID")?;
-        }
-        if dialect_ids.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(ReportProvenanceError::new(
-                "evaluation compatibility dialect IDs must be unique",
-            ));
-        }
-        let descriptor_sha256 = descriptor_sha256.into();
-        validate_lowercase_sha256(
-            &descriptor_sha256,
-            "evaluation compatibility descriptor SHA-256",
-        )?;
-        let effective_grant = effective_grant.validate()?;
-        Ok(Self {
-            dialect_ids,
-            descriptor_sha256,
-            effective_grant,
-        })
-    }
-}
-
 /// Optional typed facts returned by one backend/workload pair.
 ///
 /// The pair owns only these mode-specific facts. Common executable, registry,
@@ -738,13 +661,10 @@ pub struct ReportPairRunFacts {
     /// Dynamo topology, capacity, and exact metric-parity evidence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dynamo: Option<ReportDynamoRunInfo>,
-    /// Exact local compatibility policy for a proxy-enabled evaluator run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub evaluation_compatibility: Option<ReportEvaluationCompatibilityInfo>,
 }
 
 impl ReportPairRunFacts {
-    /// Construct an empty pair-fact set for ordinary scheduled/accuracy runs.
+    /// Construct an empty pair-fact set for ordinary scheduled runs.
     pub fn new() -> Self {
         Self::default()
     }
@@ -758,15 +678,6 @@ impl ReportPairRunFacts {
     /// Attach Dynamo offline facts.
     pub fn with_dynamo(mut self, dynamo: ReportDynamoRunInfo) -> Self {
         self.dynamo = Some(dynamo);
-        self
-    }
-
-    /// Attach exact evaluator compatibility policy identity.
-    pub fn with_evaluation_compatibility(
-        mut self,
-        compatibility: ReportEvaluationCompatibilityInfo,
-    ) -> Self {
-        self.evaluation_compatibility = Some(compatibility);
         self
     }
 }
@@ -860,19 +771,6 @@ fn validate_component_id(value: &str, field: &str) -> Result<(), ReportProvenanc
     {
         return Err(ReportProvenanceError::new(format!(
             "{field} must match [a-z][a-z0-9_]*"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_lowercase_sha256(value: &str, field: &str) -> Result<(), ReportProvenanceError> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        return Err(ReportProvenanceError::new(format!(
-            "{field} must contain exactly 64 lowercase hexadecimal digits"
         )));
     }
     Ok(())
@@ -980,505 +878,6 @@ pub struct ReportError {
     pub message: String,
     /// Number of matching records.
     pub count: usize,
-}
-
-/// Immutable dataset identity reported by the canonical accuracy evaluator.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluatorDatasetReportInfo {
-    /// Dataset preparation implementation.
-    pub provider: String,
-    /// Canonical benchmark name.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub benchmark: Option<String>,
-    /// Dataset repository, when applicable.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub repository: Option<String>,
-    /// Dataset subset/configuration, when applicable.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subset: Option<String>,
-    /// Immutable dataset revision.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub revision: Option<String>,
-    /// Evaluation splits selected by the canonical task.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub evaluation_splits: Vec<String>,
-    /// Canonical task version, when exposed by the evaluator.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub task_version: Option<u64>,
-}
-
-/// Exact evaluator runtime and benchmark identity retained in an accuracy report.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluatorReportInfo {
-    /// Negotiated stdio protocol version.
-    pub protocol: u32,
-    /// Version of the AIPerf Python worker adapter.
-    pub worker_version: String,
-    /// Python runtime version.
-    pub python_version: String,
-    /// Python executable used for this run.
-    pub python_executable: String,
-    /// Evaluator package versions; absent optional packages remain null.
-    pub packages: BTreeMap<String, Option<String>>,
-    /// SHA-256 of the worker source.
-    pub worker_source_sha256: String,
-    /// SHA-256 of the fully pinned evaluator dependency lock, when available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dependency_lock_sha256: Option<String>,
-    /// Immutable worker container digest, when supplied.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub container_digest: Option<String>,
-    /// Worker capabilities negotiated during initialization.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    /// Canonical benchmark name resolved by the worker.
-    pub benchmark: String,
-    /// Canonical grader or Lighteval metric implementation.
-    pub grader: String,
-    /// Dataset/task identity frozen by the load operation.
-    pub dataset: EvaluatorDatasetReportInfo,
-}
-
-/// Exact stateful harness identity retained beside the generic worker identity.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct AgenticEvaluatorReportInfo {
-    /// Canonical harness name.
-    pub harness: String,
-    /// Exact harness package version.
-    pub harness_version: String,
-    /// SHA-256 over the installed harness sources.
-    pub harness_source_sha256: String,
-    /// Agent scaffold name.
-    pub agent: String,
-    /// Exact adapter and inherited scaffold version.
-    pub agent_version: String,
-    /// Provider-owned canonical agent controls used for the evaluation.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub canonical_agent_config: BTreeMap<String, Value>,
-    /// Environment provider used for task sandboxes.
-    pub environment: String,
-    /// Canonical verifier implementation description.
-    pub verifier: String,
-}
-
-/// Reproducibility-relevant configuration for one agentic evaluation.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct AgenticRunConfigReport {
-    /// Requested immutable Harbor package or local dataset path.
-    pub dataset: String,
-    /// Optional exact task names selected from the package.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub task_names: Option<Vec<String>>,
-    /// Optional deterministic episode cap.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_episodes: Option<usize>,
-    /// Maximum simultaneously active task environments.
-    pub task_concurrency: usize,
-    /// Maximum simultaneously active model calls.
-    pub model_concurrency: usize,
-    /// Harness artifact root.
-    pub output_dir: String,
-    /// Optional model-call limit per episode.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<usize>,
-    /// Maximum generated tokens per model call.
-    pub max_tokens: usize,
-    /// Explicit context-window limit used by the agent scaffold.
-    pub context_window: usize,
-    /// Canonical agent command parser.
-    pub parser: String,
-    /// Whether canonical context summarization was enabled.
-    pub enable_summarize: bool,
-    /// Optional explicitly selected primary verifier reward.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_reward: Option<String>,
-    /// Whether cached task packages could be replaced.
-    pub overwrite: bool,
-    /// Rust-owned callback ingress advertised to evaluator environments.
-    ///
-    /// The per-run bearer credential is intentionally never reported.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inference_gateway_base_url: Option<String>,
-}
-
-/// Generic aggregate statistics over one canonical verifier reward.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct AgenticRewardSummary {
-    /// Number of completed episodes reporting this reward.
-    pub n: usize,
-    /// Arithmetic mean over canonical verifier values.
-    pub avg: f64,
-    /// Minimum canonical verifier value.
-    pub min: f64,
-    /// Maximum canonical verifier value.
-    pub max: f64,
-}
-
-/// Run-level agentic result summary.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct AgenticEvaluationSummary {
-    /// Every selected episode, regardless of terminal class.
-    pub episode_count: usize,
-    /// Episodes that reached canonical verification.
-    pub completed_count: usize,
-    /// Episodes that failed in inference, environment, harness, or verification infrastructure.
-    pub infrastructure_error_count: usize,
-    /// Episodes explicitly cancelled by Rust policy.
-    pub cancelled_count: usize,
-    /// All primary, environment, and verifier calls dispatched by Rust.
-    pub model_calls: usize,
-    /// Canonical agent calls emitted through the evaluator protocol.
-    pub primary_model_calls: usize,
-    /// Calls requested by task environments and canonical verifiers.
-    pub auxiliary_model_calls: usize,
-    /// Auxiliary calls requested by task environments.
-    pub environment_model_calls: usize,
-    /// Auxiliary calls requested by canonical verifiers.
-    pub verifier_model_calls: usize,
-    /// Prompt tokens across all calls when every call reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens: Option<u64>,
-    /// Completion tokens across all calls when every call reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_tokens: Option<u64>,
-    /// Cached tokens across all calls when every call reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached_tokens: Option<u64>,
-    /// Prompt tokens from canonical agent calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_prompt_tokens: Option<u64>,
-    /// Completion tokens from canonical agent calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_completion_tokens: Option<u64>,
-    /// Cached tokens from canonical agent calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_cached_tokens: Option<u64>,
-    /// Prompt tokens from environment and verifier calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auxiliary_prompt_tokens: Option<u64>,
-    /// Completion tokens from environment and verifier calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auxiliary_completion_tokens: Option<u64>,
-    /// Cached tokens from environment and verifier calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auxiliary_cached_tokens: Option<u64>,
-    /// Uniform primary reward selected for the run, when available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_reward: Option<String>,
-    /// Mean primary reward over completed episodes only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_score: Option<f64>,
-    /// Canonical reward aggregates keyed by verifier-owned name.
-    pub rewards: BTreeMap<String, AgenticRewardSummary>,
-}
-
-/// Terminal class for one report-safe agentic episode record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgenticEpisodeReportOutcome {
-    /// The canonical verifier returned rewards.
-    Completed,
-    /// Inference, environment, harness, or verifier infrastructure failed.
-    InfrastructureError,
-    /// Rust policy cancelled the episode.
-    Cancelled,
-}
-
-/// Full canonical result for one opaque agentic episode.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct AgenticEpisodeReport {
-    /// Opaque evaluator-owned episode identifier.
-    pub episode_id: String,
-    /// Canonical task label.
-    pub task: String,
-    /// Explicit terminal classification.
-    pub outcome: AgenticEpisodeReportOutcome,
-    /// Finite verifier rewards, empty for non-completed episodes.
-    pub rewards: BTreeMap<String, f64>,
-    /// Per-episode selected primary reward.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_reward: Option<String>,
-    /// End-to-end harness wall time.
-    pub duration_seconds: f64,
-    /// Number of Rust-owned inference calls.
-    pub model_calls: usize,
-    /// Canonical agent calls emitted through the evaluator protocol.
-    pub primary_model_calls: usize,
-    /// Calls requested by task environments and canonical verifiers.
-    pub auxiliary_model_calls: usize,
-    /// Auxiliary calls requested by the task environment.
-    pub environment_model_calls: usize,
-    /// Auxiliary calls requested by the canonical verifier.
-    pub verifier_model_calls: usize,
-    /// Aggregate prompt tokens reported by Rust.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens: Option<u64>,
-    /// Aggregate completion tokens reported by Rust.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_tokens: Option<u64>,
-    /// Aggregate cached prompt tokens reported by Rust.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached_tokens: Option<u64>,
-    /// Prompt tokens from canonical agent calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_prompt_tokens: Option<u64>,
-    /// Completion tokens from canonical agent calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_completion_tokens: Option<u64>,
-    /// Cached prompt tokens from canonical agent calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_cached_tokens: Option<u64>,
-    /// Prompt tokens from environment and verifier calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auxiliary_prompt_tokens: Option<u64>,
-    /// Completion tokens from environment and verifier calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auxiliary_completion_tokens: Option<u64>,
-    /// Cached prompt tokens from environment and verifier calls only.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auxiliary_cached_tokens: Option<u64>,
-    /// Infrastructure or cancellation category.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_kind: Option<String>,
-    /// Infrastructure or cancellation detail.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_message: Option<String>,
-    /// Canonical harness artifact path.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artifact_path: Option<String>,
-}
-
-/// Typed native-v2 agentic evaluation block.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct AgenticEvaluationReport {
-    /// Exact harness, agent, environment, and verifier identity.
-    pub evaluator: AgenticEvaluatorReportInfo,
-    /// Reproducibility-relevant authored configuration.
-    pub config: AgenticRunConfigReport,
-    /// Generic aggregates over canonical verifier outputs.
-    pub summary: AgenticEvaluationSummary,
-    /// Complete results in frozen evaluator order.
-    pub records: Vec<AgenticEpisodeReport>,
-}
-
-/// Terminal semantic class assigned by the selected evaluator provider.
-///
-/// This is deliberately independent from the Rust transport terminal stored in
-/// request metrics. A completed score of zero is therefore never confused with
-/// infrastructure failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSerialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvaluationCaseOutcomeKind {
-    /// Provider scoring completed and public score projections may be present.
-    Completed,
-    /// A provider, host, or evaluator infrastructure stage failed.
-    InfrastructureError,
-    /// Rust or the provider explicitly cancelled the case.
-    Cancelled,
-}
-
-/// Report-safe evaluator error metadata.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluationCaseErrorReport {
-    /// Provider-defined lifecycle stage, validated as a bounded identifier.
-    pub stage: String,
-    /// Stable error category with secret-bearing detail removed.
-    pub kind: String,
-    /// Whether provider semantic policy permits a new semantic attempt.
-    pub retryable: bool,
-    /// Redacted diagnostic suitable for the public report.
-    pub message: String,
-}
-
-/// One factory-schema-validated public score projection.
-///
-/// The provider's complete native score tree is never stored here. It remains
-/// in the restricted sealed bundle with no public content digest.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct EvaluationPublicScoreReport {
-    /// Canonical public value after Rust validation and reserialization.
-    pub value: Value,
-    /// Versioned factory-owned projection schema.
-    pub projection_schema: String,
-}
-
-/// Report-safe terminal record for one opaque evaluator case occurrence.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct EvaluationCaseReport {
-    /// Opaque occurrence identifier in frozen canonical order.
-    pub case_id: String,
-    /// Opaque provider template identifier.
-    pub template_id: String,
-    /// Safe provider-owned task label.
-    pub task: String,
-    /// Safe immutable source label.
-    pub source: String,
-    /// Explicit semantic terminal class.
-    pub outcome: EvaluationCaseOutcomeKind,
-    /// Reviewed public score projections keyed by factory-owned public label.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub scores: BTreeMap<String, EvaluationPublicScoreReport>,
-    /// Finite scalar projections eligible for score/performance joins.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub numeric_metrics: BTreeMap<String, f64>,
-    /// Factory-owned primary public score label, when reviewed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub primary_score: Option<String>,
-    /// Redacted infrastructure or cancellation metadata.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<EvaluationCaseErrorReport>,
-    /// Host-assigned opaque artifact references; restricted paths stay private.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub artifact_refs: Vec<String>,
-}
-
-/// One factory-validated aggregate projected into the public report.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct EvaluationAggregateMetricReport {
-    /// Factory-owned stable public scorer label.
-    pub scorer: String,
-    /// Factory-owned stable public reducer label.
-    pub reducer: String,
-    /// Factory-owned stable public metric label.
-    pub metric: String,
-    /// Finite provider-computed aggregate value.
-    pub value: f64,
-    /// Number of factory-validated aggregation units in the denominator.
-    pub scored_count: usize,
-    /// Number of factory-validated units excluded from the denominator.
-    pub unscored_count: usize,
-    /// Exact executable factory aggregate-rule fingerprint.
-    pub projection_schema: String,
-}
-
-/// Rust-authoritative traffic totals for one logical evaluator route.
-#[derive(Debug, Clone, Default, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluationRouteSummaryReport {
-    /// Logical host operations accepted by Rust.
-    pub logical_operations: usize,
-    /// Concrete upstream transport attempts made by Rust.
-    pub transport_attempts: usize,
-    /// Attempts after the first attempt of a logical operation.
-    pub retries: usize,
-    /// Rust-owned cache or explicitly identity-bound replay hits.
-    pub cache_hits: usize,
-    /// Operations that completed normally at the transport layer.
-    pub completed: usize,
-    /// Operations that failed or were rejected at the transport layer.
-    pub failed: usize,
-    /// Operations cancelled before or during transport.
-    pub cancelled: usize,
-    /// Prompt tokens when every contributing operation reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens: Option<u64>,
-    /// Completion tokens when every contributing operation reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_tokens: Option<u64>,
-    /// Reasoning tokens when every contributing operation reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<u64>,
-    /// Cached prompt tokens when every contributing operation reported usage.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached_tokens: Option<u64>,
-}
-
-/// Rust-verified artifact manifest entry.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluationArtifactReport {
-    /// Host-assigned opaque reference used by case reports.
-    pub artifact_ref: String,
-    /// Factory-reviewed public path; absent for restricted artifacts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// Factory-reviewed public media type; absent for restricted artifacts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub media_type: Option<String>,
-    /// Factory-authorized visibility (`public` or `restricted`).
-    pub visibility: String,
-    /// Factory-reviewed public byte length; absent for restricted artifacts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<u64>,
-    /// Factory-reviewed public SHA-256; absent for restricted artifacts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artifact_content_sha256: Option<String>,
-    /// Factory-owned public artifact projection schema; absent when restricted.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub projection_schema: Option<String>,
-}
-
-/// Safe identity graph for a replaceable evaluator-provider run.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluationIdentityReport {
-    /// Evaluator-worker protocol version.
-    pub evaluator_protocol: u32,
-    /// Open provider registry ID.
-    pub provider: String,
-    /// Factory-owned immutable distribution ID.
-    pub distribution: String,
-    /// Provider package/source identity digest.
-    pub provider_source_sha256: String,
-    /// Factory-attested worker source digest.
-    pub worker_source_sha256: String,
-    /// Factory-attested dependency lock digest.
-    pub dependency_lock_sha256: String,
-    /// Fingerprint of the pure authored-configuration schema.
-    pub authored_schema_fingerprint: String,
-    /// Canonical secret-redacted resolved evaluator configuration digest.
-    pub resolved_config_sha256: String,
-    /// Ordered case/unit manifest digest.
-    pub ordered_manifest_sha256: String,
-    /// Rust host implementation and capability inventory digest.
-    pub host_identity_sha256: String,
-    /// Enforced evaluator isolation proof digest.
-    pub isolation_proof_sha256: String,
-    /// Optional immutable OCI identity.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub container_digest: Option<String>,
-    /// Provider-specific, factory-approved identity fields.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub components: BTreeMap<String, String>,
-}
-
-/// Secret-free prepared logical route inventory.
-#[derive(Debug, Clone, PartialEq, Eq, DeriveSerialize)]
-pub struct EvaluationRouteReport {
-    /// Logical service identifier requested by the evaluator.
-    pub service_id: String,
-    /// Safe purpose label.
-    pub purpose: String,
-    /// Authored model alias, not an endpoint locator.
-    pub model: String,
-    /// Prepared endpoint profile ID.
-    pub endpoint_profile: String,
-    /// Digest of the credential-free prepared binding identity.
-    pub prepared_identity_sha256: String,
-}
-
-/// Generic native-v2 evaluation result shared by static and stateful providers.
-#[derive(Debug, Clone, PartialEq, DeriveSerialize)]
-pub struct EvaluationReport {
-    /// Factory-attested evaluator/provider/host identity.
-    pub identity: EvaluationIdentityReport,
-    /// Factory-schema-projected safe resolved configuration.
-    pub config: Value,
-    /// Secret-free logical route inventory in deterministic service order.
-    pub routes: Vec<EvaluationRouteReport>,
-    /// Number of frozen case occurrences.
-    pub case_count: usize,
-    /// Cases with a provider semantic result, including valid zero scores.
-    pub completed_count: usize,
-    /// Cases excluded because infrastructure failed.
-    pub infrastructure_error_count: usize,
-    /// Cases excluded because they were cancelled.
-    pub cancelled_count: usize,
-    /// Ordered report-safe case outcomes.
-    pub cases: Vec<EvaluationCaseReport>,
-    /// Factory-validated public aggregate projections.
-    pub aggregates: Vec<EvaluationAggregateMetricReport>,
-    /// Rust traffic summaries keyed by logical service ID.
-    pub route_summaries: BTreeMap<String, EvaluationRouteSummaryReport>,
-    /// Rust-verified report projection of the sealed artifact manifest.
-    pub artifacts: Vec<EvaluationArtifactReport>,
 }
 
 /// Terminal lifecycle state reported by a telemetry archive execution.
@@ -1766,18 +1165,6 @@ pub struct RunOutcome {
     pub server_metrics: BTreeMap<String, SidecarMetric>,
     /// Warmup inference-server Prometheus series.
     pub warmup_server_metrics: BTreeMap<String, SidecarMetric>,
-    /// Optional accuracy/analyzer output.
-    pub accuracy: Option<AccuracyAnalysis>,
-    /// Full per-request grading records in deterministic workload order.
-    pub accuracy_records: Vec<AccuracyRecord>,
-    /// Exact external evaluator identity for accuracy runs.
-    pub evaluator: Option<EvaluatorReportInfo>,
-    /// Optional stateful agentic evaluator result block.
-    pub agentic: Option<AgenticEvaluationReport>,
-    /// Generic provider-neutral evaluation result block.
-    pub evaluation: Option<EvaluationReport>,
-    /// Optional typed telemetry-archive outcome.
-    pub telemetry_archive: Option<ReportTelemetryArchive>,
     /// Grouped run errors.
     pub errors: Vec<ReportError>,
 }
@@ -1839,12 +1226,6 @@ impl Reporter for NativeReporter {
             warmup_metrics: outcome.warmup.as_ref().map(build_metric_map),
             server_metrics: build_sidecar_map(&outcome.server_metrics),
             warmup_server_metrics: build_sidecar_map(&outcome.warmup_server_metrics),
-            accuracy: outcome.accuracy.clone(),
-            accuracy_records: outcome.accuracy_records.clone(),
-            evaluator: outcome.evaluator.clone(),
-            agentic: outcome.agentic.clone(),
-            evaluation: outcome.evaluation.clone(),
-            telemetry_archive: outcome.telemetry_archive.clone(),
             errors: outcome.errors.clone(),
         }
     }
@@ -1872,38 +1253,17 @@ pub struct NativeReport {
     /// Warmup server telemetry keyed by original Prometheus family name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub warmup_server_metrics: BTreeMap<String, MetricEntry>,
-    /// Optional accuracy analysis.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accuracy: Option<AccuracyAnalysis>,
-    /// Full per-request grading records. Empty outside accuracy mode.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub accuracy_records: Vec<AccuracyRecord>,
-    /// Exact canonical evaluator identity. Absent outside accuracy mode.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub evaluator: Option<EvaluatorReportInfo>,
-    /// Stateful harness identity, configuration, summary, and episode records.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agentic: Option<AgenticEvaluationReport>,
-    /// Provider-neutral evaluator identity, results, traffic, and artifact digests.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub evaluation: Option<EvaluationReport>,
-    /// Typed telemetry archive outcome for standalone watch or attached collection.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub telemetry_archive: Option<ReportTelemetryArchive>,
     /// Grouped run errors.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ReportError>,
 }
 
 impl NativeReport {
-    /// Builds a native report from metrics and optional accuracy analysis.
-    pub fn new(metrics: &AccumulatorSummary, accuracy: Option<AccuracyAnalysis>) -> Self {
+    /// Builds a native report from profiling metrics.
+    pub fn new(metrics: &AccumulatorSummary) -> Self {
         NativeReporter.report(NativeReportInput {
             metrics: Some(metrics),
-            outcome: &RunOutcome {
-                accuracy,
-                ..RunOutcome::default()
-            },
+            outcome: &RunOutcome::default(),
         })
     }
 
@@ -2190,110 +1550,6 @@ mod tests {
         Phase, RecordIngest, SidecarMetric, SidecarSeries, SidecarStats, Unit,
     };
 
-    fn archive_head(prefix: &str) -> ReportTelemetryArchiveHead {
-        ReportTelemetryArchiveHead {
-            head_uri: format!("{prefix}/LATEST"),
-            generation_uri: format!(
-                "{prefix}/manifests/generation-7-blake3-{}.json",
-                "b".repeat(64)
-            ),
-            generation_hash: format!("blake3:{}", "b".repeat(64)),
-            index_root_hash: format!("blake3:{}", "c".repeat(64)),
-        }
-    }
-
-    fn healthy_archive_report() -> ReportTelemetryArchive {
-        ReportTelemetryArchive {
-            schema_version: TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION.to_string(),
-            archive_id: "11111111-1111-4111-8111-111111111111".to_string(),
-            execution_id: "22222222-2222-4222-8222-222222222222".to_string(),
-            receipt_observer_epoch_id: format!("blake3:{}", "a".repeat(64)),
-            collection_session_id: Some("33333333-3333-4333-8333-333333333333".to_string()),
-            latest_collection_session_id: Some("33333333-3333-4333-8333-333333333333".to_string()),
-            state: ReportTelemetryArchiveState::RemotelyFinalized,
-            publication_receipts_uri: "file:///var/lib/aiperf/archive/LOCAL-RECEIPTS".to_string(),
-            local_head: Some(archive_head("file:///var/lib/aiperf/archive")),
-            remote_head: Some(archive_head("s3://aiperf-telemetry/archive")),
-            finalized_local: true,
-            finalized_remote: true,
-            lossy: false,
-            health: ReportTelemetryArchiveHealth {
-                loss_ranges: Vec::new(),
-                loss_saturation_summaries: Vec::new(),
-                complete_ranges: true,
-                writer_alive: true,
-                spool_budget: None,
-            },
-        }
-    }
-
-    fn lossy_attached_archive_report() -> ReportTelemetryArchive {
-        ReportTelemetryArchive {
-            schema_version: TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION.to_string(),
-            archive_id: "44444444-4444-4444-8444-444444444444".to_string(),
-            execution_id: "55555555-5555-4555-8555-555555555555".to_string(),
-            receipt_observer_epoch_id: format!("blake3:{}", "d".repeat(64)),
-            collection_session_id: Some("66666666-6666-4666-8666-666666666666".to_string()),
-            latest_collection_session_id: Some("66666666-6666-4666-8666-666666666666".to_string()),
-            state: ReportTelemetryArchiveState::LocallyFinalized,
-            publication_receipts_uri: "file:///var/lib/aiperf/attached/LOCAL-RECEIPTS".to_string(),
-            local_head: Some(archive_head("file:///var/lib/aiperf/attached")),
-            remote_head: None,
-            finalized_local: true,
-            finalized_remote: false,
-            lossy: true,
-            health: ReportTelemetryArchiveHealth {
-                loss_ranges: vec![ReportTelemetryLossRange {
-                    source_id: Some("server_metrics_primary".to_string()),
-                    loss_kind: ReportTelemetryLossKind::ArchiveRejected,
-                    reason: ReportTelemetryLossReason::ArchiveAdmissionRejected,
-                    count: 2,
-                    first_source_record_seq: Some(7),
-                    last_source_record_seq: Some(8),
-                    first_request_attempt_seq: Some(12),
-                    last_request_attempt_seq: Some(13),
-                    first_tick: None,
-                    last_tick: None,
-                    first_deadline_ns: None,
-                    last_deadline_ns: None,
-                    loss_observed_ns: 6_000,
-                    boundary_refs: vec![ReportTelemetryBoundaryReference {
-                        transition_id: "profiling-finish".to_string(),
-                        boundary_id: "profiling-end-server".to_string(),
-                        phase_id: "profiling".to_string(),
-                        source_id: "server_metrics_primary".to_string(),
-                        role: ReportTelemetryBoundaryRole::PhaseEnd,
-                        coalescing_group_id: None,
-                    }],
-                    boundary_overflow_count: 0,
-                    boundary_overflow_digest: None,
-                }],
-                loss_saturation_summaries: vec![ReportTelemetryLossSaturationSummary {
-                    source_id: Some("server_metrics_primary".to_string()),
-                    loss_kind: ReportTelemetryLossKind::WriterFailed,
-                    reason: ReportTelemetryLossReason::WriterError,
-                    saturation_slot_id: format!("blake3:{}", "e".repeat(64)),
-                    saturation_snapshot_seq: 3,
-                    cumulative_omitted_range_count: 4,
-                    cumulative_omitted_entry_count: 5,
-                    omitted_rolling_digest: format!("blake3:{}", "f".repeat(64)),
-                    first_source_record_seq: Some(20),
-                    last_source_record_seq: Some(24),
-                    first_request_attempt_seq: Some(30),
-                    last_request_attempt_seq: Some(34),
-                    first_tick: None,
-                    last_tick: None,
-                    first_deadline_ns: None,
-                    last_deadline_ns: None,
-                    loss_observed_ns: 8_000,
-                }],
-                complete_ranges: false,
-                writer_alive: false,
-                spool_budget: None,
-            },
-        }
-    }
-
     fn finalized_report(
         report: NativeReport,
         distribution_digit: char,
@@ -2342,7 +1598,7 @@ mod tests {
             }),
         });
 
-        let report = NativeReport::new(&summary, None);
+        let report = NativeReport::new(&summary);
         let serialized = serde_json::to_string_pretty(&report).unwrap();
         assert_eq!(
             serialized,
@@ -2369,276 +1625,9 @@ mod tests {
                 .is_null()
         );
         assert!(value.get("warmup_metrics").is_none());
-        assert!(value.get("accuracy").is_none());
-        assert!(value.get("accuracy_records").is_none());
-        assert!(value.get("evaluation").is_none());
         assert!(value["run"].get("distribution_id").is_none());
         assert!(value["run"].get("graph").is_none());
         assert!(value["run"].get("dynamo").is_none());
-    }
-
-    #[test]
-    fn standalone_watch_report_has_archive_provenance_without_fake_metrics() {
-        let outcome = RunOutcome {
-            run: ReportRunInfo {
-                mode: Some("telemetry_watch".to_string()),
-                model: None,
-            },
-            telemetry_archive: Some(healthy_archive_report()),
-            ..RunOutcome::default()
-        };
-        let report = finalized_report(
-            NativeReport::from_input(NativeReportInput {
-                metrics: None,
-                outcome: &outcome,
-            }),
-            '1',
-            "telemetry_archive",
-            "watch",
-            Vec::new(),
-        );
-
-        assert!(report.metrics.is_empty());
-        assert_eq!(report.summary.start_time, None);
-        assert_eq!(report.summary.end_time, None);
-        assert_eq!(report.summary.duration_s, None);
-        let serialized = serde_json::to_string_pretty(&report).unwrap();
-        assert_eq!(
-            serialized,
-            include_str!("../tests/golden/native_v2_telemetry_standalone.json").trim_end()
-        );
-    }
-
-    #[test]
-    fn attached_report_keeps_real_metrics_and_structured_degradation() {
-        let mut metrics = AccumulatorSummary::new();
-        metrics.insert_finite(MetricTag::RequestCount, 3.0);
-        let outcome = RunOutcome {
-            run: ReportRunInfo {
-                mode: Some("online".to_string()),
-                model: Some("candidate-model".to_string()),
-            },
-            telemetry_archive: Some(lossy_attached_archive_report()),
-            ..RunOutcome::default()
-        };
-        let report = finalized_report(
-            NativeReport::from_input(NativeReportInput {
-                metrics: Some(&metrics),
-                outcome: &outcome,
-            }),
-            '2',
-            "http",
-            "scheduled",
-            vec![ReportEndpointProfileIdentity::new("primary", "chat").unwrap()],
-        );
-
-        assert!(report.metrics.contains_key("request_count"));
-        let archive = report.telemetry_archive.as_ref().unwrap();
-        assert!(archive.lossy);
-        assert!(!archive.health.writer_alive);
-        assert!(!archive.health.complete_ranges);
-        let serialized = serde_json::to_string_pretty(&report).unwrap();
-        assert_eq!(
-            serialized,
-            include_str!("../tests/golden/native_v2_telemetry_attached.json").trim_end()
-        );
-    }
-
-    #[test]
-    fn telemetry_archive_extension_is_old_and_new_reader_compatible() {
-        #[derive(DeriveDeserialize)]
-        struct LegacyNativeReport {
-            schema_version: String,
-            metrics: BTreeMap<String, Value>,
-        }
-
-        #[derive(DeriveDeserialize)]
-        struct ArchiveAwareNativeReport {
-            schema_version: String,
-            #[serde(default)]
-            telemetry_archive: Option<ReportTelemetryArchive>,
-        }
-
-        let standalone = include_str!("../tests/golden/native_v2_telemetry_standalone.json");
-        let attached = include_str!("../tests/golden/native_v2_telemetry_attached.json");
-        let absent = include_str!("../tests/golden/native_v2.json");
-
-        let legacy_standalone: LegacyNativeReport = serde_json::from_str(standalone).unwrap();
-        assert_eq!(
-            legacy_standalone.schema_version,
-            NATIVE_REPORT_SCHEMA_VERSION
-        );
-        assert!(legacy_standalone.metrics.is_empty());
-        let legacy_attached: LegacyNativeReport = serde_json::from_str(attached).unwrap();
-        assert_eq!(legacy_attached.schema_version, NATIVE_REPORT_SCHEMA_VERSION);
-        assert!(legacy_attached.metrics.contains_key("request_count"));
-
-        let new_absent: ArchiveAwareNativeReport = serde_json::from_str(absent).unwrap();
-        assert_eq!(new_absent.schema_version, NATIVE_REPORT_SCHEMA_VERSION);
-        assert!(new_absent.telemetry_archive.is_none());
-        let new_standalone: ArchiveAwareNativeReport = serde_json::from_str(standalone).unwrap();
-        let archive = new_standalone.telemetry_archive.unwrap();
-        assert_eq!(
-            archive.schema_version,
-            TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION
-        );
-        assert_eq!(
-            archive.state,
-            ReportTelemetryArchiveState::RemotelyFinalized
-        );
-        let new_attached: ArchiveAwareNativeReport = serde_json::from_str(attached).unwrap();
-        let health = new_attached.telemetry_archive.unwrap().health;
-        assert_eq!(health.loss_ranges.len(), 1);
-        assert_eq!(health.loss_saturation_summaries.len(), 1);
-    }
-
-    #[test]
-    fn provider_neutral_evaluation_keeps_zero_score_distinct_from_failure() {
-        let zero_case = EvaluationCaseReport {
-            case_id: "case-0".into(),
-            template_id: "template-0".into(),
-            task: "fixture".into(),
-            source: "sha256:dataset".into(),
-            outcome: EvaluationCaseOutcomeKind::Completed,
-            scores: BTreeMap::from([(
-                "accuracy".into(),
-                EvaluationPublicScoreReport {
-                    value: serde_json::json!(0),
-                    projection_schema: "fixture-score-v1".into(),
-                },
-            )]),
-            numeric_metrics: BTreeMap::from([("accuracy".into(), 0.0)]),
-            primary_score: Some("accuracy".into()),
-            error: None,
-            artifact_refs: Vec::new(),
-        };
-        let failed_case = EvaluationCaseReport {
-            case_id: "case-1".into(),
-            template_id: "template-1".into(),
-            task: "fixture".into(),
-            source: "sha256:dataset".into(),
-            outcome: EvaluationCaseOutcomeKind::InfrastructureError,
-            scores: BTreeMap::new(),
-            numeric_metrics: BTreeMap::new(),
-            primary_score: None,
-            error: Some(EvaluationCaseErrorReport {
-                stage: "inference".into(),
-                kind: "transport_failure".into(),
-                retryable: false,
-                message: "upstream attempt failed".into(),
-            }),
-            artifact_refs: Vec::new(),
-        };
-        let evaluation = EvaluationReport {
-            identity: EvaluationIdentityReport {
-                evaluator_protocol: 2,
-                provider: "openbench".into(),
-                distribution: "openbench_fixture_locked".into(),
-                provider_source_sha256: "a".repeat(64),
-                worker_source_sha256: "b".repeat(64),
-                dependency_lock_sha256: "c".repeat(64),
-                authored_schema_fingerprint: "d".repeat(64),
-                resolved_config_sha256: "e".repeat(64),
-                ordered_manifest_sha256: "f".repeat(64),
-                host_identity_sha256: "1".repeat(64),
-                isolation_proof_sha256: "2".repeat(64),
-                container_digest: None,
-                components: BTreeMap::new(),
-            },
-            config: serde_json::json!({"benchmark": "fixture"}),
-            routes: vec![EvaluationRouteReport {
-                service_id: "primary".into(),
-                purpose: "primary".into(),
-                model: "candidate".into(),
-                endpoint_profile: "candidate_openai".into(),
-                prepared_identity_sha256: "3".repeat(64),
-            }],
-            case_count: 2,
-            completed_count: 1,
-            infrastructure_error_count: 1,
-            cancelled_count: 0,
-            cases: vec![zero_case, failed_case],
-            aggregates: vec![EvaluationAggregateMetricReport {
-                scorer: "fixture".into(),
-                reducer: "mean".into(),
-                metric: "accuracy".into(),
-                value: 0.0,
-                scored_count: 1,
-                unscored_count: 1,
-                projection_schema: "6".repeat(64),
-            }],
-            route_summaries: BTreeMap::from([(
-                "primary".into(),
-                EvaluationRouteSummaryReport {
-                    logical_operations: 2,
-                    transport_attempts: 2,
-                    completed: 1,
-                    failed: 1,
-                    ..EvaluationRouteSummaryReport::default()
-                },
-            )]),
-            artifacts: vec![EvaluationArtifactReport {
-                artifact_ref: "artifact-00000000".into(),
-                path: None,
-                media_type: None,
-                visibility: "restricted".into(),
-                size_bytes: None,
-                artifact_content_sha256: None,
-                projection_schema: None,
-            }],
-        };
-
-        let report = NativeReport::from_outcome(
-            &AccumulatorSummary::new(),
-            &RunOutcome {
-                evaluation: Some(evaluation),
-                ..RunOutcome::default()
-            },
-        );
-        let value = serde_json::to_value(report).unwrap();
-        assert_eq!(value["evaluation"]["cases"][0]["outcome"], "completed");
-        assert_eq!(
-            value["evaluation"]["cases"][0]["scores"]["accuracy"]["value"],
-            0
-        );
-        assert!(value["evaluation"]["cases"][0].get("error").is_none());
-        assert_eq!(
-            value["evaluation"]["cases"][1]["outcome"],
-            "infrastructure_error"
-        );
-        assert!(value["evaluation"]["cases"][1].get("scores").is_none());
-        assert_eq!(
-            value["evaluation"]["artifacts"][0]["visibility"],
-            "restricted"
-        );
-        for field in [
-            "path",
-            "media_type",
-            "size_bytes",
-            "artifact_content_sha256",
-            "projection_schema",
-        ] {
-            assert!(value["evaluation"]["artifacts"][0].get(field).is_none());
-        }
-        assert!(
-            value["evaluation"]
-                .get("canonical_bundle_artifact_content_sha256")
-                .is_none()
-        );
-        assert!(
-            value["evaluation"]
-                .get("normalized_result_sha256")
-                .is_none()
-        );
-        assert!(
-            value["evaluation"]["aggregates"][0]
-                .get("definition")
-                .is_none()
-        );
-        assert_eq!(
-            value["evaluation"]["aggregates"][0]["projection_schema"],
-            "6".repeat(64)
-        );
     }
 
     #[test]
@@ -2677,23 +1666,8 @@ mod tests {
         .with_capacity(capacity);
         let facts = ReportPairRunFacts::new()
             .with_graph(graph)
-            .with_dynamo(dynamo)
-            .with_evaluation_compatibility(
-                ReportEvaluationCompatibilityInfo::new(
-                    vec!["openai_chat_completions".into()],
-                    "d".repeat(64),
-                    ReportEvaluationCompatibilityGrantLimits {
-                        max_operations: 1,
-                        max_concurrent_operations: 1,
-                        max_request_bytes: 1024,
-                        max_response_bytes: 2048,
-                        max_stream_events: 1,
-                        expires_after_ms: 1000,
-                    },
-                )
-                .unwrap(),
-            );
-        let report = NativeReport::new(&AccumulatorSummary::new(), None)
+            .with_dynamo(dynamo);
+        let report = NativeReport::new(&AccumulatorSummary::new())
             .finalize_run(provenance, facts)
             .unwrap();
 
@@ -2717,18 +1691,6 @@ mod tests {
         );
         assert_eq!(run["dynamo"]["parity"]["shared_fields"], 74);
         assert_eq!(run["dynamo"]["capacity"]["prefill_worker_seconds"], 2.5);
-        assert_eq!(
-            run["evaluation_compatibility"]["dialect_ids"],
-            serde_json::json!(["openai_chat_completions"])
-        );
-        assert_eq!(
-            run["evaluation_compatibility"]["descriptor_sha256"],
-            "d".repeat(64)
-        );
-        assert_eq!(
-            run["evaluation_compatibility"]["effective_grant"]["max_operations"],
-            1
-        );
         assert_eq!(
             report.run.provenance().unwrap().distribution_id,
             format!("blake3:{}", "a".repeat(64))
@@ -2783,14 +1745,6 @@ mod tests {
 
     #[test]
     fn pair_facts_reject_non_finite_capacity_and_inconsistent_counts() {
-        let grant = || ReportEvaluationCompatibilityGrantLimits {
-            max_operations: 1,
-            max_concurrent_operations: 1,
-            max_request_bytes: 1,
-            max_response_bytes: 1,
-            max_stream_events: 1,
-            expires_after_ms: 1,
-        };
         assert!(ReportDynamoCapacityInfo::new(f64::NAN, 1.0, 1, 1, 1.0).is_err());
         assert!(ReportDynamoCapacityInfo::new(1.0, 1.0, 1, 1, f64::INFINITY).is_err());
         assert!(ReportDynamoParityInfo::new(74, 68, 5, 100).is_err());
@@ -2799,28 +1753,6 @@ mod tests {
                 .unwrap()
                 .with_outcome(ReportGraphOutcomeInfo::new(1, 1, 1))
                 .is_err()
-        );
-        assert!(
-            ReportEvaluationCompatibilityInfo::new(Vec::new(), "a".repeat(64), grant()).is_err()
-        );
-        assert!(
-            ReportEvaluationCompatibilityInfo::new(
-                vec![
-                    "openai_chat_completions".into(),
-                    "openai_chat_completions".into()
-                ],
-                "a".repeat(64),
-                grant(),
-            )
-            .is_err()
-        );
-        assert!(
-            ReportEvaluationCompatibilityInfo::new(
-                vec!["openai_chat_completions".into()],
-                "not-a-digest",
-                grant(),
-            )
-            .is_err()
         );
     }
 
@@ -2836,7 +1768,7 @@ mod tests {
             )
             .unwrap()
         };
-        let report = NativeReport::new(&AccumulatorSummary::new(), None)
+        let report = NativeReport::new(&AccumulatorSummary::new())
             .finalize_run(provenance(), ReportPairRunFacts::new())
             .unwrap();
         let error = report
@@ -2869,7 +1801,7 @@ mod tests {
             ),
         );
 
-        let value = serde_json::to_value(NativeReport::new(&summary, None)).unwrap();
+        let value = serde_json::to_value(NativeReport::new(&summary)).unwrap();
         let metric = &value["metrics"]["vllm:request_latency_seconds"];
         assert_eq!(metric["type"], "histogram");
         assert_eq!(metric["unit"], "sec");
@@ -2900,7 +1832,7 @@ mod tests {
         accumulator.process_record(&endpoint_z);
         accumulator.process_record(&endpoint_a);
 
-        let report = NativeReport::new(&accumulator.summarize(), None);
+        let report = NativeReport::new(&accumulator.summarize());
         let serialized = serde_json::to_string_pretty(&report.metrics["request_count"]).unwrap();
         assert_eq!(
             serialized,
