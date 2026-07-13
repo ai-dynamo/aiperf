@@ -591,6 +591,7 @@ pub struct MeasuredTurnContext {
 /// The authoritative record stays inside the worker observer for the end-of-run
 /// drain; `live_record` (present only when [`MeasuredTurnContext::wants_live_record`]
 /// is set) is a clone so live emission never removes it from the final merge.
+#[derive(Debug)]
 pub struct MeasuredTurnOutcome {
     /// Backend-neutral dispatch result consumed by scheduling/record processors.
     pub result: HttpTurnDispatchResult,

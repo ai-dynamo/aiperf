@@ -735,10 +735,24 @@ mod tests {
 
     use aiperf::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use aiperf::http::{HttpRequest, PreparedHttpEndpoint};
+    use aiperf::metrics::RequestMetricMetadata;
     use aiperf::multiturn::PreparedEndpointReference;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    /// Coordinator-known arrival facts for a fixture turn. `MeasuredTurnContext`
+    /// has no `Default`, so the tests build the same all-neutral context the
+    /// coordinator would forward for a one-turn fixture dispatch.
+    fn measured_context() -> MeasuredTurnContext {
+        MeasuredTurnContext {
+            arrival_ms: 0.0,
+            input_length: 1,
+            requested_output_length: 4,
+            metadata: RequestMetricMetadata::default(),
+            wants_live_record: false,
+        }
+    }
 
     #[derive(Clone)]
     struct StreamingEndpointTableFactory {
@@ -929,7 +943,7 @@ mod tests {
         let outcome = backend
             .execute_turn_measured_streaming(
                 turn,
-                MeasuredTurnContext::default(),
+                measured_context(),
                 &|_| first_tokens.set(first_tokens.get() + 1),
                 &responses,
             )
@@ -938,7 +952,7 @@ mod tests {
         drop(responses);
         consumer.await.unwrap();
         assert_eq!(
-            outcome.result.unwrap().outcome.response_text,
+            outcome.result.outcome.response_text,
             format!("hel{}", "x".repeat(300))
         );
         assert_eq!(first_tokens.get(), 1);
@@ -992,7 +1006,7 @@ mod tests {
         {
             let dispatch = backend.execute_turn_measured_streaming(
                 streaming_turn(),
-                MeasuredTurnContext::default(),
+                measured_context(),
                 &|_| {},
                 &responses,
             );
