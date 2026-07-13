@@ -30,7 +30,6 @@ dynamo-parity = ["dynamo-full", "aiperf/dynamo-parity"]
 [dependencies]
 aiperf.workspace = true
 aiperf-adaptive = { path = "../adaptive" }
-aiperf-accuracy = { path = "../accuracy" }
 aiperf-clock.workspace = true
 aiperf-content-server.workspace = true
 aiperf-dataset.workspace = true
@@ -44,7 +43,6 @@ aiperf-prometheus = { path = "../prometheus" }
 aiperf-server-metrics.workspace = true
 aiperf-rng.workspace = true
 aiperf-timing = { path = "../timing" }
-aiperf-telemetry-archive = { path = "../telemetry-archive" }
 aiperf-transport-http.workspace = true
 aiperf-transport-grpc.workspace = true
 anyhow.workspace = true
