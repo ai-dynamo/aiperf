@@ -446,7 +446,9 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult> {
         let run_origin_ns = self.origin()?;
-        let reply = self.execute_command(turn, None, on_first_token, None).await?;
+        let reply = self
+            .execute_command(turn, None, on_first_token, None)
+            .await?;
         for event in reply.events {
             event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
         }
@@ -753,7 +755,12 @@ async fn run_worker(
     }
     if let Some((end_ns, reply)) = pending_drain {
         let records = observer
-            .map(|observer| observer.take_finalizer_at(end_ns).finish_with_records().records)
+            .map(|observer| {
+                observer
+                    .take_finalizer_at(end_ns)
+                    .finish_with_records()
+                    .records
+            })
             .unwrap_or_default();
         let _ = reply.send(records);
     }

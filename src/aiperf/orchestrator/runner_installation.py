@@ -228,8 +228,8 @@ class RunnerInstallation:
         The returned child has private stdin/stdout/stderr pipes. Callers must
         send exactly ``orjson.dumps(request)`` to ``communicate`` and must not
         launch a second executable after this method re-verifies distribution
-        identity. Standalone ``aiperf watch`` uses this seam to forward the
-        first SIGINT/SIGTERM for native graceful archive finalization.
+        identity. Lifecycle owners use this seam to forward the first
+        SIGINT/SIGTERM for native graceful shutdown.
         """
         self.preflight_request(request)
         self.verify_distribution_identity()

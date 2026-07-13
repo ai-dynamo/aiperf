@@ -3059,10 +3059,12 @@ impl RunCapture {
                     identity.context.requested_output_length,
                 );
                 fallback.on_terminal(identity.uuid, terminal);
-                let (start_ns, end_ns) = label.map(|label| (label.start_ns, label.end_ns)).unwrap_or_else(|| {
-                    let now = self.clock.now_ns();
-                    (now, now)
-                });
+                let (start_ns, end_ns) = label
+                    .map(|label| (label.start_ns, label.end_ns))
+                    .unwrap_or_else(|| {
+                        let now = self.clock.now_ns();
+                        (now, now)
+                    });
                 fallback.record_response(
                     identity.uuid,
                     NativeResponseMetadata {
@@ -3518,7 +3520,12 @@ mod tests {
     /// transport/usage response.
     fn drive_worker_request(observer: &NativeMetricsObserver, facts: &RequestFacts) {
         observer.register_metadata(facts.uuid, RequestMetricMetadata::default());
-        observer.on_arrival(facts.uuid, facts.arrival_ms, facts.prompt_tokens as usize, 8);
+        observer.on_arrival(
+            facts.uuid,
+            facts.arrival_ms,
+            facts.prompt_tokens as usize,
+            8,
+        );
         observer.on_admit(facts.uuid, facts.arrival_ms, 0);
         for &at in facts.token_times_ms {
             observer.on_token(facts.uuid, at);
@@ -3634,8 +3641,9 @@ mod tests {
         assert_eq!(drained[0].1.request_index, Some(0));
         assert_eq!(drained[2].1.request_index, Some(0));
 
-        let issued: HashMap<Uuid, i64> =
-            [(a.uuid, 111), (b.uuid, 222), (c.uuid, 333)].into_iter().collect();
+        let issued: HashMap<Uuid, i64> = [(a.uuid, 111), (b.uuid, 222), (c.uuid, 333)]
+            .into_iter()
+            .collect();
         let captured = capture.finish(&issued, drained).unwrap();
 
         assert_eq!(
@@ -3643,12 +3651,18 @@ mod tests {
             vec![a.uuid, b.uuid, c.uuid],
         );
         assert_eq!(
-            captured.iter().map(|r| r.x_correlation_id.as_str()).collect::<Vec<_>>(),
+            captured
+                .iter()
+                .map(|r| r.x_correlation_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["corr-a", "corr-b", "corr-c"],
         );
         // Global dispatch ordinal stamped dense 0..N-1 in dispatch order.
         assert_eq!(
-            captured.iter().map(|r| r.ingest.request_index).collect::<Vec<_>>(),
+            captured
+                .iter()
+                .map(|r| r.ingest.request_index)
+                .collect::<Vec<_>>(),
             vec![Some(0), Some(1), Some(2)],
         );
         // uuid join: each row carries its own record; admit patched per uuid.
@@ -3710,7 +3724,8 @@ mod tests {
             for record in &captured {
                 accumulator.process_record(&record.ingest);
             }
-            let summary = accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+            let summary =
+                accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
             (
                 serde_json::to_vec(&summary).unwrap(),
                 summary.finite_value(MetricTag::RequestCount),
@@ -3762,8 +3777,7 @@ mod tests {
         let drained = worker.finish_with_records().records;
         assert_eq!(drained.len(), 1);
 
-        let issued: HashMap<Uuid, i64> =
-            [(a.uuid, 111), (b.uuid, 222)].into_iter().collect();
+        let issued: HashMap<Uuid, i64> = [(a.uuid, 111), (b.uuid, 222)].into_iter().collect();
         let captured = capture.finish(&issued, drained).unwrap();
 
         assert_eq!(
@@ -3771,11 +3785,17 @@ mod tests {
             vec![a.uuid, b.uuid],
         );
         assert_eq!(
-            captured.iter().map(|r| r.ingest.request_index).collect::<Vec<_>>(),
+            captured
+                .iter()
+                .map(|r| r.ingest.request_index)
+                .collect::<Vec<_>>(),
             vec![Some(0), Some(1)],
         );
         assert!(!captured[0].ingest.errored);
-        assert!(captured[1].ingest.errored, "the pre-worker failure is errored");
+        assert!(
+            captured[1].ingest.errored,
+            "the pre-worker failure is errored"
+        );
 
         let mut accumulator = MetricsAccumulator::with_config(MetricsConfig::default());
         for record in &captured {
@@ -3785,7 +3805,13 @@ mod tests {
         // RequestCount counts successes only; the errored fallback lands in
         // ErrorRequestCount, so the total CompletedRequestCount is 2.
         assert_eq!(summary.finite_value(MetricTag::RequestCount), Some(1.0));
-        assert_eq!(summary.finite_value(MetricTag::ErrorRequestCount), Some(1.0));
-        assert_eq!(summary.finite_value(MetricTag::CompletedRequestCount), Some(2.0));
+        assert_eq!(
+            summary.finite_value(MetricTag::ErrorRequestCount),
+            Some(1.0)
+        );
+        assert_eq!(
+            summary.finite_value(MetricTag::CompletedRequestCount),
+            Some(2.0)
+        );
     }
 }

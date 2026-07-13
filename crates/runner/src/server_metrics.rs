@@ -27,7 +27,6 @@ use aiperf_server_metrics::{
     ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,
     ServerMetricsScrapeOutcome, ServerMetricsSource, ServerMetricsSummary,
 };
-use aiperf_telemetry_archive::driver::{PreparedTelemetryDriver, RunningTelemetryDriver};
 use aiperf_transport_http::config::ClientConfig;
 use aiperf_transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
@@ -36,57 +35,6 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::protocol::ServerMetricsSpec;
-/// Prepared server-metrics source whose sole physical driver is not phase-owned.
-pub(crate) struct PreparedRunOwnedServerMetricsDriver {
-    source_id: String,
-    driver: Box<dyn PreparedTelemetryDriver>,
-}
-
-#[expect(
-    dead_code,
-    reason = "scheduled attachment preparation consumes this adapter in the integration slice"
-)]
-impl PreparedRunOwnedServerMetricsDriver {
-    /// Retain one already prepared physical driver without opening another source.
-    pub(crate) fn new(driver: Box<dyn PreparedTelemetryDriver>) -> Result<Self> {
-        let source_id = driver.source_id().to_owned();
-        ensure!(
-            !source_id.is_empty()
-                && source_id.trim() == source_id
-                && !source_id.chars().any(char::is_control),
-            "prepared server-metrics source ID is invalid"
-        );
-        Ok(Self { source_id, driver })
-    }
-
-    /// Stable source ID exposed before attachment resolution.
-    pub(crate) fn source_id(&self) -> &str {
-        &self.source_id
-    }
-
-    /// Start the one run-owned driver on the current LocalSet.
-    pub(crate) fn start(self) -> Result<Rc<dyn RunningTelemetryDriver>> {
-        let running = self
-            .driver
-            .start()
-            .map_err(|error| anyhow::anyhow!(error))?;
-        ensure!(
-            running.source_id() == self.source_id,
-            "prepared server-metrics driver changed its source identity"
-        );
-        Ok(running)
-    }
-}
-
-impl std::fmt::Debug for PreparedRunOwnedServerMetricsDriver {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("PreparedRunOwnedServerMetricsDriver")
-            .field("source_id", &self.source_id)
-            .field("driver", &self.driver)
-            .finish()
-    }
-}
 
 /// Run-owned server telemetry shared by phase-specific lifecycle adapters.
 pub(crate) struct ServerMetricsRun {
@@ -573,102 +521,13 @@ fn metric_type_name(metric_type: PrometheusMetricType) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use aiperf_telemetry_archive::{SourceBoundarySnapshotCommand, driver::*};
-    use async_trait::async_trait;
-
     use super::*;
 
     static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
-
-    #[derive(Debug, Default)]
-    struct DriverCalls {
-        phase_updates: RefCell<Vec<(String, bool)>>,
-        boundaries: RefCell<Vec<String>>,
-        stops: RefCell<Vec<i64>>,
-        joins: Cell<u64>,
-        stopped: Cell<bool>,
-    }
-
-    #[derive(Debug)]
-    struct FakePreparedDriver {
-        calls: Rc<DriverCalls>,
-    }
-
-    impl PreparedTelemetryDriver for FakePreparedDriver {
-        fn source_id(&self) -> &str {
-            "server-primary"
-        }
-
-        fn start(self: Box<Self>) -> Result<Rc<dyn RunningTelemetryDriver>, DriverStartError> {
-            Ok(Rc::new(FakeRunningDriver { calls: self.calls }))
-        }
-    }
-
-    #[derive(Debug)]
-    struct FakeRunningDriver {
-        calls: Rc<DriverCalls>,
-    }
-
-    #[async_trait(?Send)]
-    impl RunningTelemetryDriver for FakeRunningDriver {
-        fn source_id(&self) -> &str {
-            "server-primary"
-        }
-
-        fn set_phase_active(&self, phase_id: &str, active: bool) -> Result<(), DriverCommandError> {
-            if self.calls.stopped.get() {
-                return Err(DriverCommandError::Stopped);
-            }
-            self.calls
-                .phase_updates
-                .borrow_mut()
-                .push((phase_id.to_owned(), active));
-            Ok(())
-        }
-
-        fn submit_boundary(
-            &self,
-            command: SourceBoundarySnapshotCommand,
-        ) -> Result<
-            LocalDriverFuture<Result<BoundaryAttemptCompletion, DriverStopError>>,
-            DriverCommandError,
-        > {
-            self.calls
-                .boundaries
-                .borrow_mut()
-                .push(command.source_id.clone());
-            Ok(Box::pin(async move {
-                Ok(BoundaryAttemptCompletion {
-                    source_id: command.source_id,
-                    transition_id: command.subscribers[0].transition_id.clone(),
-                    terminal: aiperf_telemetry_archive::driver::BoundaryAttemptTerminal::Attempt {
-                        source_record_seq: 0,
-                        request_attempt_seq: Some(0),
-                        boundary_refs: command.subscribers,
-                    },
-                })
-            }))
-        }
-
-        fn stop(&self, shutdown_deadline_ns: i64) {
-            self.calls.stopped.set(true);
-            self.calls.stops.borrow_mut().push(shutdown_deadline_ns);
-        }
-
-        async fn join(&self) -> Result<TelemetryDriverSummary, DriverStopError> {
-            self.calls.joins.set(self.calls.joins.get() + 1);
-            Ok(TelemetryDriverSummary {
-                attempts: 3,
-                missed_ticks: 1,
-                missed_ranges: 1,
-            })
-        }
-    }
 
     fn artifact_path() -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -716,51 +575,5 @@ mod tests {
         let row: Value = serde_json::from_str(rows[0]).unwrap();
         assert_eq!(row["timestamp_ns"], 10);
         std::fs::remove_file(path).unwrap();
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn run_owned_adapter_forwards_every_phase_to_one_physical_driver() {
-        let calls = Rc::new(DriverCalls::default());
-        let prepared = PreparedRunOwnedServerMetricsDriver::new(Box::new(FakePreparedDriver {
-            calls: calls.clone(),
-        }))
-        .unwrap();
-        assert_eq!(prepared.source_id(), "server-primary");
-        let running = prepared.start().unwrap();
-        running.set_phase_active("warmup", true).unwrap();
-        running.set_phase_active("profiling", true).unwrap();
-        let reference = aiperf_telemetry_archive::BoundaryReference {
-            transition_id: "warmup-to-profiling".to_owned(),
-            boundary_id: "server-primary-profiling-start".to_owned(),
-            phase_id: "profiling".to_owned(),
-            source_id: "server-primary".to_owned(),
-            role: aiperf_telemetry_archive::BoundaryRole::PhaseStart,
-            coalescing_group_id: None,
-        };
-        let completion = running
-            .submit_boundary(SourceBoundarySnapshotCommand {
-                source_id: "server-primary".to_owned(),
-                coalescing_group_id: None,
-                subscribers: vec![reference],
-                absolute_deadline_ns: 100,
-            })
-            .unwrap()
-            .await
-            .unwrap();
-        assert_eq!(completion.source_id, "server-primary");
-        running.stop(200);
-        assert_eq!(running.join().await.unwrap().attempts, 3);
-
-        assert_eq!(
-            &*calls.phase_updates.borrow(),
-            &[("warmup".to_owned(), true), ("profiling".to_owned(), true)]
-        );
-        assert_eq!(&*calls.boundaries.borrow(), &["server-primary"]);
-        assert_eq!(&*calls.stops.borrow(), &[200]);
-        assert_eq!(calls.joins.get(), 1);
-        assert!(matches!(
-            running.set_phase_active("profiling", false),
-            Err(DriverCommandError::Stopped)
-        ));
     }
 }

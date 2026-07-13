@@ -8,6 +8,7 @@
 //! preparation and never enter authored DTOs, durable source descriptors, or
 //! returned attempt facts.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::{self, Debug, Display, Formatter};
@@ -15,7 +16,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aiperf_clock::Clock;
-use aiperf_telemetry_archive::LocalCancellationSignal;
 use aiperf_transport_http::config::{
     ClientConfig, PreparedTlsClientConfig, PreparedTlsClientConfigError,
 };
@@ -25,7 +25,110 @@ use aiperf_transport_http::models::{
 use aiperf_transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use bytes::Bytes;
+use tokio::sync::Notify;
 use url::Url;
+
+/// Local-loop cancellation/deadline signal shared with an in-flight control-plane call.
+///
+/// A running workload lowers the effective deadline or stops the call by
+/// bumping a monotonic revision and waking any waiter; the executing GET selects
+/// over [`LocalCancellationSignal::changed`] to observe those updates without
+/// polling. `!Send`/`!Sync` by construction (`Rc`/`RefCell`), matching the
+/// thread-per-core control-plane execution model.
+///
+/// Extension point: a live telemetry or health source owns the writer half and
+/// drives [`stop`](Self::stop) / [`lower_deadline_ns`](Self::lower_deadline_ns);
+/// the base build constructs none, so the seam stays open without a consumer.
+#[derive(Clone, Debug)]
+pub struct LocalCancellationSignal {
+    state: Rc<RefCell<CancellationState>>,
+    notify: Rc<Notify>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CancellationState {
+    revision: u64,
+    deadline_ns: i64,
+    stopped: bool,
+}
+
+impl Default for LocalCancellationSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalCancellationSignal {
+    /// Create an unbounded, un-stopped signal at revision zero.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(CancellationState {
+                revision: 0,
+                deadline_ns: i64::MAX,
+                stopped: false,
+            })),
+            notify: Rc::new(Notify::new()),
+        }
+    }
+
+    /// Current revision; changes on every deadline lowering or stop.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.state.borrow().revision
+    }
+
+    /// Absolute nanosecond deadline currently in force (`i64::MAX` when unbounded).
+    #[must_use]
+    pub fn deadline_ns(&self) -> i64 {
+        self.state.borrow().deadline_ns
+    }
+
+    /// Whether the owner has requested an immediate stop.
+    #[must_use]
+    pub fn is_stopped(&self) -> bool {
+        self.state.borrow().stopped
+    }
+
+    /// Resolve once the revision advances past `last_revision`, returning the new value.
+    ///
+    /// Registers interest before re-reading state so a concurrent update between
+    /// the read and the await is never lost.
+    pub async fn changed(&self, last_revision: u64) -> u64 {
+        loop {
+            let notified = self.notify.notified();
+            {
+                let state = self.state.borrow();
+                if state.revision != last_revision {
+                    return state.revision;
+                }
+            }
+            notified.await;
+        }
+    }
+
+    /// Lower the effective deadline (never raises it) and wake any waiter.
+    pub fn lower_deadline_ns(&self, deadline_ns: i64) {
+        let mut state = self.state.borrow_mut();
+        if deadline_ns < state.deadline_ns {
+            state.deadline_ns = deadline_ns;
+            state.revision += 1;
+            drop(state);
+            self.notify.notify_waiters();
+        }
+    }
+
+    /// Request an immediate stop and wake any waiter.
+    pub fn stop(&self) {
+        let mut state = self.state.borrow_mut();
+        if !state.stopped {
+            state.stopped = true;
+            state.revision += 1;
+            drop(state);
+            self.notify.notify_waiters();
+        }
+    }
+}
 
 const ALLOWLISTED_RESPONSE_HEADERS: &[&str] = &[
     "cache-control",

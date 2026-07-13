@@ -231,7 +231,10 @@ fn offline_and_online_agree_on_served_counts_and_differ_only_on_clock() {
             "mode={mode} terminal={terminal}, stderr={}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(terminal["provenance"]["transport"], format!("dynosim_{mode}"));
+        assert_eq!(
+            terminal["provenance"]["transport"],
+            format!("dynosim_{mode}")
+        );
         let native: Value =
             serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
         assert_eq!(native["run"]["mode"], format!("{mode}:scheduled"));
@@ -750,8 +753,11 @@ fn offline_product_path_is_byte_exact_with_python_dynamo_replay() {
     });
     let output = run(&request);
     let terminal = one_line(&output);
-    assert!(output.status.success(), "aiperf terminal={terminal} stderr={}",
-        String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "aiperf terminal={terminal} stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     // clock=sim: this is a deterministic offline run.
     assert_eq!(terminal["provenance"]["clock"], "sim");
     let aiperf: Value =
@@ -761,24 +767,48 @@ fn offline_product_path_is_byte_exact_with_python_dynamo_replay() {
     let native_out = Command::new(python)
         .env("PYTHONPATH", &pythonpath)
         .args([
-            "-m", "dynamo.replay", trace_path.to_str().unwrap(),
-            "--replay-mode", "offline", "--replay-concurrency", &CONCURRENCY.to_string(),
-            "--num-workers", "1", "--extra-engine-args", r#"{"block_size":16}"#,
-            "--trace-format", "mooncake", "--report-json", native_report.to_str().unwrap(),
+            "-m",
+            "dynamo.replay",
+            trace_path.to_str().unwrap(),
+            "--replay-mode",
+            "offline",
+            "--replay-concurrency",
+            &CONCURRENCY.to_string(),
+            "--num-workers",
+            "1",
+            "--extra-engine-args",
+            r#"{"block_size":16}"#,
+            "--trace-format",
+            "mooncake",
+            "--report-json",
+            native_report.to_str().unwrap(),
         ])
         .output()
         .unwrap();
-    assert!(native_out.status.success(), "python dynamo.replay failed: {}",
-        String::from_utf8_lossy(&native_out.stderr));
+    assert!(
+        native_out.status.success(),
+        "python dynamo.replay failed: {}",
+        String::from_utf8_lossy(&native_out.stderr)
+    );
     let native: Value = serde_json::from_slice(&std::fs::read(&native_report).unwrap()).unwrap();
 
     let f = |v: &Value, k: &str| v[k].as_f64().unwrap();
     // Counts + wall time: byte-identical (deterministic offline).
-    assert_eq!(f(&aiperf, "completed_requests"), f(&native, "completed_requests"));
-    assert_eq!(f(&aiperf, "total_input_tokens"), f(&native, "total_input_tokens"));
-    assert_eq!(f(&aiperf, "total_output_tokens"), f(&native, "total_output_tokens"));
     assert_eq!(
-        f(&aiperf, "wall_time_ms"), f(&native, "wall_time_ms"),
+        f(&aiperf, "completed_requests"),
+        f(&native, "completed_requests")
+    );
+    assert_eq!(
+        f(&aiperf, "total_input_tokens"),
+        f(&native, "total_input_tokens")
+    );
+    assert_eq!(
+        f(&aiperf, "total_output_tokens"),
+        f(&native, "total_output_tokens")
+    );
+    assert_eq!(
+        f(&aiperf, "wall_time_ms"),
+        f(&native, "wall_time_ms"),
         "wall_time not byte-exact"
     );
     // Latency means: equal to native's 6-decimal report precision (the property

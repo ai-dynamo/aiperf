@@ -3361,3 +3361,37 @@ This addendum does not claim the §18 and §21 final validation gates are fully
 closed. Until that final audit is recorded, status should be read as
 runner-reachable implementation with final validation pending, not as an
 unbuilt design.
+
+## Addendum — 2026-07-13 (feature removed)
+
+This design is **withdrawn**. The durable telemetry archive/watch feature has
+been deleted from the workspace. This addendum is authoritative where it
+conflicts with the body above; the body is retained as an append-only historical
+record of the original intent.
+
+Removed:
+
+- The `aiperf-telemetry-archive` crate in its entirety (`crates/telemetry-archive/`).
+- The runner integration modules `telemetry_archive_components.rs`,
+  `telemetry_archive_owner.rs`, `telemetry_attachment.rs`, `telemetry_execution.rs`,
+  `telemetry_operation.rs`, `telemetry_pipeline.rs`, `telemetry_source.rs`, and
+  `telemetry_watch.rs`, plus the `telemetry_watch_v2.rs` runner test.
+- The `telemetry_watch` workload and its transport/workload pair registration
+  (base build no longer advertises any `telemetry_watch` pair).
+- The Python `aiperf watch` command (`src/aiperf/cli_commands/watch.py`), its
+  test, and its CLI registration.
+- The additive native-v2 telemetry-archive report block in
+  `crates/metrics/src/report.rs` (`ReportTelemetryArchive*`, the loss-ledger and
+  boundary report types, `TELEMETRY_ARCHIVE_REPORT_SCHEMA_VERSION`, and the
+  `RunOutcome`/`NativeReport` `telemetry_archive` fields).
+
+Retained:
+
+- `aiperf-prometheus` survives as the IO-free Prometheus/OpenMetrics parsing leaf
+  consumed by the `aiperf-server-metrics` live producer.
+- Live GPU/server/network telemetry producers (`aiperf-gpu-telemetry`,
+  `aiperf-server-metrics`, `aiperf-network-latency`) that feed the run's metrics
+  report are unaffected.
+- The general control-plane HTTP seam (`aiperf-runner::control_plane_http`) is
+  kept; its previously-borrowed `LocalCancellationSignal` type was relocated
+  into that module since it is a general execution-factory seam, not archive code.

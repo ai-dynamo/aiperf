@@ -622,7 +622,12 @@ async fn run_worker(
     }
     if let Some((end_ns, reply)) = pending_drain {
         let records = observer
-            .map(|observer| observer.take_finalizer_at(end_ns).finish_with_records().records)
+            .map(|observer| {
+                observer
+                    .take_finalizer_at(end_ns)
+                    .finish_with_records()
+                    .records
+            })
             .unwrap_or_default();
         let _ = reply.send(records);
     }

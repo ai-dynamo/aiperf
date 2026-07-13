@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol_v2::RUNNER_PROTOCOL_V2;
-use crate::registry::{RunnerTransportDescriptor, RunnerRegistry, RunnerWorkloadDescriptor};
+use crate::registry::{RunnerRegistry, RunnerTransportDescriptor, RunnerWorkloadDescriptor};
 
 /// Machine-readable runner capabilities returned by `--capabilities`.
 #[derive(Debug, Serialize)]
@@ -533,4 +533,3 @@ impl PhaseSpec {
         }
     }
 }
-

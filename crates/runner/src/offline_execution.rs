@@ -88,10 +88,10 @@ use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::records::{CapturedModelOutput, CapturedRecord};
 use crate::registry::{
-    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerTransportDescriptor,
-    RunnerTransportFactory, RunnerClockKind, RunnerPairFactory, RunnerRegistryBuilder,
-    RunnerRunContext, ScheduledWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
-    WorkloadRequirements,
+    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerClockKind,
+    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, RunnerTransportDescriptor,
+    RunnerTransportFactory, ScheduledWorkloadConfigV2, ValidatedTransportConfig,
+    ValidatedWorkloadConfig, WorkloadRequirements,
 };
 
 /// Stable runner-registry transport IDs for the in-process Dynamo engine.
@@ -1273,8 +1273,8 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
         // flag on any other topology is a no-op. This makes offline concurrency
         // byte-exact with `dynamo.replay --replay-mode offline` under saturation.
         let mut backend = backend;
-        backend.engine.single_pass_engine = dataset.is_single_turn()
-            && phases.iter().all(phase_allows_single_pass_engine);
+        backend.engine.single_pass_engine =
+            dataset.is_single_turn() && phases.iter().all(phase_allows_single_pass_engine);
 
         let phase_count = phases.len();
         let single_pass_engine = backend.engine.single_pass_engine;
@@ -2313,9 +2313,8 @@ fn create_artifact_target(path: &Path) -> Result<()> {
     // logs before launching the runner, as on the online HTTP path). Create it
     // idempotently; each backend-owned Dynamo artifact still refuses to
     // overwrite a pre-existing file of its own name during emission.
-    std::fs::create_dir_all(path).with_context(|| {
-        format!("creating offline artifact target {}", path.display())
-    })
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("creating offline artifact target {}", path.display()))
 }
 
 fn verify_parity(
@@ -2415,7 +2414,7 @@ pub struct DynosimTraceOutcome {
 mod tests {
     use super::*;
     use crate::registry::{
-        BuiltinRunnerRegistryFactory, RunnerTransportFactory, RunnerRegistryFactory,
+        BuiltinRunnerRegistryFactory, RunnerRegistryFactory, RunnerTransportFactory,
     };
 
     fn raw(value: Value) -> Box<RawValue> {

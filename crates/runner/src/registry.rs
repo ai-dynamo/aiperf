@@ -1358,22 +1358,24 @@ fn seconds_to_optional_ns(value: f64, field: &str) -> Result<Option<i64>> {
 }
 
 /// Built-in online HTTP transport descriptor.
-pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
-    id: "http",
-    description: "Clock-injected native HTTP transport over a real clock",
-    clock: RunnerClockKind::Real,
-    semantic_responses: true,
-    features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
-};
+pub static ONLINE_HTTP_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
+    RunnerTransportDescriptor {
+        id: "http",
+        description: "Clock-injected native HTTP transport over a real clock",
+        clock: RunnerClockKind::Real,
+        semantic_responses: true,
+        features: &["control_plane_http", "h1", "h2c", "http", "tls", "uds"],
+    };
 
 /// Built-in online gRPC transport descriptor.
-pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
-    id: "grpc",
-    description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
-    clock: RunnerClockKind::Real,
-    semantic_responses: true,
-    features: &["grpc", "h2", "tls"],
-};
+pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: RunnerTransportDescriptor =
+    RunnerTransportDescriptor {
+        id: "grpc",
+        description: "Clock-injected native gRPC transport over Tonic HTTP/2 channels",
+        clock: RunnerClockKind::Real,
+        semantic_responses: true,
+        features: &["grpc", "h2", "tls"],
+    };
 
 /// Built-in scheduled workload descriptor.
 pub static SCHEDULED_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDescriptor {
@@ -1416,7 +1418,9 @@ impl RunnerTransportFactory for OnlineHttpTransportFactoryV2 {
             "http control client connect_timeout_ns must be positive"
         );
         ensure!(
-            requirements.transport_features.contains("control_plane_http")
+            requirements
+                .transport_features
+                .contains("control_plane_http")
                 || config.client == OnlineHttpControlClientConfigV2::default(),
             "http client config is forbidden when the workload does not request control_plane_http"
         );
@@ -1832,7 +1836,10 @@ mod tests {
         let registry = registry();
         assert_eq!(registry.transport_descriptors(), vec![&TRANSPORT]);
         assert_eq!(registry.workload_descriptors(), vec![&WORKLOAD]);
-        assert_eq!(registry.supported_pairs(), vec![(TRANSPORT.id, WORKLOAD.id)]);
+        assert_eq!(
+            registry.supported_pairs(),
+            vec![(TRANSPORT.id, WORKLOAD.id)]
+        );
     }
 
     #[test]

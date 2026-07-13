@@ -421,13 +421,13 @@ def test_v2_request_capabilities_read_endpoint_profiles_from_resources() -> None
 
 def test_v2_request_capabilities_defer_resource_presence_to_workload_registry() -> None:
     capabilities = {
-        "supported_pairs": [["telemetry_archive", "telemetry_watch"]],
+        "supported_pairs": [["synthetic_transport", "synthetic_workload"]],
         "endpoint_types": [],
     }
     request = {
         "run": {
-            "transport": {"type": "telemetry_archive"},
-            "workload": {"type": "telemetry_watch"},
+            "transport": {"type": "synthetic_transport"},
+            "workload": {"type": "synthetic_workload"},
             "resources": {},
         }
     }

@@ -40,9 +40,9 @@ use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
 use crate::registry::{
-    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
-    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
-    ValidatedTransportConfig, ValidatedWorkloadConfig,
+    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome,
+    PreparedRunnerOperation, RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext,
+    ScheduledWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
 };
 use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 

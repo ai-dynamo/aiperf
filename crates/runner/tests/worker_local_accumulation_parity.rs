@@ -202,7 +202,10 @@ async fn worker_local_accumulation_is_byte_identical_across_worker_counts() {
     );
 
     // The run-level metadata block is worker-count independent.
-    assert_eq!(single["run"]["endpoint_profiles"], split["run"]["endpoint_profiles"]);
+    assert_eq!(
+        single["run"]["endpoint_profiles"],
+        split["run"]["endpoint_profiles"]
+    );
     assert_eq!(single["run"]["mode"], split["run"]["mode"]);
 
     // Every deterministic count/token series must be byte-identical between the
