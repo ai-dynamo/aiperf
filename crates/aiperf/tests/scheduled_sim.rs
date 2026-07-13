@@ -20,10 +20,10 @@ use aiperf::scheduled::{
 use aiperf::user_centric::UserTargetController;
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
 use aiperf::workload::SkeletonWorkload;
-use aiperf_clock::Clock;
-use aiperf_clock::sim_clock::SimClock;
-use aiperf_graph::runtime::drive_sim;
-use aiperf_timing::{BernoulliFixedDelay, Phase, RoundRobinUrlSelector, StopConfig};
+use aiperf::clock::Clock;
+use aiperf::clock::sim_clock::SimClock;
+use aiperf::graph::runtime::drive_sim;
+use aiperf::timing::{BernoulliFixedDelay, Phase, RoundRobinUrlSelector, StopConfig};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
@@ -181,7 +181,7 @@ impl TurnDispatcher for SimDispatcher {
             model_response: aiperf::scheduled::ModelResponseMetadata::default(),
             prompt_tokens: None,
             completion_tokens: None,
-            http: aiperf_metrics::HttpTrace::default(),
+            http: aiperf::metrics_core::HttpTrace::default(),
         })
     }
 }
@@ -190,7 +190,7 @@ fn run_sim(
     clock: Rc<SimClock>,
     workload: Rc<dyn Workload>,
     dispatcher: Rc<dyn TurnDispatcher>,
-    stop: aiperf_timing::StopConfig,
+    stop: aiperf::timing::StopConfig,
     enforce_stop: bool,
 ) -> ScheduledRunReport {
     let report = Rc::new(RefCell::new(None));
@@ -275,7 +275,7 @@ fn fixed_schedule_replays_absolute_relative_and_immediate_turns_exactly() {
         clock,
         workload,
         dispatcher.clone(),
-        aiperf_timing::StopConfig::default(),
+        aiperf::timing::StopConfig::default(),
         false,
     );
 
@@ -285,34 +285,34 @@ fn fixed_schedule_replays_absolute_relative_and_immediate_turns_exactly() {
     assert_eq!(
         report
             .native_metrics
-            .finite_value(aiperf_metrics::MetricTag::RequestCount),
+            .finite_value(aiperf::metrics_core::MetricTag::RequestCount),
         Some(6.0)
     );
     assert!(
         report
             .native_metrics
-            .result(aiperf_metrics::MetricTag::EffectiveConcurrency)
-            .and_then(aiperf_metrics::MetricResult::distribution)
+            .result(aiperf::metrics_core::MetricTag::EffectiveConcurrency)
+            .and_then(aiperf::metrics_core::MetricResult::distribution)
             .is_some()
     );
     assert!(
         report
             .native_metrics
-            .result(aiperf_metrics::MetricTag::CreditDropLatency)
+            .result(aiperf::metrics_core::MetricTag::CreditDropLatency)
             .is_none(),
         "fixed schedules have no inherited credit-drop latency"
     );
     assert!(
         report
             .native_metrics
-            .result(aiperf_metrics::MetricTag::CreditToStartLatency)
+            .result(aiperf::metrics_core::MetricTag::CreditToStartLatency)
             .is_none(),
         "fixed schedules have no policy-credit timestamp"
     );
     assert!(
         report
             .native_metrics
-            .result(aiperf_metrics::MetricTag::EffectiveLatency)
+            .result(aiperf::metrics_core::MetricTag::EffectiveLatency)
             .is_none(),
         "fixed schedules must omit credit-relative effective latency"
     );
@@ -491,7 +491,7 @@ fn fixed_absolute_timestamp_in_the_past_fires_on_response_return() {
         clock,
         workload,
         dispatcher,
-        aiperf_timing::StopConfig::default(),
+        aiperf::timing::StopConfig::default(),
         false,
     );
     assert_eq!(report.turns[1].scheduled_offset_ns, 20_000_000);
@@ -526,7 +526,7 @@ fn user_centric_seed_churn_and_per_user_pacing_match_the_contract() {
         clock,
         workload,
         dispatcher,
-        aiperf_timing::StopConfig {
+        aiperf::timing::StopConfig {
             total_expected_requests: Some(8),
             expected_num_sessions: None,
             expected_duration_ns: None,
@@ -591,7 +591,7 @@ fn user_centric_optional_concurrency_caps_live_sessions() {
         clock,
         workload,
         dispatcher.clone(),
-        aiperf_timing::StopConfig {
+        aiperf::timing::StopConfig {
             total_expected_requests: Some(10),
             expected_num_sessions: None,
             expected_duration_ns: None,
@@ -629,7 +629,7 @@ fn user_centric_session_bound_starts_exact_sessions_then_drains_turns() {
         clock,
         workload,
         dispatcher,
-        aiperf_timing::StopConfig {
+        aiperf::timing::StopConfig {
             total_expected_requests: None,
             expected_num_sessions: Some(4),
             expected_duration_ns: None,
@@ -674,7 +674,7 @@ fn user_centric_duration_cancels_future_schedule_but_drains_inflight() {
         clock,
         workload,
         dispatcher,
-        aiperf_timing::StopConfig {
+        aiperf::timing::StopConfig {
             total_expected_requests: None,
             expected_num_sessions: None,
             expected_duration_ns: Some(175_000_000),
@@ -733,7 +733,7 @@ fn adaptive_scale_up_interrupts_spawn_sleep_and_uses_new_turn_gap() {
             clock_dyn,
             0,
             dispatcher,
-            aiperf_timing::StopConfig {
+            aiperf::timing::StopConfig {
                 total_expected_requests: Some(10),
                 expected_num_sessions: None,
                 expected_duration_ns: None,

@@ -101,3 +101,64 @@ dynamo-kv-router = { path = "../../../../../dynamo-aiperf-native/lib/kv-router",
 aiconfigurator-core = { git = "https://github.com/ai-dynamo/aiconfigurator.git", rev = "ffbab15797d3a3f14c382e937c0ab0c1c5cbc530", package = "aiconfigurator-core", features = ["embed-python"], optional = true }
 pyo3 = { version = "0.23.4", features = ["auto-initialize"], optional = true }
 parking_lot = { version = "0.12", optional = true }
+
+# Dev-only deps carried over from the 16 absorbed crates' test suites. The
+# monocrate's normal deps already cover most needs; these add the extra feature
+# surface the integration tests require.
+[dev-dependencies]
+# transport-http integration tests stand up an in-process hyper server.
+hyper = { version = "1.10", features = ["server", "http1", "http2"] }
+# transport-grpc integration tests stand up an in-process Tonic server.
+tonic = { workspace = true, features = ["server", "router", "codegen"] }
+# grpc test servers wrap a TcpListener as a stream.
+tokio-stream = { version = "0.1", features = ["net"] }
+
+# Explicit test targets for the transport-http integration suite, which lives in
+# a `tests/transport_http/` subdirectory so the shared `common.rs` helper is a
+# sibling module (`mod common;`) rather than an auto-discovered test binary.
+# Flat `tests/*.rs` files (endpoints_*, graph_*, rng_*, timing_*,
+# transport_grpc_*, extensions_*, and the pre-existing scheduled/online suites)
+# are auto-discovered and need no explicit entry.
+[[test]]
+name = "transport_http_cancel"
+path = "tests/transport_http/cancel.rs"
+
+[[test]]
+name = "transport_http_connect"
+path = "tests/transport_http/connect.rs"
+
+[[test]]
+name = "transport_http_facade"
+path = "tests/transport_http/facade.rs"
+
+[[test]]
+name = "transport_http_h2c"
+path = "tests/transport_http/h2c.rs"
+
+[[test]]
+name = "transport_http_mock_smoke"
+path = "tests/transport_http/mock_smoke.rs"
+
+[[test]]
+name = "transport_http_no_direct_time"
+path = "tests/transport_http/no_direct_time.rs"
+
+[[test]]
+name = "transport_http_pool"
+path = "tests/transport_http/pool.rs"
+
+[[test]]
+name = "transport_http_request"
+path = "tests/transport_http/request.rs"
+
+[[test]]
+name = "transport_http_response_body_limits"
+path = "tests/transport_http/response_body_limits.rs"
+
+[[test]]
+name = "transport_http_reuse"
+path = "tests/transport_http/reuse.rs"
+
+[[test]]
+name = "transport_http_tls"
+path = "tests/transport_http/tls.rs"

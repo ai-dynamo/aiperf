@@ -15,10 +15,10 @@ use aiperf::scheduled::{
     ScheduledRunReport, TurnDispatchOutcome, TurnDispatcher, Workload, run_scheduled_workload,
 };
 use aiperf::workload::SkeletonWorkload;
-use aiperf_clock::Clock;
-use aiperf_clock::sim_clock::SimClock;
-use aiperf_graph::runtime::drive_sim;
-use aiperf_timing::{ArrivalPattern, StopConfig};
+use aiperf::clock::Clock;
+use aiperf::clock::sim_clock::SimClock;
+use aiperf::graph::runtime::drive_sim;
+use aiperf::timing::{ArrivalPattern, StopConfig};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::RequestObserver;
@@ -107,7 +107,7 @@ impl TurnDispatcher for SimDispatcher {
             model_response: aiperf::scheduled::ModelResponseMetadata::default(),
             prompt_tokens: None,
             completion_tokens: Some(1),
-            http: aiperf_metrics::HttpTrace::default(),
+            http: aiperf::metrics_core::HttpTrace::default(),
         })
     }
 }

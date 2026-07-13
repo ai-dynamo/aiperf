@@ -363,6 +363,42 @@ fn extract_prepared_responses(
     Ok(parsed)
 }
 
+/// Lower a `serde_json::Value` into a `minijinja::Value` without routing numbers
+/// through serde.
+///
+/// The workspace builds `serde_json` with the `arbitrary_precision` feature
+/// (required by the graph recorded-trace path for byte-exact number
+/// preservation). Under that feature a `serde_json::Number` serializes through a
+/// private `$serde_json::private::Number` marker that only serde_json's own
+/// deserializer understands. Handing such a value straight to minijinja's
+/// serializer (as `template.render` does) renders that marker verbatim — e.g.
+/// `{{ max_tokens }}` emits `{"$serde_json::private::Number":"12"}` — so the
+/// rendered text is no longer valid JSON. Converting numbers to native integer
+/// or float `minijinja::Value`s here sidesteps the serde bridge entirely.
+fn json_to_minijinja(value: &Value) -> minijinja::Value {
+    match value {
+        Value::Null => minijinja::Value::from(()),
+        Value::Bool(flag) => minijinja::Value::from(*flag),
+        Value::Number(number) => {
+            if let Some(signed) = number.as_i64() {
+                minijinja::Value::from(signed)
+            } else if let Some(unsigned) = number.as_u64() {
+                minijinja::Value::from(unsigned)
+            } else if let Some(float) = number.as_f64() {
+                minijinja::Value::from(float)
+            } else {
+                minijinja::Value::from(number.to_string())
+            }
+        }
+        Value::String(text) => minijinja::Value::from(text.clone()),
+        Value::Array(items) => items.iter().map(json_to_minijinja).collect(),
+        Value::Object(entries) => entries
+            .iter()
+            .map(|(key, value)| (key.clone(), json_to_minijinja(value)))
+            .collect(),
+    }
+}
+
 fn render_template_payload(
     environment: &Environment<'_>,
     request: &PreparedRequest<'_>,
@@ -446,7 +482,7 @@ fn render_template_payload(
 
     let rendered = environment
         .get_template("payload")
-        .and_then(|template| template.render(Value::Object(variables)))
+        .and_then(|template| template.render(json_to_minijinja(&Value::Object(variables))))
         .map_err(|error| {
             EndpointError::InvalidRequest(format!("render payload template: {error}"))
         })?;

@@ -14,7 +14,7 @@ use aiperf::multiturn::{
 use aiperf::run::{run_fixed_schedule_online, run_user_centric_online};
 use aiperf::user_centric::UserCentricConfig;
 use aiperf::workload::SkeletonWorkload;
-use aiperf_timing::StopConfig;
+use aiperf::timing::StopConfig;
 
 struct RealMock {
     child: Child,

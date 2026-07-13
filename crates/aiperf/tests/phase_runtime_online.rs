@@ -15,8 +15,8 @@ use aiperf::scheduled::{
     ScheduledAncillaryPolicies, SingleTurnDatasetWorkload, TurnDispatcher, Workload,
 };
 use aiperf::workload::SkeletonWorkload;
-use aiperf_clock::{Clock, RealClock};
-use aiperf_timing::{
+use aiperf::clock::{Clock, RealClock};
+use aiperf::timing::{
     GracePeriod, NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, StopConfig,
 };
 use axum::{Router, http::header, response::IntoResponse, routing::post};

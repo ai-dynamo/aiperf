@@ -12,10 +12,10 @@ use aiperf::fixed_schedule::FixedScheduleConfig;
 use aiperf::http::{HttpRequest, TransportSink};
 use aiperf::multiturn::{ConversationDataset, DatasetConversationSource};
 use aiperf::run::run_fixed_schedule_online_with_ancillary;
-use aiperf_clock::{Clock, RealClock};
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{ErrorKind, RequestConfig};
-use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf::clock::{Clock, RealClock};
+use aiperf::transport_http::config::ClientConfig;
+use aiperf::transport_http::models::{ErrorKind, RequestConfig};
+use aiperf::transport_http::transport::http_transport::HttpTransport;
 use axum::{
     Router, body::Bytes, extract::State, http::header, response::IntoResponse, routing::post,
 };

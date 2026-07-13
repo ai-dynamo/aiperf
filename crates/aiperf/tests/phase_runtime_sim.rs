@@ -23,9 +23,9 @@ use aiperf::scheduled::{
     TurnDispatcher, TurnRecordProcessor, Workload,
 };
 use aiperf::workload::SkeletonWorkload;
-use aiperf_clock::{Clock, sim_clock::SimClock};
-use aiperf_metrics::HttpTrace;
-use aiperf_timing::{
+use aiperf::clock::{Clock, sim_clock::SimClock};
+use aiperf::metrics_core::HttpTrace;
+use aiperf::timing::{
     GracePeriod, LinearRamp, PhaseBranchStats, PhaseConfig, PhaseKind, PhaseObserver, PhaseStats,
     RampDriver, RamperConfig, SlotPool, StopConfig,
 };
