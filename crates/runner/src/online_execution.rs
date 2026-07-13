@@ -19,6 +19,7 @@ use aiperf::content_server::ContentServerMediaPublisher;
 use aiperf::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
+    download_hugging_face_tokenizer,
 };
 use aiperf::endpoints::Modality;
 use aiperf::metrics_core::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
@@ -57,7 +58,7 @@ const TRANSPORT_ID: &str = "http";
 /// only when a real adapter and its execution proof are both linked.
 pub fn register_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
-        Arc::new(NativeOnlineTokenizerSourceResolver::default());
+        Arc::new(HfHubOnlineTokenizerSourceResolver::default());
     builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
         OnlineGraphAdapter { tokenizers },
     ))))
@@ -68,7 +69,7 @@ pub fn register_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
 pub fn register_http_static_accuracy_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     register_http_static_accuracy_pair_with_factories(
         builder,
-        Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+        Arc::new(HfHubOnlineTokenizerSourceResolver::default()),
         Arc::new(NativeStaticAccuracyEvaluatorFactory),
     )
 }
@@ -102,7 +103,7 @@ pub fn register_http_static_accuracy_pair_with_factories(
 pub fn register_http_scheduled_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
         OnlineScheduledAdapter {
-            tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
+            tokenizers: Arc::new(HfHubOnlineTokenizerSourceResolver::default()),
         },
     ))))
 }
@@ -611,13 +612,8 @@ impl NativeOnlineTokenizerSourceResolver {
 
 impl OnlineTokenizerSourceResolver for NativeOnlineTokenizerSourceResolver {
     fn resolve(&self, name: &str, revision: &str, trust_remote_code: bool) -> Result<String> {
-        ensure!(
-            !trust_remote_code,
-            "native tokenizers never execute repository code; set tokenizer.trust_remote_code=false"
-        );
-        let path = Path::new(name);
-        if path.is_dir() || path.is_file() || name.parse::<TiktokenEncoding>().is_ok() {
-            return Ok(name.to_owned());
+        if let Some(local) = resolve_builtin_or_local(name, trust_remote_code)? {
+            return Ok(local);
         }
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -625,10 +621,80 @@ impl OnlineTokenizerSourceResolver for NativeOnlineTokenizerSourceResolver {
             .context("creating tokenizer preparation runtime")?;
         let local = tokio::task::LocalSet::new();
         let resolved = local.block_on(&runtime, self.resolve_remote(name, revision))?;
-        resolved
-            .to_str()
-            .map(str::to_owned)
-            .ok_or_else(|| anyhow!("resolved tokenizer cache path is not valid UTF-8"))
+        tokenizer_directory_to_string(&resolved)
+    }
+}
+
+/// Built-in encodings and local filesystem tokenizers resolve without any IO.
+///
+/// Returns `Ok(Some(source))` when `name` is a tiktoken encoding or an existing
+/// local path, and `Ok(None)` when a remote Hugging Face download is required.
+/// Shared by every resolver so the no-network short-circuit and the
+/// `trust_remote_code` refusal stay identical regardless of download backend.
+fn resolve_builtin_or_local(name: &str, trust_remote_code: bool) -> Result<Option<String>> {
+    ensure!(
+        !trust_remote_code,
+        "native tokenizers never execute repository code; set tokenizer.trust_remote_code=false"
+    );
+    let path = Path::new(name);
+    if path.is_dir() || path.is_file() || name.parse::<TiktokenEncoding>().is_ok() {
+        return Ok(Some(name.to_owned()));
+    }
+    Ok(None)
+}
+
+/// Render a resolved tokenizer cache directory as a UTF-8 source string.
+fn tokenizer_directory_to_string(directory: &Path) -> Result<String> {
+    directory
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow!("resolved tokenizer cache path is not valid UTF-8"))
+}
+
+/// Hugging Face tokenizer resolver backed by the `hf-hub` crate.
+///
+/// Delegates repository download, caching, and offline handling to `hf-hub`
+/// (via [`download_hugging_face_tokenizer`]), which follows the xet CDN `302`
+/// redirect, reuses the standard `~/.cache/huggingface` cache across runs, and
+/// honors `HF_HUB_OFFLINE`. Built-in encodings and local paths short-circuit
+/// without IO. `hf-hub` acquires the `main` revision, so a pinned non-`main`
+/// revision falls back to the exact-commit HTTP resolver. Selected through the
+/// [`OnlineTokenizerSourceResolver`] seam so a distribution with an internal
+/// artifact store can still swap the whole mechanism.
+#[derive(Default)]
+pub struct HfHubOnlineTokenizerSourceResolver {
+    pinned_revision_fallback: NativeOnlineTokenizerSourceResolver,
+}
+
+impl fmt::Debug for HfHubOnlineTokenizerSourceResolver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HfHubOnlineTokenizerSourceResolver")
+            .finish_non_exhaustive()
+    }
+}
+
+impl OnlineTokenizerSourceResolver for HfHubOnlineTokenizerSourceResolver {
+    fn resolve(&self, name: &str, revision: &str, trust_remote_code: bool) -> Result<String> {
+        if let Some(local) = resolve_builtin_or_local(name, trust_remote_code)? {
+            return Ok(local);
+        }
+        // hf-hub resolves the branch tip; an authored pinned commit/branch needs
+        // the exact-commit HTTP path, which the fallback still performs.
+        if revision != default_revision() {
+            return self
+                .pinned_revision_fallback
+                .resolve(name, revision, trust_remote_code);
+        }
+        validate_repository_id(name)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("creating tokenizer preparation runtime")?;
+        let directory = runtime
+            .block_on(download_hugging_face_tokenizer(name))
+            .with_context(|| format!("resolving tokenizer repository {name:?}"))?;
+        tokenizer_directory_to_string(&directory)
     }
 }
 

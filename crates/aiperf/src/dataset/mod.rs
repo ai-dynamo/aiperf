@@ -68,7 +68,10 @@ pub use segment::{
 pub use synthesis::{
     PrefixTraceSynthesizer, TraceSynthesisConfig, TraceSynthesisRecord, TraceSynthesizer,
 };
-pub use tokenizer::{HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer};
+pub use tokenizer::{
+    HuggingFaceTokenizer, TextTokenizer, TiktokenEncoding, TiktokenTokenizer,
+    download_hugging_face_tokenizer,
+};
 pub mod loader;
 pub mod media;
 pub use compose::{

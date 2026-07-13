@@ -278,6 +278,27 @@ impl HuggingFaceTokenizer {
     }
 }
 
+/// Download `repository`'s tokenizer files into the standard Hugging Face cache
+/// and return the snapshot directory for [`HuggingFaceTokenizer::from_directory`].
+///
+/// Delegates to the `hf-hub` crate (through `llm_tokenizer::hub`) rather than
+/// AIPerf's minimal [`crate::dataset::HttpDatasetFetcher`] so that the xet CDN
+/// `302` redirect is followed, the shared on-disk `~/.cache/huggingface` cache is
+/// reused across runs and processes, and `HF_HUB_OFFLINE=1` serves an already
+/// cached tokenizer with no network access. `hf-hub` resolves the `main`
+/// revision; pinned-commit acquisition stays on the HTTP fetcher seam. This is
+/// intentionally a free function so a distribution can wrap or replace it while
+/// the tokenizer type stays download-mechanism agnostic.
+pub async fn download_hugging_face_tokenizer(repository: &str) -> Result<PathBuf> {
+    llm_tokenizer::hub::download_tokenizer_from_hf(repository)
+        .await
+        .map_err(|error| {
+            DatasetError::Tokenizer(format!(
+                "downloading Hugging Face tokenizer {repository:?}: {error}"
+            ))
+        })
+}
+
 impl TextTokenizer for HuggingFaceTokenizer {
     fn encode(&self, text: &str) -> Result<Vec<u32>> {
         LlmEncoder::encode(&self.tokenizer, text, false)
