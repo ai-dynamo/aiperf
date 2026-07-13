@@ -216,7 +216,6 @@ fn metadata() -> Vec<ConversationMetadata> {
         conversation_id: SessionId::from("conversation-1"),
         turns: Vec::new(),
         context_mode: None,
-        accuracy: None,
         dag: None,
     }]
 }
