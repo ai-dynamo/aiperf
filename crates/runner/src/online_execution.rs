@@ -790,6 +790,47 @@ impl AuthoredTokenizerV2 {
             apply_chat_template: self.apply_chat_template,
         })
     }
+
+    /// Lower to a harmless built-in tokenizer without resolving the authored
+    /// source. Selected for endpoints that neither tokenize their input nor
+    /// produce output tokens: the authored `tokenizer.name` is the primary
+    /// model repository regardless of endpoint (Python projects it verbatim),
+    /// so resolving it would download or gate-fail a tokenizer the run never
+    /// consults. A chat template would tokenize input, so it is dropped here.
+    fn lower_builtin(&self) -> TokenizerSpec {
+        TokenizerSpec {
+            name: "builtin".into(),
+            apply_chat_template: false,
+        }
+    }
+}
+
+/// Whether the selected endpoint descriptor requires a real tokenizer.
+///
+/// AIPerf only tokenizes when the endpoint tokenizes its input or produces
+/// output tokens; `base_metrics_processor` filters token metrics by the same
+/// two flags, so a descriptor with both false has no token metrics and needs no
+/// tokenizer. Descriptor-driven so any future non-tokenizing endpoint is
+/// covered without enumerating endpoint ids.
+fn endpoint_needs_tokenizer(descriptor: &aiperf::endpoints::EndpointDescriptor) -> bool {
+    descriptor.tokenizes_input || descriptor.produces_tokens
+}
+
+/// Decode and validate the authored tokenizer, then resolve its source only
+/// when the selected endpoint descriptor requires tokenization. Validation is
+/// unconditional so a malformed policy still fails; source resolution (and its
+/// network / gated-model IO) is gated on [`endpoint_needs_tokenizer`].
+fn lower_tokenizer_for_endpoint(
+    raw: &RawValue,
+    resolver: &dyn OnlineTokenizerSourceResolver,
+    descriptor: &aiperf::endpoints::EndpointDescriptor,
+) -> Result<TokenizerSpec> {
+    let authored = AuthoredTokenizerV2::decode(raw)?;
+    if endpoint_needs_tokenizer(descriptor) {
+        authored.lower(resolver)
+    } else {
+        Ok(authored.lower_builtin())
+    }
 }
 
 /// Strictly validate one authored tokenizer policy without resolving its
@@ -883,19 +924,23 @@ pub(crate) fn lower_scheduled(
     workload: &ScheduledWorkloadConfigV2,
     tokenizers: &dyn OnlineTokenizerSourceResolver,
 ) -> Result<NativeRunSpec> {
-    let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
-    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    // Prepare the endpoint before resolving the tokenizer: its descriptor
+    // decides whether a real tokenizer is needed at all. Non-tokenizing
+    // endpoints (e.g. image_retrieval, riva_asr) must not trigger a remote /
+    // gated-model tokenizer download for a tokenizer the run never consults.
     let profile = context.default_endpoint_profile()?;
     let prepared_endpoint = context
         .product_registry()
         .endpoints()
         .prepare(&profile.endpoint_id, profile.config.clone())
         .context("preparing the default endpoint for linear dataset composition")?;
-    let rankings = prepared_endpoint
-        .descriptor()
+    let endpoint_descriptor = prepared_endpoint.descriptor();
+    let tokenizer =
+        lower_tokenizer_for_endpoint(&workload.tokenizer, tokenizers, endpoint_descriptor)?;
+    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    let rankings = endpoint_descriptor
         .output_modalities
         .contains(&Modality::Rankings);
-    let endpoint_descriptor = prepared_endpoint.descriptor();
     let prepare_context = RunnerDatasetInputContext {
         registry: context.product_registry(),
         models: &run.models,
