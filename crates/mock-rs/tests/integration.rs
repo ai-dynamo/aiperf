@@ -142,6 +142,63 @@ async fn chat_completions_streaming() {
 }
 
 #[tokio::test]
+async fn messages_non_streaming_returns_anthropic_message() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/messages"))
+        .header("x-api-key", "test")
+        .header("anthropic-version", "2023-06-01")
+        .json(&json!({
+            "model": "mock-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 8,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["type"], "message");
+    assert_eq!(body["model"], "mock-model");
+    assert!(body["id"].as_str().unwrap().starts_with("msg_"));
+    assert_eq!(body["role"], "assistant");
+    assert_eq!(body["content"][0]["type"], "text");
+    assert!(body["usage"]["input_tokens"].as_u64().unwrap() > 0);
+    assert!(body["usage"]["output_tokens"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn messages_streaming_returns_anthropic_events() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let resp = client()
+        .post(format!("http://{addr}/v1/messages"))
+        .json(&json!({
+            "model": "mock-model",
+            "messages": [{"role": "user", "content": "Stream please"}],
+            "max_tokens": 8,
+            "stream": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+
+    let text = String::from_utf8(resp.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(text.contains(r#"event: message_start"#));
+    assert!(text.contains(r#""type":"content_block_delta""#));
+    assert!(text.contains(r#""type":"message_delta""#));
+    assert!(text.contains(r#"event: message_stop"#));
+}
+
+#[tokio::test]
 async fn text_completions_non_streaming() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
     let resp = client()

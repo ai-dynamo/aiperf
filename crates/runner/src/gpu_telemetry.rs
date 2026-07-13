@@ -16,15 +16,15 @@ use std::path::Path;
 use std::rc::Rc;
 
 use aiperf::phase_runtime::ScheduledPhaseSidecar;
-use aiperf_clock::Clock;
-use aiperf_gpu_telemetry::{
+use aiperf::clock::Clock;
+use aiperf::gpu_telemetry::{
     DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind, GpuPhaseBoundary,
     GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord, GpuTelemetrySummary,
     PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
 };
-use aiperf_metrics::Unit;
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf::metrics_core::Unit;
+use aiperf::transport_http::config::ClientConfig;
+use aiperf::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -269,7 +269,7 @@ impl GpuTelemetrySidecar {
 }
 
 impl ScheduledPhaseSidecar for GpuTelemetrySidecar {
-    fn start(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn start(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.start().await })
     }
@@ -282,7 +282,7 @@ impl ScheduledPhaseSidecar for GpuTelemetrySidecar {
         self.state.phase_end_ns.set(Some(timestamp_ns));
     }
 
-    fn finish(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn finish(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.finish().await })
     }

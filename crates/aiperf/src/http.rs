@@ -23,20 +23,20 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use uuid::Uuid;
 
-use aiperf_clock::Clock;
-use aiperf_dataset::EndpointResolver;
-use aiperf_endpoints::chat_request_body;
-use aiperf_endpoints::{EndpointConfig, PreparedEndpointTable};
-use aiperf_metrics::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
-use aiperf_transport_http::sse::ChatChunk;
+use crate::clock::Clock;
+use crate::dataset::EndpointResolver;
+use crate::endpoints::chat_request_body;
+use crate::endpoints::{EndpointConfig, PreparedEndpointTable};
+use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::transport_http::sse::ChatChunk;
 
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{
+use crate::transport_http::config::ClientConfig;
+use crate::transport_http::models::{
     ConnectionReuseStrategy, ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord,
     Response, SseMessage,
 };
-use aiperf_transport_http::transport::http_transport::HttpTransport;
+use crate::transport_http::transport::http_transport::HttpTransport;
 use loadgen_core::collector::ReplayTerminalStatus;
 use loadgen_core::sink::{
     Dispatchable, ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink,
@@ -725,7 +725,7 @@ impl Dispatchable for HttpRequest {
     }
 }
 
-/// Live OpenAI-chat sink over [`aiperf_transport_http`]. Shares the caller's clock and
+/// Live OpenAI-chat sink over [`crate::transport_http`]. Shares the caller's clock and
 /// origin (`start_ns`) so admit/token timestamps sit on the same timeline as the
 /// run loop's arrival events.
 pub struct TransportSink {
@@ -1747,9 +1747,9 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-    use aiperf_clock::RealClock;
-    use aiperf_dataset::BuiltinEndpointResolver;
-    use aiperf_endpoints::{EndpointId, EndpointKey, EndpointType};
+    use crate::clock::RealClock;
+    use crate::dataset::BuiltinEndpointResolver;
+    use crate::endpoints::{EndpointId, EndpointKey, EndpointType};
 
     #[derive(Default)]
     struct RecordingObserver {
@@ -1875,7 +1875,7 @@ mod tests {
             request_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             response_headers: BTreeMap::from([("x-hidden".into(), SENTINEL.into())]),
             responses: vec![Response::Text(
-                aiperf_transport_http::models::TextResponse {
+                crate::transport_http::models::TextResponse {
                     perf_ns: 1,
                     text: SENTINEL.into(),
                     body: Bytes::from_static(SENTINEL.as_bytes()),

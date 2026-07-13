@@ -8,15 +8,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 
-use aiperf_adaptive::{
+use crate::adaptive_core::{
     AdaptiveObserver, AdaptiveScale, AdaptiveScaleOptions, ControlActuator, CorrelationContext,
     DefaultSlaEvaluator, FileArtifactSink, FixedPercentStep, PrefillConcurrencyActuator,
     RampUntilFailController, RampUntilFailOptions, RequestRateActuator, SessionConcurrencyActuator,
     SharedArtifactSink, SharedWindowSampler, SlaFilter, SlaMarginStep, SlaOp, SlaStat, StepPolicy,
     TumblingWindowSampler, UserTarget, UsersActuator,
 };
-use aiperf_clock::Clock;
-use aiperf_timing::{IntervalGenerator, SlotPool};
+use crate::clock::Clock;
+use crate::timing::{IntervalGenerator, SlotPool};
 use anyhow::{Context, Result, anyhow, bail};
 use loadgen_core::sink::RequestObserver;
 

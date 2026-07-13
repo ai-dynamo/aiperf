@@ -3,7 +3,14 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+# The 16 aiperf-* library crates were absorbed into `crates/aiperf`; only these
+# four real crates remain as workspace members.
+members = [
+    "crates/loadgen-core",
+    "crates/aiperf",
+    "crates/runner",
+    "crates/mock-rs",
+]
 exclude = ["crates/runner/tests/fixtures/aiperf-test-static-extension"]
 
 [workspace.package]
@@ -15,17 +22,6 @@ license = "Apache-2.0"
 # internal crates
 loadgen-core = { path = "crates/loadgen-core" }
 aiperf = { path = "crates/aiperf" }
-aiperf-clock = { path = "crates/clock" }
-aiperf-content-server = { path = "crates/content-server" }
-aiperf-dataset = { path = "crates/dataset" }
-aiperf-endpoints = { path = "crates/endpoints" }
-aiperf-extensions = { path = "crates/extensions" }
-aiperf-metrics = { path = "crates/metrics" }
-aiperf-network-latency = { path = "crates/network-latency" }
-aiperf-server-metrics = { path = "crates/server-metrics" }
-aiperf-rng = { path = "crates/rng" }
-aiperf-transport-http = { path = "crates/transport-http" }
-aiperf-transport-grpc = { path = "crates/transport-grpc" }
 
 # external (shared versions)
 anyhow = "1"

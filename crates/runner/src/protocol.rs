@@ -44,7 +44,7 @@ impl RunnerCatalog {
     /// Serialize the exact endpoint and transport registries linked into this binary.
     pub fn from_registries(
         runner_registry: &RunnerRegistry,
-        product_registry: &aiperf_extensions::AiperfRegistry,
+        product_registry: &aiperf::extensions::AiperfRegistry,
     ) -> Self {
         let endpoint = product_registry
             .endpoints()
@@ -112,7 +112,7 @@ pub struct RunnerCapabilities {
     /// Endpoint dialects accepted by the native formatter/parser registry.
     pub endpoint_types: Vec<&'static str>,
     /// Canonical endpoint descriptors from the frozen endpoint registry.
-    pub endpoints: Vec<&'static aiperf_endpoints::EndpointDescriptor>,
+    pub endpoints: Vec<&'static aiperf::endpoints::EndpointDescriptor>,
     /// Statically linked extension package names in deterministic order.
     pub extensions: Vec<String>,
     /// Transport descriptors recognized by protocol-v2 validation.
@@ -143,7 +143,7 @@ impl RunnerCapabilities {
     /// Build a deterministic capability document from already frozen registries.
     pub fn from_registries(
         runner_registry: &RunnerRegistry,
-        product_registry: &aiperf_extensions::AiperfRegistry,
+        product_registry: &aiperf::extensions::AiperfRegistry,
     ) -> Self {
         let endpoints = product_registry
             .endpoints()
@@ -154,7 +154,7 @@ impl RunnerCapabilities {
             event: "runner_capabilities",
             capabilities_schema_version: 2,
             protocol_versions: &[RUNNER_PROTOCOL_V2],
-            report_schema_version: aiperf_metrics::NATIVE_REPORT_SCHEMA_VERSION,
+            report_schema_version: aiperf::metrics_core::NATIVE_REPORT_SCHEMA_VERSION,
             endpoint_types,
             endpoints,
             extensions: product_registry
@@ -581,23 +581,23 @@ impl PhaseSpec {
     /// Request-rate arrival policy, absent for schedule-authored workloads.
     pub fn request_arrival(
         &self,
-    ) -> Option<(aiperf_timing::ArrivalPattern, Option<f64>, Option<f64>)> {
+    ) -> Option<(aiperf::timing::ArrivalPattern, Option<f64>, Option<f64>)> {
         match self {
             Self::Concurrency { .. } => {
-                Some((aiperf_timing::ArrivalPattern::ConcurrencyBurst, None, None))
+                Some((aiperf::timing::ArrivalPattern::ConcurrencyBurst, None, None))
             }
             Self::Poisson { rate, .. } => {
-                Some((aiperf_timing::ArrivalPattern::Poisson, Some(*rate), None))
+                Some((aiperf::timing::ArrivalPattern::Poisson, Some(*rate), None))
             }
             Self::Gamma {
                 rate, smoothness, ..
             } => Some((
-                aiperf_timing::ArrivalPattern::Gamma,
+                aiperf::timing::ArrivalPattern::Gamma,
                 Some(*rate),
                 *smoothness,
             )),
             Self::Constant { rate, .. } => {
-                Some((aiperf_timing::ArrivalPattern::Constant, Some(*rate), None))
+                Some((aiperf::timing::ArrivalPattern::Constant, Some(*rate), None))
             }
             Self::UserCentric { .. } | Self::FixedSchedule { .. } => None,
         }

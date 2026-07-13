@@ -15,14 +15,14 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_clock::Clock;
-use aiperf_transport_http::config::{
+use aiperf::clock::Clock;
+use aiperf::transport_http::config::{
     ClientConfig, PreparedTlsClientConfig, PreparedTlsClientConfigError,
 };
-use aiperf_transport_http::models::{
+use aiperf::transport_http::models::{
     ConnectionReuseStrategy, ErrorKind, RequestConfig, Response, TraceData,
 };
-use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf::transport_http::transport::http_transport::HttpTransport;
 use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::sync::Notify;
@@ -1212,7 +1212,7 @@ impl std::error::Error for ControlPlaneHttpError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_clock::SimClock;
+    use aiperf::clock::SimClock;
 
     #[derive(Debug)]
     struct InvalidPemTlsResolver;

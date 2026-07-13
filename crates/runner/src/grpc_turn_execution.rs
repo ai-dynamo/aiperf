@@ -21,12 +21,12 @@ use aiperf::http::{
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::TurnToSend;
-use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_metrics::{InferenceDimensions, MetricsConfig, RecordIngest};
-use aiperf_transport_grpc::{
+use aiperf::clock::{Clock, RealClock, RealClockAnchor};
+use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
+use aiperf::transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
-use aiperf_transport_http::models::ConnectionReuseStrategy;
+use aiperf::transport_http::models::ConnectionReuseStrategy;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};

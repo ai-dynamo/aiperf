@@ -5,15 +5,15 @@
 //!
 //! The metrics crate stays transport-neutral: this adapter owns the request-event
 //! join because the runtime knows UUIDs, terminal state, usage, and the injected
-//! [`aiperf_clock::Clock`] timeline. It is single-loop `Rc`/`RefCell` state and
+//! [`crate::clock::Clock`] timeline. It is single-loop `Rc`/`RefCell` state and
 //! performs one absolute-request-index-addressed accumulator pass after all
 //! request tasks drain.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aiperf_clock::Clock;
-use aiperf_metrics::{
+use crate::clock::Clock;
+use crate::metrics_core::{
     AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
     RecordIngest, TokenCounts, UsageMetrics,
 };
@@ -744,8 +744,8 @@ impl RequestObserver for ObserverTee {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_clock::SimClock;
-    use aiperf_metrics::{MetricTag, MetricValue};
+    use crate::clock::SimClock;
+    use crate::metrics_core::{MetricTag, MetricValue};
 
     #[test]
     fn output_token_batch_preserves_absolute_order_with_one_request_lookup() {

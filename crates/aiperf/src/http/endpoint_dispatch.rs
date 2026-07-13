@@ -16,14 +16,14 @@ use anyhow::{Result, ensure};
 use bytes::Bytes;
 use serde_json::Value;
 
-use aiperf_endpoints::{
+use crate::endpoints::{
     Endpoint, EndpointConfig, EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse,
     PreparedEndpoint, RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
     UsageView,
 };
-use aiperf_metrics::HttpTrace;
-use aiperf_transport_http::models::{ErrorDetails, ErrorKind, RequestRecord};
-use aiperf_transport_http::transport::endpoint_binding::{
+use crate::metrics_core::HttpTrace;
+use crate::transport_http::models::{ErrorDetails, ErrorKind, RequestRecord};
+use crate::transport_http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
     MetadataHttpEndpointBinding, prepare_request,
 };
@@ -280,7 +280,7 @@ impl TransportSink {
             None => {
                 let payload = request_body.unwrap_or_else(|| {
                     let prompt = prompt_text.unwrap_or_default();
-                    aiperf_endpoints::chat_request_body(
+                    crate::endpoints::chat_request_body(
                         &self.model,
                         &[("user", prompt.as_str())],
                         max_output_tokens,
@@ -767,9 +767,9 @@ fn http_trace(record: &RequestRecord) -> HttpTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_endpoints::{ChatEndpoint, HuggingFaceGenerateEndpoint, ImageGenerationEndpoint};
-    use aiperf_transport_http::models::SseMessage;
-    use aiperf_transport_http::transport::endpoint_binding::decode_sse_response;
+    use crate::endpoints::{ChatEndpoint, HuggingFaceGenerateEndpoint, ImageGenerationEndpoint};
+    use crate::transport_http::models::SseMessage;
+    use crate::transport_http::transport::endpoint_binding::decode_sse_response;
 
     #[test]
     fn endpoint_sse_filter_uses_the_selected_dialect() {
@@ -788,7 +788,7 @@ mod tests {
             &decode_sse_response(&tgi).unwrap()
         ));
 
-        config.endpoint_type = aiperf_endpoints::EndpointType::ImageGeneration;
+        config.endpoint_type = crate::endpoints::EndpointType::ImageGeneration;
         let image = SseMessage::parse(r#"data: {"b64_json":"AA=="}"#, 11);
         let image_endpoint = ImageGenerationEndpoint;
         let image_adapter = LegacyEndpointAdapter {
@@ -800,7 +800,7 @@ mod tests {
             &decode_sse_response(&image).unwrap()
         ));
 
-        config.endpoint_type = aiperf_endpoints::EndpointType::Chat;
+        config.endpoint_type = crate::endpoints::EndpointType::Chat;
         let legacy_chat =
             SseMessage::parse(r#"data: {"choices":[{"delta":{"content":"compat"}}]}"#, 12);
         let chat_endpoint = ChatEndpoint;

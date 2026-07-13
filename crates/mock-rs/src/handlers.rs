@@ -7,7 +7,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aiperf_rng::RandomGenerator;
+use aiperf::rng::RandomGenerator;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
@@ -24,7 +24,7 @@ use crate::metrics::LLMLatencyInfo;
 use crate::models::{
     ChatCompletionRequest, CohereRerankRequest, CompletionRequest, EmbeddingRequest,
     HFTEIRerankRequest, ImageGenerationRequest, ImageResponseFormat, ImageRetrievalRequest,
-    Message, RankingRequest, SolidoRAGRequest, TGIGenerateRequest, Usage,
+    Message, MessagesRequest, RankingRequest, SolidoRAGRequest, TGIGenerateRequest, Usage,
 };
 use crate::state::AppState;
 use crate::tokens::{GenRequest, TokenizedText, tokenize_request};
@@ -57,6 +57,10 @@ fn now_secs() -> i64 {
 
 fn make_request_id(prefix: &str) -> String {
     format!("{prefix}-{}", uuid::Uuid::new_v4())
+}
+
+fn make_anthropic_message_id() -> String {
+    format!("msg_{}", uuid::Uuid::new_v4())
 }
 
 fn maybe_inject_error(state: &AppState) -> Option<AppError> {
@@ -322,6 +326,87 @@ fn build_chat_response(ctx: &RequestCtx) -> Value {
             "message": message,
         }],
         "usage": ctx.usage,
+    })
+}
+
+// ============================================================================
+// Anthropic Messages
+// ============================================================================
+
+/// Handle an Anthropic Messages request with the mock's shared token and latency model.
+pub async fn messages(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MessagesRequest>,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let endpoint = "/v1/messages";
+    let start = Instant::now();
+    state.recorder.init_model_config(&req.model);
+    let req_gen = GenRequest::Messages(&req);
+    let mut ctx = RequestCtx::build("msg", &req_gen, endpoint, start, &state);
+    ctx.request_id = make_anthropic_message_id();
+
+    if req.stream {
+        state.recorder.record_streaming_start(endpoint, &ctx.model);
+        Ok(sse_response(messages_stream(
+            state,
+            ctx,
+            endpoint.to_string(),
+        )))
+    } else {
+        state.recorder.record_request_start(endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+        let (prefill, _decode) = ctx.latency_sim.wait_for_tokens(ctx.tokenized.count()).await;
+        let latency = start.elapsed();
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill,
+            decode: latency.saturating_sub(prefill),
+        };
+        let body = build_messages_response(&ctx);
+        let json_body = serde_json::to_vec(&body).map_err(internal_error)?;
+        state.recorder.record_request_bytes(
+            endpoint,
+            ctx.tokenized.text.len() as u64,
+            json_body.len() as u64,
+        );
+        state.recorder.record_llm_success(
+            endpoint,
+            &ctx.model,
+            latency.as_secs_f64(),
+            &ctx.usage,
+            &info,
+        );
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(endpoint);
+
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_body))
+            .map_err(internal_error)?)
+    }
+}
+
+fn anthropic_usage(usage: &Usage) -> Value {
+    json!({
+        "input_tokens": usage.prompt_tokens,
+        "output_tokens": usage.completion_tokens,
+    })
+}
+
+fn build_messages_response(ctx: &RequestCtx) -> Value {
+    json!({
+        "id": ctx.request_id,
+        "type": "message",
+        "role": "assistant",
+        "model": ctx.model,
+        "content": [{"type": "text", "text": ctx.tokenized.content()}],
+        "stop_reason": "end_turn",
+        "stop_sequence": Value::Null,
+        "usage": anthropic_usage(&ctx.usage),
     })
 }
 
@@ -1179,6 +1264,11 @@ fn sse_done() -> Bytes {
     Bytes::from_static(b"data: [DONE]\n\n")
 }
 
+fn anthropic_sse_event(event: &str, value: &Value) -> Bytes {
+    let data = serde_json::to_string(value).expect("Anthropic event must serialize");
+    Bytes::from(format!("event: {event}\ndata: {data}\n\n"))
+}
+
 fn sse_response<S>(body: S) -> Response
 where
     S: Stream<Item = Result<Bytes, Infallible>> + Send + 'static,
@@ -1472,6 +1562,121 @@ fn chat_stream(
         };
         state.recorder.record_llm_success(
             &endpoint, &ctx.model, latency.as_secs_f64(), &ctx.usage, &info,
+        );
+        state.recorder.record_llm_inflight_end(&ctx.model);
+        state.recorder.record_request_end(&endpoint);
+    }
+}
+
+fn messages_stream(
+    state: Arc<AppState>,
+    ctx: RequestCtx,
+    endpoint: String,
+) -> impl Stream<Item = Result<Bytes, Infallible>> {
+    let labeled = state.recorder.labeled(&endpoint, &ctx.model);
+    async_stream::stream! {
+        state.recorder.record_request_start(&endpoint, &ctx.model);
+        state.recorder.record_llm_inflight_start(&ctx.model);
+
+        let start_event = json!({
+            "type": "message_start",
+            "message": {
+                "id": ctx.request_id,
+                "type": "message",
+                "role": "assistant",
+                "model": ctx.model,
+                "content": [],
+                "stop_reason": Value::Null,
+                "stop_sequence": Value::Null,
+                "usage": {
+                    "input_tokens": ctx.usage.prompt_tokens,
+                    "output_tokens": 0,
+                },
+            },
+        });
+        yield Ok::<Bytes, Infallible>(anthropic_sse_event("message_start", &start_event));
+
+        let block_start = json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        });
+        yield Ok::<Bytes, Infallible>(anthropic_sse_event("content_block_start", &block_start));
+
+        let mut first_emit: Option<Instant> = None;
+        let mut last_emit: Option<Instant> = None;
+        let count = ctx.tokenized.tokens.len();
+        if ctx.latency_sim.is_fast() {
+            if count > 0 {
+                state.recorder.record_zero_ttft_and_itls(&labeled, count - 1);
+                state.recorder.record_streamed_tokens_fast(&labeled, count as u64);
+            }
+            for token in &ctx.tokenized.tokens {
+                let event = json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": token},
+                });
+                yield Ok::<Bytes, Infallible>(anthropic_sse_event("content_block_delta", &event));
+            }
+        } else {
+            for (index, token) in ctx.tokenized.tokens.iter().enumerate() {
+                let emit_at = ctx.latency_sim.wait_for_index(index).await;
+                if first_emit.is_none() {
+                    first_emit = Some(emit_at);
+                    state.recorder.record_ttft_fast(
+                        &labeled,
+                        emit_at.duration_since(ctx.start).as_secs_f64(),
+                    );
+                } else if let Some(last) = last_emit {
+                    state.recorder.record_itl_fast(
+                        &labeled,
+                        emit_at.duration_since(last).as_secs_f64(),
+                    );
+                }
+                last_emit = Some(emit_at);
+                state.recorder.record_streamed_token_fast(&labeled);
+                let event = json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": token},
+                });
+                yield Ok::<Bytes, Infallible>(anthropic_sse_event("content_block_delta", &event));
+            }
+        }
+
+        yield Ok::<Bytes, Infallible>(anthropic_sse_event(
+            "content_block_stop",
+            &json!({"type": "content_block_stop", "index": 0}),
+        ));
+        yield Ok::<Bytes, Infallible>(anthropic_sse_event(
+            "message_delta",
+            &json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": Value::Null},
+                "usage": {"output_tokens": ctx.usage.completion_tokens},
+            }),
+        ));
+        yield Ok::<Bytes, Infallible>(anthropic_sse_event(
+            "message_stop",
+            &json!({"type": "message_stop"}),
+        ));
+
+        let latency = ctx.start.elapsed();
+        let prefill = first_emit
+            .map(|at| at.duration_since(ctx.start))
+            .unwrap_or(std::time::Duration::ZERO);
+        let info = LLMLatencyInfo {
+            e2e: latency,
+            prefill,
+            decode: latency.saturating_sub(prefill),
+        };
+        state.recorder.record_llm_success(
+            &endpoint,
+            &ctx.model,
+            latency.as_secs_f64(),
+            &ctx.usage,
+            &info,
         );
         state.recorder.record_llm_inflight_end(&ctx.model);
         state.recorder.record_request_end(&endpoint);

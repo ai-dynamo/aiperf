@@ -25,9 +25,9 @@ use aiperf::http::{
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::TurnToSend;
 use aiperf::scheduled::TurnResponseObserver;
-use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_endpoints::{ParsedResponse, PreparedEndpointTable};
-use aiperf_metrics::{InferenceDimensions, MetricsConfig, RecordIngest};
+use aiperf::clock::{Clock, RealClock, RealClockAnchor};
+use aiperf::endpoints::{ParsedResponse, PreparedEndpointTable};
+use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -732,7 +732,7 @@ mod tests {
 
     use aiperf::http::{HttpRequest, PreparedHttpEndpoint};
     use aiperf::multiturn::PreparedEndpointReference;
-    use aiperf_endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
+    use aiperf::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;

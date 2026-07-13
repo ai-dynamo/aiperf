@@ -17,12 +17,12 @@ use aiperf::http::{
     HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
 };
 use aiperf::multiturn::TurnToSend;
-use aiperf_clock::Clock;
-use aiperf_extensions::BuiltinAiperfRegistryFactory;
-use aiperf_graph::errors::TraceError;
-use aiperf_graph::execution::GraphTraceExecutionBackend;
-use aiperf_graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
-use aiperf_metrics::InferenceDimensions;
+use aiperf::clock::Clock;
+use aiperf::extensions::BuiltinAiperfRegistryFactory;
+use aiperf::graph::errors::TraceError;
+use aiperf::graph::execution::GraphTraceExecutionBackend;
+use aiperf::graph::placement::{GraphPlacementError, GraphTraceExecutionBackendFactory};
+use aiperf::metrics_core::InferenceDimensions;
 use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
 use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
 use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
@@ -231,7 +231,7 @@ impl ReadinessTransport for RecordingReadinessTransport {
 impl GraphTraceExecutionBackend for RecordingGraphBackend {
     async fn execute_trace(
         &self,
-        _plan: aiperf_graph::model::GraphTracePlan,
+        _plan: aiperf::graph::model::GraphTracePlan,
     ) -> Result<(), TraceError> {
         self.traces.fetch_add(1, Ordering::SeqCst);
         Ok(())

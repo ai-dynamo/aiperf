@@ -42,16 +42,16 @@ use aiperf::scheduled::{
     TurnRecordProcessor, Workload,
 };
 use aiperf::user_centric::{UserCentricConfig, UserCentricWorkload};
-use aiperf_accuracy::{
+use aiperf::accuracy_core::{
     AccuracyEvaluator, EvaluatorLoadConfig, EvaluatorLoadResult, PythonEvaluator,
     WorkerProcessConfig,
 };
-use aiperf_adaptive::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
-use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_content_server::{
+use aiperf::adaptive_core::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
+use aiperf::clock::{Clock, RealClock, RealClockAnchor};
+use aiperf::content_server::{
     ContentServerConfig, ContentServerFactory, ContentServerRuntime, NativeContentServerFactory,
 };
-use aiperf_dataset::{
+use aiperf::dataset::{
     ComposeConfig, Dataset, DatasetSource, HuggingFaceTokenizer, LoadConfig, ModelId,
     ModelSelector, ModelSelectorFactory, RandomModelSelectorFactory,
     RoundRobinModelSelectorFactory, SourceImageSampling, SyntheticAudioConfig,
@@ -61,19 +61,19 @@ use aiperf_dataset::{
     SyntheticVideoConfig, SyntheticVideoFormat, SyntheticVideoPattern, TextTokenizer,
     TiktokenEncoding, TiktokenTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
-use aiperf_endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
-use aiperf_extensions::AiperfRegistry;
-use aiperf_graph::input::GraphInputBundle;
-use aiperf_metrics::{
+use aiperf::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
+use aiperf::extensions::AiperfRegistry;
+use aiperf::graph::input::GraphInputBundle;
+use aiperf::metrics_core::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
     NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo, ReportSummary, RunOutcome,
     SloThreshold,
 };
-use aiperf_rng::{
+use aiperf::rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
     SequenceLengthDistribution, SequenceLengthPair, namespace,
 };
-use aiperf_timing::{
+use aiperf::timing::{
     BernoulliFixedDelay, CancellationPolicy, ExponentialRamp, GracePeriod, LinearRamp,
     NoopPhaseObserver, PhaseConfig, PhaseKind, PhaseObserver, PoissonRamp, RampDriver,
     RampStrategy, RamperConfig, RoundRobinUrlSelector, SlotPool, StopConfig, UrlSelector,
@@ -126,7 +126,7 @@ use crate::turn_execution::{
 
 type PhaseRuntimeParts = (
     Rc<dyn Workload>,
-    Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
     Option<Rc<SlotPool>>,
     Option<Rc<SlotPool>>,
     bool,
@@ -1064,7 +1064,7 @@ struct OnlineGraphPhaseBackendFactory<'a> {
     model: String,
     default_max_tokens: usize,
     endpoint_runtime_factory: Arc<dyn RunnerGraphEndpointRuntimeFactory>,
-    segments: Arc<dyn aiperf_dataset::SegmentStore>,
+    segments: Arc<dyn aiperf::dataset::SegmentStore>,
     metrics: MetricsConfig,
     raw_enabled: bool,
 }
@@ -1701,7 +1701,7 @@ type NativeEndpointExecutionParts<'a> = (
 
 struct PreparedNativeConversationSourceFactory<'a> {
     endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
-    samplers: &'a aiperf_dataset::SamplerRegistry,
+    samplers: &'a aiperf::dataset::SamplerRegistry,
 }
 
 impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory<'_> {
@@ -1877,7 +1877,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             let resources: Rc<dyn ScheduledPhaseResources> =
                 Rc::new(SlotPoolPhaseResources::new(phase_session.clone(), None));
             let intervals = Rc::new(RefCell::new(make_interval_generator(
-                aiperf_timing::ArrivalPattern::ConcurrencyBurst,
+                aiperf::timing::ArrivalPattern::ConcurrencyBurst,
                 None,
                 None,
                 arrival_seed,
@@ -1914,7 +1914,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
             let workload =
                 Rc::new(FixedScheduleWorkload::new(source, schedule_source)?) as Rc<dyn Workload>;
             let intervals = Rc::new(RefCell::new(make_interval_generator(
-                aiperf_timing::ArrivalPattern::ConcurrencyBurst,
+                aiperf::timing::ArrivalPattern::ConcurrencyBurst,
                 None,
                 None,
                 arrival_seed,
@@ -2432,10 +2432,10 @@ pub(crate) fn metrics_config(
             .find(|metric| metric.tag.as_str() == name)
             .ok_or_else(|| anyhow!("SLO metric {name:?} is not in the native metric catalog"))?;
         ensure!(
-            metric.kind == aiperf_metrics::MetricType::Record
+            metric.kind == aiperf::metrics_core::MetricType::Record
                 && !metric
                     .flags
-                    .contains(aiperf_metrics::MetricFlags::NO_INDIVIDUAL_RECORDS),
+                    .contains(aiperf::metrics_core::MetricFlags::NO_INDIVIDUAL_RECORDS),
             "SLO metric {name:?} does not produce one value per request"
         );
         slos.push(SloThreshold::from_display(metric.tag, *value)?);
@@ -2526,9 +2526,9 @@ fn ancillary_policies(
         cancellation_policy,
         url_selector,
         phase: if spec.common().name == "warmup" {
-            aiperf_timing::Phase::Warmup
+            aiperf::timing::Phase::Warmup
         } else {
-            aiperf_timing::Phase::Profiling
+            aiperf::timing::Phase::Profiling
         },
     })
 }
@@ -2575,7 +2575,7 @@ impl RampActuatorRngRoots {
 fn ramp_controller(
     spec: &PhaseSpec,
     clock: Rc<dyn Clock>,
-    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     rng_root: RngRoot,
@@ -2637,7 +2637,7 @@ fn adaptive_runtime_extension(
     phase: &PhaseSpec,
     benchmark_id: &str,
     artifact_dir: &Path,
-    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
@@ -2795,7 +2795,7 @@ pub(crate) fn integer_adaptive_bound(value: f64, label: &str) -> Result<usize> {
 
 struct AdaptiveRuntimeExtension {
     config: AdaptiveRunConfig,
-    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn aiperf::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
@@ -2877,7 +2877,7 @@ impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
         Ok(())
     }
 
-    fn stop(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn stop(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         self.scale.deactivate();
         let assessment = self.assessment.borrow_mut().take();
         let scale = self.scale.clone();
@@ -2909,7 +2909,7 @@ impl ScheduledPhaseController for AdaptiveScheduledPhaseController {
         })
     }
 
-    fn wait_until_stop(&self) -> aiperf_timing::LocalPhaseFuture<()> {
+    fn wait_until_stop(&self) -> aiperf::timing::LocalPhaseFuture<()> {
         let scale = self.scale.clone();
         Box::pin(async move { scale.wait_until_stop_sending().await })
     }
@@ -2962,9 +2962,9 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
         &self,
         models: &[ModelId],
         _root: RngRoot,
-    ) -> aiperf_dataset::Result<Box<dyn ModelSelector>> {
+    ) -> aiperf::dataset::Result<Box<dyn ModelSelector>> {
         if models.len() != self.weights.len() || models.is_empty() {
-            return Err(aiperf_dataset::DatasetError::Validation(
+            return Err(aiperf::dataset::DatasetError::Validation(
                 "weighted model values and weights must have the same non-zero length".into(),
             ));
         }
@@ -2975,7 +2975,7 @@ impl ModelSelectorFactory for WeightedModelSelectorFactory {
             .all(|weight| weight.is_finite() && *weight >= 0.0)
             || !(0.99..=1.01).contains(&total)
         {
-            return Err(aiperf_dataset::DatasetError::Validation(
+            return Err(aiperf::dataset::DatasetError::Validation(
                 "weighted model weights must be finite, non-negative, and sum to 1.0 (+/-0.01)"
                     .into(),
             ));
@@ -3188,7 +3188,7 @@ impl RunCapture {
         &self,
         uuid: Uuid,
         request_payload: Vec<u8>,
-        record: aiperf_transport_http::models::RequestRecord,
+        record: aiperf::transport_http::models::RequestRecord,
     ) -> Result<()> {
         if !self.raw_enabled {
             return Ok(());
@@ -3448,7 +3448,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use aiperf_clock::SimClock;
+    use aiperf::clock::SimClock;
     use serde_json::json;
 
     use super::*;
@@ -3502,27 +3502,27 @@ mod tests {
 
         assert_eq!(
             roots.concurrency(),
-            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_CONCURRENCY)
+            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_CONCURRENCY)
         );
         assert_eq!(
             roots.prefill_concurrency(),
-            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
+            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_PREFILL_CONCURRENCY)
         );
         assert_eq!(
             roots.request_rate(),
-            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_REQUEST_RATE)
+            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_REQUEST_RATE)
         );
 
         let curve_seeds = [
             roots
                 .request_rate()
-                .derive_seed(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
             roots
                 .prefill_concurrency()
-                .derive_seed(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
             roots
                 .concurrency()
-                .derive_seed(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+                .derive_seed(aiperf::rng::namespace::TIMING_RAMP_POISSON),
         ];
         assert!(curve_seeds.iter().all(Option::is_some));
         assert_ne!(curve_seeds[0], curve_seeds[1]);
@@ -3530,7 +3530,7 @@ mod tests {
         assert_ne!(curve_seeds[1], curve_seeds[2]);
         assert_ne!(
             roots.concurrency(),
-            phase_root.derive_root(aiperf_rng::namespace::TIMING_RAMP_POISSON),
+            phase_root.derive_root(aiperf::rng::namespace::TIMING_RAMP_POISSON),
             "the phase must not pre-derive the curve-local Poisson namespace"
         );
     }
@@ -3655,7 +3655,7 @@ mod tests {
             RngRoot::new(Some(73)),
             &TiktokenTokenizer::builtin(),
             false,
-            Arc::new(aiperf_dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            Arc::new(aiperf::dataset::NativeSyntheticMediaGeneratorFactory::default()),
             false,
         )
         .await
@@ -3688,7 +3688,7 @@ mod tests {
             RngRoot::new(Some(3)),
             &TiktokenTokenizer::builtin(),
             true,
-            Arc::new(aiperf_dataset::NativeSyntheticMediaGeneratorFactory::default()),
+            Arc::new(aiperf::dataset::NativeSyntheticMediaGeneratorFactory::default()),
             false,
         )
         .await

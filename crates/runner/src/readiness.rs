@@ -19,14 +19,14 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_clock::Clock;
-use aiperf_endpoints::{
+use aiperf::clock::Clock;
+use aiperf::endpoints::{
     EndpointId, EndpointRegistry, PreparedReadinessRequest, RawEndpointConfig, ReadinessMethod,
-    ReadinessPolicy,
+    ReadinessPolicy, ReadinessSuccess,
 };
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{ConnectionReuseStrategy, RequestConfig, Response};
-use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf::transport_http::config::ClientConfig;
+use aiperf::transport_http::models::{ConnectionReuseStrategy, RequestConfig, Response};
+use aiperf::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -234,6 +234,56 @@ impl ReadinessResponseClassifier for SuccessfulHttpStatus {
     }
 }
 
+#[derive(Debug)]
+struct ListedModel {
+    model: String,
+}
+
+impl ReadinessResponseClassifier for ListedModel {
+    fn is_ready(&self, response: &ReadinessAttemptResponse) -> bool {
+        if response.status != Some(200) {
+            return false;
+        }
+        let Some(body) = response.body.as_deref() else {
+            return false;
+        };
+        let Ok(Value::Object(payload)) = serde_json::from_str::<Value>(body) else {
+            return false;
+        };
+        payload
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(|models| {
+                models.iter().any(|entry| {
+                    entry
+                        .as_object()
+                        .and_then(|model| model.get("id"))
+                        .and_then(Value::as_str)
+                        == Some(self.model.as_str())
+                })
+            })
+    }
+}
+
+#[derive(Debug)]
+struct NonServerError;
+
+impl ReadinessResponseClassifier for NonServerError {
+    fn is_ready(&self, response: &ReadinessAttemptResponse) -> bool {
+        response.status.is_some_and(|status| status < 500)
+    }
+}
+
+fn readiness_classifier(success: &ReadinessSuccess) -> Arc<dyn ReadinessResponseClassifier> {
+    match success {
+        ReadinessSuccess::SuccessfulStatus => Arc::new(SuccessfulHttpStatus),
+        ReadinessSuccess::ModelListed(model) => Arc::new(ListedModel {
+            model: model.clone(),
+        }),
+        ReadinessSuccess::NonServerError => Arc::new(NonServerError),
+    }
+}
+
 struct PreparedReadinessTarget {
     profile_id: String,
     model: String,
@@ -264,7 +314,6 @@ pub struct NativeHttpReadinessPlanFactory;
 impl OnlineReadinessPlanFactory for NativeHttpReadinessPlanFactory {
     fn prepare(&self, input: ReadinessPlanInput<'_>) -> Result<Box<dyn PreparedOnlineReadiness>> {
         let mut targets = Vec::new();
-        let classifier: Arc<dyn ReadinessResponseClassifier> = Arc::new(SuccessfulHttpStatus);
 
         for profile in input.profiles {
             let endpoint = input
@@ -294,13 +343,22 @@ impl OnlineReadinessPlanFactory for NativeHttpReadinessPlanFactory {
 
             for base_url in &effective.urls {
                 for model in input.models {
-                    let request = match endpoint.readiness_policy(model).with_context(|| {
+                    let requests = match endpoint.readiness_policy(model).with_context(|| {
                         format!(
                             "preparing readiness policy for profile {:?}, model {model:?}",
                             profile.profile_id
                         )
                     })? {
-                        ReadinessPolicy::Request(request) => request,
+                        ReadinessPolicy::Request(request) => vec![request],
+                        ReadinessPolicy::Requests(requests) => {
+                            ensure!(
+                                !requests.is_empty(),
+                                "endpoint {:?} returned an empty readiness policy for profile {:?}, model {model:?}",
+                                profile.endpoint_id,
+                                profile.profile_id
+                            );
+                            requests
+                        }
                         ReadinessPolicy::Unsupported { .. } => {
                             bail!(
                                 "endpoint {:?} does not provide readiness for profile {:?}, model {model:?}",
@@ -309,15 +367,18 @@ impl OnlineReadinessPlanFactory for NativeHttpReadinessPlanFactory {
                             )
                         }
                     };
-                    targets.push(prepare_target(
-                        profile,
-                        base_url,
-                        model,
-                        request,
-                        timeout_ns,
-                        interval_ns,
-                        classifier.clone(),
-                    )?);
+                    for request in requests {
+                        let classifier = readiness_classifier(&request.success);
+                        targets.push(prepare_target(
+                            profile,
+                            base_url,
+                            model,
+                            request,
+                            timeout_ns,
+                            interval_ns,
+                            classifier,
+                        )?);
+                    }
                 }
             }
         }
@@ -574,7 +635,7 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
 
-    use aiperf_transport_http::models::HttpVersion;
+    use aiperf::transport_http::models::HttpVersion;
 
     use super::*;
 
@@ -717,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_endpoint_policy_fails_closed_during_preparation() {
+    fn chat_models_readiness_waits_until_the_requested_model_is_listed() {
         let endpoints = EndpointRegistry::builtin().unwrap();
         let profiles = [profile(
             "chat",
@@ -726,17 +787,78 @@ mod tests {
         )];
         let models = ["model-a".to_owned()];
 
-        let error = NativeHttpReadinessPlanFactory
+        let plan = NativeHttpReadinessPlanFactory
             .prepare(ReadinessPlanInput {
                 endpoints: &endpoints,
                 profiles: &profiles,
                 models: &models,
             })
-            .unwrap_err()
-            .to_string();
+            .unwrap();
+        let clock = Rc::new(AdvancingClock::new());
+        let transport = Rc::new(ScriptedTransport::new([
+            ReadinessAttemptResponse {
+                status: Some(200),
+                body: Some(r#"{"data":[{"id":"another-model"}]}"#.into()),
+                error: None,
+            },
+            ReadinessAttemptResponse {
+                status: Some(200),
+                body: Some(r#"{"data":[{"id":"model-a"}]}"#.into()),
+                error: None,
+            },
+        ]));
 
-        assert!(error.contains("does not provide readiness"), "{error}");
-        assert!(error.contains("model-a"), "{error}");
+        let report = run_plan(plan.as_ref(), clock, transport.clone()).unwrap();
+
+        assert_eq!(report.targets_ready, 1);
+        assert_eq!(report.attempts, 2);
+        let attempts = transport.attempts.borrow();
+        assert_eq!(attempts.len(), 2);
+        for attempt in attempts.iter() {
+            assert_eq!(attempt.method(), ReadinessMethod::Get);
+            assert_eq!(attempt.url(), "http://example.test/v1/models");
+            assert!(attempt.body().is_none());
+        }
+    }
+
+    #[test]
+    fn chat_inference_readiness_accepts_a_non_server_error_response() {
+        let endpoints = EndpointRegistry::builtin().unwrap();
+        let mut readiness_profile = profile(
+            "chat",
+            vec!["http://example.test/v1/chat/completions".into()],
+            10.0,
+        );
+        readiness_profile.config.wait_for_model_mode = "inference".into();
+        let profiles = [readiness_profile];
+        let models = ["model-a".to_owned()];
+        let plan = NativeHttpReadinessPlanFactory
+            .prepare(ReadinessPlanInput {
+                endpoints: &endpoints,
+                profiles: &profiles,
+                models: &models,
+            })
+            .unwrap();
+        let transport = Rc::new(ScriptedTransport::new([ReadinessAttemptResponse {
+            status: Some(401),
+            body: Some(r#"{"error":"unauthorized"}"#.into()),
+            error: None,
+        }]));
+
+        let report = run_plan(
+            plan.as_ref(),
+            Rc::new(AdvancingClock::new()),
+            transport.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(report.targets_ready, 1);
+        assert_eq!(report.attempts, 1);
+        let attempt = transport.attempts.borrow().last().cloned().unwrap();
+        assert_eq!(attempt.method(), ReadinessMethod::Post);
+        assert_eq!(attempt.url(), "http://example.test/v1/chat/completions");
+        assert_eq!(attempt.body().unwrap()["model"], "model-a");
+        assert_eq!(attempt.body().unwrap()["max_tokens"], 1);
     }
 
     #[test]

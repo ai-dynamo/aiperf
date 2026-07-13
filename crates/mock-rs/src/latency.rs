@@ -16,7 +16,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aiperf_rng::RandomGenerator;
+use aiperf::rng::RandomGenerator;
 
 use crate::config::MockServerConfig;
 use crate::scheduler::BatchScheduler;

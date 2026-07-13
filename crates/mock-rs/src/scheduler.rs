@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use aiperf_rng::RandomGenerator;
+use aiperf::rng::RandomGenerator;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;

@@ -15,7 +15,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
-use aiperf_clock::Clock;
+use crate::clock::Clock;
 use tokio::sync::Notify;
 
 /// Boxed `!Send` future accepted by [`LocalTaskScheduler`].
@@ -228,8 +228,8 @@ impl LocalTaskScheduler for ClockTaskScheduler {
 mod tests {
     use std::cell::RefCell;
 
-    use aiperf_clock::sim_clock::SimClock;
-    use aiperf_graph::runtime::drive_sim;
+    use crate::clock::sim_clock::SimClock;
+    use crate::graph::runtime::drive_sim;
 
     use super::*;
 

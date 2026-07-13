@@ -4,7 +4,7 @@
 //! Process proof for a statically linked product-registry extension.
 //!
 //! The spawned child runs the strict [`aiperf_runner::RunnerApplication`] with an
-//! injected [`aiperf_extensions::AiperfRegistryFactory`]. The application builds
+//! injected [`aiperf::extensions::AiperfRegistryFactory`]. The application builds
 //! that factory exactly once and threads the resulting frozen registry through validation, dataset
 //! construction, scheduling, and execution. The custom sampler and prepared-only
 //! endpoint names appear only in the authored request and extension registration:

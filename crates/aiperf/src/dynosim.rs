@@ -24,40 +24,37 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll, Waker};
 
-use aiperf_clock::{Clock, SimClock};
-use tokio::sync::Notify;
-use aiperf_endpoints::chat_request_body;
-use loadgen_core::observer::CollectorObserver;
-use aiperf_dataset::{Handle, TextTokenizer, TiktokenTokenizer};
-use aiperf_graph::bench::{BenchConfig, build_workload};
-use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
-use aiperf_graph::executor::{ExecutorFlags, TraceExecutor};
-use aiperf_graph::materialize::SegmentItemsMaterializer;
-use aiperf_graph::model::{GraphTracePlan, TraceRecord};
-use aiperf_graph::policy::{
+use crate::clock::{Clock, SimClock};
+use crate::dataset::{Handle, TextTokenizer, TiktokenTokenizer};
+use crate::endpoints::chat_request_body;
+use crate::graph::bench::{BenchConfig, build_workload};
+use crate::graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
+use crate::graph::executor::{ExecutorFlags, TraceExecutor};
+use crate::graph::materialize::SegmentItemsMaterializer;
+use crate::graph::model::{GraphTracePlan, TraceRecord};
+use crate::graph::policy::{
     CompositeNodeDispatchPolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
 };
-use aiperf_graph::runtime::{
+use crate::graph::runtime::{
     SimDriveError, SimEventSource, SimStep, drive_real_with_source, drive_sim_with_source,
 };
-use aiperf_graph::segment::SegmentStore;
-use aiperf_graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
-use aiperf_graph::transport_bench::GraphRpsReport;
-use aiperf_graph::wire::OpenAiChatMessage as GraphMessage;
-use aiperf_graph::workload::{GraphWorkload, GraphWorkloadReport};
-use aiperf_metrics::{
+use crate::graph::segment::SegmentStore;
+use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
+use crate::graph::transport_bench::GraphRpsReport;
+use crate::graph::wire::OpenAiChatMessage as GraphMessage;
+use crate::graph::workload::{GraphWorkload, GraphWorkloadReport};
+use crate::metrics_core::{
     AccumulatorSummary, ExportContext, HttpTrace, InferenceDimensions, MetricTag,
     MetricsAccumulator, MetricsConfig, Phase as MetricsPhase, RecordIngest,
 };
-use aiperf_timing::{ArrivalPattern, Phase, PhaseStats, SlotPool, StopConfig};
+use crate::timing::{ArrivalPattern, Phase, PhaseStats, SlotPool, StopConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use dynamo_mocker::common::protocols::{DirectRequest, MockEngineArgs, WorkerType};
 use dynamo_mocker::loadgen::{
     AgenticTrace, DynamoRequestTrace, EngineEvent, SteppableAgg, SteppableDisagg, SteppableEngine,
-    SteppableReplay,
-    Trace, TraceFileFormat, TurnTrace, WorkloadDriver,
+    SteppableReplay, Trace, TraceFileFormat, TurnTrace, WorkloadDriver,
 };
 use dynamo_mocker::replay::{
     OfflineDisaggReplayConfig, OfflineTraceReplayConfig as DynamoTraceReplayConfig,
@@ -69,8 +66,10 @@ use dynamo_mocker::replay::{
     simulate_concurrency_live_requests, simulate_offline_trace_files,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
+use loadgen_core::observer::CollectorObserver;
 use loadgen_core::sink::{ObservedTokenKind, ObservedUsage, RequestObserver, RequestSink};
 use rustc_hash::FxHashMap;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::adaptive::AdaptiveRunConfig;
@@ -856,7 +855,7 @@ pub struct OfflineScheduledReport {
     /// across every warmup and profiling phase.
     pub performance: loadgen_core::collector::TraceSimulationReport,
     /// Final lifecycle snapshots in authored phase order.
-    pub phases: Vec<aiperf_timing::PhaseStats>,
+    pub phases: Vec<crate::timing::PhaseStats>,
     /// Non-profiling phase reports retained without merging finalized summaries.
     pub auxiliary_phase_reports: Vec<ScheduledPhaseReport>,
     /// Dynamo-native scheduler/KV report.
@@ -878,7 +877,7 @@ pub struct OfflineScheduledExecution {
     /// Whole-run compatibility metrics from the live cross-phase observer.
     pub performance: loadgen_core::collector::TraceSimulationReport,
     /// Final lifecycle snapshots in authored order.
-    pub phases: Vec<aiperf_timing::PhaseStats>,
+    pub phases: Vec<crate::timing::PhaseStats>,
     /// Warmup or otherwise excluded phase reports.
     pub auxiliary_phase_reports: Vec<ScheduledPhaseReport>,
     aggregate_is_profiling: bool,
@@ -907,7 +906,7 @@ impl OfflineScheduledExecution {
             .iter()
             .enumerate()
             .filter_map(|(index, report)| {
-                (report.kind == aiperf_timing::PhaseKind::Profiling).then_some(index)
+                (report.kind == crate::timing::PhaseKind::Profiling).then_some(index)
             })
             .collect::<Vec<_>>();
         anyhow::ensure!(
@@ -2368,8 +2367,7 @@ pub fn run_paced_offline(
     ancillary.validate()?;
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new(clock.clone(), &engine_config)?;
-    let sink: Rc<dyn HttpRequestDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let result = Rc::new(RefCell::new(None));
     let result_for_body = result.clone();
     let clock_for_body: Rc<dyn Clock> = clock.clone();
@@ -2437,15 +2435,14 @@ pub fn run_paced_online(
     ancillary: AncillaryTimingConfig,
 ) -> Result<OfflineRunReport> {
     ancillary.validate()?;
-    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let clock: Rc<dyn Clock> = crate::clock::real_clock::RealClock::new();
     let host = EngineHost::new_real_with_factory_and_delivery(
         clock.clone(),
         &engine_config,
         &NativeDynamoEngineFactory,
         Rc::new(IncrementalOfflineEventDelivery),
     )?;
-    let sink: Rc<dyn HttpRequestDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let result = Rc::new(RefCell::new(None));
     let result_for_body = result.clone();
     let clock_for_body: Rc<dyn Clock> = clock.clone();
@@ -3341,7 +3338,7 @@ pub fn run_graph_offline(
                     if index >= instances {
                         break;
                     }
-                    let handle = aiperf_graph::runtime::Handle::new(clock.clone());
+                    let handle = crate::graph::runtime::Handle::new(clock.clone());
                     let executor = match TraceExecutor::new(
                         graph.clone(),
                         materializer.clone(),
@@ -3432,10 +3429,10 @@ impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
     async fn execute_trace(
         &self,
         plan: GraphTracePlan,
-    ) -> Result<(), aiperf_graph::errors::TraceError> {
+    ) -> Result<(), crate::graph::errors::TraceError> {
         let trace_id = plan.trace.id.clone();
         if self.cancelled.get() {
-            return Err(aiperf_graph::errors::TraceError::Cancelled(format!(
+            return Err(crate::graph::errors::TraceError::Cancelled(format!(
                 "offline graph trace {trace_id:?} was cancelled by its phase backend"
             )));
         }
@@ -3451,7 +3448,7 @@ impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
                         usize::try_from(tokens)
                             .map(|tokens| (node_id.clone(), tokens))
                             .map_err(|_| {
-                                aiperf_graph::errors::TraceError::Other(format!(
+                                crate::graph::errors::TraceError::Other(format!(
                                     "graph node {node_id:?} input_tokens exceeds usize"
                                 ))
                             })
@@ -3487,7 +3484,7 @@ impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
         result
     }
 
-    fn cancel_inflight(&self) -> Result<(), aiperf_graph::errors::TraceError> {
+    fn cancel_inflight(&self) -> Result<(), crate::graph::errors::TraceError> {
         self.cancelled.set(true);
         let active = self
             .active
@@ -3501,14 +3498,14 @@ impl GraphTraceExecutionBackend for DynamoDirectGraphBackend {
         Ok(())
     }
 
-    fn set_prefill_limit(&self, limit: usize) -> Result<(), aiperf_graph::errors::TraceError> {
+    fn set_prefill_limit(&self, limit: usize) -> Result<(), crate::graph::errors::TraceError> {
         if limit == 0 {
-            return Err(aiperf_graph::errors::TraceError::Other(
+            return Err(crate::graph::errors::TraceError::Other(
                 "offline graph prefill limit must be positive".into(),
             ));
         }
         let slots = self.prefill_slots.as_ref().ok_or_else(|| {
-            aiperf_graph::errors::TraceError::Other(
+            crate::graph::errors::TraceError::Other(
                 "offline graph phase does not expose prefill control".into(),
             )
         })?;
@@ -3814,7 +3811,7 @@ pub fn run_graph_workload_online_deferred(
         "online graph default_max_tokens must be positive"
     );
 
-    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let clock: Rc<dyn Clock> = crate::clock::real_clock::RealClock::new();
     let start_ns = clock.now_ns();
     let host = EngineHost::new_real(clock.clone(), &engine_config)?;
     let sink = DynosimSink::new(host.clone(), clock.clone(), model);
@@ -3985,8 +3982,7 @@ fn run_scheduled_offline(
 
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new(clock.clone(), &engine_config)?;
-    let dispatcher: Rc<dyn TurnDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let dispatcher: Rc<dyn TurnDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let result = Rc::new(RefCell::new(None));
     let result_for_body = result.clone();
     let clock_for_body: Rc<dyn Clock> = clock.clone();
@@ -4121,8 +4117,7 @@ pub fn run_scheduled_backend_offline(
 ) -> Result<OfflineScheduledReport> {
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new(clock.clone(), &engine_config)?;
-    let dispatcher: Rc<dyn TurnDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let dispatcher: Rc<dyn TurnDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4161,15 +4156,14 @@ pub fn run_scheduled_backend_online(
     model: String,
     factory: Box<dyn OfflineScheduledRunFactory>,
 ) -> Result<OfflineScheduledReport> {
-    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let clock: Rc<dyn Clock> = crate::clock::real_clock::RealClock::new();
     let host = EngineHost::new_real_with_factory_and_delivery(
         clock.clone(),
         &engine_config,
         &NativeDynamoEngineFactory,
         Rc::new(IncrementalOfflineEventDelivery),
     )?;
-    let dispatcher: Rc<dyn TurnDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let dispatcher: Rc<dyn TurnDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4219,8 +4213,7 @@ pub fn run_scheduled_backend_offline_deferred_with_delivery(
 ) -> Result<OfflineScheduledReport> {
     let clock = Rc::new(SimClock::new());
     let host = EngineHost::new_with_delivery(clock.clone(), &engine_config, event_delivery)?;
-    let dispatcher: Rc<dyn TurnDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let dispatcher: Rc<dyn TurnDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4256,15 +4249,14 @@ pub fn run_scheduled_backend_online_deferred_with_delivery(
     factory: Box<dyn DeferredOfflineScheduledRunFactory>,
     event_delivery: Rc<dyn OfflineEventDeliveryPolicy>,
 ) -> Result<OfflineScheduledReport> {
-    let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+    let clock: Rc<dyn Clock> = crate::clock::real_clock::RealClock::new();
     let host = EngineHost::new_real_with_factory_and_delivery(
         clock.clone(),
         &engine_config,
         &NativeDynamoEngineFactory,
         event_delivery,
     )?;
-    let dispatcher: Rc<dyn TurnDispatcher> =
-        DynosimSink::new(host.clone(), clock.clone(), model);
+    let dispatcher: Rc<dyn TurnDispatcher> = DynosimSink::new(host.clone(), clock.clone(), model);
     let start_ns = clock.now_ns();
     let future = factory.create(clock.clone(), start_ns, dispatcher);
     let result = Rc::new(RefCell::new(None));
@@ -4583,7 +4575,7 @@ pub fn run_request_rate_offline_with_adaptive_and_ancillary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_rng::RngRoot;
+    use crate::rng::RngRoot;
 
     #[test]
     fn python_json_exponents_have_a_sign_and_two_digits() {
@@ -4801,11 +4793,11 @@ mod tests {
 
     #[test]
     fn authored_raw_token_ids_bypass_all_offline_encoders() {
-        use aiperf_dataset::{
+        use crate::dataset::{
             ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
             TraceHashAwareRequestMaterializer,
         };
-        use aiperf_endpoints::{
+        use crate::endpoints::{
             EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
         };
 
@@ -5096,8 +5088,16 @@ mod tests {
                 (a - n).abs()
             );
         };
-        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
-        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "ttft",
+            aiperf.latency.ttft.mean_ms,
+            native.latency.ttft.mean_ms,
+        );
+        within_1_ulp(
+            "e2e",
+            aiperf.latency.e2e.mean_ms,
+            native.latency.e2e.mean_ms,
+        );
         within_1_ulp(
             "itl",
             aiperf.latency.itl.distribution.mean_ms,
@@ -5221,8 +5221,16 @@ mod tests {
                 (a - n).abs()
             );
         };
-        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
-        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "ttft",
+            aiperf.latency.ttft.mean_ms,
+            native.latency.ttft.mean_ms,
+        );
+        within_1_ulp(
+            "e2e",
+            aiperf.latency.e2e.mean_ms,
+            native.latency.e2e.mean_ms,
+        );
         within_1_ulp(
             "itl",
             aiperf.latency.itl.distribution.mean_ms,
@@ -5352,8 +5360,16 @@ mod tests {
                 (a - n).abs()
             );
         };
-        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
-        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "ttft",
+            aiperf.latency.ttft.mean_ms,
+            native.latency.ttft.mean_ms,
+        );
+        within_1_ulp(
+            "e2e",
+            aiperf.latency.e2e.mean_ms,
+            native.latency.e2e.mean_ms,
+        );
         within_1_ulp(
             "itl",
             aiperf.latency.itl.distribution.mean_ms,
@@ -5489,8 +5505,16 @@ mod tests {
                 (a - n).abs()
             );
         };
-        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
-        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "ttft",
+            aiperf.latency.ttft.mean_ms,
+            native.latency.ttft.mean_ms,
+        );
+        within_1_ulp(
+            "e2e",
+            aiperf.latency.e2e.mean_ms,
+            native.latency.e2e.mean_ms,
+        );
         within_1_ulp(
             "itl",
             aiperf.latency.itl.distribution.mean_ms,
@@ -5628,8 +5652,16 @@ mod tests {
                 (a - n).abs()
             );
         };
-        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
-        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "ttft",
+            aiperf.latency.ttft.mean_ms,
+            native.latency.ttft.mean_ms,
+        );
+        within_1_ulp(
+            "e2e",
+            aiperf.latency.e2e.mean_ms,
+            native.latency.e2e.mean_ms,
+        );
         within_1_ulp(
             "itl",
             aiperf.latency.itl.distribution.mean_ms,
@@ -5674,7 +5706,7 @@ mod tests {
         // the fixed native-format token encoder so the engine sees exactly the
         // native tokens rather than text-encoded synthetic ones.
         let aiperf = {
-            let clock: Rc<dyn Clock> = aiperf_clock::real_clock::RealClock::new();
+            let clock: Rc<dyn Clock> = crate::clock::real_clock::RealClock::new();
             let host = EngineHost::new_real_with_factory_and_delivery(
                 clock.clone(),
                 &OfflineEngineConfig::default(),
@@ -5781,16 +5813,36 @@ mod tests {
                 "{name}: aiperf={a:.4} native={n:.4} delta={delta:.4} exceeds 3% (tol={tol:.4})"
             );
         };
-        within_3pct("ttft.mean", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
-        within_3pct("ttft.p90", aiperf.latency.ttft.p90_ms, native.latency.ttft.p90_ms);
-        within_3pct("e2e.mean", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
-        within_3pct("e2e.p90", aiperf.latency.e2e.p90_ms, native.latency.e2e.p90_ms);
+        within_3pct(
+            "ttft.mean",
+            aiperf.latency.ttft.mean_ms,
+            native.latency.ttft.mean_ms,
+        );
+        within_3pct(
+            "ttft.p90",
+            aiperf.latency.ttft.p90_ms,
+            native.latency.ttft.p90_ms,
+        );
+        within_3pct(
+            "e2e.mean",
+            aiperf.latency.e2e.mean_ms,
+            native.latency.e2e.mean_ms,
+        );
+        within_3pct(
+            "e2e.p90",
+            aiperf.latency.e2e.p90_ms,
+            native.latency.e2e.p90_ms,
+        );
         within_3pct(
             "itl.mean",
             aiperf.latency.itl.distribution.mean_ms,
             native.latency.itl.distribution.mean_ms,
         );
-        within_3pct("tpot.mean", aiperf.latency.tpot.mean_ms, native.latency.tpot.mean_ms);
+        within_3pct(
+            "tpot.mean",
+            aiperf.latency.tpot.mean_ms,
+            native.latency.tpot.mean_ms,
+        );
 
         // Throughput: AIPerf's driver is at least as fast as the native driver.
         // A small slack absorbs real-timer jitter on the (already fast) run.

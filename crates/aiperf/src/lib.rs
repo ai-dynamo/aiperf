@@ -3,17 +3,17 @@
 
 //! Rust-native AIPerf load-generation runtime.
 //!
-//! OpenAI SSE chunk types live in [`aiperf_transport_http`]`::sse`, the OpenAI
-//! chat request-body builder in [`aiperf_endpoints`], and the `CollectorObserver`
+//! OpenAI SSE chunk types live in [`crate::transport_http`]`::sse`, the OpenAI
+//! chat request-body builder in [`crate::endpoints`], and the `CollectorObserver`
 //! recorder in [`loadgen_core`]`::observer`; the
-//! Graph-IR engine lives in `aiperf_graph`; the clock-native scheduling policy
+//! Graph-IR engine lives in `crate::graph`; the clock-native scheduling policy
 //! (arrivals, slots, stop conditions, ramps, cancellation, and URL selection)
-//! lives in shared [`aiperf_timing`]. This library owns runtime composition used
+//! lives in shared [`crate::timing`]. This library owns runtime composition used
 //! by `aiperf-runner`: the online HTTP sink over `aiperf-transport-http` ([`http`]),
 //! ancillary policy wiring ([`ancillary`]), phased scheduled execution
 //! ([`phase_runtime`]), workload shaping ([`workload`]), the online run loop
 //! ([`run`]), reporting ([`report`]), and canonical static-accuracy execution
-//! seams. Named compile-time extension composition lives in `aiperf_extensions`
+//! seams. Named compile-time extension composition lives in `crate::extensions`
 //! and is owned by the runner, so extension crates never need a dependency cycle
 //! through this runtime crate.
 //! With the `dynosim` Cargo feature, [`dynosim`] composes the
@@ -22,9 +22,9 @@
 
 pub mod accuracy;
 pub mod adaptive;
-pub mod ancillary;
 #[cfg(feature = "dynamo-aic-forward-pass")]
 pub mod aic_runtime;
+pub mod ancillary;
 #[cfg(feature = "dynosim")]
 pub mod dynosim;
 pub mod fixed_schedule;
@@ -40,6 +40,24 @@ pub mod scheduled;
 pub mod scheduler;
 pub mod user_centric;
 pub mod workload;
+
+// Modules absorbed from the formerly-standalone aiperf-* library crates.
+pub mod accuracy_core;
+pub mod adaptive_core;
+pub mod clock;
+pub mod content_server;
+pub mod dataset;
+pub mod endpoints;
+pub mod extensions;
+pub mod gpu_telemetry;
+pub mod graph;
+pub mod metrics_core;
+pub mod network_latency;
+pub mod rng;
+pub mod server_metrics;
+pub mod timing;
+pub mod transport_grpc;
+pub mod transport_http;
 
 #[cfg(test)]
 mod test_util;

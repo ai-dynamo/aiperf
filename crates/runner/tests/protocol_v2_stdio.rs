@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn runner_capabilities() -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_aiperf-runner"))
@@ -111,10 +111,12 @@ fn graph_dataset_selects_graph_path_before_execution() {
         response["errors"][0]["code"],
         "invalid_transport_workload_selection"
     );
-    assert!(response["errors"][0]["message"]
-        .as_str()
-        .unwrap()
-        .contains("graph"));
+    assert!(
+        response["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("graph")
+    );
 }
 
 #[test]
@@ -140,10 +142,12 @@ fn unknown_v2_fields_fail_as_protocol_errors_without_side_effects() {
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(response["event"], "run_validation");
     assert_eq!(response["errors"][0]["code"], "invalid_request");
-    assert!(response["errors"][0]["message"]
-        .as_str()
-        .unwrap()
-        .contains("unknown field `unknown_outer_field`"));
+    assert!(
+        response["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown field `unknown_outer_field`")
+    );
 }
 
 #[test]

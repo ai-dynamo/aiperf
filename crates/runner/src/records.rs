@@ -5,7 +5,7 @@
 //!
 //! Python's convergence and detailed-aggregation consumers read the
 //! `MetricRecordInfo` shape. Rust retains that wire shape, but every value is
-//! produced by the same [`aiperf_metrics::MetricsAccumulator`] used for
+//! produced by the same [`aiperf::metrics_core::MetricsAccumulator`] used for
 //! native-v2 aggregation.
 
 use std::collections::BTreeMap;
@@ -13,10 +13,10 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use aiperf_metrics::{
+use aiperf::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
 };
-use aiperf_transport_http::models::{
+use aiperf::transport_http::models::{
     ErrorKind, RequestRecord, Response, SseFieldName, SseMessage, TextResponse,
 };
 use anyhow::{Context, Result};
@@ -476,7 +476,7 @@ fn text_response_value(response: &TextResponse) -> Value {
     })
 }
 
-fn error_value(error: &aiperf_transport_http::models::ErrorDetails) -> Value {
+fn error_value(error: &aiperf::transport_http::models::ErrorDetails) -> Value {
     json!({
         "code": error.code,
         "type": match error.kind {
@@ -557,7 +557,7 @@ fn trace_value(record: &RecordIngest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_metrics::{Phase, TokenCounts};
+    use aiperf::metrics_core::{Phase, TokenCounts};
 
     #[test]
     fn captured_output_prefers_structured_visible_and_reasoning_text() {

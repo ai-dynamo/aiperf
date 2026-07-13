@@ -6,14 +6,14 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_dataset::{ConversationMetadata, Sampler, SamplerFactory, SessionId};
-use aiperf_endpoints::{
+use aiperf::dataset::{ConversationMetadata, Sampler, SamplerFactory, SessionId};
+use aiperf::endpoints::{
     ChatEndpoint, EffectiveEndpointConfig, EndpointDescriptor, EndpointFactory, EndpointResult,
     ExtractedPayload, Modality, ParsedResponse, PreparedEndpoint, PreparedRequest, ReadinessPolicy,
     RequestRecord, ServerResponse, StatelessEndpointFactory, Turn,
 };
-use aiperf_extensions::{AiperfExtension, AiperfRegistry, AiperfRegistryFactory, ExtensionError};
-use aiperf_rng::RngRoot;
+use aiperf::extensions::{AiperfExtension, AiperfRegistry, AiperfRegistryFactory, ExtensionError};
+use aiperf::rng::RngRoot;
 
 /// Stable package identity advertised by the fixture extension.
 pub const EXTENSION_NAME: &str = "runner-static-extension-process-proof";
@@ -160,12 +160,12 @@ impl SamplerFactory for LinkedPinnedSamplerFactory {
         &self,
         metadata: &[ConversationMetadata],
         _root: RngRoot,
-    ) -> aiperf_dataset::Result<Box<dyn Sampler>> {
+    ) -> aiperf::dataset::Result<Box<dyn Sampler>> {
         SAMPLER_CREATIONS.fetch_add(1, Ordering::SeqCst);
         let id = metadata
             .last()
             .map(|conversation| conversation.conversation_id.clone())
-            .ok_or(aiperf_dataset::DatasetError::EmptySampler)?;
+            .ok_or(aiperf::dataset::DatasetError::EmptySampler)?;
         Ok(Box::new(LinkedPinnedSampler { id }))
     }
 }

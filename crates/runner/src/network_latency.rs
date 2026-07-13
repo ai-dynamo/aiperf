@@ -16,8 +16,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 use aiperf::phase_runtime::ScheduledPhaseSidecar;
-use aiperf_clock::Clock;
-use aiperf_network_latency::{
+use aiperf::clock::Clock;
+use aiperf::network_latency::{
     NetworkLatencyAccumulator, NetworkLatencyProbe, NetworkLatencyTarget, TcpConnectProbe,
 };
 use anyhow::{Context, Result, ensure};
@@ -142,7 +142,7 @@ trait NetworkLatencyArtifactSink {
     fn write(
         &self,
         path: &Path,
-        samples: &[aiperf_network_latency::NetworkLatencySample],
+        samples: &[aiperf::network_latency::NetworkLatencySample],
     ) -> Result<()>;
 }
 
@@ -152,7 +152,7 @@ impl NetworkLatencyArtifactSink for JsonlNetworkLatencyArtifactSink {
     fn write(
         &self,
         path: &Path,
-        samples: &[aiperf_network_latency::NetworkLatencySample],
+        samples: &[aiperf::network_latency::NetworkLatencySample],
     ) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
@@ -227,12 +227,12 @@ impl NetworkLatencySidecar {
 }
 
 impl ScheduledPhaseSidecar for NetworkLatencySidecar {
-    fn start(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn start(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.start().await })
     }
 
-    fn finish(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn finish(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         let state = self.state.clone();
         Box::pin(async move { state.finish().await })
     }

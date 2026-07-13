@@ -16,9 +16,9 @@ use std::path::Component;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{value::RawValue, Map, Value};
+use serde_json::{Map, Value, value::RawValue};
 
 use crate::protocol::{MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec};
 use crate::sidecar_input::{
@@ -1062,9 +1062,11 @@ mod tests {
         let identities = decoded.run.endpoints.identities().unwrap();
         assert_eq!(identities[0].profile_id, "default");
         assert_eq!(identities[0].endpoint_id.as_str(), "future_endpoint");
-        assert!(decoded.run.endpoints.profiles[0]
-            .get()
-            .contains("extension_field"));
+        assert!(
+            decoded.run.endpoints.profiles[0]
+                .get()
+                .contains("extension_field")
+        );
     }
 
     #[test]

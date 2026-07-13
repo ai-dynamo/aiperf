@@ -20,8 +20,8 @@ use serde_json::Value;
 
 use crate::models::{
     ChatCompletionRequest, CohereRerankRequest, CompletionRequest, EmbeddingRequest,
-    HFTEIRerankRequest, ImageGenerationRequest, ImageRetrievalRequest, RankingRequest,
-    ReasoningEffort, SolidoRAGRequest, TGIGenerateRequest,
+    HFTEIRerankRequest, ImageGenerationRequest, ImageRetrievalRequest, MessagesRequest,
+    RankingRequest, ReasoningEffort, SolidoRAGRequest, TGIGenerateRequest,
 };
 
 /// Upper bound before we stop caching new entries. At steady state the mock
@@ -254,6 +254,7 @@ impl TokenizedText {
 
 pub enum GenRequest<'a> {
     Chat(&'a ChatCompletionRequest),
+    Messages(&'a MessagesRequest),
     Completion(&'a CompletionRequest),
     TGI(&'a TGIGenerateRequest),
     Embedding(&'a EmbeddingRequest),
@@ -269,6 +270,7 @@ impl GenRequest<'_> {
     pub fn model(&self) -> &str {
         match self {
             GenRequest::Chat(r) => &r.model,
+            GenRequest::Messages(r) => &r.model,
             GenRequest::Completion(r) => &r.model,
             GenRequest::TGI(r) => &r.model,
             GenRequest::Embedding(r) => &r.model,
@@ -286,6 +288,7 @@ impl GenRequest<'_> {
     pub fn priority(&self) -> i64 {
         match self {
             GenRequest::Chat(r) => r.priority.unwrap_or(0),
+            GenRequest::Messages(r) => r.priority.unwrap_or(0),
             GenRequest::Completion(r) => r.priority.unwrap_or(0),
             _ => 0,
         }
@@ -320,6 +323,7 @@ fn extract_chat_text(messages: &[crate::models::Message]) -> String {
 fn extract_content(req: &GenRequest<'_>) -> (String, Option<usize>) {
     match req {
         GenRequest::Chat(r) => (extract_chat_text(&r.messages), r.max_output_tokens()),
+        GenRequest::Messages(r) => (extract_chat_text(&r.messages), Some(r.max_tokens)),
         GenRequest::Completion(r) => (r.prompt_text(), r.max_tokens),
         GenRequest::TGI(r) => (r.prompt_text(), r.max_tokens()),
         GenRequest::Embedding(r) => (r.inputs().join("\n"), None),
@@ -537,6 +541,7 @@ fn generate_reasoning_tokens(
 fn min_tokens_of(req: &GenRequest<'_>) -> Option<usize> {
     match req {
         GenRequest::Chat(r) => r.min_tokens,
+        GenRequest::Messages(_) => None,
         GenRequest::Completion(r) => r.min_tokens,
         GenRequest::TGI(r) => r.min_tokens,
         GenRequest::SolidoRAG(r) => r.min_tokens,
@@ -547,6 +552,7 @@ fn min_tokens_of(req: &GenRequest<'_>) -> Option<usize> {
 fn ignore_eos_of(req: &GenRequest<'_>) -> bool {
     match req {
         GenRequest::Chat(r) => r.ignore_eos,
+        GenRequest::Messages(_) => false,
         GenRequest::Completion(r) => r.ignore_eos,
         GenRequest::TGI(r) => r.ignore_eos,
         GenRequest::SolidoRAG(r) => r.ignore_eos,

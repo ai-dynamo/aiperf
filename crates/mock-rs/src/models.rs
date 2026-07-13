@@ -69,6 +69,19 @@ impl ChatCompletionRequest {
     }
 }
 
+/// Anthropic Messages API request accepted by the local mock.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessagesRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    pub max_tokens: usize,
+    #[serde(default)]
+    pub stream: bool,
+    /// Request priority for the `priority` KV-cache eviction policy.
+    #[serde(default)]
+    pub priority: Option<i64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum StringOrList {

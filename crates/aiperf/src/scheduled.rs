@@ -19,14 +19,14 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
-use aiperf_clock::Clock;
-use loadgen_core::observer::CollectorObserver;
-use aiperf_endpoints::ParsedResponse;
-use aiperf_metrics::{AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsConfig};
-use aiperf_timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
+use crate::clock::Clock;
+use crate::endpoints::ParsedResponse;
+use crate::metrics_core::{AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsConfig};
+use crate::timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
+use loadgen_core::observer::CollectorObserver;
 use loadgen_core::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
@@ -1315,15 +1315,15 @@ pub async fn run_scheduled_workload_with_processors(
     record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
 ) -> Result<ScheduledRunReport> {
     let config =
-        aiperf_timing::PhaseConfig::new("profiling", aiperf_timing::PhaseKind::Profiling, stop)
+        crate::timing::PhaseConfig::new("profiling", crate::timing::PhaseKind::Profiling, stop)
             // The legacy single-phase helper always drained admitted work. Explicit
             // multi-phase callers choose Disabled/Finite/Infinite grace per phase.
-            .with_grace_period(aiperf_timing::GracePeriod::Infinite);
+            .with_grace_period(crate::timing::GracePeriod::Infinite);
     let plan = crate::phase_runtime::ScheduledPhasePlan::new(config, workload, policies)
         .with_enforce_stop(enforce_stop)
         .with_start_ns(start_ns)
         .with_record_processors(record_processors);
-    let observer: Rc<dyn aiperf_timing::PhaseObserver> = Rc::new(aiperf_timing::NoopPhaseObserver);
+    let observer: Rc<dyn crate::timing::PhaseObserver> = Rc::new(crate::timing::NoopPhaseObserver);
     let mut result =
         crate::phase_runtime::run_scheduled_phases(vec![plan], clock, dispatcher, observer).await?;
     let phase = result

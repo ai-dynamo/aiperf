@@ -18,21 +18,21 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use aiperf_dataset::{
+use crate::dataset::{
     BuiltinEndpointResolver, ConversationSession as NativeConversationSession,
     Dataset as NativeDataset, EndpointRequestMaterializer, EndpointResolver, Handle, Overrides,
     Payload, RequestMaterializer, Sampler, SamplerRegistry, SegmentPool, SegmentStore,
     SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
-use aiperf_endpoints::{
+use crate::endpoints::{
     ChatEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointId, EndpointKey, EndpointType,
     Media as EndpointMedia, ModelEndpoint, PreparedEndpoint, PreparedEndpointTable,
     Turn as EndpointTurn,
 };
-use aiperf_graph::segment::intern_message;
-use aiperf_graph::wire::OpenAiChatMessage;
-use aiperf_rng::RngRoot;
-use aiperf_timing::{RunState, StopConfig};
+use crate::graph::segment::intern_message;
+use crate::graph::wire::OpenAiChatMessage;
+use crate::rng::RngRoot;
+use crate::timing::{RunState, StopConfig};
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -129,7 +129,7 @@ impl EndpointInputTokenCounter {
 
     fn count_extracted(
         &self,
-        extracted: aiperf_endpoints::ExtractedPayload,
+        extracted: crate::endpoints::ExtractedPayload,
         authored_input_tokens: u64,
     ) -> Result<u64> {
         if self.apply_chat_template
@@ -1447,9 +1447,8 @@ impl NativeSessionBackend {
                 };
                 let mut effective_model_endpoint = legacy.model_endpoint.clone();
                 let descriptor = endpoint.descriptor();
-                effective_model_endpoint.endpoint.endpoint_type = descriptor
-                    .legacy_type()
-                    .expect("legacy endpoint type");
+                effective_model_endpoint.endpoint.endpoint_type =
+                    descriptor.legacy_type().expect("legacy endpoint type");
                 effective_model_endpoint.endpoint.streaming &= descriptor.supports_streaming;
                 let materialized = self.materializer.materialize(
                     &session,
@@ -1494,9 +1493,13 @@ impl NativeSessionBackend {
         .then(|| StaticInputCountKey {
             template_index: self.template_index,
             endpoint: match &turn_endpoint {
-                TurnEndpoint::Legacy(binding) => {
-                    StaticInputCountEndpoint::Legacy(binding.endpoint.descriptor().legacy_type().expect("legacy endpoint type"))
-                }
+                TurnEndpoint::Legacy(binding) => StaticInputCountEndpoint::Legacy(
+                    binding
+                        .endpoint
+                        .descriptor()
+                        .legacy_type()
+                        .expect("legacy endpoint type"),
+                ),
                 TurnEndpoint::Prepared(reference) => {
                     StaticInputCountEndpoint::Prepared(reference.key)
                 }
@@ -1960,7 +1963,7 @@ impl NativeDatasetConversationSource {
         conversation_id: &str,
         correlation_id: Option<String>,
     ) -> Result<SampledSession> {
-        let id = aiperf_dataset::SessionId::from(conversation_id);
+        let id = crate::dataset::SessionId::from(conversation_id);
         self.dataset.get(&id)?;
         let metadata_index = self
             .metadata_by_id
@@ -2126,8 +2129,8 @@ impl CreditCounter {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use aiperf_dataset::{ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
-    use aiperf_rng::RngRoot;
+    use crate::dataset::{ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry};
+    use crate::rng::RngRoot;
     use serde_json::json;
 
     use super::*;
@@ -2166,11 +2169,11 @@ mod tests {
     }
 
     impl TextTokenizer for FixedTemplateTokenizer {
-        fn encode(&self, text: &str) -> aiperf_dataset::Result<Vec<u32>> {
+        fn encode(&self, text: &str) -> crate::dataset::Result<Vec<u32>> {
             Ok((0..text.split_whitespace().count() as u32).collect())
         }
 
-        fn decode(&self, _token_ids: &[u32]) -> aiperf_dataset::Result<String> {
+        fn decode(&self, _token_ids: &[u32]) -> crate::dataset::Result<String> {
             Ok(String::new())
         }
 
@@ -2190,7 +2193,7 @@ mod tests {
             &self,
             _messages: &[Value],
             _add_generation_prompt: bool,
-        ) -> aiperf_dataset::Result<Option<Vec<u32>>> {
+        ) -> crate::dataset::Result<Option<Vec<u32>>> {
             Ok(Some(vec![0; 5]))
         }
     }
@@ -2459,7 +2462,7 @@ mod tests {
                 "claude",
                 4,
                 EndpointConfig {
-                    endpoint_type: aiperf_endpoints::EndpointType::Messages,
+                    endpoint_type: crate::endpoints::EndpointType::Messages,
                     streaming: true,
                     ..EndpointConfig::default()
                 },
@@ -2528,15 +2531,15 @@ mod tests {
             )
             .await
             .unwrap();
-        let registry = aiperf_endpoints::EndpointRegistry::builtin().unwrap();
+        let registry = crate::endpoints::EndpointRegistry::builtin().unwrap();
         let endpoint_id = EndpointId::new("chat").unwrap();
         let endpoint = registry
             .prepare(
                 &endpoint_id,
-                aiperf_endpoints::RawEndpointConfig {
+                crate::endpoints::RawEndpointConfig {
                     streaming: true,
                     use_server_token_count: true,
-                    ..aiperf_endpoints::RawEndpointConfig::default()
+                    ..crate::endpoints::RawEndpointConfig::default()
                 },
             )
             .unwrap();

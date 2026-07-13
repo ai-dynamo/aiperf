@@ -15,9 +15,9 @@ use std::process::Stdio;
 use std::rc::Rc;
 use std::time::Duration;
 
-use aiperf_clock::Clock;
-use aiperf_metrics::MetricsConfig;
-use aiperf_timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
+use aiperf::clock::Clock;
+use aiperf::metrics_core::MetricsConfig;
+use aiperf::timing::{PhaseBranchStats, PhaseConfig, PhaseObserver, PhaseStats};
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -597,13 +597,13 @@ mod tests {
         let endpoint = NativeEndpointPlan::Prepared(Arc::new(vec![
             crate::registry::ValidatedEndpointProfileV2 {
                 profile_id: "default".into(),
-                endpoint_id: aiperf_endpoints::EndpointId::new("extension_chat").unwrap(),
-                config: aiperf_endpoints::RawEndpointConfig {
+                endpoint_id: aiperf::endpoints::EndpointId::new("extension_chat").unwrap(),
+                config: aiperf::endpoints::RawEndpointConfig {
                     urls: vec!["http://example.test/v1".into()],
                     streaming: false,
-                    ..aiperf_endpoints::RawEndpointConfig::default()
+                    ..aiperf::endpoints::RawEndpointConfig::default()
                 },
-                connection_reuse: aiperf_transport_http::models::ConnectionReuseStrategy::default(),
+                connection_reuse: aiperf::transport_http::models::ConnectionReuseStrategy::default(),
                 client: Default::default(),
                 session_header: None,
             },

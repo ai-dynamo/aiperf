@@ -118,8 +118,7 @@ fn normalize_quant_modes(args: &MockEngineArgs) -> Result<[Option<String>; 5]> {
     Python::with_gil(|py| -> PyResult<[Option<String>; 5]> {
         let common = py.import("aiconfigurator.sdk.common")?;
         let mut normalized: [Option<String>; 5] = Default::default();
-        for (index, ((field, enum_name), value)) in
-            AIC_QUANT_FIELDS.iter().zip(values).enumerate()
+        for (index, ((field, enum_name), value)) in AIC_QUANT_FIELDS.iter().zip(values).enumerate()
         {
             let Some(value) = normalize_quant_mode(value) else {
                 continue;

@@ -8,7 +8,7 @@
 //! identity-only format lookup, then gives the untouched object to exactly one
 //! selected adapter. The adapter owns the sole strict full decode and lowers
 //! directly to [`GraphInputBundle`]; no protocol-v1 DTO, linear
-//! [`aiperf_dataset::Dataset`],
+//! [`aiperf::dataset::Dataset`],
 //! conversation, or second graph-source representation exists in this path.
 //!
 //! A future linked distribution injects another [`RunnerGraphInputAdapter`]
@@ -20,13 +20,13 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf_dataset::{DatasetSource, LoadConfig, TextTokenizer};
-use aiperf_graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
-use aiperf_graph::recorded::{
+use aiperf::dataset::{DatasetSource, LoadConfig, TextTokenizer};
+use aiperf::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
+use aiperf::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
     compile_weka_trace_input,
 };
-use aiperf_rng::RngRoot;
+use aiperf::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -857,7 +857,7 @@ fn default_sequential() -> String {
 
 #[cfg(test)]
 mod tests {
-    use aiperf_dataset::TiktokenTokenizer;
+    use aiperf::dataset::TiktokenTokenizer;
     use serde_json::json;
 
     use super::*;

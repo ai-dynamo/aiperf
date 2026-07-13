@@ -8,7 +8,7 @@
 //!
 //! One loop serves both modes via the timing-plane seam:
 //! - **request-rate** — Poisson/Gamma/Constant inter-arrivals
-//!   ([`IntervalGenerator`](aiperf_timing::IntervalGenerator)),
+//!   ([`IntervalGenerator`](crate::timing::IntervalGenerator)),
 //! - **concurrency** — the degenerate `ConcurrencyBurst` (zero interval) bounded by a
 //!   session [`SlotPool`].
 //! - **ancillary policy** — Clock-driven session/prefill/rate ramps, per-request
@@ -26,13 +26,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aiperf_clock::{Clock, RealClock};
-use loadgen_core::observer::CollectorObserver;
-use aiperf_metrics::{AccumulatorSummary, MetricsConfig};
+use crate::clock::{Clock, RealClock};
+use crate::metrics_core::{AccumulatorSummary, MetricsConfig};
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
+use loadgen_core::observer::CollectorObserver;
 use loadgen_core::sink::RequestObserver;
 
-use aiperf_timing::{
+use crate::timing::{
     ArrivalPattern, LinearRamp, Phase, RampDriver, RampHandle, RamperConfig, RunState, SlotPool,
     StopChecker, StopConfig, make_interval_generator,
 };
@@ -127,7 +127,7 @@ pub(crate) fn validate_adaptive_ramp_ownership(
 pub(crate) fn start_ramps(
     ancillary: &AncillaryTimingConfig,
     clock: Rc<dyn Clock>,
-    intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>>,
+    intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     rate: Option<f64>,
@@ -469,7 +469,7 @@ pub(crate) async fn run_paced_with_backend(
     };
     let session_slots = session_initial.map(|limit| Rc::new(SlotPool::new(limit)));
     let prefill_slots = prefill_initial.map(|limit| Rc::new(SlotPool::new(limit)));
-    let intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>> = Rc::new(RefCell::new(
+    let intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>> = Rc::new(RefCell::new(
         make_interval_generator(pattern, rate, smoothness, seed),
     ));
     let ramp_handles = start_ramps(
@@ -486,7 +486,7 @@ pub(crate) async fn run_paced_with_backend(
     let mut endpoint_selector = url_selector(&base_urls)?;
 
     let (adaptive_scale, obs): (
-        Option<Rc<aiperf_adaptive::AdaptiveScale>>,
+        Option<Rc<crate::adaptive_core::AdaptiveScale>>,
         Rc<dyn RequestObserver>,
     ) = match adaptive {
         Some(config) => {
@@ -1036,7 +1036,7 @@ pub(crate) async fn run_user_centric_with_backend(
     ancillary.validate()?;
     validate_user_centric_ramps(&ancillary, config)?;
     let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
-    let intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>> = Rc::new(RefCell::new(
+    let intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>> = Rc::new(RefCell::new(
         make_interval_generator(ArrivalPattern::ConcurrencyBurst, None, None, seed),
     ));
     let ramp_handles = start_ramps(
@@ -1063,7 +1063,7 @@ pub(crate) async fn run_user_centric_with_backend(
     result
 }
 
-impl IssuanceGate for aiperf_adaptive::AdaptiveScale {
+impl IssuanceGate for crate::adaptive_core::AdaptiveScale {
     fn can_issue(&self) -> bool {
         !self.should_stop_sending()
     }
@@ -1155,7 +1155,7 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
         "user-centric adaptive scale currently requires control_variable=users"
     );
     let workload = Rc::new(UserCentricWorkload::new(config, conversations)?);
-    let user_target: Rc<dyn aiperf_adaptive::UserTarget> = Rc::new(workload.control());
+    let user_target: Rc<dyn crate::adaptive_core::UserTarget> = Rc::new(workload.control());
     let collector = Rc::new(CollectorObserver::new(true));
     let native_metrics = Rc::new(NativeMetricsObserver::new(
         clock.clone(),
@@ -1164,7 +1164,7 @@ pub(crate) async fn run_user_centric_adaptive_with_backend(
     ));
     let delegates: Vec<Rc<dyn RequestObserver>> = vec![collector.clone(), native_metrics.clone()];
     let base_observer: Rc<dyn RequestObserver> = Rc::new(ObserverTee::new(delegates));
-    let intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>> = Rc::new(RefCell::new(
+    let intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>> = Rc::new(RefCell::new(
         make_interval_generator(ArrivalPattern::ConcurrencyBurst, None, None, 0),
     ));
     let ramp_handles = start_ramps(
@@ -1236,14 +1236,14 @@ mod tests {
     use super::*;
     use crate::adaptive::{AdaptiveRunConfig, AdaptiveStepConfig};
     use crate::workload::SkeletonWorkload;
-    use aiperf_adaptive::{CorrelationContext, SlaFilter, SlaOp, SlaStat};
-    use aiperf_clock::SimClock;
-    use aiperf_graph::runtime::drive_sim;
+    use crate::adaptive_core::{CorrelationContext, SlaFilter, SlaOp, SlaStat};
+    use crate::clock::SimClock;
+    use crate::graph::runtime::drive_sim;
 
     #[test]
     fn phase_ramps_drive_the_live_slot_and_interval_actuators() {
         let clock = Rc::new(SimClock::new());
-        let intervals: Rc<RefCell<Box<dyn aiperf_timing::IntervalGenerator>>> =
+        let intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>> =
             Rc::new(RefCell::new(make_interval_generator(
                 ArrivalPattern::Constant,
                 Some(40.0),
@@ -1356,24 +1356,24 @@ mod tests {
                 assert_eq!(
                     report
                         .metrics
-                        .finite_value(aiperf_metrics::MetricTag::RequestCount),
+                        .finite_value(crate::metrics_core::MetricTag::RequestCount),
                     Some(4.0)
                 );
                 assert!(
                     report
                         .metrics
-                        .result(aiperf_metrics::MetricTag::RequestLatency)
-                        .and_then(aiperf_metrics::MetricResult::distribution)
+                        .result(crate::metrics_core::MetricTag::RequestLatency)
+                        .and_then(crate::metrics_core::MetricResult::distribution)
                         .is_some()
                 );
                 assert!(
                     report
                         .metrics
-                        .result(aiperf_metrics::MetricTag::EffectiveConcurrency)
-                        .and_then(aiperf_metrics::MetricResult::distribution)
+                        .result(crate::metrics_core::MetricTag::EffectiveConcurrency)
+                        .and_then(crate::metrics_core::MetricResult::distribution)
                         .is_some()
                 );
-                let native = aiperf_metrics::NativeReport::new(&report.metrics, None);
+                let native = crate::metrics_core::NativeReport::new(&report.metrics, None);
                 let json = serde_json::to_value(native).unwrap();
                 assert_eq!(json["schema_version"], "2.0");
                 assert_eq!(json["metrics"]["request_count"]["type"], "counter");

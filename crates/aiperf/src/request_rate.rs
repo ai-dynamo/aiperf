@@ -13,7 +13,7 @@
 //! Session guards live from turn zero through the final return. Prefill guards
 //! live from issuance through the first meaningful token, with terminal return
 //! as the no-token fallback. Think time delays continuation queue insertion on
-//! the injected [`Clock`](aiperf_clock::Clock), so the same workload remains
+//! the injected [`Clock`](crate::clock::Clock), so the same workload remains
 //! deterministic under `SimClock`. A future branching workload can implement
 //! [`Workload`] separately and route DAG children directly; this linear policy
 //! intentionally owns only root conversation chains.
@@ -22,11 +22,12 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use aiperf_timing::{
+use crate::timing::{
     ArrivalPattern, IntervalGenerator, SlotGuard, SlotPool, make_interval_generator,
 };
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
+use tokio::sync::Notify;
 
 use crate::fixed_schedule::milliseconds_to_ns;
 use crate::multiturn::{ConversationSource, TurnResponse, TurnToSend};
@@ -81,11 +82,13 @@ struct RequestRateState {
     continuations: RefCell<VecDeque<TurnToSend>>,
     session_guards: RefCell<HashMap<String, SlotGuard>>,
     failure: RefCell<Option<String>>,
+    progress: Notify,
 }
 
 impl RequestRateState {
     fn enqueue(&self, turn: TurnToSend) {
         self.continuations.borrow_mut().push_back(turn);
+        self.progress.notify_one();
     }
 
     fn pop_continuation(&self) -> Option<TurnToSend> {
@@ -103,6 +106,7 @@ impl RequestRateState {
 
     fn release_session(&self, correlation_id: &str) {
         self.session_guards.borrow_mut().remove(correlation_id);
+        self.progress.notify_one();
     }
 
     fn release_all_sessions(&self) {
@@ -310,20 +314,8 @@ impl RequestRateWorkload {
         Ok(NewSessionOutcome::Issued)
     }
 
-    async fn wait_for_closed_loop_capacity(&self) {
-        if let Some(pool) = &self.session_slots
-            && pool.locked()
-        {
-            drop(pool.acquire().await);
-            return;
-        }
-        if let Some(pool) = &self.prefill_slots
-            && pool.locked()
-        {
-            drop(pool.acquire().await);
-            return;
-        }
-        tokio::task::yield_now().await;
+    async fn wait_for_closed_loop_progress(&self) {
+        self.state.progress.notified().await;
     }
 }
 
@@ -388,12 +380,10 @@ impl Workload for RequestRateWorkload {
                     Ok(NewSessionOutcome::Issued) => {}
                     Ok(NewSessionOutcome::NoSlot) => {
                         if next_target_ns <= runtime.now_ns() {
-                            // A zero-interval closed loop must become pending
-                            // until a completion releases capacity. Repeated
-                            // `yield_now` keeps the LocalSet runnable forever
-                            // and prevents a virtual-clock driver from
-                            // advancing to that completion event.
-                            self.wait_for_closed_loop_capacity().await;
+                            // A session slot stays held until its continuation
+                            // completes, so waiting on that slot here can hide
+                            // the queued continuation that must release it.
+                            self.wait_for_closed_loop_progress().await;
                         } else {
                             // Paced modes preserve the nonblocking skipped-tick
                             // behavior and retry at the next authored arrival.
@@ -528,4 +518,93 @@ fn issue_rate_turn(
         state.release_session(&correlation_id);
     }
     issued
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use crate::clock::{Clock, SimClock};
+    use crate::graph::runtime::drive_sim;
+    use crate::timing::{ArrivalPattern, StopConfig};
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use loadgen_core::collector::ReplayTerminalStatus;
+    use loadgen_core::sink::RequestObserver;
+
+    use super::*;
+    use crate::multiturn::SyntheticConversationSource;
+    use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
+    use crate::workload::SkeletonWorkload;
+
+    struct DelayedDispatcher {
+        clock: Rc<dyn Clock>,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for DelayedDispatcher {
+        async fn dispatch_turn(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            self.clock.clone().sleep(1).await;
+            observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
+            Ok(TurnDispatchOutcome {
+                start_ns: self.clock.now_ns().saturating_sub(1),
+                end_ns: self.clock.now_ns(),
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: "answer".into(),
+                model_response: ModelResponseMetadata::default(),
+                prompt_tokens: None,
+                completion_tokens: None,
+                http: Default::default(),
+            })
+        }
+    }
+
+    #[test]
+    fn closed_loop_issues_continuations_when_session_slot_is_full() {
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let outcome = drive_sim(clock, move |_handle| async move {
+            let source = SyntheticConversationSource::new(SkeletonWorkload {
+                num_requests: 4,
+                input_tokens: 8,
+                output_tokens: 4,
+                turns: 2,
+                think_time_ms: Some(0),
+            })
+            .unwrap();
+            let workload = RequestRateWorkload::new(
+                RequestRateConfig {
+                    arrival_pattern: ArrivalPattern::ConcurrencyBurst,
+                    request_rate: None,
+                    arrival_smoothness: None,
+                    session_concurrency: Some(1),
+                    prefill_concurrency: None,
+                    seed: 0,
+                },
+                Box::new(source),
+            )
+            .unwrap();
+            let runtime = ScheduledRuntime::new(
+                runtime_clock.clone(),
+                0,
+                Rc::new(DelayedDispatcher {
+                    clock: runtime_clock,
+                }),
+                StopConfig {
+                    total_expected_requests: Some(4),
+                    ..StopConfig::default()
+                },
+                true,
+            );
+
+            workload.execute(runtime).await.unwrap();
+        });
+
+        assert!(!outcome.deadlocked);
+    }
 }

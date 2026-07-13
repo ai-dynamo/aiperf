@@ -10,14 +10,14 @@
 
 use std::sync::Arc;
 
-use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
+use aiperf::extensions::{AiperfRegistry, AiperfRegistryFactory, BuiltinAiperfRegistryFactory};
 use anyhow::Result;
 
 use crate::coordinator::{RunnerProcessResultV2, RunnerV2Coordinator};
 use crate::dataset_input::{
     BuiltinRunnerDatasetInputAdapterResolver, RunnerDatasetInputAdapterResolver,
 };
-use crate::execution_factories::{native_execution_factories, RunnerExecutionFactories};
+use crate::execution_factories::{RunnerExecutionFactories, native_execution_factories};
 use crate::graph_input::{BuiltinRunnerGraphInputAdapterResolver, RunnerGraphInputAdapterResolver};
 use crate::protocol::{RunnerCapabilities, RunnerCatalog};
 use crate::protocol_v2::RunnerEnvelopeV2;

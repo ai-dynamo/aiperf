@@ -6,7 +6,7 @@
 //! [`run_scheduled_phases`] connects the transport-neutral
 //! [`TurnDispatcher`](crate::scheduled::TurnDispatcher) and
 //! [`Workload`](crate::scheduled::Workload) seams to
-//! `aiperf_timing::{PhaseRunner, PhaseOrchestrator}`. The adapter records sends,
+//! `crate::timing::{PhaseRunner, PhaseOrchestrator}`. The adapter records sends,
 //! first tokens, and terminal returns at the dispatcher boundary, so workload
 //! implementations remain schedule generators and do not learn phase lifecycle
 //! policy. One factory is shared across every phase; each phase still receives
@@ -16,9 +16,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use loadgen_core::observer::CollectorObserver;
-use aiperf_metrics::MetricsConfig;
-use aiperf_timing::{
+use crate::metrics_core::MetricsConfig;
+use crate::timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseConfig, PhaseContext,
     PhaseExecution, PhaseExecutionError, PhaseExecutionFactory, PhaseKind, PhaseObserver,
     PhaseOrchestrator, PhaseReturn, PhaseSend, PhaseStats, RampDriver, RampHandle,
@@ -26,6 +25,7 @@ use aiperf_timing::{
 };
 use anyhow::{Result, anyhow};
 use loadgen_core::collector::ReplayTerminalStatus;
+use loadgen_core::observer::CollectorObserver;
 use loadgen_core::sink::RequestObserver;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
@@ -83,7 +83,7 @@ pub trait ScheduledRuntimeExtension {
     #[allow(clippy::too_many_arguments)]
     fn build(
         &self,
-        clock: Rc<dyn aiperf_clock::Clock>,
+        clock: Rc<dyn crate::clock::Clock>,
         observer_origin_ns: i64,
         phase_start_ns: i64,
         delegate: Rc<dyn RequestObserver>,
@@ -591,7 +591,7 @@ impl DeferredAggregateStrategy for SinglePhaseAggregateReuse {
 /// finalized phase summaries.
 pub async fn run_scheduled_phases_with_aggregate(
     mut plans: Vec<ScheduledPhasePlan>,
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     start_ns: i64,
     dispatcher: Rc<dyn TurnDispatcher>,
     observer: Rc<dyn PhaseObserver>,
@@ -616,7 +616,7 @@ pub async fn run_scheduled_phases_with_aggregate(
 /// `LocalSet` has exited. No request, engine, or clock decision is deferred.
 pub async fn run_scheduled_phases_with_aggregate_deferred(
     mut plans: Vec<ScheduledPhasePlan>,
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     start_ns: i64,
     dispatcher: Rc<dyn TurnDispatcher>,
     observer: Rc<dyn PhaseObserver>,
@@ -645,7 +645,7 @@ pub async fn run_scheduled_phases_with_aggregate_deferred(
 /// Run prepared scheduled workloads through the shared phase orchestrator.
 pub async fn run_scheduled_phases(
     plans: Vec<ScheduledPhasePlan>,
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     dispatcher: Rc<dyn TurnDispatcher>,
     observer: Rc<dyn PhaseObserver>,
 ) -> Result<PhasedScheduledRunReport> {
@@ -659,7 +659,7 @@ pub async fn run_scheduled_phases(
 /// Run prepared phases to quiescence without reducing their retained metrics.
 pub async fn run_scheduled_phases_deferred(
     plans: Vec<ScheduledPhasePlan>,
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     dispatcher: Rc<dyn TurnDispatcher>,
     observer: Rc<dyn PhaseObserver>,
 ) -> Result<DeferredPhasedScheduledRunReport> {
@@ -668,7 +668,7 @@ pub async fn run_scheduled_phases_deferred(
 
 async fn run_scheduled_phases_inner(
     plans: Vec<ScheduledPhasePlan>,
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     dispatcher: Rc<dyn TurnDispatcher>,
     observer: Rc<dyn PhaseObserver>,
     defer_reports: bool,
@@ -726,7 +726,7 @@ async fn run_scheduled_phases_inner(
 }
 
 struct ScheduledPhaseExecutionFactory {
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     dispatcher: Rc<dyn TurnDispatcher>,
     plans: RefCell<BTreeMap<String, ScheduledPhasePlan>>,
     reports: Rc<RefCell<Vec<(String, PendingScheduledPhaseReport)>>>,
@@ -752,8 +752,8 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             });
         };
         plan.ancillary.phase = match config.kind {
-            PhaseKind::Warmup => aiperf_timing::Phase::Warmup,
-            PhaseKind::Profiling => aiperf_timing::Phase::Profiling,
+            PhaseKind::Warmup => crate::timing::Phase::Warmup,
+            PhaseKind::Profiling => crate::timing::Phase::Profiling,
         };
         let tracker = Rc::new(PhaseDispatchTracker::new(context));
         let phase_start_ns = self.clock.now_ns();
@@ -894,7 +894,7 @@ impl PhaseExecution for MissingScheduledPhaseExecution {
 
 struct ScheduledPhaseExecution {
     phase_id: String,
-    clock: Rc<dyn aiperf_clock::Clock>,
+    clock: Rc<dyn crate::clock::Clock>,
     workload: Rc<dyn Workload>,
     runtime: Rc<ScheduledRuntime>,
     tracker: Rc<PhaseDispatchTracker>,

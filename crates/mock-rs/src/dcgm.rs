@@ -6,7 +6,7 @@
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use aiperf_rng::RandomGenerator;
+use aiperf::rng::RandomGenerator;
 use parking_lot::Mutex;
 
 #[derive(Debug, Clone)]

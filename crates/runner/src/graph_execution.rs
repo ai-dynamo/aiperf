@@ -20,28 +20,28 @@ use aiperf::http::{
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::InputTokenCounter;
-use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_dataset::{Handle, Payload, SegmentStore};
-use aiperf_endpoints::{
+use aiperf::clock::{Clock, RealClock, RealClockAnchor};
+use aiperf::dataset::{Handle, Payload, SegmentStore};
+use aiperf::endpoints::{
     CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
     Turn,
 };
-use aiperf_graph::errors::TraceError;
-use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
-use aiperf_graph::materialize::SegmentItemsMaterializer;
-use aiperf_graph::model::{GraphTracePlan, LlmNode};
-use aiperf_graph::placement::{
+use aiperf::graph::errors::TraceError;
+use aiperf::graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};
+use aiperf::graph::materialize::SegmentItemsMaterializer;
+use aiperf::graph::model::{GraphTracePlan, LlmNode};
+use aiperf::graph::placement::{
     GraphPlacementError, GraphTraceExecutionBackendFactory, ThreadPerCoreGraphTraceExecutionBackend,
 };
-use aiperf_graph::policy::{
+use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, PrefillSlotNodePolicy,
 };
-use aiperf_graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
-use aiperf_graph::wire::OpenAiChatMessage;
-use aiperf_metrics::{InferenceDimensions, MetricsConfig, Phase};
-use aiperf_rng::{RngRoot, namespace};
-use aiperf_timing::{BernoulliFixedDelay, SlotPool};
+use aiperf::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
+use aiperf::graph::wire::OpenAiChatMessage;
+use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
+use aiperf::rng::{RngRoot, namespace};
+use aiperf::timing::{BernoulliFixedDelay, SlotPool};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -489,7 +489,7 @@ pub(crate) struct GraphCancellationConfig {
     pub(crate) delay_seconds: f64,
     /// Phase-local cancellation root; workers derive independent indexed roots.
     pub(crate) rng_root: RngRoot,
-    pub(crate) phase: aiperf_timing::Phase,
+    pub(crate) phase: aiperf::timing::Phase,
 }
 
 /// Native runner factory installed into whole-trace placement.
@@ -965,7 +965,7 @@ fn terminal_graph_nodes(plan: &GraphTracePlan) -> HashSet<String> {
         .graph
         .edges
         .iter()
-        .filter(|edge| edge.target != aiperf_graph::model::END_NODE_ID)
+        .filter(|edge| edge.target != aiperf::graph::model::END_NODE_ID)
         .map(|edge| edge.source.as_str())
         .collect::<HashSet<_>>();
     plan.graph
@@ -1012,13 +1012,13 @@ fn uniquify_dynamo_session_headers(
 mod tests {
     use super::*;
     use aiperf::multiturn::AuthoredInputTokenCounter;
-    use aiperf_clock::SimClock;
-    use aiperf_endpoints::{
+    use aiperf::clock::SimClock;
+    use aiperf::endpoints::{
         ChatEndpoint, EffectiveEndpointConfig, Endpoint, EndpointDescriptor, EndpointFactory,
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
         RawEndpointConfig, StatelessEndpointFactory,
     };
-    use aiperf_transport_http::models::ConnectionReuseStrategy;
+    use aiperf::transport_http::models::ConnectionReuseStrategy;
 
     #[derive(Debug)]
     struct PreparedOnlyChatFactory;

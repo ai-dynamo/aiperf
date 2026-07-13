@@ -8,7 +8,7 @@
 //! cadence, seeded cancellation construction, and comma-separated endpoint
 //! normalization.
 
-use aiperf_timing::{BernoulliFixedDelay, CancellationPolicy, RoundRobinUrlSelector, UrlSelector};
+use crate::timing::{BernoulliFixedDelay, CancellationPolicy, RoundRobinUrlSelector, UrlSelector};
 use anyhow::{Result, bail};
 
 /// Python's `RATE_RAMP_UPDATE_INTERVAL` default, expressed in nanoseconds.

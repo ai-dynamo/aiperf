@@ -43,25 +43,25 @@ use aiperf::multiturn::{
     PreparedTurnEndpointResolver,
 };
 use aiperf::phase_runtime::run_scheduled_phases_with_aggregate_deferred;
-use aiperf_clock::Clock;
-use aiperf_dataset::{
+use aiperf::clock::Clock;
+use aiperf::dataset::{
     HashIdentityTracePromptStorage, NativeSyntheticMediaGeneratorFactory, SamplerRegistry,
     SegmentStore, TextTokenizer, TraceHashAwareRequestMaterializer,
 };
-use aiperf_endpoints::{Modality, PreparedEndpointTable};
-use aiperf_graph::bench::BenchConfig;
-use aiperf_graph::input::GraphInputBundle;
-use aiperf_graph::policy::{
+use aiperf::endpoints::{Modality, PreparedEndpointTable};
+use aiperf::graph::bench::BenchConfig;
+use aiperf::graph::input::GraphInputBundle;
+use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, NodeDispatchPolicy, NodeFailurePolicy,
 };
-use aiperf_metrics::{
+use aiperf::metrics_core::{
     CATALOG, MetricFlags, MetricTag, MetricType, MetricsConfig, NativeReport, ReportClockKind,
     ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
     ReportDynamoTopology, ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportPairRunFacts,
     ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
 };
-use aiperf_rng::{RngRoot, namespace};
-use aiperf_timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
+use aiperf::rng::{RngRoot, namespace};
+use aiperf::timing::{BernoulliFixedDelay, DISABLED_PROGRESS_INTERVAL_NS, NoopPhaseObserver};
 use anyhow::{Context, Result, anyhow, ensure};
 use loadgen_core::sink::RequestObserver;
 use serde::Deserialize;
@@ -1183,7 +1183,7 @@ struct DynosimPreparedConversationSourceFactory {
 impl NativeConversationSourceFactory for DynosimPreparedConversationSourceFactory {
     fn build(
         &self,
-        dataset: aiperf_dataset::Dataset,
+        dataset: aiperf::dataset::Dataset,
         model: String,
         default_output_tokens: usize,
         rng_root: RngRoot,
@@ -1375,7 +1375,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
             .report
             .auxiliary_phase_reports
             .iter()
-            .find(|report| report.kind == aiperf_timing::PhaseKind::Warmup)
+            .find(|report| report.kind == aiperf::timing::PhaseKind::Warmup)
             .map(|report| report.report.native_metrics.clone());
         let native_report = NativeReport::from_outcome(
             &outcome.report.aiperf.native_metrics,
@@ -2560,10 +2560,10 @@ mod tests {
 
     #[test]
     fn direct_graph_plans_use_the_shared_segment_store_and_engine() {
-        let (segments, graph, _) = aiperf_graph::bench::build_workload(2);
-        let plan = aiperf_graph::model::GraphTracePlan {
+        let (segments, graph, _) = aiperf::graph::bench::build_workload(2);
+        let plan = aiperf::graph::model::GraphTracePlan {
             graph,
-            trace: aiperf_graph::model::TraceRecord {
+            trace: aiperf::graph::model::TraceRecord {
                 id: "direct-root".into(),
                 graph_ref: None,
                 initial_state: BTreeMap::new(),
@@ -2571,9 +2571,9 @@ mod tests {
             arrival_offset_ns: None,
         };
         let factory: Box<dyn OfflineGraphRunFactory> = Box::new(move |clock, backend| {
-            Ok(aiperf_graph::workload::GraphWorkload::new(
+            Ok(aiperf::graph::workload::GraphWorkload::new(
                 clock,
-                Rc::new(aiperf_graph::workload::VecGraphTraceSource::new([plan])),
+                Rc::new(aiperf::graph::workload::VecGraphTraceSource::new([plan])),
                 backend,
             ))
         });
@@ -2587,7 +2587,7 @@ mod tests {
                 2,
                 MetricsConfig::default(),
                 None,
-                Rc::new(aiperf_graph::policy::AbortTraceNodeFailurePolicy),
+                Rc::new(aiperf::graph::policy::AbortTraceNodeFailurePolicy),
                 factory,
             )
             .unwrap();

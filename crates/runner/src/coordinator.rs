@@ -13,9 +13,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use aiperf::report::finalize_and_write_native_report_json;
-use aiperf_extensions::{AiperfRegistry, AiperfRegistryFactory};
-use aiperf_metrics::ReportRunProvenance;
-use anyhow::{ensure, Context, Result};
+use aiperf::extensions::{AiperfRegistry, AiperfRegistryFactory};
+use aiperf::metrics_core::ReportRunProvenance;
+use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
 use crate::dataset_input::RunnerDatasetInputAdapterResolver;
@@ -23,13 +23,13 @@ use crate::execution_factories::RunnerExecutionFactories;
 use crate::graph_input::RunnerGraphInputAdapterResolver;
 use crate::protocol::{RunnerCapabilities, RunnerCatalog};
 use crate::protocol_v2::{
-    DeferredCheckV2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2, RunnerEnvelopeV2,
-    RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2, RUNNER_PROTOCOL_V2,
+    DeferredCheckV2, RUNNER_PROTOCOL_V2, RunTerminalV2, RunValidationV2, RunnerDiagnosticV2,
+    RunnerEnvelopeV2, RunnerFailureStageV2, RunnerOperationV2, ValidationCompletenessV2,
 };
 use crate::redaction::redact_diagnostic;
 use crate::registry::{
-    validate_endpoint_profiles_v2, PreparedRunFailure, PreparedRunOutcome, RunnerRegistry,
-    RunnerRegistryFactory, RunnerRunContext,
+    PreparedRunFailure, PreparedRunOutcome, RunnerRegistry, RunnerRegistryFactory,
+    RunnerRunContext, validate_endpoint_profiles_v2,
 };
 use crate::sidecar_input::RunnerSidecarInputAdapterResolver;
 
@@ -115,10 +115,7 @@ impl RunnerV2Coordinator {
     /// validation, and execution observe one implementation universe. No
     /// registry factory is invoked a second time.
     pub fn capabilities(&self) -> RunnerCapabilities {
-        RunnerCapabilities::from_registries(
-            &self.runner_registry,
-            self.product_registry.as_ref(),
-        )
+        RunnerCapabilities::from_registries(&self.runner_registry, self.product_registry.as_ref())
     }
 
     /// Return the plugins.yaml-shaped catalog from this process's frozen registries.
@@ -592,18 +589,18 @@ mod tests {
             "http",
             "evaluation",
             Vec::new(),
-            vec![aiperf_metrics::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
+            vec![aiperf::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
         )
         .unwrap()
     }
 
     fn outcome(calls: Arc<AtomicUsize>, fail: bool) -> PreparedRunOutcome {
         PreparedRunOutcome {
-            native_report: aiperf_metrics::NativeReport::new(
-                &aiperf_metrics::AccumulatorSummary::new(),
+            native_report: aiperf::metrics_core::NativeReport::new(
+                &aiperf::metrics_core::AccumulatorSummary::new(),
                 None,
             ),
-            report_facts: aiperf_metrics::ReportPairRunFacts::new(),
+            report_facts: aiperf::metrics_core::ReportPairRunFacts::new(),
             provenance: BTreeMap::from([("fixture".to_owned(), "durable".to_owned())]),
             report_commit: Some(Box::new(TrackingCommit { calls, fail })),
         }

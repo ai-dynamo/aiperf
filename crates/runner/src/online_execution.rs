@@ -15,14 +15,14 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aiperf_content_server::ContentServerMediaPublisher;
-use aiperf_dataset::{
+use aiperf::content_server::ContentServerMediaPublisher;
+use aiperf::dataset::{
     DatasetFetcher, HttpDatasetFetcher, MaterializedTracePromptStorage,
     NativeSyntheticMediaGeneratorFactory, SyntheticMediaGeneratorFactory, TiktokenEncoding,
 };
-use aiperf_endpoints::Modality;
-use aiperf_metrics::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
-use aiperf_rng::RngRoot;
+use aiperf::endpoints::Modality;
+use aiperf::metrics_core::{NativeReport, ReportGraphRunInfo, ReportPairRunFacts};
+use aiperf::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -229,7 +229,7 @@ trait PreparedOnlineHarness: fmt::Debug {
     /// Execute through the selected transport and return an uncommitted report.
     fn execute(
         self: Box<Self>,
-        product_registry: &aiperf_extensions::AiperfRegistry,
+        product_registry: &aiperf::extensions::AiperfRegistry,
         execution_factories: &RunnerExecutionFactories,
         readiness: Box<dyn PreparedOnlineReadiness>,
     ) -> Result<(NativeReport, ReportPairRunFacts)>;
@@ -993,7 +993,7 @@ fn build_common_plan(
 }
 
 fn validate_graph_endpoint_profile_references(
-    bundle: &aiperf_graph::input::GraphInputBundle,
+    bundle: &aiperf::graph::input::GraphInputBundle,
     context: &RunnerRunContext,
 ) -> Result<()> {
     context.default_endpoint_profile()?;
@@ -1028,7 +1028,7 @@ impl fmt::Debug for NativePlanHarness {
 impl PreparedOnlineHarness for NativePlanHarness {
     fn execute(
         self: Box<Self>,
-        product_registry: &aiperf_extensions::AiperfRegistry,
+        product_registry: &aiperf::extensions::AiperfRegistry,
         execution_factories: &RunnerExecutionFactories,
         readiness: Box<dyn PreparedOnlineReadiness>,
     ) -> Result<(NativeReport, ReportPairRunFacts)> {
@@ -1060,7 +1060,7 @@ fn native_plan_report_facts(plan: &NativeRunSpec) -> Result<ReportPairRunFacts> 
 struct PreparedOnlineOperation {
     workload_id: &'static str,
     harness: Box<dyn PreparedOnlineHarness>,
-    product_registry: Arc<aiperf_extensions::AiperfRegistry>,
+    product_registry: Arc<aiperf::extensions::AiperfRegistry>,
     execution_factories: RunnerExecutionFactories,
     readiness: Box<dyn PreparedOnlineReadiness>,
 }
@@ -1107,7 +1107,7 @@ mod tests {
         async fn spawn(
             &self,
             _process: &StaticAccuracyEvaluatorProcessSpec,
-        ) -> Result<Box<dyn aiperf_accuracy::AccuracyEvaluator>> {
+        ) -> Result<Box<dyn aiperf::accuracy_core::AccuracyEvaluator>> {
             panic!("config lowering must retain, not invoke, the selected evaluator factory")
         }
     }
@@ -1124,7 +1124,7 @@ mod tests {
             url: &str,
             _cache_key: &str,
             _bearer_token: Option<&str>,
-        ) -> aiperf_dataset::Result<Bytes> {
+        ) -> aiperf::dataset::Result<Bytes> {
             self.urls.lock().unwrap().push(url.to_owned());
             if url.contains("/api/models/") {
                 return Ok(Bytes::from(
@@ -1134,7 +1134,7 @@ mod tests {
             if url.ends_with("/tokenizer.json") {
                 return Ok(Bytes::from_static(br#"{"version":"1.0"}"#));
             }
-            Err(aiperf_dataset::DatasetError::Validation(
+            Err(aiperf::dataset::DatasetError::Validation(
                 "optional fixture file is absent".into(),
             ))
         }

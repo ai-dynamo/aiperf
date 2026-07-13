@@ -32,7 +32,7 @@ pub struct AppState {
 }
 
 pub struct ErrorRng {
-    rng: aiperf_rng::RandomGenerator,
+    rng: aiperf::rng::RandomGenerator,
 }
 
 impl ErrorRng {
@@ -40,7 +40,7 @@ impl ErrorRng {
     /// actual stream is derived from the canonical `mock.errors` namespace.
     /// When `None`, the derived stream seeds from OS entropy.
     pub fn new(seed: Option<u64>) -> Self {
-        let rng = aiperf_rng::RngRoot::new(seed).derive(aiperf_rng::namespace::MOCK_ERRORS);
+        let rng = aiperf::rng::RngRoot::new(seed).derive(aiperf::rng::namespace::MOCK_ERRORS);
         Self { rng }
     }
 
@@ -102,8 +102,8 @@ impl AppState {
                 Some(s + idx)
             } else {
                 config.random_seed.and_then(|root| {
-                    aiperf_rng::RngRoot::new(Some(root))
-                        .derive_indexed_seed(aiperf_rng::namespace::MOCK_DCGM, idx)
+                    aiperf::rng::RngRoot::new(Some(root))
+                        .derive_indexed_seed(aiperf::rng::namespace::MOCK_DCGM, idx)
                 })
             }
         };

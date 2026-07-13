@@ -15,14 +15,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
-use aiperf_extensions::AiperfRegistry;
-use aiperf_metrics::{
+use aiperf::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType};
+use aiperf::extensions::AiperfRegistry;
+use aiperf::metrics_core::{
     NativeReport, ReportEndpointProfileIdentity, ReportExtensionIdentity, ReportPairRunFacts,
     ReportRunProvenance,
 };
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::models::{ConnectionReuseStrategy, HttpVersion};
+use aiperf::transport_http::config::ClientConfig;
+use aiperf::transport_http::models::{ConnectionReuseStrategy, HttpVersion};
 use anyhow::{Result, anyhow, bail, ensure};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -1737,7 +1737,7 @@ mod tests {
     impl PreparedRunnerOperation for Operation {
         fn execute(self: Box<Self>) -> Result<PreparedRunOutcome> {
             Ok(PreparedRunOutcome {
-                native_report: NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None),
+                native_report: NativeReport::new(&aiperf::metrics_core::AccumulatorSummary::new(), None),
                 report_facts: ReportPairRunFacts::new(),
                 provenance: BTreeMap::from([(
                     "fixture".into(),

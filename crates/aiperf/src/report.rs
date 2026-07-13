@@ -7,7 +7,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use aiperf_metrics::{NativeReport, ReportPairRunFacts, ReportRunProvenance};
+use crate::metrics_core::{NativeReport, ReportPairRunFacts, ReportRunProvenance};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
@@ -110,15 +110,15 @@ mod tests {
             "online_http",
             "scheduled",
             Vec::new(),
-            vec![aiperf_metrics::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
+            vec![crate::metrics_core::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],
         )
         .unwrap()
     }
 
     #[test]
     fn native_report_json_uses_the_metrics_first_v2_shape() {
-        let mut summary = aiperf_metrics::AccumulatorSummary::new();
-        summary.insert_finite(aiperf_metrics::MetricTag::RequestCount, 1.0);
+        let mut summary = crate::metrics_core::AccumulatorSummary::new();
+        summary.insert_finite(crate::metrics_core::MetricTag::RequestCount, 1.0);
         let report = NativeReport::new(&summary, None);
         let path =
             std::env::temp_dir().join(format!("aiperf_native_sum_{}.json", std::process::id()));
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn coordinator_finalizes_typed_run_before_the_only_write() {
-        let report = NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None);
+        let report = NativeReport::new(&crate::metrics_core::AccumulatorSummary::new(), None);
         let path = std::env::temp_dir().join(format!(
             "aiperf_finalized_native_sum_{}.json",
             std::process::id()
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn report_commit_never_replaces_existing_authority() {
-        let report = NativeReport::new(&aiperf_metrics::AccumulatorSummary::new(), None);
+        let report = NativeReport::new(&crate::metrics_core::AccumulatorSummary::new(), None);
         let path = std::env::temp_dir().join(format!(
             "aiperf_existing_native_sum_{}.json",
             std::process::id()

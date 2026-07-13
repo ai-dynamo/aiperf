@@ -15,18 +15,18 @@ use std::path::Path;
 use std::rc::Rc;
 
 use aiperf::phase_runtime::ScheduledPhaseSidecar;
-use aiperf_clock::Clock;
-use aiperf_metrics::{
+use aiperf::clock::Clock;
+use aiperf::metrics_core::{
     Phase, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
     ReportServerMetricsPhaseRange,
 };
-use aiperf_server_metrics::{
+use aiperf::server_metrics::{
     MetricSample, PrometheusHttpSource, PrometheusMetricType, ServerMetricsAccumulator,
     ServerMetricsPhaseBoundary, ServerMetricsRecord, ServerMetricsScrapeMode,
     ServerMetricsScrapeOutcome, ServerMetricsSource, ServerMetricsSummary,
 };
-use aiperf_transport_http::config::ClientConfig;
-use aiperf_transport_http::transport::http_transport::HttpTransport;
+use aiperf::transport_http::config::ClientConfig;
+use aiperf::transport_http::transport::http_transport::HttpTransport;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Map, Value, json};
 use tokio::sync::Notify;
@@ -383,7 +383,7 @@ impl ServerMetricsPhaseSidecar {
 }
 
 impl ScheduledPhaseSidecar for ServerMetricsPhaseSidecar {
-    fn start(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn start(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         let sidecar = self.clone();
         Box::pin(async move { sidecar.start_inner().await })
     }
@@ -396,7 +396,7 @@ impl ScheduledPhaseSidecar for ServerMetricsPhaseSidecar {
         self.phase_end_ns.set(Some(timestamp_ns));
     }
 
-    fn finish(&self) -> aiperf_timing::LocalPhaseFuture<Result<()>> {
+    fn finish(&self) -> aiperf::timing::LocalPhaseFuture<Result<()>> {
         let sidecar = self.clone();
         Box::pin(async move { sidecar.finish_inner().await })
     }
@@ -546,7 +546,7 @@ mod tests {
             benchmark_phase: Some(Phase::Profiling),
             metrics: BTreeMap::from([(
                 "queue".to_string(),
-                aiperf_server_metrics::MetricFamily {
+                aiperf::server_metrics::MetricFamily {
                     metric_type: PrometheusMetricType::Gauge,
                     description: "Queued requests".to_string(),
                     samples: vec![MetricSample::Scalar {

@@ -12,9 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use aiperf_metrics::ReportPairRunFacts;
-use aiperf_transport_grpc::GrpcBindingRegistry;
-use aiperf_transport_http::config::ClientConfig;
+use aiperf::metrics_core::ReportPairRunFacts;
+use aiperf::transport_grpc::GrpcBindingRegistry;
+use aiperf::transport_http::config::ClientConfig;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use url::Url;
 
@@ -198,7 +198,7 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
 
 struct PreparedGrpcScheduledOperation {
     plan: crate::execute::NativeRunSpec,
-    product_registry: Arc<aiperf_extensions::AiperfRegistry>,
+    product_registry: Arc<aiperf::extensions::AiperfRegistry>,
     execution_factories: RunnerExecutionFactories,
 }
 

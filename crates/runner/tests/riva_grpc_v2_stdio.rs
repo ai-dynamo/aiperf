@@ -10,8 +10,8 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use aiperf_transport_grpc::riva_proto::streaming_recognize_request::StreamingRequest;
-use aiperf_transport_grpc::riva_proto::{
+use aiperf::transport_grpc::riva_proto::streaming_recognize_request::StreamingRequest;
+use aiperf::transport_grpc::riva_proto::{
     SpeechRecognitionAlternative, StreamingRecognitionResult, StreamingRecognizeRequest,
     StreamingRecognizeResponse,
 };

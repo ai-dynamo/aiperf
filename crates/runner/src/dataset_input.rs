@@ -12,12 +12,12 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aiperf_dataset::{
+use aiperf::dataset::{
     Dataset, SyntheticMediaGeneratorFactory, TextTokenizer, TracePromptStoragePolicy,
 };
-use aiperf_endpoints::EndpointDescriptor;
-use aiperf_extensions::AiperfRegistry;
-use aiperf_rng::RngRoot;
+use aiperf::endpoints::EndpointDescriptor;
+use aiperf::extensions::AiperfRegistry;
+use aiperf::rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, de::Error as _};

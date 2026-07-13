@@ -17,17 +17,17 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
 
-use aiperf_clock::Clock;
-use aiperf_endpoints::{
+use crate::clock::Clock;
+use crate::endpoints::{
     EndpointKey, ParsedResponse, PreparedEndpoint, PreparedEndpointTable,
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
-use aiperf_metrics::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
-use aiperf_transport_grpc::{
+use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+use crate::transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
 };
-use aiperf_transport_http::models::{
+use crate::transport_http::models::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -113,7 +113,7 @@ pub struct GrpcTransportSink {
     connection_reuse: GrpcConnectionReuseStrategy,
     binding_registry: GrpcBindingRegistry,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
-    prepared_bindings: Vec<Box<dyn aiperf_transport_grpc::GrpcEndpointBinding>>,
+    prepared_bindings: Vec<Box<dyn crate::transport_grpc::GrpcEndpointBinding>>,
     /// Worker-local metric accumulator for the scheduled runner's measured
     /// execution path (`None` until `configure_measurement`).
     measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
@@ -179,7 +179,7 @@ impl GrpcTransportSink {
             let endpoint = endpoints.get(EndpointKey::from_index(index))?;
             bindings.push(
                 self.binding_registry
-                    .prepare(&aiperf_endpoints::EndpointId::new(
+                    .prepare(&crate::endpoints::EndpointId::new(
                         endpoint.descriptor().id,
                     )?)
                     .with_context(|| {
@@ -324,7 +324,7 @@ impl GrpcTransportSink {
         request: HttpRequest,
         model: &str,
         endpoint: &dyn PreparedEndpoint,
-        binding: &dyn aiperf_transport_grpc::GrpcEndpointBinding,
+        binding: &dyn crate::transport_grpc::GrpcEndpointBinding,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult> {
@@ -855,7 +855,7 @@ fn nonzero_usize(value: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aiperf_endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
+    use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
 
     #[test]
     fn usage_absorption_retains_extended_endpoint_facts() {

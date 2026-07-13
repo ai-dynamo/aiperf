@@ -22,6 +22,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/models/{id}", get(handlers::get_model))
         // LLM endpoints
         .route("/v1/chat/completions", post(handlers::chat_completions))
+        .route("/v1/messages", post(handlers::messages))
         .route("/v1/completions", post(handlers::text_completions))
         .route("/v1/embeddings", post(handlers::embeddings))
         // Rerank / ranking endpoints

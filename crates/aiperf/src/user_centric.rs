@@ -3,7 +3,7 @@
 
 //! Per-user open-loop pacing with virtual-history steady-state seeding.
 //!
-//! The pure setup math lives in `aiperf_timing::plan_user_centric`; this module
+//! The pure setup math lives in `crate::timing::plan_user_centric`; this module
 //! binds the plan to sampled sessions, schedules initial users, maintains a
 //! deterministic absolute spawn heap, paces each continuation at
 //! `max(now, previous_send + turn_gap)`, holds an optional session slot from
@@ -14,8 +14,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::rc::Rc;
 
-use aiperf_timing::user_centric::next_replacement_spawn_ns;
-use aiperf_timing::{SlotGuard, SlotPool, plan_user_centric};
+use crate::timing::user_centric::next_replacement_spawn_ns;
+use crate::timing::{SlotGuard, SlotPool, plan_user_centric};
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use tokio::sync::Notify;
@@ -337,19 +337,19 @@ impl UserTargetController for UserCentricControl {
     }
 }
 
-impl aiperf_adaptive::UserTarget for UserCentricControl {
+impl crate::adaptive_core::UserTarget for UserCentricControl {
     fn set_target_users(
         &self,
         value: usize,
         now_ns: i64,
-    ) -> Result<(), aiperf_adaptive::AdaptiveError> {
+    ) -> Result<(), crate::adaptive_core::AdaptiveError> {
         UserTargetController::set_target_users(self, value, now_ns)
-            .map_err(|error| aiperf_adaptive::AdaptiveError::Actuator(error.to_string()))
+            .map_err(|error| crate::adaptive_core::AdaptiveError::Actuator(error.to_string()))
     }
 
-    fn user_control_snapshot(&self) -> aiperf_adaptive::ControlSnapshot {
+    fn user_control_snapshot(&self) -> crate::adaptive_core::ControlSnapshot {
         let snapshot = UserTargetController::snapshot(self);
-        aiperf_adaptive::ControlSnapshot {
+        crate::adaptive_core::ControlSnapshot {
             target_value: snapshot.target_value as f64,
             actual_value: snapshot.actual_value as f64,
             active_users: Some(snapshot.active_users),

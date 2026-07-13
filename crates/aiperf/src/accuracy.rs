@@ -16,21 +16,21 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use aiperf_accuracy::{
+use crate::accuracy_core::{
     AccuracyEvaluator, EvaluatorGrade, EvaluatorGradeItem, EvaluatorIdentity, EvaluatorLoadConfig,
     EvaluatorLoadResult, EvaluatorProblem, ProblemId,
 };
-use aiperf_dataset::{
+use crate::dataset::{
     AccuracyComposer, ComposeConfig, Composer, ConversationContextMode, Dataset, RawRow, RowOrigin,
     SegmentPool, TextTokenizer,
 };
-use aiperf_metrics::{
+use crate::metrics_core::{
     AccumulatorSummary, AccumulatorType, AccuracyAccumulator, AccuracyAnalysis, AccuracyRecord,
     AccuracyResultsAnalyzer, AnalyzerRunner, AnalyzerType, CorrelationId, EnergyEfficiencySummary,
     EvaluatorDatasetReportInfo, EvaluatorReportInfo, ExportContext, GradingResult, MetricTag,
     NativeReport, Phase, ReportError, ReportRunInfo, RunOutcome, SummaryContext, TaskId,
 };
-use aiperf_rng::RngRoot;
+use crate::rng::RngRoot;
 use anyhow::Context;
 use async_trait::async_trait;
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
@@ -237,10 +237,7 @@ fn evaluator_problem_row(index: usize, problem: EvaluatorProblem) -> anyhow::Res
     let messages = serde_json::to_value(problem.messages)
         .context("serializing evaluator-authored messages")?;
     let mut extra_body = serde_json::Map::new();
-    extra_body.insert(
-        "temperature".into(),
-        json!(problem.generation.temperature),
-    );
+    extra_body.insert("temperature".into(), json!(problem.generation.temperature));
     extra_body.insert("top_p".into(), json!(problem.generation.top_p));
     // Emit `stop` only when non-empty. OpenAI treats an empty stop array as
     // equivalent to no stop, but Dynamo's frontend rejects `stop: []` with
@@ -758,11 +755,11 @@ mod tests {
     use std::collections::BTreeMap;
     use std::rc::Rc;
 
-    use aiperf_accuracy::{
+    use crate::accuracy_core::{
         EvaluatorDatasetIdentity, EvaluatorGenerationConfig, EvaluatorGradeBatch, EvaluatorMessage,
         EvaluatorProblemPage, EvaluatorWorkerError,
     };
-    use aiperf_dataset::{TextTokenizer, TiktokenTokenizer};
+    use crate::dataset::{TextTokenizer, TiktokenTokenizer};
     use axum::{
         Json, Router,
         http::{StatusCode, header},
