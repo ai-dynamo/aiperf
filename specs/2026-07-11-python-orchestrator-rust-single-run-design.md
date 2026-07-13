@@ -276,3 +276,18 @@ This addendum supersedes this spec's protocol-v1 process sequence, its
 conditional v2 selection/fallback language, and the final sentence of the
 native-gRPC addendum that retained compatibility execution for unadvertised
 pairs. Unadvertised pairs now fail closed; they do not select another protocol.
+
+## Addendum — 2026-07-12 (runner protocol-v1 fully removed)
+
+The runner's protocol-v1 support has now been deleted, not merely left dormant.
+`aiperf-runner` advertises `protocol_versions: [2]` only and rejects any non-v2
+request as a protocol-v2 failure envelope. Removed from `crates/aiperf-runner`:
+the v1 request `dispatch` entry, `execute_v1` and the `execute_run*` chain, the
+`RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
+`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
+`Legacy` enum variants, plus the accompanying v1 tests.
+
+This supersedes the earlier statement that "the Rust protocol-v1 decoder may
+remain as an isolated" compatibility path: no v1 decoder or authority remains.
+The Python-side facts are unchanged and still true — Python projects one
+authored v2 request and never resolves or converts a run to protocol v1.

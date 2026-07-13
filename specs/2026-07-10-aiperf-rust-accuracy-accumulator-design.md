@@ -643,3 +643,42 @@ continue to own prompts, agents, environments, private tests, tool loops, and
 rewards; they do not become an alternate inference client. Agentic capability
 is product-reachable only when the selected runner advertises the workload and
 passes the provider subprocess matrix.
+
+## Addendum — 2026-07-12 (provider-neutral long-term target)
+
+This specification remains authoritative for the built/current static and
+stateful accuracy implementation. Its descriptions of the existing
+accumulator, analyzer, supervised evaluator workers, static path, agentic path,
+reports, and product-reachability gates remain code truth where the code still
+implements them.
+
+The long-term evaluator architecture is superseded by
+`2026-07-12-external-evaluator-provider-host-boundary-design.md`. That RFC
+converges static and agentic accuracy on one provider-neutral evaluation
+workload. The selected evaluator provider owns dataset, prompt, agent,
+environment, verifier, scorer, reducer, and canonical bundle semantics. AIPerf
+Rust owns admission, routing, retries, cancellation, accounting, and every
+upstream/external network operation, reached through typed pipes or an
+authenticated, per-run scoped Rust-owned MITM compatibility proxy.
+
+This target does not delete or silently redirect the current implementations.
+Legacy static and agentic workloads, providers, protocols, and report
+projections remain until the new RFC's provider-specific semantic-parity,
+subprocess, report-consumer, and exact deletion gates are satisfied.
+
+## Addendum — 2026-07-12 (runner protocol-v1 fully removed)
+
+The runner's protocol-v1 support has been deleted. `aiperf-runner` now advertises
+`protocol_versions: [2]` only and rejects any non-v2 request as a protocol-v2
+failure envelope. Removed from `crates/aiperf-runner`: the v1 request `dispatch`
+entry, `execute_v1` and the `execute_run*` chain, the `RunRequest` / `RunSpec` /
+`RunTerminal` / `EndpointSpec` / `DatasetSpec` / `AccuracySpec` wire DTOs, the
+`load_protocol_v1` graph-input adapters, and the `Legacy` enum variants, plus the
+v1 tests.
+
+This supersedes the 2026-07-11 "accuracy product reachability" addendum's claim
+that static evaluator-backed accuracy is reachable "through `aiperf-runner`
+protocol v1": static accuracy is now product-reachable through the same strict
+protocol-v2 `online_http + static_accuracy` pair. The canonical-provider
+boundary and the supervised Python grader/JSONL protocol are unchanged; only the
+runner wire protocol that carries the authored request moved from v1 to v2-only.

@@ -874,3 +874,22 @@ migration plan's pending increments 3–5, and the completion criterion that
 allowed a Python fallback until protocol-v1 retirement. Remaining unregistered
 combinations and unsupported per-workload lifecycle fields continue to fail
 closed; capability truth remains exact-image-specific.
+
+## Addendum — 2026-07-12 (runner protocol-v1 fully removed)
+
+Protocol-v1 support has been deleted from `aiperf-runner` entirely. The runner
+now advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
+protocol-v2 failure envelope. Removed from `crates/aiperf-runner`: the v1
+request `dispatch` entry, `execute_v1` and the `execute_run*` execution chain,
+the `RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
+`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
+`Legacy` capability/enum variants, along with the accompanying v1 tests. Python
+had already dropped its v1 wire projection.
+
+This supersedes Section 3.3 "Protocol-v1 compatibility," the "runner temporarily
+accepts the current protocol-v1" language, the migration steps that kept v1
+online/static-accuracy compatibility, and the two prior addenda sentences
+describing an "isolated compatibility decoder": no v1 decoder, authority,
+request builder, or fallback remains on the runner. (The `aiperf-endpoints`
+crate keeps its own internal `EndpointType` metadata/compatibility adapters —
+those are unrelated to the removed runner wire protocol.)

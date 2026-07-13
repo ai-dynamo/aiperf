@@ -1176,3 +1176,22 @@ The complete transport and reachability contract is recorded in
 previous statement that all runner capability and prepared-binding execution
 convergence remained pending; protocol-v1 authorities and unregistered
 workload/lifecycle combinations still remain.
+
+## Addendum — 2026-07-12 (runner protocol-v1 fully removed)
+
+The runner's protocol-v1 support has been deleted. `aiperf-runner` now
+advertises `protocol_versions: [2]` only and rejects any non-v2 request as a
+protocol-v2 failure envelope. Removed from `crates/aiperf-runner`: the v1
+request `dispatch` entry, `execute_v1` and the `execute_run*` chain, the
+`RunRequest` / `RunSpec` / `RunTerminal` / `EndpointSpec` / `DatasetSpec` /
+`AccuracySpec` wire DTOs, the `load_protocol_v1` graph-input adapters, and the
+`Legacy` capability/enum variants, along with the v1 tests.
+
+This supersedes Section 6.1 "Protocol-v1 compatibility," the `RunRequest`-typed
+`validate`/`execute` signatures shown in this spec (the runner's live envelope
+is the strict `AuthoredRunSpecV2`), and the prior addendum clause that
+"protocol-v1 authorities ... still remain": no v1 authority remains on the
+runner. Only unregistered workload/lifecycle combinations continue to fail
+closed. Note the `aiperf-endpoints` crate retains its own internal
+`EndpointType` metadata/compatibility adapters, which are independent of the
+removed runner wire protocol.
