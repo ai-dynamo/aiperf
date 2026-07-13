@@ -291,7 +291,6 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "prometheus 0.13.4",
- "rand 0.8.7",
  "reqwest",
  "serde",
  "serde_json",
@@ -448,8 +447,6 @@ version = "0.0.0"
 dependencies = [
  "aiperf-clock",
  "aiperf-rng",
- "rand 0.9.4",
- "rand_distr",
  "serde",
  "tokio",
 ]

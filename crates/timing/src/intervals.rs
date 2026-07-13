@@ -12,9 +12,7 @@
 //! The pacer converts a `next_interval_ns()` into an absolute target time and
 //! `clock.sleep`s to it — identical code on real and virtual clocks.
 
-use rand::SeedableRng;
-use rand::rngs::StdRng;
-use rand_distr::{Distribution, Exp, Gamma};
+use aiperf_rng::RandomGenerator;
 
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
@@ -57,7 +55,7 @@ pub trait IntervalGenerator {
 /// Poisson process: exponential inter-arrival times with mean `1/rate`.
 pub struct Poisson {
     rate: f64,
-    rng: StdRng,
+    rng: RandomGenerator,
 }
 
 impl Poisson {
@@ -66,7 +64,7 @@ impl Poisson {
         assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
         Self {
             rate,
-            rng: StdRng::seed_from_u64(seed),
+            rng: RandomGenerator::from_seed(Some(seed)),
         }
     }
 }
@@ -74,8 +72,11 @@ impl Poisson {
 impl IntervalGenerator for Poisson {
     fn next_interval_ns(&mut self) -> i64 {
         // Exp(λ) has mean 1/λ; λ = rate, so mean interval = 1/rate seconds.
-        let dist = Exp::new(self.rate).expect("rate > 0 checked at construction/set_rate");
-        secs_to_ns(dist.sample(&mut self.rng))
+        secs_to_ns(
+            self.rng
+                .expovariate(self.rate)
+                .expect("rate > 0 checked at construction/set_rate"),
+        )
     }
     fn set_rate(&mut self, rate: f64) {
         assert!(rate > 0.0, "Poisson rate must be > 0, got {rate}");
@@ -91,10 +92,13 @@ impl IntervalGenerator for Poisson {
 pub struct GammaProcess {
     rate: f64,
     smoothness: f64,
-    // Cached distribution: `Gamma::new` precomputes the Marsaglia-Tsang constants,
-    // so it is rebuilt only when the rate changes, never per sample on the hot path.
-    dist: Gamma<f64>,
-    rng: StdRng,
+    // Cached scale parameter (shape = smoothness), recomputed only on set_rate.
+    // `RandomGenerator::gammavariate` reconstructs the Marsaglia-Tsang constants
+    // internally per draw; caching the scale keeps the arithmetic off this hot
+    // path, and arrival sampling is once-per-request so the rebuild is not a
+    // measured bottleneck.
+    scale: f64,
+    rng: RandomGenerator,
 }
 
 impl GammaProcess {
@@ -108,27 +112,29 @@ impl GammaProcess {
         Self {
             rate,
             smoothness,
-            dist: Self::make_dist(rate, smoothness),
-            rng: StdRng::seed_from_u64(seed),
+            scale: Self::scale(rate, smoothness),
+            rng: RandomGenerator::from_seed(Some(seed)),
         }
     }
 
-    /// shape = smoothness, scale = 1/(rate*smoothness) -> mean = shape*scale = 1/rate.
-    fn make_dist(rate: f64, smoothness: f64) -> Gamma<f64> {
-        let scale = 1.0 / (rate * smoothness);
-        Gamma::new(smoothness, scale)
-            .expect("shape and scale > 0 checked at construction/set_rate")
+    /// scale = 1/(rate*smoothness) so mean = shape*scale = smoothness/(rate*smoothness) = 1/rate.
+    fn scale(rate: f64, smoothness: f64) -> f64 {
+        1.0 / (rate * smoothness)
     }
 }
 
 impl IntervalGenerator for GammaProcess {
     fn next_interval_ns(&mut self) -> i64 {
-        secs_to_ns(self.dist.sample(&mut self.rng))
+        secs_to_ns(
+            self.rng
+                .gammavariate(self.smoothness, self.scale)
+                .expect("shape and scale > 0 checked at construction/set_rate"),
+        )
     }
     fn set_rate(&mut self, rate: f64) {
         assert!(rate > 0.0, "Gamma rate must be > 0, got {rate}");
         self.rate = rate;
-        self.dist = Self::make_dist(rate, self.smoothness);
+        self.scale = Self::scale(rate, self.smoothness);
     }
     fn rate(&self) -> f64 {
         self.rate

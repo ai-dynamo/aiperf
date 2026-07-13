@@ -19,22 +19,21 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use aiperf_rng::RandomGenerator;
 use parking_lot::Mutex;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::config::MockServerConfig;
 
 /// Mean-1 lognormal multiplier with coefficient of variation `cv` (`cv<=0` -> 1.0).
-fn lognormal(rng: &mut SmallRng, cv: f64) -> f64 {
+fn lognormal(rng: &mut RandomGenerator, cv: f64) -> f64 {
     if cv <= 0.0 {
         return 1.0;
     }
     let sigma = (1.0 + cv * cv).ln().sqrt();
-    let u1: f64 = rng.r#gen::<f64>().max(1e-12);
-    let u2: f64 = rng.r#gen::<f64>();
+    let u1: f64 = rng.random().max(1e-12);
+    let u2: f64 = rng.random();
     let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
     (sigma * z - 0.5 * sigma * sigma).exp()
 }
@@ -71,7 +70,7 @@ pub struct BatchScheduler {
     step_index: AtomicU64,
     stopped: AtomicBool,
     tick: Mutex<Option<JoinHandle<()>>>,
-    admit_rng: Mutex<SmallRng>,
+    admit_rng: Mutex<RandomGenerator>,
 }
 
 impl BatchScheduler {
@@ -96,8 +95,8 @@ impl BatchScheduler {
             stopped: AtomicBool::new(false),
             tick: Mutex::new(None),
             admit_rng: Mutex::new(match cfg.random_seed {
-                Some(s) => SmallRng::seed_from_u64(s ^ 0x5c4ed_u64),
-                None => SmallRng::from_entropy(),
+                Some(s) => RandomGenerator::from_seed(Some(s ^ 0x5c4ed_u64)),
+                None => RandomGenerator::from_seed(None),
             }),
         })
     }
@@ -188,7 +187,7 @@ impl BatchScheduler {
             eff.div_ceil(self.prefill_chunk_tokens).max(1)
         };
         let chunks = if self.work_cv > 0.0 {
-            let mut rng = SmallRng::seed_from_u64(seed ^ 0x9E37_79B9_7F4A_7C15);
+            let mut rng = RandomGenerator::from_seed(Some(seed ^ 0x9E37_79B9_7F4A_7C15));
             ((base as f64 * lognormal(&mut rng, self.work_cv)).round() as usize).max(1)
         } else {
             base

@@ -32,30 +32,21 @@ pub struct AppState {
 }
 
 pub struct ErrorRng {
-    rng: rand::rngs::SmallRng,
+    rng: aiperf_rng::RandomGenerator,
 }
 
 impl ErrorRng {
     /// Build the error-injection RNG. When a root seed is provided, the
-    /// actual seed is derived from the canonical `mock.errors` namespace.
-    /// When `None`, we seed from OS entropy.
+    /// actual stream is derived from the canonical `mock.errors` namespace.
+    /// When `None`, the derived stream seeds from OS entropy.
     pub fn new(seed: Option<u64>) -> Self {
-        use rand::SeedableRng;
-        let rng = match seed {
-            Some(root) => rand::rngs::SmallRng::seed_from_u64(
-                aiperf_rng::RngRoot::new(Some(root))
-                    .derive_seed(aiperf_rng::namespace::MOCK_ERRORS)
-                    .expect("a seeded RNG root always derives a seed"),
-            ),
-            None => rand::rngs::SmallRng::from_entropy(),
-        };
+        let rng = aiperf_rng::RngRoot::new(seed).derive(aiperf_rng::namespace::MOCK_ERRORS);
         Self { rng }
     }
 
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> f64 {
-        use rand::Rng;
-        self.rng.r#gen()
+        self.rng.random()
     }
 }
 

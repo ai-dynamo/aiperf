@@ -7,6 +7,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use aiperf_rng::RandomGenerator;
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
@@ -16,8 +17,6 @@ use base64::Engine;
 use blake2::{Blake2s256, Digest};
 use bytes::Bytes;
 use futures::stream::Stream;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
 use serde_json::{Value, json};
 
 use crate::latency::{LatencySimulator, wait_for_processing};
@@ -463,8 +462,8 @@ pub fn generate_embedding(text: &str, dim: usize) -> Vec<f64> {
     hasher.update(text.as_bytes());
     let digest = hasher.finalize();
     let seed: u64 = u64::from_be_bytes(digest[0..8].try_into().unwrap());
-    let mut rng = SmallRng::seed_from_u64(seed);
-    (0..dim).map(|_| rng.r#gen::<f64>() - 0.5).collect()
+    let mut rng = RandomGenerator::from_seed(Some(seed));
+    (0..dim).map(|_| rng.random() - 0.5).collect()
 }
 
 // ============================================================================
@@ -621,16 +620,18 @@ fn generate_bounding_boxes(url: &str) -> serde_json::Map<String, Value> {
     hasher.update(url.as_bytes());
     let digest = hasher.finalize();
     let seed = u64::from_be_bytes(digest[0..8].try_into().unwrap());
-    let mut rng = SmallRng::seed_from_u64(seed);
-    let num_boxes: u32 = rng.gen_range(1..=5);
+    let mut rng = RandomGenerator::from_seed(Some(seed));
+    let num_boxes: i64 = rng.randint(1, 5).expect("1..=5 is a valid inclusive range");
     let mut out: serde_json::Map<String, Value> = serde_json::Map::new();
     for _ in 0..num_boxes {
-        let category = BOUNDING_BOX_CATEGORIES[rng.gen_range(0..BOUNDING_BOX_CATEGORIES.len())];
-        let x_min: f64 = round_4(rng.gen_range(0.0..=0.5));
-        let y_min: f64 = round_4(rng.gen_range(0.0..=0.5));
-        let x_max: f64 = round_4(rng.gen_range((x_min + 0.05)..=1.0));
-        let y_max: f64 = round_4(rng.gen_range((y_min + 0.05)..=1.0));
-        let confidence: f64 = round_4(rng.gen_range(0.7..=1.0));
+        let category = *rng
+            .choice(BOUNDING_BOX_CATEGORIES)
+            .expect("bounding-box categories are non-empty");
+        let x_min: f64 = round_4(rng.uniform(0.0, 0.5));
+        let y_min: f64 = round_4(rng.uniform(0.0, 0.5));
+        let x_max: f64 = round_4(rng.uniform(x_min + 0.05, 1.0));
+        let y_max: f64 = round_4(rng.uniform(y_min + 0.05, 1.0));
+        let confidence: f64 = round_4(rng.uniform(0.7, 1.0));
         let box_json = json!({
             "x_min": x_min,
             "y_min": y_min,

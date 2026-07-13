@@ -6,10 +6,8 @@
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use aiperf_rng::RandomGenerator;
 use parking_lot::Mutex;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
 
 #[derive(Debug, Clone)]
 pub struct GpuConfig {
@@ -112,7 +110,7 @@ pub fn lookup_gpu(name: &str) -> Option<GpuConfig> {
 struct FakeGpuState {
     idx: u32,
     cfg: GpuConfig,
-    rng: SmallRng,
+    rng: RandomGenerator,
     load_offset: f64,
     uuid: String,
     mem_total: f64,
@@ -136,14 +134,18 @@ struct FakeGpuState {
 }
 
 impl FakeGpuState {
-    fn new(idx: u32, cfg: GpuConfig, mut rng: SmallRng, load_offset: f64) -> Self {
+    fn new(idx: u32, cfg: GpuConfig, mut rng: RandomGenerator, load_offset: f64) -> Self {
+        let mut draw = |lo: u64, hi: u64| {
+            rng.randrange_u64(lo, hi)
+                .expect("dcgm uuid ranges are non-empty")
+        };
         let uuid = format!(
             "GPU-{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-            rng.gen_range(10u64.pow(8)..10u64.pow(9)),
-            rng.gen_range(0u32..=0xFFFF),
-            rng.gen_range(0u32..=0xFFFF),
-            rng.gen_range(0u32..=0xFFFF),
-            rng.gen_range(0u64..10u64.pow(12)),
+            draw(10u64.pow(8), 10u64.pow(9)),
+            draw(0, 0x1_0000),
+            draw(0, 0x1_0000),
+            draw(0, 0x1_0000),
+            draw(0, 10u64.pow(12)),
         );
         let mem_total = (cfg.memory_gb as f64) * 1024.0;
         let power_limit = cfg.max_power_w as f64;
@@ -176,7 +178,7 @@ impl FakeGpuState {
     }
 
     fn noise(&mut self, val: f64, variance: f64, max_val: f64) -> f64 {
-        let factor: f64 = self.rng.gen_range((1.0 - variance)..=(1.0 + variance));
+        let factor: f64 = self.rng.uniform(1.0 - variance, 1.0 + variance);
         let noisy = val * factor;
         noisy.max(0.0).min(max_val)
     }
@@ -204,7 +206,7 @@ impl FakeGpuState {
             0.01,
             temp_max_c,
         );
-        let mem_temp_off: f64 = self.rng.gen_range(3.0..=8.0);
+        let mem_temp_off: f64 = self.rng.uniform(3.0, 8.0);
         self.mem_temp = (self.temp + mem_temp_off).min(temp_max_c + 10.0);
         self.sm_clk = self.noise(sm_base + load * (sm_boost - sm_base), 0.01, sm_boost);
         self.mem_clk = self.noise(mem_clock, 0.005, mem_clock);
@@ -217,16 +219,16 @@ impl FakeGpuState {
         self.mem_copy = self.noise(load * 50.0, 0.05, 100.0);
 
         self.energy += self.power * 1000.0; // 1 tick = 1 s
-        if self.rng.r#gen::<f64>() < 0.0001 {
+        if self.rng.random() < 0.0001 {
             self.xid += 1;
         }
 
         if self.power > max_power_w * 0.95 {
-            let factor: f64 = self.rng.gen_range(500.0..=2000.0);
+            let factor: f64 = self.rng.uniform(500.0, 2000.0);
             self.power_viol += (self.power - max_power_w * 0.95) / (max_power_w * 0.95) * factor;
         }
         if self.temp > temp_max_c - 5.0 {
-            let factor: f64 = self.rng.gen_range(100.0..=500.0);
+            let factor: f64 = self.rng.uniform(100.0, 500.0);
             self.thermal_viol += (self.temp - (temp_max_c - 5.0)) * factor;
         }
     }
@@ -261,15 +263,12 @@ impl DcgmFaker {
         hostname: &str,
         initial_load: f64,
     ) -> Result<Self, String> {
-        let mut rng = match seed {
-            Some(s) => SmallRng::seed_from_u64(s),
-            None => SmallRng::from_entropy(),
-        };
+        let mut rng = RandomGenerator::from_seed(seed);
         let mut gpus = Vec::with_capacity(num_gpus as usize);
         for i in 0..num_gpus {
-            let load_offset: f64 = rng.gen_range(-0.05..=0.05);
-            let gpu_seed = rng.r#gen::<u64>();
-            let gpu_rng = SmallRng::seed_from_u64(gpu_seed);
+            let load_offset: f64 = rng.uniform(-0.05, 0.05);
+            let gpu_seed = rng.random_u64();
+            let gpu_rng = RandomGenerator::from_seed(Some(gpu_seed));
             gpus.push(FakeGpuState::new(i, cfg.clone(), gpu_rng, load_offset));
         }
         Ok(DcgmFaker {

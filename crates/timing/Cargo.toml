@@ -13,5 +13,3 @@ aiperf-clock.workspace = true
 aiperf-rng.workspace = true
 serde.workspace = true
 tokio.workspace = true
-rand = "0.9"
-rand_distr = "0.5"

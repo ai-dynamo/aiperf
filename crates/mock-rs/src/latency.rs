@@ -16,8 +16,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use aiperf_rng::RandomGenerator;
 
 use crate::config::MockServerConfig;
 use crate::scheduler::BatchScheduler;
@@ -25,14 +24,14 @@ use crate::scheduler::BatchScheduler;
 /// Lognormal multiplier with mean ~= 1.0 and coefficient of variation `cv`
 /// (stddev/mean). `cv <= 0` returns 1.0. The `-sigma^2/2` term keeps the mean
 /// at 1.0 so a base latency can be multiplied without bias.
-fn lognormal_jitter(rng: &mut SmallRng, cv: f64) -> f64 {
+fn lognormal_jitter(rng: &mut RandomGenerator, cv: f64) -> f64 {
     if cv <= 0.0 {
         return 1.0;
     }
     let sigma = (1.0 + cv * cv).ln().sqrt();
     // Box-Muller: z ~ N(0, 1) from two uniforms.
-    let u1: f64 = rng.r#gen::<f64>().max(1e-12);
-    let u2: f64 = rng.r#gen::<f64>();
+    let u1: f64 = rng.random().max(1e-12);
+    let u2: f64 = rng.random();
     let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
     (sigma * z - 0.5 * sigma * sigma).exp()
 }
@@ -40,7 +39,7 @@ fn lognormal_jitter(rng: &mut SmallRng, cv: f64) -> f64 {
 /// Extra (>= 0) seconds to add as jitter on top of `base_ms`. Used in scheduler
 /// mode, where the admit floor means we can only ever delay, not accelerate, so
 /// faster-than-nominal samples contribute 0.
-fn positive_jitter_extra_secs(rng: &mut SmallRng, base_ms: f64, cv: f64) -> f64 {
+fn positive_jitter_extra_secs(rng: &mut RandomGenerator, base_ms: f64, cv: f64) -> f64 {
     if cv <= 0.0 || base_ms <= 0.0 {
         return 0.0;
     }
@@ -51,8 +50,8 @@ fn positive_jitter_extra_secs(rng: &mut SmallRng, base_ms: f64, cv: f64) -> f64 
     (factor - 1.0) * base_ms * 0.001
 }
 
-fn seeded_rng(seed: u64, salt: u64) -> SmallRng {
-    SmallRng::seed_from_u64(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+fn seeded_rng(seed: u64, salt: u64) -> RandomGenerator {
+    RandomGenerator::from_seed(Some(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)))
 }
 
 /// Per-request latency scheduler. Owned exclusively by one request.
