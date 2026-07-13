@@ -222,7 +222,7 @@ describe("runtime graph edge", () => {
     expect(pulseMarker).toHaveAttribute("data-motion", "static");
     expect(circle).toHaveAttribute("cx", "100");
     expect(circle).toHaveAttribute("cy", "0");
-    expect(circle).toHaveAttribute("fill", "#76B900");
+    expect(circle).toHaveAttribute("fill", "#94d340");
     expect(pulseMarker?.querySelector("animateMotion")).not.toBeInTheDocument();
   });
 

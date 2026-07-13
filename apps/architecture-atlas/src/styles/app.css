@@ -1773,6 +1773,19 @@
     font-size: 0.58rem;
     white-space: nowrap;
     cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  /* Labels are noise at rest; surface them on hover or while tracing a path */
+  .graph-edge-label:hover,
+  .graph-edge-label:focus-visible,
+  .graph-edge-label[data-path-state="focused"],
+  .graph-edge-label[data-path-state="upstream"],
+  .graph-edge-label[data-path-state="downstream"] {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .graph-edge-label span:first-child,
@@ -2126,33 +2139,48 @@
 
   .graph-node {
     position: relative;
-    display: grid;
-    grid-template-rows: auto auto auto;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-2);
-    min-block-size: 220px;
-    padding: var(--space-3);
+    min-block-size: 156px;
+    padding: var(--space-4);
     touch-action: none;
   }
 
+  /* Drag affordance — a subtle grip revealed on hover, not a loud tab */
   .graph-node-drag-handle {
     position: absolute;
-    inset: 0 0 auto auto;
+    inset: var(--space-3) var(--space-3) auto auto;
     z-index: 2;
     display: grid;
     place-items: center;
-    min-inline-size: 2.75rem;
-    min-block-size: 1.5rem;
-    padding: 0.18rem 0.35rem;
-    border: 1px solid var(--panel-border);
-    border-radius: 0 0 0 0.35rem;
-    background: rgb(4 13 20 / 0.86);
-    color: var(--text-muted);
+    inline-size: 1.1rem;
+    block-size: 1.1rem;
+    border: 0;
+    background: none;
+    color: transparent;
     cursor: grab;
-    font-family: var(--font-data);
-    font-size: 0.56rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: 0;
+    opacity: 0;
+    transition: opacity 120ms ease;
     touch-action: none;
+  }
+
+  .graph-node-drag-handle::before {
+    content: "\22EE\22EE";
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    letter-spacing: -0.12em;
+    line-height: 1;
+  }
+
+  .graph-node:hover .graph-node-drag-handle,
+  .graph-node:focus-within .graph-node-drag-handle {
+    opacity: 0.65;
+  }
+
+  .graph-node-drag-handle:hover {
+    opacity: 1;
   }
 
   .graph-node-drag-handle:active {
@@ -2162,69 +2190,113 @@
   .graph-node-trigger {
     display: grid;
     gap: var(--space-2);
+    align-content: start;
     inline-size: 100%;
     padding: 0;
   }
 
   .graph-node-title-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-2);
+    padding-inline-end: 1rem;
   }
 
-  .graph-node-status-chip,
-  .graph-node-meta-badges span {
-    border: 1px solid var(--panel-border);
+  .graph-node-title-row strong {
+    font-size: 0.92rem;
+    font-weight: 600;
+    line-height: 1.22;
+  }
+
+  /* Status chip — the single pill that earns its place */
+  .graph-node-status-chip {
+    flex-shrink: 0;
+    align-self: flex-start;
+    border: 1px solid rgb(148 211 64 / 0.4);
     border-radius: 999px;
-    background: var(--chip-surface);
-    color: var(--text-secondary);
-    padding: 0.12rem var(--space-2);
+    background: rgb(148 211 64 / 0.12);
+    color: #ddf7b8;
+    padding: 0.08rem 0.45rem;
     font-family: var(--font-data);
-    font-size: 0.62rem;
-    letter-spacing: 0.04em;
+    font-size: 0.56rem;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
-  .graph-node-status-chip {
-    border-color: rgb(118 185 0 / 0.45);
-    background: rgb(118 185 0 / 0.12);
-    color: #ddf7b8;
-  }
-
   .graph-node[data-implementation-state="planned"] .graph-node-status-chip {
-    border-color: rgb(239 83 80 / 0.5);
+    border-color: rgb(239 83 80 / 0.45);
+    background: rgb(239 83 80 / 0.1);
     color: #ffc8c8;
   }
 
   .graph-node-summary {
+    display: -webkit-box;
+    overflow: hidden;
     color: var(--text-secondary);
-    font-size: 0.77rem;
-    line-height: 1.32;
+    font-size: 0.76rem;
+    line-height: 1.4;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
 
+  /* Metadata — one quiet mono line with dot separators, not a pill stack */
   .graph-node-meta-badges {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2);
+    align-items: center;
+    gap: 0 var(--space-2);
+    margin-block-start: auto;
+    color: var(--text-muted);
+    font-family: var(--font-data);
+    font-size: 0.58rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
 
+  .graph-node-meta-badges span {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .graph-node-meta-badges span:not(:last-child)::after {
+    content: "";
+    inline-size: 2px;
+    block-size: 2px;
+    margin-inline-start: var(--space-2);
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.6;
+  }
+
+  /* Trace actions — hidden until hover/focus, then a clean overlay bar */
   .graph-node-actions {
+    position: absolute;
+    inset: auto 0 0 0;
+    z-index: 3;
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2);
-    opacity: 0.62;
-    transition: opacity 140ms ease-in-out;
+    gap: var(--space-1);
+    border-radius: 0 0 var(--radius-panel) var(--radius-panel);
+    background: linear-gradient(
+      180deg,
+      transparent,
+      var(--surface-raised) 42%
+    );
+    padding: var(--space-5) var(--space-4) var(--space-3);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
   }
 
   .graph-node-actions button {
     border: 1px solid var(--panel-border);
-    border-radius: 999px;
-    background: var(--chip-surface);
+    border-radius: var(--radius-sm, 4px);
+    background: var(--surface-raised);
     color: var(--text-secondary);
-    padding: 0.12rem var(--space-3);
+    padding: 0.1rem var(--space-2);
     font-family: var(--font-data);
-    font-size: 0.62rem;
+    font-size: 0.58rem;
     letter-spacing: 0.03em;
     cursor: pointer;
     text-transform: uppercase;
@@ -2248,13 +2320,14 @@
 
   .graph-node:hover .graph-node-actions,
   .graph-node:focus-within .graph-node-actions,
-  .graph-node[data-expanded] .graph-node-actions,
-  .graph-node[data-audience="maintainer"] .graph-node-actions {
+  .graph-node[data-expanded] .graph-node-actions {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .graph-node-details {
     display: none;
+    margin-block-start: var(--space-1);
     border-top: 1px solid var(--line-subtle);
     padding-top: var(--space-2);
   }

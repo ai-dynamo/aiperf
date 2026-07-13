@@ -23,7 +23,7 @@ const elk = new ELK({
   },
   workerUrl: elkWorkerUrl,
 });
-const NODE_HEIGHT = 224;
+const NODE_HEIGHT = 156;
 const NODE_WIDTH = 320;
 
 interface ElkLayoutNode {
