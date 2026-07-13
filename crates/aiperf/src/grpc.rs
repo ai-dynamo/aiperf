@@ -851,6 +851,7 @@ fn compatibility_http_record(record: &GrpcRequestRecord) -> RequestRecord {
             ..TraceData::default()
         }),
         cancellation_ns: record.cancellation_ns,
+        reusable_connection: false,
     }
 }
 
