@@ -531,15 +531,15 @@ describe("graph-first catalog", () => {
     expect(dynosimEvidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          lines: { start: 4124, end: 4156 },
+          lines: { start: 4159, end: 4192 },
           symbol: "run_scheduled_backend_online",
         }),
         expect.objectContaining({
-          lines: { start: 556, end: 628 },
+          lines: { start: 575, end: 649 },
           symbol: "OfflineEngineConfig::build_native",
         }),
         expect.objectContaining({
-          lines: { start: 915, end: 984 },
+          lines: { start: 950, end: 1019 },
           symbol: "finish_shared_metrics_enforcing",
         }),
       ]),
@@ -552,6 +552,94 @@ describe("graph-first catalog", () => {
         ...architectureCatalog.graphEdges.flatMap(({ evidence }) => evidence),
       ].some(({ path }) => path === "crates/aiperf/src/dynamo_offline.rs"),
     ).toBe(false);
+  });
+
+  it("pins audited graph-catalog evidence ranges to current symbols", () => {
+    const nodeById = new Map(
+      architectureCatalog.graphNodes.map((node) => [node.id, node]),
+    );
+
+    expect(nodeById.get("node.runtime-composition")?.evidence).toContainEqual({
+      path: "crates/aiperf-runner/src/application.rs",
+      lines: { start: 34, end: 65 },
+      role: "source",
+      symbol: "RunnerApplication",
+    });
+    expect(nodeById.get("node.dataset-segment-pipeline")?.evidence).toContainEqual({
+      path: "crates/aiperf-dataset/src/segment.rs",
+      lines: { start: 195, end: 205 },
+      role: "source",
+      symbol: "SegmentStore",
+    });
+    expect(nodeById.get("node.request-sink-seam")?.evidence).toContainEqual({
+      path: "crates/loadgen-core/src/sink.rs",
+      lines: { start: 157, end: 160 },
+      role: "source",
+      symbol: "RequestSink",
+    });
+    expect(nodeById.get("node.crate-dependency-topology")?.evidence).toContainEqual({
+      path: "apps/architecture-atlas/src/domain/integrity.ts",
+      lines: { start: 404, end: 455 },
+      role: "source",
+      symbol: "validateWorkspaceCrates",
+    });
+
+    expect(
+      nodeById.get("node.dynamo-online-library-seam")?.evidence,
+    ).toContainEqual({
+      path: "crates/aiperf/src/dynosim.rs",
+      lines: { start: 4159, end: 4192 },
+      role: "source",
+      symbol: "run_scheduled_backend_online",
+    });
+    expect(
+      nodeById.get("node.dynamo-offline-steppable-replay")?.evidence,
+    ).toContainEqual({
+      path: "crates/aiperf/src/dynosim.rs",
+      lines: { start: 575, end: 649 },
+      role: "source",
+      symbol: "OfflineEngineConfig::build_native",
+    });
+    expect(nodeById.get("node.dynamo-offline-report-gate")?.evidence).toContainEqual({
+      path: "crates/aiperf/src/dynosim.rs",
+      lines: { start: 950, end: 1019 },
+      role: "source",
+      symbol: "finish_shared_metrics_enforcing",
+    });
+    expect(
+      nodeById.get("node.dynamo-offline-runner-backend")?.evidence,
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          path: "crates/aiperf-runner/src/offline_execution.rs",
+          lines: { start: 98, end: 103 },
+          role: "source",
+          symbol: "DYNOSIM_BACKEND_ID",
+        },
+        {
+          path: "crates/aiperf-runner/src/offline_execution.rs",
+          lines: { start: 830, end: 846 },
+          role: "source",
+          symbol: "DynosimBackendFactory",
+        },
+      ]),
+    );
+    expect(nodeById.get("node.dynamo-online-replay-mode")?.evidence).toEqual(
+      expect.arrayContaining([
+        {
+          path: "crates/aiperf-runner/src/offline_execution.rs",
+          lines: { start: 229, end: 249 },
+          role: "source",
+          symbol: "DynamoReplayModeSpec",
+        },
+        {
+          path: "crates/aiperf-runner/src/offline_execution.rs",
+          lines: { start: 1894, end: 1923 },
+          role: "source",
+          symbol: "DynosimExecutor::execute_scheduled",
+        },
+      ]),
+    );
   });
 
   it("models RequestObserver on_token as a source-grounded token edge", () => {

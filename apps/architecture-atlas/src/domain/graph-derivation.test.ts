@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { architectureCatalog } from "../content";
 import {
   architectureCatalogSchema,
   type ArchitectureCatalog,
@@ -417,5 +418,51 @@ describe("graph derivation", () => {
       upstreamNodeIds: ["node.root"],
       downstreamNodeIds: ["node.shared-deep"],
     });
+  });
+
+  it("derives canonical runtime topology with audience depth from the real catalog", () => {
+    const executive = deriveGraphDerivation(architectureCatalog, {
+      sceneId: "scene.runtime-composition",
+      audience: "executive",
+      primaryFlavor: "native_http",
+    });
+    const maintainer = deriveGraphDerivation(architectureCatalog, {
+      sceneId: "scene.runtime-composition",
+      audience: "maintainer",
+      primaryFlavor: "native_http",
+    });
+
+    expect(executive.visibleNodeIds).toContain("node.runtime-composition");
+    expect(maintainer.visibleNodeIds).toContain("node.request-sink-seam");
+    expect(maintainer.visibleNodeIds.length).toBeGreaterThan(
+      executive.visibleNodeIds.length,
+    );
+  });
+
+  it("partitions canonical flavor overlay without duplicate node or edge classification", () => {
+    const derived = deriveGraphDerivation(architectureCatalog, {
+      sceneId: "scene.runtime-composition",
+      audience: "developer",
+      primaryFlavor: "native_http",
+      compareFlavor: "dynamo_online",
+    });
+
+    const nodeOverlayIds = [
+      ...derived.overlay.sharedNodeIds,
+      ...derived.overlay.primaryOnlyNodeIds,
+      ...derived.overlay.compareOnlyNodeIds,
+    ];
+    const edgeOverlayIds = [
+      ...derived.overlay.sharedEdgeIds,
+      ...derived.overlay.primaryOnlyEdgeIds,
+      ...derived.overlay.compareOnlyEdgeIds,
+    ];
+
+    expect(new Set(nodeOverlayIds).size).toBe(nodeOverlayIds.length);
+    expect(new Set(edgeOverlayIds).size).toBe(edgeOverlayIds.length);
+    expect(new Set(nodeOverlayIds)).toEqual(new Set(derived.visibleNodeIds));
+    expect(new Set(edgeOverlayIds)).toEqual(new Set(derived.visibleEdgeIds));
+    expect(derived.overlay.compareOnlyNodeIds.length).toBeGreaterThan(0);
+    expect(derived.overlay.primaryOnlyNodeIds.length).toBeGreaterThan(0);
   });
 });

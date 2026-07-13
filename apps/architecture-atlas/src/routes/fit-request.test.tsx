@@ -255,4 +255,42 @@ describe("graph fit command integration", () => {
       y: 111,
     });
   });
+
+  it("shares reset state with scene and flavor context preserved", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn<(text: string) => Promise<void>>(async () => undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const router = createAppRouter({
+      history: createMemoryHistory({
+        initialEntries: [
+          "/scenes/metrics-telemetry?audience=maintainer&primary=native_grpc&compare=dynamo_online",
+        ],
+      }),
+    });
+    render(<RouterProvider router={router} />);
+
+    await user.click(await screen.findByRole("button", { name: "Persist drag override" }));
+    await user.click(screen.getByRole("button", { name: "Persist waypoint override" }));
+    await user.click(screen.getByRole("button", { name: "Reset graph" }));
+    await user.click(screen.getByRole("button", { name: "Share graph state" }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const firstCall = writeText.mock.calls.at(0);
+    if (!firstCall) {
+      throw new Error("expected clipboard call");
+    }
+    const sharedUrl = new URL(String(firstCall[0]));
+    const encoded = sharedUrl.searchParams.get("s");
+    const decoded = decodeGraphStateFromUrl(String(encoded), buildCanonicalDomain());
+
+    expect(decoded.state.sceneId).toBe("scene.metrics-telemetry");
+    expect(decoded.state.primaryFlavor).toBe("native_grpc");
+    expect(decoded.state.compareFlavor).toBe("dynamo_online");
+    expect(decoded.state.audience).toBe("maintainer");
+    expect(decoded.state.nodePositions).toEqual([]);
+    expect(decoded.state.edgeWaypoints).toEqual([]);
+  });
 });

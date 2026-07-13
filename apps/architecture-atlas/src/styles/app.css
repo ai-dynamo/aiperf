@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Saira+Condensed:wght@500;600;700&display=swap");
-
 @layer reset, tokens, base, layout, components, flightdeck, responsive;
 
 @layer reset {
@@ -57,10 +55,11 @@
     --space-6: 2rem;
     --space-7: 3rem;
     --radius-control: 0.2rem;
-    --font-interface: "Arial Narrow", "Roboto Condensed", "Helvetica Neue",
-      sans-serif;
-    --font-body: Inter, "Helvetica Neue", Arial, sans-serif;
-    --font-data: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    --font-interface: "Arial Narrow", "Liberation Sans Narrow", "Helvetica Neue",
+      Arial, sans-serif;
+    --font-body: "Segoe UI", "Noto Sans", "Liberation Sans", "Helvetica Neue",
+      Arial, sans-serif;
+    --font-data: "SFMono-Regular", "Liberation Mono", Consolas, monospace;
   }
 }
 

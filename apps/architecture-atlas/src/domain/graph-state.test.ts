@@ -200,6 +200,30 @@ describe("graph share state", () => {
     expect(resolved.notice?.code).toBe("invalid_url_state");
   });
 
+  it("recovers canonical defaults with invalid local state notice", () => {
+    const canonical = canonicalDomain();
+    const incompatibleLocalState = canonicalGraphState({
+      audience: "developer",
+      nodePositions: [{ nodeId: "node.unknown", x: 1, y: 2 }],
+      primaryFlavor: "native_http",
+      sceneId: "scene.runtime-composition",
+      timelinePosition: 0.4,
+    });
+    const resolved = resolveGraphState({
+      canonical,
+      storage: {
+        getItem: () => JSON.stringify(incompatibleLocalState),
+        removeItem: () => undefined,
+        setItem: () => undefined,
+      },
+      urlState: null,
+    });
+
+    expect(resolved.source).toBe("canonical");
+    expect(resolved.state).toEqual(canonical.defaultState);
+    expect(resolved.notice?.code).toBe("invalid_local_state");
+  });
+
   it("rejects semantic graph content from URL state", () => {
     const canonical = canonicalDomain();
     const encoded = encodeURIComponent(

@@ -26,8 +26,9 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify and package static SPA
+    name: Validate and package graph-first Atlas
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: apps/architecture-atlas
@@ -65,13 +66,43 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run browser tests
-        run: npm run e2e
+      - name: Run Playwright functional suites
+        run: |
+          PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/functional \
+            npx playwright test e2e/architecture-atlas.spec.ts --reporter=list,html --output=test-results/functional
 
-      - name: Upload static SPA
+      - name: Run Playwright visual and accessibility assertions
+        run: |
+          PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/visual-a11y \
+            npx playwright test e2e/flight-deck-visual.spec.ts --reporter=list,html --output=test-results/visual-a11y
+
+      - name: Upload static SPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aiperf-architecture-atlas
+          name: aiperf-architecture-atlas-dist
           path: apps/architecture-atlas/dist
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiperf-architecture-atlas-playwright-report
+          path: apps/architecture-atlas/playwright-report
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiperf-architecture-atlas-playwright-diagnostics
+          path: |
+            apps/architecture-atlas/test-results
+            apps/architecture-atlas/test-results/**/*.png
+            apps/architecture-atlas/test-results/**/*-diff.png
+            apps/architecture-atlas/test-results/**/trace.zip
+            apps/architecture-atlas/test-results/**/*.webm
+          if-no-files-found: warn
           retention-days: 14

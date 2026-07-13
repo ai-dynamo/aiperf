@@ -118,8 +118,8 @@ const journeyDefinitions: JourneyDefinition[] = [
     evidence: [
       source(
         "crates/aiperf-runner/src/application.rs",
-        38,
-        100,
+        34,
+        65,
         "RunnerApplication",
       ),
     ],
@@ -185,8 +185,8 @@ const journeyDefinitions: JourneyDefinition[] = [
     evidence: [
       source(
         "crates/loadgen-core/src/sink.rs",
-        134,
-        175,
+        157,
+        160,
         "RequestSink",
       ),
     ],
@@ -293,8 +293,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/aiperf-runner/src/application.rs",
-        38,
-        100,
+        34,
+        65,
         "RunnerApplication",
       ),
     ],
@@ -333,8 +333,8 @@ const graphNodesRaw = [
       ),
       source(
         "crates/aiperf-runner/src/application.rs",
-        38,
-        100,
+        34,
+        65,
         "RunnerApplication",
       ),
     ],
@@ -410,8 +410,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/aiperf-dataset/src/segment.rs",
-        185,
-        260,
+        195,
+        205,
         "SegmentStore",
       ),
       source(
@@ -613,8 +613,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "apps/architecture-atlas/src/domain/integrity.ts",
-        350,
-        400,
+        404,
+        455,
         "validateWorkspaceCrates",
       ),
     ],
@@ -679,8 +679,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/loadgen-core/src/sink.rs",
-        85,
-        175,
+        157,
+        160,
         "RequestSink",
       ),
     ],
@@ -712,8 +712,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/aiperf/src/dynosim.rs",
-        4124,
-        4156,
+        4159,
+        4192,
         "run_scheduled_backend_online",
       ),
     ],
@@ -772,19 +772,25 @@ const graphNodesRaw = [
     title: {
       executive: "Dynamo replay runner backend",
       developer: "Feature-gated Dynamo offline backend and pairs",
-      maintainer: "DynamoOfflineBackendFactory with replay_mode",
+      maintainer: "DynosimBackendFactory with replay_mode",
     },
     summary: {
       executive: "Runs deterministic or wall-clock in-process replay in special builds.",
-      developer: "The dynamo_offline backend selects offline or online replay_mode.",
+      developer: "The dynosim backend selects offline or online replay_mode.",
       maintainer: "One registered backend and pair family owns both clock axes.",
     },
     evidence: [
       source(
         "crates/aiperf-runner/src/offline_execution.rs",
-        829,
-        856,
-        "DynamoOfflineBackendFactory",
+        98,
+        103,
+        "DYNOSIM_BACKEND_ID",
+      ),
+      source(
+        "crates/aiperf-runner/src/offline_execution.rs",
+        830,
+        846,
+        "DynosimBackendFactory",
       ),
     ],
     seamPorts: [
@@ -818,15 +824,15 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/aiperf-runner/src/offline_execution.rs",
-        219,
-        246,
+        229,
+        249,
         "DynamoReplayModeSpec",
       ),
       source(
         "crates/aiperf-runner/src/offline_execution.rs",
-        1845,
-        1877,
-        "DynamoOfflineExecutor::execute_scheduled",
+        1894,
+        1923,
+        "DynosimExecutor::execute_scheduled",
       ),
     ],
     seamPorts: [
@@ -840,7 +846,7 @@ const graphNodesRaw = [
     footnotes: [
       {
         executive: "This is not a dedicated Dynamo-online registry backend.",
-        developer: "The registered backend ID remains dynamo_offline.",
+        developer: "The registered backend ID remains dynosim.",
         maintainer: "A distinct dynamo_online backend/pair remains design-only.",
       },
     ],
@@ -902,8 +908,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/aiperf/src/dynosim.rs",
-        556,
-        628,
+        575,
+        649,
         "OfflineEngineConfig::build_native",
       ),
     ],
@@ -943,8 +949,8 @@ const graphNodesRaw = [
     evidence: [
       source(
         "crates/aiperf/src/dynosim.rs",
-        915,
-        984,
+        950,
+        1019,
         "finish_shared_metrics_enforcing",
       ),
     ],
@@ -1110,19 +1116,19 @@ const graphEdgesRaw = [
     channel: "control",
     status: { state: "built", delivery: "feature_gated" },
     flavors: ["dynamo_online"],
-    protocol: "Existing dynamo_offline pair with replay_mode=online",
+    protocol: "Existing dynosim pair with replay_mode=online",
     evidence: [
       source(
         "crates/aiperf-runner/src/offline_execution.rs",
-        219,
-        246,
+        229,
+        249,
         "DynamoReplayModeSpec",
       ),
       source(
         "crates/aiperf-runner/src/offline_execution.rs",
-        1845,
-        1877,
-        "DynamoOfflineExecutor::execute_scheduled",
+        1894,
+        1923,
+        "DynosimExecutor::execute_scheduled",
       ),
     ],
     footnotes: [],
@@ -1144,9 +1150,9 @@ const graphEdgesRaw = [
     evidence: [
       source(
         "crates/aiperf-runner/src/offline_execution.rs",
-        829,
-        856,
-        "DynamoOfflineBackendFactory",
+        830,
+        846,
+        "DynosimBackendFactory",
       ),
     ],
     footnotes: [],
@@ -1192,8 +1198,8 @@ const graphEdgesRaw = [
     evidence: [
       source(
         "crates/aiperf/src/dynosim.rs",
-        915,
-        984,
+        950,
+        1019,
         "finish_shared_metrics_enforcing",
       ),
     ],

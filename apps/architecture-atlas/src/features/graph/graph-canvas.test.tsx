@@ -349,6 +349,37 @@ describe("graph canvas", () => {
     );
   });
 
+  it("falls back deterministically when layout service rejects", async () => {
+    const service: GraphCanvasLayoutService = {
+      layout: vi.fn(async () => {
+        throw new Error("worker protocol mismatch");
+      }),
+    };
+    render(
+      <GraphCanvas
+        audience="developer"
+        focusedEntityId={null}
+        layoutRequest={createLayoutRequest()}
+        layoutService={service}
+        neighborhood={{ downstreamNodeIds: [], upstreamNodeIds: [] }}
+        onFocusEntity={vi.fn()}
+        overlay={overlay}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Graph layout status" })).toHaveTextContent(
+        "Graph layout degraded",
+      ),
+    );
+    expect(screen.getByRole("status", { name: "Graph layout status" })).toHaveTextContent(
+      "worker protocol mismatch",
+    );
+    expect(await screen.findByTestId("graph-node-node.runner")).toBeInTheDocument();
+  });
+
   it("enables dragging and emits a typed manual position on completion", async () => {
     const onNodeDragComplete = vi.fn();
     render(
