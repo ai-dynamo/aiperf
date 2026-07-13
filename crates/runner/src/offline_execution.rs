@@ -1308,6 +1308,10 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                             &artifact_for_factory,
                             &["dynosim".to_owned()],
                             &shared,
+                            // Offline co-simulation feeds the callback observer
+                            // directly, so the sampler needs no worker-record
+                            // source (and must not be double-fed).
+                            None,
                         )?
                         .with_metrics_config(metrics.clone())
                         .with_performance_record_capture(false)

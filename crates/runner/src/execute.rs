@@ -21,7 +21,9 @@ use aiperf::adaptive::{
     AdaptiveControlVariable, AdaptiveRunConfig, AdaptiveStepConfig, build_adaptive_with_origins,
     positive_seconds_to_ns,
 };
-use aiperf::adaptive_core::{AdaptiveScale, CorrelationContext, SlaFilter, UserTarget};
+use aiperf::adaptive_core::{
+    AdaptiveScale, CorrelationContext, SharedWindowSampler, SlaFilter, UserTarget,
+};
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::content_server::{
@@ -1421,12 +1423,20 @@ async fn execute_native_inner(
         prepared_endpoints,
     })?;
     let start_ns = clock.now_ns();
+    // An adaptive phase needs each completed turn's finished worker record fed
+    // into its window sampler; the online dispatcher records per-token facts
+    // worker-locally, so the coordinator sampler is otherwise starved.
+    let wants_adaptive_record = request
+        .phases
+        .iter()
+        .any(|phase| phase.common().adaptive_scale.is_some());
     let capture = Rc::new(RunCapture::new(
         clock.clone(),
         start_ns,
         metrics_config.clone(),
         request.artifacts.raw_path.is_some(),
         live_sink.is_some(),
+        wants_adaptive_record,
     ));
     let execution_result = async {
         execution_backend.set_run_origin(start_ns)?;
@@ -1462,6 +1472,8 @@ async fn execute_native_inner(
                 &request.artifact_dir,
                 &endpoint_urls,
                 &shared_resources,
+                wants_adaptive_record
+                    .then(|| capture.clone() as Rc<dyn AdaptiveTerminalRecordSource>),
             )?;
             let record_processor: Rc<dyn TurnRecordProcessor> = Rc::new(CapturePhaseProcessor {
                 capture: capture.clone(),
@@ -1757,6 +1769,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     artifact_dir: &Path,
     endpoint_names: &[String],
     shared: &NativeScheduledResources,
+    adaptive_record_source: Option<Rc<dyn AdaptiveTerminalRecordSource>>,
 ) -> Result<ScheduledPhasePlan> {
     let phase_rng =
         RngRoot::new(dataset_rng_root.derive_seed(&format!("runner.phase.{phase_index}.dataset")));
@@ -1941,6 +1954,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
         phase_session,
         phase_prefill,
         user_target,
+        adaptive_record_source,
     )?;
     let mut plan =
         ScheduledPhasePlan::new(phase_config(phase, seamless_to_next)?, workload, policies)
@@ -2631,6 +2645,7 @@ fn adaptive_runtime_extension(
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
     user_target: Option<Rc<dyn UserTarget>>,
+    record_source: Option<Rc<dyn AdaptiveTerminalRecordSource>>,
 ) -> Result<Option<Rc<dyn ScheduledRuntimeExtension>>> {
     let Some(config) = adaptive_run_config(phase, benchmark_id, artifact_dir)? else {
         return Ok(None);
@@ -2697,6 +2712,7 @@ fn adaptive_runtime_extension(
         user_target,
         session_target: phase.concurrency(),
         prefill_target: phase.common().prefill_concurrency,
+        record_source,
     })))
 }
 
@@ -2791,6 +2807,10 @@ struct AdaptiveRuntimeExtension {
     user_target: Option<Rc<dyn UserTarget>>,
     session_target: Option<usize>,
     prefill_target: Option<usize>,
+    /// Worker-record source feeding the sampler on the online path. `None` for
+    /// dispatchers that feed the callback observer directly (offline), which
+    /// keeps the sampler from being double-fed.
+    record_source: Option<Rc<dyn AdaptiveTerminalRecordSource>>,
 }
 
 impl ScheduledRuntimeExtension for AdaptiveRuntimeExtension {
@@ -2824,6 +2844,20 @@ impl ScheduledRuntimeExtension for AdaptiveRuntimeExtension {
             self.user_target.clone(),
         )?;
         let gate: Rc<dyn IssuanceGate> = built.scale.clone();
+        // On the online path the dispatcher records token/usage/terminal facts
+        // worker-locally and discards the callback observer's token feed, so the
+        // sampler must be fed each completed turn's finished record explicitly,
+        // exactly as the graph phase runtime does. Offline supplies no source and
+        // keeps the callback-observer feed built into `built.observer`.
+        let record_processors: Vec<Rc<dyn TurnRecordProcessor>> =
+            if let Some(source) = self.record_source.clone() {
+                vec![Rc::new(AdaptiveSamplerRecordProcessor {
+                    source,
+                    sampler: built.scale.sampler().clone(),
+                })]
+            } else {
+                Vec::new()
+            };
         let controller: Rc<dyn ScheduledPhaseController> = Rc::new(
             AdaptiveScheduledPhaseController::new(built.scale, controller),
         );
@@ -2831,6 +2865,7 @@ impl ScheduledRuntimeExtension for AdaptiveRuntimeExtension {
             observer: built.observer,
             issuance_gate: Some(gate),
             controller,
+            record_processors,
         })
     }
 }
@@ -3078,7 +3113,17 @@ struct RunCapture {
     /// Non-consuming cloned records for the live-results sink, keyed by uuid;
     /// the authoritative record stays in the worker observer for the drain.
     live_records: RefCell<HashMap<Uuid, RecordIngest>>,
-    wants_live_record: bool,
+    /// Finished worker records staged for the adaptive window sampler, keyed by
+    /// uuid. The online dispatcher records per-token facts worker-locally, so the
+    /// coordinator's adaptive sampler never sees them through the callback
+    /// observer; the per-phase adaptive record processor drains this map through
+    /// [`AdaptiveTerminalRecordSource`]. Consumed per completed turn, so it never
+    /// accumulates beyond in-flight requests.
+    adaptive_records: RefCell<HashMap<Uuid, RecordIngest>>,
+    /// Whether the live-results sink consumes each completed record.
+    wants_live_sink_record: bool,
+    /// Whether an adaptive phase consumes each completed record.
+    wants_adaptive_record: bool,
 }
 
 impl RunCapture {
@@ -3087,7 +3132,8 @@ impl RunCapture {
         origin_ns: i64,
         config: MetricsConfig,
         raw_enabled: bool,
-        wants_live_record: bool,
+        wants_live_sink_record: bool,
+        wants_adaptive_record: bool,
     ) -> Self {
         Self {
             clock,
@@ -3099,8 +3145,16 @@ impl RunCapture {
             raw_enabled,
             raw_exchanges: RefCell::new(HashMap::new()),
             live_records: RefCell::new(HashMap::new()),
-            wants_live_record,
+            adaptive_records: RefCell::new(HashMap::new()),
+            wants_live_sink_record,
+            wants_adaptive_record,
         }
+    }
+
+    /// Whether the worker should snapshot a non-consuming record for either the
+    /// live-results sink or the adaptive window sampler.
+    fn wants_live_record(&self) -> bool {
+        self.wants_live_sink_record || self.wants_adaptive_record
     }
 
     /// Record the dispatch identity plus coordinator-known arrival facts, and
@@ -3120,7 +3174,7 @@ impl RunCapture {
                 audio_duration_s: turn.audio_duration_seconds,
                 ..RequestMetricMetadata::default()
             },
-            wants_live_record: self.wants_live_record,
+            wants_live_record: self.wants_live_record(),
         };
         self.identities.borrow_mut().push(CaptureIdentity {
             uuid: turn.uuid,
@@ -3151,7 +3205,24 @@ impl RunCapture {
     }
 
     fn record_live(&self, uuid: Uuid, record: RecordIngest) {
-        self.live_records.borrow_mut().insert(uuid, record);
+        // Fan the worker's non-consuming snapshot out to each interested
+        // consumer. Both drain their own map per completed turn, so neither
+        // consumer starves the other and neither map outgrows in-flight work.
+        match (self.wants_adaptive_record, self.wants_live_sink_record) {
+            (true, true) => {
+                self.adaptive_records
+                    .borrow_mut()
+                    .insert(uuid, record.clone());
+                self.live_records.borrow_mut().insert(uuid, record);
+            }
+            (true, false) => {
+                self.adaptive_records.borrow_mut().insert(uuid, record);
+            }
+            (false, true) => {
+                self.live_records.borrow_mut().insert(uuid, record);
+            }
+            (false, false) => {}
+        }
     }
 
     fn record_model_output(
@@ -3351,6 +3422,51 @@ impl RunCapture {
                 })
             })
             .collect()
+    }
+}
+
+/// Source of the authoritative worker-built terminal record for a completed
+/// online turn.
+///
+/// The online scheduled dispatcher records per-token facts in worker-local
+/// observers, so the coordinator's adaptive window sampler never sees them
+/// through the callback observer. This seam lets the per-phase adaptive record
+/// processor pull each completed turn's finished [`RecordIngest`] and feed it to
+/// the sampler through `WindowSampler::on_record`, exactly as the graph phase
+/// runtime does. Backends whose dispatcher feeds the callback observer directly
+/// (offline co-simulation) supply no source and keep the observer feed, so the
+/// sampler is never double-fed.
+pub(crate) trait AdaptiveTerminalRecordSource {
+    /// Consume the finished record for `uuid`, if the worker produced one.
+    fn take_terminal_record(&self, uuid: Uuid) -> Option<RecordIngest>;
+}
+
+impl AdaptiveTerminalRecordSource for RunCapture {
+    fn take_terminal_record(&self, uuid: Uuid) -> Option<RecordIngest> {
+        self.adaptive_records.borrow_mut().remove(&uuid)
+    }
+}
+
+/// Feeds each completed online turn's finished worker record into the adaptive
+/// window sampler.
+///
+/// This mirrors `graph_phase_runtime`'s `sampler.on_record(&record.ingest)` feed
+/// for the scheduled online path, where token/usage/terminal facts are recorded
+/// worker-locally and the coordinator's callback observer only sees arrivals.
+/// It runs after normal measurement and credit return, keeping token
+/// accumulation off the coordinator.
+struct AdaptiveSamplerRecordProcessor {
+    source: Rc<dyn AdaptiveTerminalRecordSource>,
+    sampler: SharedWindowSampler,
+}
+
+#[async_trait(?Send)]
+impl TurnRecordProcessor for AdaptiveSamplerRecordProcessor {
+    async fn process(&self, credit: &IssuedCredit, _outcome: &TurnDispatchOutcome) -> Result<()> {
+        if let Some(ingest) = self.source.take_terminal_record(credit.turn.uuid) {
+            self.sampler.borrow_mut().on_record(&ingest);
+        }
+        Ok(())
     }
 }
 
@@ -3845,7 +3961,14 @@ mod tests {
     #[test]
     fn run_capture_finish_stamps_global_index_and_joins_worker_records() {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let capture = RunCapture::new(clock.clone(), 0, MetricsConfig::default(), false, false);
+        let capture = RunCapture::new(
+            clock.clone(),
+            0,
+            MetricsConfig::default(),
+            false,
+            false,
+            false,
+        );
         let (a, b, c) = facts();
         // Dispatch order A, B, C.
         register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
@@ -3919,7 +4042,7 @@ mod tests {
         let build = |split: bool| -> (Vec<u8>, Option<f64>) {
             let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
             let config = MetricsConfig::default();
-            let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false);
+            let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false, false);
             let (a, b, c) = facts();
             register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
             register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
@@ -3995,7 +4118,14 @@ mod tests {
     #[test]
     fn run_capture_finish_synthesizes_fallback_for_pre_worker_failures() {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let capture = RunCapture::new(clock.clone(), 0, MetricsConfig::default(), false, false);
+        let capture = RunCapture::new(
+            clock.clone(),
+            0,
+            MetricsConfig::default(),
+            false,
+            false,
+            false,
+        );
         let (a, b, _c) = facts();
         register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
         // B is dispatched (identity + Failed label) but never reaches a worker.

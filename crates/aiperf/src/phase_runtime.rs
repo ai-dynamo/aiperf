@@ -70,6 +70,13 @@ pub struct ScheduledRuntimeExtensionParts {
     pub issuance_gate: Option<Rc<dyn IssuanceGate>>,
     /// Effective phase controller, normally wrapping the supplied controller.
     pub controller: Rc<dyn ScheduledPhaseController>,
+    /// Per-turn record processors the extension needs registered on the runtime.
+    ///
+    /// An extension whose policy consumes finished worker records (rather than
+    /// the callback observer) contributes them here, since the sampler and its
+    /// feed are both created at phase start. They run alongside the plan's own
+    /// processors, after normal measurement and credit return.
+    pub record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
 }
 
 /// Object-safe factory for one phase-local runtime policy extension.
@@ -784,27 +791,32 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         } else {
             Rc::new(ObserverTee::new(delegates))
         };
-        let (observer, issuance_gate) = if let Some(extension) = plan.runtime_extension.take() {
-            let extension = match extension.build(
-                self.clock.clone(),
-                start_ns,
-                phase_start_ns,
-                delegate,
-                controller,
-            ) {
-                Ok(extension) => extension,
-                Err(error) => {
-                    return Rc::new(FailedScheduledPhaseExecution {
-                        phase_id: config.id.clone(),
-                        error: format!("building phase runtime extension: {error:#}"),
-                    });
-                }
+        let (observer, issuance_gate, extension_processors) =
+            if let Some(extension) = plan.runtime_extension.take() {
+                let extension = match extension.build(
+                    self.clock.clone(),
+                    start_ns,
+                    phase_start_ns,
+                    delegate,
+                    controller,
+                ) {
+                    Ok(extension) => extension,
+                    Err(error) => {
+                        return Rc::new(FailedScheduledPhaseExecution {
+                            phase_id: config.id.clone(),
+                            error: format!("building phase runtime extension: {error:#}"),
+                        });
+                    }
+                };
+                controller = extension.controller;
+                (
+                    extension.observer,
+                    extension.issuance_gate,
+                    extension.record_processors,
+                )
+            } else {
+                (delegate, None, Vec::new())
             };
-            controller = extension.controller;
-            (extension.observer, extension.issuance_gate)
-        } else {
-            (delegate, None)
-        };
         let runtime = ScheduledRuntime::new_with_observer(
             self.clock.clone(),
             start_ns,
@@ -821,6 +833,9 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {
+            runtime.add_record_processor(processor);
+        }
+        for processor in extension_processors {
             runtime.add_record_processor(processor);
         }
         runtime.configure_ancillary(
