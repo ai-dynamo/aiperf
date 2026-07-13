@@ -79,9 +79,9 @@ pub struct HttpRequest {
     pub max_output_tokens: usize,
     /// Prompt text placed on the wire.
     pub prompt_text: Option<String>,
-    /// Optional prebuilt JSON request body. Accuracy benchmarks use this to
-    /// preserve benchmark-specific messages, sampling settings, and stop strings;
-    /// normal synthetic requests leave it absent and use the shared chat builder.
+    /// Optional prebuilt JSON request body used to preserve dataset-specific
+    /// messages, sampling settings, and stop strings; normal synthetic requests
+    /// leave it absent and use the shared chat builder.
     pub request_body: Option<Value>,
     /// Optional already-serialized request body. Unified dataset materializers
     /// use this byte-exact fast path; it is mutually exclusive with
@@ -286,11 +286,10 @@ fn enforce_turn_data_policy(
     }
     if !data_policy.allow_content_diagnostics() {
         if let Some(error) = &mut record.error {
-            error.message = "restricted evaluator HTTP operation failed".to_string();
+            error.message = "restricted HTTP operation failed".to_string();
         }
         if model_response.error_message.is_some() {
-            model_response.error_message =
-                Some("restricted evaluator inference failed".to_string());
+            model_response.error_message = Some("restricted inference failed".to_string());
         }
     }
 }
@@ -765,12 +764,11 @@ pub struct TransportSink {
     /// Whether to retain each raw SSE/non-streaming chunk as a generic
     /// `serde_json::Value` in `ModelResponseMetadata::wire_responses`.
     ///
-    /// Only the evaluation/agentic consumers read `wire_responses`; scheduled,
-    /// request-rate, and user-centric performance runs write it and never read
-    /// it. Retaining it there re-parses every streamed chunk into an
-    /// allocation-heavy `Value` on top of the typed `ChatChunk` the metrics
-    /// path already needs, so those hot paths opt out. Defaults to `true` to
-    /// preserve capture for every consumer that does not explicitly opt out.
+    /// Scheduled, request-rate, and user-centric performance runs write
+    /// `wire_responses` but never read it. Retaining it re-parses every streamed
+    /// chunk into an allocation-heavy `Value` on top of the typed `ChatChunk` the
+    /// metrics path already needs, so those hot paths opt out. Defaults to `true`
+    /// so a raw-artifact consumer that opts in still receives every chunk.
     capture_wire_responses: bool,
     /// Worker-local metric accumulator for the scheduled runner's measured
     /// execution path. `None` until [`configure_measurement`] is called; the
@@ -875,10 +873,9 @@ impl TransportSink {
 
     /// Enable or disable retention of raw wire responses (`wire_responses`).
     ///
-    /// Defaults to `true`. Scheduling/performance sinks whose results are never
-    /// inspected by the evaluation/agentic consumers set this to `false` to
-    /// skip the redundant per-chunk generic-`Value` parse on the streaming hot
-    /// path.
+    /// Defaults to `true`. Scheduling/performance sinks whose raw wire responses
+    /// are never inspected set this to `false` to skip the redundant per-chunk
+    /// generic-`Value` parse on the streaming hot path.
     pub fn with_wire_response_capture(mut self, capture: bool) -> Self {
         self.capture_wire_responses = capture;
         self

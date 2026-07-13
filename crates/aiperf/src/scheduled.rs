@@ -62,7 +62,7 @@ pub type FirstTokenHandler = Box<dyn Fn(i64) + 'static>;
 /// The issuer selects this future against the ordinary backend dispatch. A
 /// cancellation winner drops that dispatch future, emits exactly one cancelled
 /// observer terminal, and still invokes the normal completion callback. This
-/// keeps evaluator, proxy, phase, and future cancellation sources outside the
+/// keeps phase and future cancellation sources outside the
 /// transport-neutral [`TurnDispatcher`] seam.
 pub trait DispatchCancellation {
     /// Whether cancellation was requested before dispatch received its first poll.
@@ -197,7 +197,7 @@ pub trait TurnDispatcher {
 ///
 /// Python AIPerf routes parsed inference records through record processors after
 /// workers return them (`records/record_processor_service.py:218-384`). Native
-/// consumers such as accuracy grading attach here; they never own transport or
+/// downstream record consumers attach here; they never own transport or
 /// issuance policy.
 #[async_trait(?Send)]
 pub trait TurnRecordProcessor {

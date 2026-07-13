@@ -704,9 +704,6 @@ pub async fn run_fixed_schedule_online(
 
 /// Run one authored turn per dataset conversation through the ordinary AIPerf
 /// scheduler, transport, observer, metrics, and terminal-processing pipeline.
-///
-/// Accuracy is one consumer of this generic path; the runner has no benchmark,
-/// ground-truth, or grader knowledge.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_single_turn_dataset_online(
     base_url: String,
@@ -723,10 +720,9 @@ pub async fn run_single_turn_dataset_online(
 
 /// Run any prepared [`Workload`] through the standard online transport path.
 ///
-/// This is the application composition boundary for dynamic workloads such as
-/// agentic evaluation. The workload owns scheduling decisions only; inference
-/// still traverses the shared `TransportSink`, observers, credits, metrics, and
-/// phase runner assembled here.
+/// This is the application composition boundary for dynamic workloads. The
+/// workload owns scheduling decisions only; inference still traverses the shared
+/// `TransportSink`, observers, credits, metrics, and phase runner assembled here.
 pub async fn run_scheduled_online(
     base_url: String,
     model: String,
@@ -1373,7 +1369,7 @@ mod tests {
                         .and_then(aiperf_metrics::MetricResult::distribution)
                         .is_some()
                 );
-                let native = aiperf_metrics::NativeReport::new(&report.metrics, None);
+                let native = aiperf_metrics::NativeReport::new(&report.metrics);
                 let json = serde_json::to_value(native).unwrap();
                 assert_eq!(json["schema_version"], "2.0");
                 assert_eq!(json["metrics"]["request_count"]["type"], "counter");
