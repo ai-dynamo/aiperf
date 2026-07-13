@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Runner backend, workload, and provider selection models.
+"""Runner transport, workload, and provider selection models.
 
 The selected ``aiperf-runner`` distribution owns the registries behind these
 identifiers.  Config v2 therefore validates only a normalized, non-empty ID
@@ -16,19 +16,23 @@ from typing import Annotated, Any, Self, TypeAlias
 from pydantic import AfterValidator, ConfigDict, Field, field_validator, model_validator
 
 from aiperf.config.base import BaseConfig
-from aiperf.config.dynosim import DynosimBackendConfig
+from aiperf.config.dynosim import DynosimTransportConfig
 
 __all__ = [
     "AgenticProviderConfig",
-    "DynosimBackendConfig",
+    "DynosimTransportConfig",
     "EvaluationProviderConfig",
     "EvaluationResourceConfig",
     "EvaluationRouteConfig",
     "EvaluationWorkloadConfig",
-    "RunnerBackendConfig",
     "RunnerComponentId",
+    "RunnerTransportConfig",
     "RunnerWorkloadConfig",
 ]
+
+# Transport IDs whose typed ``DynosimTransportConfig`` shape is validated and
+# normalized to a plain dict for the wire.
+_DYNOSIM_TRANSPORT_TYPES = frozenset({"dynosim_offline", "dynosim_online"})
 
 
 def _normalize_runner_component_id(value: str) -> str:
@@ -68,48 +72,53 @@ class _NamedRunnerComponentConfig(BaseConfig):
     ]
 
 
-class RunnerBackendConfig(_NamedRunnerComponentConfig):
-    """Orthogonal execution-backend selection for one native run.
+class RunnerTransportConfig(_NamedRunnerComponentConfig):
+    """Orthogonal execution-transport selection for one native run.
 
-    The open runner registry owns arbitrary backend IDs, whose ``config`` stays an
-    opaque dict.  The built-in ``dynosim`` backend (in-process Dynamo mocker
-    replay) has a documented structural contract so it can be authored with typed,
-    validated, schema-visible fields; it is normalized back to a plain dict for the
-    wire, mirroring the ``evaluation`` workload's precedent.
+    The open runner registry owns arbitrary transport IDs, whose ``config`` stays
+    an opaque dict.  The built-in ``dynosim_offline`` / ``dynosim_online``
+    transports (in-process Dynamo mocker replay) have a documented structural
+    contract so they can be authored with typed, validated, schema-visible fields;
+    the object is normalized back to a plain dict for the wire, mirroring the
+    ``evaluation`` workload's precedent.  The clock rides on the transport ID —
+    ``dynosim_offline`` is the deterministic virtual clock, ``dynosim_online`` the
+    wall clock — so there is no ``replay_mode`` field.
     """
 
-    type: RunnerComponentId = "online_http"
+    type: RunnerComponentId = "http"
     config: Annotated[
-        dict[str, Any] | DynosimBackendConfig,
+        dict[str, Any] | DynosimTransportConfig,
         Field(
             default_factory=dict,
             description=(
-                "Factory-owned authored configuration. The built-in dynosim backend "
-                "shape is documented explicitly; other open backend factories retain "
-                "opaque objects."
+                "Factory-owned authored configuration. The built-in dynosim "
+                "transport shape is documented explicitly; other open transport "
+                "factories retain opaque objects."
             ),
         ),
     ]
 
     @model_validator(mode="after")
     def validate_builtin_dynosim_shape(self) -> Self:
-        """Normalize the typed dynosim backend envelope when selected.
+        """Normalize the typed dynosim transport envelope when selected.
 
-        Validates against :class:`DynosimBackendConfig`, then dumps back to a plain
-        snake_case dict so the wire matches the runner's ``DynosimBackendSpec``.
-        Only authored fields are emitted (``exclude_unset``); the runner fills every
-        omitted field from its ``serde`` defaults.
+        Validates against :class:`DynosimTransportConfig`, then dumps back to a
+        plain snake_case dict so the wire matches the runner's
+        ``DynosimTransportSpec``.  Only authored fields are emitted
+        (``exclude_unset``); the runner fills every omitted field from its
+        ``serde`` defaults.
         """
-        if self.type != "dynosim":
-            if isinstance(self.config, DynosimBackendConfig):
+        if self.type not in _DYNOSIM_TRANSPORT_TYPES:
+            if isinstance(self.config, DynosimTransportConfig):
                 raise ValueError(
-                    "DynosimBackendConfig requires backend.type='dynosim'"
+                    "DynosimTransportConfig requires transport.type "
+                    "'dynosim_offline' or 'dynosim_online'"
                 )
             return self
         validated = (
             self.config
-            if isinstance(self.config, DynosimBackendConfig)
-            else DynosimBackendConfig.model_validate(self.config)
+            if isinstance(self.config, DynosimTransportConfig)
+            else DynosimTransportConfig.model_validate(self.config)
         )
         dumped = validated.model_dump(
             mode="json",

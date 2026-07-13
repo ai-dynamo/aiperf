@@ -214,7 +214,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 template=getattr(ep, "template", None),
                 session_header=getattr(ep, "session_header", None),
             ),
-            transport=ep.transport,
+            # EndpointConfig.transport was removed (the axis moved to the
+            # top-level benchmark.transport); the legacy aiohttp stack
+            # auto-detects transport from the URL scheme downstream.
+            transport=getattr(ep, "transport", None),
         )
 
     @property

@@ -187,7 +187,7 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def agentic_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("online_http", "agentic")
+    assert installation.supports_pair("http", "agentic")
     return installation
 
 
@@ -304,7 +304,7 @@ def test_python_config_v2_reaches_direct_agentic_adapter(
         assert completed.returncode == 0, completed.stderr.decode(errors="replace")
         assert request["protocol_version"] == 2
         assert request["operation"] == "execute"
-        assert request["run"]["backend"]["type"] == "online_http"
+        assert request["run"]["transport"]["type"] == "http"
         workload = request["run"]["workload"]
         assert workload["type"] == "agentic"
         assert workload["config"]["dataset"] == "fixture/agentic@locked"
@@ -315,7 +315,7 @@ def test_python_config_v2_reaches_direct_agentic_adapter(
         assert result.success, result.error
         report = orjson.loads((artifact_dir / "native-v2.json").read_bytes())
         assert report["run"]["mode"] == "agentic_accuracy"
-        assert report["run"]["backend"] == "online_http"
+        assert report["run"]["transport"] == "http"
         assert report["run"]["workload"] == "agentic"
         assert report["agentic"]["summary"]["episode_count"] == 1
         assert report["agentic"]["summary"]["completed_count"] == 1

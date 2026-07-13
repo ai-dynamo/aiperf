@@ -4,7 +4,8 @@
 """Low-overhead process entry point for AIPerf.
 
 Offline/online Dynamo replay is authored through ``aiperf profile`` via
-``backend.type: dynosim``; there is no ``aiperf dynosim`` fast path.
+``transport.type: dynosim_offline`` / ``dynosim_online``; there is no
+``aiperf dynosim`` fast path.
 """
 
 from __future__ import annotations

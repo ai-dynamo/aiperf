@@ -462,9 +462,15 @@ fn validate_url(raw: &str) -> EndpointResult<()> {
             "URL {raw:?} is missing scheme or host. Expected an http(s) or grpc(s) URL."
         ))
     })?;
-    if !matches!(parsed.scheme(), "http" | "https" | "grpc" | "grpcs") {
+    // `dynosim` is the non-dialed materialization sentinel used by the
+    // in-process Dynamo transports (reported as `dynosim://offline`); it opens
+    // no socket, so it is accepted here alongside the real network schemes.
+    if !matches!(
+        parsed.scheme(),
+        "http" | "https" | "grpc" | "grpcs" | "dynosim"
+    ) {
         return Err(EndpointError::InvalidConfig(format!(
-            "URL {raw:?} has unsupported scheme {:?}. Expected 'http', 'https', 'grpc', or 'grpcs'.",
+            "URL {raw:?} has unsupported scheme {:?}. Expected 'http', 'https', 'grpc', 'grpcs', or 'dynosim'.",
             parsed.scheme()
         )));
     }

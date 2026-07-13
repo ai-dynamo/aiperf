@@ -53,6 +53,7 @@ import { CrateReferenceView } from "../features/crates/crate-reference";
 import {
   GraphScene,
 } from "../features/graph/graph-scene";
+import { RuntimeStory } from "../features/story/runtime-story";
 import type { GraphFitViewCommand } from "../features/graph/types";
 
 const GRAPH_SEARCH_INPUT_ID = "atlas-graph-search";
@@ -126,6 +127,7 @@ function RootRouteComponent() {
   const storage = getStorage();
   const activeSceneRoute = routeCapabilities.find((route) => route.path === pathname);
   const isSceneRoutePath = activeSceneRoute !== undefined;
+  const isStoryRoute = pathname === "/story";
 
   const audience = resolveAudience(search.audience, storage);
   const routeSceneId = activeSceneRoute?.sceneId ?? "scene.runtime-composition";
@@ -322,6 +324,7 @@ function RootRouteComponent() {
       primaryFlavor={primaryFlavor}
       sceneRoutes={routeCapabilities}
       sharedStateNotice={sharedStateNotice}
+      storyMode={isStoryRoute}
     >
       <AudienceProvider audience={audience}>
         <GraphFitRequestContext.Provider value={fitLifecycle}>
@@ -401,6 +404,12 @@ const runtimeSceneRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   component: () => <GraphSceneRouteComponent sceneId="scene.runtime-composition" />,
+});
+
+const storyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/story",
+  component: () => <RuntimeStory audience={useAudience()} />,
 });
 
 const runnerProtocolSceneRoute = createRoute({
@@ -518,6 +527,7 @@ function CrateRouteComponent() {
 
 const routeTree = rootRoute.addChildren([
   runtimeSceneRoute,
+  storyRoute,
   runnerProtocolSceneRoute,
   schedulingSceneRoute,
   datasetSceneRoute,

@@ -161,3 +161,14 @@ pub trait RequestSink: Send + Sync {
 3. Trace/agentic/disagg workload modes through the shared driver.
 4. Extract `loadgen-core` crate; `dynamo-aiperf` and `lib/mocker` both depend on it.
 5. Exporters / summary parity with Python AIPerf output.
+
+## Addendum — 2026-07-12 (historical precursor)
+
+This document describes a prior `dynamo-aiperf-native` working tree built on
+AI-Dynamo application internals. It is retained only as lineage for the
+`RequestSink` / `RequestObserver` seam and the later `loadgen-core` extraction.
+
+The current AIPerf Rust workspace lives under `crates/`, default builds have no
+Dynamo dependency, and the optional `dynosim` adapter consumes only the curated
+public mocker boundary. Do not read the "Approved design" status above as a
+current implementation plan for this repository.

@@ -71,8 +71,8 @@ fn envelope(artifact_dir: &Path) -> RunnerEnvelopeV2 {
                 "random_seed": 37
             },
             "artifact_target": artifact_dir,
-            "backend": {
-                "type": "dynosim",
+            "transport": {
+                "type": "dynosim_offline",
                 "config": {}
             },
             "workload": {
@@ -173,10 +173,10 @@ fn statically_linked_extension_is_selected_in_a_fresh_runner_process() {
         serde_json::json!([EXTENSION_NAME])
     );
     assert_eq!(proof["distribution_id"], DISTRIBUTION_ID);
-    assert_eq!(proof["backend"], "dynosim");
+    assert_eq!(proof["transport"], "dynosim_offline");
     assert_eq!(proof["workload"], "scheduled");
     assert_eq!(proof["report_distribution_id"], DISTRIBUTION_ID);
-    assert_eq!(proof["report_backend"], "dynosim");
+    assert_eq!(proof["report_backend"], "dynosim_offline");
     assert_eq!(proof["report_workload"], "scheduled");
     assert_eq!(
         proof["report_extensions"],
@@ -221,7 +221,7 @@ fn statically_linked_extension_child() {
     assert!(
         capabilities
             .supported_pairs
-            .contains(&["dynosim".to_owned(), "scheduled".to_owned()])
+            .contains(&["dynosim_offline".to_owned(), "scheduled".to_owned()])
     );
     assert_eq!(evidence().registry_builds, 1);
     assert_eq!(
@@ -241,7 +241,7 @@ fn statically_linked_extension_child() {
         terminal.errors
     );
     assert!(terminal.success, "terminal errors: {:?}", terminal.errors);
-    assert_eq!(terminal.provenance["backend"], "dynosim");
+    assert_eq!(terminal.provenance["transport"], "dynosim_offline");
     assert_eq!(terminal.provenance["workload"], "scheduled");
     assert_eq!(terminal.provenance["phase_count"], "2");
     assert_eq!(dataset_loads.load(Ordering::SeqCst), 1);
@@ -256,7 +256,7 @@ fn statically_linked_extension_child() {
         serde_json::from_slice(&std::fs::read(artifact_dir.join("native-v2.json")).unwrap())
             .unwrap();
     assert_eq!(report["run"]["distribution_id"], DISTRIBUTION_ID);
-    assert_eq!(report["run"]["backend"], "dynosim");
+    assert_eq!(report["run"]["transport"], "dynosim_offline");
     assert_eq!(report["run"]["workload"], "scheduled");
     assert_eq!(
         report["run"]["extensions"],
@@ -287,10 +287,10 @@ fn statically_linked_extension_child() {
             "extension_name": EXTENSION_NAME,
             "advertised_extensions": capabilities.extensions,
             "distribution_id": capabilities.distribution_id,
-            "backend": terminal.provenance["backend"],
+            "transport": terminal.provenance["transport"],
             "workload": terminal.provenance["workload"],
             "report_distribution_id": report["run"]["distribution_id"],
-            "report_backend": report["run"]["backend"],
+            "report_backend": report["run"]["transport"],
             "report_workload": report["run"]["workload"],
             "report_extensions": report["run"]["extensions"],
             "report_endpoint_profiles": report["run"]["endpoint_profiles"]

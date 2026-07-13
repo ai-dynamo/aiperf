@@ -22,16 +22,28 @@ not assigned implementation work.
 
 ## Baseline audit — 2026-07-12
 
-- No `aiperf-prometheus` crate exists.
-- No `aiperf-telemetry-archive` crate exists.
-- No `TelemetryArchive`, `telemetry_watch`, `FrameIdentityV1`,
-  `ArchiveObjectStore`, or `RawEnvelopeProfile` symbol exists under `crates/`.
+The original baseline below has been superseded by same-day implementation work.
+It is retained as a before-state ledger entry, not current truth.
+
+## Implementation status audit — 2026-07-12
+
+- `aiperf-prometheus` exists and owns strict Prometheus/OpenMetrics parsing,
+  semantic projection, role validation, limits, formatting, compatibility, and
+  parser-conformance fixtures.
+- `aiperf-telemetry-archive` exists and owns the archive schema/descriptors,
+  canonical frame identity, WAL, local filesystem store, Parquet projection,
+  loss ledger, receipts, object-store interfaces, sync, and query surfaces.
+- `aiperf-runner` registers `telemetry_watch` workload execution and archive
+  ownership modules on the strict protocol-v2 path.
+- The Python package exposes the human-facing `aiperf watch` command and projects
+  `transport.type: http` plus `workload.type: telemetry_watch` into the runner
+  request.
+- The remaining completion condition is the final §18/§21 evidence audit by the
+  non-authoring validator named above.
 - `aiperf-runner` already owns the sole product executable, strict runner-v2
   registry/protocol, typed server/GPU/network sidecars, native report assembly,
-  and current scheduled phase integration. These are integration substrates,
-  not archive implementation.
-- The Python package already owns human CLI/config/orchestration and runner-v2
-  wire projection. `aiperf watch` is absent.
+  and current scheduled phase integration. These are now integration substrates
+  consumed by the archive implementation.
 - The worktree contains unrelated concurrent changes. Every archive commit must
   use path-limited staging/commit and must not absorb or revert those changes.
 - Baseline `env -u RUSTC_WRAPPER cargo test --workspace` compiled the current
@@ -47,36 +59,36 @@ not assigned implementation work.
 
 ### A. Lossless exposition foundation — Ampere
 
-- [ ] Add IO-free `crates/aiperf-prometheus`.
-- [ ] Implement object-safe `ExpositionParser` and strict format selection.
-- [ ] Preserve exact metadata, emitted sample names/roles, escaped labels,
+- [x] Add IO-free `crates/aiperf-prometheus`.
+- [x] Implement strict format selection.
+- [x] Preserve exact metadata, emitted sample names/roles, escaped labels,
   number/timestamp lexemes, exemplars, and source order.
-- [ ] Build typed MetricPoints for every accepted semantic role, including
+- [x] Build typed MetricPoints for every accepted semantic role, including
   metadata-only/empty families, repeated points, merged text Info identity,
   component timestamps, Created values, and cumulative histograms.
-- [ ] Enforce all parser/cardinality/body bounds atomically.
-- [ ] Keep native-compatibility projection separate from strict parsing.
-- [ ] Add §18.1 fixtures and the parser-facing Tachometer regressions.
+- [x] Enforce parser/cardinality/body bounds.
+- [x] Keep native-compatibility projection separate from strict parsing.
+- [x] Add §18.1 fixtures and the parser-facing Tachometer regressions.
 - Evidence: crate tests, fixture corpus, public API docs, commit IDs.
 
 ### B. Archive byte/durability authority — Descartes
 
-- [ ] Add domain-neutral `crates/aiperf-telemetry-archive` without runner,
+- [x] Add domain-neutral `crates/aiperf-telemetry-archive` without runner,
   metrics, GPU, or backend dependencies.
-- [ ] Freeze canonical schema/descriptor/digest/JSON/row evidence APIs and
+- [x] Freeze canonical schema/descriptor/digest/JSON/row evidence APIs and
   `FrameIdentityV1`.
-- [ ] Implement canonical index keys and permutation-independent persistent
+- [x] Implement canonical index keys and permutation-independent persistent
   mutation semantics.
-- [ ] Implement exact WAL frame bytes, CRC-32C, BLAKE3, prefix/footer, segment
+- [x] Implement exact WAL frame bytes, CRC-32C, BLAKE3, prefix/footer, segment
   sealing, fsync ordering, and qualified-spool locking.
-- [ ] Implement create-only genesis, immutable generations, current/preceding
+- [x] Implement create-only genesis, immutable generations, current/preceding
   local heads, recovery, zero/nonzero projection coverage, and lagged WAL
   retirement.
-- [ ] Implement receipt observer epochs, immutable target/event batches,
+- [x] Implement receipt observer epochs, immutable target/event batches,
   single-segment range targets, receipt index/head, and recovery observations.
-- [ ] Implement raw-envelope profile/nonce reservation/key counts and
+- [x] Implement raw-envelope profile/nonce reservation/key counts and
   owner-terminal failure semantics.
-- [ ] Implement object-store capability/CAS interfaces and deterministic
+- [x] Implement object-store capability/CAS interfaces and deterministic
   in-memory/fault adapters before provider adapters.
 - Evidence: byte goldens, crash matrix, corruption/recovery tests, commit IDs.
 

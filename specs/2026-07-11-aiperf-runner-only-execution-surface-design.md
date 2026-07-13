@@ -893,3 +893,23 @@ describing an "isolated compatibility decoder": no v1 decoder, authority,
 request builder, or fallback remains on the runner. (The `aiperf-endpoints`
 crate keeps its own internal `EndpointType` metadata/compatibility adapters —
 those are unrelated to the removed runner wire protocol.)
+
+## Addendum — 2026-07-12 (transport vocabulary and telemetry-watch pair)
+
+The runner execution axis has been renamed from backend to transport in the
+strict protocol-v2 surface. Capabilities now emit `transports`, authored requests
+carry `run.transport`, and registered IDs are `http`, `grpc`,
+`dynosim_offline`, and `dynosim_online`. The older `online_http`,
+`online_grpc`, and single `dynosim` backend names in this spec are superseded.
+
+The base runner's executable protocol-v2 matrix now also includes the
+operational history plane:
+
+| Runner distribution | Executable protocol-v2 pairs |
+|---|---|
+| Base | `http + scheduled`, `http + graph`, `http + static_accuracy`, `http + agentic`, `http + telemetry_watch`, `grpc + scheduled` |
+| `dynosim` feature | every base pair plus `dynosim_offline + scheduled`, `dynosim_offline + graph`, `dynosim_online + scheduled`, and `dynosim_online + graph` |
+
+Exact deployment-owned evaluator roots may still conditionally add
+`http + evaluation`. Capability truth remains exact-image-specific, and
+`protocol_versions` remains `[2]`.

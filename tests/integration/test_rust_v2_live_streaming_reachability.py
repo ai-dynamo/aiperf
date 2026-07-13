@@ -118,7 +118,7 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def scheduled_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("online_http", "scheduled")
+    assert installation.supports_pair("http", "scheduled")
     return installation
 
 

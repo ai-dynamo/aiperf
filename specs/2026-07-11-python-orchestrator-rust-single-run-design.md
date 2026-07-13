@@ -291,3 +291,19 @@ This supersedes the earlier statement that "the Rust protocol-v1 decoder may
 remain as an isolated" compatibility path: no v1 decoder or authority remains.
 The Python-side facts are unchanged and still true — Python projects one
 authored v2 request and never resolves or converts a run to protocol v1.
+
+## Addendum — 2026-07-12 (transport vocabulary)
+
+The Python-authored runner envelope now uses `transport`, not `backend`, for the
+execution axis. `RustSubprocessExecutor` and the v2 wire projector emit
+`run.transport.type` / `run.transport.config` together with
+`run.workload.type` / `run.workload.config`. The current built transport IDs are
+`http`, `grpc`, `dynosim_offline`, and `dynosim_online`.
+
+This supersedes earlier addenda that named `benchmark.backend.type:
+online_grpc`, `online_http + scheduled`, or a single `dynosim` backend. Native
+gRPC selection is now `transport.type: grpc`; in-process Dynamo replay is split
+between `transport.type: dynosim_offline` and `transport.type:
+dynosim_online`, with no `replay_mode` field. The core process claim remains:
+Python projects one side-effect-free protocol-v2 request and never resolves or
+falls back through protocol v1.

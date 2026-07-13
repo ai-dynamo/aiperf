@@ -2994,9 +2994,9 @@
           "default": null,
           "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
         },
-        "backend": {
-          "$ref": "#/$defs/RunnerBackendConfig",
-          "description": "Orthogonal native backend selection. The open type ID and factory-owned config are validated by the selected aiperf-runner."
+        "transport": {
+          "$ref": "#/$defs/RunnerTransportConfig",
+          "description": "Orthogonal native transport selection. The open type ID and factory-owned config are validated by the selected aiperf-runner. The clock rides on the transport ID (dynosim_offline=virtual, dynosim_online/http/grpc=wall clock)."
         },
         "workload": {
           "anyOf": [
@@ -8972,15 +8972,6 @@
       "title": "DynamoKvEventVisibility",
       "type": "string"
     },
-    "DynamoReplayMode": {
-      "description": "Clock axis for the in-process engine (mirrors ``DynamoReplayModeSpec``).\n\n``offline`` fast-forwards a virtual clock for deterministic byte-exact replay;\n``online`` drives the same engine under a wall clock for live-throughput\nmeasurement.  Both are in-process — ``online`` still opens no sockets.",
-      "enum": [
-        "offline",
-        "online"
-      ],
-      "title": "DynamoReplayMode",
-      "type": "string"
-    },
     "DynosimAicConfig": {
       "additionalProperties": false,
       "description": "Structured AIConfigurator overrides (mirrors ``DynosimAicSpec``).\n\nAll fields are optional; the runner requires ``backend``, ``system``, and\n``model_path`` together once any AIC field is set.",
@@ -9306,9 +9297,111 @@
       "title": "DynosimArtifactConfig",
       "type": "object"
     },
-    "DynosimBackendConfig": {
+    "DynosimRouterMode": {
+      "description": "Router policy for routed topologies (mirrors ``DynosimRouterSpec``).",
+      "enum": [
+        "round_robin",
+        "kv"
+      ],
+      "title": "DynosimRouterMode",
+      "type": "string"
+    },
+    "DynosimSlaConfig": {
       "additionalProperties": false,
-      "description": "Typed ``backend.config`` for ``backend.type: dynosim``.\n\nMirrors the runner's ``DynosimBackendSpec`` (``deny_unknown_fields``).  The\n``engine``/``prefill_engine``/``decode_engine``/``router`` objects are opaque\n``MockEngineArgs``/``KvRouterConfig`` JSON, preserved verbatim for Dynamo to\nvalidate.",
+      "description": "Canonical goodput thresholds owned by Dynamo's collector.\n\nMirrors ``DynosimSlaSpec``; each bound is optional and non-negative.",
+      "properties": {
+        "ttftMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum time to first token (ms).",
+          "title": "Ttftms",
+          "x-jinja2-supported": true
+        },
+        "itlMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum mean inter-token latency (ms).",
+          "title": "Itlms",
+          "x-jinja2-supported": true
+        },
+        "e2EMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\{\\{.*\\}\\}.*",
+              "description": "Jinja2 template (e.g., '{{ variable }}')."
+            },
+            {
+              "type": "string",
+              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
+              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
+            }
+          ],
+          "default": null,
+          "description": "Maximum end-to-end latency (ms).",
+          "title": "E2Ems",
+          "x-jinja2-supported": true
+        }
+      },
+      "title": "DynosimSlaConfig",
+      "type": "object"
+    },
+    "DynosimTopology": {
+      "description": "Authored offline deployment topology (mirrors ``DynosimTopologySpec``).",
+      "enum": [
+        "single",
+        "aggregated",
+        "disaggregated"
+      ],
+      "title": "DynosimTopology",
+      "type": "string"
+    },
+    "DynosimTransportConfig": {
+      "additionalProperties": false,
+      "description": "Typed ``transport.config`` for ``transport.type: dynosim_offline`` / ``dynosim_online``.\n\nMirrors the runner's ``DynosimTransportSpec`` (``deny_unknown_fields``).  The\n``engine``/``prefill_engine``/``decode_engine``/``router`` objects are opaque\n``MockEngineArgs``/``KvRouterConfig`` JSON, preserved verbatim for Dynamo to\nvalidate.  The clock axis is not a field here — it rides on the transport ID.",
       "properties": {
         "engineProfile": {
           "anyOf": [
@@ -9514,11 +9607,6 @@
           "default": "round_robin",
           "description": "Router policy for routed topologies."
         },
-        "replayMode": {
-          "$ref": "#/$defs/DynamoReplayMode",
-          "default": "offline",
-          "description": "Clock axis: deterministic virtual replay (offline) or wall-clock replay (online)."
-        },
         "requiredFeatures": {
           "description": "Optional build capabilities that must exist in the exact runner image.",
           "items": {
@@ -9533,110 +9621,8 @@
           "description": "Backend-owned output artifacts."
         }
       },
-      "title": "DynosimBackendConfig",
+      "title": "DynosimTransportConfig",
       "type": "object"
-    },
-    "DynosimRouterMode": {
-      "description": "Router policy for routed topologies (mirrors ``DynosimRouterSpec``).",
-      "enum": [
-        "round_robin",
-        "kv"
-      ],
-      "title": "DynosimRouterMode",
-      "type": "string"
-    },
-    "DynosimSlaConfig": {
-      "additionalProperties": false,
-      "description": "Canonical goodput thresholds owned by Dynamo's collector.\n\nMirrors ``DynosimSlaSpec``; each bound is optional and non-negative.",
-      "properties": {
-        "ttftMs": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum time to first token (ms).",
-          "title": "Ttftms",
-          "x-jinja2-supported": true
-        },
-        "itlMs": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum mean inter-token latency (ms).",
-          "title": "Itlms",
-          "x-jinja2-supported": true
-        },
-        "e2EMs": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\{\\{.*\\}\\}.*",
-              "description": "Jinja2 template (e.g., '{{ variable }}')."
-            },
-            {
-              "type": "string",
-              "pattern": ".*\\$\\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\\}.*",
-              "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
-            }
-          ],
-          "default": null,
-          "description": "Maximum end-to-end latency (ms).",
-          "title": "E2Ems",
-          "x-jinja2-supported": true
-        }
-      },
-      "title": "DynosimSlaConfig",
-      "type": "object"
-    },
-    "DynosimTopology": {
-      "description": "Authored offline deployment topology (mirrors ``DynosimTopologySpec``).",
-      "enum": [
-        "single",
-        "aggregated",
-        "disaggregated"
-      ],
-      "title": "DynosimTopology",
-      "type": "string"
     },
     "EmpiricalDistribution": {
       "additionalProperties": false,
@@ -9848,18 +9834,6 @@
           "description": "Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to first token) measurement. Server must support streaming for this to work.",
           "title": "Streaming",
           "type": "boolean"
-        },
-        "transport": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TransportType"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Legacy Python transport plugin name. Native protocol-v2 transport is selected by benchmark.backend; leave this unset for online_grpc."
         },
         "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
@@ -14565,12 +14539,12 @@
       "title": "RequestContentType",
       "type": "string"
     },
-    "RunnerBackendConfig": {
+    "RunnerTransportConfig": {
       "additionalProperties": false,
-      "description": "Orthogonal execution-backend selection for one native run.\n\nThe open runner registry owns arbitrary backend IDs, whose ``config`` stays an\nopaque dict.  The built-in ``dynosim`` backend (in-process Dynamo mocker\nreplay) has a documented structural contract so it can be authored with typed,\nvalidated, schema-visible fields; it is normalized back to a plain dict for the\nwire, mirroring the ``evaluation`` workload's precedent.",
+      "description": "Orthogonal execution-transport selection for one native run.\n\nThe open runner registry owns arbitrary transport IDs, whose ``config`` stays\nan opaque dict.  The built-in ``dynosim_offline`` / ``dynosim_online``\ntransports (in-process Dynamo mocker replay) have a documented structural\ncontract so they can be authored with typed, validated, schema-visible fields;\nthe object is normalized back to a plain dict for the wire, mirroring the\n``evaluation`` workload's precedent.  The clock rides on the transport ID —\n``dynosim_offline`` is the deterministic virtual clock, ``dynosim_online`` the\nwall clock — so there is no ``replay_mode`` field.",
       "properties": {
         "type": {
-          "default": "online_http",
+          "default": "http",
           "minLength": 1,
           "title": "Type",
           "type": "string"
@@ -14582,14 +14556,14 @@
               "type": "object"
             },
             {
-              "$ref": "#/$defs/DynosimBackendConfig"
+              "$ref": "#/$defs/DynosimTransportConfig"
             }
           ],
-          "description": "Factory-owned authored configuration. The built-in dynosim backend shape is documented explicitly; other open backend factories retain opaque objects.",
+          "description": "Factory-owned authored configuration. The built-in dynosim transport shape is documented explicitly; other open transport factories retain opaque objects.",
           "title": "Config"
         }
       },
-      "title": "RunnerBackendConfig",
+      "title": "RunnerTransportConfig",
       "type": "object"
     },
     "RunnerWorkloadConfig": {
@@ -16552,13 +16526,6 @@
       ],
       "title": "TokenizerOverride",
       "type": "object"
-    },
-    "TransportType": {
-      "enum": [
-        "http"
-      ],
-      "title": "TransportType",
-      "type": "string"
     },
     "UIType": {
       "enum": [

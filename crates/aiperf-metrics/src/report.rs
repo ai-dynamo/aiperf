@@ -298,8 +298,8 @@ impl ReportEndpointProfileIdentity {
 pub struct ReportRunProvenance {
     /// BLAKE3 identity of the exact runner executable that performed the run.
     pub distribution_id: String,
-    /// Canonical selected backend factory ID.
-    pub backend: String,
+    /// Canonical selected transport factory ID.
+    pub transport: String,
     /// Canonical selected workload factory ID.
     pub workload: String,
     /// Statically linked extensions in deterministic identity order.
@@ -312,15 +312,15 @@ impl ReportRunProvenance {
     /// Build the complete coordinator-owned common provenance block.
     pub fn new(
         distribution_id: impl Into<String>,
-        backend: impl Into<String>,
+        transport: impl Into<String>,
         workload: impl Into<String>,
         mut extensions: Vec<ReportExtensionIdentity>,
         endpoint_profiles: Vec<ReportEndpointProfileIdentity>,
     ) -> Result<Self, ReportProvenanceError> {
         let distribution_id = distribution_id.into();
         validate_distribution_id(&distribution_id)?;
-        let backend = backend.into();
-        validate_component_id(&backend, "backend ID")?;
+        let transport = transport.into();
+        validate_component_id(&transport, "transport ID")?;
         let workload = workload.into();
         validate_component_id(&workload, "workload ID")?;
 
@@ -346,7 +346,7 @@ impl ReportRunProvenance {
 
         Ok(Self {
             distribution_id,
-            backend,
+            transport,
             workload,
             extensions,
             endpoint_profiles,
@@ -2297,7 +2297,7 @@ mod tests {
     fn finalized_report(
         report: NativeReport,
         distribution_digit: char,
-        backend: &str,
+        transport: &str,
         workload: &str,
         endpoint_profiles: Vec<ReportEndpointProfileIdentity>,
     ) -> NativeReport {
@@ -2305,7 +2305,7 @@ mod tests {
             .finalize_run(
                 ReportRunProvenance::new(
                     format!("blake3:{}", distribution_digit.to_string().repeat(64)),
-                    backend,
+                    transport,
                     workload,
                     Vec::new(),
                     endpoint_profiles,
@@ -2427,7 +2427,7 @@ mod tests {
                 outcome: &outcome,
             }),
             '2',
-            "online_http",
+            "http",
             "scheduled",
             vec![ReportEndpointProfileIdentity::new("primary", "chat").unwrap()],
         );
@@ -2700,7 +2700,7 @@ mod tests {
         let value = serde_json::to_value(&report).unwrap();
         let run = &value["run"];
         assert_eq!(run["distribution_id"], format!("blake3:{}", "a".repeat(64)));
-        assert_eq!(run["backend"], "dynosim");
+        assert_eq!(run["transport"], "dynosim");
         assert_eq!(run["workload"], "graph");
         assert_eq!(run["extensions"][0]["name"], "alpha");
         assert!(run["extensions"][0].get("version").is_none());

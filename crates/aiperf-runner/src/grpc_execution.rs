@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Protocol-v2-only scheduled pair for the native online gRPC backend.
+//! Protocol-v2-only scheduled pair for the native online gRPC transport.
 //!
 //! There is no protocol-v1 request projection or endpoint adapter in this
 //! module. Authored Config v2 is validated through the open runner, endpoint,
@@ -26,16 +26,16 @@ use crate::online_execution::{
 };
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
-    OnlineGrpcBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerPairFactory,
-    RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2, ValidatedBackendConfig,
+    OnlineGrpcTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerPairFactory,
+    RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2, ValidatedTransportConfig,
     ValidatedWorkloadConfig,
 };
 
-const BACKEND_ID: &str = "online_grpc";
+const TRANSPORT_ID: &str = "grpc";
 const WORKLOAD_ID: &str = "scheduled";
 
 /// Register the native gRPC scheduled pair.
-pub fn register_online_grpc_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+pub fn register_grpc_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_pair(Arc::new(OnlineGrpcScheduledPair {
         tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
     }))
@@ -53,8 +53,8 @@ impl fmt::Debug for OnlineGrpcScheduledPair {
 }
 
 impl RunnerPairFactory for OnlineGrpcScheduledPair {
-    fn backend_id(&self) -> &'static str {
-        BACKEND_ID
+    fn transport_id(&self) -> &'static str {
+        TRANSPORT_ID
     }
 
     fn workload_id(&self) -> &'static str {
@@ -63,10 +63,10 @@ impl RunnerPairFactory for OnlineGrpcScheduledPair {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        grpc_backend(backend)?;
+        grpc_transport(transport)?;
         scheduled_workload(workload)?;
         Ok(())
     }
@@ -75,10 +75,10 @@ impl RunnerPairFactory for OnlineGrpcScheduledPair {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
+        self.validate_pair(transport, workload)?;
         validate_grpc_run(run, context)?;
         validate_authored_tokenizer(&scheduled_workload(workload)?.tokenizer)
     }
@@ -86,20 +86,20 @@ impl RunnerPairFactory for OnlineGrpcScheduledPair {
     fn prepare(
         &self,
         _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _transport: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        bail!("{BACKEND_ID} preparation requires the coordinator-owned RunnerRunContext")
+        bail!("{TRANSPORT_ID} preparation requires the coordinator-owned RunnerRunContext")
     }
 
     fn prepare_with_context(
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        grpc_backend(backend.as_ref())?;
+        grpc_transport(transport.as_ref())?;
         let workload = scheduled_workload(workload.as_ref())?;
         let plan = lower_scheduled(run, context, workload, self.tokenizers.as_ref())?;
         Ok(Box::new(PreparedGrpcScheduledOperation {
@@ -110,10 +110,10 @@ impl RunnerPairFactory for OnlineGrpcScheduledPair {
     }
 }
 
-fn grpc_backend(config: &dyn ValidatedBackendConfig) -> Result<&OnlineGrpcBackendConfigV2> {
-    ValidatedBackendConfig::as_any(config)
-        .downcast_ref::<OnlineGrpcBackendConfigV2>()
-        .ok_or_else(|| anyhow!("online gRPC pair received a different backend config type"))
+fn grpc_transport(config: &dyn ValidatedTransportConfig) -> Result<&OnlineGrpcTransportConfigV2> {
+    ValidatedTransportConfig::as_any(config)
+        .downcast_ref::<OnlineGrpcTransportConfigV2>()
+        .ok_or_else(|| anyhow!("online gRPC pair received a different transport config type"))
 }
 
 fn scheduled_workload(config: &dyn ValidatedWorkloadConfig) -> Result<&ScheduledWorkloadConfigV2> {
@@ -144,7 +144,7 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
                 let scheme = parsed.scheme().to_ascii_lowercase();
                 ensure!(
                     matches!(scheme.as_str(), "grpc" | "grpcs"),
-                    "online_grpc endpoint profile {profile_id:?} requires grpc:// or grpcs:// URLs, got {url:?}"
+                    "grpc endpoint profile {profile_id:?} requires grpc:// or grpcs:// URLs, got {url:?}"
                 );
                 Ok(scheme)
             })
@@ -159,30 +159,30 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
                 && profile.client.keepalive_ns == default_http_client.keepalive_ns
                 && profile.client.max_connections_per_origin
                     == default_http_client.max_connections_per_origin,
-            "endpoint profile {profile_id:?} authors HTTP-specific client policy unsupported by online_grpc"
+            "endpoint profile {profile_id:?} authors HTTP-specific client policy unsupported by grpc"
         );
         ensure!(
             profile.config.wait_for_model_timeout <= 0.0,
-            "protocol-v2 online_grpc execution does not yet run readiness retries; endpoint profile {profile_id:?} enables one"
+            "protocol-v2 grpc execution does not yet run readiness retries; endpoint profile {profile_id:?} enables one"
         );
         // The common prepared execution factory currently constructs one
         // transport policy for the default profile. Fail closed rather than
         // silently applying it to a differently routed secondary profile.
         ensure!(
             profile.config.urls == default.config.urls,
-            "online_grpc currently requires every endpoint profile to share the default profile URL list"
+            "grpc currently requires every endpoint profile to share the default profile URL list"
         );
         ensure!(
             profile.connection_reuse == default.connection_reuse,
-            "online_grpc currently requires one connection_reuse policy across endpoint profiles"
+            "grpc currently requires one connection_reuse policy across endpoint profiles"
         );
         ensure!(
             profile.session_header == default.session_header,
-            "online_grpc currently requires one session_header across endpoint profiles"
+            "grpc currently requires one session_header across endpoint profiles"
         );
         ensure!(
             profile.config.timeout_seconds == default.config.timeout_seconds,
-            "online_grpc currently requires one request timeout across endpoint profiles"
+            "grpc currently requires one request timeout across endpoint profiles"
         );
     }
     ensure!(
@@ -191,7 +191,7 @@ fn validate_grpc_run(run: &AuthoredRunSpecV2, context: &RunnerRunContext) -> Res
             && run.sidecars.network_latency.is_none()
             && run.sidecars.server_metrics.is_none()
             && run.sidecars.live_streaming.is_none(),
-        "protocol-v2 online_grpc execution has no registered sidecar adapter"
+        "protocol-v2 grpc execution has no registered sidecar adapter"
     );
     Ok(())
 }

@@ -88,44 +88,61 @@ use crate::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::records::{CapturedModelOutput, CapturedRecord};
 use crate::registry::{
-    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerBackendDescriptor,
-    RunnerBackendFactory, RunnerClockKind, RunnerPairFactory, RunnerRegistryBuilder,
-    RunnerRunContext, ScheduledWorkloadConfigV2, ValidatedBackendConfig, ValidatedWorkloadConfig,
+    GraphWorkloadConfigV2, PreparedRunOutcome, PreparedRunnerOperation, RunnerTransportDescriptor,
+    RunnerTransportFactory, RunnerClockKind, RunnerPairFactory, RunnerRegistryBuilder,
+    RunnerRunContext, ScheduledWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
     WorkloadRequirements,
 };
 
-/// Stable runner-registry ID for the in-process Dynamo backend.
-pub const DYNOSIM_BACKEND_ID: &str = "dynosim";
+/// Stable runner-registry transport IDs for the in-process Dynamo engine.
+///
+/// The clock rides on the transport ID: `dynosim_offline` fast-forwards a
+/// deterministic `SimClock` through the discrete-event pump for byte-exact
+/// replay; `dynosim_online` drives the *same* passive engine under the real wall
+/// clock (`drive_real_with_source`) for live-throughput measurement. Both open no
+/// sockets and share one materialization/report path.
+pub const DYNOSIM_OFFLINE_ID: &str = "dynosim_offline";
+pub const DYNOSIM_ONLINE_ID: &str = "dynosim_online";
 
-static DYNOSIM_BACKEND_DESCRIPTOR: RunnerBackendDescriptor = RunnerBackendDescriptor {
-    id: DYNOSIM_BACKEND_ID,
+const DYNOSIM_TRANSPORT_FEATURES: &[&str] = &[
+    "steppable_replay",
+    "aggregate",
+    "disaggregate",
+    "kv_routing",
+    "cancellation",
+    "canonical_trace_formats",
+    "worker_artifacts",
+    "exact_metric_parity",
+    #[cfg(feature = "dynamo-router-runtime")]
+    "dynamo-router-runtime",
+    #[cfg(feature = "dynamo-zmq-events")]
+    "dynamo-zmq-events",
+    #[cfg(feature = "dynamo-kvbm-offload")]
+    "dynamo-kvbm-offload",
+    #[cfg(feature = "dynamo-aic-forward-pass")]
+    "dynamo-aic-forward-pass",
+    #[cfg(feature = "dynamo-profile")]
+    "dynamo-profile",
+    #[cfg(feature = "dynamo-full")]
+    "dynamo-full",
+    #[cfg(feature = "dynamo-parity")]
+    "dynamo-parity",
+];
+
+static DYNOSIM_OFFLINE_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
+    id: DYNOSIM_OFFLINE_ID,
     description: "Dynamo passive-engine co-simulation on one deterministic SimClock",
     clock: RunnerClockKind::Sim,
     semantic_responses: false,
-    features: &[
-        "steppable_replay",
-        "aggregate",
-        "disaggregate",
-        "kv_routing",
-        "cancellation",
-        "canonical_trace_formats",
-        "worker_artifacts",
-        "exact_metric_parity",
-        #[cfg(feature = "dynamo-router-runtime")]
-        "dynamo-router-runtime",
-        #[cfg(feature = "dynamo-zmq-events")]
-        "dynamo-zmq-events",
-        #[cfg(feature = "dynamo-kvbm-offload")]
-        "dynamo-kvbm-offload",
-        #[cfg(feature = "dynamo-aic-forward-pass")]
-        "dynamo-aic-forward-pass",
-        #[cfg(feature = "dynamo-profile")]
-        "dynamo-profile",
-        #[cfg(feature = "dynamo-full")]
-        "dynamo-full",
-        #[cfg(feature = "dynamo-parity")]
-        "dynamo-parity",
-    ],
+    features: DYNOSIM_TRANSPORT_FEATURES,
+};
+
+static DYNOSIM_ONLINE_DESCRIPTOR: RunnerTransportDescriptor = RunnerTransportDescriptor {
+    id: DYNOSIM_ONLINE_ID,
+    description: "Dynamo passive-engine in-process replay under the real wall clock",
+    clock: RunnerClockKind::Real,
+    semantic_responses: false,
+    features: DYNOSIM_TRANSPORT_FEATURES,
 };
 
 /// Optional Dynamo build capability that an authored run may require.
@@ -212,38 +229,6 @@ impl From<DynosimTopologySpec> for OfflineTopology {
             DynosimTopologySpec::Single => Self::Single,
             DynosimTopologySpec::Aggregated => Self::Aggregated,
             DynosimTopologySpec::Disaggregated => Self::Disaggregated,
-        }
-    }
-}
-
-/// Clock axis for the in-process Dynamo engine co-simulation.
-///
-/// `Offline` fast-forwards a `SimClock` through the discrete-event pump for
-/// deterministic byte-exact replay. `Online` drives the *same* engine, sink,
-/// materializer, observer, and report under a wall clock
-/// (`drive_real_with_source`) — the equivalent of Dynamo's `--replay-mode
-/// online`: no sockets/HTTP/frontend, but stepped in real time. aiperf still
-/// owns the trace flow in both modes; the mocker's own trace driver is unused.
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DynamoReplayModeSpec {
-    /// Deterministic virtual-clock discrete-event replay (default).
-    #[default]
-    Offline,
-    /// Wall-clock in-process replay for live-throughput measurement.
-    Online,
-}
-
-impl DynamoReplayModeSpec {
-    /// Whether this mode drives the engine under the real wall clock.
-    const fn is_online(self) -> bool {
-        matches!(self, Self::Online)
-    }
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Offline => "offline",
-            Self::Online => "online",
         }
     }
 }
@@ -516,10 +501,10 @@ impl DynosimArtifactSpec {
     }
 }
 
-/// Strict authored configuration owned by the `dynosim` backend.
+/// Strict authored configuration owned by the `dynosim` transport.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DynosimBackendSpec {
+pub struct DynosimTransportSpec {
     /// Optional JSON profile consumed by Dynamo's canonical engine parser.
     #[serde(default)]
     pub engine_profile: Option<PathBuf>,
@@ -565,10 +550,6 @@ pub struct DynosimBackendSpec {
     /// Router policy for routed topologies.
     #[serde(default)]
     pub router_mode: DynosimRouterSpec,
-    /// Clock axis: deterministic virtual replay (default) or wall-clock
-    /// in-process replay for live-throughput measurement.
-    #[serde(default)]
-    pub replay_mode: DynamoReplayModeSpec,
     /// Optional build capabilities that must exist in the exact runner image.
     #[serde(default)]
     pub required_features: BTreeSet<DynamoBuildFeature>,
@@ -581,8 +562,8 @@ const fn one() -> usize {
     1
 }
 
-impl DynosimBackendSpec {
-    fn validate(self) -> Result<ValidatedDynosimBackend> {
+impl DynosimTransportSpec {
+    fn validate(self, online: bool) -> Result<ValidatedDynosimTransport> {
         ensure!(
             self.engine_profile.is_none() || self.engine.is_none(),
             "engine_profile conflicts with inline engine"
@@ -664,13 +645,13 @@ impl DynosimBackendSpec {
             ..OfflineEngineConfig::default()
         };
         engine = engine.with_sla_thresholds(self.sla.ttft_ms, self.sla.itl_ms, self.sla.e2e_ms)?;
-        Ok(ValidatedDynosimBackend {
+        Ok(ValidatedDynosimTransport {
             engine,
             artifacts,
             sla: self.sla,
             topology,
             router_mode,
-            replay_mode: self.replay_mode,
+            online,
             required_features: required,
         })
     }
@@ -730,29 +711,29 @@ fn validate_relative_artifact_path(name: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Strictly validated runner backend state retained until pair preparation.
+/// Strictly validated runner transport state retained until pair preparation.
+///
+/// `online` is derived from the selected transport ID (`dynosim_online` ⇒
+/// `true`, `dynosim_offline` ⇒ `false`), not from an authored field: the clock
+/// axis rides on the transport ID.
 #[derive(Clone, Debug)]
-pub struct ValidatedDynosimBackend {
+pub struct ValidatedDynosimTransport {
     engine: OfflineEngineConfig,
     artifacts: DynosimArtifactSpec,
     sla: DynosimSlaSpec,
     topology: DynosimTopologySpec,
     router_mode: DynosimRouterSpec,
-    replay_mode: DynamoReplayModeSpec,
+    online: bool,
     required_features: BTreeSet<DynamoBuildFeature>,
 }
 
-impl ValidatedDynosimBackend {
+impl ValidatedDynosimTransport {
     /// Report/provenance prefix for the selected clock axis.
     ///
     /// `"offline"` for deterministic virtual-clock replay, `"online"` for
     /// wall-clock in-process replay (`drive_real_with_source`).
     pub const fn mode_prefix(&self) -> &'static str {
-        if self.replay_mode.is_online() {
-            "online"
-        } else {
-            "offline"
-        }
+        if self.online { "online" } else { "offline" }
     }
 
     /// Build a no-side-effect execution adapter rooted at the selected target.
@@ -777,7 +758,7 @@ impl ValidatedDynosimBackend {
             artifacts: self.artifacts.clone(),
             topology: self.topology,
             router_mode: self.router_mode,
-            replay_mode: self.replay_mode,
+            online: self.online,
             required_features: self.required_features.clone(),
             model,
             artifact_target,
@@ -786,7 +767,7 @@ impl ValidatedDynosimBackend {
 }
 
 fn dynamo_report_facts(
-    backend: &ValidatedDynosimBackend,
+    backend: &ValidatedDynosimTransport,
     parity: OfflineMetricParity,
     performance: &loadgen_core::collector::TraceSimulationReport,
 ) -> Result<ReportDynamoRunInfo> {
@@ -805,7 +786,7 @@ fn dynamo_report_facts(
         throughput.gpu_hours,
     )?;
     Ok(ReportDynamoRunInfo::new(
-        if backend.replay_mode.is_online() {
+        if backend.online {
             ReportClockKind::Real
         } else {
             ReportClockKind::Sim
@@ -825,56 +806,89 @@ fn dynamo_report_facts(
     .with_capacity(capacity))
 }
 
-/// Registered strict decoder for the feature-bearing offline backend.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DynosimBackendFactory;
+/// Registered strict decoder for the feature-bearing offline/online transports.
+///
+/// One factory type serves both `dynosim_offline` and `dynosim_online`; the
+/// `online` flag selects the descriptor (Sim vs Real clock) and is stamped onto
+/// the validated config so the shared executor can pick the driver without a
+/// wire `replay_mode` field.
+#[derive(Debug, Clone, Copy)]
+pub struct DynosimTransportFactory {
+    online: bool,
+}
 
-impl RunnerBackendFactory for DynosimBackendFactory {
-    fn descriptor(&self) -> &'static RunnerBackendDescriptor {
-        &DYNOSIM_BACKEND_DESCRIPTOR
+impl DynosimTransportFactory {
+    /// Deterministic virtual-clock (`dynosim_offline`) transport factory.
+    pub const fn offline() -> Self {
+        Self { online: false }
+    }
+
+    /// Wall-clock in-process (`dynosim_online`) transport factory.
+    pub const fn online() -> Self {
+        Self { online: true }
+    }
+}
+
+impl RunnerTransportFactory for DynosimTransportFactory {
+    fn descriptor(&self) -> &'static RunnerTransportDescriptor {
+        if self.online {
+            &DYNOSIM_ONLINE_DESCRIPTOR
+        } else {
+            &DYNOSIM_OFFLINE_DESCRIPTOR
+        }
     }
 
     fn validate(
         &self,
         authored: &RawValue,
         _requirements: &WorkloadRequirements,
-    ) -> Result<Box<dyn ValidatedBackendConfig>> {
-        let spec = serde_json::from_str::<DynosimBackendSpec>(authored.get())
-            .map_err(|error| anyhow!("invalid dynosim backend config: {error}"))?;
-        Ok(Box::new(spec.validate()?))
+    ) -> Result<Box<dyn ValidatedTransportConfig>> {
+        let spec = serde_json::from_str::<DynosimTransportSpec>(authored.get())
+            .map_err(|error| anyhow!("invalid dynosim transport config: {error}"))?;
+        Ok(Box::new(spec.validate(self.online)?))
     }
 }
 
-/// Add the offline backend and its executable workload pairs to a mutable
-/// runner registry.
+/// Add both offline and online Dynamo transports and their executable workload
+/// pairs to a mutable runner registry.
+///
+/// Registers **2 transports** (`dynosim_offline`, `dynosim_online`) and **4
+/// pairs**: `(dynosim_offline, scheduled)`, `(dynosim_offline, graph)`,
+/// `(dynosim_online, scheduled)`, `(dynosim_online, graph)`.
 ///
 /// Direct graph preparation resolves its authored-input adapter from the
 /// coordinator-owned [`RunnerRunContext`], so the pair never constructs or
 /// retains a private adapter universe.
-pub fn register_dynosim_backend(builder: &mut RunnerRegistryBuilder) -> Result<()> {
-    builder.register_backend(Arc::new(DynosimBackendFactory))?;
-    builder.register_pair(Arc::new(DynosimGraphPairFactory::default()))?;
-    builder.register_pair(Arc::new(DynosimScheduledPairFactory::default()))
+pub fn register_dynosim_transport(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+    builder.register_transport(Arc::new(DynosimTransportFactory::offline()))?;
+    builder.register_transport(Arc::new(DynosimTransportFactory::online()))?;
+    for transport_id in [DYNOSIM_OFFLINE_ID, DYNOSIM_ONLINE_ID] {
+        builder.register_pair(Arc::new(DynosimGraphPairFactory::new(transport_id)))?;
+        builder.register_pair(Arc::new(DynosimScheduledPairFactory::new(transport_id)))?;
+    }
+    Ok(())
 }
 
-/// Downcast one pair-factory backend value with an actionable invariant error.
-pub fn validated_dynosim_backend(
-    config: &dyn ValidatedBackendConfig,
-) -> Result<&ValidatedDynosimBackend> {
+/// Downcast one pair-factory transport value with an actionable invariant error.
+pub fn validated_dynosim_transport(
+    config: &dyn ValidatedTransportConfig,
+) -> Result<&ValidatedDynosimTransport> {
     config
         .as_any()
-        .downcast_ref::<ValidatedDynosimBackend>()
-        .ok_or_else(|| anyhow!("dynosim pair received a different backend config type"))
+        .downcast_ref::<ValidatedDynosimTransport>()
+        .ok_or_else(|| anyhow!("dynosim pair received a different transport config type"))
 }
 
 #[derive(Clone)]
 struct DynosimScheduledPairFactory {
+    transport_id: &'static str,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl Default for DynosimScheduledPairFactory {
-    fn default() -> Self {
+impl DynosimScheduledPairFactory {
+    fn new(transport_id: &'static str) -> Self {
         Self {
+            transport_id,
             tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
         }
     }
@@ -882,13 +896,16 @@ impl Default for DynosimScheduledPairFactory {
 
 impl fmt::Debug for DynosimScheduledPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("DynosimScheduledPairFactory")
+        formatter
+            .debug_struct("DynosimScheduledPairFactory")
+            .field("transport_id", &self.transport_id)
+            .finish_non_exhaustive()
     }
 }
 
 impl RunnerPairFactory for DynosimScheduledPairFactory {
-    fn backend_id(&self) -> &'static str {
-        DYNOSIM_BACKEND_ID
+    fn transport_id(&self) -> &'static str {
+        self.transport_id
     }
 
     fn workload_id(&self) -> &'static str {
@@ -897,10 +914,10 @@ impl RunnerPairFactory for DynosimScheduledPairFactory {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        backend: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        let _ = validated_dynosim_backend(backend)?;
+        let _ = validated_dynosim_transport(backend)?;
         let workload = validated_scheduled_workload(workload)?;
         ensure!(
             workload.worker_count == 1,
@@ -913,7 +930,7 @@ impl RunnerPairFactory for DynosimScheduledPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        backend: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
         self.validate_pair(backend, workload)?;
@@ -929,17 +946,18 @@ impl RunnerPairFactory for DynosimScheduledPairFactory {
                 && run.artifacts.user_files.is_empty(),
             "dynosim scheduled execution does not project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
         );
-        ensure!(
-            !run.artifact_target.exists(),
-            "artifact_target already exists; protocol-v2 execution requires an exclusive uncreated target"
-        );
+        // The artifact target directory may already exist: the Python CLI
+        // creates it for its own logs before launching the runner, exactly as on
+        // the online HTTP path. Each backend-owned Dynamo artifact still rejects
+        // a pre-existing file of its own name in `emit_backend_artifacts`, so no
+        // output is silently overwritten.
         Ok(())
     }
 
     fn prepare(
         &self,
         _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _backend: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         Err(anyhow!(
@@ -951,10 +969,10 @@ impl RunnerPairFactory for DynosimScheduledPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        backend: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        let backend = validated_dynosim_backend(backend.as_ref())?.clone();
+        let backend = validated_dynosim_transport(backend.as_ref())?.clone();
         let workload = validated_scheduled_workload(workload.as_ref())?;
         validate_offline_scheduled_phases(&workload.phases)?;
 
@@ -1202,7 +1220,7 @@ impl NativeConversationSourceFactory for DynosimPreparedConversationSourceFactor
 }
 
 struct PreparedDynosimScheduledOperation {
-    backend: ValidatedDynosimBackend,
+    backend: ValidatedDynosimTransport,
     dataset: PreparedDatasetInput,
     source_factory: DynosimPreparedConversationSourceFactory,
     tokenizer: Arc<dyn TextTokenizer>,
@@ -1369,7 +1387,7 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
                     model: Some(model),
                 },
                 summary: ReportSummary {
-                    endpoints_configured: vec![format!("dynamo://{}", backend.mode_prefix())],
+                    endpoints_configured: vec![format!("dynosim://{}", backend.mode_prefix())],
                     ..ReportSummary::default()
                 },
                 warmup,
@@ -1453,12 +1471,14 @@ fn seconds_to_ns(value: f64, name: &str) -> Result<i64> {
 
 #[derive(Clone)]
 struct DynosimGraphPairFactory {
+    transport_id: &'static str,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
 }
 
-impl Default for DynosimGraphPairFactory {
-    fn default() -> Self {
+impl DynosimGraphPairFactory {
+    fn new(transport_id: &'static str) -> Self {
         Self {
+            transport_id,
             tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
         }
     }
@@ -1468,13 +1488,14 @@ impl fmt::Debug for DynosimGraphPairFactory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DynosimGraphPairFactory")
+            .field("transport_id", &self.transport_id)
             .finish_non_exhaustive()
     }
 }
 
 impl RunnerPairFactory for DynosimGraphPairFactory {
-    fn backend_id(&self) -> &'static str {
-        DYNOSIM_BACKEND_ID
+    fn transport_id(&self) -> &'static str {
+        self.transport_id
     }
 
     fn workload_id(&self) -> &'static str {
@@ -1483,10 +1504,10 @@ impl RunnerPairFactory for DynosimGraphPairFactory {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        backend: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        let _ = validated_dynosim_backend(backend)?;
+        let _ = validated_dynosim_transport(backend)?;
         let workload = validated_graph_workload(workload)?;
         ensure!(
             workload.worker_count == 1,
@@ -1500,7 +1521,7 @@ impl RunnerPairFactory for DynosimGraphPairFactory {
         &self,
         _run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        backend: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
         self.validate_pair(backend, workload)?;
@@ -1533,7 +1554,7 @@ impl RunnerPairFactory for DynosimGraphPairFactory {
     fn prepare(
         &self,
         _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _backend: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         Err(anyhow!(
@@ -1545,10 +1566,10 @@ impl RunnerPairFactory for DynosimGraphPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        backend: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        let backend = validated_dynosim_backend(backend.as_ref())?.clone();
+        let backend = validated_dynosim_transport(backend.as_ref())?.clone();
         let workload = validated_graph_workload(workload.as_ref())?;
         let phases = workload.phases.clone();
         ensure!(
@@ -1564,10 +1585,11 @@ impl RunnerPairFactory for DynosimGraphPairFactory {
                 && run.artifacts.user_files.is_empty(),
             "dynosim direct graph does not yet project common request/raw/output/user-file artifacts; use backend Dynamo artifacts or disable them"
         );
-        ensure!(
-            !run.artifact_target.exists(),
-            "artifact_target already exists; protocol-v2 execution requires an exclusive uncreated target"
-        );
+        // The artifact target directory may already exist: the Python CLI
+        // creates it for its own logs before launching the runner, exactly as on
+        // the online HTTP path. Each backend-owned Dynamo artifact still rejects
+        // a pre-existing file of its own name in `emit_backend_artifacts`, so no
+        // output is silently overwritten.
         let model = run.models.items[0].name.clone();
         let tokenizer_spec =
             lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
@@ -1687,7 +1709,7 @@ impl RunnerGraphPhaseBackendFactory for DynosimGraphPhaseBackendFactory {
 }
 
 struct PreparedDynosimGraphOperation {
-    backend: ValidatedDynosimBackend,
+    backend: ValidatedDynosimTransport,
     input: GraphInputBundle,
     phases: Vec<PhaseSpec>,
     metrics: MetricsConfig,
@@ -1882,7 +1904,7 @@ pub struct DynosimExecutor {
     artifacts: DynosimArtifactSpec,
     topology: DynosimTopologySpec,
     router_mode: DynosimRouterSpec,
-    replay_mode: DynamoReplayModeSpec,
+    online: bool,
     required_features: BTreeSet<DynamoBuildFeature>,
     model: String,
     artifact_target: PathBuf,
@@ -1899,7 +1921,7 @@ impl DynosimExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let online = self.replay_mode.is_online();
+        let online = self.online;
         let report = if online {
             run_scheduled_backend_online(self.engine.clone(), self.model.clone(), workload)?
         } else {
@@ -1944,7 +1966,7 @@ impl DynosimExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let online = self.replay_mode.is_online();
+        let online = self.online;
         let report = if online {
             run_scheduled_backend_online_deferred_with_delivery(
                 self.engine.clone(),
@@ -2019,7 +2041,7 @@ impl DynosimExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let online = self.replay_mode.is_online();
+        let online = self.online;
         let report = if online {
             run_graph_workload_online(
                 self.engine.clone(),
@@ -2091,7 +2113,7 @@ impl DynosimExecutor {
             self.artifacts.worker_artifacts_json.is_none(),
             "worker_artifacts_json is supported only by canonical trace workloads"
         );
-        let online = self.replay_mode.is_online();
+        let online = self.online;
         let report = if online {
             run_graph_workload_online_deferred(
                 self.engine.clone(),
@@ -2150,9 +2172,9 @@ impl DynosimExecutor {
     /// native metrics stack, retaining the complete byte-exact parity proof.
     pub fn execute_trace(self, trace: OfflineTraceConfig) -> Result<DynosimTraceOutcome> {
         ensure!(
-            !self.replay_mode.is_online(),
-            "replay_mode=online drives the trace through AIPerf's own graph flow; \
-             the canonical mocker trace driver runs only under offline replay"
+            !self.online,
+            "dynosim_online drives the trace through AIPerf's own graph flow; \
+             the canonical mocker trace driver runs only under dynosim_offline replay"
         );
         let report = run_trace_offline(self.engine.clone(), trace.clone())?;
         verify_parity(&report.aiperf.performance, &report.dynamo, report.parity)?;
@@ -2229,16 +2251,22 @@ impl DynosimExecutor {
 
     fn provenance(&self, parity: OfflineMetricParity) -> BTreeMap<String, String> {
         BTreeMap::from([
-            ("backend".into(), DYNOSIM_BACKEND_ID.into()),
+            (
+                "transport".into(),
+                if self.online {
+                    DYNOSIM_ONLINE_ID.into()
+                } else {
+                    DYNOSIM_OFFLINE_ID.into()
+                },
+            ),
             (
                 "clock".into(),
-                if self.replay_mode.is_online() {
+                if self.online {
                     "real".into()
                 } else {
                     "sim".into()
                 },
             ),
-            ("replay_mode".into(), self.replay_mode.as_str().into()),
             ("topology".into(), self.topology.as_str().into()),
             ("router".into(), self.router_mode.as_str().into()),
             (
@@ -2281,23 +2309,12 @@ fn prepare_output_parent(path: &Path) -> Result<()> {
 }
 
 fn create_artifact_target(path: &Path) -> Result<()> {
-    ensure!(
-        !path.exists(),
-        "artifact_target already exists: {}",
-        path.display()
-    );
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating offline artifact parent {}", parent.display()))?;
-    }
-    std::fs::create_dir(path).with_context(|| {
-        format!(
-            "creating exclusive offline artifact target {}",
-            path.display()
-        )
+    // The directory may already exist (the Python CLI creates it for its own
+    // logs before launching the runner, as on the online HTTP path). Create it
+    // idempotently; each backend-owned Dynamo artifact still refuses to
+    // overwrite a pre-existing file of its own name during emission.
+    std::fs::create_dir_all(path).with_context(|| {
+        format!("creating offline artifact target {}", path.display())
     })
 }
 
@@ -2329,7 +2346,7 @@ fn verify_parity(
     Ok(())
 }
 
-/// Relaxed parity verification for wall-clock in-process (`replay_mode=online`)
+/// Relaxed parity verification for wall-clock in-process (`dynosim_online`)
 /// runs. The AIPerf and Dynamo shared summaries are *not* byte-identical — real
 /// timers cannot reproduce the engine's internal completion times — so only the
 /// field-accounting and non-empty-schema invariants are enforced. Request and
@@ -2398,15 +2415,15 @@ pub struct DynosimTraceOutcome {
 mod tests {
     use super::*;
     use crate::registry::{
-        BuiltinRunnerRegistryFactory, RunnerBackendFactory, RunnerRegistryFactory,
+        BuiltinRunnerRegistryFactory, RunnerTransportFactory, RunnerRegistryFactory,
     };
 
     fn raw(value: Value) -> Box<RawValue> {
         RawValue::from_string(value.to_string()).unwrap()
     }
 
-    fn validate(value: Value) -> Result<Box<dyn ValidatedBackendConfig>> {
-        DynosimBackendFactory.validate(&raw(value), &WorkloadRequirements::default())
+    fn validate(value: Value) -> Result<Box<dyn ValidatedTransportConfig>> {
+        DynosimTransportFactory::offline().validate(&raw(value), &WorkloadRequirements::default())
     }
 
     #[test]
@@ -2473,22 +2490,28 @@ mod tests {
     #[test]
     fn factory_registration_is_derived_from_the_feature_bearing_registry() {
         let registry = BuiltinRunnerRegistryFactory.build().unwrap();
-        let descriptor = registry
-            .backend_descriptors()
-            .into_iter()
-            .find(|descriptor| descriptor.id == DYNOSIM_BACKEND_ID)
-            .unwrap();
-        assert!(descriptor.features.contains(&"exact_metric_parity"));
-        assert!(
-            registry
-                .supported_pairs()
-                .contains(&(DYNOSIM_BACKEND_ID, "graph"))
-        );
-        assert!(
-            registry
-                .supported_pairs()
-                .contains(&(DYNOSIM_BACKEND_ID, "scheduled"))
-        );
+        for (transport_id, clock) in [
+            (DYNOSIM_OFFLINE_ID, RunnerClockKind::Sim),
+            (DYNOSIM_ONLINE_ID, RunnerClockKind::Real),
+        ] {
+            let descriptor = registry
+                .transport_descriptors()
+                .into_iter()
+                .find(|descriptor| descriptor.id == transport_id)
+                .unwrap();
+            assert!(descriptor.features.contains(&"exact_metric_parity"));
+            assert_eq!(descriptor.clock, clock);
+            assert!(
+                registry
+                    .supported_pairs()
+                    .contains(&(transport_id, "graph"))
+            );
+            assert!(
+                registry
+                    .supported_pairs()
+                    .contains(&(transport_id, "scheduled"))
+            );
+        }
     }
 
     #[test]
@@ -2506,7 +2529,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let backend = validated_dynosim_backend(validated.as_ref()).unwrap();
+        let backend = validated_dynosim_transport(validated.as_ref()).unwrap();
         let outcome = backend
             .executor("model", &root)
             .unwrap()
@@ -2524,7 +2547,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(outcome.report.aiperf.completed, 4);
-        assert_eq!(outcome.provenance["backend"], DYNOSIM_BACKEND_ID);
+        assert_eq!(outcome.provenance["transport"], DYNOSIM_OFFLINE_ID);
         let report_path = outcome.artifacts.report_json.unwrap();
         let records_path = outcome.artifacts.per_request_jsonl.unwrap();
         assert!(report_path.is_file());
@@ -2558,7 +2581,7 @@ mod tests {
             ))
         });
         let validated = validate(serde_json::json!({})).unwrap();
-        let backend = validated_dynosim_backend(validated.as_ref()).unwrap();
+        let backend = validated_dynosim_transport(validated.as_ref()).unwrap();
         let outcome = backend
             .executor("model", "/tmp/aiperf-direct-graph-unused")
             .unwrap()

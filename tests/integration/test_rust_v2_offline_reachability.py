@@ -41,7 +41,7 @@ def _base_benchmark(artifact_dir: Path) -> dict[str, Any]:
             "type": "chat",
             "streaming": True,
         },
-        "backend": {
+        "transport": {
             "type": "dynamo_offline",
             "config": {
                 "artifacts": {
@@ -67,7 +67,7 @@ def _base_benchmark(artifact_dir: Path) -> dict[str, Any]:
 
 def _scheduled_run(artifact_dir: Path) -> BenchmarkRun:
     benchmark = _base_benchmark(artifact_dir)
-    benchmark["backend"]["config"].update(
+    benchmark["transport"]["config"].update(
         {
             "topology": "aggregated",
             "workers": 2,
@@ -230,14 +230,14 @@ def _assert_product_result(
     assert request["protocol_version"] == 2
     assert request["operation"] == "execute"
     assert request["expected_distribution_id"] == installation.distribution_id
-    assert request["run"]["backend"]["type"] == "dynamo_offline"
+    assert request["run"]["transport"]["type"] == "dynamo_offline"
     assert request["run"]["workload"]["type"] == workload
 
     terminal = _terminal(completed)
     assert completed.returncode == 0, terminal
     assert terminal["success"] is True
     assert terminal["distribution_id"] == installation.distribution_id
-    assert terminal["provenance"]["backend"] == "dynamo_offline"
+    assert terminal["provenance"]["transport"] == "dynamo_offline"
     assert terminal["provenance"]["workload"] == workload
     assert terminal["provenance"]["parity_shared_fields"] == parity_shared_fields
 
@@ -336,12 +336,12 @@ def test_online_only_capability_image_rejects_offline_before_legacy_resolution(
     """A runner without the pair cannot reinterpret an offline run as v1 HTTP."""
     capabilities = copy.deepcopy(offline_installation.capabilities)
     capabilities["supported_pairs"] = [
-        pair for pair in capabilities["supported_pairs"] if pair[0] == "online_http"
+        pair for pair in capabilities["supported_pairs"] if pair[0] == "http"
     ]
-    capabilities["backends"] = [
+    capabilities["transports"] = [
         backend
-        for backend in capabilities["backends"]
-        if backend["id"] == "online_http"
+        for backend in capabilities["transports"]
+        if backend["id"] == "http"
     ]
     online_only = RunnerInstallation(
         binary=offline_installation.binary,

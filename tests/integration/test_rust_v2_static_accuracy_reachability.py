@@ -166,7 +166,7 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def static_accuracy_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("online_http", "static_accuracy")
+    assert installation.supports_pair("http", "static_accuracy")
     return installation
 
 
@@ -270,8 +270,8 @@ def test_python_config_v2_reaches_static_accuracy_without_v1_or_python_http(
         request, completed = captured[0]
         assert request["protocol_version"] == 2
         assert request["operation"] == "execute"
-        assert request["run"]["backend"] == {
-            "type": "online_http",
+        assert request["run"]["transport"] == {
+            "type": "http",
             "config": {},
         }
         assert request["run"]["workload"]["type"] == "static_accuracy"
@@ -284,7 +284,7 @@ def test_python_config_v2_reaches_static_accuracy_without_v1_or_python_http(
         assert completed.returncode == 0, completed.stderr.decode(errors="replace")
         assert terminal["success"] is True
         assert terminal["provenance"] == {
-            "backend": "online_http",
+            "transport": "http",
             "workload": "static_accuracy",
         }
         assert result.success, result.error
@@ -292,7 +292,7 @@ def test_python_config_v2_reaches_static_accuracy_without_v1_or_python_http(
 
         native = orjson.loads((artifact_dir / "native-v2.json").read_bytes())
         assert native["run"]["mode"] == "accuracy"
-        assert native["run"]["backend"] == "online_http"
+        assert native["run"]["transport"] == "http"
         assert native["run"]["workload"] == "static_accuracy"
         overall = native["accuracy"]["summary"]["overall"]
         assert overall["accuracy"] == 0.5

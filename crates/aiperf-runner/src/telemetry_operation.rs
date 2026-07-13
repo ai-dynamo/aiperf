@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Executable `online_http + telemetry_watch` runner pair.
+//! Executable `http + telemetry_watch` runner pair.
 //!
 //! Static component/source validation is complete before this module resolves
 //! key material, opens a target, qualifies a spool, or constructs control HTTP.
@@ -45,8 +45,8 @@ use crate::control_plane_http::{ControlPlaneClientPolicy, ControlPlaneHttpProvid
 use crate::protocol_v2::{AuthoredRunSpecV2, RunDiagnosticArtifactV2};
 use crate::redaction::redact_diagnostic;
 use crate::registry::{
-    OnlineHttpBackendConfigV2, PreparedRunFailure, PreparedRunOutcome, PreparedRunnerOperation,
-    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ValidatedBackendConfig,
+    OnlineHttpTransportConfigV2, PreparedRunFailure, PreparedRunOutcome, PreparedRunnerOperation,
+    RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ValidatedTransportConfig,
     ValidatedWorkloadConfig,
 };
 use crate::telemetry_archive_components::{
@@ -63,7 +63,7 @@ use crate::telemetry_execution::{ValidatedTelemetrySourceV2, ValidatedTelemetryW
 use crate::telemetry_pipeline::{BoundedTelemetryDecodePool, PrometheusAttemptPipeline};
 use crate::telemetry_source::ArchiveSourcePrepareContext;
 
-const BACKEND_ID: &str = "online_http";
+const TRANSPORT_ID: &str = "http";
 const WORKLOAD_ID: &str = "telemetry_watch";
 const STANDALONE_LOSS_EXACT_RANGES: usize = 1_024;
 const STANDALONE_LOSS_BOUNDARY_REFS_PER_RANGE: usize = 8;
@@ -75,10 +75,10 @@ const SOURCE_TO_WAL_EXPANSION_BOUND: u64 = 24;
 const INDEX_PATH_PAGE_BOUND: u64 = 16;
 
 /// Register the fully executable standalone telemetry-watch pair.
-pub fn register_online_http_telemetry_watch_pair(
+pub fn register_http_telemetry_watch_pair(
     builder: &mut RunnerRegistryBuilder,
 ) -> Result<()> {
-    register_online_http_telemetry_watch_pair_with_providers(
+    register_http_telemetry_watch_pair_with_providers(
         builder,
         Arc::new(NativeArchiveObjectStoreProvider),
         Arc::new(EnvironmentArchiveKeyProviderResolver::default()),
@@ -86,7 +86,7 @@ pub fn register_online_http_telemetry_watch_pair(
 }
 
 /// Register telemetry watch with deployment-selected store and key providers.
-pub fn register_online_http_telemetry_watch_pair_with_providers(
+pub fn register_http_telemetry_watch_pair_with_providers(
     builder: &mut RunnerRegistryBuilder,
     store_provider: Arc<dyn ArchiveObjectStoreProvider>,
     key_resolver: Arc<dyn ArchiveKeyProviderResolver>,
@@ -113,8 +113,8 @@ impl Debug for TelemetryWatchPairFactory {
 }
 
 impl RunnerPairFactory for TelemetryWatchPairFactory {
-    fn backend_id(&self) -> &'static str {
-        BACKEND_ID
+    fn transport_id(&self) -> &'static str {
+        TRANSPORT_ID
     }
 
     fn workload_id(&self) -> &'static str {
@@ -123,13 +123,13 @@ impl RunnerPairFactory for TelemetryWatchPairFactory {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        backend
+        transport
             .as_any()
-            .downcast_ref::<OnlineHttpBackendConfigV2>()
-            .ok_or_else(|| anyhow!("telemetry watch received a non-HTTP backend config"))?;
+            .downcast_ref::<OnlineHttpTransportConfigV2>()
+            .ok_or_else(|| anyhow!("telemetry watch received a non-HTTP transport config"))?;
         workload
             .as_any()
             .downcast_ref::<ValidatedTelemetryWatchWorkloadV2>()
@@ -141,10 +141,10 @@ impl RunnerPairFactory for TelemetryWatchPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         _context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
+        self.validate_pair(transport, workload)?;
         ensure!(
             !run.artifact_target.exists(),
             "telemetry watch artifact target already exists"
@@ -178,7 +178,7 @@ impl RunnerPairFactory for TelemetryWatchPairFactory {
     fn prepare(
         &self,
         _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _transport: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         bail!("telemetry watch requires the coordinator-owned runner context")
@@ -188,15 +188,15 @@ impl RunnerPairFactory for TelemetryWatchPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        self.validate_pair(backend.as_ref(), workload.as_ref())?;
+        self.validate_pair(transport.as_ref(), workload.as_ref())?;
         let distribution_id = parse_distribution_digest(context.distribution_id())?;
-        let backend = backend
+        let transport = transport
             .into_any()
-            .downcast::<OnlineHttpBackendConfigV2>()
-            .map_err(|_| anyhow!("telemetry watch lost its validated HTTP backend type"))?;
+            .downcast::<OnlineHttpTransportConfigV2>()
+            .map_err(|_| anyhow!("telemetry watch lost its validated HTTP transport type"))?;
         let workload = workload
             .into_any()
             .downcast::<ValidatedTelemetryWatchWorkloadV2>()
@@ -225,7 +225,7 @@ impl RunnerPairFactory for TelemetryWatchPairFactory {
                     sources,
                     archive,
                     control_plane_policy: ControlPlaneClientPolicy {
-                        connect_timeout_ns: backend.client.connect_timeout_ns,
+                        connect_timeout_ns: transport.client.connect_timeout_ns,
                     },
                     control_plane_factory: context
                         .execution_factories()

@@ -25,7 +25,7 @@ class _Installation:
     distribution_id = "blake3:" + "a" * 64
     capabilities = {
         "protocol_versions": [2],
-        "supported_pairs": [["online_http", "telemetry_watch"]],
+        "supported_pairs": [["http", "telemetry_watch"]],
     }
 
     def __init__(self) -> None:
@@ -43,7 +43,7 @@ def _document() -> dict[str, Any]:
         "run": {
             "identity": {"benchmark_id": "watch-test"},
             "artifact_target": "artifacts/watch-test",
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {
                 "type": "telemetry_watch",
                 "config": {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -32,12 +32,15 @@ describe("application shell", () => {
     expect(screen.getByRole("button", { name: "Collapse scene rail" })).toBeEnabled();
   });
 
-  it("keeps an explicit audience label in the compact command bar", async () => {
+  it("exposes the audience lenses as labeled icon buttons", async () => {
     renderAtlas("/");
 
+    const group = await screen.findByRole("radiogroup", { name: "Audience" });
     expect(
-      await screen.findByRole("combobox", { name: "Audience" }),
-    ).toHaveAttribute("aria-label", "Audience");
+      within(group)
+        .getAllByRole("radio")
+        .map((option) => option.getAttribute("aria-label")),
+    ).toEqual(["Executive", "Developer", "Maintainer"]);
   });
 
   it("uses the URL audience before local storage", async () => {
@@ -45,8 +48,8 @@ describe("application shell", () => {
     renderAtlas("/journey?audience=executive");
 
     expect(
-      await screen.findByRole("combobox", { name: "Audience" }),
-    ).toHaveValue("executive");
+      await screen.findByRole("radio", { name: "Executive" }),
+    ).toBeChecked();
     await waitFor(() => {
       expect(window.localStorage.getItem(AUDIENCE_STORAGE_KEY)).toBe(
         "executive",
@@ -59,8 +62,8 @@ describe("application shell", () => {
     const router = renderAtlas("/");
 
     expect(
-      await screen.findByRole("combobox", { name: "Audience" }),
-    ).toHaveValue("maintainer");
+      await screen.findByRole("radio", { name: "Maintainer" }),
+    ).toBeChecked();
     await waitFor(() => {
       expect(router.state.location.search).toMatchObject({
         audience: "maintainer",
@@ -73,8 +76,8 @@ describe("application shell", () => {
     const router = renderAtlas("/");
 
     expect(
-      await screen.findByRole("combobox", { name: "Audience" }),
-    ).toHaveValue("developer");
+      await screen.findByRole("radio", { name: "Developer" }),
+    ).toBeChecked();
     await waitFor(() => {
       expect(router.state.location.search).toMatchObject({
         audience: "developer",
@@ -93,8 +96,8 @@ describe("application shell", () => {
       renderAtlas("/");
 
       expect(
-        await screen.findByRole("combobox", { name: "Audience" }),
-      ).toHaveValue("developer");
+        await screen.findByRole("radio", { name: "Developer" }),
+      ).toBeChecked();
     } finally {
       storageGetter.mockRestore();
     }
@@ -104,10 +107,7 @@ describe("application shell", () => {
     const user = userEvent.setup();
     const router = renderAtlas("/?audience=developer");
 
-    await user.selectOptions(
-      await screen.findByRole("combobox", { name: "Audience" }),
-      "maintainer",
-    );
+    await user.click(await screen.findByRole("radio", { name: "Maintainer" }));
 
     await waitFor(() => {
       expect(router.state.location.search).toMatchObject({

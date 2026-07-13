@@ -89,7 +89,7 @@ fn run_scenario(distribution_id: &Value, address: SocketAddr, worker_count: u64)
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": worker_count,
                 "dataset": {

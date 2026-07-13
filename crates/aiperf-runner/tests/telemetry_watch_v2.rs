@@ -71,7 +71,7 @@ fn watch_request(
             "run": {
                 "identity": {"benchmark_id": benchmark_id},
                 "artifact_target": artifact,
-                "backend": {"type": "online_http", "config": {}},
+                "transport": {"type": "http", "config": {}},
                 "workload": {"type": "telemetry_watch", "config": {
                     "mode": "collect",
                     "duration_ns": 150_000_000_i64,
@@ -147,7 +147,7 @@ fn sync_request(
         "run": {
             "identity": {"benchmark_id": "telemetry-watch-sync"},
             "artifact_target": artifact,
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "telemetry_watch", "config": {
                 "mode": "finalize_remote",
                 "shutdown_timeout_ns": 2_000_000_000_i64,
@@ -237,7 +237,7 @@ async fn collect_runs_real_sources_and_commits_local_and_remote_heads() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "telemetry_watch"]))
+            .contains(&json!(["http", "telemetry_watch"]))
     );
     let temporary = tempfile::tempdir().unwrap();
     let (request, artifact, remote, _spool) = watch_request(

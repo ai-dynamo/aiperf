@@ -29,7 +29,6 @@ from aiperf.common.enums import (
 from aiperf.config.base import BaseConfig
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
-    TransportType,
     URLSelectionStrategy,
 )
 
@@ -210,16 +209,6 @@ class EndpointConfig(BaseConfig):
             description="Enable streaming (Server-Sent Events) responses. "
             "Required for accurate TTFT (time to first token) measurement. "
             "Server must support streaming for this to work.",
-        ),
-    ]
-
-    transport: Annotated[
-        TransportType | None,
-        Field(
-            default=None,
-            description="Legacy Python transport plugin name. Native protocol-v2 "
-            "transport is selected by benchmark.backend; leave this unset for "
-            "online_grpc.",
         ),
     ]
 
@@ -464,10 +453,16 @@ class EndpointConfig(BaseConfig):
                     f"URL {url!r} is missing scheme or host. "
                     f"Expected an http(s) or grpc(s) URL with a host."
                 )
-            if parsed.scheme.lower() not in ("http", "https", "grpc", "grpcs"):
+            if parsed.scheme.lower() not in (
+                "http",
+                "https",
+                "grpc",
+                "grpcs",
+                "dynosim",
+            ):
                 raise ValueError(
                     f"URL {url!r} has unsupported scheme {parsed.scheme!r}. "
-                    f"Expected 'http', 'https', 'grpc', or 'grpcs'."
+                    f"Expected 'http', 'https', 'grpc', 'grpcs', or 'dynosim'."
                 )
             # Validate the port if one is present. urlparse.port raises
             # ValueError on access for non-numeric or out-of-range ports

@@ -368,7 +368,7 @@ fn v2_scheduled_run_uses_injected_remote_turn_placement() {
                     "wait_for_model_mode": "models"
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 3,
                 "dataset": {
@@ -442,7 +442,7 @@ fn v2_graph_run_uses_injected_whole_trace_placement() {
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 3,
                 "dataset": {
@@ -508,7 +508,7 @@ fn v2_backend_shutdown_runs_after_pre_artifact_origin_failure() {
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {

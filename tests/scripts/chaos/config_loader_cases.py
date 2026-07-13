@@ -2095,12 +2095,14 @@ def case_endpoint_extra_list(ctx: Context, name: str, log: Path) -> tuple[int, s
 def case_endpoint_transport_unknown(
     ctx: Context, name: str, log: Path
 ) -> tuple[int, str]:
+    # endpoint.transport was removed (the axis is now the top-level
+    # benchmark.transport), so any value here must fail extra-field validation.
     body = _replace_once(
         _minimal_body(ctx).rstrip(),
         "type: chat\n          dataset:",
         "type: chat\n            transport: definitely-not-a-transport\n          dataset:",
         log,
-        "Endpoint transport unknown",
+        "Endpoint transport removed",
     )
     return run_cmd(_validate(_write(ctx, name, body)), log, ctx, 30)
 
@@ -2589,7 +2591,8 @@ def build_config_loader_cases() -> list[Case]:
             "v2-endpoint-transport-unknown",
             "GRACEFUL_FAILURE_REQUIRED",
             case_endpoint_transport_unknown,
-            "endpoint.transport set to an unknown plugin name must fail enum validation cleanly",
+            "the removed endpoint.transport field must fail extra-field validation cleanly "
+            "(the axis moved to the top-level benchmark.transport)",
         ),
         Case(
             "v2-endpoint-url-strategy-unknown",

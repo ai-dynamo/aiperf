@@ -63,9 +63,9 @@ use crate::online_execution::{
 use crate::protocol::{PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::registry::{
-    OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation, ResourceRequirementsV2,
+    OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation, ResourceRequirementsV2,
     RunnerClockKind, RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext,
-    RunnerWorkloadDescriptor, RunnerWorkloadFactory, ValidatedBackendConfig,
+    RunnerWorkloadDescriptor, RunnerWorkloadFactory, ValidatedTransportConfig,
     ValidatedWorkloadConfig, WorkloadRequirements,
 };
 use crate::turn_execution::{
@@ -78,7 +78,7 @@ static AGENTIC_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWorkloadDes
     description: "canonical stateful Python harness over Rust-owned inference",
     requires_semantic_responses: true,
     clock_kinds: &[RunnerClockKind::Real],
-    required_backend_features: &["http"],
+    required_transport_features: &["http"],
 };
 
 /// Process command for the supervised canonical evaluator worker.
@@ -416,22 +416,22 @@ impl RunnerWorkloadFactory for AgenticRunnerWorkloadFactory {
         Ok(WorkloadRequirements {
             semantic_responses: true,
             clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
-            backend_features: BTreeSet::from(["http".to_string()]),
+            transport_features: BTreeSet::from(["http".to_string()]),
             resources: ResourceRequirementsV2::inference(),
         })
     }
 }
 
-/// Register the open `agentic` workload without registering a backend pair.
+/// Register the open `agentic` workload without registering a transport pair.
 ///
 /// The protocol-v2 composition root links this factory to its shared
-/// `online_http` backend marker. Keeping pair registration outside this module
-/// prevents a second online-backend config type from emerging.
+/// `http` transport marker. Keeping pair registration outside this module
+/// prevents a second online-transport config type from emerging.
 pub fn register_agentic_workload(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_workload(Arc::new(AgenticRunnerWorkloadFactory))
 }
 
-/// Register the executable `online_http + agentic` pair adapter.
+/// Register the executable `http + agentic` pair adapter.
 pub fn register_agentic_online_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_pair(Arc::new(AgenticOnlinePairFactory {
         tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
@@ -450,8 +450,8 @@ impl fmt::Debug for AgenticOnlinePairFactory {
 }
 
 impl RunnerPairFactory for AgenticOnlinePairFactory {
-    fn backend_id(&self) -> &'static str {
-        "online_http"
+    fn transport_id(&self) -> &'static str {
+        "http"
     }
 
     fn workload_id(&self) -> &'static str {
@@ -460,10 +460,10 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        validated_online_http_backend(backend)?;
+        validated_http_transport(transport)?;
         validated_agentic_workload(workload)?.validate()
     }
 
@@ -471,21 +471,21 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
+        self.validate_pair(transport, workload)?;
         validate_agentic_authored_run(run, context)
     }
 
     fn prepare(
         &self,
         _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _transport: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         Err(anyhow!(
-            "online_http + agentic preparation requires the coordinator-owned runner context"
+            "http + agentic preparation requires the coordinator-owned runner context"
         ))
     }
 
@@ -493,10 +493,10 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        self.validate_run(run, context, backend.as_ref(), workload.as_ref())?;
+        self.validate_run(run, context, transport.as_ref(), workload.as_ref())?;
         let workload = validated_agentic_workload(workload.as_ref())?.clone();
         let tokenizer = lower_authored_tokenizer(&workload.tokenizer, self.tokenizers.as_ref())?;
         let endpoint = context.default_endpoint_profile()?;
@@ -518,17 +518,17 @@ impl RunnerPairFactory for AgenticOnlinePairFactory {
         Ok(Box::new(PreparedAgenticOnlineOperation {
             spec,
             registry: context.product_registry_handle(),
-            backend_factory: context.execution_factories().http_handle(),
+            transport_factory: context.execution_factories().http_handle(),
         }))
     }
 }
 
-fn validated_online_http_backend(
-    config: &dyn ValidatedBackendConfig,
-) -> Result<&OnlineHttpBackendConfigV2> {
-    ValidatedBackendConfig::as_any(config)
-        .downcast_ref::<OnlineHttpBackendConfigV2>()
-        .ok_or_else(|| anyhow!("agentic pair received the wrong online_http backend config type"))
+fn validated_http_transport(
+    config: &dyn ValidatedTransportConfig,
+) -> Result<&OnlineHttpTransportConfigV2> {
+    ValidatedTransportConfig::as_any(config)
+        .downcast_ref::<OnlineHttpTransportConfigV2>()
+        .ok_or_else(|| anyhow!("agentic pair received the wrong http transport config type"))
 }
 
 fn validated_agentic_workload(
@@ -591,7 +591,7 @@ fn validate_agentic_authored_run(
 struct PreparedAgenticOnlineOperation {
     spec: AgenticOnlineExecutionSpec,
     registry: Arc<AiperfRegistry>,
-    backend_factory: Arc<dyn HttpExecutionBackendFactory>,
+    transport_factory: Arc<dyn HttpExecutionBackendFactory>,
 }
 
 impl fmt::Debug for PreparedAgenticOnlineOperation {
@@ -610,7 +610,7 @@ impl PreparedRunnerOperation for PreparedAgenticOnlineOperation {
         let report = execute_agentic_online_report_with_registry_and_factories(
             &self.spec,
             self.registry.as_ref(),
-            self.backend_factory.as_ref(),
+            self.transport_factory.as_ref(),
             &NativeAgenticEvaluatorProcessFactory,
             &NativeAgenticGatewayFactory,
             &NativeAgenticTokenizerFactory,
@@ -619,7 +619,7 @@ impl PreparedRunnerOperation for PreparedAgenticOnlineOperation {
             native_report: report.native_report,
             report_facts: ReportPairRunFacts::new(),
             provenance: BTreeMap::from([
-                ("backend".to_owned(), "online_http".to_owned()),
+                ("transport".to_owned(), "http".to_owned()),
                 ("workload".to_owned(), "agentic".to_owned()),
             ]),
             report_commit: None,
@@ -801,7 +801,7 @@ pub fn execute_agentic_online(spec: AgenticOnlineExecutionSpec) -> Result<Agenti
 pub fn execute_agentic_online_with_factories(
     spec: AgenticOnlineExecutionSpec,
     registry_factory: &dyn AiperfRegistryFactory,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
@@ -812,7 +812,7 @@ pub fn execute_agentic_online_with_factories(
     execute_agentic_online_with_registry_and_factories(
         spec,
         &registry,
-        backend_factory,
+        transport_factory,
         evaluator_factory,
         gateway_factory,
         tokenizer_factory,
@@ -840,7 +840,7 @@ pub fn execute_agentic_online_with_registry(
 pub fn execute_agentic_online_with_registry_and_factories(
     spec: AgenticOnlineExecutionSpec,
     registry: &AiperfRegistry,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
@@ -848,7 +848,7 @@ pub fn execute_agentic_online_with_registry_and_factories(
     let report = execute_agentic_online_report_with_registry_and_factories(
         &spec,
         registry,
-        backend_factory,
+        transport_factory,
         evaluator_factory,
         gateway_factory,
         tokenizer_factory,
@@ -865,7 +865,7 @@ pub fn execute_agentic_online_with_registry_and_factories(
 fn execute_agentic_online_report_with_registry_and_factories(
     spec: &AgenticOnlineExecutionSpec,
     registry: &AiperfRegistry,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
@@ -881,7 +881,7 @@ fn execute_agentic_online_report_with_registry_and_factories(
         execute_agentic_online_async_with_registry_and_factories(
             spec,
             registry,
-            backend_factory,
+            transport_factory,
             evaluator_factory,
             gateway_factory,
             tokenizer_factory,
@@ -894,7 +894,7 @@ fn execute_agentic_online_report_with_registry_and_factories(
 pub async fn execute_agentic_online_async_with_factories(
     spec: &AgenticOnlineExecutionSpec,
     registry_factory: &dyn AiperfRegistryFactory,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
@@ -905,7 +905,7 @@ pub async fn execute_agentic_online_async_with_factories(
     execute_agentic_online_async_with_registry_and_factories(
         spec,
         &registry,
-        backend_factory,
+        transport_factory,
         evaluator_factory,
         gateway_factory,
         tokenizer_factory,
@@ -918,7 +918,7 @@ pub async fn execute_agentic_online_async_with_factories(
 pub async fn execute_agentic_online_async_with_registry_and_factories(
     spec: &AgenticOnlineExecutionSpec,
     registry: &AiperfRegistry,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     evaluator_factory: &dyn AgenticEvaluatorProcessFactory,
     gateway_factory: &dyn AgenticGatewayFactory,
     tokenizer_factory: &dyn AgenticTokenizerFactory,
@@ -990,10 +990,10 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
     let evaluator_identity = workload.identity().clone();
 
     // The measurement origin begins only after the canonical task set and all
-    // endpoint/backend state are frozen.
+    // endpoint/transport state are frozen.
     let real_clock_anchor = RealClockAnchor::now();
     let clock: Rc<dyn Clock> = RealClock::from_anchor(real_clock_anchor);
-    let execution_backend = match backend_factory.build(HttpExecutionBackendConfig {
+    let execution_transport = match transport_factory.build(HttpExecutionBackendConfig {
         workers: spec.workload.worker_count,
         coordinator_clock: clock.clone(),
         real_clock_anchor,
@@ -1002,7 +1002,7 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
         transport: endpoint.transport,
         prepared_endpoints: Some(endpoint.table_factory),
     }) {
-        Ok(backend) => backend,
+        Ok(transport) => transport,
         Err(error) => {
             let worker_shutdown = workload.shutdown().await;
             return combine_run_shutdown(Err(error), Ok(()), worker_shutdown);
@@ -1018,18 +1018,18 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
             spec.artifact_target.display()
         )
     }) {
-        let backend_shutdown = execution_backend.shutdown();
+        let transport_shutdown = execution_transport.shutdown();
         let worker_shutdown = workload.shutdown().await;
-        return combine_run_shutdown(Err(error), backend_shutdown, worker_shutdown);
+        return combine_run_shutdown(Err(error), transport_shutdown, worker_shutdown);
     }
     let start_ns = clock.now_ns();
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(AgenticDispatcher {
-        execution_backend: execution_backend.clone(),
+        execution_transport: execution_transport.clone(),
         model: spec.model.clone(),
     });
     let scheduled_workload: Rc<dyn Workload> = workload.clone();
     let run_result = async {
-        execution_backend.set_run_origin(start_ns)?;
+        execution_transport.set_run_origin(start_ns)?;
         let scheduled = run_scheduled_workload(
             scheduled_workload,
             clock,
@@ -1052,26 +1052,26 @@ pub async fn execute_agentic_online_async_with_registry_and_factories(
         )
     }
     .await;
-    let backend_shutdown = execution_backend.shutdown();
+    let transport_shutdown = execution_transport.shutdown();
     let worker_shutdown = workload.shutdown().await;
-    combine_run_shutdown(run_result, backend_shutdown, worker_shutdown)
+    combine_run_shutdown(run_result, transport_shutdown, worker_shutdown)
 }
 
-fn combine_run_shutdown<T>(run: Result<T>, backend: Result<()>, worker: Result<()>) -> Result<T> {
-    match (run, backend, worker) {
+fn combine_run_shutdown<T>(run: Result<T>, transport: Result<()>, worker: Result<()>) -> Result<T> {
+    match (run, transport, worker) {
         (Ok(value), Ok(()), Ok(())) => Ok(value),
         (Err(error), Ok(()), Ok(())) => Err(error),
-        (Ok(_), Err(error), Ok(())) => Err(error.context("shutting down agentic HTTP backend")),
+        (Ok(_), Err(error), Ok(())) => Err(error.context("shutting down agentic HTTP transport")),
         (Ok(_), Ok(()), Err(error)) => {
             Err(error.context("shutting down agentic evaluator/gateway"))
         }
-        (Ok(_), Err(backend), Err(worker)) => Err(backend.context(format!(
+        (Ok(_), Err(transport), Err(worker)) => Err(transport.context(format!(
             "agentic evaluator/gateway also failed during shutdown: {worker:#}"
         ))),
-        (Err(error), backend, worker) => {
+        (Err(error), transport, worker) => {
             let mut details = Vec::new();
-            if let Err(backend) = backend {
-                details.push(format!("HTTP backend shutdown failed: {backend:#}"));
+            if let Err(transport) = transport {
+                details.push(format!("HTTP transport shutdown failed: {transport:#}"));
             }
             if let Err(worker) = worker {
                 details.push(format!("evaluator/gateway shutdown failed: {worker:#}"));
@@ -1193,14 +1193,14 @@ fn ensure_agentic_endpoint(descriptor: &aiperf_endpoints::EndpointDescriptor) ->
 }
 
 struct AgenticDispatcher {
-    execution_backend: Rc<dyn HttpTurnExecutionBackend>,
+    execution_transport: Rc<dyn HttpTurnExecutionBackend>,
     model: String,
 }
 
 #[async_trait(?Send)]
 impl TurnDispatcher for AgenticDispatcher {
     fn inference_dimensions(&self, turn: &TurnToSend) -> aiperf_metrics::InferenceDimensions {
-        self.execution_backend.inference_dimensions(turn)
+        self.execution_transport.inference_dimensions(turn)
     }
 
     async fn dispatch_turn(
@@ -1210,7 +1210,7 @@ impl TurnDispatcher for AgenticDispatcher {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         Ok(self
-            .execution_backend
+            .execution_transport
             .execute_turn(
                 PreparedHttpTurn::from_turn(turn, &self.model),
                 observer,
@@ -1312,7 +1312,7 @@ mod tests {
             BTreeSet::from([RunnerClockKind::Real])
         );
         assert_eq!(
-            requirements.backend_features,
+            requirements.transport_features,
             BTreeSet::from(["http".into()])
         );
     }

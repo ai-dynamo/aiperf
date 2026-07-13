@@ -80,7 +80,6 @@ from aiperf.plugin.enums import (
     GPUTelemetryCollectorType,
     PublicDatasetType,
     SearchPlannerType,
-    TransportType,
     UIType,
     URLSelectionStrategy,
 )
@@ -281,19 +280,6 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.API_KEY
-
-    transport: Annotated[
-        TransportType | None,
-        Field(
-            description="Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme "
-            "(`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, "
-            "TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.",
-        ),
-        CLIParameter(
-            name=("--transport", "--transport-type"),
-            group=Groups.ENDPOINT,
-        ),
-    ] = None
 
     use_legacy_max_tokens: Annotated[
         bool,

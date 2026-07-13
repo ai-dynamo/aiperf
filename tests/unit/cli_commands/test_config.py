@@ -463,7 +463,7 @@ class TestConfigValidate:
                 """),
             encoding="utf-8",
         )
-        installation = _RecordingRunnerInstallation([["online_http", "scheduled"]])
+        installation = _RecordingRunnerInstallation([["http", "scheduled"]])
         resolutions = _select_runner(monkeypatch, installation)
         monkeypatch.setattr(
             "aiperf.config.resolution.resolvers.build_default_resolver_chain",
@@ -522,7 +522,7 @@ class TestConfigValidate:
     ) -> None:
         config_file = tmp_path / "benchmark.yaml"
         config_file.write_text(_VALID_BENCHMARK, encoding="utf-8")
-        installation = _RecordingRunnerInstallation([["online_http", "scheduled"]])
+        installation = _RecordingRunnerInstallation([["http", "scheduled"]])
         installation.validation_error = RuntimeError("authored phase rejected")
         _select_runner(monkeypatch, installation)
 

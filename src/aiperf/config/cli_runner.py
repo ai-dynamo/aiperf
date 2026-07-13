@@ -163,9 +163,9 @@ def _validate_native_plan(plan: BenchmarkPlan, *, config_file: Path) -> None:
                 operation="validate",
             )
             authored = projected["run"]
-            backend_id = authored["backend"]["type"]
+            transport_id = authored["transport"]["type"]
             workload_id = authored["workload"]["type"]
-            if not installation.supports_pair(backend_id, workload_id):
+            if not installation.supports_pair(transport_id, workload_id):
                 continue
             installation.validate_authored_request(
                 projected,

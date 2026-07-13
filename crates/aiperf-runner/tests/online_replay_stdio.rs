@@ -85,7 +85,7 @@ fn scheduled_envelope(
     distribution_id: &str,
     benchmark_id: &str,
     artifact_target: &Path,
-    replay_mode: &str,
+    transport_type: &str,
     phases: Value,
 ) -> Value {
     json!({
@@ -98,10 +98,9 @@ fn scheduled_envelope(
                 "random_seed": 41
             },
             "artifact_target": artifact_target,
-            "backend": {
-                "type": "dynosim",
+            "transport": {
+                "type": transport_type,
                 "config": {
-                    "replay_mode": replay_mode,
                     "sla": {"e2e_ms": 1000.0},
                     "artifacts": {
                         "report_json": "dynamo/report.json",
@@ -161,7 +160,7 @@ fn online_scheduled_runs_in_process_under_real_clock_with_exact_counts() {
         &distribution_id,
         "online-scheduled",
         &target,
-        "online",
+        "dynosim_online",
         json!([{
             "type": "constant",
             "name": "profiling",
@@ -180,8 +179,7 @@ fn online_scheduled_runs_in_process_under_real_clock_with_exact_counts() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "dynosim");
-    assert_eq!(terminal["provenance"]["replay_mode"], "online");
+    assert_eq!(terminal["provenance"]["transport"], "dynosim_online");
     assert_eq!(terminal["provenance"]["clock"], "real");
 
     let native: Value =
@@ -223,7 +221,7 @@ fn offline_and_online_agree_on_served_counts_and_differ_only_on_clock() {
             &distribution_id,
             &format!("agree-{mode}"),
             &target,
-            mode,
+            &format!("dynosim_{mode}"),
             phases.clone(),
         );
         let output = run(&request);
@@ -233,7 +231,7 @@ fn offline_and_online_agree_on_served_counts_and_differ_only_on_clock() {
             "mode={mode} terminal={terminal}, stderr={}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(terminal["provenance"]["replay_mode"], mode);
+        assert_eq!(terminal["provenance"]["transport"], format!("dynosim_{mode}"));
         let native: Value =
             serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
         assert_eq!(native["run"]["mode"], format!("{mode}:scheduled"));
@@ -299,10 +297,9 @@ fn online_product_path_matches_native_live_replay_within_3pct() {
         "run": {
             "identity": {"benchmark_id": "online-product-apples", "random_seed": 41},
             "artifact_target": target,
-            "backend": {
-                "type": "dynosim",
+            "transport": {
+                "type": "dynosim_online",
                 "config": {
-                    "replay_mode": "online",
                     "engine": {"block_size": BLOCK_SIZE},
                     "artifacts": {"report_json": "dynamo/report.json"}
                 }
@@ -346,7 +343,7 @@ fn online_product_path_matches_native_live_replay_within_3pct() {
             }
         }
     });
-    request["run"]["backend"]["config"]["engine"]["block_size"] = json!(BLOCK_SIZE);
+    request["run"]["transport"]["config"]["engine"]["block_size"] = json!(BLOCK_SIZE);
 
     let output = run(&request);
     let terminal = one_line(&output);
@@ -355,7 +352,7 @@ fn online_product_path_matches_native_live_replay_within_3pct() {
         "terminal={terminal}, stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(terminal["provenance"]["replay_mode"], "online");
+    assert_eq!(terminal["provenance"]["transport"], "dynosim_online");
     let native_v2: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
 
@@ -537,10 +534,9 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
         "run": {
             "identity": {"benchmark_id": "online-apples-subproc", "random_seed": 41},
             "artifact_target": target,
-            "backend": {
-                "type": "dynosim",
+            "transport": {
+                "type": "dynosim_online",
                 "config": {
-                    "replay_mode": "online",
                     "engine": {"block_size": BLOCK_SIZE},
                     "artifacts": {}
                 }
@@ -585,7 +581,7 @@ fn online_product_path_matches_python_dynamo_replay_subprocess_within_3pct() {
         "aiperf terminal={terminal}, stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(terminal["provenance"]["replay_mode"], "online");
+    assert_eq!(terminal["provenance"]["transport"], "dynosim_online");
     let aiperf: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     let a_avg = |tag: &str| -> f64 {
@@ -732,8 +728,8 @@ fn offline_product_path_is_byte_exact_with_python_dynamo_replay() {
         "run": {
             "identity": {"benchmark_id": "offline-be", "random_seed": 41},
             "artifact_target": target,
-            "backend": {"type": "dynosim", "config": {
-                "replay_mode": "offline", "engine": {"block_size": 16},
+            "transport": {"type": "dynosim_offline", "config": {
+                "engine": {"block_size": 16},
                 "artifacts": {"report_json": "dynamo/report.json"}
             }},
             "workload": {"type": "scheduled", "config": {

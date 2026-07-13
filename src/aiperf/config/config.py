@@ -53,7 +53,7 @@ from aiperf.config.endpoint import (
     EndpointConfig,
 )
 from aiperf.config.execution import (
-    RunnerBackendConfig,
+    RunnerTransportConfig,
     RunnerWorkloadConfig,
 )
 from aiperf.config.gpu_telemetry import (
@@ -405,12 +405,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
-    backend: Annotated[
-        RunnerBackendConfig,
+    transport: Annotated[
+        RunnerTransportConfig,
         Field(
-            default_factory=RunnerBackendConfig,
-            description="Orthogonal native backend selection. The open type ID and "
-            "factory-owned config are validated by the selected aiperf-runner.",
+            default_factory=RunnerTransportConfig,
+            description="Orthogonal native transport selection. The open type ID and "
+            "factory-owned config are validated by the selected aiperf-runner. The "
+            "clock rides on the transport ID (dynosim_offline=virtual, "
+            "dynosim_online/http/grpc=wall clock).",
         ),
     ]
 
@@ -437,6 +439,32 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         shorthand. See `_benchmark_normalizers.normalize_benchmark_input`.
         """
         return normalize_benchmark_input(data)
+
+    @model_validator(mode="before")
+    @classmethod
+    def inject_dynosim_placeholder_url(cls, data: Any) -> Any:
+        """Supply the non-dialed ``dynosim://offline`` URL for dynosim endpoints.
+
+        The in-process Dynamo transports open no sockets, so an author writing
+        ``endpoint: {type: dynosim}`` should not have to invent a URL. But
+        :class:`EndpointConfig` still requires at least one syntactically valid
+        URL. Inject the never-dialed ``dynosim://`` sentinel (an accepted scheme
+        that mirrors the runner's ``dynosim://offline`` reporting) when the
+        transport is ``dynosim_*`` and no URL was authored, so the clean
+        ``endpoint: {type: dynosim}`` form validates.
+        """
+        if not isinstance(data, dict):
+            return data
+        transport = data.get("transport")
+        transport_type = (
+            transport.get("type") if isinstance(transport, dict) else None
+        )
+        if transport_type not in {"dynosim_offline", "dynosim_online"}:
+            return data
+        endpoint = data.get("endpoint")
+        if isinstance(endpoint, dict) and not endpoint.get("urls") and not endpoint.get("url"):
+            endpoint["urls"] = ["dynosim://offline"]
+        return data
 
     @field_validator("phases", mode="before")
     @classmethod
@@ -558,47 +586,54 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
-    def validate_native_online_backend_url_family(self) -> Self:
+    def default_dynosim_endpoint_dialect(self) -> Self:
+        """Default the endpoint dialect to ``dynosim`` for dynosim transports.
+
+        The in-process Dynamo transports materialize an empty request body and
+        never dial a server, so the first-class ``dynosim`` endpoint dialect is
+        the natural default (reported as ``dynosim://offline``) instead of a
+        chat-over-fake-HTTP URL.  Only fill it when the author left the endpoint
+        type unset; an explicit dialect is always honored.  This validator lives
+        on ``BenchmarkConfig`` because ``EndpointConfig`` cannot see the transport.
+        """
+        if (
+            str(self.transport.type) in {"dynosim_offline", "dynosim_online"}
+            and "type" not in self.endpoint.model_fields_set
+        ):
+            self.endpoint.type = "dynosim"
+        return self
+
+    @model_validator(mode="after")
+    def validate_native_online_transport_url_family(self) -> Self:
         """Keep native HTTP and gRPC selections explicit and non-fallback.
 
-        Custom runner backends retain open URL policy. The two built-in online
-        backends, however, must never reinterpret one another's URLs; in
+        Custom runner transports retain open URL policy. The two built-in online
+        transports, however, must never reinterpret one another's URLs; in
         particular a ``grpc://`` run cannot fall through protocol v1's HTTP
         path when the selected runner lacks the v2 pair.
         """
-        backend = str(self.backend.type)
+        transport = str(self.transport.type)
         schemes = {urlparse(url).scheme.lower() for url in self.endpoint.urls}
-        if backend == "dynosim":
-            # dynosim is an in-process native protocol-v2 backend (Dynamo mocker
-            # co-simulation). It opens no sockets in either replay mode, so the
+        if transport in {"dynosim_offline", "dynosim_online"}:
+            # dynosim is an in-process native protocol-v2 transport (Dynamo mocker
+            # co-simulation). It opens no sockets in either clock mode, so the
             # endpoint block supplies only materialization policy (modality,
             # tokenization) and its URL is never dialed — hence no scheme
-            # constraint. As a native v2 backend it shares online_grpc's rule that
-            # endpoint.transport must be unset.
-            if self.endpoint.transport is not None:
-                raise ValueError(
-                    "backend.type='dynosim' is a native protocol-v2 backend; "
-                    "endpoint.transport must be unset"
-                )
+            # constraint.
             return self
-        if backend == "online_http" and not schemes <= {"http", "https"}:
+        if transport == "http" and not schemes <= {"http", "https"}:
             raise ValueError(
-                "backend.type='online_http' requires http:// or https:// endpoint URLs; "
-                "select backend.type='online_grpc' for grpc:// or grpcs://"
+                "transport.type='http' requires http:// or https:// endpoint URLs; "
+                "select transport.type='grpc' for grpc:// or grpcs://"
             )
-        if backend == "online_grpc":
+        if transport == "grpc":
             if not schemes <= {"grpc", "grpcs"}:
                 raise ValueError(
-                    "backend.type='online_grpc' requires grpc:// or grpcs:// endpoint URLs"
+                    "transport.type='grpc' requires grpc:// or grpcs:// endpoint URLs"
                 )
             if len(schemes) != 1:
                 raise ValueError(
-                    "all online_grpc endpoint URLs must use the same grpc or grpcs scheme"
-                )
-            if self.endpoint.transport is not None:
-                raise ValueError(
-                    "online_grpc is a native protocol-v2 backend; endpoint.transport "
-                    "must be unset"
+                    "all grpc endpoint URLs must use the same grpc or grpcs scheme"
                 )
         return self
 

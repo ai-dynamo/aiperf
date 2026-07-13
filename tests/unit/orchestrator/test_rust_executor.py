@@ -34,9 +34,9 @@ def _capabilities(*endpoint_types: str) -> dict[str, object]:
         "report_schema_version": "2.0",
         "distribution_id": _TEST_DISTRIBUTION_ID,
         "endpoint_types": list(endpoint_types),
-        "supported_pairs": [["online_http", "scheduled"]],
-        "statically_compatible_pairs": [["online_http", "scheduled"]],
-        "backends": [{"id": "online_http"}],
+        "supported_pairs": [["http", "scheduled"]],
+        "statically_compatible_pairs": [["http", "scheduled"]],
+        "transports": [{"id": "http"}],
         "workloads": [{"id": "scheduled"}],
         "endpoints": [{"id": endpoint} for endpoint in endpoint_types],
         "extensions": [],
@@ -401,12 +401,12 @@ def test_capabilities_require_every_typed_feature_inventory(
 
 def test_v2_request_capabilities_read_endpoint_profiles_from_resources() -> None:
     capabilities = {
-        "supported_pairs": [["online_grpc", "scheduled"]],
+        "supported_pairs": [["grpc", "scheduled"]],
         "endpoint_types": ["kserve_v2_infer"],
     }
     request = {
         "run": {
-            "backend": {"type": "online_grpc"},
+            "transport": {"type": "grpc"},
             "workload": {"type": "scheduled"},
             "resources": {
                 "endpoints": {
@@ -426,7 +426,7 @@ def test_v2_request_capabilities_defer_resource_presence_to_workload_registry() 
     }
     request = {
         "run": {
-            "backend": {"type": "telemetry_archive"},
+            "transport": {"type": "telemetry_archive"},
             "workload": {"type": "telemetry_watch"},
             "resources": {},
         }

@@ -299,9 +299,9 @@ def _evaluation_capabilities() -> dict:
     return {
         "capabilities_schema_version": 2,
         "protocol_versions": [1, 2],
-        "supported_pairs": [["online_http", "evaluation"]],
-        "statically_compatible_pairs": [["online_http", "evaluation"]],
-        "backends": [{"id": "online_http"}],
+        "supported_pairs": [["http", "evaluation"]],
+        "statically_compatible_pairs": [["http", "evaluation"]],
+        "transports": [{"id": "http"}],
         "workloads": [{"id": "evaluation"}],
         "endpoints": [{"id": "chat"}],
         "endpoint_types": ["chat"],
@@ -342,7 +342,7 @@ def _evaluation_capabilities() -> dict:
         ],
         "supported_evaluation_combinations": [
             {
-                "backend": "online_http",
+                "transport": "http",
                 "workload": "evaluation",
                 "provider": "nemo_evaluator",
                 "distribution": "nvidia_nemo_evaluator_0_4_locked",
@@ -360,7 +360,7 @@ def _evaluation_request(distribution: str) -> dict:
         "protocol_version": 2,
         "operation": "execute",
         "run": {
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {
                 "type": "evaluation",
                 "config": {

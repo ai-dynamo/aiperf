@@ -283,3 +283,24 @@ enabled as a required check prematurely.
   basename equality.
 - `aiperf-core` remains a separate responsibility-naming question and is not
   silently blessed by this mechanical convention.
+
+## Addendum — 2026-07-12 (new crates added after mapping table)
+
+Several Cargo packages were added or became product-relevant after the target
+mapping table in §4 was written. The naming policy still holds: package names
+retain the `aiperf-` prefix, while the future target directory should use the
+short local capability name unless explicitly excepted.
+
+Additional target mappings:
+
+| Target directory | Cargo package | Rust identifier |
+|---|---|---|
+| `crates/content-server` | `aiperf-content-server` | `aiperf_content_server` |
+| `crates/mock-rs` | `aiperf-mock-rs` | `aiperf_mock_rs` |
+| `crates/prometheus` | `aiperf-prometheus` | `aiperf_prometheus` |
+| `crates/telemetry-archive` | `aiperf-telemetry-archive` | `aiperf_telemetry_archive` |
+| `crates/transport-grpc` | `aiperf-transport-grpc` | `aiperf_transport_grpc` |
+
+This addendum updates only the inventory. The directory migration, independent
+`loadgen-core` versioning, Dynamo consumption, and metadata conformance guard
+remain unimplemented.

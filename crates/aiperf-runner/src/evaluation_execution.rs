@@ -78,10 +78,10 @@ use crate::protocol::{
 use crate::protocol_v2::RunnerComponentId;
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::registry::{
-    OnlineHttpBackendConfigV2, PreparedReportCommit, PreparedRunOutcome, PreparedRunnerOperation,
+    OnlineHttpTransportConfigV2, PreparedReportCommit, PreparedRunOutcome, PreparedRunnerOperation,
     ResourceRequirementV2, ResourceRequirementsV2, RunnerClockKind, RunnerPairFactory,
     RunnerRegistryBuilder, RunnerRunContext, RunnerWorkloadDescriptor, RunnerWorkloadFactory,
-    ValidatedBackendConfig, ValidatedWorkloadConfig, WorkloadRequirements,
+    ValidatedTransportConfig, ValidatedWorkloadConfig, WorkloadRequirements,
 };
 use crate::turn_execution::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, HttpPreparedEndpointTableFactory,
@@ -210,7 +210,7 @@ pub static EVALUATION_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor = RunnerWork
     description: "provider-neutral evaluator session over Rust-owned host effects",
     requires_semantic_responses: true,
     clock_kinds: &[RunnerClockKind::Real],
-    required_backend_features: &["http"],
+    required_transport_features: &["http"],
 };
 
 /// Provider-factory validated workload input retained through pair preparation.
@@ -302,7 +302,7 @@ impl RunnerWorkloadFactory for EvaluationRunnerWorkloadFactory {
         Ok(WorkloadRequirements {
             semantic_responses: true,
             clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
-            backend_features: BTreeSet::from(["http".to_owned()]),
+            transport_features: BTreeSet::from(["http".to_owned()]),
             resources: ResourceRequirementsV2 {
                 sidecars: ResourceRequirementV2::Forbidden,
                 ..ResourceRequirementsV2::inference()
@@ -477,7 +477,7 @@ pub fn build_evaluation_capability_inventory<'a>(
         if executable_pair && !operations.is_empty() {
             for distribution in &available_distributions {
                 supported_combinations.push(SupportedEvaluationCombination {
-                    backend: "online_http".to_owned(),
+                    transport: "http".to_owned(),
                     workload: EVALUATION_WORKLOAD_DESCRIPTOR.id.to_owned(),
                     provider: descriptor.provider_id.as_str().to_owned(),
                     distribution: distribution.distribution_id.as_str().to_owned(),
@@ -488,7 +488,7 @@ pub fn build_evaluation_capability_inventory<'a>(
             }
         } else if !executable_pair {
             // Roots resolved for these distributions, but the exact image does
-            // not advertise the executable `online_http + evaluation` pair.
+            // not advertise the executable `http + evaluation` pair.
             for distribution in &available_distributions {
                 unavailable.push(EvaluationUnavailableCapability {
                     provider: descriptor.provider_id.as_str().to_owned(),
@@ -997,9 +997,9 @@ impl EvaluationEndpointCapabilityResolver for NativeEvaluationEndpointCapability
     }
 }
 
-/// Register the real `online_http + evaluation` adapter against the same
+/// Register the real `http + evaluation` adapter against the same
 /// provider registry used for side-effect-free workload validation.
-pub fn register_online_http_evaluation_pair(
+pub fn register_http_evaluation_pair(
     builder: &mut RunnerRegistryBuilder,
     providers: Arc<EvaluationProviderRegistry>,
     assets: Arc<dyn EvaluationAssetCatalog>,
@@ -1032,8 +1032,8 @@ impl fmt::Debug for OnlineHttpEvaluationPairFactory {
 }
 
 impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
-    fn backend_id(&self) -> &'static str {
-        "online_http"
+    fn transport_id(&self) -> &'static str {
+        "http"
     }
 
     fn workload_id(&self) -> &'static str {
@@ -1042,10 +1042,10 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        validated_evaluation_backend(backend)?;
+        validated_evaluation_transport(transport)?;
         validated_evaluation_workload(workload)?
             .authored()
             .validate_structure()
@@ -1055,10 +1055,10 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
         &self,
         run: &crate::protocol_v2::AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
+        self.validate_pair(transport, workload)?;
         let workload = validated_evaluation_workload(workload)?;
         validate_evaluation_authored_run(run, context, workload)?;
         let routes =
@@ -1071,20 +1071,20 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
     fn prepare(
         &self,
         _run: &crate::protocol_v2::AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _transport: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        bail!("online_http + evaluation preparation requires the coordinator-owned runner context")
+        bail!("http + evaluation preparation requires the coordinator-owned runner context")
     }
 
     fn prepare_with_context(
         &self,
         run: &crate::protocol_v2::AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        self.validate_run(run, context, backend.as_ref(), workload.as_ref())?;
+        self.validate_run(run, context, transport.as_ref(), workload.as_ref())?;
         let workload = validated_evaluation_workload(workload.as_ref())?.clone();
         let routes =
             prepare_evaluation_routes(context, &workload, self.endpoint_capabilities.as_ref())?;
@@ -1101,7 +1101,7 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
             assets: self.assets.clone(),
             routes,
             compatibility,
-            backend_factory: context.execution_factories().http_handle(),
+            transport_factory: context.execution_factories().http_handle(),
             readiness,
             readiness_transport: context.execution_factories().readiness_transport_handle(),
             metrics,
@@ -1109,12 +1109,12 @@ impl RunnerPairFactory for OnlineHttpEvaluationPairFactory {
     }
 }
 
-fn validated_evaluation_backend(
-    config: &dyn ValidatedBackendConfig,
-) -> Result<&OnlineHttpBackendConfigV2> {
-    ValidatedBackendConfig::as_any(config)
-        .downcast_ref::<OnlineHttpBackendConfigV2>()
-        .ok_or_else(|| anyhow!("evaluation pair received the wrong online_http backend config"))
+fn validated_evaluation_transport(
+    config: &dyn ValidatedTransportConfig,
+) -> Result<&OnlineHttpTransportConfigV2> {
+    ValidatedTransportConfig::as_any(config)
+        .downcast_ref::<OnlineHttpTransportConfigV2>()
+        .ok_or_else(|| anyhow!("evaluation pair received the wrong http transport config"))
 }
 
 fn validate_evaluation_authored_run(
@@ -1425,7 +1425,7 @@ struct PreparedOnlineEvaluationOperation {
     assets: Arc<dyn EvaluationAssetCatalog>,
     routes: PreparedEvaluationRoutes,
     compatibility: Option<PreparedEvaluationCompatibility>,
-    backend_factory: Arc<dyn HttpExecutionBackendFactory>,
+    transport_factory: Arc<dyn HttpExecutionBackendFactory>,
     readiness: Box<dyn PreparedOnlineReadiness>,
     readiness_transport: Arc<dyn ReadinessTransportFactory>,
     metrics: MetricsConfig,
@@ -1502,8 +1502,8 @@ async fn execute_online_evaluation(
         .unwrap_or(1)
         .min(authored.unit_concurrency)
         .max(1);
-    let execution_backend = operation
-        .backend_factory
+    let execution_transport = operation
+        .transport_factory
         .build(HttpExecutionBackendConfig {
             workers,
             coordinator_clock: clock.clone(),
@@ -1514,11 +1514,11 @@ async fn execute_online_evaluation(
             prepared_endpoints: Some(operation.routes.table_factory.clone()),
         })
         .context("building evaluation HTTP execution placement")?;
-    execution_backend
+    execution_transport
         .set_run_origin(start_ns)
         .context("setting evaluation HTTP run origin")?;
     let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(EvaluationDispatcher {
-        execution_backend: execution_backend.clone(),
+        execution_transport: execution_transport.clone(),
         default_model: operation.routes.default_model.clone(),
     });
     let scheduled = ScheduledRuntime::new_with_metrics_config(
@@ -1642,11 +1642,11 @@ async fn execute_online_evaluation(
         let (server, receiver) = match started {
             Ok(started) => started,
             Err(error) => {
-                let shutdown = execution_backend.shutdown();
+                let shutdown = execution_transport.shutdown();
                 return match shutdown {
                     Ok(()) => Err(error).context("starting evaluator compatibility proxy"),
                     Err(shutdown) => Err(error).context(format!(
-                        "starting evaluator compatibility proxy; HTTP backend shutdown also failed: {shutdown:#}"
+                        "starting evaluator compatibility proxy; HTTP transport shutdown also failed: {shutdown:#}"
                     )),
                 };
             }
@@ -1679,7 +1679,7 @@ async fn execute_online_evaluation(
                 error,
                 None,
                 &mut proxy_server,
-                &execution_backend,
+                &execution_transport,
             )
             .await);
         }
@@ -1691,7 +1691,7 @@ async fn execute_online_evaluation(
             anyhow!("prepared evaluator launch returned invalid distribution/digest evidence"),
             None,
             &mut proxy_server,
-            &execution_backend,
+            &execution_transport,
         )
         .await);
     }
@@ -1711,7 +1711,7 @@ async fn execute_online_evaluation(
             anyhow!(error.to_string()).context("validating evaluator host binding"),
             None,
             &mut proxy_server,
-            &execution_backend,
+            &execution_transport,
         )
         .await);
     }
@@ -1731,7 +1731,7 @@ async fn execute_online_evaluation(
                 error,
                 None,
                 &mut proxy_server,
-                &execution_backend,
+                &execution_transport,
             )
             .await);
         }
@@ -1774,14 +1774,14 @@ async fn execute_online_evaluation(
             .expect("prepared proxy server and receiver share one authority");
     }
     let execution = workload.execute().await;
-    let shutdown = execution_backend.shutdown();
+    let shutdown = execution_transport.shutdown();
     let execution = match (execution, shutdown) {
         (Ok(execution), Ok(())) => execution,
         (Err(error), Ok(())) => return Err(error),
-        (Ok(_), Err(error)) => return Err(error).context("shutting down evaluation HTTP backend"),
+        (Ok(_), Err(error)) => return Err(error).context("shutting down evaluation HTTP transport"),
         (Err(error), Err(shutdown)) => {
             return Err(error.context(format!(
-                "evaluation HTTP backend also failed during shutdown: {shutdown:#}"
+                "evaluation HTTP transport also failed during shutdown: {shutdown:#}"
             )));
         }
     };
@@ -1806,7 +1806,7 @@ async fn execute_online_evaluation(
         },
     );
     let mut provenance = BTreeMap::from([
-        ("backend".to_string(), "online_http".to_string()),
+        ("transport".to_string(), "http".to_string()),
         (
             "provider".to_string(),
             authored.provider.provider_id.to_string(),
@@ -1881,7 +1881,7 @@ async fn cleanup_evaluation_setup_failure(
     primary: anyhow::Error,
     provider: Option<&mut dyn EvaluationProvider>,
     proxy: &mut Option<EvaluatorCompatibilityProxy>,
-    execution_backend: &Rc<dyn HttpTurnExecutionBackend>,
+    execution_transport: &Rc<dyn HttpTurnExecutionBackend>,
 ) -> anyhow::Error {
     let abort_error = match provider {
         Some(provider) => provider
@@ -1899,7 +1899,7 @@ async fn cleanup_evaluation_setup_failure(
             .err(),
         None => None,
     };
-    let backend_error = execution_backend.shutdown().err();
+    let transport_error = execution_transport.shutdown().err();
     if let Some(abort_error) = abort_error {
         return anyhow!(
             "evaluator provider abort/quiescence failed: {abort_error:#}; original setup failure: {primary:#}"
@@ -1909,8 +1909,8 @@ async fn cleanup_evaluation_setup_failure(
     if let Some(error) = proxy_error {
         cleanup.push(format!("compatibility proxy: {error:#}"));
     }
-    if let Some(error) = backend_error {
-        cleanup.push(format!("HTTP backend: {error:#}"));
+    if let Some(error) = transport_error {
+        cleanup.push(format!("HTTP transport: {error:#}"));
     }
     if cleanup.is_empty() {
         primary
@@ -1985,18 +1985,18 @@ impl PreparedReportCommit for PendingEvaluationReportCommit {
 }
 
 struct EvaluationDispatcher {
-    execution_backend: Rc<dyn HttpTurnExecutionBackend>,
+    execution_transport: Rc<dyn HttpTurnExecutionBackend>,
     default_model: String,
 }
 
 #[async_trait(?Send)]
 impl TurnDispatcher for EvaluationDispatcher {
     fn supports_response_streaming(&self) -> bool {
-        self.execution_backend.supports_response_streaming()
+        self.execution_transport.supports_response_streaming()
     }
 
     fn inference_dimensions(&self, turn: &TurnToSend) -> aiperf_metrics::InferenceDimensions {
-        self.execution_backend.inference_dimensions(turn)
+        self.execution_transport.inference_dimensions(turn)
     }
 
     async fn dispatch_turn(
@@ -2006,7 +2006,7 @@ impl TurnDispatcher for EvaluationDispatcher {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         Ok(self
-            .execution_backend
+            .execution_transport
             .execute_turn(
                 PreparedHttpTurn::from_turn(turn, &self.default_model),
                 observer,
@@ -2024,7 +2024,7 @@ impl TurnDispatcher for EvaluationDispatcher {
         responses: &dyn TurnResponseObserver,
     ) -> Result<TurnDispatchOutcome> {
         Ok(self
-            .execution_backend
+            .execution_transport
             .execute_turn_streaming(
                 PreparedHttpTurn::from_turn(turn, &self.default_model),
                 observer,

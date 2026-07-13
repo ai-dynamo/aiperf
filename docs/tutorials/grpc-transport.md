@@ -21,7 +21,7 @@ The built-in gRPC registry supports exactly these prepared endpoint IDs:
 - `kserve_v2_vlm`
 - `kserve_v2_images`
 
-Use `backend.type: online_grpc` with `grpc://` for plaintext HTTP/2 or
+Use `transport.type: grpc` with `grpc://` for plaintext HTTP/2 or
 `grpcs://` for TLS with WebPKI roots. See [Profile KServe Endpoints](./kserve.md)
 for a complete Config v2 example.
 

@@ -551,3 +551,24 @@ byte-identical native-format hash-block tokens (`TurnTrace::synthesize_tokens`) 
 AIPerf online and Dynamo's native `simulate_concurrency_live_requests` real-clock driver and
 asserts counts exact, every latency stat within 3% (measured ttft 1.4% / e2e 1.0% / itl 0.7%),
 and AIPerf throughput >= native.
+
+## Addendum — 2026-07-12 (transport split and replay-mode removal)
+
+The runner-facing configuration described in the prior addendum has been
+renamed and split. The protocol-v2 envelope now carries a `transport` object,
+not a `backend` object, and capabilities advertise `transports`, not
+`backends`.
+
+The former single `dynosim` backend plus `replay_mode` field is removed. Offline
+virtual-clock replay is selected by `transport.type: dynosim_offline`; wall-clock
+in-process replay is selected by `transport.type: dynosim_online`. Both use the
+typed `DynosimTransportConfig` / `DynosimTransportSpec` shape, and Python
+validates that typed config before projecting only authored fields into the
+strict runner request. There is no `replay_mode` key in authored or runner wire
+configuration.
+
+This supersedes the prior addendum's references to `DynosimBackend`,
+`ValidatedDynosimBackend`, `DynosimExecutor`, a free-form backend `config`, and
+`replay_mode=online`. The engine, clock, materializer, observer, metric, raw-token
+bypass, parity, and artifact behavior remain as described; only the product
+selection surface changed.

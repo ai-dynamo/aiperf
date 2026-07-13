@@ -39,8 +39,8 @@ fn request(operation: &str, distribution_id: &str, artifact_target: &Path) -> Va
                 "random_seed": 17
             },
             "artifact_target": artifact_target,
-            "backend": {
-                "type": "dynosim",
+            "transport": {
+                "type": "dynosim_offline",
                 "config": {
                     "artifacts": {
                         "report_json": "dynamo/report.json",
@@ -169,23 +169,23 @@ fn target(name: &str) -> PathBuf {
 fn capabilities_advertise_both_executable_offline_pairs() {
     let capabilities = capabilities();
     assert!(
-        capabilities["backends"]
+        capabilities["transports"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|backend| backend["id"] == "dynosim")
+            .any(|transport| transport["id"] == "dynosim_offline")
     );
     assert!(
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["dynosim", "graph"]))
+            .contains(&json!(["dynosim_offline", "graph"]))
     );
     assert!(
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["dynosim", "scheduled"]))
+            .contains(&json!(["dynosim_offline", "scheduled"]))
     );
 }
 
@@ -212,7 +212,7 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     );
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "dynosim");
+    assert_eq!(terminal["provenance"]["transport"], "dynosim_offline");
     assert_eq!(terminal["provenance"]["workload"], "graph");
     assert_eq!(terminal["provenance"]["phase_count"], "2");
     assert_eq!(terminal["provenance"]["parity_shared_fields"], "74");
@@ -223,7 +223,7 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
     let native: Value = serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
     assert_eq!(native["schema_version"], "2.0");
     assert_eq!(native["run"]["distribution_id"], distribution_id);
-    assert_eq!(native["run"]["backend"], "dynosim");
+    assert_eq!(native["run"]["transport"], "dynosim_offline");
     assert_eq!(native["run"]["workload"], "graph");
     assert_eq!(native["run"]["extensions"], json!([]));
     assert_eq!(
@@ -280,7 +280,7 @@ fn uncompiled_optional_feature_fails_before_artifacts_or_engine_execution() {
         capabilities["distribution_id"].as_str().unwrap(),
         &target,
     );
-    authored["run"]["backend"]["config"]["engine"] = json!({"num_g2_blocks": 8});
+    authored["run"]["transport"]["config"]["engine"] = json!({"num_g2_blocks": 8});
     let output = run(&authored);
     let terminal = one_line(&output);
 

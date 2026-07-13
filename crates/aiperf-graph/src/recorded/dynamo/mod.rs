@@ -572,6 +572,7 @@ fn build_tree_requests(
             extra_headers: headers,
             adapter_metadata: metadata,
             explicit_tags: None,
+            block_lens: None,
         });
     }
     Ok(requests)

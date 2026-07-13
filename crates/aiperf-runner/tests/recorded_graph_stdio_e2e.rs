@@ -118,7 +118,7 @@ fn request(
                     "wait_for_model_mode": "inference"
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 1,
                 "dataset": dataset,
@@ -167,7 +167,7 @@ async fn config_v2_weka_and_dynamo_dispatch_byte_identical_http_bodies() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "graph"]))
+            .contains(&json!(["http", "graph"]))
     );
     let endpoint = format!("http://{address}");
     let temporary = tempfile::tempdir().unwrap();

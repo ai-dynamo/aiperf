@@ -105,7 +105,7 @@ fn request(distribution_id: &str, operation: &str, target: &std::path::Path, url
         "run": {
             "identity": {"benchmark_id": "native-grpc-v2", "random_seed": 7},
             "artifact_target": target,
-            "backend": {"type": "online_grpc", "config": {}},
+            "transport": {"type": "grpc", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 2,
                 "dataset": {
@@ -368,7 +368,7 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_grpc", "scheduled"]))
+            .contains(&json!(["grpc", "scheduled"]))
     );
     assert!(
         capabilities["endpoint_types"]
@@ -416,7 +416,7 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["protocol_version"], 2);
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "online_grpc");
+    assert_eq!(terminal["provenance"]["transport"], "grpc");
     assert_eq!(terminal["provenance"]["workload"], "scheduled");
     assert_eq!(terminal["provenance"]["transport"], "grpc");
 
@@ -443,7 +443,7 @@ async fn scheduled_pair_validates_and_executes_over_native_grpc_stdio() {
     let report: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
     assert_eq!(report["schema_version"], "2.0");
-    assert_eq!(report["run"]["backend"], "online_grpc");
+    assert_eq!(report["run"]["transport"], "grpc");
     assert_eq!(report["run"]["workload"], "scheduled");
     assert_eq!(
         report["run"]["endpoint_profiles"],
@@ -554,7 +554,7 @@ benchmark:
         artifact_root.display()
     );
     let report: Value = serde_json::from_slice(&std::fs::read(&reports[0]).unwrap()).unwrap();
-    assert_eq!(report["run"]["backend"], "online_grpc");
+    assert_eq!(report["run"]["transport"], "grpc");
     assert_eq!(report["run"]["workload"], "scheduled");
     assert_eq!(
         report["metrics"]["request_count"]["series"][0]["stats"]["total"],

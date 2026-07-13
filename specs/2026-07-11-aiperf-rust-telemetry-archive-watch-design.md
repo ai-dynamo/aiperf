@@ -3334,3 +3334,30 @@ five source- and runtime-reproduced issues in
 stale-checkpoint duplication, Float32 precision loss, quoted-label truncation, and acceptance of
 non-2xx metric bodies. Review cycles 1–6 challenged this new AIPerf design and do not enlarge that
 bug list.
+
+## Addendum — 2026-07-12 (runner-reachable implementation)
+
+This spec is no longer merely implementation-ready. The operational history
+plane is substantially implemented and product-reachable through the Python
+`aiperf watch` command and the strict protocol-v2 `aiperf-runner` path.
+
+The implementation added `aiperf-prometheus` for strict Prometheus/OpenMetrics
+parsing and compatibility projection, plus `aiperf-telemetry-archive` for the
+archive schema, descriptors, canonical identities, WAL, local filesystem store,
+Parquet projection, loss ledger, object-store sync interfaces, receipts, and
+query surfaces. The runner owns the `telemetry_watch` workload and registers
+executable HTTP telemetry-watch operation wiring through its frozen registry;
+the same crate family also supplies attached archive ownership for benchmark
+sidecars. Python owns the human-facing `aiperf watch` command and still launches
+the sole Rust executable.
+
+The original `online_http` backend wording is superseded by the current
+protocol-v2 transport vocabulary: authored requests use `transport.type: http`
+and `workload.type: telemetry_watch`. The archive remains non-authoritative for
+benchmark metrics; native accumulators and reports remain the live source of
+measurement truth.
+
+This addendum does not claim the §18 and §21 final validation gates are fully
+closed. Until that final audit is recorded, status should be read as
+runner-reachable implementation with final validation pending, not as an
+unbuilt design.

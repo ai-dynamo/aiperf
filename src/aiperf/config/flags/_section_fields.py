@@ -26,7 +26,6 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "session_header",
         "streaming",
         "timeout_seconds",
-        "transport",
         "endpoint_type",
         "url_selection_strategy",
         "urls",

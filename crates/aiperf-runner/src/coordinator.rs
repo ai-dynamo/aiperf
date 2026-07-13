@@ -4,7 +4,7 @@
 //! Injected protocol-v2 composition root for one runner process.
 //!
 //! The stock binary and statically linked custom distributions use the same
-//! coordinator. Concrete registries meet here exactly once; backend/workload
+//! coordinator. Concrete registries meet here exactly once; transport/workload
 //! pair adapters receive only the frozen [`RunnerRunContext`] and their own
 //! validated configuration.
 
@@ -92,7 +92,7 @@ impl RunnerV2Coordinator {
         validate_distribution_id(&distribution_id)?;
         let runner_registry = runner_registry_factory
             .build()
-            .context("composing runner backend/workload registry")?;
+            .context("composing runner transport/workload registry")?;
         let product_registry = Arc::new(
             product_registry_factory
                 .build()
@@ -166,7 +166,7 @@ impl RunnerV2Coordinator {
                     self.distribution_id.clone(),
                     benchmark_id,
                     RunnerFailureStageV2::Validation,
-                    "invalid_backend_workload_selection",
+                    "invalid_transport_workload_selection",
                     format!("{error:#}"),
                     1,
                 );
@@ -236,16 +236,16 @@ impl RunnerV2Coordinator {
                 self.distribution_id.clone(),
                 benchmark_id,
                 RunnerFailureStageV2::Validation,
-                "invalid_backend_workload_run",
+                "invalid_transport_workload_run",
                 format!("{error:#}"),
                 1,
             );
         }
-        let backend_id = selection.backend_id().to_owned();
+        let transport_id = selection.transport_id().to_owned();
         let workload_id = selection.workload_id().to_owned();
         let report_provenance = match context.report_provenance(
             self.distribution_id.clone(),
-            backend_id.clone(),
+            transport_id.clone(),
             workload_id.clone(),
         ) {
             Ok(provenance) => provenance,
@@ -274,7 +274,7 @@ impl RunnerV2Coordinator {
                     deferred_checks: vec![DeferredCheckV2 {
                         code: "workload_preparation".to_owned(),
                         path: "run.workload".to_owned(),
-                        reason: "dataset, tokenizer, endpoint-profile references, and backend resources require execution preparation"
+                        reason: "dataset, tokenizer, endpoint-profile references, and transport resources require execution preparation"
                             .to_owned(),
                     }],
                     errors: Vec::new(),
@@ -317,7 +317,7 @@ impl RunnerV2Coordinator {
                             );
                         }
                     };
-                provenance.insert("backend".into(), backend_id);
+                provenance.insert("transport".into(), transport_id);
                 provenance.insert("workload".into(), workload_id);
                 RunnerProcessResultV2 {
                     response: RunnerResponseV2::Terminal(RunTerminalV2 {
@@ -543,7 +543,7 @@ mod tests {
     fn provenance() -> ReportRunProvenance {
         ReportRunProvenance::new(
             format!("blake3:{}", "a".repeat(64)),
-            "online_http",
+            "http",
             "evaluation",
             Vec::new(),
             vec![aiperf_metrics::ReportEndpointProfileIdentity::new("default", "chat").unwrap()],

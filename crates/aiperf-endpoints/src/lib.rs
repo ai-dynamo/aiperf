@@ -13,6 +13,7 @@
 
 mod anthropic;
 mod config;
+mod dynosim;
 mod endpoints;
 mod extraction;
 mod kserve;
@@ -26,6 +27,7 @@ mod vllm_generate;
 
 pub use anthropic::MessagesEndpoint;
 pub use config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, RequestContentType};
+pub use dynosim::DynosimEndpointFactory;
 pub use endpoints::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
     ResponsesEndpoint, WARMUP_SYSTEM_MESSAGE_PREFIX,

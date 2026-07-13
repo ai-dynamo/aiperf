@@ -33,7 +33,7 @@ effective model selected for each request.
 ## Native gRPC example
 
 Native gRPC is available only through a Config v2 file. Select the
-`online_grpc` backend and use an explicit `grpc://` or `grpcs://` URL:
+`grpc` transport and use an explicit `grpc://` or `grpcs://` URL:
 
 ```yaml
 # kserve-grpc.yaml
@@ -41,8 +41,8 @@ schemaVersion: "2.0"
 
 benchmark:
   models: [my-triton-model]
-  backend:
-    type: online_grpc
+  transport:
+    type: grpc
     config: {}
   endpoint:
     urls: ["grpc://triton.default.svc.cluster.local:8001"]
@@ -89,8 +89,8 @@ schemaVersion: "2.0"
 
 benchmark:
   models: [tensorflow-model]
-  backend:
-    type: online_http
+  transport:
+    type: http
     config: {}
   endpoint:
     urls: ["http://tensorflow-serving.default.svc.cluster.local:8501"]
@@ -136,8 +136,7 @@ values during side-effect-free runner-v2 preparation.
 
 ## Current fail-closed limits
 
-- `online_grpc` accepts only `grpc://` or `grpcs://`; do not set the legacy
-  `endpoint.transport` field.
+- `transport.type: grpc` accepts only `grpc://` or `grpcs://` URLs.
 - All URLs in one run must use the same gRPC security scheme.
 - Positive `waitForModelTimeout` is not yet composed into the gRPC runner
   lifecycle, so leave it at its default `0`. The transport-level `ModelReady`

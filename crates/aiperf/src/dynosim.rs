@@ -1546,7 +1546,7 @@ impl EngineHost {
             .event_delivery
             .requires_incremental_delivery(delivery_request);
         let mut engine = self.engine.borrow_mut();
-        engine.set_now_ms(ns_to_ms(self.clock.now_ns()));
+        engine.advance_now_ms(ns_to_ms(self.clock.now_ns()));
         let uuid = engine.submit(request)?;
         drop(engine);
 
@@ -1634,7 +1634,7 @@ impl EngineHost {
         let mut events = Vec::with_capacity(due.len());
         {
             let mut engine = self.engine.borrow_mut();
-            engine.set_now_ms(now_ms);
+            engine.advance_now_ms(now_ms);
             for uuid in due {
                 let event = engine.cancel(uuid)?.with_context(|| {
                     format!("Dynamo request {uuid} became terminal before its cancellation event")
@@ -1730,7 +1730,7 @@ impl SimEventSource for EngineHost {
     }
 
     fn set_time_ns(&self, now_ns: i64) -> std::result::Result<(), SimDriveError> {
-        self.engine.borrow_mut().set_now_ms(ns_to_ms(now_ns));
+        self.engine.borrow_mut().advance_now_ms(ns_to_ms(now_ns));
         Ok(())
     }
 
@@ -1746,7 +1746,7 @@ impl SimEventSource for EngineHost {
         }
         let (before_ms, before_in_flight, before_event_ms) = {
             let mut engine = self.engine.borrow_mut();
-            engine.set_now_ms(ns_to_ms(now_ns));
+            engine.advance_now_ms(ns_to_ms(now_ns));
             let before_ms = engine.now_ms();
             let before_in_flight = engine.in_flight();
             let before_event_ms = engine.next_event_ms();
@@ -2241,7 +2241,7 @@ impl DynosimSink {
 impl HttpRequestDispatcher for DynosimSink {
     fn inference_dimensions(&self, _request: &HttpRequest) -> InferenceDimensions {
         InferenceDimensions {
-            endpoint_url: Some("dynamo://offline".to_string()),
+            endpoint_url: Some("dynosim://offline".to_string()),
             model: Some(self.model.clone()),
         }
     }
@@ -2261,7 +2261,7 @@ impl HttpRequestDispatcher for DynosimSink {
 impl TurnDispatcher for DynosimSink {
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         InferenceDimensions {
-            endpoint_url: Some("dynamo://offline".to_string()),
+            endpoint_url: Some("dynosim://offline".to_string()),
             model: turn
                 .effective_model
                 .clone()
@@ -2945,7 +2945,7 @@ pub fn run_trace_offline(
             "Dynamo trace clock regressed from {now_ms}ms to {next_ms}ms"
         );
         now_ms = next_ms;
-        engine.set_now_ms(now_ms);
+        engine.advance_now_ms(now_ms);
         clock.advance_to(ms_to_ns(now_ms).map_err(anyhow::Error::msg)?);
 
         let ready = driver.pop_ready(now_ms, usize::MAX);
@@ -2961,7 +2961,7 @@ pub fn run_trace_offline(
                     turn_index: u32::try_from(ready.turn_index).unwrap_or(u32::MAX),
                     correlation_id: ready.replay_key,
                     dimensions: InferenceDimensions {
-                        endpoint_url: Some("dynamo://offline".to_string()),
+                        endpoint_url: Some("dynosim://offline".to_string()),
                         model: None,
                     },
                     ..RequestMetricMetadata::default()
@@ -3153,7 +3153,7 @@ impl DynamoGraphSink {
                 correlation_id: Some(correlation_id),
                 conversation_id: Some(conversation_id.clone()),
                 dimensions: InferenceDimensions {
-                    endpoint_url: Some("dynamo://offline".to_string()),
+                    endpoint_url: Some("dynosim://offline".to_string()),
                     model: Some(self.backend.model.clone()),
                 },
                 ..RequestMetricMetadata::default()

@@ -232,3 +232,13 @@ parity tests for all nine dialects, semantic protobuf tests for every RPC,
 exact method/cardinality checks, a real Tonic bidirectional ASR loopback, and a
 strict runner `validate`/`execute` subprocess proof using an inline Rust-side
 WAV fixture.
+
+## Addendum — 2026-07-12 (transport vocabulary)
+
+The native gRPC execution surface now uses the protocol-v2 transport vocabulary.
+Authored Config v2 selects `transport.type: grpc`, not
+`backend.type: online_grpc`, and capabilities advertise the executable
+`grpc + scheduled` pair. The `online_grpc` wording in the body and prior
+addendum is superseded by this transport ID rename only; the endpoint registry,
+Tonic transport, KServe/Riva dialect behavior, readiness, cancellation, and
+subprocess proof requirements remain unchanged.

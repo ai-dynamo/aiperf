@@ -46,6 +46,15 @@ pub(crate) struct RecordedRequest {
     /// `aiperf_trace` adapter, which knows exact message boundaries. `None` for
     /// WEKA/Dynamo, which fall back to the token-geometry heuristic.
     pub explicit_tags: Option<Vec<BlockTag>>,
+    /// Ground-truth per-block token lengths, aligned 1:1 with `hash_ids`, supplied
+    /// by the `aiperf_trace` adapter. Every entry is `block_size` except a
+    /// message's final block, which carries its exact **partial-tail** length
+    /// (`tokens - (blocks - 1) * block_size`). This makes reconstruction honor the
+    /// real per-segment token count instead of rounding each tail up to a full
+    /// block. `None` for WEKA/Dynamo, whose blocks are uniformly `block_size` with
+    /// any remainder handled as a single prompt-level tail. When present,
+    /// `Σ block_lens == input_tokens`.
+    pub block_lens: Option<Vec<usize>>,
 }
 
 impl RecordedRequest {

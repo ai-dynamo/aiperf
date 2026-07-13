@@ -11,8 +11,7 @@ const { fitView } = vi.hoisted(() => ({
   fitView: vi.fn(async () => true),
 }));
 
-vi.mock("@xyflow/react", async () => {
-  const { useEffect } = await import("react");
+vi.mock("@xyflow/react", () => {
   return {
     Background: () => null,
     BaseEdge: () => null,
@@ -23,18 +22,8 @@ vi.mock("@xyflow/react", async () => {
     MiniMap: () => null,
     Panel: ({ children }: { children: unknown }) => children,
     Position: { Left: "left", Right: "right" },
-    ReactFlow: ({
-      children,
-      onInit,
-    }: {
-      children: unknown;
-      onInit?(instance: { fitView: typeof fitView }): void;
-    }) => {
-      useEffect(() => {
-        onInit?.({ fitView });
-      }, [onInit]);
-      return children;
-    },
+    ReactFlow: ({ children }: { children: unknown }) => children,
+    useReactFlow: () => ({ fitView }),
     getSmoothStepPath: () => ["", 0, 0],
   };
 });
@@ -69,6 +58,10 @@ function layoutRequest(key: string): LayoutRequest {
 
 describe("graph fit command consumption", () => {
   it("executes each request id once across later layout changes", async () => {
+    // The controller auto-fits on a deferred frame; stub it out so this test
+    // isolates command-driven fits from the readiness auto-fit.
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
     const layoutService = {
       layout: vi.fn(async () => layoutResult),
     };

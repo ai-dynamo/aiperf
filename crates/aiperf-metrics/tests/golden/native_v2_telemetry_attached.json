@@ -5,7 +5,7 @@
     "mode": "online",
     "model": "candidate-model",
     "distribution_id": "blake3:2222222222222222222222222222222222222222222222222222222222222222",
-    "backend": "online_http",
+    "transport": "http",
     "workload": "scheduled",
     "extensions": [],
     "endpoint_profiles": [

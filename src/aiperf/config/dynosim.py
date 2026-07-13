@@ -1,18 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Typed authoring surface for the ``dynosim`` runner backend.
+"""Typed authoring surface for the ``dynosim`` runner transports.
 
-The ``dynosim`` backend runs one in-process Dynamo mocker co-simulation of a
-trace or synthetic workload — deterministic virtual-clock (``offline``) or
-wall-clock (``online``) — with no sockets, HTTP, or frontend.  It is selected
-through ``aiperf profile`` as ``backend.type: dynosim``; there is no separate
-``aiperf dynosim`` command.
+The ``dynosim`` transports run one in-process Dynamo mocker co-simulation of a
+trace or synthetic workload with no sockets, HTTP, or frontend.  The clock rides
+on the transport ID: ``dynosim_offline`` fast-forwards a deterministic virtual
+clock for byte-exact replay, and ``dynosim_online`` drives the same engine under
+a wall clock for live-throughput measurement.  Both are selected through
+``aiperf profile`` as ``transport.type: dynosim_offline`` / ``dynosim_online``;
+there is no separate ``aiperf dynosim`` command and no ``replay_mode`` field.
 
 These models mirror the runner's strict decoder
-(``crates/aiperf-runner/src/offline_execution.rs`` ``DynosimBackendSpec`` and its
+(``crates/aiperf-runner/src/offline_execution.rs`` ``DynosimTransportSpec`` and its
 ``deny_unknown_fields`` sub-specs) field-for-field so the projected
-``backend.config`` object round-trips into the exact Rust schema.  The engine and
+``transport.config`` object round-trips into the exact Rust schema.  The engine and
 router objects are deliberately left as free-form JSON: they are ``MockEngineArgs``
 / ``KvRouterConfig`` (``RawValue`` on the wire) owned and validated by Dynamo, and
 copying their ~60-field surface into Python would only invite drift.
@@ -35,13 +37,12 @@ from aiperf.config.base import BaseConfig
 __all__ = [
     "DynamoBuildFeature",
     "DynamoKvEventVisibility",
-    "DynamoReplayMode",
     "DynosimAicConfig",
     "DynosimArtifactConfig",
-    "DynosimBackendConfig",
     "DynosimRouterMode",
     "DynosimSlaConfig",
     "DynosimTopology",
+    "DynosimTransportConfig",
 ]
 
 
@@ -58,18 +59,6 @@ class DynosimRouterMode(str, Enum):
 
     ROUND_ROBIN = "round_robin"
     KV = "kv"
-
-
-class DynamoReplayMode(str, Enum):
-    """Clock axis for the in-process engine (mirrors ``DynamoReplayModeSpec``).
-
-    ``offline`` fast-forwards a virtual clock for deterministic byte-exact replay;
-    ``online`` drives the same engine under a wall clock for live-throughput
-    measurement.  Both are in-process — ``online`` still opens no sockets.
-    """
-
-    OFFLINE = "offline"
-    ONLINE = "online"
 
 
 class DynamoKvEventVisibility(str, Enum):
@@ -210,13 +199,13 @@ class DynosimArtifactConfig(BaseConfig):
     ]
 
 
-class DynosimBackendConfig(BaseConfig):
-    """Typed ``backend.config`` for ``backend.type: dynosim``.
+class DynosimTransportConfig(BaseConfig):
+    """Typed ``transport.config`` for ``transport.type: dynosim_offline`` / ``dynosim_online``.
 
-    Mirrors the runner's ``DynosimBackendSpec`` (``deny_unknown_fields``).  The
+    Mirrors the runner's ``DynosimTransportSpec`` (``deny_unknown_fields``).  The
     ``engine``/``prefill_engine``/``decode_engine``/``router`` objects are opaque
     ``MockEngineArgs``/``KvRouterConfig`` JSON, preserved verbatim for Dynamo to
-    validate.
+    validate.  The clock axis is not a field here — it rides on the transport ID.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -289,13 +278,6 @@ class DynosimBackendConfig(BaseConfig):
     router_mode: Annotated[
         DynosimRouterMode,
         Field(default=DynosimRouterMode.ROUND_ROBIN, description="Router policy for routed topologies."),
-    ]
-    replay_mode: Annotated[
-        DynamoReplayMode,
-        Field(
-            default=DynamoReplayMode.OFFLINE,
-            description="Clock axis: deterministic virtual replay (offline) or wall-clock replay (online).",
-        ),
     ]
     required_features: Annotated[
         set[DynamoBuildFeature],

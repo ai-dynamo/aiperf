@@ -7,7 +7,7 @@
 //! The selected runner owns component discovery, strict factory-specific config
 //! decoding, preparation, execution, and reporting. Factory-owned objects stay
 //! as [`RawValue`] until their registered implementation decodes them; this is
-//! what keeps backend and workload identities open without weakening the outer
+//! what keeps transport and workload identities open without weakening the outer
 //! process contract.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -166,8 +166,8 @@ pub struct AuthoredRunSpecV2 {
     pub models: ModelsSpec,
     /// Resolved endpoint profiles; empty only when the resource was absent.
     pub endpoints: EndpointProfilesSpecV2,
-    /// Open backend selection.
-    pub backend: NamedRunnerComponentSpecV2,
+    /// Open transport selection (the `{transport, clock}` execution axis).
+    pub transport: NamedRunnerComponentSpecV2,
     /// Open workload selection.
     pub workload: NamedRunnerComponentSpecV2,
     /// Resolved native metrics policy.
@@ -206,7 +206,7 @@ pub struct AuthoredRunResourcesV2 {
 struct AuthoredRunWireV2 {
     identity: RunIdentitySpecV2,
     artifact_target: PathBuf,
-    backend: NamedRunnerComponentSpecV2,
+    transport: NamedRunnerComponentSpecV2,
     workload: NamedRunnerComponentSpecV2,
     #[serde(default)]
     resources: AuthoredRunResourcesV2,
@@ -239,7 +239,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             artifact_target: wire.artifact_target,
             models: wire.resources.models.unwrap_or_else(empty_models),
             endpoints: wire.resources.endpoints.unwrap_or_default(),
-            backend: wire.backend,
+            transport: wire.transport,
             workload: wire.workload,
             metrics: wire.resources.metrics.unwrap_or_default(),
             artifacts: wire.resources.artifacts.unwrap_or_default(),
@@ -296,7 +296,7 @@ impl AuthoredRunSpecV2 {
             !self.artifact_target.as_os_str().is_empty(),
             "artifact_target cannot be empty"
         );
-        self.backend.validate_outer("backend")?;
+        self.transport.validate_outer("transport")?;
         self.workload.validate_outer("workload")?;
         if self.resource_is_present(RunResourceV2::Models) {
             validate_models(&self.models)?;
@@ -427,7 +427,7 @@ impl NamedRunnerComponentSpecV2 {
     }
 }
 
-/// Authored endpoint profiles shared by every backend/workload pair.
+/// Authored endpoint profiles shared by every transport/workload pair.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointProfilesSpecV2 {
@@ -646,7 +646,7 @@ pub enum RunnerFailureStageV2 {
     Protocol,
     /// Side-effect-free static validation failure.
     Validation,
-    /// Dataset, endpoint, evaluator, or backend preparation failure.
+    /// Dataset, endpoint, evaluator, or transport preparation failure.
     Preparation,
     /// Workload execution failure.
     Execution,
@@ -743,7 +743,7 @@ pub struct RunTerminalV2 {
     /// Non-authoritative diagnostic evidence emitted for failed executions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostic_artifacts: Vec<RunDiagnosticArtifactV2>,
-    /// Additive backend/workload provenance returned before Python opens the report.
+    /// Additive transport/workload provenance returned before Python opens the report.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub provenance: BTreeMap<String, String>,
 }
@@ -775,7 +775,7 @@ mod tests {
             "run": {
                 "identity": {"benchmark_id": "run-1"},
                 "artifact_target": "/tmp/not-created",
-                "backend": {"type": "future_backend", "config": {"node": 7}},
+                "transport": {"type": "future_transport", "config": {"node": 7}},
                 "workload": {"type": "future_workload", "config": {"mode": "x"}},
                 "resources": {
                     "models": {"items": [{"name": "model"}]},
@@ -796,8 +796,8 @@ mod tests {
     fn authored_envelope_preserves_factory_owned_objects() {
         let decoded: RunnerEnvelopeV2 = serde_json::from_value(request()).unwrap();
         decoded.validate_outer().unwrap();
-        assert_eq!(decoded.run.backend.id.as_str(), "future_backend");
-        assert_eq!(decoded.run.backend.config.get(), r#"{"node":7}"#);
+        assert_eq!(decoded.run.transport.id.as_str(), "future_transport");
+        assert_eq!(decoded.run.transport.config.get(), r#"{"node":7}"#);
         assert_eq!(decoded.run.workload.id.as_str(), "future_workload");
         let identities = decoded.run.endpoints.identities().unwrap();
         assert_eq!(identities[0].profile_id, "default");
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn component_ids_are_open_but_wire_safe() {
-        for valid in ["online_http", "acme_zmq4", "x"] {
+        for valid in ["http", "acme_zmq4", "x"] {
             assert_eq!(valid.parse::<RunnerComponentId>().unwrap().as_str(), valid);
         }
         for invalid in ["", " Online_http", "Online", "a-b", "a.b", "a/b"] {
@@ -846,11 +846,11 @@ mod tests {
     #[test]
     fn factory_owned_config_must_still_be_an_object() {
         let mut value = request();
-        value["run"]["backend"]["config"] = serde_json::json!(null);
+        value["run"]["transport"]["config"] = serde_json::json!(null);
         let decoded: RunnerEnvelopeV2 = serde_json::from_value(value).unwrap();
         let error = decoded.validate_outer().unwrap_err().to_string();
         assert!(
-            error.contains("backend.config must be a JSON object"),
+            error.contains("transport.config must be a JSON object"),
             "{error}"
         );
     }

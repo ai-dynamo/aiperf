@@ -176,7 +176,7 @@ fn scheduled_request(
                 "models": {"items": [{"name": "fixture-model"}]},
                 "endpoints": {"profiles": [profile]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -392,7 +392,7 @@ fn tls_request(artifact_target: &std::path::Path, endpoint_url: &str, ssl_verify
                     "wait_for_model_mode": "models"
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {

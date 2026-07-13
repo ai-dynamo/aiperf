@@ -28,16 +28,16 @@ def _capabilities(binary: Path, *, offline: bool) -> dict[str, object]:
         if offline
         else []
     )
-    backends = (
-        [{"id": "dynamo_offline"}, {"id": "online_http"}]
+    transports = (
+        [{"id": "dynamo_offline"}, {"id": "http"}]
         if offline
-        else [{"id": "online_http"}]
+        else [{"id": "http"}]
     )
     return {
         "event": "runner_capabilities",
         "distribution_id": runner_release_input._distribution_id(binary),
         "supported_pairs": pairs,
-        "backends": backends,
+        "transports": transports,
     }
 
 

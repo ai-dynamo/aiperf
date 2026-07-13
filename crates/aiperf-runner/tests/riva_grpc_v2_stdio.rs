@@ -98,7 +98,7 @@ fn operation(distribution_id: &str, operation: &str, target: &std::path::Path, u
         "run": {
             "identity": {"benchmark_id": "native-riva-asr-v2", "random_seed": 11},
             "artifact_target": target,
-            "backend": {"type": "online_grpc", "config": {}},
+            "transport": {"type": "grpc", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -304,7 +304,7 @@ async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_grpc", "scheduled"]))
+            .contains(&json!(["grpc", "scheduled"]))
     );
 
     let temporary = tempfile::tempdir().unwrap();
@@ -336,7 +336,7 @@ async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
     );
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "online_grpc");
+    assert_eq!(terminal["provenance"]["transport"], "grpc");
     assert_eq!(terminal["provenance"]["transport"], "grpc");
 
     {
@@ -373,7 +373,7 @@ async fn runner_capabilities_validate_and_execute_native_riva_asr_bidi() {
 
     let report: Value =
         serde_json::from_slice(&std::fs::read(target.join("native-v2.json")).unwrap()).unwrap();
-    assert_eq!(report["run"]["backend"], "online_grpc");
+    assert_eq!(report["run"]["transport"], "grpc");
     assert_eq!(
         report["run"]["endpoint_profiles"],
         json!([{"profile_id": "default", "endpoint_id": "riva_asr"}])

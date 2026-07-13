@@ -474,13 +474,13 @@ pub(crate) struct NativeGraphDatasetPlan {
 /// reinterpret the authored source a second time.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_factories(
     plan: NativeRunPlan,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_all_factories(
         plan,
-        backend_factory,
+        transport_factory,
         graph_placement,
         registry,
         &BuiltinNativeSidecarResourceFactory,
@@ -511,14 +511,14 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_execution_factories(
 /// Execute one fully prepared plan with sidecar resource construction injected.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
     plan: NativeRunPlan,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
         plan,
-        backend_factory,
+        transport_factory,
         graph_placement,
         registry,
         sidecar_factory,
@@ -528,7 +528,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_all_factories(
 
 fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     plan: NativeRunPlan,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -547,7 +547,7 @@ fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
         &runtime,
         prepare_and_execute_native(
             plan,
-            backend_factory,
+            transport_factory,
             graph_placement,
             registry,
             sidecar_factory,
@@ -966,7 +966,7 @@ impl PreparedNativeSidecarResources {
 
 async fn prepare_and_execute_native(
     request: NativeRunPlan,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
     sidecar_factory: &dyn NativeSidecarResourceFactory,
@@ -1007,7 +1007,7 @@ async fn prepare_and_execute_native(
         request,
         accuracy.as_mut(),
         &mut sidecars,
-        backend_factory,
+        transport_factory,
         graph_placement,
         registry,
     )
@@ -1030,7 +1030,7 @@ async fn execute_native(
     request: NativeRunPlan,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     graph_placement: &dyn RunnerGraphPlacementFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
@@ -1041,17 +1041,17 @@ async fn execute_native(
         );
         return execute_graph_native(request, sidecars, graph_placement, registry).await;
     }
-    execute_scheduled_native(request, accuracy, sidecars, backend_factory, registry).await
+    execute_scheduled_native(request, accuracy, sidecars, transport_factory, registry).await
 }
 
 async fn execute_scheduled_native(
     request: NativeRunPlan,
     accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
-    execute_native_inner(request, accuracy, sidecars, backend_factory, registry).await
+    execute_native_inner(request, accuracy, sidecars, transport_factory, registry).await
 }
 
 fn validate_graph_request(request: &NativeRunPlan) -> Result<()> {
@@ -1359,7 +1359,7 @@ async fn execute_native_inner(
     request: NativeRunPlan,
     mut accuracy: Option<&mut PreparedAccuracy>,
     sidecars: &mut PreparedNativeSidecarResources,
-    backend_factory: &dyn HttpExecutionBackendFactory,
+    transport_factory: &dyn HttpExecutionBackendFactory,
     registry: &AiperfRegistry,
 ) -> Result<NativeReport> {
     let live_sink = sidecars.live_sink();
@@ -1444,7 +1444,7 @@ async fn execute_native_inner(
 
     let real_clock_anchor = sidecars.real_clock_anchor;
     let clock = sidecars.clock.clone();
-    let execution_backend = backend_factory.build(HttpExecutionBackendConfig {
+    let execution_backend = transport_factory.build(HttpExecutionBackendConfig {
         workers: request.run.workers,
         coordinator_clock: clock.clone(),
         real_clock_anchor,

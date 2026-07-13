@@ -19,6 +19,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::DynosimEndpointFactory;
 use crate::MessagesEndpoint;
 use crate::VllmGenerateFactory;
 use crate::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
@@ -608,6 +609,7 @@ impl EndpointRegistryBuilder {
         builder.register_factory(RawEndpointFactory)?;
         builder.register_factory(TemplateEndpointFactory)?;
         builder.register_factory(VllmGenerateFactory)?;
+        builder.register_factory(DynosimEndpointFactory)?;
         builder.register_factory(KServeChatFactory)?;
         builder.register_factory(KServeCompletionsFactory)?;
         builder.register_factory(KServeEmbeddingsFactory)?;

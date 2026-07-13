@@ -249,7 +249,7 @@ fn evaluation_request(
                     "wait_for_model_mode": readiness["wait_for_model_mode"]
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "evaluation", "config": {
                 "provider": {"type": provider, "distribution": distribution},
                 "evaluation": provider_config,
@@ -489,7 +489,7 @@ fn capabilities_omit_evaluation_without_deployment_owned_provider_roots() {
         !capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "evaluation"]))
+            .contains(&json!(["http", "evaluation"]))
     );
     assert!(
         capabilities["evaluation_providers"]
@@ -514,7 +514,7 @@ async fn both_stock_providers_execute_through_rust_owned_http_and_sse() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "evaluation"]))
+            .contains(&json!(["http", "evaluation"]))
     );
     let combinations = capabilities["supported_evaluation_combinations"]
         .as_array()

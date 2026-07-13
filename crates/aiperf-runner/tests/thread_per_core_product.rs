@@ -103,7 +103,7 @@ async fn v2_workers_own_transport_pools_below_one_phase_coordinator() {
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 3,
                 "dataset": {
@@ -149,7 +149,7 @@ async fn v2_workers_own_transport_pools_below_one_phase_coordinator() {
     );
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["success"], true, "{terminal}");
-    assert_eq!(terminal["provenance"]["backend"], "online_http");
+    assert_eq!(terminal["provenance"]["transport"], "http");
     assert_eq!(terminal["provenance"]["workload"], "scheduled");
 
     let peers = connection_log.peers.lock().unwrap().clone();

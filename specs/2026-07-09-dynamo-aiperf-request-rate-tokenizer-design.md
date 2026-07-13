@@ -78,3 +78,14 @@ flowchart LR
 - **Tokenizer construction API:** the concrete loader type for `tokenizer.json` in `dynamo-tokenizers` is not yet pinned; a short spike is the first plan task.
 - **Arrival accuracy under load:** request-rate honoring depends on the driver's `next_ready_time_ms` cadence; tolerance-based assertions only.
 - **Decoded-token text round-trip:** random in-vocab ids may decode to odd text; acceptable for load generation (server still processes tokens), but note it in a comment.
+
+## Addendum — 2026-07-12 (historical precursor)
+
+The "IMPLEMENTED" status above refers to the prior `dynamo-aiperf-native` tree,
+not to the current standalone AIPerf Rust workspace under `crates/`. This file is
+kept as lineage for the request-rate/tokenizer increment that informed the later
+`loadgen-core`, `aiperf-rng`, dataset, and scheduled-workload designs.
+
+Current product truth is the Python Config-v2 frontend plus `aiperf-runner`;
+default Rust builds have no Dynamo dependency, and optional Dynamo replay enters
+only through the curated `dynosim` adapter.

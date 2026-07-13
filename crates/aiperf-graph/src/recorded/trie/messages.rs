@@ -170,24 +170,28 @@ pub(super) fn assign_block_tags(
         // `(role, starts_message)` tags from real message boundaries, so we skip
         // the token-geometry heuristic entirely and validate the covered count.
         if let Some(explicit) = &node.request.explicit_tags {
+            // Explicit tags cover *every* block, including a message's partial-tail
+            // final block. The geometry heuristic's covered count is
+            // `input_tokens / block_size` (a floor), which under-counts the moment
+            // a segment ends on a partial tail — so validate against the true block
+            // count instead. Prefix inheritance still comes from the block-id LCP.
+            if explicit.len() != node.request.hash_ids.len() {
+                return Err(RecordedTraceError(format!(
+                    "node {:?}: explicit tag count {} differs from block count {}",
+                    node.request.node_id,
+                    explicit.len(),
+                    node.request.hash_ids.len()
+                )));
+            }
             let parent_hashes = node
                 .content_parent
                 .map_or(&[][..], |parent| nodes[parent].request.hash_ids.as_slice());
-            let geo = geometry_from_hashes(
-                parent_hashes,
-                &node.request.hash_ids,
-                node.request.input_tokens,
-                block_size,
-            );
-            if explicit.len() != geo.covered {
-                return Err(RecordedTraceError(format!(
-                    "node {:?}: explicit tag count {} differs from covered block count {}",
-                    node.request.node_id,
-                    explicit.len(),
-                    geo.covered
-                )));
-            }
-            inherited_by_node[index] = geo.lcp.min(explicit.len());
+            let lcp = parent_hashes
+                .iter()
+                .zip(&node.request.hash_ids)
+                .take_while(|(left, right)| left == right)
+                .count();
+            inherited_by_node[index] = lcp.min(explicit.len());
             all_tags[index] = explicit.clone();
             continue;
         }
@@ -280,14 +284,20 @@ pub(super) fn emit_prompt(
                 .push(index);
         }
     }
+    // Per-block token lengths: `block_size` for every block by default, or the
+    // adapter's ground-truth lengths when supplied — where a message's final
+    // block carries its exact partial-tail length. Truncating the deterministic
+    // full block to that length is prefix-stable (a given block id always resolves
+    // to the same first-N tokens), so shared-prefix messages stay byte-identical
+    // and reuse the cache.
+    let block_lens = node.request.block_lens.as_deref();
+    let block_len = |block: usize| block_lens.map_or(block_size, |lens| lens[block]);
     let mut handles = Vec::with_capacity(groups.len());
     let mut parent: Option<Handle> = None;
     let mut assembled = 0_usize;
     for (role, blocks) in groups {
-        // Each block contributes exactly `block_size` tokens, so the message
-        // length is known without decoding — the covered-count assertion below
-        // stays exact even when the message is served from the reuse cache.
-        assembled = assembled.saturating_add(blocks.len().saturating_mul(block_size));
+        let group_tokens: usize = blocks.iter().map(|block| block_len(*block)).sum();
+        assembled = assembled.saturating_add(group_tokens);
         let key = PromptMessageKey {
             parent: parent.map(|handle| handle.index()),
             role,
@@ -299,13 +309,15 @@ pub(super) fn emit_prompt(
         let handle = if let Some(cached) = cache.get(&key) {
             *cached
         } else {
-            let mut tokens = Vec::with_capacity(blocks.len().saturating_mul(block_size));
+            let mut tokens = Vec::with_capacity(group_tokens);
             for block in &blocks {
-                tokens.extend(content.block_tokens(
+                let full = content.block_tokens(
                     &node.request.hash_ids[*block..*block + 1],
                     block_size,
                     hash_scope,
-                )?);
+                )?;
+                let len = block_len(*block).min(full.len());
+                tokens.extend_from_slice(&full[..len]);
             }
             let text = content.decode(&tokens)?;
             let handle = intern_message(pool, parent, role.as_str(), &text, &tokens)?;
@@ -315,10 +327,17 @@ pub(super) fn emit_prompt(
         parent = Some(handle);
         handles.push(handle);
     }
-    let expected = tags.len().saturating_mul(block_size);
+    // With ground-truth `block_lens`, the reconstruction must total the real input
+    // length (`Σ block_lens == input_tokens`); otherwise it totals the covered
+    // block count times `block_size` (the WEKA/Dynamo tail lives outside the trie).
+    let expected = if block_lens.is_some() {
+        node.request.input_tokens
+    } else {
+        tags.len().saturating_mul(block_size)
+    };
     if assembled != expected {
         return Err(RecordedTraceError(format!(
-            "node {:?}: reconstructed {assembled} tokens, expected covered-count {expected}",
+            "node {:?}: reconstructed {assembled} tokens, expected {expected}",
             node.request.node_id
         )));
     }
@@ -403,6 +422,7 @@ mod parity_tests {
                 extra_headers: BTreeMap::new(),
                 adapter_metadata: BTreeMap::new(),
                 explicit_tags: None,
+                block_lens: None,
             },
             content_parent: None,
             warped_start: order as f64,
@@ -518,6 +538,7 @@ mod tests {
                 extra_headers: BTreeMap::new(),
                 adapter_metadata: BTreeMap::new(),
                 explicit_tags: None,
+                block_lens: None,
             },
             content_parent: None,
             warped_start: order as f64,

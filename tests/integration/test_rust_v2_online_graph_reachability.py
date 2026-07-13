@@ -115,7 +115,7 @@ def _runner_binary() -> Path:
 @pytest.fixture(scope="module")
 def online_graph_installation() -> RunnerInstallation:
     installation = RunnerInstallation.resolve(_runner_binary())
-    assert installation.supports_pair("online_http", "graph")
+    assert installation.supports_pair("http", "graph")
     return installation
 
 
@@ -238,7 +238,7 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
             request["expected_distribution_id"]
             == online_graph_installation.distribution_id
         )
-        assert request["run"]["backend"] == {"type": "online_http", "config": {}}
+        assert request["run"]["transport"] == {"type": "http", "config": {}}
         assert request["run"]["workload"]["type"] == "graph"
         dataset = request["run"]["workload"]["config"]["dataset"]
         assert dataset["format"] == "dag_jsonl"
@@ -251,7 +251,7 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
         assert terminal["success"] is True
         assert terminal["distribution_id"] == online_graph_installation.distribution_id
         assert terminal["provenance"] == {
-            "backend": "online_http",
+            "transport": "http",
             "workload": "graph",
         }
         assert result.success, result.error
@@ -261,7 +261,7 @@ def test_python_config_v2_reaches_online_graph_adapter_without_dual_conversion(
         assert Path(terminal["report_path"]) == native_path
         native = orjson.loads(native_path.read_bytes())
         assert native["run"]["mode"] == "graph"
-        assert native["run"]["backend"] == "online_http"
+        assert native["run"]["transport"] == "http"
         assert native["run"]["workload"] == "graph"
         assert native["run"]["graph"] == {
             "input_format": "dag_jsonl",

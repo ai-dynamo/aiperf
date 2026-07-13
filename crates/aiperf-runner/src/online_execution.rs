@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Protocol-v2 adapters for the native online HTTP backend.
+//! Protocol-v2 adapters for the native online HTTP transport.
 //!
 //! Authored protocol-v2 values lower directly into the protocol-neutral
 //! [`NativeRunPlan`] consumed by the same coordinator as protocol v1. The
@@ -41,20 +41,20 @@ use crate::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::protocol_v2::AuthoredRunSpecV2;
 use crate::readiness::{PreparedOnlineReadiness, ReadinessEndpointProfile, ReadinessPlanInput};
 use crate::registry::{
-    GraphWorkloadConfigV2, OnlineHttpBackendConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
+    GraphWorkloadConfigV2, OnlineHttpTransportConfigV2, PreparedRunOutcome, PreparedRunnerOperation,
     RunnerPairFactory, RunnerRegistryBuilder, RunnerRunContext, ScheduledWorkloadConfigV2,
-    StaticAccuracyWorkloadConfigV2, ValidatedBackendConfig, ValidatedWorkloadConfig,
+    StaticAccuracyWorkloadConfigV2, ValidatedTransportConfig, ValidatedWorkloadConfig,
 };
 use crate::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
 
-const BACKEND_ID: &str = "online_http";
+const TRANSPORT_ID: &str = "http";
 
 /// Register online HTTP pairs whose entire authored Config-v2 surface is
 /// executable without falling back to protocol v1.
 ///
 /// Keeping registration in this module means capability publication changes
 /// only when a real adapter and its execution proof are both linked.
-pub fn register_online_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+pub fn register_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     let tokenizers: Arc<dyn OnlineTokenizerSourceResolver> =
         Arc::new(NativeOnlineTokenizerSourceResolver::default());
     builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
@@ -64,10 +64,10 @@ pub fn register_online_http_pairs(builder: &mut RunnerRegistryBuilder) -> Result
 
 /// Register static accuracy after sidecar parity or an exact frontend gate is
 /// present in the same distribution.
-pub fn register_online_http_static_accuracy_pair(
+pub fn register_http_static_accuracy_pair(
     builder: &mut RunnerRegistryBuilder,
 ) -> Result<()> {
-    register_online_http_static_accuracy_pair_with_factories(
+    register_http_static_accuracy_pair_with_factories(
         builder,
         Arc::new(NativeOnlineTokenizerSourceResolver::default()),
         Arc::new(NativeStaticAccuracyEvaluatorFactory),
@@ -80,7 +80,7 @@ pub fn register_online_http_static_accuracy_pair(
 /// an authored run becomes its prepared operation. This is the compile-time
 /// extension point for non-Hugging-Face tokenizer stores or non-local
 /// evaluator processes.
-pub fn register_online_http_static_accuracy_pair_with_factories(
+pub fn register_http_static_accuracy_pair_with_factories(
     builder: &mut RunnerRegistryBuilder,
     tokenizers: Arc<dyn OnlineTokenizerSourceResolver>,
     evaluator_factory: Arc<dyn StaticAccuracyEvaluatorFactory>,
@@ -100,7 +100,7 @@ pub fn register_online_http_static_accuracy_pair_with_factories(
 /// The adapter is real and subprocess-tested, but the base registry must not
 /// advertise it while ordinary v1 scheduled configs could be routed to a
 /// narrower v2 surface merely because the pair ID matches.
-pub fn register_online_http_scheduled_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
+pub fn register_http_scheduled_pair(builder: &mut RunnerRegistryBuilder) -> Result<()> {
     builder.register_pair(Arc::new(OnlineHttpPairFactory::new(Arc::new(
         OnlineScheduledAdapter {
             tokenizers: Arc::new(NativeOnlineTokenizerSourceResolver::default()),
@@ -162,8 +162,8 @@ trait OnlineWorkloadAdapter: fmt::Debug + Send + Sync {
 }
 
 impl RunnerPairFactory for OnlineHttpPairFactory {
-    fn backend_id(&self) -> &'static str {
-        BACKEND_ID
+    fn transport_id(&self) -> &'static str {
+        TRANSPORT_ID
     }
 
     fn workload_id(&self) -> &'static str {
@@ -172,10 +172,10 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
 
     fn validate_pair(
         &self,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        online_backend(backend)?;
+        online_transport(transport)?;
         self.adapter.validate_workload(workload)
     }
 
@@ -183,21 +183,21 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: &dyn ValidatedBackendConfig,
+        transport: &dyn ValidatedTransportConfig,
         workload: &dyn ValidatedWorkloadConfig,
     ) -> Result<()> {
-        self.validate_pair(backend, workload)?;
+        self.validate_pair(transport, workload)?;
         self.adapter.validate_run(run, context, workload)
     }
 
     fn prepare(
         &self,
         _run: &AuthoredRunSpecV2,
-        _backend: Box<dyn ValidatedBackendConfig>,
+        _transport: Box<dyn ValidatedTransportConfig>,
         _workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
         bail!(
-            "{BACKEND_ID} + {} preparation requires the coordinator-owned RunnerRunContext",
+            "{TRANSPORT_ID} + {} preparation requires the coordinator-owned RunnerRunContext",
             self.adapter.workload_id()
         )
     }
@@ -206,10 +206,10 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
         &self,
         run: &AuthoredRunSpecV2,
         context: &RunnerRunContext,
-        backend: Box<dyn ValidatedBackendConfig>,
+        transport: Box<dyn ValidatedTransportConfig>,
         workload: Box<dyn ValidatedWorkloadConfig>,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        online_backend(backend.as_ref())?;
+        online_transport(transport.as_ref())?;
         self.adapter.validate_workload(workload.as_ref())?;
         let readiness = prepare_online_readiness(run, context)?;
         let harness = self.adapter.prepare(run, context, workload)?;
@@ -227,7 +227,7 @@ impl RunnerPairFactory for OnlineHttpPairFactory {
 /// load. Implementations own their canonical prepared state; the registry and
 /// pair coordinator do not inspect it.
 trait PreparedOnlineHarness: fmt::Debug {
-    /// Execute through the selected backend and return an uncommitted report.
+    /// Execute through the selected transport and return an uncommitted report.
     fn execute(
         self: Box<Self>,
         product_registry: &aiperf_extensions::AiperfRegistry,
@@ -396,10 +396,10 @@ impl OnlineWorkloadAdapter for OnlineStaticAccuracyAdapter {
     }
 }
 
-fn online_backend(config: &dyn ValidatedBackendConfig) -> Result<&OnlineHttpBackendConfigV2> {
-    ValidatedBackendConfig::as_any(config)
-        .downcast_ref::<OnlineHttpBackendConfigV2>()
-        .ok_or_else(|| anyhow!("online HTTP pair received a different backend config type"))
+fn online_transport(config: &dyn ValidatedTransportConfig) -> Result<&OnlineHttpTransportConfigV2> {
+    ValidatedTransportConfig::as_any(config)
+        .downcast_ref::<OnlineHttpTransportConfigV2>()
+        .ok_or_else(|| anyhow!("online HTTP pair received a different transport config type"))
 }
 
 fn workload_config<'a, T: 'static>(
@@ -425,7 +425,7 @@ fn validate_online_run(context: &RunnerRunContext) -> Result<()> {
                 .to_string();
             ensure!(
                 matches!(scheme.as_str(), "http" | "https"),
-                "online_http endpoint profile {profile_id:?} requires http:// or https:// URLs, got {url:?}"
+                "http endpoint profile {profile_id:?} requires http:// or https:// URLs, got {url:?}"
             );
         }
         if profile.config.wait_for_model_timeout > 0.0 {
@@ -737,7 +737,7 @@ pub(crate) fn validate_authored_tokenizer(raw: &RawValue) -> Result<()> {
 }
 
 /// Decode and resolve one authored tokenizer through an injected source
-/// resolver. Offline and future remote backends reuse this preparation without
+/// resolver. Offline and future remote transports reuse this preparation without
 /// inheriting the online HTTP workload adapter.
 pub(crate) fn lower_authored_tokenizer(
     raw: &RawValue,
@@ -1218,9 +1218,9 @@ mod tests {
         let mut builder = RunnerRegistryBuilder::new();
         // The builder intentionally rejects dangling pairs at freeze time;
         // registration itself proves the function has no hidden mode switch.
-        register_online_http_pairs(&mut builder).unwrap();
-        register_online_http_static_accuracy_pair(&mut builder).unwrap();
-        register_online_http_scheduled_pair(&mut builder).unwrap();
+        register_http_pairs(&mut builder).unwrap();
+        register_http_static_accuracy_pair(&mut builder).unwrap();
+        register_http_scheduled_pair(&mut builder).unwrap();
     }
 
     #[test]

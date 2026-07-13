@@ -5,7 +5,7 @@
 //!
 //! Validation freezes source factories before any spool, credential, or
 //! transport preparation. Collection and source-free finalization derive
-//! different backend requirements from their already validated mode.
+//! different transport requirements from their already validated mode.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Debug, Formatter};
@@ -35,7 +35,7 @@ pub static TELEMETRY_WATCH_WORKLOAD_DESCRIPTOR: RunnerWorkloadDescriptor =
         description: "fixed-deadline durable telemetry collection or source-free remote finalization",
         requires_semantic_responses: false,
         clock_kinds: &[RunnerClockKind::Real],
-        required_backend_features: &[],
+        required_transport_features: &[],
     };
 
 /// One source whose concrete factory configuration is frozen without `Any`.
@@ -198,14 +198,14 @@ impl RunnerWorkloadFactory for TelemetryWatchWorkloadFactoryV2 {
             .as_any()
             .downcast_ref::<ValidatedTelemetryWatchWorkloadV2>()
             .ok_or_else(|| anyhow!("telemetry_watch factory received another workload config"))?;
-        let mut backend_features = BTreeSet::new();
+        let mut transport_features = BTreeSet::new();
         if config.collects_sources() {
-            backend_features.insert("control_plane_http".to_owned());
+            transport_features.insert("control_plane_http".to_owned());
         }
         Ok(WorkloadRequirements {
             semantic_responses: false,
             clock_kinds: BTreeSet::from([RunnerClockKind::Real]),
-            backend_features,
+            transport_features,
             resources: ResourceRequirementsV2::telemetry_watch(),
         })
     }
@@ -274,7 +274,7 @@ mod tests {
         let collect = factory.validate(&collect()).unwrap();
         let requirements = factory.requirements(collect.as_ref()).unwrap();
         assert_eq!(
-            requirements.backend_features,
+            requirements.transport_features,
             BTreeSet::from(["control_plane_http".to_owned()])
         );
         assert_eq!(
@@ -299,7 +299,7 @@ mod tests {
             factory
                 .requirements(finalize.as_ref())
                 .unwrap()
-                .backend_features
+                .transport_features
                 .is_empty()
         );
     }

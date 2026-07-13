@@ -96,7 +96,7 @@ from aiperf.config.execution import (
     EvaluationResourceConfig,
     EvaluationRouteConfig,
     EvaluationWorkloadConfig,
-    RunnerBackendConfig,
+    RunnerTransportConfig,
     RunnerComponentId,
     RunnerWorkloadConfig,
 )
@@ -279,7 +279,7 @@ __all__ = [
     "RatePhaseConfig",
     "ResolvedConfig",
     "RuntimeConfig",
-    "RunnerBackendConfig",
+    "RunnerTransportConfig",
     "RunnerComponentId",
     "RunnerWorkloadConfig",
     "SLOsConfig",

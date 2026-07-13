@@ -17,7 +17,7 @@ from aiperf.config import (
     AgenticProviderConfig,
     AIPerfConfig,
     BenchmarkRun,
-    RunnerBackendConfig,
+    RunnerTransportConfig,
     RunnerWorkloadConfig,
 )
 from aiperf.orchestrator import rust_executor
@@ -36,7 +36,7 @@ def _run(
     *,
     dataset: dict | None = None,
     accuracy: dict | None = None,
-    backend: dict | None = None,
+    transport: dict | None = None,
     workload: dict | None = None,
     endpoint_url: str = "http://127.0.0.1:8000",
     endpoint_type: str = "future_endpoint",
@@ -70,8 +70,8 @@ def _run(
     }
     if accuracy is not None:
         benchmark["accuracy"] = accuracy
-    if backend is not None:
-        benchmark["backend"] = backend
+    if transport is not None:
+        benchmark["transport"] = transport
     if workload is not None:
         benchmark["workload"] = workload
     config = AIPerfConfig.model_validate({"benchmark": benchmark})
@@ -108,7 +108,7 @@ def test_v2_envelope_and_default_scheduled_projection(
         "random_seed": 17,
     }
     assert authored["artifact_target"] == str(tmp_path / "not-created")
-    assert authored["backend"] == {"type": "online_http", "config": {}}
+    assert authored["transport"] == {"type": "http", "config": {}}
     assert authored["workload"]["type"] == "scheduled"
     assert authored["workload"]["config"]["worker_count"] == 1
     assert "name" not in authored["workload"]["config"]["dataset"]
@@ -202,7 +202,7 @@ def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
 ) -> None:
     run = _run(
         tmp_path / "grpc-v2-only",
-        backend={"type": "online_grpc", "config": {}},
+        transport={"type": "grpc", "config": {}},
         endpoint_url="grpc://127.0.0.1:8001",
         endpoint_type="kserve_v2_infer",
     )
@@ -214,7 +214,7 @@ def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
     )
 
     assert request["protocol_version"] == 2
-    assert request["run"]["backend"] == {"type": "online_grpc", "config": {}}
+    assert request["run"]["transport"] == {"type": "grpc", "config": {}}
     assert request["run"]["resources"]["endpoints"]["profiles"][0]["urls"] == [
         "grpc://127.0.0.1:8001"
     ]
@@ -223,8 +223,8 @@ def test_online_grpc_is_preserved_only_in_the_authored_v2_projection(
 @pytest.mark.parametrize(
     ("backend", "url", "message"),
     [
-        ("online_http", "grpc://127.0.0.1:8001", "online_grpc"),
-        ("online_grpc", "http://127.0.0.1:8000", "requires grpc"),
+        ("http", "grpc://127.0.0.1:8001", "grpc"),
+        ("grpc", "http://127.0.0.1:8000", "requires grpc"),
     ],
 )
 def test_builtin_online_backend_url_families_fail_closed(
@@ -233,7 +233,7 @@ def test_builtin_online_backend_url_families_fail_closed(
     with pytest.raises(ValidationError, match=message):
         _run(
             tmp_path / backend,
-            backend={"type": backend, "config": {}},
+            transport={"type": backend, "config": {}},
             endpoint_url=url,
             endpoint_type="kserve_v2_infer",
         )
@@ -383,7 +383,7 @@ def test_open_backend_workload_and_agentic_provider_payloads_survive(
 ) -> None:
     run = _run(
         tmp_path,
-        backend={
+        transport={
             "type": " acme_remote_backend ",
             "config": {"placement": {"fabric": "zmq", "nodes": 4}},
         },
@@ -405,7 +405,7 @@ def test_open_backend_workload_and_agentic_provider_payloads_survive(
         expected_distribution_id=_DISTRIBUTION_A,
     )["run"]
 
-    assert authored["backend"] == {
+    assert authored["transport"] == {
         "type": "acme_remote_backend",
         "config": {"placement": {"fabric": "zmq", "nodes": 4}},
     }
@@ -735,19 +735,19 @@ def test_v2_custom_gpu_source_never_reads_resolved_state(tmp_path: Path) -> None
 
 
 def test_component_ids_are_open_strings_not_enums() -> None:
-    backend = RunnerBackendConfig(type="future_backend", config={"a": 1})
+    backend = RunnerTransportConfig(type="future_backend", config={"a": 1})
     workload = RunnerWorkloadConfig(type="future_workload", config={"b": 2})
 
     assert backend.type == "future_backend"
     assert workload.type == "future_workload"
-    backend_schema = RunnerBackendConfig.model_json_schema()
+    backend_schema = RunnerTransportConfig.model_json_schema()
     workload_schema = RunnerWorkloadConfig.model_json_schema()
     assert backend_schema["properties"]["type"]["type"] == "string"
     assert workload_schema["properties"]["type"]["type"] == "string"
     assert "enum" not in backend_schema["properties"]["type"]
     assert "enum" not in workload_schema["properties"]["type"]
 
-    for model in (RunnerBackendConfig, RunnerWorkloadConfig, AgenticProviderConfig):
+    for model in (RunnerTransportConfig, RunnerWorkloadConfig, AgenticProviderConfig):
         with pytest.raises(ValidationError, match="at least 1|non-empty string"):
             model(type="   ")
 
@@ -783,7 +783,7 @@ def test_executor_loads_only_the_advertised_v2_pair_adapter(tmp_path: Path) -> N
         capabilities={
             "protocol_versions": [1, 2],
             "distribution_id": _DISTRIBUTION_A,
-            "supported_pairs": [["online_http", "scheduled"]],
+            "supported_pairs": [["http", "scheduled"]],
             "endpoint_types": ["future_endpoint"],
         },
     )
@@ -794,7 +794,7 @@ def test_executor_loads_only_the_advertised_v2_pair_adapter(tmp_path: Path) -> N
     request = executor._request_for_run(run)
 
     assert request["protocol_version"] == 2
-    assert request["run"]["backend"]["type"] == "online_http"
+    assert request["run"]["transport"]["type"] == "http"
     assert request["run"]["workload"]["type"] == "scheduled"
     assert not hasattr(rust_executor.RustSubprocessExecutor, "_resolve_run")
     assert not hasattr(rust_executor, "build_run_request")
@@ -805,14 +805,14 @@ def test_executor_loads_only_the_advertised_v2_pair_adapter(tmp_path: Path) -> N
 def test_unsupported_pair_fails_at_exact_v2_image_preflight(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "must-not-exist",
-        backend={"type": "dynamo_offline", "config": {}},
+        transport={"type": "dynamo_offline", "config": {}},
     )
     installation = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
         capabilities={
             "protocol_versions": [1, 2],
             "distribution_id": _DISTRIBUTION_A,
-            "supported_pairs": [["online_http", "scheduled"]],
+            "supported_pairs": [["http", "scheduled"]],
         },
     )
     executor = rust_executor.RustSubprocessExecutor(
@@ -864,14 +864,14 @@ def test_v2_terminal_is_bound_to_negotiated_distribution() -> None:
 def test_executor_never_reinterprets_an_unsupported_pair_as_v1(tmp_path: Path) -> None:
     run = _run(
         tmp_path / "not-created",
-        backend={"type": "future_backend", "config": {"node": "remote"}},
+        transport={"type": "future_backend", "config": {"node": "remote"}},
     )
     installation = RunnerInstallation(
         binary=Path("/opt/aiperf-runner"),
         capabilities={
             "protocol_versions": [2],
             "distribution_id": _DISTRIBUTION_A,
-            "supported_pairs": [["online_http", "scheduled"]],
+            "supported_pairs": [["http", "scheduled"]],
             "endpoint_types": ["future_endpoint"],
         },
     )
@@ -925,20 +925,21 @@ def test_v2_envelope_rejects_unknown_operation_or_missing_identity(
         )
 
 
-def test_dynosim_backend_projects_minimal_typed_config_snake_case(
+def test_dynosim_offline_transport_projects_minimal_typed_config_snake_case(
     tmp_path: Path,
 ) -> None:
-    """Authoring ``backend.type: dynosim`` projects the exact runner schema.
+    """Authoring ``transport.type: dynosim_offline`` projects the exact runner schema.
 
     Mirrors the offline replay path proven byte-exact at 50k: a minimal
-    ``{replayMode: offline, engine: {block_size}}`` config projects to snake_case
-    with only the authored fields (the runner fills every other serde default).
+    ``{engine: {block_size}}`` config projects to snake_case with only the
+    authored fields (the runner fills every other serde default). The clock rides
+    on the transport id, so there is no ``replay_mode`` field.
     """
     run = _run(
         tmp_path,
-        backend={
-            "type": "dynosim",
-            "config": {"replayMode": "offline", "engine": {"block_size": 16}},
+        transport={
+            "type": "dynosim_offline",
+            "config": {"engine": {"block_size": 16}},
         },
         dataset={
             "type": "file",
@@ -950,25 +951,28 @@ def test_dynosim_backend_projects_minimal_typed_config_snake_case(
     authored = build_authored_run_request(
         run, operation="execute", expected_distribution_id=_DISTRIBUTION_A
     )["run"]
-    assert authored["backend"] == {
-        "type": "dynosim",
-        "config": {"replay_mode": "offline", "engine": {"block_size": 16}},
+    assert authored["transport"] == {
+        "type": "dynosim_offline",
+        "config": {"engine": {"block_size": 16}},
     }
-    # Trace + concurrency reuse the shared scheduled surface, not the backend.
+    assert "replay_mode" not in authored["transport"]["config"]
+    # Trace + concurrency reuse the shared scheduled surface, not the transport.
     assert authored["workload"]["type"] == "scheduled"
     assert authored["workload"]["config"]["dataset"]["format"] == "mooncake_trace"
 
 
-def test_dynosim_backend_normalizes_camelcase_and_sorts_features(
+def test_dynosim_online_transport_normalizes_camelcase_and_sorts_features(
     tmp_path: Path,
 ) -> None:
-    """camelCase authoring dumps snake_case; required_features is deterministic."""
+    """camelCase authoring dumps snake_case; required_features is deterministic.
+
+    The wall-clock axis is the ``dynosim_online`` transport id, not a config field.
+    """
     run = _run(
         tmp_path,
-        backend={
-            "type": "dynosim",
+        transport={
+            "type": "dynosim_online",
             "config": {
-                "replayMode": "online",
                 "topology": "disaggregated",
                 "prefillWorkers": 2,
                 "decodeWorkers": 4,
@@ -983,10 +987,12 @@ def test_dynosim_backend_normalizes_camelcase_and_sorts_features(
             },
         },
     )
-    config = build_authored_run_request(
+    authored = build_authored_run_request(
         run, operation="validate", expected_distribution_id=_DISTRIBUTION_A
-    )["run"]["backend"]["config"]
-    assert config["replay_mode"] == "online"
+    )["run"]
+    assert authored["transport"]["type"] == "dynosim_online"
+    config = authored["transport"]["config"]
+    assert "replay_mode" not in config
     assert config["topology"] == "disaggregated"
     assert config["prefill_workers"] == 2
     assert config["decode_workers"] == 4
@@ -1001,54 +1007,52 @@ def test_dynosim_backend_normalizes_camelcase_and_sorts_features(
     ]
 
 
-def test_dynosim_backend_not_constrained_to_online_http_url_scheme(
+def test_dynosim_transport_not_constrained_to_http_url_scheme(
     tmp_path: Path,
 ) -> None:
-    """dynosim is native protocol-v2: it does not impose the online_http scheme."""
-    # A grpc:// endpoint URL would be rejected under online_http, but dynosim's
-    # in-process replay never dials it, so validation must pass.
-    _run(
-        tmp_path,
-        backend={"type": "dynosim", "config": {"replayMode": "offline"}},
-        endpoint_url="grpc://127.0.0.1:8001",
-    )
-
-
-def test_dynosim_backend_rejects_endpoint_transport(tmp_path: Path) -> None:
-    """dynosim is a native protocol-v2 backend; endpoint.transport must be unset."""
-    with pytest.raises(ValidationError, match="endpoint.transport must be unset"):
-        AIPerfConfig.model_validate(
-            {
-                "benchmark": {
-                    "models": ["mock-model"],
-                    "endpoint": {
-                        "urls": ["http://unused.invalid"],
-                        "type": "chat",
-                        "streaming": True,
-                        "transport": "http",
-                    },
-                    "dataset": {
-                        "type": "synthetic",
-                        "entries": 2,
-                        "prompts": {"isl": 8, "osl": 2},
-                    },
-                    "phases": [
-                        {"name": "profiling", "type": "concurrency", "requests": 2, "concurrency": 1}
-                    ],
-                    "backend": {"type": "dynosim", "config": {"replayMode": "offline"}},
-                }
-            }
+    """dynosim is native protocol-v2: it does not impose the http scheme."""
+    # A grpc:// endpoint URL would be rejected under transport.type='http', but
+    # dynosim's in-process replay never dials it, so validation must pass.
+    for transport_type in ("dynosim_offline", "dynosim_online"):
+        _run(
+            tmp_path / transport_type,
+            transport={"type": transport_type, "config": {}},
+            endpoint_url="grpc://127.0.0.1:8001",
         )
 
 
-def test_typed_dynosim_config_rejected_under_non_dynosim_backend(
+def test_dynosim_transport_defaults_endpoint_dialect_to_dynosim(
     tmp_path: Path,
 ) -> None:
-    """A DynosimBackendConfig payload requires backend.type='dynosim'."""
-    from aiperf.config.dynosim import DynosimBackendConfig
+    """When transport is dynosim_* and endpoint.type is unset it defaults to dynosim."""
+    config = AIPerfConfig.model_validate(
+        {
+            "benchmark": {
+                "models": ["mock-model"],
+                "endpoint": {"urls": ["http://unused.invalid"]},
+                "dataset": {
+                    "type": "synthetic",
+                    "entries": 2,
+                    "prompts": {"isl": 8, "osl": 2},
+                },
+                "phases": [
+                    {"name": "profiling", "type": "concurrency", "requests": 2, "concurrency": 1}
+                ],
+                "transport": {"type": "dynosim_offline", "config": {}},
+            }
+        }
+    )
+    assert str(config.benchmark.endpoint.type) == "dynosim"
 
-    with pytest.raises(ValidationError, match="requires backend.type='dynosim'"):
-        RunnerBackendConfig(
-            type="online_http",
-            config=DynosimBackendConfig(replay_mode="offline"),
+
+def test_typed_dynosim_config_rejected_under_non_dynosim_transport() -> None:
+    """A DynosimTransportConfig payload requires a dynosim_* transport type."""
+    from aiperf.config.dynosim import DynosimTransportConfig
+
+    with pytest.raises(
+        ValidationError, match="requires transport.type"
+    ):
+        RunnerTransportConfig(
+            type="http",
+            config=DynosimTransportConfig(workers=1),
         )

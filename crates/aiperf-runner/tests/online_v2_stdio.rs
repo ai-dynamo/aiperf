@@ -77,7 +77,7 @@ fn graph_adapter_and_profile_references_fail_before_artifact_creation() {
                     "wait_for_model_mode": "inference"
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -226,7 +226,7 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "scheduled"]))
+            .contains(&json!(["http", "scheduled"]))
     );
     let artifacts = tempfile::tempdir().unwrap();
     let artifact_target = artifacts.path().join("kserve-v1-run");
@@ -247,7 +247,7 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -287,7 +287,7 @@ async fn scheduled_pair_executes_kserve_v1_endpoint_only_through_v2() {
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["protocol_version"], 2);
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "online_http");
+    assert_eq!(terminal["provenance"]["transport"], "http");
     assert_eq!(terminal["provenance"]["workload"], "scheduled");
     let report: Value =
         serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
@@ -339,7 +339,7 @@ async fn scheduled_pair_executes_vllm_token_arrays_without_text_round_trip() {
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -431,7 +431,7 @@ fn vllm_token_requirement_fails_during_dataset_preparation() {
                     "wait_for_model_timeout": 0.0
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -508,7 +508,7 @@ async fn scheduled_pair_serves_generated_image_urls_for_the_full_run_lifecycle()
                     "max_tracked_records": 100
                 }}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -593,7 +593,7 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "graph"]))
+            .contains(&json!(["http", "graph"]))
     );
     let artifacts = tempfile::tempdir().unwrap();
     let artifact_target = artifacts.path().join("graph-run");
@@ -631,7 +631,7 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
                     }
                 ]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "graph", "config": {
                 "worker_count": 1,
                 "dataset": {
@@ -682,7 +682,7 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
     let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
-    assert_eq!(terminal["provenance"]["backend"], "online_http");
+    assert_eq!(terminal["provenance"]["transport"], "http");
     assert_eq!(terminal["provenance"]["workload"], "graph");
     let report: Value =
         serde_json::from_slice(&std::fs::read(artifact_target.join("native-v2.json")).unwrap())
@@ -691,7 +691,7 @@ async fn graph_pair_executes_direct_dag_with_remote_tokenizer_over_stdio() {
         report["run"]["distribution_id"],
         capabilities["distribution_id"]
     );
-    assert_eq!(report["run"]["backend"], "online_http");
+    assert_eq!(report["run"]["transport"], "http");
     assert_eq!(report["run"]["workload"], "graph");
     assert_eq!(report["run"]["extensions"], json!([]));
     assert_eq!(

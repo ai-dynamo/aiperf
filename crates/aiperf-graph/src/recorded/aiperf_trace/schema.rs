@@ -37,7 +37,10 @@ pub(super) struct AiperfSegment {
 #[derive(Debug)]
 pub(super) struct AiperfCall {
     pub segment_refs: Vec<usize>,
-    pub response_ref: Option<usize>,
+    /// Pooled segments that make up the response. A response may span multiple
+    /// segments (e.g. an assistant turn plus its tool-call segments), so this is a
+    /// list; a single-segment response is just a one-element list.
+    pub response_refs: Vec<usize>,
     pub ts_ms: f64,
     pub ttft_ms: Option<f64>,
     pub e2e_latency_ms: Option<f64>,
@@ -111,6 +114,11 @@ struct CallWire {
     compaction: Option<CompactionWire>,
     #[serde(default)]
     segment_refs: Vec<usize>,
+    // A response may cover several pooled segments. `response_refs` is the
+    // canonical list; `response_ref` is accepted as a single-segment shorthand
+    // and folded in when the list form is absent.
+    #[serde(default)]
+    response_refs: Vec<usize>,
     #[serde(default)]
     response_ref: Option<usize>,
     #[serde(default)]
@@ -171,7 +179,11 @@ pub(super) fn parse_trace(value: Value) -> Result<AiperfTrace, RecordedTraceErro
         .into_iter()
         .map(|call| AiperfCall {
             segment_refs: call.segment_refs,
-            response_ref: call.response_ref,
+            response_refs: if call.response_refs.is_empty() {
+                call.response_ref.into_iter().collect()
+            } else {
+                call.response_refs
+            },
             ts_ms: call.ts,
             ttft_ms: call.ttft_ms,
             e2e_latency_ms: call.e2e_latency_ms,

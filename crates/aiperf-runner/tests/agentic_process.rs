@@ -723,7 +723,7 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "agentic"]))
+            .contains(&json!(["http", "agentic"]))
     );
     let mut request = json!({
         "protocol_version": 2,
@@ -752,7 +752,7 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
                     "wait_for_model_mode": "inference"
                 }]}
             },
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "agentic", "config": {
                 "worker_count": 2,
                 "dataset": "fixture/agentic@locked",
@@ -802,14 +802,14 @@ fn protocol_v2_stdio_validates_without_side_effects_then_executes_agentic_pair()
     assert_eq!(terminal["event"], "run_terminal");
     assert_eq!(terminal["success"], true);
     assert_eq!(terminal["distribution_id"], distribution_id);
-    assert_eq!(terminal["provenance"]["backend"], "online_http");
+    assert_eq!(terminal["provenance"]["transport"], "http");
     assert_eq!(terminal["provenance"]["workload"], "agentic");
     let report_path = PathBuf::from(terminal["report_path"].as_str().unwrap());
     assert_eq!(report_path, artifact_target.join("native-v2.json"));
     let report: Value = serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
     assert_eq!(report["schema_version"], "2.0");
     assert_eq!(report["run"]["distribution_id"], distribution_id);
-    assert_eq!(report["run"]["backend"], "online_http");
+    assert_eq!(report["run"]["transport"], "http");
     assert_eq!(report["run"]["workload"], "agentic");
     assert_eq!(report["run"]["extensions"], json!([]));
     assert_eq!(

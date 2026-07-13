@@ -4,7 +4,7 @@
   "run": {
     "mode": "telemetry_watch",
     "distribution_id": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
-    "backend": "telemetry_archive",
+    "transport": "telemetry_archive",
     "workload": "watch",
     "extensions": [],
     "endpoint_profiles": []

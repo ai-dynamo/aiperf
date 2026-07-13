@@ -356,3 +356,16 @@ implementation. The binding lowers canonical endpoint JSON to HTTP URL/body/life
 decodes HTTP/SSE responses back into `ServerResponse`; `aiperf` retains endpoint parsing, observer
 emission, usage aggregation, and scheduled outcomes. Future gRPC and WebSocket implementations are
 peer transport crates with their own bindings, not endpoint forks.
+
+## Addendum — 2026-07-12 (post-send cancellation built)
+
+The cancellation-after-send behavior called out as a remaining target in the
+2026-07-11 addendum is now implemented. HTTP cancellation is armed from the
+captured request-body `SendCompletion`, so the configured cancellation delay
+starts only after the outbound body has been fully sent. Both h1 and h2 paths
+key off that body-wrapper completion signal rather than racing the entire
+dispatch future from submission time.
+
+The remaining "partly built" caveat is therefore limited to the original
+spec's broader h2 reuse/multiplexing ambitions and full aiohttp-style trace
+field parity, not to post-send cancellation.

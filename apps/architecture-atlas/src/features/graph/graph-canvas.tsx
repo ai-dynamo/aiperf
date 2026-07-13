@@ -7,6 +7,7 @@ import {
   MiniMap,
   Panel,
   ReactFlow,
+  useReactFlow,
   type Edge,
   type Node,
   type ReactFlowInstance,
@@ -59,6 +60,62 @@ export function completeNodeDrag(
     x: node.position.x,
     y: node.position.y,
   });
+}
+
+/**
+ * Frames the graph in the viewport using the live React Flow store (via
+ * `useReactFlow`), which is the same source the working zoom controls use.
+ * The `onInit`-captured instance's `fitView` silently no-ops here, so all
+ * fitting must go through this in-tree controller instead.
+ *
+ * Auto-fits when the layout is ready and whenever the node set changes
+ * (scene switch), and honours the manual "Fit graph" command. `useNodesInitialized`
+ * never flips true for these nodes, so readiness is keyed off the layout instead
+ * and explicit node width/height give `fitView` real bounds to frame.
+ */
+function GraphFitController({
+  layoutKey,
+  fitCommand,
+  onFitComplete,
+}: {
+  layoutKey: string | null;
+  fitCommand?: { requestId: number; padding?: number };
+  onFitComplete?(requestId: number): void;
+}): null {
+  const { fitView } = useReactFlow();
+  const ready = layoutKey !== null;
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+    // Defer a frame so the freshly laid-out nodes are in the store before we
+    // frame them (explicit node width/height give fitView real bounds).
+    const frame = requestAnimationFrame(() => {
+      void fitView({ padding: 0.16, maxZoom: 1.15, duration: 250 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ready, layoutKey, fitView]);
+
+  const handledRequestId = useRef<number | null>(null);
+  useEffect(() => {
+    if (
+      !ready ||
+      !fitCommand ||
+      handledRequestId.current === fitCommand.requestId
+    ) {
+      return;
+    }
+    handledRequestId.current = fitCommand.requestId;
+    const requestId = fitCommand.requestId;
+    void fitView({
+      padding: fitCommand.padding ?? 0.16,
+      maxZoom: 1.15,
+      duration: 250,
+    }).then(() => onFitComplete?.(requestId));
+  }, [ready, fitCommand, fitView, onFitComplete]);
+
+  return null;
 }
 
 function classifyFlavor(
@@ -230,8 +287,6 @@ export function GraphCanvas(props: GraphCanvasProps) {
   const [layoutState, setLayoutState] = useState<CanvasLayoutState>({
     status: "loading",
   });
-  const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
-  const handledFitRequestIds = useRef(new Set<number>());
 
   useEffect(() => {
     let active = true;
@@ -281,37 +336,6 @@ export function GraphCanvas(props: GraphCanvasProps) {
     props.focusedEntityId?.startsWith("node.") && traceMode !== "none"
       ? props.focusedEntityId
       : null;
-
-  useEffect(() => {
-    if (
-      !instance ||
-      layoutState.status !== "ready" ||
-      !props.fitViewCommand ||
-      handledFitRequestIds.current.has(props.fitViewCommand.requestId)
-    ) {
-      return;
-    }
-    const requestId = props.fitViewCommand.requestId;
-    handledFitRequestIds.current.add(requestId);
-    let active = true;
-    void fitGraphView(
-      instance,
-      layoutState.result.positions.map(({ id }) => id),
-      props.fitViewCommand.padding,
-    ).then(() => {
-      if (active) {
-        props.onFitViewComplete?.(requestId);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [
-    instance,
-    layoutState,
-    props.fitViewCommand,
-    props.onFitViewComplete,
-  ]);
 
   const positionsByNodeId = useMemo(
     () =>
@@ -390,6 +414,11 @@ export function GraphCanvas(props: GraphCanvasProps) {
             draggable: true,
             dragHandle: ".graph-node-drag-handle",
             id: node.id,
+            // Explicit width/height give React Flow real bounds so fitView()
+            // can frame the graph; without them getNodesBounds is empty and
+            // fitView (and the Fit graph button) silently no-op.
+            width: 320,
+            height: 156,
             position: positionsByNodeId.get(node.id) ?? { x: 0, y: 0 },
             style: { width: 320 },
             type: "runtimeNode",
@@ -531,10 +560,18 @@ export function GraphCanvas(props: GraphCanvasProps) {
           onNodeDragStop={(_event, node) =>
             completeNodeDrag(node, props.onNodeDragComplete)
           }
-          onInit={setInstance}
           proOptions={{ hideAttribution: true }}
         >
           <Background color="#22222c" gap={26} size={1} />
+          <GraphFitController
+            fitCommand={props.fitViewCommand}
+            layoutKey={
+              layoutState.status === "ready"
+                ? layoutState.result.positions.map(({ id }) => id).join(",")
+                : null
+            }
+            onFitComplete={props.onFitViewComplete}
+          />
           <Panel className="graph-canvas-controls-panel" position="bottom-left">
             <div aria-label="Graph viewport controls" role="group">
               <Controls showInteractive={false} />

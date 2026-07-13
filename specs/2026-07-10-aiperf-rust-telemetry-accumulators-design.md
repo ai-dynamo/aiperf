@@ -513,3 +513,18 @@ Why the settle wait was wrong:
 So GPU and server counters are identical again: **snapshot at the boundary → delta → reset-clamp**
 — no grace, no settle. (Sequential scrape, the two-picker unification, the gauge/histogram split,
 and the routing/fallback/auto-disable logic from the prior addendum all stand unchanged.)
+
+## Addendum — 2026-07-12 (Prometheus parser extraction)
+
+The low-level Prometheus/OpenMetrics parser and semantic compatibility layer has
+been extracted from the server-metrics producer into the dedicated
+`aiperf-prometheus` crate. `aiperf-server-metrics` remains the Clock-paced
+producer and accumulator owner for server telemetry: routing/fallback,
+auto-disable policy, vLLM/SGLang atlas, unit handling, histogram estimation,
+and metric ingestion still live there.
+
+This supersedes any wording in this spec that implies Prometheus text parsing is
+owned directly by `aiperf-server-metrics`. The dependency direction remains from
+the telemetry producers and archive/watch surfaces toward the IO-free parsing
+and metrics leaves; `aiperf-metrics` remains runtime-neutral and does not depend
+back on any producer.

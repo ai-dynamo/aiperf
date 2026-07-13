@@ -105,12 +105,14 @@ pub async fn compile_aiperf_trace_input(
 /// Flatten one session's `inference_calls` into normalized `RecordedRequest`s.
 ///
 /// Calls are taken in file order (`aiperf.trace.v1` emits them time-sorted, and
-/// its `previous_ref`/`compaction.prior_ref`/`response_ref` are indices into
+/// its `previous_ref`/`compaction.prior_ref`/`response_refs` are indices into
 /// that same order). Each call's prompt is the concatenation of its referenced
 /// segments' block ids; per-block `(role, starts_message)` tags come straight
-/// from the segment roles. `input_tokens` is block-granular (`blocks *
-/// block_size`) so every block is a covered, tagged message-block — matching how
-/// the content synthesizer reconstructs one `block_size` token block per id.
+/// from the segment roles. `input_tokens` is the **exact** sum of the referenced
+/// segments' token counts, and `block_lens` records each block's true length —
+/// full `block_size` blocks plus each segment's partial-tail remainder — so the
+/// reconstruction honors the real per-segment length rather than rounding every
+/// tail up to a whole block.
 fn flatten_trace(trace: &AiperfTrace) -> Result<Vec<RecordedRequest>, RecordedTraceError> {
     let block_size = trace.block_size;
     let node_ids: Vec<String> = assign_node_ids(trace);
@@ -119,6 +121,7 @@ fn flatten_trace(trace: &AiperfTrace) -> Result<Vec<RecordedRequest>, RecordedTr
     for (index, call) in trace.calls.iter().enumerate() {
         let mut hash_ids = Vec::new();
         let mut explicit_tags = Vec::new();
+        let mut block_lens = Vec::new();
         let mut token_sum = 0_usize;
         for &seg_ref in &call.segment_refs {
             let segment = trace.segments.get(seg_ref).ok_or_else(|| {
@@ -127,18 +130,48 @@ fn flatten_trace(trace: &AiperfTrace) -> Result<Vec<RecordedRequest>, RecordedTr
                     trace.id
                 ))
             })?;
+            let blocks = segment.hash_ids.len();
+            if blocks == 0 {
+                return Err(RecordedTraceError(format!(
+                    "session {:?} call {index}: segment {seg_ref} has no hash_ids",
+                    trace.id
+                )));
+            }
+            // The final block of a segment is a partial tail: its length is the
+            // remainder `tokens - (blocks - 1) * block_size`, which must fall in
+            // `1..=block_size` (i.e. `blocks == ceil(tokens / block_size)`). Every
+            // earlier block is a full `block_size`. This preserves the segment's
+            // *exact* token count instead of rounding the tail up to a whole block.
+            let tail = segment
+                .tokens
+                .checked_sub(blocks.saturating_sub(1).saturating_mul(block_size))
+                .filter(|tail| (1..=block_size).contains(tail))
+                .ok_or_else(|| {
+                    RecordedTraceError(format!(
+                        "session {:?} call {index}: segment {seg_ref} has {} tokens \
+                         inconsistent with {blocks} block(s) of size {block_size}",
+                        trace.id, segment.tokens
+                    ))
+                })?;
             token_sum = token_sum.saturating_add(segment.tokens);
             for (block, id) in segment.hash_ids.iter().enumerate() {
                 hash_ids.push(*id);
                 explicit_tags.push(BlockTag::from_authored(&segment.role, block == 0));
+                block_lens.push(if block + 1 == blocks {
+                    tail
+                } else {
+                    block_size
+                });
             }
         }
-        // Block-granular ISL so `covered == hash_ids.len() == explicit_tags.len()`.
-        let input_tokens = hash_ids.len().saturating_mul(block_size);
+        // Exact reconstructed input length: `Σ segment.tokens == Σ block_lens`.
+        let input_tokens = token_sum;
         let output_tokens = call.output_tokens.unwrap_or_else(|| {
-            call.response_ref
-                .and_then(|r| trace.segments.get(r))
-                .map_or(0, |seg| seg.tokens)
+            call.response_refs
+                .iter()
+                .filter_map(|&r| trace.segments.get(r))
+                .map(|seg| seg.tokens)
+                .sum()
         });
 
         let chain_id = call
@@ -184,6 +217,7 @@ fn flatten_trace(trace: &AiperfTrace) -> Result<Vec<RecordedRequest>, RecordedTr
             extra_headers: BTreeMap::new(),
             adapter_metadata,
             explicit_tags: Some(explicit_tags),
+            block_lens: Some(block_lens),
         });
     }
 
@@ -310,6 +344,97 @@ mod tests {
             prompt_roles(&bundle, "42:1"),
             ["system", "user", "assistant", "tool"]
         );
+    }
+
+    fn prompt_token_counts(bundle: &GraphInputBundle, node_id: &str) -> Vec<usize> {
+        bundle.plans[0].graph.nodes[node_id]
+            .items
+            .iter()
+            .map(|item| {
+                let PromptItem::Seg { seg } = item else {
+                    panic!("recorded prompt must use dense segments");
+                };
+                match bundle.segments.get(*seg).unwrap() {
+                    Payload::Message { tokens, .. } => tokens.len(),
+                    other => panic!("expected a message payload, got {other:?}"),
+                }
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn partial_tail_segments_materialize_exact_token_counts() {
+        // block_size 16; token counts are deliberately NOT multiples of 16, so
+        // every segment ends on a partial tail. Each must materialize at its exact
+        // length — 40 -> 16+16+8, NOT rounded up to a full 3*16 = 48.
+        let records = json!({
+            "schema": "aiperf.trace.v1", "session_id": 7, "block_size": 16,
+            "segments": [
+                {"role": "system", "hash_ids": [1, 2, 3], "tokens": 40},
+                {"role": "user", "hash_ids": [4], "tokens": 10},
+                {"role": "assistant", "hash_ids": [5], "tokens": 12},
+                {"role": "tool", "hash_ids": [6], "tokens": 9}
+            ],
+            "inference_calls": [
+                {"ts": 0.0, "model": "m", "segment_refs": [0, 1],
+                 "response_ref": 2, "usage": {"output_tokens": 5}},
+                {"ts": 1000.0, "model": "m", "segment_refs": [0, 1, 2, 3],
+                 "previous_ref": 0, "usage": {"output_tokens": 5}}
+            ]
+        });
+        let bundle = compile_aiperf_trace_input(config(records), &TiktokenTokenizer::builtin())
+            .await
+            .unwrap();
+        // Per-message counts are the true segment token counts, partial tails intact.
+        assert_eq!(prompt_token_counts(&bundle, "7:0"), [40, 10]);
+        assert_eq!(prompt_token_counts(&bundle, "7:1"), [40, 10, 12, 9]);
+        // Reported ISL is the exact sum (50 / 71), not the block-rounded
+        // 4*16 = 64 / 6*16 = 96.
+        assert_eq!(
+            prompt_token_counts(&bundle, "7:0").iter().sum::<usize>(),
+            50
+        );
+        assert_eq!(
+            prompt_token_counts(&bundle, "7:1").iter().sum::<usize>(),
+            71
+        );
+        // The shared-prefix messages still dedup to the same pooled handles across
+        // calls (identical bytes => a KV cache hits), partial tail and all.
+        let handles = |id: &str| {
+            bundle.plans[0].graph.nodes[id]
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    PromptItem::Seg { seg } => Some(*seg),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let (call0, call1) = (handles("7:0"), handles("7:1"));
+        assert_eq!(call0, call1[..call0.len()]);
+    }
+
+    #[tokio::test]
+    async fn response_refs_sum_multiple_segments_into_output_tokens() {
+        // A response spanning two pooled segments (assistant text + a tool-call
+        // segment): output tokens is their sum, not just the first.
+        let records = json!({
+            "schema": "aiperf.trace.v1", "session_id": 9, "block_size": 16,
+            "segments": [
+                {"role": "user", "hash_ids": [1], "tokens": 10},
+                {"role": "assistant", "hash_ids": [2], "tokens": 12},
+                {"role": "assistant", "hash_ids": [3], "tokens": 7}
+            ],
+            "inference_calls": [
+                {"ts": 0.0, "model": "m", "segment_refs": [0],
+                 "response_refs": [1, 2], "usage": {}}
+            ]
+        });
+        let bundle = compile_aiperf_trace_input(config(records), &TiktokenTokenizer::builtin())
+            .await
+            .unwrap();
+        // max_tokens mirrors output_tokens = 12 + 7 = 19 (both response segments).
+        assert_eq!(bundle.plans[0].graph.nodes["9:0"].max_tokens, Some(19));
     }
 
     #[tokio::test]

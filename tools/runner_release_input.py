@@ -267,9 +267,9 @@ def _verify_profile(
         and len(pair) == 2
         and all(isinstance(value, str) for value in pair)
     }
-    backend_ids = {
+    transport_ids = {
         descriptor.get("id")
-        for descriptor in capabilities.get("backends", [])
+        for descriptor in capabilities.get("transports", [])
         if isinstance(descriptor, dict)
     }
     if profile == "offline":
@@ -281,7 +281,7 @@ def _verify_profile(
             raise RuntimeError(
                 "offline runner manifest must identify the dynamo-aiperf-native revision"
             )
-        if not _OFFLINE_PAIRS.issubset(pairs) or "dynamo_offline" not in backend_ids:
+        if not _OFFLINE_PAIRS.issubset(pairs) or "dynamo_offline" not in transport_ids:
             raise RuntimeError(
                 "offline runner must advertise executable Dynamo scheduled and graph pairs"
             )
@@ -296,7 +296,7 @@ def _verify_profile(
         )
     if any(backend == "dynamo_offline" for backend, _workload in pairs):
         raise RuntimeError("online runner unexpectedly advertises an offline pair")
-    if "dynamo_offline" in backend_ids:
+    if "dynamo_offline" in transport_ids:
         raise RuntimeError("online runner unexpectedly advertises the offline backend")
 
 

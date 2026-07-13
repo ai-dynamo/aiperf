@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol_v2::RUNNER_PROTOCOL_V2;
-use crate::registry::{RunnerBackendDescriptor, RunnerRegistry, RunnerWorkloadDescriptor};
+use crate::registry::{RunnerTransportDescriptor, RunnerRegistry, RunnerWorkloadDescriptor};
 
 /// Machine-readable runner capabilities returned by `--capabilities`.
 #[derive(Debug, Serialize)]
@@ -31,8 +31,8 @@ pub struct RunnerCapabilities {
     pub endpoints: Vec<&'static aiperf_endpoints::EndpointDescriptor>,
     /// Statically linked extension package names in deterministic order.
     pub extensions: Vec<String>,
-    /// Backend descriptors recognized by protocol-v2 validation.
-    pub backends: Vec<&'static RunnerBackendDescriptor>,
+    /// Transport descriptors recognized by protocol-v2 validation.
+    pub transports: Vec<&'static RunnerTransportDescriptor>,
     /// Workload descriptors recognized by protocol-v2 validation.
     pub workloads: Vec<&'static RunnerWorkloadDescriptor>,
     /// Descriptor-compatible pairs, including pairs without an executable v2 adapter.
@@ -44,7 +44,7 @@ pub struct RunnerCapabilities {
     pub evaluation_providers: Vec<EvaluationProviderCapability>,
     /// Host operations with linked executable Rust adapters.
     pub evaluation_host_operations: Vec<EvaluationHostOperationCapability>,
-    /// Fully executable backend/workload/provider/distribution combinations.
+    /// Fully executable transport/workload/provider/distribution combinations.
     pub supported_evaluation_combinations: Vec<SupportedEvaluationCombination>,
     /// Known stock provider/distribution selections that this exact image
     /// cannot execute, expressed only with closed path-free reason codes.
@@ -104,17 +104,17 @@ impl RunnerCapabilities {
                 .extension_names()
                 .map(str::to_owned)
                 .collect(),
-            backends: runner_registry.backend_descriptors(),
+            transports: runner_registry.transport_descriptors(),
             workloads: runner_registry.workload_descriptors(),
             statically_compatible_pairs: runner_registry
                 .statically_compatible_pairs()
                 .into_iter()
-                .map(|(backend, workload)| [backend.to_owned(), workload.to_owned()])
+                .map(|(transport, workload)| [transport.to_owned(), workload.to_owned()])
                 .collect(),
             supported_pairs: runner_registry
                 .supported_pairs()
                 .into_iter()
-                .map(|(backend, workload)| [backend.to_owned(), workload.to_owned()])
+                .map(|(transport, workload)| [transport.to_owned(), workload.to_owned()])
                 .collect(),
             evaluation_providers: evaluation.providers,
             evaluation_host_operations: evaluation.host_operations,
@@ -219,8 +219,8 @@ pub struct EvaluationHostOperationCapability {
 /// One provider selection that the exact image can execute end to end.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct SupportedEvaluationCombination {
-    /// Registered backend pair half.
-    pub backend: String,
+    /// Registered transport pair half.
+    pub transport: String,
     /// Registered workload pair half; currently `evaluation`.
     pub workload: String,
     /// Exact provider factory ID.

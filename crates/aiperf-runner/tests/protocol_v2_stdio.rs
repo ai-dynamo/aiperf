@@ -25,7 +25,7 @@ fn request(operation: &str, distribution_id: &str) -> Value {
         "run": {
             "identity": {"benchmark_id": "v2-process-proof"},
             "artifact_target": "/tmp/aiperf-v2-never-created",
-            "backend": {"type": "online_http", "config": {}},
+            "transport": {"type": "http", "config": {}},
             "workload": {"type": "scheduled", "config": {
                 "worker_count": 1,
                 "dataset": {"type": "synthetic", "entries": 1},
@@ -66,7 +66,7 @@ fn request(operation: &str, distribution_id: &str) -> Value {
 
 fn unregistered_pair_request(operation: &str, distribution_id: &str) -> Value {
     let mut request = request(operation, distribution_id);
-    request["run"]["backend"]["type"] = json!("online_grpc");
+    request["run"]["transport"]["type"] = json!("grpc");
     request["run"]["workload"]["type"] = json!("graph");
     request["run"]["workload"]["config"]["dataset"] = json!({
         "type": "file",
@@ -109,11 +109,11 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
     assert_eq!(capabilities["capabilities_schema_version"], 2);
     assert_eq!(capabilities["protocol_versions"], json!([2]));
     assert!(
-        capabilities["backends"]
+        capabilities["transports"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|entry| entry["id"] == "online_http")
+            .any(|entry| entry["id"] == "http")
     );
     for workload in ["scheduled", "graph", "static_accuracy", "agentic"] {
         assert!(
@@ -129,20 +129,20 @@ fn capabilities_distinguish_static_compatibility_from_executable_pairs() {
         capabilities["statically_compatible_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "scheduled"]))
+            .contains(&json!(["http", "scheduled"]))
     );
     assert!(
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "scheduled"])),
+            .contains(&json!(["http", "scheduled"])),
         "the protocol-v2 scheduled adapter must be product-reachable"
     );
     assert!(
         capabilities["supported_pairs"]
             .as_array()
             .unwrap()
-            .contains(&json!(["online_http", "agentic"])),
+            .contains(&json!(["http", "agentic"])),
         "the registered agentic pair must be product-reachable"
     );
 }
@@ -164,13 +164,13 @@ fn validate_emits_one_typed_failure_for_a_recognized_but_unregistered_pair() {
     assert_eq!(response["completeness"], "static");
     assert_eq!(
         response["errors"][0]["code"],
-        "invalid_backend_workload_selection"
+        "invalid_transport_workload_selection"
     );
     assert!(
         response["errors"][0]["message"]
             .as_str()
             .unwrap()
-            .contains("does not contain backend/workload pair")
+            .contains("does not contain transport/workload pair")
     );
 }
 

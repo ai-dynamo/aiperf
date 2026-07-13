@@ -35,7 +35,7 @@ _ALLOWED_DOCUMENT_FIELDS = {"schema_version", "variables", "run"}
 _ALLOWED_RUN_FIELDS = {
     "identity",
     "artifact_target",
-    "backend",
+    "transport",
     "workload",
     "resources",
 }
@@ -47,7 +47,7 @@ def watch(
         Path,
         Parameter(
             name=["--config", "-c"],
-            help="Config-v2 YAML containing one online_http/telemetry_watch run.",
+            help="Config-v2 YAML containing one http/telemetry_watch run.",
         ),
     ],
     *,
@@ -156,9 +156,9 @@ def _validate_watch_run_shape(run: dict[str, Any]) -> None:
         raise ValueError("watch run identity.benchmark_id must be a non-empty string")
     if not isinstance(run.get("artifact_target"), (str, os.PathLike)):
         raise ValueError("watch run artifact_target must be a path")
-    backend = run.get("backend")
-    if not isinstance(backend, dict) or backend.get("type") != "online_http":
-        raise ValueError("aiperf watch requires run.backend.type='online_http'")
+    transport = run.get("transport")
+    if not isinstance(transport, dict) or transport.get("type") != "http":
+        raise ValueError("aiperf watch requires run.transport.type='http'")
     workload = run.get("workload")
     if not isinstance(workload, dict) or workload.get("type") != "telemetry_watch":
         raise ValueError("aiperf watch requires run.workload.type='telemetry_watch'")

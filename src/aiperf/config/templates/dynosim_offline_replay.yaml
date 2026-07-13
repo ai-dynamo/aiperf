@@ -7,20 +7,21 @@
 # category: Advanced
 # tags: dynosim, offline, replay, mooncake, simulation
 # difficulty: advanced
-# features: dynosim backend, offline replay, mooncake format
+# features: dynosim transport, offline replay, mooncake format
 #
 # DynoSim Offline Replay
 # ======================
-# The `dynosim` backend runs one in-process Dynamo mocker co-simulation of the
-# trace — no inference server, no HTTP, no sockets. `replayMode: offline` fast-
-# forwards a virtual clock through the discrete-event engine for deterministic,
-# byte-exact-with-native results; `replayMode: online` drives the same engine in
-# real wall-clock time for live-throughput measurement.
+# The `dynosim_offline` transport runs one in-process Dynamo mocker co-simulation
+# of the trace — no inference server, no HTTP, no sockets. The clock rides on the
+# transport id: `dynosim_offline` fast-forwards a virtual clock through the
+# discrete-event engine for deterministic, byte-exact-with-native results, while
+# `dynosim_online` drives the same engine in real wall-clock time for
+# live-throughput measurement.
 #
-# All engine/topology/router/SLA knobs live under `backend.config` (mirroring
+# All engine/topology/router/SLA knobs live under `transport.config` (mirroring
 # Dynamo's `MockEngineArgs`/router). The trace file and concurrency/rate axes reuse
 # the SAME `dataset` and `phases` surface as an online run — switching a benchmark
-# between a real server and the simulator is just the `backend` block.
+# between a real server and the simulator is just the `transport` block.
 #
 # Requires an `aiperf-runner` built with the `dynosim` Cargo feature.
 # Run: aiperf profile --config dynosim_offline_replay.yaml
@@ -35,18 +36,17 @@ randomSeed: 42
 benchmark:
   model: meta-llama/Llama-3.1-8B-Instruct
 
-  # OFFLINE opens no sockets: the endpoint supplies only materialization policy
-  # (modality, tokenization). The URL is a placeholder and is never dialed —
-  # `.invalid` (RFC 2606) makes that explicit.
+  # OFFLINE opens no sockets: the endpoint defaults to the first-class `dynosim`
+  # dialect (materialization only), so no URL is required or dialed. The runner
+  # reports its endpoint as `dynamo://offline`.
   endpoint:
-    url: http://unused.invalid
-    type: chat
-    streaming: true
-
-  backend:
     type: dynosim
+
+  transport:
+    # dynosim_offline = deterministic virtual clock (byte-exact-with-native).
+    # dynosim_online  = same engine under a real wall clock (live throughput).
+    type: dynosim_offline
     config:
-      replayMode: offline       # offline (virtual clock) | online (wall clock)
       topology: single          # single | aggregated | disaggregated
       routerMode: round_robin   # round_robin | kv
       workers: 1

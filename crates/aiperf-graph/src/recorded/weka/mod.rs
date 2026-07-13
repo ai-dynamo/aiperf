@@ -197,6 +197,7 @@ fn flatten_entries(
                     extra_headers: BTreeMap::new(),
                     adapter_metadata: BTreeMap::new(),
                     explicit_tags: None,
+                    block_lens: None,
                 });
                 previous = Some(node_id);
                 turn_index += 1;
