@@ -571,6 +571,7 @@ fn build_tree_requests(
             max_tokens: turn.output_tokens.max(1),
             extra_headers: headers,
             adapter_metadata: metadata,
+            explicit_tags: None,
         });
     }
     Ok(requests)

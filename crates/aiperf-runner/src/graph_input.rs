@@ -23,7 +23,8 @@ use std::sync::Arc;
 use aiperf_dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use aiperf_graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use aiperf_graph::recorded::{
-    PromptCorpus, RecordedTraceInputConfig, compile_dynamo_trace_input, compile_weka_trace_input,
+    PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
+    compile_weka_trace_input,
 };
 use aiperf_rng::RngRoot;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -126,10 +127,11 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 3] = [
+        let adapters: [Arc<dyn RunnerGraphInputAdapter>; 4] = [
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
+            Arc::new(AiperfTraceRunnerGraphInputAdapter),
         ];
         Self {
             adapters: adapters
@@ -155,6 +157,21 @@ impl BuiltinRunnerGraphInputAdapterResolver {
             )
         })
     }
+}
+
+/// Strictly decode an authored graph-input object through an owned [`Value`].
+///
+/// `aiperf-graph` links serde_json with the `arbitrary_precision` feature, which
+/// makes streaming `from_str` represent every JSON number as an internal map and
+/// breaks direct deserialization into structs carrying `f64` fields (e.g. the
+/// recorded-trace `max_osl`/`idle_gap_cap_seconds` knobs). Round-tripping through
+/// an owned `Value` first — mirroring `dataset_input::decode_dataset_source` —
+/// restores exact numeric decoding under that global feature.
+fn decode_graph_input<T>(raw: &RawValue) -> serde_json::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_value(serde_json::from_str::<Value>(raw.get())?)
 }
 
 #[async_trait(?Send)]
@@ -195,7 +212,7 @@ impl RunnerGraphInputAdapter for DagJsonlRunnerGraphInputAdapter {
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: DagJsonlDatasetInput =
-            serde_json::from_str(raw.get()).context("decoding direct dag_jsonl graph input")?;
+            decode_graph_input(raw).context("decoding direct dag_jsonl graph input")?;
         self.load_decoded(input, context).await
     }
 }
@@ -241,6 +258,58 @@ pub struct WekaTraceRunnerGraphInputAdapter;
 #[derive(Debug)]
 pub struct DynamoTraceRunnerGraphInputAdapter;
 
+/// Built-in native `aiperf.trace.v1` recorded-trace adapter.
+#[derive(Debug)]
+pub struct AiperfTraceRunnerGraphInputAdapter;
+
+#[async_trait(?Send)]
+impl RunnerGraphInputAdapter for AiperfTraceRunnerGraphInputAdapter {
+    fn format(&self) -> &'static str {
+        "aiperf_trace"
+    }
+
+    async fn load(
+        &self,
+        raw: &RawValue,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let input: RecordedDatasetInput =
+            decode_graph_input(raw).context("decoding direct aiperf_trace graph input")?;
+        self.load_decoded(input, context).await
+    }
+}
+
+impl AiperfTraceRunnerGraphInputAdapter {
+    async fn load_decoded(
+        &self,
+        input: RecordedDatasetInput,
+        context: &RunnerGraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let prepared = match input {
+            RecordedDatasetInput::File(input) => {
+                prepare_recorded_file(input, self.format(), context)?
+            }
+            RecordedDatasetInput::Public(input) => {
+                prepare_recorded_public(input, self.format(), context)?
+            }
+        };
+        let random_seed = prepared.random_seed;
+        let default_output_tokens = prepared.default_output_tokens;
+        let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let bundle = compile_aiperf_trace_input(prepared.input, context.tokenizer)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("loading and lowering native aiperf_trace Graph-IR input")?;
+        finish_recorded_input(
+            bundle,
+            random_seed,
+            default_output_tokens,
+            allow_dataset_wrap,
+            self.format(),
+        )
+    }
+}
+
 #[async_trait(?Send)]
 impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
     fn format(&self) -> &'static str {
@@ -253,7 +322,7 @@ impl RunnerGraphInputAdapter for WekaTraceRunnerGraphInputAdapter {
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedDatasetInput =
-            serde_json::from_str(raw.get()).context("decoding direct WEKA graph input")?;
+            decode_graph_input(raw).context("decoding direct WEKA graph input")?;
         self.load_decoded(input, context).await
     }
 }
@@ -270,7 +339,7 @@ impl RunnerGraphInputAdapter for DynamoTraceRunnerGraphInputAdapter {
         context: &RunnerGraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedDatasetInput =
-            serde_json::from_str(raw.get()).context("decoding direct Dynamo graph input")?;
+            decode_graph_input(raw).context("decoding direct Dynamo graph input")?;
         self.load_decoded(input, context).await
     }
 }
@@ -925,6 +994,43 @@ mod tests {
         );
         assert_eq!(prepared.random_seed, Some(91));
         assert!(prepared.allow_dataset_wrap);
+    }
+
+    #[tokio::test]
+    async fn aiperf_trace_adapter_strictly_decodes_and_compiles_directly_to_graph_ir() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "aiperf_trace",
+            "records": {
+                "schema": "aiperf.trace.v1",
+                "session_id": 7,
+                "block_size": 16,
+                "segments": [
+                    {"role": "user", "kind": ["text"], "hash_ids": [1], "tokens": 16}
+                ],
+                "inference_calls": [
+                    {"ts": 0.0, "segment_refs": [0], "usage": {"output_tokens": 3}}
+                ]
+            },
+            "random_seed": 91
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &RunnerGraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("direct aiperf_trace compiler");
+        assert_eq!(prepared.bundle.metadata.format, "aiperf_trace");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 1);
+        assert!(prepared.bundle.plans[0].graph.nodes.contains_key("7:0"));
+        assert_eq!(prepared.random_seed, Some(91));
     }
 
     #[tokio::test]

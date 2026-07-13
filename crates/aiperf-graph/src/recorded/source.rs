@@ -87,6 +87,62 @@ pub(crate) async fn load_dynamo_documents(
     }
 }
 
+pub(crate) async fn load_aiperf_documents(
+    config: &LoadConfig,
+) -> Result<Vec<Value>, RecordedTraceError> {
+    match &config.source {
+        DatasetSource::Path(path) if path.is_dir() => {
+            let mut paths = fs::read_dir(path)
+                .map_err(|error| source_error(path, error))?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|candidate| {
+                    candidate.is_file()
+                        && candidate
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .is_some_and(|value| value.eq_ignore_ascii_case("json"))
+                })
+                .collect::<Vec<_>>();
+            paths.sort();
+            if paths.is_empty() {
+                return Err(RecordedTraceError(format!(
+                    "{}: aiperf.trace.v1 directory contains no .json files",
+                    path.display()
+                )));
+            }
+            let mut values = Vec::new();
+            for candidate in &paths {
+                let bytes = fs::read(candidate).map_err(|error| source_error(candidate, error))?;
+                values.extend(parse_aiperf_documents(
+                    &bytes,
+                    &candidate.display().to_string(),
+                )?);
+            }
+            Ok(values)
+        }
+        DatasetSource::Path(path) => {
+            let bytes = fs::read(path).map_err(|error| source_error(path, error))?;
+            parse_aiperf_documents(&bytes, &path.display().to_string())
+        }
+        DatasetSource::Bytes(bytes) => parse_aiperf_documents(bytes, "in-memory aiperf trace"),
+        DatasetSource::Inline(value) => values_from_inline(value),
+        DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => load_raw_rows(config)
+            .await
+            .map(|rows| rows.into_iter().map(|row| row.value).collect())
+            .map_err(Into::into),
+    }
+}
+
+/// One session object, an array of them, or JSONL (one compact object per line).
+fn parse_aiperf_documents(bytes: &[u8], label: &str) -> Result<Vec<Value>, RecordedTraceError> {
+    match serde_json::from_slice::<Value>(bytes) {
+        Ok(Value::Array(values)) => Ok(values),
+        Ok(value) => Ok(vec![value]),
+        Err(_) => parse_json_lines(bytes, label),
+    }
+}
+
 fn values_from_inline(value: &Value) -> Result<Vec<Value>, RecordedTraceError> {
     Ok(match value {
         Value::Array(values) => values.clone(),

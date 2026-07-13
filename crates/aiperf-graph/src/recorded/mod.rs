@@ -12,6 +12,7 @@
 //! same content-parent, idle-warp, interval-order, message, and segment path.
 //! Format selection remains runner-owned; this module contains no registry.
 
+mod aiperf_trace;
 mod coding;
 mod content;
 mod dynamo;
@@ -25,6 +26,7 @@ use std::fmt::{self, Display};
 
 use aiperf_dataset::LoadConfig;
 
+pub use aiperf_trace::compile_aiperf_trace_input;
 pub use dynamo::compile_dynamo_trace_input;
 pub use weka::compile_weka_trace_input;
 

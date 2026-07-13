@@ -16,6 +16,9 @@ use crate::recorded::content::RecordedContentSynthesizer;
 enum Role {
     Assistant,
     User,
+    System,
+    Tool,
+    Tools,
 }
 
 impl Role {
@@ -23,14 +26,40 @@ impl Role {
         match self {
             Self::Assistant => "assistant",
             Self::User => "user",
+            Self::System => "system",
+            Self::Tool => "tool",
+            Self::Tools => "tools",
+        }
+    }
+
+    /// Map an authored role string to a `Role`. Unknown roles fall back to
+    /// `User`. Used by the `aiperf_trace` adapter's explicit-tag path; the
+    /// WEKA/Dynamo heuristic only ever produces `User`/`Assistant`.
+    fn from_authored(role: &str) -> Self {
+        match role {
+            "assistant" => Self::Assistant,
+            "system" => Self::System,
+            "tool" => Self::Tool,
+            "tools" | "tool_defs" => Self::Tools,
+            _ => Self::User,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct BlockTag {
+pub(crate) struct BlockTag {
     role: Role,
     starts_message: bool,
+}
+
+impl BlockTag {
+    /// Construct a ground-truth tag from an authored role string (adapter side).
+    pub(crate) fn from_authored(role: &str, starts_message: bool) -> Self {
+        Self {
+            role: Role::from_authored(role),
+            starts_message,
+        }
+    }
 }
 
 /// De-duplication key for a single prompt message within one trace's lowering.
@@ -137,6 +166,31 @@ pub(super) fn assign_block_tags(
     let mut all_tags: Vec<Vec<BlockTag>> = vec![Vec::new(); nodes.len()];
     let mut inherited_by_node = vec![0_usize; nodes.len()];
     for (index, node) in nodes.iter().enumerate() {
+        // Ground-truth path: the `aiperf_trace` adapter supplies exact per-block
+        // `(role, starts_message)` tags from real message boundaries, so we skip
+        // the token-geometry heuristic entirely and validate the covered count.
+        if let Some(explicit) = &node.request.explicit_tags {
+            let parent_hashes = node
+                .content_parent
+                .map_or(&[][..], |parent| nodes[parent].request.hash_ids.as_slice());
+            let geo = geometry_from_hashes(
+                parent_hashes,
+                &node.request.hash_ids,
+                node.request.input_tokens,
+                block_size,
+            );
+            if explicit.len() != geo.covered {
+                return Err(RecordedTraceError(format!(
+                    "node {:?}: explicit tag count {} differs from covered block count {}",
+                    node.request.node_id,
+                    explicit.len(),
+                    geo.covered
+                )));
+            }
+            inherited_by_node[index] = geo.lcp.min(explicit.len());
+            all_tags[index] = explicit.clone();
+            continue;
+        }
         let (parent_hashes, parent_output, parent_tags) = match node.content_parent {
             Some(parent) => (
                 nodes[parent].request.hash_ids.as_slice(),
@@ -348,6 +402,7 @@ mod parity_tests {
                 max_tokens: output.max(1),
                 extra_headers: BTreeMap::new(),
                 adapter_metadata: BTreeMap::new(),
+                explicit_tags: None,
             },
             content_parent: None,
             warped_start: order as f64,
@@ -462,6 +517,7 @@ mod tests {
                 max_tokens: output.max(1),
                 extra_headers: BTreeMap::new(),
                 adapter_metadata: BTreeMap::new(),
+                explicit_tags: None,
             },
             content_parent: None,
             warped_start: order as f64,

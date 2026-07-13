@@ -85,6 +85,7 @@ mod tests {
                 max_tokens: 1,
                 extra_headers: BTreeMap::new(),
                 adapter_metadata: BTreeMap::new(),
+                explicit_tags: None,
             },
             content_parent: None,
             warped_start: order as f64,

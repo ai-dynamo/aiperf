@@ -196,6 +196,7 @@ fn flatten_entries(
                     max_tokens,
                     extra_headers: BTreeMap::new(),
                     adapter_metadata: BTreeMap::new(),
+                    explicit_tags: None,
                 });
                 previous = Some(node_id);
                 turn_index += 1;

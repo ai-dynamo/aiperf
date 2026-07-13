@@ -7,6 +7,8 @@ mod messages;
 mod parents;
 mod timing;
 
+pub(crate) use messages::BlockTag;
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use aiperf_dataset::SegmentPool;
@@ -40,6 +42,10 @@ pub(crate) struct RecordedRequest {
     pub max_tokens: usize,
     pub extra_headers: BTreeMap<String, String>,
     pub adapter_metadata: BTreeMap<String, Value>,
+    /// Ground-truth per-block `(role, starts_message)` tags supplied by the
+    /// `aiperf_trace` adapter, which knows exact message boundaries. `None` for
+    /// WEKA/Dynamo, which fall back to the token-geometry heuristic.
+    pub explicit_tags: Option<Vec<BlockTag>>,
 }
 
 impl RecordedRequest {
