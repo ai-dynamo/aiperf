@@ -5230,6 +5230,137 @@ mod tests {
         );
     }
 
+    /// The KV-router `SteppableAgg` PUSH path is byte-exact with Dynamo's own
+    /// native offline KV-router `run()` (pull) driver under prefill saturation.
+    /// The router admits its own queued requests on completion, so the delta-cycle
+    /// still applies: the EVALUATE yield lets AIPerf's `SlotPool` submit the
+    /// replacement (which the router queues and admits at the completion instant)
+    /// before the freed worker is driven.
+    #[test]
+    fn offline_kv_router_deferred_drive_is_byte_exact_with_native_multi_worker() {
+        use dynamo_mocker::replay::simulate_concurrency_requests_with_router_mode;
+        const N: usize = 96;
+        const ISL: usize = 16;
+        const OSL: usize = 4;
+        const C: usize = 12;
+        const WORKERS: usize = 2;
+        let eng = r#"{"block_size":16,"enable_prefix_caching":false,"max_num_batched_tokens":32}"#;
+        let tokens = vec![7u32; ISL];
+        let router_json = "{}";
+
+        let config = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            single_pass_engine: false,
+            topology: OfflineTopology::Aggregated,
+            workers: WORKERS,
+            router_mode: OfflineRouterMode::Kv,
+            router_config: Some(router_json.to_string()),
+            ..OfflineEngineConfig::default()
+        };
+        let aiperf = {
+            let clock = Rc::new(SimClock::new());
+            let host = EngineHost::new(clock.clone(), &config).unwrap();
+            let encoder = Rc::new(FixedTokensEncoder {
+                tokens: tokens.clone(),
+            });
+            let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new_with_encoders(
+                host.clone(),
+                clock.clone(),
+                "m".to_string(),
+                encoder.clone(),
+                encoder,
+            );
+            let result = Rc::new(RefCell::new(None));
+            let result_for_body = result.clone();
+            let clock_for_body: Rc<dyn Clock> = clock.clone();
+            let start_ns = clock.now_ns();
+            let source: Rc<dyn SimEventSource> = host.clone();
+            let outcome = drive_sim_with_source(clock.clone(), source, move |_h| async move {
+                let run = run_paced_with_backend(
+                    clock_for_body,
+                    start_ns,
+                    sink,
+                    vec!["dynosim".to_string()],
+                    SkeletonWorkload {
+                        num_requests: N,
+                        input_tokens: ISL,
+                        output_tokens: OSL,
+                        turns: 1,
+                        think_time_ms: None,
+                    },
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    Some(C),
+                    None,
+                    StopConfig {
+                        total_expected_requests: Some(N as u64),
+                        ..StopConfig::default()
+                    },
+                    7,
+                    None,
+                    AncillaryTimingConfig::default(),
+                )
+                .await;
+                *result_for_body.borrow_mut() = Some(run);
+            })
+            .unwrap();
+            assert!(!outcome.deadlocked);
+            let run = result.borrow_mut().take().unwrap().unwrap();
+            host.take_report_at(run.performance.throughput.wall_time_ms)
+        };
+
+        let requests: Vec<_> = (0..N)
+            .map(|i| DirectRequest {
+                tokens: tokens.clone(),
+                max_output_tokens: OSL,
+                output_token_ids: None,
+                uuid: Some(Uuid::from_u128(i as u128 + 1)),
+                dp_rank: 0,
+                arrival_timestamp_ms: None,
+                priority: 0,
+                strict_priority: 0,
+                policy_class: None,
+            })
+            .collect();
+        let router_config: ReplayKvRouterConfig = serde_json::from_str(router_json).unwrap();
+        let native = simulate_concurrency_requests_with_router_mode(
+            MockEngineArgs::from_json_str(eng).unwrap(),
+            Some(router_config),
+            None,
+            requests,
+            C,
+            WORKERS,
+            ReplayRouterMode::KvRouter,
+            DynamoSlaThresholds::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            aiperf.request_counts.completed_requests,
+            native.request_counts.completed_requests
+        );
+        assert_eq!(
+            aiperf.request_counts.total_output_tokens,
+            native.request_counts.total_output_tokens
+        );
+        let within_1_ulp = |name: &str, a: f64, n: f64| {
+            let tol = n.abs() * 8.0 * f64::EPSILON;
+            assert!(
+                (a - n).abs() <= tol,
+                "{name} not byte-exact: aiperf={a} native={n} delta={}",
+                (a - n).abs()
+            );
+        };
+        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
+        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "itl",
+            aiperf.latency.itl.distribution.mean_ms,
+            native.latency.itl.distribution.mean_ms,
+        );
+    }
+
     /// The disaggregated `SteppableDisagg` PUSH path is byte-exact with Dynamo's
     /// own native offline disaggregated `run()` (pull) driver under prefill
     /// saturation. The steppable delta-cycle yields on the terminal decode
@@ -5338,6 +5469,145 @@ mod tests {
             requests,
             C,
             ReplayRouterMode::RoundRobin,
+            DynamoSlaThresholds::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            aiperf.request_counts.completed_requests,
+            native.request_counts.completed_requests
+        );
+        assert_eq!(
+            aiperf.request_counts.total_output_tokens,
+            native.request_counts.total_output_tokens
+        );
+        let within_1_ulp = |name: &str, a: f64, n: f64| {
+            let tol = n.abs() * 8.0 * f64::EPSILON;
+            assert!(
+                (a - n).abs() <= tol,
+                "{name} not byte-exact: aiperf={a} native={n} delta={}",
+                (a - n).abs()
+            );
+        };
+        within_1_ulp("ttft", aiperf.latency.ttft.mean_ms, native.latency.ttft.mean_ms);
+        within_1_ulp("e2e", aiperf.latency.e2e.mean_ms, native.latency.e2e.mean_ms);
+        within_1_ulp(
+            "itl",
+            aiperf.latency.itl.distribution.mean_ms,
+            native.latency.itl.distribution.mean_ms,
+        );
+    }
+
+    /// The disaggregated KV-router `SteppableDisagg` PUSH path is byte-exact with
+    /// Dynamo's own native offline disaggregated KV-router `run()` (pull) driver
+    /// under prefill saturation — the last of the four offline routing/topology
+    /// combinations, completing byte-exactness for every offline engine/mode.
+    #[test]
+    fn offline_disagg_kv_router_deferred_drive_is_byte_exact_with_native() {
+        use dynamo_mocker::replay::{
+            OfflineDisaggReplayConfig, simulate_concurrency_requests_disagg_with_router_mode,
+        };
+        const N: usize = 80;
+        const ISL: usize = 16;
+        const OSL: usize = 4;
+        const C: usize = 10;
+        let eng = r#"{"block_size":16,"enable_prefix_caching":false,"max_num_batched_tokens":32}"#;
+        let tokens = vec![7u32; ISL];
+        let router_json = "{}";
+
+        let config = OfflineEngineConfig {
+            extra_engine_args: Some(eng.to_string()),
+            single_pass_engine: false,
+            topology: OfflineTopology::Disaggregated,
+            prefill_workers: 1,
+            decode_workers: 1,
+            router_mode: OfflineRouterMode::Kv,
+            router_config: Some(router_json.to_string()),
+            ..OfflineEngineConfig::default()
+        };
+        let aiperf = {
+            let clock = Rc::new(SimClock::new());
+            let host = EngineHost::new(clock.clone(), &config).unwrap();
+            let encoder = Rc::new(FixedTokensEncoder {
+                tokens: tokens.clone(),
+            });
+            let sink: Rc<dyn HttpRequestDispatcher> = DynosimSink::new_with_encoders(
+                host.clone(),
+                clock.clone(),
+                "m".to_string(),
+                encoder.clone(),
+                encoder,
+            );
+            let result = Rc::new(RefCell::new(None));
+            let result_for_body = result.clone();
+            let clock_for_body: Rc<dyn Clock> = clock.clone();
+            let start_ns = clock.now_ns();
+            let source: Rc<dyn SimEventSource> = host.clone();
+            let outcome = drive_sim_with_source(clock.clone(), source, move |_h| async move {
+                let run = run_paced_with_backend(
+                    clock_for_body,
+                    start_ns,
+                    sink,
+                    vec!["dynosim".to_string()],
+                    SkeletonWorkload {
+                        num_requests: N,
+                        input_tokens: ISL,
+                        output_tokens: OSL,
+                        turns: 1,
+                        think_time_ms: None,
+                    },
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    Some(C),
+                    None,
+                    StopConfig {
+                        total_expected_requests: Some(N as u64),
+                        ..StopConfig::default()
+                    },
+                    7,
+                    None,
+                    AncillaryTimingConfig::default(),
+                )
+                .await;
+                *result_for_body.borrow_mut() = Some(run);
+            })
+            .unwrap();
+            assert!(!outcome.deadlocked);
+            let run = result.borrow_mut().take().unwrap().unwrap();
+            host.take_report_at(run.performance.throughput.wall_time_ms)
+        };
+
+        let requests: Vec<_> = (0..N)
+            .map(|i| DirectRequest {
+                tokens: tokens.clone(),
+                max_output_tokens: OSL,
+                output_token_ids: None,
+                uuid: Some(Uuid::from_u128(i as u128 + 1)),
+                dp_rank: 0,
+                arrival_timestamp_ms: None,
+                priority: 0,
+                strict_priority: 0,
+                policy_class: None,
+            })
+            .collect();
+        let mut prefill_args = MockEngineArgs::from_json_str(eng).unwrap();
+        prefill_args.worker_type = WorkerType::Prefill;
+        let mut decode_args = MockEngineArgs::from_json_str(eng).unwrap();
+        decode_args.worker_type = WorkerType::Decode;
+        let router_config: ReplayKvRouterConfig = serde_json::from_str(router_json).unwrap();
+        let native = simulate_concurrency_requests_disagg_with_router_mode(
+            OfflineDisaggReplayConfig {
+                prefill_args,
+                decode_args,
+                num_prefill_workers: 1,
+                num_decode_workers: 1,
+            },
+            Some(router_config),
+            None,
+            requests,
+            C,
+            ReplayRouterMode::KvRouter,
             DynamoSlaThresholds::default(),
         )
         .unwrap();
