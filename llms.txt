@@ -561,11 +561,13 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the
   standalone workspace).
 - `specs/2026-07-12-track-a-*.md` + `specs/2026-07-12-{scheduled-worker-local-accumulation,http-connector-seam-uds-duplex,lean-per-request-hotpath,single-observer-compat-projection,cellular-ready-seams-and-roadmap}.md`
-  — **planning; not built.** The Track-A measurement-path refactor design set:
-  implementation plan (PR1 `RunCapture` uuid-keyed join → A1 worker-local
-  accumulation → A3 connector / A4 lean → A2 compat projection), regression
-  harnesses, the four component specs, and the cellular-ready seams + roadmap
-  (single-issuer today, cross-node autonomous cells deferred). Start with
+  — **PR1 + PR2 (A1) built; A3/A4/A2 planning.** The Track-A measurement-path
+  refactor design set: implementation plan (PR1 `RunCapture` uuid-keyed join
+  **(built)** → A1 worker-local accumulation **(built, runner HTTP + gRPC via an
+  additive `execute_turn_measured`/`drain_records` seam; `BufferedObserver` kept
+  for agentic/evaluation)** → A3 connector / A4 lean → A2 compat projection),
+  regression harnesses, the four component specs, and the cellular-ready seams +
+  roadmap (single-issuer today, cross-node autonomous cells deferred). Start with
   `specs/2026-07-12-track-a-implementation.md`.
 
 ## Build / test / run

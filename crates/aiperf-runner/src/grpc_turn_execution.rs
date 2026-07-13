@@ -15,10 +15,14 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use aiperf::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
-use aiperf::http::{HttpTurnDispatchResult, HttpTurnExecutionBackend, PreparedHttpTurn};
+use aiperf::http::{
+    HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome,
+    PreparedHttpTurn,
+};
+use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::TurnToSend;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
-use aiperf_metrics::InferenceDimensions;
+use aiperf_metrics::{InferenceDimensions, MetricsConfig, RecordIngest};
 use aiperf_transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
@@ -207,17 +211,36 @@ impl RequestObserver for BufferedObserver {
 
 struct WorkerReply {
     result: Result<HttpTurnDispatchResult>,
+    /// Buffered observations for the legacy `execute_turn(observer)` replay path;
+    /// empty for the worker-local measured path.
     events: Vec<ObserverEvent>,
+    /// Non-consuming cloned record for a live sink, when requested.
+    live_record: Option<RecordIngest>,
 }
 
 struct WorkerCommand {
     turn: PreparedHttpTurn,
+    /// Present for the worker-local measured path; absent for the buffered path.
+    context: Option<MeasuredTurnContext>,
     first_token: oneshot::Sender<i64>,
     completed: oneshot::Sender<WorkerReply>,
 }
 
+/// Control-plane message multiplexed onto each gRPC worker's command channel.
+enum WorkerMessage {
+    Configure {
+        config: MetricsConfig,
+        origin_ns: i64,
+    },
+    Command(Box<WorkerCommand>),
+    Drain {
+        end_ns: i64,
+        reply: std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>,
+    },
+}
+
 struct ThreadPerCoreGrpcExecutionBackend {
-    senders: RefCell<Option<Vec<mpsc::Sender<WorkerCommand>>>>,
+    senders: RefCell<Option<Vec<mpsc::Sender<WorkerMessage>>>>,
     threads: RefCell<Vec<JoinHandle<Result<()>>>>,
     next_worker: Cell<usize>,
     run_origin_ns: Cell<Option<i64>>,
@@ -242,7 +265,7 @@ impl ThreadPerCoreGrpcExecutionBackend {
         let mut senders = Vec::with_capacity(config.workers);
         let mut threads = Vec::with_capacity(config.workers);
         for worker_id in 0..config.workers {
-            let (sender, receiver) = mpsc::channel(WORKER_QUEUE_CAPACITY);
+            let (sender, receiver) = mpsc::channel::<WorkerMessage>(WORKER_QUEUE_CAPACITY);
             let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
             let base_urls = config.base_urls.clone();
             let model = config.model.clone();
@@ -330,10 +353,93 @@ impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult> {
-        let run_origin_ns = self
-            .run_origin_ns
+        let run_origin_ns = self.origin()?;
+        let reply = self.execute_command(turn, None, on_first_token).await?;
+        for event in reply.events {
+            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
+        }
+        reply.result
+    }
+
+    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+        let senders = self.senders.borrow();
+        let senders = senders
+            .as_ref()
+            .ok_or_else(|| anyhow!("gRPC execution backend is shut down"))?;
+        for sender in senders.iter() {
+            sender
+                .try_send(WorkerMessage::Configure {
+                    config: config.clone(),
+                    origin_ns,
+                })
+                .map_err(|_| anyhow!("gRPC execution worker rejected measurement configuration"))?;
+        }
+        Ok(())
+    }
+
+    async fn execute_turn_measured(
+        &self,
+        turn: PreparedHttpTurn,
+        context: MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredTurnOutcome> {
+        let reply = self
+            .execute_command(turn, Some(context), on_first_token)
+            .await?;
+        Ok(MeasuredTurnOutcome {
+            result: reply.result?,
+            live_record: reply.live_record,
+        })
+    }
+
+    fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
+        let senders = {
+            let senders = self.senders.borrow();
+            senders
+                .as_ref()
+                .ok_or_else(|| anyhow!("gRPC execution backend is shut down"))?
+                .clone()
+        };
+        let mut receivers = Vec::with_capacity(senders.len());
+        for sender in &senders {
+            let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+            sender
+                .try_send(WorkerMessage::Drain {
+                    end_ns,
+                    reply: reply_tx,
+                })
+                .map_err(|_| anyhow!("gRPC execution worker rejected a drain request"))?;
+            receivers.push(reply_rx);
+        }
+        let mut records = Vec::new();
+        for receiver in receivers {
+            let worker_records = receiver
+                .recv()
+                .map_err(|_| anyhow!("gRPC execution worker dropped before draining records"))?;
+            records.extend(worker_records);
+        }
+        Ok(records)
+    }
+
+    fn shutdown(&self) -> Result<()> {
+        self.shutdown_workers()
+    }
+}
+
+impl ThreadPerCoreGrpcExecutionBackend {
+    fn origin(&self) -> Result<i64> {
+        self.run_origin_ns
             .get()
-            .ok_or_else(|| anyhow!("gRPC execution run origin is not configured"))?;
+            .ok_or_else(|| anyhow!("gRPC execution run origin is not configured"))
+    }
+
+    async fn execute_command(
+        &self,
+        turn: PreparedHttpTurn,
+        context: Option<MeasuredTurnContext>,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<WorkerReply> {
+        let _run_origin_ns = self.origin()?;
         let sender = {
             let senders = self.senders.borrow();
             let senders = senders
@@ -346,11 +452,12 @@ impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
         let (first_token_tx, mut first_token_rx) = oneshot::channel();
         let (completed_tx, mut completed_rx) = oneshot::channel();
         sender
-            .send(WorkerCommand {
+            .send(WorkerMessage::Command(Box::new(WorkerCommand {
                 turn,
+                context,
                 first_token: first_token_tx,
                 completed: completed_tx,
-            })
+            })))
             .await
             .map_err(|_| anyhow!("gRPC worker stopped before accepting a command"))?;
         let mut first_token_channel_done = false;
@@ -373,14 +480,7 @@ impl HttpTurnExecutionBackend for ThreadPerCoreGrpcExecutionBackend {
         if !first_token_channel_done && let Ok(ttft_ns) = first_token_rx.try_recv() {
             on_first_token(ttft_ns);
         }
-        for event in reply.events {
-            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
-        }
-        reply.result
-    }
-
-    fn shutdown(&self) -> Result<()> {
-        self.shutdown_workers()
+        Ok(reply)
     }
 }
 
@@ -394,7 +494,7 @@ impl Drop for ThreadPerCoreGrpcExecutionBackend {
 
 #[allow(clippy::too_many_arguments)]
 fn run_worker_thread(
-    receiver: mpsc::Receiver<WorkerCommand>,
+    receiver: mpsc::Receiver<WorkerMessage>,
     anchor: RealClockAnchor,
     base_urls: Vec<String>,
     model: String,
@@ -415,7 +515,7 @@ fn run_worker_thread(
     };
     let clock = RealClock::from_anchor(anchor);
     let sink = match prepare_grpc_sink(
-        clock,
+        clock.clone(),
         0,
         &base_urls,
         model,
@@ -433,7 +533,7 @@ fn run_worker_thread(
         return Ok(());
     }
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, run_worker(receiver, sink));
+    local.block_on(&runtime, run_worker(receiver, sink, clock));
     Ok(())
 }
 
@@ -478,16 +578,37 @@ fn grpc_reuse(reuse: ConnectionReuseStrategy) -> GrpcConnectionReuseStrategy {
     }
 }
 
-async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<GrpcTransportSink>) {
+async fn run_worker(
+    mut receiver: mpsc::Receiver<WorkerMessage>,
+    sink: Rc<GrpcTransportSink>,
+    clock: Rc<dyn Clock>,
+) {
     let mut jobs = JoinSet::new();
     let mut accepting = true;
+    let mut observer: Option<Rc<NativeMetricsObserver>> = None;
+    let mut pending_drain: Option<(i64, std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>)> =
+        None;
     while accepting || !jobs.is_empty() {
         tokio::select! {
-            command = receiver.recv(), if accepting => {
-                match command {
-                    Some(command) => {
+            message = receiver.recv(), if accepting => {
+                match message {
+                    Some(WorkerMessage::Configure { config, origin_ns }) => {
+                        observer = Some(Rc::new(NativeMetricsObserver::new(
+                            clock.clone(),
+                            origin_ns,
+                            config,
+                        )));
+                    }
+                    Some(WorkerMessage::Command(command)) => {
                         let sink = sink.clone();
-                        jobs.spawn_local(async move { execute_worker_command(sink, command).await });
+                        let observer = observer.clone();
+                        jobs.spawn_local(async move {
+                            execute_worker_command(sink, observer, *command).await;
+                        });
+                    }
+                    Some(WorkerMessage::Drain { end_ns, reply }) => {
+                        accepting = false;
+                        pending_drain = Some((end_ns, reply));
                     }
                     None => accepting = false,
                 }
@@ -499,24 +620,70 @@ async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<GrpcTr
             }
         }
     }
+    if let Some((end_ns, reply)) = pending_drain {
+        let records = observer
+            .map(|observer| observer.take_finalizer_at(end_ns).finish_with_records().records)
+            .unwrap_or_default();
+        let _ = reply.send(records);
+    }
 }
 
-async fn execute_worker_command(sink: Rc<GrpcTransportSink>, command: WorkerCommand) {
-    let observer = Rc::new(BufferedObserver::default());
-    let first_token = RefCell::new(Some(command.first_token));
+async fn execute_worker_command(
+    sink: Rc<GrpcTransportSink>,
+    worker_observer: Option<Rc<NativeMetricsObserver>>,
+    command: WorkerCommand,
+) {
+    let WorkerCommand {
+        turn,
+        context,
+        first_token,
+        completed,
+    } = command;
+    let uuid = turn.request.uuid;
+    let first_token = RefCell::new(Some(first_token));
     let on_first_token = |ttft_ns| {
         if let Some(sender) = first_token.borrow_mut().take() {
             let _ = sender.send(ttft_ns);
         }
     };
-    let result = sink
-        .dispatch_prepared_turn_collect_record(command.turn, observer.as_ref(), &on_first_token)
-        .await;
+    let reply = match &context {
+        Some(context) => match &worker_observer {
+            Some(observer) => {
+                let result = sink
+                    .dispatch_prepared_turn_measured(observer, turn, context, &on_first_token)
+                    .await;
+                let live_record = context
+                    .wants_live_record
+                    .then(|| observer.snapshot_record(uuid, 0))
+                    .flatten();
+                WorkerReply {
+                    result,
+                    events: Vec::new(),
+                    live_record,
+                }
+            }
+            None => WorkerReply {
+                result: Err(anyhow!(
+                    "worker-local measurement was not configured before a measured command"
+                )),
+                events: Vec::new(),
+                live_record: None,
+            },
+        },
+        None => {
+            let observer = Rc::new(BufferedObserver::default());
+            let result = sink
+                .dispatch_prepared_turn_collect_record(turn, observer.as_ref(), &on_first_token)
+                .await;
+            WorkerReply {
+                result,
+                events: observer.take(),
+                live_record: None,
+            }
+        }
+    };
     drop(first_token.borrow_mut().take());
-    let _ = command.completed.send(WorkerReply {
-        result,
-        events: observer.take(),
-    });
+    let _ = completed.send(reply);
 }
 
 fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {

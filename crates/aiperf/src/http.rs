@@ -13,13 +13,13 @@
 //! from `src/aiperf/credit/issuer.py:197-238` and preserve the full-send timer
 //! invariant from `src/aiperf/timing/request_cancellation.py:53-82`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
 use uuid::Uuid;
@@ -29,7 +29,9 @@ use aiperf_core::chat::chat_request_body;
 use aiperf_core::sse::ChatChunk;
 use aiperf_dataset::EndpointResolver;
 use aiperf_endpoints::{EndpointConfig, PreparedEndpointTable};
-use aiperf_metrics::{HttpTrace, InferenceDimensions};
+use aiperf_metrics::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
+
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf_transport_http::config::ClientConfig;
 use aiperf_transport_http::models::{
     ConnectionReuseStrategy, ErrorDetails, ErrorKind, HttpVersion, RequestConfig, RequestRecord,
@@ -556,6 +558,47 @@ impl PreparedHttpTurnWire {
     }
 }
 
+/// Coordinator-supplied per-turn measurement facts for the worker-local
+/// accumulation path.
+///
+/// The scheduled runner no longer replays every token onto one coordinator
+/// observer. Instead, each execution worker owns its own [`NativeMetricsObserver`]
+/// and this context carries the coordinator-known arrival facts and metadata the
+/// worker registers locally before dispatch. Fields the coordinator only learns
+/// after dispatch (`phase`, `session_num`, `has_credit_timestamp`, and the global
+/// dispatch `request_index`) are deliberately absent from `metadata`; the
+/// coordinator patches them onto the drained record at finish so all
+/// credit/phase logic stays exactly where the single-observer path had it.
+#[derive(Clone, Debug)]
+pub struct MeasuredTurnContext {
+    /// Arrival timestamp in milliseconds relative to the run origin, computed
+    /// coordinator-side at issue exactly as the single-observer path did.
+    pub arrival_ms: f64,
+    /// Coordinator-known input length forwarded to the worker's `on_arrival`.
+    pub input_length: usize,
+    /// Coordinator-known requested output length forwarded to `on_arrival`.
+    pub requested_output_length: usize,
+    /// Begin-known request metadata (turn index, conversation, correlation,
+    /// dimensions, audio duration); no `request_index`/`phase`/`session_num`.
+    pub metadata: RequestMetricMetadata,
+    /// Whether a live-results sink is attached and the worker must return a
+    /// non-consuming cloned record for live emission.
+    pub wants_live_record: bool,
+}
+
+/// Result of a worker-local measured execution: the transport outcome plus an
+/// optional non-consuming cloned record for the live-results sink.
+///
+/// The authoritative record stays inside the worker observer for the end-of-run
+/// drain; `live_record` (present only when [`MeasuredTurnContext::wants_live_record`]
+/// is set) is a clone so live emission never removes it from the final merge.
+pub struct MeasuredTurnOutcome {
+    /// Backend-neutral dispatch result consumed by scheduling/record processors.
+    pub result: HttpTurnDispatchResult,
+    /// Non-consuming cloned record for a live sink, when requested.
+    pub live_record: Option<RecordIngest>,
+}
+
 /// Pluggable execution placement behind the one logical turn dispatcher.
 ///
 /// Implementations may execute on the caller's reactor, a thread-per-core
@@ -597,6 +640,57 @@ pub trait HttpTurnExecutionBackend {
         Err(anyhow::anyhow!(
             "selected HTTP execution placement does not support response streaming"
         ))
+    }
+
+    /// Configure worker-local metric accumulation.
+    ///
+    /// Called once after [`set_run_origin`](Self::set_run_origin) and before any
+    /// [`execute_turn_measured`](Self::execute_turn_measured). Builds one
+    /// [`NativeMetricsObserver`] per execution worker from the single resolved
+    /// [`MetricsConfig`] so every worker accumulator shares an identical
+    /// configuration. Backends that do not support worker-local measurement
+    /// reject the call.
+    fn configure_measurement(&self, _config: MetricsConfig, _origin_ns: i64) -> Result<()> {
+        Err(anyhow!(
+            "selected HTTP execution placement does not support worker-local measurement"
+        ))
+    }
+
+    /// Execute one prepared request while accumulating its metrics into the
+    /// worker-local observer (no per-token replay across the coordinator).
+    async fn execute_turn_measured(
+        &self,
+        _turn: PreparedHttpTurn,
+        _context: MeasuredTurnContext,
+        _on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredTurnOutcome> {
+        Err(anyhow!(
+            "selected HTTP execution placement does not support worker-local measurement"
+        ))
+    }
+
+    /// Worker-local measured execution with live response-frame forwarding.
+    async fn execute_turn_measured_streaming(
+        &self,
+        _turn: PreparedHttpTurn,
+        _context: MeasuredTurnContext,
+        _on_first_token: &dyn Fn(i64),
+        _responses: &dyn TurnResponseObserver,
+    ) -> Result<MeasuredTurnOutcome> {
+        Err(anyhow!(
+            "selected HTTP execution placement does not support worker-local measurement"
+        ))
+    }
+
+    /// Drain every worker observer into flat `(uuid, record)` pairs after all
+    /// dispatched turns reach terminal.
+    ///
+    /// Each record carries the worker's dense-local `request_index`; the
+    /// coordinator reassigns the global dispatch ordinal and rewrites `admit_ns`
+    /// during its uuid-join, then re-ingests in dispatch order. Backends without
+    /// worker-local measurement return an empty vector.
+    fn drain_records(&self, _end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
+        Ok(Vec::new())
     }
 
     /// Drain backend-owned execution resources after all dispatched turns have
@@ -678,6 +772,12 @@ pub struct TransportSink {
     /// path already needs, so those hot paths opt out. Defaults to `true` to
     /// preserve capture for every consumer that does not explicitly opt out.
     capture_wire_responses: bool,
+    /// Worker-local metric accumulator for the scheduled runner's measured
+    /// execution path. `None` until [`configure_measurement`] is called; the
+    /// legacy `execute_turn(observer)` and `TurnDispatcher` paths never touch it.
+    ///
+    /// [`configure_measurement`]: HttpTurnExecutionBackend::configure_measurement
+    measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
 }
 
 impl TransportSink {
@@ -769,6 +869,7 @@ impl TransportSink {
             connection_reuse: config.connection_reuse,
             prepared_endpoints: None,
             capture_wire_responses: true,
+            measurement: RefCell::new(None),
         })
     }
 
@@ -1358,6 +1459,71 @@ impl HttpTurnExecutionBackend for TransportSink {
         )
         .await
     }
+
+    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+        // The workers==1 sink runs on the coordinator reactor, so its single
+        // observer accumulates on the coordinator thread exactly as the
+        // superseded single-observer path did — only its owner moved.
+        let observer = NativeMetricsObserver::new(self.clock.clone(), origin_ns, config);
+        *self.measurement.borrow_mut() = Some(Rc::new(observer));
+        Ok(())
+    }
+
+    async fn execute_turn_measured(
+        &self,
+        turn: PreparedHttpTurn,
+        context: MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredTurnOutcome> {
+        let observer = self.measurement_observer()?;
+        let uuid = turn.request.uuid;
+        let result = self
+            .dispatch_prepared_turn_measured(&observer, turn, &context, on_first_token, None)
+            .await?;
+        let live_record = context
+            .wants_live_record
+            .then(|| observer.snapshot_record(uuid, 0))
+            .flatten();
+        Ok(MeasuredTurnOutcome {
+            result,
+            live_record,
+        })
+    }
+
+    async fn execute_turn_measured_streaming(
+        &self,
+        turn: PreparedHttpTurn,
+        context: MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<MeasuredTurnOutcome> {
+        let observer = self.measurement_observer()?;
+        let uuid = turn.request.uuid;
+        let result = self
+            .dispatch_prepared_turn_measured(
+                &observer,
+                turn,
+                &context,
+                on_first_token,
+                Some(responses),
+            )
+            .await?;
+        let live_record = context
+            .wants_live_record
+            .then(|| observer.snapshot_record(uuid, 0))
+            .flatten();
+        Ok(MeasuredTurnOutcome {
+            result,
+            live_record,
+        })
+    }
+
+    fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
+        match self.measurement.borrow_mut().take() {
+            Some(observer) => Ok(observer.take_finalizer_at(end_ns).finish_with_records().records),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 impl TransportSink {
@@ -1431,6 +1597,84 @@ impl TransportSink {
             Some(responses),
         )
         .await
+    }
+
+    /// Access the worker-local measurement observer, erroring if the measured
+    /// execution path is used before [`configure_measurement`] runs.
+    ///
+    /// [`configure_measurement`]: HttpTurnExecutionBackend::configure_measurement
+    fn measurement_observer(&self) -> Result<Rc<NativeMetricsObserver>> {
+        self.measurement
+            .borrow()
+            .clone()
+            .ok_or_else(|| anyhow!("worker-local measurement was not configured before dispatch"))
+    }
+
+    /// Register coordinator-known arrival facts on `observer`, dispatch the
+    /// prepared turn into it, and record the terminal transport facts.
+    ///
+    /// This is the shared worker-local measurement wrapper used by both the
+    /// workers==1 sink and each thread-per-core worker. The observer accumulates
+    /// the complete record (arrival → admit → tokens → usage → terminal →
+    /// response) so the end-of-run drain yields one authoritative
+    /// [`RecordIngest`] per request. `phase`, `session_num`, the global
+    /// `request_index`, and the credit-issued `admit_ns` are patched onto the
+    /// drained record coordinator-side; they are intentionally not set here.
+    pub async fn dispatch_prepared_turn_measured(
+        &self,
+        observer: &NativeMetricsObserver,
+        turn: PreparedHttpTurn,
+        context: &MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
+    ) -> Result<HttpTurnDispatchResult> {
+        let uuid = turn.request.uuid;
+        observer.register_metadata(uuid, context.metadata.clone());
+        observer.on_arrival(
+            uuid,
+            context.arrival_ms,
+            context.input_length,
+            context.requested_output_length,
+        );
+        let result = self
+            .dispatch_prepared_turn_collect_record_with_response_observer(
+                turn,
+                observer,
+                on_first_token,
+                responses,
+            )
+            .await;
+        match &result {
+            Ok(collected) => {
+                let outcome = &collected.outcome;
+                observer.record_response(
+                    uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(outcome.start_ns),
+                        end_ns: Some(outcome.end_ns),
+                        prompt_tokens: outcome.prompt_tokens,
+                        completion_tokens: outcome.completion_tokens,
+                        http: outcome.http.clone(),
+                    },
+                );
+            }
+            Err(_) => {
+                // The worker records a complete failed terminal so the drain has
+                // one record for this identity; the coordinator's fallback only
+                // covers identities no worker ever touched (pre-dispatch failure).
+                let now = self.clock.now_ns();
+                observer.on_terminal(uuid, ReplayTerminalStatus::Failed);
+                observer.record_response(
+                    uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(now),
+                        end_ns: Some(now),
+                        ..NativeResponseMetadata::default()
+                    },
+                );
+            }
+        }
+        result
     }
 
     async fn dispatch_prepared_turn_collect_record_with_response_observer(

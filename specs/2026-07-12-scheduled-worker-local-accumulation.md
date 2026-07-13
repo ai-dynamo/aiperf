@@ -833,3 +833,51 @@ cross-thread `MetricsAccumulator::merge` in the production graph bench, and
   `store.rs` 569–656 / 1437–1471; `collector.rs` 466–490 / 748–836 / 928–1013;
   `observer.rs` 19–68; `transport_bench.rs` 385–395; `graph_execution.rs`
   738 / 787–805; `phase_runtime.rs` 586–643 / 760–778.
+
+---
+
+## Addendum — 2026-07-12 (PR2 built: runner HTTP + gRPC worker-local accumulation)
+
+The runner product path (HTTP scheduled workers==1 and workers>1, plus the gRPC
+twin) is **built**. Where the implementation diverges from the design body above,
+this addendum is authoritative.
+
+- **`BufferedObserver` / `execute_turn(observer)` are NOT deleted (supersedes §3.1
+  / §3.2 "delete `ObserverEvent`/`BufferedObserver`").** Verified against the tree,
+  `ThreadPerCoreHttpExecutionBackend` and `ThreadPerCoreGrpcExecutionBackend` are
+  also used by the **agentic** and **evaluation** paths (`evaluation_execution.rs`
+  builds `workers = available_parallelism()`), which still consume the buffered
+  `execute_turn(observer)` replay. Deleting it would break those paths. Instead the
+  worker-local path is **additive**: `HttpTurnExecutionBackend` gains
+  `configure_measurement` / `execute_turn_measured` / `drain_records` (+ streaming)
+  with `MeasuredTurnContext`/`MeasuredTurnOutcome`, implemented in `TransportSink`,
+  `GrpcTransportSink`, `ThreadPerCoreHttpExecutionBackend`, and
+  `ThreadPerCoreGrpcExecutionBackend`. The scheduled `ConfiguredDispatcher` uses the
+  measured seam; the buffered path stays byte-for-byte for agentic/evaluation. Each
+  worker command carries `Option<MeasuredTurnContext>` — `Some` → worker-local
+  observer, `None` → `BufferedObserver`.
+- **Global `request_index` = `RunCapture::begin` push order (a coordinator counter),
+  NOT `recorder.begin`.** `begin` runs on the coordinator thread in
+  `dispatch_turn`'s synchronous prefix *before* backend dispatch, so its order is
+  independent of worker count and equal to HEAD's single-observer arrival-slot order.
+  `finish` stamps `request_index = identity ordinal`, giving the collision-free,
+  dense, HEAD-ordered re-ingest §4.2 requires without threading the recorder index.
+- **Phase / session_num / admit_ns are patched at finish, not registered on the
+  worker.** The worker records only transport facts. `CapturePhaseProcessor` stores
+  `phase`/`session_num`/`has_credit_timestamp`/terminal per uuid; `RunCapture::finish`
+  applies them and sets `admit_ns = has_credit_timestamp.then(issued_time)`, keeping
+  the credit-latency time base identical to HEAD. This resolves Risk 2 (phase timing)
+  without forwarding phase at issue.
+- **Fallback (Risk 4) is a coordinator-owned observer.** Identities with no drained
+  worker record are synthesized via a fallback `NativeMetricsObserver` reusing the
+  retained `MeasuredTurnContext`, so `into_record` reproduces the HEAD shape.
+- **Live sink (Risk 3):** the worker returns a non-consuming `snapshot_record` clone
+  in `WorkerReply.live_record`; the authoritative record stays for the drain.
+- **Scope:** only the runner path is relocated. The library
+  `ScheduledRuntime`/`phase_runtime` accumulation is unchanged and remains gated on A2.
+- **Proof:** `aiperf-runner/tests/worker_local_accumulation_parity.rs` drives the real
+  runner subprocess at `worker_count` 1 vs 4 over a fixed mock and asserts the
+  count/token report fields are **byte-identical** (rate/throughput excluded — the
+  faster four-worker run is the expected win). Unit tests cover the global-index
+  reassignment, worker-split byte-parity, the pre-worker fallback, and the
+  non-consuming live snapshot; `grpc_v2_stdio` (`worker_count: 2`) proves the gRPC twin.

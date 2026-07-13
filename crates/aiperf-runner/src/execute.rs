@@ -21,7 +21,10 @@ use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
 use aiperf::fixed_schedule::{
     DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
 };
-use aiperf::http::{HttpTurnExecutionBackend, PreparedHttpTurn, TransportSinkConfig};
+use aiperf::http::{
+    HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome, PreparedHttpTurn,
+    TransportSinkConfig,
+};
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::multiturn::{
     AuthoredInputTokenCounter, ConversationSource, EndpointInputTokenCounter, InputTokenCounter,
@@ -1456,9 +1459,14 @@ async fn execute_native_inner(
         start_ns,
         metrics_config.clone(),
         request.run.artifacts.raw_path.is_some(),
+        live_sink.is_some(),
     ));
     let execution_result = async {
         execution_backend.set_run_origin(start_ns)?;
+        // Build one worker-local observer per execution worker from the single
+        // resolved metrics configuration; token accumulation moves off the
+        // coordinator onto each worker's core.
+        execution_backend.configure_measurement(metrics_config.clone(), start_ns)?;
         let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
             execution_backend: execution_backend.clone(),
             model: primary_model.clone(),
@@ -1539,15 +1547,23 @@ async fn execute_native_inner(
         Ok(phased)
     }
     .await;
+    // Drain each worker observer's records before shutting the workers down; on
+    // the failure path the report is discarded, so an empty drain is fine.
+    let drained = if execution_result.is_ok() {
+        execution_backend.drain_records(capture.clock.now_ns())
+    } else {
+        Ok(Vec::new())
+    };
     let shutdown = execution_backend.shutdown();
     let phased = finish_execution_backend_shutdown(execution_result, shutdown)?;
+    let drained = drained?;
     let issued_times = phased
         .reports
         .iter()
         .flat_map(|report| report.report.turns.iter())
         .map(|turn| (turn.uuid, turn.issued_offset_ns))
         .collect::<HashMap<_, _>>();
-    let captured = capture.finish(&issued_times)?;
+    let captured = capture.finish(&issued_times, drained)?;
     let gpu_telemetry = sidecars.gpu_telemetry.as_ref();
     let network_latency = sidecars.network_latency.as_ref();
     let server_metrics = sidecars.server_metrics.as_ref();
@@ -3063,67 +3079,113 @@ pub(crate) fn seconds_to_u64_ns(value: f64) -> Result<u64> {
 struct CaptureIdentity {
     uuid: Uuid,
     x_correlation_id: String,
+    /// Coordinator-known arrival facts, retained so a pre-worker failure (an
+    /// identity with no drained worker record) can be synthesized into a
+    /// HEAD-identical fallback record at finish.
+    context: MeasuredTurnContext,
+}
+
+/// Coordinator-owned finalization facts learned after dispatch.
+///
+/// Worker observers record only transport facts. The phase, session number,
+/// credit-latency policy, and terminal outcome are applied to the drained record
+/// during the coordinator uuid-join — exactly where the superseded
+/// single-observer path applied them via `label` → `register_metadata`.
+struct CaptureLabel {
+    phase: MetricsPhase,
+    session_num: u64,
+    has_credit_timestamp: bool,
+    terminal: ReplayTerminalStatus,
+    start_ns: i64,
+    end_ns: i64,
 }
 
 struct RunCapture {
     clock: Rc<dyn Clock>,
     origin_ns: i64,
-    observer: Rc<NativeMetricsObserver>,
+    metrics_config: MetricsConfig,
     identities: RefCell<Vec<CaptureIdentity>>,
+    labels: RefCell<HashMap<Uuid, CaptureLabel>>,
     outputs: RefCell<HashMap<Uuid, CapturedModelOutput>>,
     raw_enabled: bool,
     raw_exchanges: RefCell<HashMap<Uuid, CapturedHttpExchange>>,
+    /// Non-consuming cloned records for the live-results sink, keyed by uuid;
+    /// the authoritative record stays in the worker observer for the drain.
+    live_records: RefCell<HashMap<Uuid, RecordIngest>>,
+    wants_live_record: bool,
 }
 
 impl RunCapture {
-    fn new(clock: Rc<dyn Clock>, origin_ns: i64, config: MetricsConfig, raw_enabled: bool) -> Self {
+    fn new(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+        raw_enabled: bool,
+        wants_live_record: bool,
+    ) -> Self {
         Self {
-            observer: Rc::new(NativeMetricsObserver::new(clock.clone(), origin_ns, config)),
             clock,
             origin_ns,
+            metrics_config: config,
             identities: RefCell::new(Vec::new()),
+            labels: RefCell::new(HashMap::new()),
             outputs: RefCell::new(HashMap::new()),
             raw_enabled,
             raw_exchanges: RefCell::new(HashMap::new()),
+            live_records: RefCell::new(HashMap::new()),
+            wants_live_record,
         }
     }
 
-    fn begin(&self, turn: &TurnToSend) {
-        self.identities.borrow_mut().push(CaptureIdentity {
-            uuid: turn.uuid,
-            x_correlation_id: turn.x_correlation_id.clone(),
-        });
-        self.observer.register_metadata(
-            turn.uuid,
-            RequestMetricMetadata {
+    /// Record the dispatch identity plus coordinator-known arrival facts, and
+    /// return the measured context the dispatcher forwards to the worker so it
+    /// registers arrival locally. The identity push order is the global dispatch
+    /// ordinal used at finish; it runs on the coordinator thread before backend
+    /// dispatch, so it is independent of worker count.
+    fn begin(&self, turn: &TurnToSend) -> MeasuredTurnContext {
+        let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
+        let context = MeasuredTurnContext {
+            arrival_ms,
+            input_length: turn.input_length,
+            requested_output_length: turn.max_output_tokens,
+            metadata: RequestMetricMetadata {
                 turn_index: u32::try_from(turn.turn_index).unwrap_or(u32::MAX),
                 conversation_id: Some(turn.conversation_id.clone()),
                 audio_duration_s: turn.audio_duration_seconds,
                 ..RequestMetricMetadata::default()
             },
-        );
-        let arrival_ms = self.clock.now_ns().saturating_sub(self.origin_ns) as f64 / 1_000_000.0;
-        self.observer.on_arrival(
-            turn.uuid,
-            arrival_ms,
-            turn.input_length,
-            turn.max_output_tokens,
+            wants_live_record: self.wants_live_record,
+        };
+        self.identities.borrow_mut().push(CaptureIdentity {
+            uuid: turn.uuid,
+            x_correlation_id: turn.x_correlation_id.clone(),
+            context: context.clone(),
+        });
+        context
+    }
+
+    fn label(
+        &self,
+        credit: &IssuedCredit,
+        phase: MetricsPhase,
+        has_credit_timestamp: bool,
+        outcome: &TurnDispatchOutcome,
+    ) {
+        self.labels.borrow_mut().insert(
+            credit.turn.uuid,
+            CaptureLabel {
+                phase,
+                session_num: credit.id,
+                has_credit_timestamp,
+                terminal: outcome.terminal,
+                start_ns: outcome.start_ns,
+                end_ns: outcome.end_ns,
+            },
         );
     }
 
-    fn label(&self, credit: &IssuedCredit, phase: MetricsPhase, has_credit_timestamp: bool) {
-        self.observer.register_metadata(
-            credit.turn.uuid,
-            RequestMetricMetadata {
-                phase,
-                session_num: Some(credit.id),
-                turn_index: u32::try_from(credit.turn.turn_index).unwrap_or(u32::MAX),
-                conversation_id: Some(credit.turn.conversation_id.clone()),
-                audio_duration_s: credit.turn.audio_duration_seconds,
-                has_credit_timestamp,
-                ..RequestMetricMetadata::default()
-            },
-        );
+    fn record_live(&self, uuid: Uuid, record: RecordIngest) {
+        self.live_records.borrow_mut().insert(uuid, record);
     }
 
     fn record_model_output(
@@ -3171,20 +3233,20 @@ impl RunCapture {
         Ok(())
     }
 
-    fn snapshot(&self, credit: &IssuedCredit) -> Result<CapturedRecord> {
-        let mut ingest = self
-            .observer
-            .snapshot_record(credit.turn.uuid, credit.id)
-            .ok_or_else(|| {
-                anyhow!(
-                    "terminal request {} was absent from native metric capture",
-                    credit.turn.uuid
-                )
-            })?;
+    /// Build a live-sink record from the worker's non-consuming cloned record.
+    ///
+    /// The clone is removed from the pending map (each request emits once); the
+    /// authoritative record stays in the worker observer for the final drain, so
+    /// live emission never undercounts the end-of-run aggregate. `admit_ns` and
+    /// `session_num` are patched to the credit-issued values the live consumer
+    /// expects, mirroring the superseded coordinator `snapshot_record` path.
+    fn snapshot_live(&self, credit: &IssuedCredit) -> Option<CapturedRecord> {
+        let mut ingest = self.live_records.borrow_mut().remove(&credit.turn.uuid)?;
+        ingest.session_num = credit.id;
         if ingest.admit_ns.is_some() {
             ingest.admit_ns = Some(credit.issued_ns.saturating_sub(self.origin_ns));
         }
-        Ok(CapturedRecord {
+        Some(CapturedRecord {
             uuid: credit.turn.uuid,
             x_correlation_id: credit.turn.x_correlation_id.clone(),
             output: self
@@ -3198,52 +3260,120 @@ impl RunCapture {
         })
     }
 
-    fn finish(&self, issued_times: &HashMap<Uuid, i64>) -> Result<Vec<CapturedRecord>> {
-        let collection = self.observer.finish_with_records();
+    /// Join per-worker drained records to dispatch identities and produce the
+    /// coordinator's captured records in dispatch order.
+    ///
+    /// Worker observers accumulate per-worker in dense-local order, so a record's
+    /// drain slot is meaningless globally. Keyed on each record's true drain
+    /// `Uuid` (never `correlation_id`, which aggregate-only mode blanks), this:
+    ///
+    /// 1. resolves each identity to its worker record, or synthesizes a fallback
+    ///    record for an identity that failed before any worker touched it;
+    /// 2. stamps `request_index` to the identity's global dispatch ordinal so the
+    ///    downstream re-ingest lands each record at a unique, dense, HEAD-ordered
+    ///    slot;
+    /// 3. patches `phase`/`session_num`/`admit_ns` from the coordinator-owned
+    ///    label, keeping the credit-latency time base identical to HEAD.
+    fn finish(
+        &self,
+        issued_times: &HashMap<Uuid, i64>,
+        drained: Vec<(Uuid, RecordIngest)>,
+    ) -> Result<Vec<CapturedRecord>> {
         let identities = self.identities.borrow();
+        let labels = self.labels.borrow();
         let outputs = self.outputs.borrow();
         let mut raw_exchanges = self.raw_exchanges.take();
-        // Resolve each drained record to its dispatch identity by the record's
-        // true drain Uuid, never by `RecordIngest.correlation_id`. Aggregate-only
-        // mode sets `correlation_id` to the empty string for every record
-        // (`NativeMetricsObserver::register_metadata`), so a correlation-keyed
-        // join would collapse every record onto one key. Keying on the uuid also
-        // stops assuming the drained order matches the dispatch order: worker-local
-        // accumulation (a later PR) returns records per worker, not in global
-        // dispatch order, and this join must survive that.
+
         let mut records_by_uuid: HashMap<Uuid, RecordIngest> =
-            HashMap::with_capacity(collection.records.len());
-        for (uuid, ingest) in collection.records {
+            HashMap::with_capacity(drained.len());
+        for (uuid, ingest) in drained {
             ensure!(
                 records_by_uuid.insert(uuid, ingest).is_none(),
-                "native record capture drained request {uuid} more than once"
+                "worker drained request {uuid} more than once"
             );
         }
+
+        // Synthesize fallback records for identities that failed before any
+        // worker observer registered them (pre-dispatch send failure, worker
+        // drop, or placement cancellation). Reusing a coordinator-owned observer
+        // reproduces the exact `into_record` shape the single-observer path
+        // produced for those requests.
+        let missing: Vec<&CaptureIdentity> = identities
+            .iter()
+            .filter(|identity| !records_by_uuid.contains_key(&identity.uuid))
+            .collect();
+        if !missing.is_empty() {
+            let fallback = NativeMetricsObserver::new(
+                self.clock.clone(),
+                self.origin_ns,
+                self.metrics_config.clone(),
+            );
+            for identity in &missing {
+                let label = labels.get(&identity.uuid);
+                let terminal = label
+                    .map(|label| label.terminal)
+                    .unwrap_or(ReplayTerminalStatus::Failed);
+                fallback.register_metadata(identity.uuid, identity.context.metadata.clone());
+                fallback.on_arrival(
+                    identity.uuid,
+                    identity.context.arrival_ms,
+                    identity.context.input_length,
+                    identity.context.requested_output_length,
+                );
+                fallback.on_terminal(identity.uuid, terminal);
+                let (start_ns, end_ns) = label.map(|label| (label.start_ns, label.end_ns)).unwrap_or_else(|| {
+                    let now = self.clock.now_ns();
+                    (now, now)
+                });
+                fallback.record_response(
+                    identity.uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(start_ns),
+                        end_ns: Some(end_ns),
+                        ..NativeResponseMetadata::default()
+                    },
+                );
+            }
+            for (uuid, ingest) in fallback.finish_with_records().records {
+                records_by_uuid.insert(uuid, ingest);
+            }
+        }
+
         ensure!(
             records_by_uuid.len() == identities.len(),
             "native record capture finalized {} records for {} dispatched identities",
             records_by_uuid.len(),
             identities.len()
         );
-        // Emit rows in dispatch (identity) order. Each identity resolves to its
-        // worker-merged record; the lookup shape also admits a coordinator-side
-        // fallback record (for identities that fail before any worker observer
-        // registers them — a later PR) without changing this join, so a missing
-        // lookup is a hard error today rather than a structural 1:1 assumption.
+
+        // Emit rows in dispatch (identity) order; the enumerate index is the
+        // global dispatch ordinal (begin order — worker-count-independent).
         identities
             .iter()
-            .map(|identity| {
+            .enumerate()
+            .map(|(ordinal, identity)| {
                 let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
                     anyhow!(
                         "captured request {} produced no native metric record",
                         identity.uuid
                     )
                 })?;
-                if ingest.admit_ns.is_some() {
-                    ingest.admit_ns = Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
-                        anyhow!("captured request {} has no issuer timestamp", identity.uuid)
-                    })?);
+                ingest.request_index = Some(ordinal);
+                let has_credit_timestamp = labels
+                    .get(&identity.uuid)
+                    .map(|label| label.has_credit_timestamp)
+                    .unwrap_or(true);
+                if let Some(label) = labels.get(&identity.uuid) {
+                    ingest.phase = label.phase;
+                    ingest.session_num = label.session_num;
                 }
+                ingest.admit_ns = if has_credit_timestamp {
+                    Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
+                        anyhow!("captured request {} has no issuer timestamp", identity.uuid)
+                    })?)
+                } else {
+                    None
+                };
                 Ok(CapturedRecord {
                     uuid: identity.uuid,
                     x_correlation_id: identity.x_correlation_id.clone(),
@@ -3265,11 +3395,13 @@ struct CapturePhaseProcessor {
 
 #[async_trait(?Send)]
 impl TurnRecordProcessor for CapturePhaseProcessor {
-    async fn process(&self, credit: &IssuedCredit, _outcome: &TurnDispatchOutcome) -> Result<()> {
+    async fn process(&self, credit: &IssuedCredit, outcome: &TurnDispatchOutcome) -> Result<()> {
         self.capture
-            .label(credit, self.phase, self.has_credit_timestamp);
-        if let Some(sink) = &self.live_sink {
-            sink.emit_record(&self.capture.snapshot(credit)?);
+            .label(credit, self.phase, self.has_credit_timestamp, outcome);
+        if let Some(sink) = &self.live_sink
+            && let Some(record) = self.capture.snapshot_live(credit)
+        {
+            sink.emit_record(&record);
         }
         Ok(())
     }
@@ -3294,21 +3426,23 @@ impl TurnDispatcher for ConfiguredDispatcher {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let uuid = turn.uuid;
-        self.capture.begin(&turn);
-        // The runner's native-v2 report is produced entirely from RunCapture's
-        // observer (`self.capture`); the ScheduledRuntime's runtime observer
-        // (CollectorObserver + NativeMetricsObserver) is computed and then
-        // discarded (the runner consumes only `report.turns` from the recorder,
-        // and TTFT/slot release use the separate `on_first_token`). Feed only the
-        // capture observer so the single dispatch thread does not replay every
-        // token into a discarded accumulator, and its finalization is skipped.
+        // `begin` runs on the coordinator thread before backend dispatch, so its
+        // push order is the worker-count-independent global dispatch ordinal.
+        // It returns the measured context the worker registers locally; the
+        // runner's native-v2 report is then produced from the drained worker
+        // records, not a single coordinator observer. The ScheduledRuntime's own
+        // observer (`_observer`) is still computed and discarded by the runner.
+        let context = self.capture.begin(&turn);
         let turn = PreparedHttpTurn::from_turn(turn, &self.model);
-        let collected = self
+        match self
             .execution_backend
-            .execute_turn(turn, self.capture.observer.as_ref(), on_first_token)
-            .await;
-        match collected {
-            Ok(collected) => {
+            .execute_turn_measured(turn, context, on_first_token)
+            .await
+        {
+            Ok(MeasuredTurnOutcome {
+                result: collected,
+                live_record,
+            }) => {
                 let outcome = collected.outcome;
                 self.capture.record_http_exchange(
                     uuid,
@@ -3321,33 +3455,15 @@ impl TurnDispatcher for ConfiguredDispatcher {
                     outcome.model_response.content.as_deref(),
                     outcome.model_response.reasoning.as_deref(),
                 )?;
-                self.capture.observer.record_response(
-                    uuid,
-                    NativeResponseMetadata {
-                        start_ns: Some(outcome.start_ns),
-                        end_ns: Some(outcome.end_ns),
-                        prompt_tokens: outcome.prompt_tokens,
-                        completion_tokens: outcome.completion_tokens,
-                        http: outcome.http,
-                    },
-                );
+                if let Some(live_record) = live_record {
+                    self.capture.record_live(uuid, live_record);
+                }
                 Ok(outcome)
             }
-            Err(error) => {
-                let now = self.capture.clock.now_ns();
-                self.capture
-                    .observer
-                    .on_terminal(uuid, ReplayTerminalStatus::Failed);
-                self.capture.observer.record_response(
-                    uuid,
-                    NativeResponseMetadata {
-                        start_ns: Some(now),
-                        end_ns: Some(now),
-                        ..NativeResponseMetadata::default()
-                    },
-                );
-                Err(error)
-            }
+            // The worker (or, for a pre-dispatch failure, the coordinator
+            // fallback at finish) owns finalizing the failed record; the
+            // dispatcher only propagates the error, exactly as before.
+            Err(error) => Err(error),
         }
     }
 }
@@ -3649,7 +3765,6 @@ mod tests {
     /// Distinct per-request facts for the `RunCapture::finish` join tests.
     struct RequestFacts {
         uuid: Uuid,
-        request_index: Option<usize>,
         arrival_ms: f64,
         token_times_ms: &'static [f64],
         prompt_tokens: u64,
@@ -3658,17 +3773,13 @@ mod tests {
         end_ns: i64,
     }
 
-    /// Drives one request through an observer exactly as the online dispatcher
-    /// does: metadata, arrival, admit, per-token arrivals, terminal, and the
-    /// authoritative transport/usage response.
-    fn drive_request(observer: &NativeMetricsObserver, facts: &RequestFacts) {
-        observer.register_metadata(
-            facts.uuid,
-            RequestMetricMetadata {
-                request_index: facts.request_index,
-                ..RequestMetricMetadata::default()
-            },
-        );
+    /// Drive one request through a worker observer exactly as
+    /// `TransportSink::dispatch_prepared_turn_measured` does: register begin-known
+    /// metadata (no `request_index` — the worker uses a dense-local arrival slot),
+    /// arrival, admit, per-token arrivals, terminal, and the authoritative
+    /// transport/usage response.
+    fn drive_worker_request(observer: &NativeMetricsObserver, facts: &RequestFacts) {
+        observer.register_metadata(facts.uuid, RequestMetricMetadata::default());
         observer.on_arrival(facts.uuid, facts.arrival_ms, facts.prompt_tokens as usize, 8);
         observer.on_admit(facts.uuid, facts.arrival_ms, 0);
         for &at in facts.token_times_ms {
@@ -3687,33 +3798,43 @@ mod tests {
         );
     }
 
-    /// Harness B test 4: `RunCapture::finish` must key each drained record to its
-    /// dispatch identity by the record's true drain `Uuid` — not by drain order
-    /// and not by `RecordIngest.correlation_id`. Here the observer drains records
-    /// in absolute request-slot order (`B`, `C`, `A`) that deliberately diverges
-    /// from dispatch order (`A`, `B`, `C`); the positional zip this replaced would
-    /// have paired `B`'s record with `A`'s identity and aborted on the
-    /// correlation-id assertion.
-    #[test]
-    fn run_capture_finish_joins_records_by_uuid_in_dispatch_order() {
-        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let capture = RunCapture::new(clock.clone(), 0, MetricsConfig::default(), false);
+    /// Register a dispatch identity + its coordinator label, exactly as `begin`
+    /// and `label` do on the coordinator thread.
+    fn register_identity(
+        capture: &RunCapture,
+        x_correlation_id: &str,
+        session_num: u64,
+        terminal: ReplayTerminalStatus,
+        facts: &RequestFacts,
+    ) {
+        capture.identities.borrow_mut().push(CaptureIdentity {
+            uuid: facts.uuid,
+            x_correlation_id: x_correlation_id.to_string(),
+            context: MeasuredTurnContext {
+                arrival_ms: facts.arrival_ms,
+                input_length: facts.prompt_tokens as usize,
+                requested_output_length: 8,
+                metadata: RequestMetricMetadata::default(),
+                wants_live_record: false,
+            },
+        });
+        capture.labels.borrow_mut().insert(
+            facts.uuid,
+            CaptureLabel {
+                phase: MetricsPhase::Profiling,
+                session_num,
+                has_credit_timestamp: true,
+                terminal,
+                start_ns: facts.start_ns,
+                end_ns: facts.end_ns,
+            },
+        );
+    }
 
-        let a = Uuid::from_u128(0xA);
-        let b = Uuid::from_u128(0xB);
-        let c = Uuid::from_u128(0xC);
-        // Dispatch order is A, B, C.
-        for (uuid, x_correlation_id) in [(a, "corr-a"), (b, "corr-b"), (c, "corr-c")] {
-            capture.identities.borrow_mut().push(CaptureIdentity {
-                uuid,
-                x_correlation_id: x_correlation_id.to_string(),
-            });
-        }
-        // Request slots (drain order) are B=0, C=1, A=2 — the reverse-ish of dispatch.
-        let facts = [
+    fn facts() -> (RequestFacts, RequestFacts, RequestFacts) {
+        (
             RequestFacts {
-                uuid: a,
-                request_index: Some(2),
+                uuid: Uuid::from_u128(0xA),
                 arrival_ms: 1.0,
                 token_times_ms: &[5.0, 8.0],
                 prompt_tokens: 4,
@@ -3722,8 +3843,7 @@ mod tests {
                 end_ns: 9_000_000,
             },
             RequestFacts {
-                uuid: b,
-                request_index: Some(0),
+                uuid: Uuid::from_u128(0xB),
                 arrival_ms: 2.0,
                 token_times_ms: &[6.0, 10.0, 14.0],
                 prompt_tokens: 5,
@@ -3732,8 +3852,7 @@ mod tests {
                 end_ns: 15_000_000,
             },
             RequestFacts {
-                uuid: c,
-                request_index: Some(1),
+                uuid: Uuid::from_u128(0xC),
                 arrival_ms: 3.0,
                 token_times_ms: &[7.0],
                 prompt_tokens: 6,
@@ -3741,148 +3860,194 @@ mod tests {
                 start_ns: 4_000_000,
                 end_ns: 8_000_000,
             },
-        ];
-        for fact in &facts {
-            drive_request(&capture.observer, fact);
-        }
+        )
+    }
 
-        let issued_times: HashMap<Uuid, i64> = [(a, 111), (b, 222), (c, 333)].into_iter().collect();
-        let captured = capture.finish(&issued_times).unwrap();
-
-        // Rows come out in dispatch order, not drain order.
+    /// A1 core: worker records arrive **per worker**, not in global dispatch
+    /// order. `RunCapture::finish` must key each record to its identity by uuid,
+    /// emit rows in dispatch order, and stamp each record's `request_index` to its
+    /// global dispatch ordinal so the downstream re-ingest is collision-free
+    /// (Finding 1) — the per-worker-local `request_index=Some(0)` collision would
+    /// otherwise panic `insert_record_at`.
+    #[test]
+    fn run_capture_finish_stamps_global_index_and_joins_worker_records() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let capture = RunCapture::new(clock.clone(), 0, MetricsConfig::default(), false, false);
+        let (a, b, c) = facts();
+        // Dispatch order A, B, C.
+        register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
+        register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
+        register_identity(&capture, "corr-c", 2, ReplayTerminalStatus::Completed, &c);
+        // Two workers: worker0 handled A then C (local slots 0, 1); worker1 handled
+        // B (local slot 0). Concatenated drain order is [A, C, B] != dispatch order.
+        let worker0 = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        let worker1 = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        drive_worker_request(&worker0, &a);
+        drive_worker_request(&worker0, &c);
+        drive_worker_request(&worker1, &b);
+        let mut drained = worker0.finish_with_records().records;
+        drained.extend(worker1.finish_with_records().records);
         assert_eq!(
-            captured.iter().map(|record| record.uuid).collect::<Vec<_>>(),
-            vec![a, b, c],
+            drained.iter().map(|(uuid, _)| *uuid).collect::<Vec<_>>(),
+            vec![a.uuid, c.uuid, b.uuid],
+        );
+        // Both worker0 records carry local request_index Some(0)/Some(1) and
+        // worker1's is Some(0): a raw re-ingest would collide.
+        assert_eq!(drained[0].1.request_index, Some(0));
+        assert_eq!(drained[2].1.request_index, Some(0));
+
+        let issued: HashMap<Uuid, i64> =
+            [(a.uuid, 111), (b.uuid, 222), (c.uuid, 333)].into_iter().collect();
+        let captured = capture.finish(&issued, drained).unwrap();
+
+        assert_eq!(
+            captured.iter().map(|r| r.uuid).collect::<Vec<_>>(),
+            vec![a.uuid, b.uuid, c.uuid],
         );
         assert_eq!(
-            captured
-                .iter()
-                .map(|record| record.x_correlation_id.as_str())
-                .collect::<Vec<_>>(),
+            captured.iter().map(|r| r.x_correlation_id.as_str()).collect::<Vec<_>>(),
             vec!["corr-a", "corr-b", "corr-c"],
         );
-        // Each identity is joined to ITS OWN record (uuid-keyed), so the record's
-        // correlation id matches the identity's uuid rather than the drain-order
-        // neighbour a positional zip would have produced.
+        // Global dispatch ordinal stamped dense 0..N-1 in dispatch order.
+        assert_eq!(
+            captured.iter().map(|r| r.ingest.request_index).collect::<Vec<_>>(),
+            vec![Some(0), Some(1), Some(2)],
+        );
+        // uuid join: each row carries its own record; admit patched per uuid.
         for record in &captured {
             assert_eq!(record.ingest.correlation_id, record.uuid.to_string());
         }
-        // The credit-issued admit rewrite resolves through the same uuid key.
         assert_eq!(captured[0].ingest.admit_ns, Some(111));
         assert_eq!(captured[1].ingest.admit_ns, Some(222));
         assert_eq!(captured[2].ingest.admit_ns, Some(333));
-        // PR1 preserves each record's absolute request_index (the global-ordinal
-        // restamp belongs to worker-local accumulation, a later PR).
-        assert_eq!(captured[0].ingest.request_index, Some(2));
-        assert_eq!(captured[1].ingest.request_index, Some(0));
-        assert_eq!(captured[2].ingest.request_index, Some(1));
+        // Re-ingest is collision-free (no insert_record_at panic) and counts all 3.
+        let mut accumulator = MetricsAccumulator::with_config(MetricsConfig::default());
+        for record in &captured {
+            accumulator.process_record(&record.ingest);
+        }
+        let summary = accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+        assert_eq!(summary.finite_value(MetricTag::RequestCount), Some(3.0));
     }
 
-    /// Value-parity golden: for the realistic single-observer scenario (drain
-    /// order == dispatch order), the uuid-keyed `RunCapture::finish` must produce
-    /// a re-ingested report byte-identical to the positional-zip finish it
-    /// replaced. Both paths drain the identical records; the reference path
-    /// reproduces the exact HEAD algorithm (positional zip + admit rewrite).
+    /// Value-parity: the same request set produces a **byte-identical** re-ingested
+    /// report whether it drained from ONE worker (equivalent to workers==1 / HEAD)
+    /// or was split across TWO workers (the A1 workers>1 path). `finish` stamps the
+    /// global dispatch ordinal in both cases, so the IEEE-754 fold order is
+    /// identical and no worker-count reorder occurs on the runner path (Finding 6).
     #[test]
-    fn run_capture_finish_reingest_is_byte_identical_to_positional_zip() {
-        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let config = MetricsConfig::default();
-        let capture = RunCapture::new(clock.clone(), 0, config.clone(), false);
-        let reference = NativeMetricsObserver::new(clock.clone(), 0, config.clone());
-
-        let a = Uuid::from_u128(0x10);
-        let b = Uuid::from_u128(0x11);
-        let c = Uuid::from_u128(0x12);
-        let dispatch = [(a, "corr-a"), (b, "corr-b"), (c, "corr-c")];
-        for (uuid, x_correlation_id) in dispatch {
-            capture.identities.borrow_mut().push(CaptureIdentity {
-                uuid,
-                x_correlation_id: x_correlation_id.to_string(),
-            });
-        }
-        // Natural request slots (None -> arrival ordinal) so drain order equals
-        // dispatch order, exactly as the online dispatcher produces them.
-        let facts = [
-            RequestFacts {
-                uuid: a,
-                request_index: None,
-                arrival_ms: 1.0,
-                token_times_ms: &[5.0, 8.0],
-                prompt_tokens: 4,
-                completion_tokens: 2,
-                start_ns: 2_000_000,
-                end_ns: 9_000_000,
-            },
-            RequestFacts {
-                uuid: b,
-                request_index: None,
-                arrival_ms: 2.0,
-                token_times_ms: &[6.0, 10.0, 14.0],
-                prompt_tokens: 5,
-                completion_tokens: 3,
-                start_ns: 3_000_000,
-                end_ns: 15_000_000,
-            },
-            RequestFacts {
-                uuid: c,
-                request_index: None,
-                arrival_ms: 3.0,
-                token_times_ms: &[7.0],
-                prompt_tokens: 6,
-                completion_tokens: 1,
-                start_ns: 4_000_000,
-                end_ns: 8_000_000,
-            },
-        ];
-        for fact in &facts {
-            drive_request(&capture.observer, fact);
-            drive_request(&reference, fact);
-        }
-        let issued_times: HashMap<Uuid, i64> =
-            [(a, 1_500_000), (b, 2_500_000), (c, 3_500_000)]
-                .into_iter()
-                .collect();
-
-        // New path: uuid-keyed finish, then the runner's re-ingest into a fresh
-        // accumulator in captured order (execute.rs run() path).
-        let captured = capture.finish(&issued_times).unwrap();
-        let mut new_accumulator = MetricsAccumulator::with_config(config.clone());
-        for record in &captured {
-            new_accumulator.process_record(&record.ingest);
-        }
-        let new_summary =
-            new_accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
-
-        // Reference path: the exact positional-zip algorithm this PR replaced.
-        let collection = reference.finish_with_records();
-        let identities: Vec<Uuid> = dispatch.iter().map(|(uuid, _)| *uuid).collect();
-        assert_eq!(collection.records.len(), identities.len());
-        let mut reference_accumulator = MetricsAccumulator::with_config(config.clone());
-        for ((drain_uuid, mut ingest), identity) in
-            collection.records.into_iter().zip(identities.iter())
-        {
-            assert_eq!(
-                &drain_uuid, identity,
-                "reference fixture must keep drain order == dispatch order",
-            );
-            if ingest.admit_ns.is_some() {
-                ingest.admit_ns = Some(*issued_times.get(identity).unwrap());
+    fn run_capture_finish_worker_split_matches_single_worker_byte_for_byte() {
+        let build = |split: bool| -> (Vec<u8>, Option<f64>) {
+            let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+            let config = MetricsConfig::default();
+            let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false);
+            let (a, b, c) = facts();
+            register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
+            register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
+            register_identity(&capture, "corr-c", 2, ReplayTerminalStatus::Completed, &c);
+            let drained = if split {
+                let worker0 = NativeMetricsObserver::new(clock.clone(), 0, config.clone());
+                let worker1 = NativeMetricsObserver::new(clock.clone(), 0, config.clone());
+                drive_worker_request(&worker0, &a);
+                drive_worker_request(&worker0, &c);
+                drive_worker_request(&worker1, &b);
+                let mut drained = worker0.finish_with_records().records;
+                drained.extend(worker1.finish_with_records().records);
+                drained
+            } else {
+                let worker = NativeMetricsObserver::new(clock.clone(), 0, config.clone());
+                drive_worker_request(&worker, &a);
+                drive_worker_request(&worker, &b);
+                drive_worker_request(&worker, &c);
+                worker.finish_with_records().records
+            };
+            let issued: HashMap<Uuid, i64> = [
+                (a.uuid, 1_500_000),
+                (b.uuid, 2_500_000),
+                (c.uuid, 3_500_000),
+            ]
+            .into_iter()
+            .collect();
+            let captured = capture.finish(&issued, drained).unwrap();
+            let mut accumulator = MetricsAccumulator::with_config(config);
+            for record in &captured {
+                accumulator.process_record(&record.ingest);
             }
-            reference_accumulator.process_record(&ingest);
-        }
-        let reference_summary =
-            reference_accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+            let summary = accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+            (
+                serde_json::to_vec(&summary).unwrap(),
+                summary.finite_value(MetricTag::RequestCount),
+            )
+        };
+        let (single_bytes, single_count) = build(false);
+        let (split_bytes, split_count) = build(true);
+        assert_eq!(single_count, Some(3.0));
+        assert_eq!(split_count, Some(3.0));
+        assert_eq!(
+            single_bytes, split_bytes,
+            "worker-split drain must re-ingest byte-identically to a single worker",
+        );
+    }
 
-        assert_eq!(new_summary, reference_summary);
+    /// Risk 3: the live-results sink must read a **non-consuming** clone. The
+    /// worker returns `snapshot_record` (not `drain_terminal_record`), so the
+    /// authoritative record stays in the worker observer and the end-of-run drain
+    /// still counts every live-emitted request — a `--live` run cannot undercount.
+    #[test]
+    fn live_record_snapshot_does_not_consume_the_drain_record() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+        let (a, _b, _c) = facts();
+        drive_worker_request(&observer, &a);
+        // The live sink emits from this non-consuming clone.
+        let live = observer.snapshot_record(a.uuid, 0);
+        assert!(live.is_some(), "a terminal request yields a live snapshot");
+        // The authoritative record is still present for the end-of-run drain.
+        let drained = observer.finish_with_records().records;
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].0, a.uuid);
+    }
+
+    /// Risk 4: an identity that fails before any worker observer registers it has
+    /// no drained record. `finish` must synthesize a HEAD-identical errored
+    /// fallback record so `RequestCount`/`ErrorRequestCount` stay exact and the run
+    /// does not abort fail-closed on the missing lookup.
+    #[test]
+    fn run_capture_finish_synthesizes_fallback_for_pre_worker_failures() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let capture = RunCapture::new(clock.clone(), 0, MetricsConfig::default(), false, false);
+        let (a, b, _c) = facts();
+        register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
+        // B is dispatched (identity + Failed label) but never reaches a worker.
+        register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Failed, &b);
+        let worker = NativeMetricsObserver::new(clock.clone(), 0, MetricsConfig::default());
+        drive_worker_request(&worker, &a);
+        let drained = worker.finish_with_records().records;
+        assert_eq!(drained.len(), 1);
+
+        let issued: HashMap<Uuid, i64> =
+            [(a.uuid, 111), (b.uuid, 222)].into_iter().collect();
+        let captured = capture.finish(&issued, drained).unwrap();
+
         assert_eq!(
-            serde_json::to_vec(&new_summary).unwrap(),
-            serde_json::to_vec(&reference_summary).unwrap(),
-            "uuid-keyed finish must re-ingest byte-identically to the positional zip",
+            captured.iter().map(|r| r.uuid).collect::<Vec<_>>(),
+            vec![a.uuid, b.uuid],
         );
-        // Sanity: the golden actually measured all three requests.
         assert_eq!(
-            new_summary.finite_value(MetricTag::RequestCount),
-            Some(3.0),
+            captured.iter().map(|r| r.ingest.request_index).collect::<Vec<_>>(),
+            vec![Some(0), Some(1)],
         );
+        assert!(!captured[0].ingest.errored);
+        assert!(captured[1].ingest.errored, "the pre-worker failure is errored");
+
+        let mut accumulator = MetricsAccumulator::with_config(MetricsConfig::default());
+        for record in &captured {
+            accumulator.process_record(&record.ingest);
+        }
+        let summary = accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+        // RequestCount counts successes only; the errored fallback lands in
+        // ErrorRequestCount, so the total CompletedRequestCount is 2.
+        assert_eq!(summary.finite_value(MetricTag::RequestCount), Some(1.0));
+        assert_eq!(summary.finite_value(MetricTag::ErrorRequestCount), Some(1.0));
+        assert_eq!(summary.finite_value(MetricTag::CompletedRequestCount), Some(2.0));
     }
 }

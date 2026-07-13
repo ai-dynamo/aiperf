@@ -19,14 +19,15 @@ use std::task::{Context as TaskContext, Poll};
 use std::thread::JoinHandle;
 
 use aiperf::http::{
-    HttpTurnDispatchResult, HttpTurnExecutionBackend, PreparedHttpTurn, TransportSink,
-    TransportSinkConfig,
+    HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext, MeasuredTurnOutcome,
+    PreparedHttpTurn, TransportSink, TransportSinkConfig,
 };
+use aiperf::metrics::NativeMetricsObserver;
 use aiperf::multiturn::TurnToSend;
 use aiperf::scheduled::TurnResponseObserver;
 use aiperf_clock::{Clock, RealClock, RealClockAnchor};
 use aiperf_endpoints::{ParsedResponse, PreparedEndpointTable};
-use aiperf_metrics::InferenceDimensions;
+use aiperf_metrics::{InferenceDimensions, MetricsConfig, RecordIngest};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use loadgen_core::collector::ReplayTerminalStatus;
@@ -224,15 +225,41 @@ impl RequestObserver for BufferedObserver {
 
 struct WorkerReply {
     result: Result<HttpTurnDispatchResult>,
+    /// Buffered observations for the legacy `execute_turn(observer)` replay path
+    /// (agentic/evaluation); empty for the worker-local measured path.
     events: Vec<ObserverEvent>,
+    /// Non-consuming cloned record for a live sink, when the measured command
+    /// requested one; the authoritative record stays in the worker observer.
+    live_record: Option<RecordIngest>,
 }
 
 struct WorkerCommand {
     turn: PreparedHttpTurn,
+    /// Present when this command accumulates into the worker-local observer;
+    /// absent for the legacy buffered `execute_turn(observer)` path.
+    context: Option<MeasuredTurnContext>,
     first_token: oneshot::Sender<i64>,
     responses: Option<mpsc::Sender<ParsedResponse>>,
     completed: oneshot::Sender<WorkerReply>,
     cancellation: PlacementCancellation,
+}
+
+/// Control-plane message multiplexed onto each worker's command channel.
+enum WorkerMessage {
+    /// Build the worker-local observer from the single resolved metrics
+    /// configuration and run origin before any measured command.
+    Configure {
+        config: MetricsConfig,
+        origin_ns: i64,
+    },
+    /// Execute one prepared turn (buffered or measured).
+    Command(Box<WorkerCommand>),
+    /// Finalize the worker observer at `end_ns` and return its records, then
+    /// exit. Sent once, after all commands for this worker have been enqueued.
+    Drain {
+        end_ns: i64,
+        reply: std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>,
+    },
 }
 
 #[derive(Clone)]
@@ -294,7 +321,7 @@ impl Drop for PlacementCancellationGuard {
 
 /// Local thread-per-core placement behind the single dispatcher.
 struct ThreadPerCoreHttpExecutionBackend {
-    senders: RefCell<Option<Vec<mpsc::Sender<WorkerCommand>>>>,
+    senders: RefCell<Option<Vec<mpsc::Sender<WorkerMessage>>>>,
     threads: RefCell<Vec<JoinHandle<Result<()>>>>,
     next_worker: Cell<usize>,
     run_origin_ns: Cell<Option<i64>>,
@@ -319,7 +346,7 @@ impl ThreadPerCoreHttpExecutionBackend {
         let mut threads = Vec::with_capacity(config.workers);
 
         for worker_id in 0..config.workers {
-            let (sender, receiver) = mpsc::channel(WORKER_QUEUE_CAPACITY);
+            let (sender, receiver) = mpsc::channel::<WorkerMessage>(WORKER_QUEUE_CAPACITY);
             let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
             let base_urls = config.base_urls.clone();
             let model = config.model.clone();
@@ -418,8 +445,12 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<HttpTurnDispatchResult> {
-        self.execute_command(turn, observer, on_first_token, None)
-            .await
+        let run_origin_ns = self.origin()?;
+        let reply = self.execute_command(turn, None, on_first_token, None).await?;
+        for event in reply.events {
+            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
+        }
+        reply.result
     }
 
     async fn execute_turn_streaming(
@@ -429,8 +460,92 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
     ) -> Result<HttpTurnDispatchResult> {
-        self.execute_command(turn, observer, on_first_token, Some(responses))
-            .await
+        let run_origin_ns = self.origin()?;
+        let reply = self
+            .execute_command(turn, None, on_first_token, Some(responses))
+            .await?;
+        for event in reply.events {
+            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
+        }
+        reply.result
+    }
+
+    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+        let senders = self.senders.borrow();
+        let senders = senders
+            .as_ref()
+            .ok_or_else(|| anyhow!("HTTP execution backend is shut down"))?;
+        for sender in senders.iter() {
+            sender
+                .try_send(WorkerMessage::Configure {
+                    config: config.clone(),
+                    origin_ns,
+                })
+                .map_err(|_| anyhow!("HTTP execution worker rejected measurement configuration"))?;
+        }
+        Ok(())
+    }
+
+    async fn execute_turn_measured(
+        &self,
+        turn: PreparedHttpTurn,
+        context: MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredTurnOutcome> {
+        let reply = self
+            .execute_command(turn, Some(context), on_first_token, None)
+            .await?;
+        Ok(MeasuredTurnOutcome {
+            result: reply.result?,
+            live_record: reply.live_record,
+        })
+    }
+
+    async fn execute_turn_measured_streaming(
+        &self,
+        turn: PreparedHttpTurn,
+        context: MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+        responses: &dyn TurnResponseObserver,
+    ) -> Result<MeasuredTurnOutcome> {
+        let reply = self
+            .execute_command(turn, Some(context), on_first_token, Some(responses))
+            .await?;
+        Ok(MeasuredTurnOutcome {
+            result: reply.result?,
+            live_record: reply.live_record,
+        })
+    }
+
+    fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
+        let senders = {
+            let senders = self.senders.borrow();
+            senders
+                .as_ref()
+                .ok_or_else(|| anyhow!("HTTP execution backend is shut down"))?
+                .clone()
+        };
+        // Each worker finalizes its observer once its in-flight jobs complete and
+        // replies with its dense-local records; the coordinator concatenates them.
+        let mut receivers = Vec::with_capacity(senders.len());
+        for sender in &senders {
+            let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+            sender
+                .try_send(WorkerMessage::Drain {
+                    end_ns,
+                    reply: reply_tx,
+                })
+                .map_err(|_| anyhow!("HTTP execution worker rejected a drain request"))?;
+            receivers.push(reply_rx);
+        }
+        let mut records = Vec::new();
+        for receiver in receivers {
+            let worker_records = receiver
+                .recv()
+                .map_err(|_| anyhow!("HTTP execution worker dropped before draining records"))?;
+            records.extend(worker_records);
+        }
+        Ok(records)
     }
 
     fn shutdown(&self) -> Result<()> {
@@ -439,17 +554,20 @@ impl HttpTurnExecutionBackend for ThreadPerCoreHttpExecutionBackend {
 }
 
 impl ThreadPerCoreHttpExecutionBackend {
+    fn origin(&self) -> Result<i64> {
+        self.run_origin_ns
+            .get()
+            .ok_or_else(|| anyhow!("HTTP execution run origin is not configured"))
+    }
+
     async fn execute_command(
         &self,
         turn: PreparedHttpTurn,
-        observer: &dyn RequestObserver,
+        context: Option<MeasuredTurnContext>,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
-    ) -> Result<HttpTurnDispatchResult> {
-        let run_origin_ns = self
-            .run_origin_ns
-            .get()
-            .ok_or_else(|| anyhow!("HTTP execution run origin is not configured"))?;
+    ) -> Result<WorkerReply> {
+        let _run_origin_ns = self.origin()?;
         let sender = {
             let senders = self.senders.borrow();
             let senders = senders
@@ -465,13 +583,14 @@ impl ThreadPerCoreHttpExecutionBackend {
         let cancellation = PlacementCancellation::new();
         let mut cancellation_guard = PlacementCancellationGuard::new(cancellation.clone());
         sender
-            .send(WorkerCommand {
+            .send(WorkerMessage::Command(Box::new(WorkerCommand {
                 turn,
+                context,
                 first_token: first_token_tx,
                 responses: responses.map(|_| response_tx),
                 completed: completed_tx,
                 cancellation,
-            })
+            })))
             .await
             .map_err(|_| anyhow!("HTTP execution worker stopped before accepting a command"))?;
 
@@ -513,11 +632,8 @@ impl ThreadPerCoreHttpExecutionBackend {
                 responses.start_send(response)?;
             }
         }
-        for event in reply.events {
-            event.replay(observer, run_origin_ns as f64 / 1_000_000.0);
-        }
         cancellation_guard.disarm();
-        reply.result
+        Ok(reply)
     }
 }
 
@@ -531,7 +647,7 @@ impl Drop for ThreadPerCoreHttpExecutionBackend {
 
 #[allow(clippy::too_many_arguments)]
 fn run_worker_thread(
-    receiver: mpsc::Receiver<WorkerCommand>,
+    receiver: mpsc::Receiver<WorkerMessage>,
     anchor: RealClockAnchor,
     base_urls: Vec<String>,
     model: String,
@@ -551,7 +667,7 @@ fn run_worker_thread(
     };
     let clock = RealClock::from_anchor(anchor);
     let sink = match prepare_transport_sink(
-        clock,
+        clock.clone(),
         0,
         &base_urls,
         model,
@@ -568,7 +684,7 @@ fn run_worker_thread(
         return Ok(());
     }
     let local = tokio::task::LocalSet::new();
-    local.block_on(&runtime, run_worker(receiver, sink));
+    local.block_on(&runtime, run_worker(receiver, sink, clock));
     Ok(())
 }
 
@@ -587,18 +703,43 @@ fn prepare_transport_sink(
     }
 }
 
-async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<TransportSink>) {
+async fn run_worker(
+    mut receiver: mpsc::Receiver<WorkerMessage>,
+    sink: Rc<TransportSink>,
+    clock: Rc<dyn Clock>,
+) {
     let mut jobs = JoinSet::new();
     let mut accepting = true;
+    // Built lazily by `Configure`; shared (`Rc`) into every measured task so all
+    // of this worker's requests accumulate into one observer that is drained
+    // once at end of run.
+    let mut observer: Option<Rc<NativeMetricsObserver>> = None;
+    // Set by `Drain`; the loop finalizes and replies once its JoinSet empties.
+    let mut pending_drain: Option<(i64, std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>)> =
+        None;
     while accepting || !jobs.is_empty() {
         tokio::select! {
-            command = receiver.recv(), if accepting => {
-                match command {
-                    Some(command) => {
+            message = receiver.recv(), if accepting => {
+                match message {
+                    Some(WorkerMessage::Configure { config, origin_ns }) => {
+                        observer = Some(Rc::new(NativeMetricsObserver::new(
+                            clock.clone(),
+                            origin_ns,
+                            config,
+                        )));
+                    }
+                    Some(WorkerMessage::Command(command)) => {
                         let sink = sink.clone();
+                        let observer = observer.clone();
                         jobs.spawn_local(async move {
-                            execute_worker_command(sink, command).await;
+                            execute_worker_command(sink, observer, *command).await;
                         });
+                    }
+                    Some(WorkerMessage::Drain { end_ns, reply }) => {
+                        // No more commands follow a drain; stop accepting and let
+                        // the loop finalize once every in-flight job completes.
+                        accepting = false;
+                        pending_drain = Some((end_ns, reply));
                     }
                     None => accepting = false,
                 }
@@ -609,6 +750,12 @@ async fn run_worker(mut receiver: mpsc::Receiver<WorkerCommand>, sink: Rc<Transp
                 }
             }
         }
+    }
+    if let Some((end_ns, reply)) = pending_drain {
+        let records = observer
+            .map(|observer| observer.take_finalizer_at(end_ns).finish_with_records().records)
+            .unwrap_or_default();
+        let _ = reply.send(records);
     }
 }
 
@@ -644,15 +791,20 @@ impl TurnResponseObserver for WorkerResponseObserver {
     }
 }
 
-async fn execute_worker_command(sink: Rc<TransportSink>, command: WorkerCommand) {
+async fn execute_worker_command(
+    sink: Rc<TransportSink>,
+    worker_observer: Option<Rc<NativeMetricsObserver>>,
+    command: WorkerCommand,
+) {
     let WorkerCommand {
         turn,
+        context,
         first_token,
         responses,
         completed,
         cancellation,
     } = command;
-    let observer = Rc::new(BufferedObserver::default());
+    let uuid = turn.request.uuid;
     let first_token = RefCell::new(Some(first_token));
     let on_first_token = |ttft_ns| {
         if let Some(sender) = first_token.borrow_mut().take() {
@@ -660,36 +812,89 @@ async fn execute_worker_command(sink: Rc<TransportSink>, command: WorkerCommand)
         }
     };
     let response_observer = responses.map(WorkerResponseObserver::new);
-    let dispatch = async {
-        match response_observer.as_ref() {
-            Some(responses) => {
-                sink.dispatch_prepared_turn_collect_record_streaming(
-                    turn,
-                    observer.as_ref(),
-                    &on_first_token,
-                    responses,
-                )
-                .await
-            }
-            None => {
-                sink.dispatch_prepared_turn_collect_record(turn, observer.as_ref(), &on_first_token)
-                    .await
+    // Measured commands accumulate into the shared worker observer; legacy
+    // buffered commands (agentic/evaluation) collect replayable events instead.
+    let buffered = context.is_none().then(BufferedObserver::default);
+    let reply = match &context {
+        Some(context) => {
+            let observer = match &worker_observer {
+                Some(observer) => observer,
+                None => {
+                    let _ = completed.send(WorkerReply {
+                        result: Err(anyhow!(
+                            "worker-local measurement was not configured before a measured command"
+                        )),
+                        events: Vec::new(),
+                        live_record: None,
+                    });
+                    return;
+                }
+            };
+            let dispatch = sink.dispatch_prepared_turn_measured(
+                observer,
+                turn,
+                context,
+                &on_first_token,
+                response_observer
+                    .as_ref()
+                    .map(|responses| responses as &dyn TurnResponseObserver),
+            );
+            tokio::pin!(dispatch);
+            let result = tokio::select! {
+                biased;
+                () = cancellation.cancelled() => {
+                    Err(anyhow!("HTTP execution command cancelled by its coordinator"))
+                }
+                result = &mut dispatch => result,
+            };
+            let live_record = context
+                .wants_live_record
+                .then(|| observer.snapshot_record(uuid, 0))
+                .flatten();
+            WorkerReply {
+                result,
+                events: Vec::new(),
+                live_record,
             }
         }
-    };
-    tokio::pin!(dispatch);
-    let result = tokio::select! {
-        biased;
-        () = cancellation.cancelled() => {
-            Err(anyhow!("HTTP execution command cancelled by its coordinator"))
+        None => {
+            let observer = buffered
+                .as_ref()
+                .expect("buffered observer exists when no measured context is present");
+            let dispatch = async {
+                match response_observer.as_ref() {
+                    Some(responses) => {
+                        sink.dispatch_prepared_turn_collect_record_streaming(
+                            turn,
+                            observer,
+                            &on_first_token,
+                            responses,
+                        )
+                        .await
+                    }
+                    None => {
+                        sink.dispatch_prepared_turn_collect_record(turn, observer, &on_first_token)
+                            .await
+                    }
+                }
+            };
+            tokio::pin!(dispatch);
+            let result = tokio::select! {
+                biased;
+                () = cancellation.cancelled() => {
+                    Err(anyhow!("HTTP execution command cancelled by its coordinator"))
+                }
+                result = &mut dispatch => result,
+            };
+            WorkerReply {
+                result,
+                events: observer.take(),
+                live_record: None,
+            }
         }
-        result = &mut dispatch => result,
     };
     drop(first_token.borrow_mut().take());
-    let _ = completed.send(WorkerReply {
-        result,
-        events: observer.take(),
-    });
+    let _ = completed.send(reply);
 }
 
 fn join_worker_threads(threads: Vec<JoinHandle<Result<()>>>) -> Result<()> {

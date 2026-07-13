@@ -9,7 +9,7 @@
 //! temporarily shared with the established online execution-placement seam;
 //! all actual wire IO and timing are owned by `aiperf-transport-grpc`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use anyhow::{Context, Result, ensure};
@@ -22,7 +22,7 @@ use aiperf_endpoints::{
     EndpointKey, ParsedResponse, PreparedEndpoint, PreparedEndpointTable,
     RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
-use aiperf_metrics::{HttpTrace, InferenceDimensions};
+use aiperf_metrics::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
 use aiperf_transport_grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
     GrpcErrorKind, GrpcRequestConfig, GrpcRequestRecord, GrpcTransport,
@@ -38,9 +38,10 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::http::{
-    HttpRequest, HttpTurnDispatchResult, HttpTurnExecutionBackend, PreparedHttpEndpoint,
-    PreparedHttpTurn,
+    HttpRequest, HttpTurnDispatchResult, HttpTurnExecutionBackend, MeasuredTurnContext,
+    MeasuredTurnOutcome, PreparedHttpEndpoint, PreparedHttpTurn,
 };
+use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
 
@@ -113,6 +114,9 @@ pub struct GrpcTransportSink {
     binding_registry: GrpcBindingRegistry,
     prepared_endpoints: Option<Rc<PreparedEndpointTable>>,
     prepared_bindings: Vec<Box<dyn aiperf_transport_grpc::GrpcEndpointBinding>>,
+    /// Worker-local metric accumulator for the scheduled runner's measured
+    /// execution path (`None` until `configure_measurement`).
+    measurement: RefCell<Option<Rc<NativeMetricsObserver>>>,
 }
 
 impl std::fmt::Debug for GrpcTransportSink {
@@ -163,6 +167,7 @@ impl GrpcTransportSink {
             binding_registry,
             prepared_endpoints: None,
             prepared_bindings: Vec::new(),
+            measurement: RefCell::new(None),
         })
     }
 
@@ -204,6 +209,67 @@ impl GrpcTransportSink {
     }
 
     /// Execute one scheduler-free v2 command and retain compatibility raw facts.
+    /// Access the worker-local measurement observer, erroring if the measured
+    /// execution path is used before `configure_measurement`.
+    fn measurement_observer(&self) -> Result<Rc<NativeMetricsObserver>> {
+        self.measurement.borrow().clone().ok_or_else(|| {
+            anyhow::anyhow!("worker-local measurement was not configured before dispatch")
+        })
+    }
+
+    /// Register coordinator-known arrival facts on `observer`, dispatch the
+    /// prepared gRPC turn into it, and record the terminal transport facts — the
+    /// gRPC twin of [`TransportSink::dispatch_prepared_turn_measured`].
+    ///
+    /// [`TransportSink::dispatch_prepared_turn_measured`]: crate::http::TransportSink::dispatch_prepared_turn_measured
+    pub async fn dispatch_prepared_turn_measured(
+        &self,
+        observer: &NativeMetricsObserver,
+        turn: PreparedHttpTurn,
+        context: &MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<HttpTurnDispatchResult> {
+        let uuid = turn.request.uuid;
+        observer.register_metadata(uuid, context.metadata.clone());
+        observer.on_arrival(
+            uuid,
+            context.arrival_ms,
+            context.input_length,
+            context.requested_output_length,
+        );
+        let result = self
+            .dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
+            .await;
+        match &result {
+            Ok(collected) => {
+                let outcome = &collected.outcome;
+                observer.record_response(
+                    uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(outcome.start_ns),
+                        end_ns: Some(outcome.end_ns),
+                        prompt_tokens: outcome.prompt_tokens,
+                        completion_tokens: outcome.completion_tokens,
+                        http: outcome.http.clone(),
+                    },
+                );
+            }
+            Err(_) => {
+                let now = self.clock.now_ns();
+                observer.on_terminal(uuid, ReplayTerminalStatus::Failed);
+                observer.record_response(
+                    uuid,
+                    NativeResponseMetadata {
+                        start_ns: Some(now),
+                        end_ns: Some(now),
+                        ..NativeResponseMetadata::default()
+                    },
+                );
+            }
+        }
+        result
+    }
+
     pub async fn dispatch_prepared_turn_collect_record(
         &self,
         turn: PreparedHttpTurn,
@@ -475,6 +541,40 @@ impl HttpTurnExecutionBackend for GrpcTransportSink {
     ) -> Result<HttpTurnDispatchResult> {
         self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
             .await
+    }
+
+    fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {
+        let observer = NativeMetricsObserver::new(self.clock.clone(), origin_ns, config);
+        *self.measurement.borrow_mut() = Some(Rc::new(observer));
+        Ok(())
+    }
+
+    async fn execute_turn_measured(
+        &self,
+        turn: PreparedHttpTurn,
+        context: MeasuredTurnContext,
+        on_first_token: &dyn Fn(i64),
+    ) -> Result<MeasuredTurnOutcome> {
+        let observer = self.measurement_observer()?;
+        let uuid = turn.request.uuid;
+        let result = self
+            .dispatch_prepared_turn_measured(&observer, turn, &context, on_first_token)
+            .await?;
+        let live_record = context
+            .wants_live_record
+            .then(|| observer.snapshot_record(uuid, 0))
+            .flatten();
+        Ok(MeasuredTurnOutcome {
+            result,
+            live_record,
+        })
+    }
+
+    fn drain_records(&self, end_ns: i64) -> Result<Vec<(Uuid, RecordIngest)>> {
+        match self.measurement.borrow_mut().take() {
+            Some(observer) => Ok(observer.take_finalizer_at(end_ns).finish_with_records().records),
+            None => Ok(Vec::new()),
+        }
     }
 }
 
