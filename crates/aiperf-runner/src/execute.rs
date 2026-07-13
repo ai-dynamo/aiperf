@@ -63,7 +63,8 @@ use aiperf_extensions::AiperfRegistry;
 use aiperf_graph::input::GraphInputBundle;
 use aiperf_metrics::{
     CATALOG, ExportContext, InferenceDimensions, MetricTag, MetricsAccumulator, MetricsConfig,
-    NativeReport, Phase as MetricsPhase, ReportRunInfo, ReportSummary, RunOutcome, SloThreshold,
+    NativeReport, Phase as MetricsPhase, RecordIngest, ReportRunInfo, ReportSummary, RunOutcome,
+    SloThreshold,
 };
 use aiperf_rng::{
     EmpiricalPoint, PeakEntry, RandomGenerator, RngRoot, SamplingDistribution,
@@ -3202,21 +3203,42 @@ impl RunCapture {
         let identities = self.identities.borrow();
         let outputs = self.outputs.borrow();
         let mut raw_exchanges = self.raw_exchanges.take();
+        // Resolve each drained record to its dispatch identity by the record's
+        // true drain Uuid, never by `RecordIngest.correlation_id`. Aggregate-only
+        // mode sets `correlation_id` to the empty string for every record
+        // (`NativeMetricsObserver::register_metadata`), so a correlation-keyed
+        // join would collapse every record onto one key. Keying on the uuid also
+        // stops assuming the drained order matches the dispatch order: worker-local
+        // accumulation (a later PR) returns records per worker, not in global
+        // dispatch order, and this join must survive that.
+        let mut records_by_uuid: HashMap<Uuid, RecordIngest> =
+            HashMap::with_capacity(collection.records.len());
+        for (uuid, ingest) in collection.records {
+            ensure!(
+                records_by_uuid.insert(uuid, ingest).is_none(),
+                "native record capture drained request {uuid} more than once"
+            );
+        }
         ensure!(
-            collection.records.len() == identities.len(),
+            records_by_uuid.len() == identities.len(),
             "native record capture finalized {} records for {} dispatched identities",
-            collection.records.len(),
+            records_by_uuid.len(),
             identities.len()
         );
-        collection
-            .records
-            .into_iter()
-            .zip(identities.iter())
-            .map(|(mut ingest, identity)| {
-                ensure!(
-                    ingest.correlation_id == identity.uuid.to_string(),
-                    "native record arrival order diverged from dispatch identity order"
-                );
+        // Emit rows in dispatch (identity) order. Each identity resolves to its
+        // worker-merged record; the lookup shape also admits a coordinator-side
+        // fallback record (for identities that fail before any worker observer
+        // registers them — a later PR) without changing this join, so a missing
+        // lookup is a hard error today rather than a structural 1:1 assumption.
+        identities
+            .iter()
+            .map(|identity| {
+                let mut ingest = records_by_uuid.remove(&identity.uuid).ok_or_else(|| {
+                    anyhow!(
+                        "captured request {} produced no native metric record",
+                        identity.uuid
+                    )
+                })?;
                 if ingest.admit_ns.is_some() {
                     ingest.admit_ns = Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
                         anyhow!("captured request {} has no issuer timestamp", identity.uuid)
@@ -3332,6 +3354,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use aiperf_clock::SimClock;
     use serde_json::json;
 
     use super::*;
@@ -3621,5 +3644,245 @@ mod tests {
 
         assert!(error.contains("symlink"), "{error}");
         assert!(!outside.path().join("owned.txt").exists());
+    }
+
+    /// Distinct per-request facts for the `RunCapture::finish` join tests.
+    struct RequestFacts {
+        uuid: Uuid,
+        request_index: Option<usize>,
+        arrival_ms: f64,
+        token_times_ms: &'static [f64],
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        start_ns: i64,
+        end_ns: i64,
+    }
+
+    /// Drives one request through an observer exactly as the online dispatcher
+    /// does: metadata, arrival, admit, per-token arrivals, terminal, and the
+    /// authoritative transport/usage response.
+    fn drive_request(observer: &NativeMetricsObserver, facts: &RequestFacts) {
+        observer.register_metadata(
+            facts.uuid,
+            RequestMetricMetadata {
+                request_index: facts.request_index,
+                ..RequestMetricMetadata::default()
+            },
+        );
+        observer.on_arrival(facts.uuid, facts.arrival_ms, facts.prompt_tokens as usize, 8);
+        observer.on_admit(facts.uuid, facts.arrival_ms, 0);
+        for &at in facts.token_times_ms {
+            observer.on_token(facts.uuid, at);
+        }
+        observer.on_terminal(facts.uuid, ReplayTerminalStatus::Completed);
+        observer.record_response(
+            facts.uuid,
+            NativeResponseMetadata {
+                start_ns: Some(facts.start_ns),
+                end_ns: Some(facts.end_ns),
+                prompt_tokens: Some(facts.prompt_tokens),
+                completion_tokens: Some(facts.completion_tokens),
+                ..NativeResponseMetadata::default()
+            },
+        );
+    }
+
+    /// Harness B test 4: `RunCapture::finish` must key each drained record to its
+    /// dispatch identity by the record's true drain `Uuid` — not by drain order
+    /// and not by `RecordIngest.correlation_id`. Here the observer drains records
+    /// in absolute request-slot order (`B`, `C`, `A`) that deliberately diverges
+    /// from dispatch order (`A`, `B`, `C`); the positional zip this replaced would
+    /// have paired `B`'s record with `A`'s identity and aborted on the
+    /// correlation-id assertion.
+    #[test]
+    fn run_capture_finish_joins_records_by_uuid_in_dispatch_order() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let capture = RunCapture::new(clock.clone(), 0, MetricsConfig::default(), false);
+
+        let a = Uuid::from_u128(0xA);
+        let b = Uuid::from_u128(0xB);
+        let c = Uuid::from_u128(0xC);
+        // Dispatch order is A, B, C.
+        for (uuid, x_correlation_id) in [(a, "corr-a"), (b, "corr-b"), (c, "corr-c")] {
+            capture.identities.borrow_mut().push(CaptureIdentity {
+                uuid,
+                x_correlation_id: x_correlation_id.to_string(),
+            });
+        }
+        // Request slots (drain order) are B=0, C=1, A=2 — the reverse-ish of dispatch.
+        let facts = [
+            RequestFacts {
+                uuid: a,
+                request_index: Some(2),
+                arrival_ms: 1.0,
+                token_times_ms: &[5.0, 8.0],
+                prompt_tokens: 4,
+                completion_tokens: 2,
+                start_ns: 2_000_000,
+                end_ns: 9_000_000,
+            },
+            RequestFacts {
+                uuid: b,
+                request_index: Some(0),
+                arrival_ms: 2.0,
+                token_times_ms: &[6.0, 10.0, 14.0],
+                prompt_tokens: 5,
+                completion_tokens: 3,
+                start_ns: 3_000_000,
+                end_ns: 15_000_000,
+            },
+            RequestFacts {
+                uuid: c,
+                request_index: Some(1),
+                arrival_ms: 3.0,
+                token_times_ms: &[7.0],
+                prompt_tokens: 6,
+                completion_tokens: 1,
+                start_ns: 4_000_000,
+                end_ns: 8_000_000,
+            },
+        ];
+        for fact in &facts {
+            drive_request(&capture.observer, fact);
+        }
+
+        let issued_times: HashMap<Uuid, i64> = [(a, 111), (b, 222), (c, 333)].into_iter().collect();
+        let captured = capture.finish(&issued_times).unwrap();
+
+        // Rows come out in dispatch order, not drain order.
+        assert_eq!(
+            captured.iter().map(|record| record.uuid).collect::<Vec<_>>(),
+            vec![a, b, c],
+        );
+        assert_eq!(
+            captured
+                .iter()
+                .map(|record| record.x_correlation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["corr-a", "corr-b", "corr-c"],
+        );
+        // Each identity is joined to ITS OWN record (uuid-keyed), so the record's
+        // correlation id matches the identity's uuid rather than the drain-order
+        // neighbour a positional zip would have produced.
+        for record in &captured {
+            assert_eq!(record.ingest.correlation_id, record.uuid.to_string());
+        }
+        // The credit-issued admit rewrite resolves through the same uuid key.
+        assert_eq!(captured[0].ingest.admit_ns, Some(111));
+        assert_eq!(captured[1].ingest.admit_ns, Some(222));
+        assert_eq!(captured[2].ingest.admit_ns, Some(333));
+        // PR1 preserves each record's absolute request_index (the global-ordinal
+        // restamp belongs to worker-local accumulation, a later PR).
+        assert_eq!(captured[0].ingest.request_index, Some(2));
+        assert_eq!(captured[1].ingest.request_index, Some(0));
+        assert_eq!(captured[2].ingest.request_index, Some(1));
+    }
+
+    /// Value-parity golden: for the realistic single-observer scenario (drain
+    /// order == dispatch order), the uuid-keyed `RunCapture::finish` must produce
+    /// a re-ingested report byte-identical to the positional-zip finish it
+    /// replaced. Both paths drain the identical records; the reference path
+    /// reproduces the exact HEAD algorithm (positional zip + admit rewrite).
+    #[test]
+    fn run_capture_finish_reingest_is_byte_identical_to_positional_zip() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let config = MetricsConfig::default();
+        let capture = RunCapture::new(clock.clone(), 0, config.clone(), false);
+        let reference = NativeMetricsObserver::new(clock.clone(), 0, config.clone());
+
+        let a = Uuid::from_u128(0x10);
+        let b = Uuid::from_u128(0x11);
+        let c = Uuid::from_u128(0x12);
+        let dispatch = [(a, "corr-a"), (b, "corr-b"), (c, "corr-c")];
+        for (uuid, x_correlation_id) in dispatch {
+            capture.identities.borrow_mut().push(CaptureIdentity {
+                uuid,
+                x_correlation_id: x_correlation_id.to_string(),
+            });
+        }
+        // Natural request slots (None -> arrival ordinal) so drain order equals
+        // dispatch order, exactly as the online dispatcher produces them.
+        let facts = [
+            RequestFacts {
+                uuid: a,
+                request_index: None,
+                arrival_ms: 1.0,
+                token_times_ms: &[5.0, 8.0],
+                prompt_tokens: 4,
+                completion_tokens: 2,
+                start_ns: 2_000_000,
+                end_ns: 9_000_000,
+            },
+            RequestFacts {
+                uuid: b,
+                request_index: None,
+                arrival_ms: 2.0,
+                token_times_ms: &[6.0, 10.0, 14.0],
+                prompt_tokens: 5,
+                completion_tokens: 3,
+                start_ns: 3_000_000,
+                end_ns: 15_000_000,
+            },
+            RequestFacts {
+                uuid: c,
+                request_index: None,
+                arrival_ms: 3.0,
+                token_times_ms: &[7.0],
+                prompt_tokens: 6,
+                completion_tokens: 1,
+                start_ns: 4_000_000,
+                end_ns: 8_000_000,
+            },
+        ];
+        for fact in &facts {
+            drive_request(&capture.observer, fact);
+            drive_request(&reference, fact);
+        }
+        let issued_times: HashMap<Uuid, i64> =
+            [(a, 1_500_000), (b, 2_500_000), (c, 3_500_000)]
+                .into_iter()
+                .collect();
+
+        // New path: uuid-keyed finish, then the runner's re-ingest into a fresh
+        // accumulator in captured order (execute.rs run() path).
+        let captured = capture.finish(&issued_times).unwrap();
+        let mut new_accumulator = MetricsAccumulator::with_config(config.clone());
+        for record in &captured {
+            new_accumulator.process_record(&record.ingest);
+        }
+        let new_summary =
+            new_accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+
+        // Reference path: the exact positional-zip algorithm this PR replaced.
+        let collection = reference.finish_with_records();
+        let identities: Vec<Uuid> = dispatch.iter().map(|(uuid, _)| *uuid).collect();
+        assert_eq!(collection.records.len(), identities.len());
+        let mut reference_accumulator = MetricsAccumulator::with_config(config.clone());
+        for ((drain_uuid, mut ingest), identity) in
+            collection.records.into_iter().zip(identities.iter())
+        {
+            assert_eq!(
+                &drain_uuid, identity,
+                "reference fixture must keep drain order == dispatch order",
+            );
+            if ingest.admit_ns.is_some() {
+                ingest.admit_ns = Some(*issued_times.get(identity).unwrap());
+            }
+            reference_accumulator.process_record(&ingest);
+        }
+        let reference_summary =
+            reference_accumulator.export_results(&ExportContext::phase(MetricsPhase::Profiling));
+
+        assert_eq!(new_summary, reference_summary);
+        assert_eq!(
+            serde_json::to_vec(&new_summary).unwrap(),
+            serde_json::to_vec(&reference_summary).unwrap(),
+            "uuid-keyed finish must re-ingest byte-identically to the positional zip",
+        );
+        // Sanity: the golden actually measured all three requests.
+        assert_eq!(
+            new_summary.finite_value(MetricTag::RequestCount),
+            Some(3.0),
+        );
     }
 }

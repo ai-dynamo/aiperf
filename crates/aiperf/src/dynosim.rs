@@ -3713,7 +3713,7 @@ pub fn run_graph_workload_offline_deferred(
     let (performance, dynamo, parity) = finish_shared_metrics(performance, dynamo)?;
     let collection = native_metrics.finish_with_records();
     let mut accumulator = MetricsAccumulator::with_config(metrics_config);
-    for record in &collection.records {
+    for (_uuid, record) in &collection.records {
         accumulator.process_record(record);
     }
     let mut profiling_metrics =
@@ -3721,7 +3721,7 @@ pub fn run_graph_workload_offline_deferred(
     let warmup_metrics = collection
         .records
         .iter()
-        .any(|record| record.phase == MetricsPhase::Warmup)
+        .any(|(_uuid, record)| record.phase == MetricsPhase::Warmup)
         .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
     inject_dynamo_goodput(&mut profiling_metrics, &dynamo);
     Ok(OfflineDirectGraphReport {
@@ -3859,7 +3859,7 @@ pub fn run_graph_workload_online_deferred(
         finish_shared_metrics_enforcing(performance, dynamo, false)?;
     let collection = native_metrics.finish_with_records();
     let mut accumulator = MetricsAccumulator::with_config(metrics_config);
-    for record in &collection.records {
+    for (_uuid, record) in &collection.records {
         accumulator.process_record(record);
     }
     let mut profiling_metrics =
@@ -3867,7 +3867,7 @@ pub fn run_graph_workload_online_deferred(
     let warmup_metrics = collection
         .records
         .iter()
-        .any(|record| record.phase == MetricsPhase::Warmup)
+        .any(|(_uuid, record)| record.phase == MetricsPhase::Warmup)
         .then(|| accumulator.export_results(&ExportContext::phase(MetricsPhase::Warmup)));
     inject_dynamo_goodput(&mut profiling_metrics, &dynamo);
     Ok(OfflineDirectGraphReport {
