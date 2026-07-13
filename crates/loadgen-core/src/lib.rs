@@ -12,6 +12,8 @@
 //!
 //! - [`collector`] — `TraceCollector` and the report/record/status types.
 //! - [`sink`] — `Dispatchable`, `RequestSink<R>`, `RequestObserver`.
+//! - [`observer`] — `CollectorObserver`, a pure recorder into `TraceCollector`.
 
 pub mod collector;
+pub mod observer;
 pub mod sink;

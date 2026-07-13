@@ -26,8 +26,8 @@ use std::task::{Context as TaskContext, Poll, Waker};
 
 use aiperf_clock::{Clock, SimClock};
 use tokio::sync::Notify;
-use aiperf_core::chat::chat_request_body;
-use aiperf_core::observer::CollectorObserver;
+use aiperf_endpoints::chat_request_body;
+use loadgen_core::observer::CollectorObserver;
 use aiperf_dataset::{Handle, TextTokenizer, TiktokenTokenizer};
 use aiperf_graph::bench::{BenchConfig, build_workload};
 use aiperf_graph::execution::{GraphTraceExecutionBackend, LocalGraphTraceExecutionBackend};

@@ -39,7 +39,6 @@ path = "src/lib.rs"
 [dependencies]
 aiperf-accuracy = { path = "../accuracy" }
 aiperf-adaptive = { path = "../adaptive" }
-aiperf-core = { path = "../core" }
 aiperf-dataset.workspace = true
 aiperf-endpoints.workspace = true
 aiperf-graph = { path = "../graph" }

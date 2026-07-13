@@ -25,8 +25,8 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
-use aiperf_core::chat::chat_request_body;
-use aiperf_core::sse::ChatChunk;
+use aiperf_endpoints::chat_request_body;
+use aiperf_transport_http::sse::ChatChunk;
 use aiperf_dataset::EndpointResolver;
 use aiperf_endpoints::{EndpointConfig, PreparedEndpointTable};
 use aiperf_metrics::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};

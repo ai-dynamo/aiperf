@@ -40,7 +40,7 @@ use crate::sink::{GraphReply, GraphSink};
 use crate::wire::OpenAiChatMessage as Msg;
 use aiperf_clock::Clock;
 use aiperf_clock::real_clock::RealClock;
-use aiperf_core::sse::ChatChunk;
+use aiperf_transport_http::sse::ChatChunk;
 use aiperf_dataset::{Overrides, build_message_body_from_wires};
 use aiperf_metrics::{
     AccumulatorSummary, InferenceDimensions, MetricsAccumulator, Phase, RecordIngest, TokenCounts,

@@ -280,7 +280,7 @@ impl TransportSink {
             None => {
                 let payload = request_body.unwrap_or_else(|| {
                     let prompt = prompt_text.unwrap_or_default();
-                    aiperf_core::chat::chat_request_body(
+                    aiperf_endpoints::chat_request_body(
                         &self.model,
                         &[("user", prompt.as_str())],
                         max_output_tokens,

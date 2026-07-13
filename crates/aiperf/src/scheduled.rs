@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use aiperf_clock::Clock;
-use aiperf_core::observer::CollectorObserver;
+use loadgen_core::observer::CollectorObserver;
 use aiperf_endpoints::ParsedResponse;
 use aiperf_metrics::{AccumulatorSummary, HttpTrace, InferenceDimensions, MetricsConfig};
 use aiperf_timing::{CancellationPolicy, Phase, SlotPool, StopChecker, StopConfig, UrlSelector};

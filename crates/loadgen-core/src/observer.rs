@@ -6,14 +6,16 @@
 //! The observer is a pure recorder — it does not own a clock. Callers supply
 //! millisecond timestamps drawn from one shared time source (the live HTTP
 //! path uses the `aiperf-transport-http` `Clock`), so arrival, admit, and token
-//! events all sit on the same timeline.
+//! events all sit on the same timeline. It lives here beside the
+//! [`TraceCollector`] it writes into so both online HTTP dispatch and the
+//! `aiperf-graph` engine can record without a dependency cycle.
 
 use std::cell::RefCell;
 
 use uuid::Uuid;
 
-use loadgen_core::collector::{ReplayTerminalStatus, TraceCollector, TraceSimulationReport};
-use loadgen_core::sink::RequestObserver;
+use crate::collector::{ReplayTerminalStatus, TraceCollector, TraceSimulationReport};
+use crate::sink::RequestObserver;
 
 /// Collects measurement events from any sink into one `TraceCollector`.
 pub struct CollectorObserver {

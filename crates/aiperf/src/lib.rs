@@ -3,7 +3,9 @@
 
 //! Rust-native AIPerf load-generation runtime.
 //!
-//! Measurement wire types + the collector observer live in [`aiperf_core`]; the
+//! OpenAI SSE chunk types live in [`aiperf_transport_http`]`::sse`, the OpenAI
+//! chat request-body builder in [`aiperf_endpoints`], and the `CollectorObserver`
+//! recorder in [`loadgen_core`]`::observer`; the
 //! Graph-IR engine lives in `aiperf_graph`; the clock-native scheduling policy
 //! (arrivals, slots, stop conditions, ramps, cancellation, and URL selection)
 //! lives in shared [`aiperf_timing`]. This library owns runtime composition used

@@ -17,7 +17,7 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use aiperf_clock::Clock;
-use aiperf_core::sse::ChatChunk;
+use aiperf_transport_http::sse::ChatChunk;
 use aiperf_dataset::{Overrides, build_message_body_from_wires};
 use aiperf_transport_http::config::ClientConfig;
 use aiperf_transport_http::models::{HttpVersion, RequestConfig, Response};

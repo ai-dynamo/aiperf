@@ -7,8 +7,10 @@
 //! OpenAI-compatible server without depending on a specific server's internal
 //! protocol types. These structs deserialize the streaming chunk shape; unknown
 //! fields are ignored by serde. SSE byte-framing (splitting the stream into
-//! `data:` events) lives in the transport layer; callers deserialize the `data`
-//! payload straight into [`ChatChunk`].
+//! `data:` events) lives in the transport [`reader`](super::reader); callers
+//! deserialize the `data` payload straight into [`ChatChunk`]. Colocated with
+//! the SSE reader so the OpenAI chat response codec lives beside the transport
+//! that frames it.
 
 use serde::Deserialize;
 

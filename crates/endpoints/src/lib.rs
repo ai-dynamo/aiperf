@@ -12,6 +12,7 @@
 //! live in `aiperf-transport-grpc`.
 
 mod anthropic;
+mod chat;
 mod config;
 mod dynosim;
 mod endpoints;
@@ -26,6 +27,7 @@ mod usage;
 mod vllm_generate;
 
 pub use anthropic::MessagesEndpoint;
+pub use chat::chat_request_body;
 pub use config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, RequestContentType};
 pub use dynosim::DynosimEndpointFactory;
 pub use endpoints::{

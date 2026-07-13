@@ -3,6 +3,11 @@
 
 //! Shared OpenAI chat-completions request-body construction, so every live HTTP
 //! sink emits the identical streaming wire contract in one place.
+//!
+//! This is the standalone body builder consumed by the runner-library online
+//! path's legacy turn binding; the dialect-driven convergence target is
+//! [`ChatEndpoint`](crate::ChatEndpoint), which owns the full prepared-endpoint
+//! request pipeline.
 
 use serde_json::{Value, json};
 

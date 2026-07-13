@@ -89,7 +89,6 @@ dependencies = [
  "aiperf-accuracy",
  "aiperf-adaptive",
  "aiperf-clock",
- "aiperf-core",
  "aiperf-dataset",
  "aiperf-endpoints",
  "aiperf-graph",
@@ -170,18 +169,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aiperf-core"
-version = "0.0.0"
-dependencies = [
- "axum",
- "loadgen-core",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "aiperf-dataset"
 version = "0.0.0"
 dependencies = [
@@ -249,7 +236,6 @@ name = "aiperf-graph"
 version = "0.0.0"
 dependencies = [
  "aiperf-clock",
- "aiperf-core",
  "aiperf-dataset",
  "aiperf-metrics",
  "aiperf-rng",

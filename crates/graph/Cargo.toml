@@ -9,7 +9,6 @@ license.workspace = true
 description = "Graph-IR async-dataflow workload driver for AIPerf — online (live HTTP) mode."
 
 [dependencies]
-aiperf-core = { path = "../core" }
 aiperf-dataset.workspace = true
 aiperf-metrics.workspace = true
 aiperf-rng.workspace = true

@@ -27,7 +27,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aiperf_clock::{Clock, RealClock};
-use aiperf_core::observer::CollectorObserver;
+use loadgen_core::observer::CollectorObserver;
 use aiperf_metrics::{AccumulatorSummary, MetricsConfig};
 use loadgen_core::collector::{ReplayTerminalStatus, TraceSimulationReport};
 use loadgen_core::sink::RequestObserver;

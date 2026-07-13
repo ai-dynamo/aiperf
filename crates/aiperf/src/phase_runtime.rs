@@ -16,7 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use aiperf_core::observer::CollectorObserver;
+use loadgen_core::observer::CollectorObserver;
 use aiperf_metrics::MetricsConfig;
 use aiperf_timing::{
     ClockPhaseOrchestrator, ClockPhaseRunnerFactory, LocalPhaseFuture, PhaseConfig, PhaseContext,
