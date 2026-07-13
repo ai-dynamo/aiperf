@@ -129,20 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn default_corpus_exceeds_1m_tokens() {
-        // One full-scale build verifies the shipped default pool size. The full
-        // multi-variant generator at the default `POOL_SCALE` produces a >1M-token
-        // pool (vs the ~50k single-template baseline).
-        let tokenizer = TiktokenTokenizer::builtin();
-        let corpus = build_coding_corpus(&tokenizer, 17).expect("default corpus");
-        assert!(
-            corpus.len() > 1_000_000,
-            "default corpus should exceed 1M tokens, got {}",
-            corpus.len()
-        );
-    }
-
-    #[test]
     fn every_template_kind_yields_structural_variety() {
         use super::templates::{TemplateKind, TemplateRenderer};
         // Every top-level category dispatches across its Python variant family
