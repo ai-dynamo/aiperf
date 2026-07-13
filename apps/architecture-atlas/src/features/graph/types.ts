@@ -36,7 +36,7 @@ export interface GraphCanvasProps {
   fitViewCommand?: GraphFitViewCommand;
   onFitViewComplete?(requestId: number): void;
   onFocusEntity(entityId: string): void;
-  overlay?: FlavorOverlay;
+  overlay: FlavorOverlay;
   visibleEdges: readonly GraphEdge[];
   visibleNodes: readonly GraphNode[];
 }

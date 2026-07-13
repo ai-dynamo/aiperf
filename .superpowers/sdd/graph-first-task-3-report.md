@@ -111,3 +111,19 @@ Final gate results after review integration:
 - `npm --prefix apps/architecture-atlas run build` — pass; Vite production build completed.
 
 The existing non-failing Vite warning remains: the layout worker and main application chunks exceed 500 kB.
+
+## Final Review Follow-Up — 2026-07-12
+
+- `GraphCanvas` now consumes each typed fit request ID exactly once. Layout, scene, flavor, search, and selection rerenders cannot replay a handled request; a new monotonically increasing request ID remains the only trigger.
+- `FlavorOverlay` is now required by `GraphCanvasProps`. Node and edge classification accepts no missing overlay, and an entity absent from all overlay partitions fails loudly rather than defaulting to primary-only.
+- A failing-first canvas regression proved request ID 1 replayed after a layout change, then verified the fix and that request ID 2 still executes.
+
+Final verification:
+
+- Focused fit/overlay tests — pass; 3 files, 8 tests.
+- `npm --prefix apps/architecture-atlas run typecheck` — pass.
+- `npm --prefix apps/architecture-atlas run lint` — pass.
+- `npm --prefix apps/architecture-atlas test` — pass; 22 files, 188 tests.
+- `npm --prefix apps/architecture-atlas run build` — pass.
+
+The non-failing Vite large-chunk warning remains unchanged.

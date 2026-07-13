@@ -10,7 +10,7 @@ import {
   type Node,
   type ReactFlowInstance,
 } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { deterministicFallbackLayout, type LayoutResult } from "../atlas/layout";
 import { RuntimeGraphEdge, edgeMarker, type RuntimeGraphEdgeData } from "./graph-edges";
@@ -47,20 +47,20 @@ export async function fitGraphView(
 
 function classifyFlavor(
   entityId: string,
-  sharedIds: readonly string[] | undefined,
-  primaryOnlyIds: readonly string[] | undefined,
-  compareOnlyIds: readonly string[] | undefined,
+  sharedIds: readonly string[],
+  primaryOnlyIds: readonly string[],
+  compareOnlyIds: readonly string[],
 ): GraphFlavorClass {
-  if (sharedIds?.includes(entityId)) {
+  if (sharedIds.includes(entityId)) {
     return "shared";
   }
-  if (compareOnlyIds?.includes(entityId)) {
+  if (compareOnlyIds.includes(entityId)) {
     return "compare-only";
   }
-  if (primaryOnlyIds?.includes(entityId)) {
+  if (primaryOnlyIds.includes(entityId)) {
     return "primary-only";
   }
-  return "primary-only";
+  throw new Error(`flavor overlay does not classify ${entityId}`);
 }
 
 function classifyNodePathState(
@@ -155,6 +155,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
     status: "loading",
   });
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
+  const handledFitRequestIds = useRef(new Set<number>());
 
   useEffect(() => {
     let active = true;
@@ -192,10 +193,13 @@ export function GraphCanvas(props: GraphCanvasProps) {
     if (
       !instance ||
       layoutState.status !== "ready" ||
-      !props.fitViewCommand
+      !props.fitViewCommand ||
+      handledFitRequestIds.current.has(props.fitViewCommand.requestId)
     ) {
       return;
     }
+    const requestId = props.fitViewCommand.requestId;
+    handledFitRequestIds.current.add(requestId);
     let active = true;
     void fitGraphView(
       instance,
@@ -203,7 +207,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
       props.fitViewCommand.padding,
     ).then(() => {
       if (active) {
-        props.onFitViewComplete?.(props.fitViewCommand?.requestId ?? 0);
+        props.onFitViewComplete?.(requestId);
       }
     });
     return () => {
@@ -238,9 +242,9 @@ export function GraphCanvas(props: GraphCanvasProps) {
               audience: props.audience,
               flavorClass: classifyFlavor(
                 node.id,
-                props.overlay?.sharedNodeIds,
-                props.overlay?.primaryOnlyNodeIds,
-                props.overlay?.compareOnlyNodeIds,
+                props.overlay.sharedNodeIds,
+                props.overlay.primaryOnlyNodeIds,
+                props.overlay.compareOnlyNodeIds,
               ),
               node,
               onSelect: props.onFocusEntity,
@@ -283,9 +287,9 @@ export function GraphCanvas(props: GraphCanvasProps) {
         );
         const flavorClass = classifyFlavor(
           edge.id,
-          props.overlay?.sharedEdgeIds,
-          props.overlay?.primaryOnlyEdgeIds,
-          props.overlay?.compareOnlyEdgeIds,
+          props.overlay.sharedEdgeIds,
+          props.overlay.primaryOnlyEdgeIds,
+          props.overlay.compareOnlyEdgeIds,
         );
         return {
           className: `graph-edge-path-${pathState}`,
