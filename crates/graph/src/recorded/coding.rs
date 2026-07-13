@@ -32,6 +32,12 @@ use aiperf_rng::{RngRoot, namespace};
 use self::templates::{TemplateKind, TemplateRenderer};
 use super::RecordedTraceError;
 
+/// Multiplier applied to every category's block count when building the pool
+/// (the native analogue of the Python generator's `_pool_scale`). At `1` the
+/// pool is ~270k tokens; the default `4` yields a >1M-token corpus so block
+/// sampling draws from a large, structurally varied space.
+const POOL_SCALE: usize = 4;
+
 const TOOL_POOL_BLOCK_COUNTS: &[(TemplateKind, usize)] = &[
     (TemplateKind::Python, 45),
     (TemplateKind::Go, 45),
@@ -64,10 +70,13 @@ pub(super) fn build_coding_corpus(
         .derive_seed(namespace::DATASET_CODING_CONTENT_TEMPLATE)
         .expect("a seeded RNG root always derives a concrete stream seed");
     let mut renderer = TemplateRenderer::new(template_seed);
-    let capacity = TOOL_POOL_BLOCK_COUNTS.iter().map(|(_, count)| count).sum();
+    let capacity: usize = TOOL_POOL_BLOCK_COUNTS
+        .iter()
+        .map(|(_, count)| count * POOL_SCALE)
+        .sum();
     let mut blocks = Vec::with_capacity(capacity);
     for &(kind, count) in TOOL_POOL_BLOCK_COUNTS {
-        for ordinal in 0..count {
+        for ordinal in 0..count * POOL_SCALE {
             blocks.push(renderer.render(kind, ordinal)?);
         }
     }
@@ -89,12 +98,12 @@ mod tests {
         let first = build_coding_corpus(&tokenizer, 17).expect("first corpus");
         let repeated = build_coding_corpus(&tokenizer, 17).expect("repeated corpus");
         let different = build_coding_corpus(&tokenizer, 18).expect("different corpus");
-        // The full multi-variant generator produces a much larger pool than the
-        // single-template baseline (~50k tokens) — every category now fans out
-        // across its whole family of structural variants.
+        // The full multi-variant generator at the default `POOL_SCALE` produces a
+        // >1M-token pool (vs the ~50k single-template baseline) — every category
+        // fans out across its whole family of structural variants, scaled up.
         assert!(
-            first.len() > 150_000,
-            "full corpus should be large, got {} tokens",
+            first.len() > 1_000_000,
+            "full corpus should exceed 1M tokens, got {}",
             first.len()
         );
         assert_eq!(
