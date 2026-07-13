@@ -18,8 +18,11 @@ import { RuntimeGraphNode, type RuntimeGraphNodeData } from "./graph-nodes";
 import type {
   GraphCanvasProps,
   GraphFlavorClass,
+  GraphManualNodePosition,
   GraphNodePortView,
   GraphPathState,
+  GraphPulseState,
+  GraphRelayoutState,
 } from "./types";
 import "@xyflow/react/dist/style.css";
 
@@ -45,6 +48,17 @@ export async function fitGraphView(
   });
 }
 
+export function completeNodeDrag(
+  node: Pick<Node, "id" | "position">,
+  complete: ((position: GraphManualNodePosition) => void) | undefined,
+): void {
+  complete?.({
+    nodeId: node.id,
+    x: node.position.x,
+    y: node.position.y,
+  });
+}
+
 function classifyFlavor(
   entityId: string,
   sharedIds: readonly string[],
@@ -65,17 +79,25 @@ function classifyFlavor(
 
 function classifyNodePathState(
   nodeId: string,
+  traceNodeId: string | null,
+  traceMode: GraphCanvasProps["traceMode"],
   focusedEntityId: string | null,
   upstreamNodeIds: ReadonlySet<string>,
   downstreamNodeIds: ReadonlySet<string>,
 ): GraphPathState {
-  if (nodeId === focusedEntityId) {
+  if (nodeId === traceNodeId || nodeId === focusedEntityId) {
     return "focused";
   }
-  if (upstreamNodeIds.has(nodeId)) {
+  if (traceMode === "upstream" && upstreamNodeIds.has(nodeId)) {
     return "upstream";
   }
-  if (downstreamNodeIds.has(nodeId)) {
+  if (traceMode === "downstream" && downstreamNodeIds.has(nodeId)) {
+    return "downstream";
+  }
+  if (traceMode === "none" && upstreamNodeIds.has(nodeId)) {
+    return "upstream";
+  }
+  if (traceMode === "none" && downstreamNodeIds.has(nodeId)) {
     return "downstream";
   }
   return "default";
@@ -111,6 +133,8 @@ function classifyPortDirections(input: GraphCanvasProps): Map<string, GraphNodeP
 
 function classifyEdgePathState(
   edge: GraphCanvasProps["visibleEdges"][number],
+  traceNodeId: string | null,
+  traceMode: GraphCanvasProps["traceMode"],
   focusedEntityId: string | null,
   upstreamNodeIds: ReadonlySet<string>,
   downstreamNodeIds: ReadonlySet<string>,
@@ -118,22 +142,25 @@ function classifyEdgePathState(
   if (focusedEntityId === edge.id) {
     return "focused";
   }
-  if (!focusedEntityId) {
+  if (!focusedEntityId && !traceNodeId) {
     return "default";
   }
 
   const sourceId = edge.source.nodeId;
   const targetId = edge.target.nodeId;
+  if (traceMode === "isolate" && traceNodeId) {
+    return sourceId === traceNodeId || targetId === traceNodeId ? "focused" : "default";
+  }
 
   if (
-    (targetId === focusedEntityId && upstreamNodeIds.has(sourceId)) ||
+    ((targetId === focusedEntityId || targetId === traceNodeId) && upstreamNodeIds.has(sourceId)) ||
     (upstreamNodeIds.has(sourceId) && upstreamNodeIds.has(targetId))
   ) {
     return "upstream";
   }
 
   if (
-    (sourceId === focusedEntityId && downstreamNodeIds.has(targetId)) ||
+    ((sourceId === focusedEntityId || sourceId === traceNodeId) && downstreamNodeIds.has(targetId)) ||
     (downstreamNodeIds.has(sourceId) && downstreamNodeIds.has(targetId))
   ) {
     return "downstream";
@@ -188,6 +215,23 @@ export function GraphCanvas(props: GraphCanvasProps) {
     [props.neighborhood.downstreamNodeIds],
   );
   const portViewsByNode = useMemo(() => classifyPortDirections(props), [props]);
+  const expandedNodeIds = useMemo(
+    () => new Set(props.expandedNodeIds ?? []),
+    [props.expandedNodeIds],
+  );
+  const activePulseNodeIds = useMemo(
+    () => new Set(props.activePulseNodeIds ?? []),
+    [props.activePulseNodeIds],
+  );
+  const completedPulseNodeIds = useMemo(
+    () => new Set(props.completedPulseNodeIds ?? []),
+    [props.completedPulseNodeIds],
+  );
+  const traceMode = props.traceMode ?? "none";
+  const traceNodeId =
+    props.focusedEntityId?.startsWith("node.") && traceMode !== "none"
+      ? props.focusedEntityId
+      : null;
 
   useEffect(() => {
     if (
@@ -232,14 +276,44 @@ export function GraphCanvas(props: GraphCanvasProps) {
         : new Map<string, { x: number; y: number }>(),
     [layoutState],
   );
+  const preservedNodeIds = useMemo(
+    () =>
+      new Set(
+        layoutState.status === "ready"
+          ? layoutState.result.partialRelayout?.preservedManualNodeIds ?? []
+          : [],
+      ),
+    [layoutState],
+  );
+  const relaidOutNodeIds = useMemo(
+    () =>
+      new Set(
+        layoutState.status === "ready"
+          ? layoutState.result.partialRelayout?.relaidOutNodeIds ?? []
+          : [],
+      ),
+    [layoutState],
+  );
 
   const nodes: Node<RuntimeGraphNodeData>[] = useMemo(
     () =>
       layoutState.status !== "ready"
         ? []
-        : props.visibleNodes.map((node) => ({
-            data: {
+        : props.visibleNodes.map((node) => {
+            const pulseState: GraphPulseState = activePulseNodeIds.has(node.id)
+              ? "active"
+              : completedPulseNodeIds.has(node.id)
+                ? "completed"
+                : "idle";
+            const relayoutState: GraphRelayoutState = preservedNodeIds.has(node.id)
+              ? "preserved"
+              : relaidOutNodeIds.has(node.id)
+                ? "relaid-out"
+                : "canonical";
+            return {
+              data: {
               audience: props.audience,
+              expanded: expandedNodeIds.has(node.id),
               flavorClass: classifyFlavor(
                 node.id,
                 props.overlay.sharedNodeIds,
@@ -247,31 +321,50 @@ export function GraphCanvas(props: GraphCanvasProps) {
                 props.overlay.compareOnlyNodeIds,
               ),
               node,
+              onCollapse: props.onCollapseNode,
+              onExpand: props.onExpandNode,
               onSelect: props.onFocusEntity,
+              onTraceModeChange: props.onTraceModeChange,
               pathState: classifyNodePathState(
                 node.id,
+                traceNodeId,
+                traceMode,
                 props.focusedEntityId,
                 upstreamNodeIds,
                 downstreamNodeIds,
               ),
               ports: portViewsByNode.get(node.id) ?? [],
+              pulseState,
+              relayoutState,
+              traceMode,
             },
-            draggable: false,
+            draggable: true,
             id: node.id,
             position: positionsByNodeId.get(node.id) ?? { x: 0, y: 0 },
             style: { width: 280 },
             type: "runtimeNode",
-          })),
+            };
+          }),
     [
+      activePulseNodeIds,
+      completedPulseNodeIds,
       downstreamNodeIds,
+      expandedNodeIds,
       layoutState.status,
       portViewsByNode,
       positionsByNodeId,
+      preservedNodeIds,
       props.audience,
       props.focusedEntityId,
+      props.onCollapseNode,
+      props.onExpandNode,
       props.onFocusEntity,
+      props.onTraceModeChange,
       props.overlay,
+      traceMode,
+      traceNodeId,
       props.visibleNodes,
+      relaidOutNodeIds,
       upstreamNodeIds,
     ],
   );
@@ -281,6 +374,8 @@ export function GraphCanvas(props: GraphCanvasProps) {
       props.visibleEdges.map((edge) => {
         const pathState = classifyEdgePathState(
           edge,
+          traceNodeId,
+          traceMode,
           props.focusedEntityId,
           upstreamNodeIds,
           downstreamNodeIds,
@@ -297,7 +392,10 @@ export function GraphCanvas(props: GraphCanvasProps) {
             edge,
             flavorClass,
             onSelect: props.onFocusEntity,
+            onWaypointsChange: props.onWaypointsChange,
+            onWaypointsReset: props.onWaypointsReset,
             pathState,
+            waypoints: props.edgeWaypoints?.get(edge.id),
           },
           id: edge.id,
           markerEnd: edgeMarker(
@@ -312,9 +410,14 @@ export function GraphCanvas(props: GraphCanvasProps) {
     [
       downstreamNodeIds,
       props.focusedEntityId,
+      props.onWaypointsChange,
+      props.onWaypointsReset,
       props.onFocusEntity,
       props.overlay,
+      traceMode,
       props.visibleEdges,
+      props.edgeWaypoints,
+      traceNodeId,
       upstreamNodeIds,
     ],
   );
@@ -329,6 +432,29 @@ export function GraphCanvas(props: GraphCanvasProps) {
 
   return (
     <section aria-label="Graph canvas">
+      {(props.breadcrumbNodeIds?.length ?? 0) > 0 ? (
+        <nav aria-label="Graph focus context">
+          <ol>
+            {props.breadcrumbNodeIds?.map((nodeId) => {
+              const node = props.visibleNodes.find(({ id }) => id === nodeId);
+              const label = node?.title[props.audience] ?? nodeId;
+              return (
+                <li key={nodeId}>
+                  <button
+                    aria-current={
+                      nodeId === props.focusedEntityId ? "location" : undefined
+                    }
+                    onClick={() => props.onFocusBreadcrumb?.(nodeId)}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+      ) : null}
       <p aria-label="Graph layout status" role="status">
         {layoutState.result.degraded
           ? `Graph layout degraded; deterministic fallback in use. ${layoutState.result.reason ?? ""}`.trim()
@@ -342,7 +468,10 @@ export function GraphCanvas(props: GraphCanvasProps) {
           minZoom={0.2}
           nodeTypes={nodeTypes}
           nodes={nodes}
-          nodesDraggable={false}
+          nodesDraggable
+          onNodeDragStop={(_event, node) =>
+            completeNodeDrag(node, props.onNodeDragComplete)
+          }
           onInit={setInstance}
           proOptions={{ hideAttribution: true }}
         >

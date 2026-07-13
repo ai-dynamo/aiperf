@@ -11,10 +11,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import type { GraphEdge } from "../../domain/architecture";
-import {
-  RuntimeGraphEdge,
-  type RuntimeGraphEdgeData,
-} from "./graph-edges";
+import { RuntimeGraphEdge, type EdgeWaypoint, type RuntimeGraphEdgeData } from "./graph-edges";
 
 const edge: GraphEdge = {
   channel: "request_data",
@@ -66,5 +63,39 @@ describe("runtime graph edge", () => {
       strokeDasharray: "8 6",
       strokeWidth: "3",
     });
+  });
+
+  it("renders focused edge path through waypoint overrides", () => {
+    const waypoints: EdgeWaypoint[] = [{ x: 80, y: 24 }];
+    const props = {
+      data: {
+        edge,
+        flavorClass: "shared",
+        onSelect: vi.fn(),
+        onWaypointsChange: vi.fn(),
+        onWaypointsReset: vi.fn(),
+        pathState: "focused",
+        waypoints,
+      },
+      id: edge.id,
+      markerEnd: "marker",
+      sourcePosition: Position.Right,
+      sourceX: 0,
+      sourceY: 0,
+      targetPosition: Position.Left,
+      targetX: 200,
+      targetY: 0,
+    } as unknown as EdgeProps<Edge<RuntimeGraphEdgeData>>;
+
+    const { container } = render(
+      <ReactFlowProvider>
+        <svg>
+          <RuntimeGraphEdge {...props} />
+        </svg>
+      </ReactFlowProvider>,
+    );
+    const path = container.querySelector("path");
+    expect(path).toHaveAttribute("d", "M 0 0 L 80 24 L 200 0");
+    expect(path).toHaveClass("graph-edge-path-focused", "graph-edge-planned");
   });
 });

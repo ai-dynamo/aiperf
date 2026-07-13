@@ -8,6 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { GraphEdge, GraphNode } from "../../domain/architecture";
@@ -16,7 +17,11 @@ import type {
   FlavorOverlay,
 } from "../../domain/graph-derivation";
 import type { LayoutRequest, LayoutResult } from "../atlas/layout";
-import { fitGraphView, GraphCanvas } from "./graph-canvas";
+import {
+  completeNodeDrag,
+  fitGraphView,
+  GraphCanvas,
+} from "./graph-canvas";
 import type { GraphCanvasLayoutService } from "./types";
 
 function createNode(input: {
@@ -27,13 +32,14 @@ function createNode(input: {
   tier: GraphNode["tier"];
   title: string;
   state?: GraphNode["status"]["state"];
+  childIds?: string[];
 }): GraphNode {
   return {
     audience: {
       autoExpandDepth: { developer: 2, executive: 1, maintainer: 3 },
       visibility: ["executive", "developer", "maintainer"],
     },
-    childIds: [],
+    childIds: input.childIds ?? [],
     evidence: [{ path: "AGENTS.md" }],
     flavors: ["native_http"],
     footnotes: [],
@@ -87,6 +93,7 @@ const visibleNodes: GraphNode[] = [
     title: "Python control",
   }),
   createNode({
+    childIds: ["node.transport"],
     id: "node.runner",
     owner: "rust",
     ports: [
@@ -339,5 +346,169 @@ describe("graph canvas", () => {
     expect(screen.getByRole("status", { name: "Graph layout status" })).toHaveTextContent(
       "worker unavailable",
     );
+  });
+
+  it("enables dragging and emits a typed manual position on completion", async () => {
+    const onNodeDragComplete = vi.fn();
+    render(
+      <GraphCanvas
+        audience="developer"
+        focusedEntityId={null}
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(layoutResult)}
+        neighborhood={{ downstreamNodeIds: [], upstreamNodeIds: [] }}
+        onFocusEntity={vi.fn()}
+        onNodeDragComplete={onNodeDragComplete}
+        overlay={overlay}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    await screen.findByTestId("graph-node-node.runner");
+    expect(screen.getByTestId("rf__node-node.runner")).toHaveClass("draggable");
+
+    completeNodeDrag(
+      { id: "node.runner", position: { x: 412, y: 144 } },
+      onNodeDragComplete,
+    );
+    expect(onNodeDragComplete).toHaveBeenCalledWith({
+      nodeId: "node.runner",
+      x: 412,
+      y: 144,
+    });
+  });
+
+  it("exposes keyboard-operable expansion and trace controls inside nodes", async () => {
+    const user = userEvent.setup();
+    const onCollapseNode = vi.fn();
+    const onTraceModeChange = vi.fn();
+    render(
+      <GraphCanvas
+        audience="developer"
+        expandedNodeIds={["node.runner"]}
+        focusedEntityId="node.runner"
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(layoutResult)}
+        neighborhood={neighborhood}
+        onCollapseNode={onCollapseNode}
+        onFocusEntity={vi.fn()}
+        onTraceModeChange={onTraceModeChange}
+        overlay={overlay}
+        traceMode="upstream"
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    await screen.findByTestId("graph-node-node.runner");
+    const runner = within(screen.getByTestId("graph-node-node.runner"));
+    const collapse = runner.getByLabelText("Collapse Runner core");
+    const downstream = runner.getByLabelText(
+      "Trace downstream from Runner core",
+    );
+
+    collapse.focus();
+    await user.keyboard("{Enter}");
+    downstream.focus();
+    await user.keyboard("{Enter}");
+
+    expect(onCollapseNode).toHaveBeenCalledWith("node.runner");
+    expect(onTraceModeChange).toHaveBeenCalledWith(
+      "node.runner",
+      "downstream",
+    );
+  });
+
+  it("renders breadcrumb focus context with typed focus callbacks", async () => {
+    const onFocusBreadcrumb = vi.fn();
+    render(
+      <GraphCanvas
+        audience="developer"
+        breadcrumbNodeIds={["node.python", "node.runner"]}
+        focusedEntityId="node.runner"
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(layoutResult)}
+        neighborhood={neighborhood}
+        onFocusBreadcrumb={onFocusBreadcrumb}
+        onFocusEntity={vi.fn()}
+        overlay={overlay}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    const breadcrumbs = await screen.findByRole("navigation", {
+      name: "Graph focus context",
+    });
+    const python = within(breadcrumbs).getByRole("button", {
+      name: "Python control",
+    });
+    expect(
+      within(breadcrumbs).getByRole("button", { name: "Runner core" }),
+    ).toHaveAttribute("aria-current", "location");
+
+    fireEvent.click(python);
+    expect(onFocusBreadcrumb).toHaveBeenCalledWith("node.python");
+  });
+
+  it("preserves unaffected positions and exposes relayout and pulse states", async () => {
+    const partialLayout: LayoutResult = {
+      ...layoutResult,
+      partialRelayout: {
+        preservedManualNodeIds: ["node.python"],
+        relaidOutNodeIds: ["node.runner"],
+      },
+      positions: layoutResult.positions.map((position) =>
+        position.id === "node.python"
+          ? { ...position, x: 777, y: 555 }
+          : position,
+      ),
+    };
+    render(
+      <GraphCanvas
+        activePulseNodeIds={["node.runner"]}
+        audience="developer"
+        completedPulseNodeIds={["node.python"]}
+        focusedEntityId="node.runner"
+        layoutRequest={createLayoutRequest()}
+        layoutService={createLayoutService(partialLayout)}
+        neighborhood={neighborhood}
+        onFocusEntity={vi.fn()}
+        overlay={overlay}
+        visibleEdges={visibleEdges}
+        visibleNodes={visibleNodes}
+      />,
+    );
+
+    await screen.findByTestId("graph-node-node.runner");
+    expect(screen.getByTestId("graph-node-node.python")).toHaveAttribute(
+      "data-relayout-state",
+      "preserved",
+    );
+    expect(screen.getByTestId("graph-node-node.python")).toHaveAttribute(
+      "data-pulse-state",
+      "completed",
+    );
+    expect(screen.getByTestId("graph-node-node.runner")).toHaveAttribute(
+      "data-relayout-state",
+      "relaid-out",
+    );
+    expect(screen.getByTestId("graph-node-node.runner")).toHaveAttribute(
+      "data-pulse-state",
+      "active",
+    );
+    expect(screen.getByTestId("graph-node-node.runner")).toHaveClass(
+      "graph-node",
+      "graph-node-tier-1",
+      "graph-node-flavor-shared",
+      "graph-node-path-focused",
+      "graph-node-built",
+      "graph-node-pulse-active",
+      "graph-node-relayout-relaid-out",
+    );
+    expect(screen.getByTestId("rf__node-node.python")).toHaveStyle({
+      transform: "translate(777px,555px)",
+    });
   });
 });

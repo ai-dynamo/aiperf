@@ -4,7 +4,7 @@
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createAppRouter } from "./router";
 
@@ -138,5 +138,67 @@ describe("graph scene routes", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("graph-node-node.clock-seam")).not.toBeInTheDocument();
     });
+  });
+
+  it("applies trace mode controls to visible path states", async () => {
+    const user = userEvent.setup();
+    renderAtlas("/scenes/metrics-telemetry?audience=developer");
+
+    const metricsNode = await screen.findByTestId("graph-node-node.metrics-telemetry");
+    await user.click(
+      within(metricsNode).getByText("upstream"),
+    );
+
+    expect(screen.getByTestId("graph-node-node.runtime-composition")).toHaveAttribute(
+      "data-path-state",
+      "upstream",
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Show graph accessibility outline" }),
+    );
+    const outline = screen.getByRole("tree", { name: "Visible graph outline" });
+    const metricsItem = within(outline).getByRole("listitem", {
+      name: "Node Metrics accumulator and telemetry producers",
+    });
+    await user.click(within(metricsItem).getByRole("button", { name: "Isolate" }));
+
+    expect(screen.getByTestId("graph-node-node.metrics-telemetry")).toHaveAttribute(
+      "data-path-state",
+      "focused",
+    );
+    expect(screen.getByTestId("graph-node-node.runtime-composition")).toHaveAttribute(
+      "data-path-state",
+      "default",
+    );
+  });
+
+  it("renders pulse controls and reduced-motion overlay semantics", async () => {
+    const matchMedia = vi.fn().mockReturnValue({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: matchMedia,
+    });
+    renderAtlas("/scenes/metrics-telemetry?audience=developer");
+
+    expect(
+      await screen.findByRole("region", { name: "Pulse edge overlay" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Pulse channels legend" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("pulse-active-particle")).toHaveAttribute(
+      "data-motion",
+      "reduced",
+    );
   });
 });

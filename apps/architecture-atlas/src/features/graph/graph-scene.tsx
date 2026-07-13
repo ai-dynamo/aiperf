@@ -4,6 +4,7 @@
 import {
   useEffect,
   useMemo,
+  useState,
   useRef,
 } from "react";
 
@@ -17,7 +18,11 @@ import {
 } from "../../domain/graph-derivation";
 import { canonicalGraphState, type GraphState } from "../../domain/graph-state";
 import {
+  DEFAULT_TIMELINE_PLAYBACK,
   buildFlowTimeline,
+  pauseTimeline,
+  playTimeline,
+  scrubTimeline,
   resolveTimelineSemanticState,
 } from "../../domain/flow-timeline";
 import {
@@ -27,6 +32,8 @@ import {
 import { AccessibilityOutline } from "./accessibility-outline";
 import { EvidenceDrawer, type EvidenceDrawerEntity } from "./evidence-drawer";
 import { GraphCanvas } from "./graph-canvas";
+import { PulseControls } from "./pulse-controls";
+import { PulseLayer } from "./pulse-layer";
 import type { GraphFitViewCommand } from "./types";
 
 interface GraphSceneProps {
@@ -67,7 +74,10 @@ function buildGraphLayoutRequest(input: {
     .sort((left, right) => left.id.localeCompare(right.id))
     .map((edge) => ({ from: edge.source.nodeId, id: edge.id, to: edge.target.nodeId }));
 
-  const relayoutNodeIds = nodes.map(({ id }) => id);
+  const manualNodeIds = new Set(input.nodePositions.map(({ nodeId }) => nodeId));
+  const relayoutNodeIds = nodes
+    .map(({ id }) => id)
+    .filter((nodeId) => !manualNodeIds.has(nodeId));
   const manualPositions = input.nodePositions
     .filter(({ nodeId }) => nodeIds.has(nodeId))
     .map(({ nodeId, x, y }) => ({ id: nodeId, x, y }));
@@ -101,6 +111,60 @@ function buildGraphLayoutRequest(input: {
     perspective: "ownership",
     version: 1,
   };
+}
+
+function replaceNodePosition(
+  nodePositions: GraphState["nodePositions"],
+  nextPosition: { nodeId: string; x: number; y: number },
+): GraphState["nodePositions"] {
+  const byId = new Map(nodePositions.map((position) => [position.nodeId, position]));
+  byId.set(nextPosition.nodeId, nextPosition);
+  return [...byId.values()];
+}
+
+function replaceEdgeWaypoints(
+  edgeWaypoints: GraphState["edgeWaypoints"],
+  nextWaypoints: { edgeId: string; points: { x: number; y: number }[] },
+): GraphState["edgeWaypoints"] {
+  if (nextWaypoints.points.length === 0) {
+    return edgeWaypoints.filter(({ edgeId }) => edgeId !== nextWaypoints.edgeId);
+  }
+  const byId = new Map(edgeWaypoints.map((waypoint) => [waypoint.edgeId, waypoint]));
+  byId.set(nextWaypoints.edgeId, nextWaypoints);
+  return [...byId.values()];
+}
+
+function collectDescendantNodeIds(
+  rootNodeId: string,
+  nodes: readonly GraphNode[],
+): Set<string> {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const descendants = new Set<string>();
+  const pending = [rootNodeId];
+  while (pending.length > 0) {
+    const nodeId = pending.pop();
+    if (!nodeId) {
+      continue;
+    }
+    const node = nodeById.get(nodeId);
+    if (!node) {
+      continue;
+    }
+    for (const childId of node.childIds) {
+      if (!descendants.has(childId)) {
+        descendants.add(childId);
+        pending.push(childId);
+      }
+    }
+  }
+  return descendants;
+}
+
+function reducedMotionPreferred(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function createEvidenceEntity(
@@ -153,6 +217,7 @@ export function GraphScene({
   onGraphStateChange,
 }: GraphSceneProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [timelinePlayback, setTimelinePlayback] = useState(DEFAULT_TIMELINE_PLAYBACK);
 
   useEffect(() => {
     searchInputRef.current = document.getElementById(
@@ -189,6 +254,21 @@ export function GraphScene({
   const timelineState = useMemo(
     () => resolveTimelineSemanticState(timeline, state.timelinePosition),
     [state.timelinePosition, timeline],
+  );
+  const reducedMotion = useMemo(() => reducedMotionPreferred(), []);
+  const activePulseNodeIds = useMemo(() => {
+    const activeEvent = timelineState.activeEvent.reference;
+    return activeEvent.kind === "node" ? [activeEvent.nodeId] : [];
+  }, [timelineState.activeEvent.reference]);
+  const completedPulseNodeIds = useMemo(
+    () =>
+      timelineState.completedEvents
+        .map((event) => event.reference)
+        .filter((reference): reference is { kind: "node"; nodeId: string; portId: string } =>
+          reference.kind === "node"
+        )
+        .map((reference) => reference.nodeId),
+    [timelineState.completedEvents],
   );
 
   const evidenceEntity = useMemo(
@@ -231,6 +311,71 @@ export function GraphScene({
       }),
     );
   };
+  const edgeWaypointsById = useMemo(
+    () => new Map(state.edgeWaypoints.map((waypoint) => [waypoint.edgeId, waypoint.points])),
+    [state.edgeWaypoints],
+  );
+  const traceNodeId =
+    state.traceMode !== "none" && state.focusedEntityId?.startsWith("node.")
+      ? state.focusedEntityId
+      : null;
+  const traceNeighborhood = useMemo(() => {
+    if (!traceNodeId || state.traceMode === "none") {
+      return derivation.neighborhood;
+    }
+    if (state.traceMode === "upstream") {
+      return {
+        downstreamNodeIds: [] as string[],
+        upstreamNodeIds: derivation.neighborhood.upstreamNodeIds,
+      };
+    }
+    if (state.traceMode === "downstream") {
+      return {
+        downstreamNodeIds: derivation.neighborhood.downstreamNodeIds,
+        upstreamNodeIds: [] as string[],
+      };
+    }
+    return {
+      downstreamNodeIds: [] as string[],
+      upstreamNodeIds: [] as string[],
+    };
+  }, [derivation.neighborhood.downstreamNodeIds, derivation.neighborhood.upstreamNodeIds, state.traceMode, traceNodeId]);
+
+  const handleCollapseNode = (nodeId: string) => {
+    const descendants = collectDescendantNodeIds(nodeId, architectureCatalog.graphNodes);
+    descendants.add(nodeId);
+    const collapsedExpandedNodeIds = collapseExpandedNode(
+      architectureCatalog,
+      state.expandedNodeIds,
+      nodeId,
+    );
+    const descendantNodeIds = descendants;
+    const descendantEdgeIds = new Set(
+      architectureCatalog.graphEdges
+        .filter(
+          (edge) =>
+            descendantNodeIds.has(edge.source.nodeId) || descendantNodeIds.has(edge.target.nodeId),
+        )
+        .map((edge) => edge.id),
+    );
+    updateState({
+      edgeWaypoints: state.edgeWaypoints.filter(
+        ({ edgeId }) => !descendantEdgeIds.has(edgeId),
+      ),
+      expandedNodeIds: collapsedExpandedNodeIds,
+      focusedEntityId:
+        state.focusedEntityId && descendantNodeIds.has(state.focusedEntityId)
+          ? nodeId
+          : state.focusedEntityId,
+      nodePositions: state.nodePositions.filter(
+        ({ nodeId: positionNodeId }) => !descendantNodeIds.has(positionNodeId),
+      ),
+      traceMode:
+        state.focusedEntityId && descendantNodeIds.has(state.focusedEntityId)
+          ? "none"
+          : state.traceMode,
+    });
+  };
 
   return (
     <section aria-label={`${derivation.scene.title} scene`} className="graph-scene-route">
@@ -239,32 +384,73 @@ export function GraphScene({
         {derivation.visibleNodes.length} nodes, {derivation.visibleEdges.length} edges, timeline step{" "}
         {timelineState.eventIndex + 1}: {timelineState.activeEvent.label}
       </p>
-      <label>
-        <span>Timeline position</span>
-        <input
-          aria-label="Timeline position"
-          max={1}
-          min={0}
-          onChange={(event) =>
-            updateState({ timelinePosition: Number(event.currentTarget.value) })
-          }
-          step={0.01}
-          type="range"
-          value={state.timelinePosition}
-        />
-      </label>
+      <PulseControls
+        isPlaying={timelinePlayback.isPlaying}
+        onPause={() => setTimelinePlayback(pauseTimeline)}
+        onPlay={() => setTimelinePlayback(playTimeline)}
+        onRestart={() => {
+          setTimelinePlayback(pauseTimeline);
+          updateState({ timelinePosition: 0 });
+        }}
+        onScrub={(position) => {
+          setTimelinePlayback((current) => scrubTimeline(current, position));
+          updateState({ timelinePosition: position });
+        }}
+        reducedMotion={reducedMotion}
+        semanticState={timelineState}
+        timeline={timeline}
+      />
       <GraphCanvas
+        activePulseNodeIds={activePulseNodeIds}
         audience={audience}
+        breadcrumbNodeIds={derivation.breadcrumbNodeIds}
+        completedPulseNodeIds={completedPulseNodeIds}
+        expandedNodeIds={state.expandedNodeIds}
+        edgeWaypoints={edgeWaypointsById}
         fitViewCommand={fitViewCommand ?? undefined}
         focusedEntityId={state.focusedEntityId}
         layoutRequest={layoutRequest}
         layoutService={{ layout: layoutAtlas }}
-        neighborhood={derivation.neighborhood}
+        neighborhood={traceNeighborhood}
+        onCollapseNode={handleCollapseNode}
+        onExpandNode={(nodeId) =>
+          updateState({
+            expandedNodeIds: toggleExpandedNode(state.expandedNodeIds, nodeId),
+          })
+        }
         onFitViewComplete={onFitViewComplete}
-        onFocusEntity={(entityId) => updateState({ focusedEntityId: entityId })}
+        onFocusBreadcrumb={(nodeId) => updateState({ focusedEntityId: nodeId, traceMode: "none" })}
+        onFocusEntity={(entityId) => updateState({ focusedEntityId: entityId, traceMode: "none" })}
+        onNodeDragComplete={(position) =>
+          updateState({
+            nodePositions: replaceNodePosition(state.nodePositions, position),
+          })
+        }
+        onTraceModeChange={(nodeId, mode) =>
+          updateState({
+            focusedEntityId: nodeId,
+            traceMode: mode,
+          })
+        }
+        onWaypointsChange={(update) =>
+          updateState({
+            edgeWaypoints: replaceEdgeWaypoints(state.edgeWaypoints, update),
+          })
+        }
+        onWaypointsReset={(edgeId) =>
+          updateState({
+            edgeWaypoints: state.edgeWaypoints.filter((waypoint) => waypoint.edgeId !== edgeId),
+          })
+        }
         overlay={derivation.overlay}
+        traceMode={state.traceMode}
         visibleEdges={derivation.visibleEdges}
         visibleNodes={derivation.visibleNodes}
+      />
+      <PulseLayer
+        reducedMotion={reducedMotion}
+        semanticState={timelineState}
+        visibleEdges={derivation.visibleEdges}
       />
 
       <EvidenceDrawer
@@ -283,27 +469,26 @@ export function GraphScene({
         audience={audience}
         expandedNodeIds={derivation.expandedNodeIds}
         onCollapseNode={(nodeId) =>
-          updateState({
-            expandedNodeIds: collapseExpandedNode(
-              architectureCatalog,
-              state.expandedNodeIds,
-              nodeId,
-            ),
-          })
+          handleCollapseNode(nodeId)
         }
         onExpandNode={(nodeId) =>
           updateState({
             expandedNodeIds: toggleExpandedNode(state.expandedNodeIds, nodeId),
           })
         }
-        onInspectEntity={(entityId) => updateState({ focusedEntityId: entityId })}
+        onInspectEntity={(entityId) =>
+          updateState({ focusedEntityId: entityId, traceMode: "none" })
+        }
         onIsolateEntity={(entityId) =>
           updateState({
             expandedNodeIds: [],
             focusedEntityId: entityId,
+            traceMode: entityId.startsWith("node.") ? "isolate" : "none",
           })
         }
-        onSelectEntity={(entityId) => updateState({ focusedEntityId: entityId })}
+        onSelectEntity={(entityId) =>
+          updateState({ focusedEntityId: entityId, traceMode: "none" })
+        }
         visibleEdges={derivation.visibleEdges}
         visibleNodes={derivation.visibleNodes}
       />

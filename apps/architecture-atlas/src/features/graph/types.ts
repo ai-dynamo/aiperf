@@ -17,6 +17,15 @@ import type {
 
 export type GraphPathState = "focused" | "upstream" | "downstream" | "default";
 export type GraphFlavorClass = "shared" | "primary-only" | "compare-only";
+export type GraphTraceMode = "none" | "upstream" | "downstream" | "isolate";
+export type GraphPulseState = "idle" | "active" | "completed";
+export type GraphRelayoutState = "canonical" | "preserved" | "relaid-out";
+
+export interface GraphManualNodePosition {
+  nodeId: string;
+  x: number;
+  y: number;
+}
 
 export interface GraphFitViewCommand {
   requestId: number;
@@ -28,15 +37,28 @@ export interface GraphCanvasLayoutService {
 }
 
 export interface GraphCanvasProps {
+  activePulseNodeIds?: readonly string[];
   audience: AudienceLevel;
+  breadcrumbNodeIds?: readonly string[];
+  completedPulseNodeIds?: readonly string[];
+  expandedNodeIds?: readonly string[];
+  edgeWaypoints?: ReadonlyMap<string, { x: number; y: number }[]>;
   focusedEntityId: string | null;
   layoutRequest: LayoutRequest;
   layoutService: GraphCanvasLayoutService;
   neighborhood: DirectedNeighborhood;
   fitViewCommand?: GraphFitViewCommand;
+  onCollapseNode?(nodeId: string): void;
+  onExpandNode?(nodeId: string): void;
   onFitViewComplete?(requestId: number): void;
+  onFocusBreadcrumb?(nodeId: string): void;
   onFocusEntity(entityId: string): void;
+  onNodeDragComplete?(position: GraphManualNodePosition): void;
+  onTraceModeChange?(nodeId: string, mode: GraphTraceMode): void;
+  onWaypointsChange?(update: { edgeId: string; points: { x: number; y: number }[] }): void;
+  onWaypointsReset?(edgeId: string): void;
   overlay: FlavorOverlay;
+  traceMode?: GraphTraceMode;
   visibleEdges: readonly GraphEdge[];
   visibleNodes: readonly GraphNode[];
 }

@@ -123,18 +123,21 @@ export function AppShell({
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell flight-deck-shell">
       <a className="skip-link" href="#atlas-content">
         Skip to content
       </a>
 
-      <aside className="side-rail" data-collapsed={sceneRailCollapsed || undefined}>
+      <aside
+        className="side-rail scene-rail"
+        data-collapsed={sceneRailCollapsed || undefined}
+      >
         <div className="product-mark">
           <span className="product-kicker">AIPerf runtime atlas</span>
           <span className="product-name">Architecture atlas</span>
         </div>
         {sceneRailCollapsed ? null : (
-          <nav aria-label="Runtime scenes" className="wide-navigation">
+          <nav aria-label="Runtime scenes" className="wide-navigation scene-rail-nav">
             <SceneRailLinks
               audience={audience}
               compareFlavor={compareFlavor}
@@ -144,7 +147,7 @@ export function AppShell({
             />
           </nav>
         )}
-        <div className="rail-status">
+        <div className="rail-status legend-strip">
           <span aria-hidden="true" className="status-indicator" />
           <span>Built</span>
           <span aria-hidden="true" className="utility-divider" />
@@ -152,8 +155,8 @@ export function AppShell({
         </div>
       </aside>
 
-      <header className="utility-rail">
-        <div className="utility-context" aria-label="Current scene">
+      <header className="utility-rail command-bar">
+        <div className="utility-context scene-context" aria-label="Current scene">
           <span>
             {sceneRoutes.find(({ path }) => path === activeScenePath)?.label ??
               routeCapabilities[0].label}
@@ -162,14 +165,14 @@ export function AppShell({
           <span>Graph-first runtime path</span>
         </div>
 
-        <div className="utility-controls">
+        <div className="utility-controls command-controls">
           <form
             aria-label="Compact graph command bar"
-            className="global-search"
+            className="global-search command-search"
             onSubmit={handleGlobalSearch}
             role="search"
           >
-            <label>
+            <label className="command-field">
               <span>Graph search</span>
               <input
                 aria-label="Graph search"
@@ -181,7 +184,7 @@ export function AppShell({
               />
             </label>
           </form>
-          <label className="audience-control">
+          <label className="audience-control command-field">
             <span>Audience</span>
             <select
               aria-label="Audience"
@@ -193,7 +196,7 @@ export function AppShell({
               <option value="maintainer">Maintainer</option>
             </select>
           </label>
-          <label className="audience-control">
+          <label className="audience-control command-field">
             <span>Primary flavor</span>
             <select
               aria-label="Primary flavor"
@@ -212,7 +215,7 @@ export function AppShell({
               ))}
             </select>
           </label>
-          <label className="audience-control">
+          <label className="audience-control command-field">
             <span>Compare flavor</span>
             <select
               aria-label="Compare flavor"
@@ -236,16 +239,21 @@ export function AppShell({
               ))}
             </select>
           </label>
-          <button onClick={onFitGraph} type="button">
+          <button className="command-action" onClick={onFitGraph} type="button">
             Fit graph
           </button>
-          <button onClick={onResetGraph} type="button">
+          <button className="command-action" onClick={onResetGraph} type="button">
             Reset graph
           </button>
-          <button onClick={onShareGraphState} type="button">
+          <button
+            className="command-action command-action-share"
+            onClick={onShareGraphState}
+            type="button"
+          >
             Share graph state
           </button>
           <button
+            className="command-action command-action-toggle"
             onClick={() => setSceneRailCollapsed((collapsed) => !collapsed)}
             type="button"
           >
@@ -255,12 +263,16 @@ export function AppShell({
       </header>
 
       {sharedStateNotice ? (
-        <p aria-label="Graph state recovery notice" role="status">
+        <p
+          aria-label="Graph state recovery notice"
+          className="graph-state-notice"
+          role="status"
+        >
           {sharedStateNotice}
         </p>
       ) : null}
 
-      <main className="content-frame" id="atlas-content" tabIndex={-1}>
+      <main className="content-frame operational-content" id="atlas-content" tabIndex={-1}>
         {children}
       </main>
     </div>

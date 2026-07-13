@@ -9,6 +9,7 @@ import { architectureIdSchema, executionFlavorSchema, type ExecutionFlavor } fro
 
 export const GRAPH_STATE_VERSION = 1 as const;
 export const GRAPH_STATE_STORAGE_KEY = "aiperf-atlas:graph-state:v1";
+const graphTraceModeSchema = z.enum(["none", "upstream", "downstream", "isolate"]);
 
 const coordinateSchema = z
   .object({
@@ -41,6 +42,7 @@ export const graphStateSchema = z
     compareFlavor: executionFlavorSchema.nullable(),
     expandedNodeIds: z.array(architectureIdSchema),
     focusedEntityId: architectureIdSchema.nullable(),
+    traceMode: graphTraceModeSchema,
     nodePositions: z.array(nodePositionSchema),
     edgeWaypoints: z.array(edgeWaypointSchema),
     timelinePosition: z.number().finite().min(0),
@@ -89,6 +91,7 @@ export function canonicalGraphState(input: {
   compareFlavor?: ExecutionFlavor | null;
   expandedNodeIds?: readonly string[];
   focusedEntityId?: string | null;
+  traceMode?: z.infer<typeof graphTraceModeSchema>;
   nodePositions?: readonly NodePositionOverride[];
   edgeWaypoints?: readonly EdgeWaypointOverride[];
   timelinePosition?: number;
@@ -101,6 +104,7 @@ export function canonicalGraphState(input: {
     compareFlavor: input.compareFlavor ?? null,
     expandedNodeIds: sortedUniqueIds(input.expandedNodeIds ?? []),
     focusedEntityId: input.focusedEntityId ?? null,
+    traceMode: input.traceMode ?? "none",
     nodePositions: stableNodePositions(input.nodePositions ?? []),
     edgeWaypoints: stableEdgeWaypoints(input.edgeWaypoints ?? []),
     timelinePosition: normalizeTimelinePosition(input.timelinePosition),
@@ -322,6 +326,12 @@ function sanitizeGraphState(
     state.focusedEntityId !== null &&
     !canonical.nodeIds.has(state.focusedEntityId) &&
     !canonical.edgeIds.has(state.focusedEntityId)
+  ) {
+    return null;
+  }
+  if (
+    state.traceMode !== "none" &&
+    (state.focusedEntityId === null || !canonical.nodeIds.has(state.focusedEntityId))
   ) {
     return null;
   }

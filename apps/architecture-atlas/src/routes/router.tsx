@@ -35,6 +35,7 @@ import {
   canonicalGraphState,
   decodeGraphStateFromUrl,
   encodeGraphStateForUrl,
+  resetManualLayoutState,
   resolveGraphState,
   writeStoredGraphState,
   type CanonicalGraphStateDomain,
@@ -165,12 +166,9 @@ function RootRouteComponent() {
   });
   const encodedState = encodeGraphStateForUrl(effectiveGraphState);
   const resetEncodedState = encodeGraphStateForUrl(
-    canonicalGraphState({
-      audience,
-      compareFlavor,
-      primaryFlavor,
-      sceneId: routeSceneId,
-    }),
+    resetManualLayoutState(
+      effectiveGraphState,
+    ),
   );
   const legacyRedirect = legacyGuidedRedirects[pathname as keyof typeof legacyGuidedRedirects];
 
@@ -300,6 +298,21 @@ function RootRouteComponent() {
         if (!isSceneRoutePath) {
           return;
         }
+        const shareUrl = new URL(window.location.href);
+        shareUrl.searchParams.set("audience", audience);
+        shareUrl.searchParams.set("primary", primaryFlavor);
+        if (compareFlavor) {
+          shareUrl.searchParams.set("compare", compareFlavor);
+        } else {
+          shareUrl.searchParams.delete("compare");
+        }
+        if (search.q) {
+          shareUrl.searchParams.set("q", search.q);
+        } else {
+          shareUrl.searchParams.delete("q");
+        }
+        shareUrl.searchParams.set("s", encodedState);
+        void navigator.clipboard?.writeText(shareUrl.toString()).catch(() => undefined);
         void navigate({
           replace: true,
           to: pathname as AtlasRoutePath,
