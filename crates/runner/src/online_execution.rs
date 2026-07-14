@@ -938,9 +938,19 @@ pub(crate) fn lower_scheduled(
     let tokenizer =
         lower_tokenizer_for_endpoint(&workload.tokenizer, tokenizers, endpoint_descriptor)?;
     let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    // The rankings composer synthesizes text query/passage rows and is correct
+    // only for text-input rerankers. `image_retrieval` also advertises a
+    // `Rankings` output but consumes image input, so keying solely on the output
+    // modality would misroute it to the text composer and leave every turn
+    // imageless (the request builder then rejects it). Restrict the rankings
+    // composer to endpoints whose input is not image-based so image-input
+    // reranking flows through the media-generating synthetic composer.
     let rankings = endpoint_descriptor
         .output_modalities
-        .contains(&Modality::Rankings);
+        .contains(&Modality::Rankings)
+        && !endpoint_descriptor
+            .input_modalities
+            .contains(&Modality::Image);
     let prepare_context = RunnerDatasetInputContext {
         registry: context.product_registry(),
         models: &run.models,
@@ -1101,6 +1111,7 @@ fn build_common_plan(
             records_path: run.artifacts.records_path.clone(),
             raw_path: run.artifacts.raw_path.clone(),
             outputs_path: run.artifacts.outputs_path.clone(),
+            inputs_path: run.artifacts.inputs_path.clone(),
             trace: run.artifacts.trace,
         },
         sidecars,
