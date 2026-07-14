@@ -99,7 +99,7 @@ impl RequestExecutor for FailingOriginBackend {
         unreachable!("origin failure prevents dispatch")
     }
 
-    async fn execute_turn_measured(
+    async fn execute_measured(
         &self,
         _turn: PreparedTurn,
         _context: MeasuredContext,

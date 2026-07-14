@@ -3725,7 +3725,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
         let turn = PreparedTurn::from_turn(turn, &self.model);
         match self
             .execution_backend
-            .execute_turn_measured(turn, context, on_first_token)
+            .execute_measured(turn, context, on_first_token)
             .await
         {
             Ok(MeasuredOutcome {
@@ -4068,7 +4068,7 @@ mod tests {
     }
 
     /// Drive one request through a worker observer exactly as
-    /// `TransportSink::dispatch_prepared_turn_measured` does: register begin-known
+    /// `TransportSink::dispatch_measured` does: register begin-known
     /// metadata (no `request_index` — the worker uses a dense-local arrival slot),
     /// arrival, admit, per-token arrivals, terminal, and the authoritative
     /// transport/usage response.

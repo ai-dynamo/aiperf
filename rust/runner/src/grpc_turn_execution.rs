@@ -252,7 +252,7 @@ impl RequestExecutor for ThreadPerCoreGrpcExecutionBackend {
         Ok(())
     }
 
-    async fn execute_turn_measured(
+    async fn execute_measured(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -527,7 +527,7 @@ async fn execute_worker_command(
     let reply = match &worker_observer {
         Some(observer) => {
             let result = sink
-                .dispatch_prepared_turn_measured(observer, turn, &context, &on_first_token)
+                .dispatch_measured(observer, turn, &context, &on_first_token)
                 .await;
             let live_record = context
                 .wants_live_record

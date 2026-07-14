@@ -355,7 +355,7 @@ pub trait RequestExecutor {
     /// Configure worker-local metric accumulation.
     ///
     /// Called once after [`set_run_origin`](Self::set_run_origin) and before any
-    /// [`execute_turn_measured`](Self::execute_turn_measured). Builds one
+    /// [`execute_measured`](Self::execute_measured). Builds one
     /// [`NativeMetricsObserver`] per execution worker from the single resolved
     /// [`MetricsConfig`] so every worker accumulator shares an identical
     /// configuration. Backends that do not support worker-local measurement
@@ -368,7 +368,7 @@ pub trait RequestExecutor {
 
     /// Execute one prepared request while accumulating its metrics into the
     /// worker-local observer (no per-token replay across the coordinator).
-    async fn execute_turn_measured(
+    async fn execute_measured(
         &self,
         _turn: PreparedTurn,
         _context: MeasuredContext,
@@ -380,7 +380,7 @@ pub trait RequestExecutor {
     }
 
     /// Worker-local measured execution with live response-frame forwarding.
-    async fn execute_turn_measured_streaming(
+    async fn execute_measured_streaming(
         &self,
         _turn: PreparedTurn,
         _context: MeasuredContext,
@@ -1152,7 +1152,7 @@ impl RequestExecutor for TransportSink {
         Ok(())
     }
 
-    async fn execute_turn_measured(
+    async fn execute_measured(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -1161,7 +1161,7 @@ impl RequestExecutor for TransportSink {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
-            .dispatch_prepared_turn_measured(&observer, turn, &context, on_first_token, None)
+            .dispatch_measured(&observer, turn, &context, on_first_token, None)
             .await?;
         let live_record = context
             .wants_live_record
@@ -1173,7 +1173,7 @@ impl RequestExecutor for TransportSink {
         })
     }
 
-    async fn execute_turn_measured_streaming(
+    async fn execute_measured_streaming(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -1183,7 +1183,7 @@ impl RequestExecutor for TransportSink {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
-            .dispatch_prepared_turn_measured(
+            .dispatch_measured(
                 &observer,
                 turn,
                 &context,
@@ -1226,7 +1226,7 @@ impl TransportSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
         let turn = PreparedTurn::from_turn(turn, &self.model);
-        self.dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
+        self.dispatch_collect(turn, observer, on_first_token)
             .await
     }
 
@@ -1240,7 +1240,7 @@ impl TransportSink {
         responses: &dyn TurnResponseObserver,
     ) -> Result<DispatchResult> {
         let turn = PreparedTurn::from_turn(turn, &self.model);
-        self.dispatch_prepared_turn_collect_record_with_response_observer(
+        self.dispatch_collect_with_observer(
             turn,
             observer,
             on_first_token,
@@ -1252,13 +1252,13 @@ impl TransportSink {
     /// Execute an owned scheduler-free HTTP command and retain the exact wire
     /// exchange. Execution-placement adapters use this method on their local
     /// worker reactor while the ordinary direct path calls it in place.
-    pub async fn dispatch_prepared_turn_collect_record(
+    pub async fn dispatch_collect(
         &self,
         turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
-        self.dispatch_prepared_turn_collect_record_with_response_observer(
+        self.dispatch_collect_with_observer(
             turn,
             observer,
             on_first_token,
@@ -1269,14 +1269,14 @@ impl TransportSink {
 
     /// Execute an owned scheduler-free command while publishing live,
     /// endpoint-normalized response frames.
-    pub async fn dispatch_prepared_turn_collect_record_streaming(
+    pub async fn dispatch_collect_streaming(
         &self,
         turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
     ) -> Result<DispatchResult> {
-        self.dispatch_prepared_turn_collect_record_with_response_observer(
+        self.dispatch_collect_with_observer(
             turn,
             observer,
             on_first_token,
@@ -1306,7 +1306,7 @@ impl TransportSink {
     /// [`RecordIngest`] per request. `phase`, `session_num`, the global
     /// `request_index`, and the credit-issued `admit_ns` are patched onto the
     /// drained record coordinator-side; they are intentionally not set here.
-    pub async fn dispatch_prepared_turn_measured(
+    pub async fn dispatch_measured(
         &self,
         observer: &NativeMetricsObserver,
         turn: PreparedTurn,
@@ -1323,7 +1323,7 @@ impl TransportSink {
             context.requested_output_length,
         );
         let result = self
-            .dispatch_prepared_turn_collect_record_with_response_observer(
+            .dispatch_collect_with_observer(
                 turn,
                 observer,
                 on_first_token,
@@ -1363,7 +1363,7 @@ impl TransportSink {
         result
     }
 
-    async fn dispatch_prepared_turn_collect_record_with_response_observer(
+    async fn dispatch_collect_with_observer(
         &self,
         turn: PreparedTurn,
         observer: &dyn RequestObserver,

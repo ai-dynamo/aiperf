@@ -828,7 +828,7 @@ impl GraphSink<OpenAiChatMessage> for RunnerGraphSink {
         let first_token_emitted = Cell::new(false);
         let first_token_error = RefCell::new(None);
         let collected = transport
-            .dispatch_prepared_turn_collect_record(
+            .dispatch_collect(
                 PreparedTurn {
                     request,
                     model,

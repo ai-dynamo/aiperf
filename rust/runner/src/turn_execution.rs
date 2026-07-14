@@ -334,7 +334,7 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
         Ok(())
     }
 
-    async fn execute_turn_measured(
+    async fn execute_measured(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -349,7 +349,7 @@ impl RequestExecutor for ThreadPerCoreRequestExecutor {
         })
     }
 
-    async fn execute_turn_measured_streaming(
+    async fn execute_measured_streaming(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -676,7 +676,7 @@ async fn execute_worker_command(
     let response_observer = responses.map(WorkerResponseObserver::new);
     let reply = match &worker_observer {
         Some(observer) => {
-            let dispatch = sink.dispatch_prepared_turn_measured(
+            let dispatch = sink.dispatch_measured(
                 observer,
                 turn,
                 &context,
@@ -950,7 +950,7 @@ mod tests {
         });
         let first_tokens = Cell::new(0_usize);
         let outcome = backend
-            .execute_turn_measured_streaming(
+            .execute_measured_streaming(
                 turn,
                 measured_context(),
                 &|_| first_tokens.set(first_tokens.get() + 1),
@@ -1013,7 +1013,7 @@ mod tests {
             observed: first_response.clone(),
         };
         {
-            let dispatch = backend.execute_turn_measured_streaming(
+            let dispatch = backend.execute_measured_streaming(
                 streaming_turn(),
                 measured_context(),
                 &|_| {},

@@ -219,10 +219,10 @@ impl GrpcTransportSink {
 
     /// Register coordinator-known arrival facts on `observer`, dispatch the
     /// prepared gRPC turn into it, and record the terminal transport facts — the
-    /// gRPC twin of [`TransportSink::dispatch_prepared_turn_measured`].
+    /// gRPC twin of [`TransportSink::dispatch_measured`].
     ///
-    /// [`TransportSink::dispatch_prepared_turn_measured`]: crate::http::TransportSink::dispatch_prepared_turn_measured
-    pub async fn dispatch_prepared_turn_measured(
+    /// [`TransportSink::dispatch_measured`]: crate::http::TransportSink::dispatch_measured
+    pub async fn dispatch_measured(
         &self,
         observer: &NativeMetricsObserver,
         turn: PreparedTurn,
@@ -238,7 +238,7 @@ impl GrpcTransportSink {
             context.requested_output_length,
         );
         let result = self
-            .dispatch_prepared_turn_collect_record(turn, observer, on_first_token)
+            .dispatch_collect(turn, observer, on_first_token)
             .await;
         match &result {
             Ok(collected) => {
@@ -270,7 +270,7 @@ impl GrpcTransportSink {
         result
     }
 
-    pub async fn dispatch_prepared_turn_collect_record(
+    pub async fn dispatch_collect(
         &self,
         turn: PreparedTurn,
         observer: &dyn RequestObserver,
@@ -537,7 +537,7 @@ impl RequestExecutor for GrpcTransportSink {
         Ok(())
     }
 
-    async fn execute_turn_measured(
+    async fn execute_measured(
         &self,
         turn: PreparedTurn,
         context: MeasuredContext,
@@ -546,7 +546,7 @@ impl RequestExecutor for GrpcTransportSink {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
-            .dispatch_prepared_turn_measured(&observer, turn, &context, on_first_token)
+            .dispatch_measured(&observer, turn, &context, on_first_token)
             .await?;
         let live_record = context
             .wants_live_record
@@ -572,7 +572,7 @@ impl RequestExecutor for GrpcTransportSink {
 #[async_trait(?Send)]
 impl RequestSink<GrpcRequest> for GrpcTransportSink {
     async fn dispatch(&self, request: GrpcRequest, observer: &dyn RequestObserver) -> Result<()> {
-        self.dispatch_prepared_turn_collect_record(request.into_inner(), observer, &|_| {})
+        self.dispatch_collect(request.into_inner(), observer, &|_| {})
             .await?;
         Ok(())
     }
