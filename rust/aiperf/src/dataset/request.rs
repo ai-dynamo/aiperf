@@ -21,7 +21,7 @@ use crate::endpoints::{
 use bytes::Bytes;
 use serde_json::{Map, Value};
 
-use crate::dataset::body_plan::{BodyPlan, JsonBodyMaterializer};
+use crate::dataset::body_plan::{BodyPlan, JsonBodyMaterializer, materialize_merged_object};
 use crate::dataset::dataset::Dataset;
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::materialize::Overrides;
@@ -356,7 +356,18 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 endpoint.descriptor().supports_streaming,
                 overrides,
             )?;
-            (Bytes::from(serde_json::to_vec(&value)?), effective)
+            // Route structured dispatch through the shared JSON materializer
+            // (endpoint-body-construction stage 2). Byte-identical to
+            // `serde_json::to_vec(&value)`: the merged body object decomposes to
+            // a BodyPlan whose `messages` array is spliced as wires and whose
+            // other fields are literals, materialized in the same order.
+            let body = value
+                .as_object()
+                .ok_or_else(|| {
+                    DatasetError::Validation("endpoint formatter returned a non-object body".into())
+                })
+                .and_then(materialize_merged_object)?;
+            (body, effective)
         };
 
         let endpoint_path = model_endpoint.endpoint.path.clone().or_else(|| {
@@ -448,7 +459,18 @@ impl RequestMaterializer for EndpointRequestMaterializer {
                 supports_streaming,
                 overrides,
             )?;
-            (Bytes::from(serde_json::to_vec(&value)?), effective)
+            // Route structured dispatch through the shared JSON materializer
+            // (endpoint-body-construction stage 2). Byte-identical to
+            // `serde_json::to_vec(&value)`: the merged body object decomposes to
+            // a BodyPlan whose `messages` array is spliced as wires and whose
+            // other fields are literals, materialized in the same order.
+            let body = value
+                .as_object()
+                .ok_or_else(|| {
+                    DatasetError::Validation("endpoint formatter returned a non-object body".into())
+                })
+                .and_then(materialize_merged_object)?;
+            (body, effective)
         };
 
         let endpoint_path = endpoint.config().as_raw().path.clone().or_else(|| {

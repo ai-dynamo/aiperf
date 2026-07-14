@@ -23,6 +23,8 @@
 //! segments through their codec rather than splicing bytes — see
 //! `transport_grpc` — so this materializer is intentionally JSON-only.
 
+use std::borrow::Cow;
+
 use bytes::{BufMut, Bytes, BytesMut};
 use serde_json::Value;
 use smallvec::SmallVec;
@@ -33,8 +35,9 @@ use crate::dataset::materialize::{
 };
 use crate::dataset::segment::{Handle, Payload, SegmentStore};
 
-/// A JSON object field name authored by an endpoint formatter.
-pub type FieldName = &'static str;
+/// A JSON object field name. `Cow` so endpoints pass `&'static str` literals for
+/// free while a runtime decompose can carry owned keys (user `extra_body`).
+pub type FieldName = Cow<'static, str>;
 
 /// The value bound to one [`BodyPlan`] field.
 ///
@@ -100,23 +103,23 @@ impl BodyPlan {
     }
 
     /// Declare an ordered message array of stored segments (`"name":[seg,…]`).
-    pub fn array(self, name: FieldName, handles: impl IntoIterator<Item = Handle>) -> Self {
-        self.push(name, FieldValue::Segments(handles.into_iter().collect()))
+    pub fn array(self, name: impl Into<FieldName>, handles: impl IntoIterator<Item = Handle>) -> Self {
+        self.push(name.into(), FieldValue::Segments(handles.into_iter().collect()))
     }
 
     /// Declare an ordered message array of already-serialized wires — dynamic or
     /// live-continuation content not interned in the frozen store.
-    pub fn wire_array(self, name: FieldName, wires: impl IntoIterator<Item = Bytes>) -> Self {
-        self.push(name, FieldValue::Wires(wires.into_iter().collect()))
+    pub fn wire_array(self, name: impl Into<FieldName>, wires: impl IntoIterator<Item = Bytes>) -> Self {
+        self.push(name.into(), FieldValue::Wires(wires.into_iter().collect()))
     }
 
     /// Declare a single content segment field (`"name":<segment wire>`).
-    pub fn segment(self, name: FieldName, handle: Handle) -> Self {
-        self.push(name, FieldValue::Segment(handle))
+    pub fn segment(self, name: impl Into<FieldName>, handle: Handle) -> Self {
+        self.push(name.into(), FieldValue::Segment(handle))
     }
 
     /// Declare a single content segment field only when present.
-    pub fn opt_segment(self, name: FieldName, handle: Option<Handle>) -> Self {
+    pub fn opt_segment(self, name: impl Into<FieldName>, handle: Option<Handle>) -> Self {
         match handle {
             Some(handle) => self.segment(name, handle),
             None => self,
@@ -124,22 +127,22 @@ impl BodyPlan {
     }
 
     /// Declare a literal endpoint-generated value.
-    pub fn literal(self, name: FieldName, value: Value) -> Self {
-        self.push(name, FieldValue::Literal(value))
+    pub fn literal(self, name: impl Into<FieldName>, value: Value) -> Self {
+        self.push(name.into(), FieldValue::Literal(value))
     }
 
     /// Declare a literal string field.
-    pub fn str(self, name: FieldName, value: impl Into<String>) -> Self {
+    pub fn str(self, name: impl Into<FieldName>, value: impl Into<String>) -> Self {
         self.literal(name, Value::String(value.into()))
     }
 
     /// Declare a literal integer field.
-    pub fn int(self, name: FieldName, value: u32) -> Self {
+    pub fn int(self, name: impl Into<FieldName>, value: u32) -> Self {
         self.literal(name, Value::from(value))
     }
 
     /// Declare a literal boolean field.
-    pub fn bool(self, name: FieldName, value: bool) -> Self {
+    pub fn bool(self, name: impl Into<FieldName>, value: bool) -> Self {
         self.literal(name, Value::Bool(value))
     }
 }
@@ -231,6 +234,38 @@ fn materialize_fields<S: SegmentStore + ?Sized>(
     }
     body.put_u8(b'}');
     Ok(body.freeze())
+}
+
+/// Bridge a fully-merged endpoint body object onto the shared materializer.
+///
+/// Decomposes the final merged request object into a [`BodyPlan`] — any
+/// top-level array-of-objects field (`messages`) becomes spliceable
+/// [`Wires`](FieldValue::Wires), everything else a [`Literal`] — and
+/// materializes it. The result is **byte-identical** to
+/// `serde_json::to_vec(object)` (the materializer preserves field order and
+/// per-value encoding), so structured dispatch routes through the one JSON
+/// materializer while the endpoints are migrated to return a [`BodyPlan`]
+/// directly. Content is serialized exactly once, as before.
+///
+/// [`Literal`]: FieldValue::Literal
+pub fn materialize_merged_object(object: &serde_json::Map<String, Value>) -> Result<Bytes> {
+    let mut plan = BodyPlan::new();
+    for (key, value) in object {
+        let name = Cow::Owned(key.clone());
+        match value.as_array() {
+            Some(elements) if !elements.is_empty() && elements.iter().all(Value::is_object) => {
+                let wires = elements
+                    .iter()
+                    .map(|element| serde_json::to_vec(element).map(Bytes::from))
+                    .collect::<std::result::Result<SmallVec<[Bytes; 1]>, _>>()?;
+                plan = plan.push(name, FieldValue::Wires(wires));
+            }
+            _ => plan = plan.push(name, FieldValue::Literal(value.clone())),
+        }
+    }
+    // No Segment handles are referenced, so the store is never consulted.
+    let store = crate::dataset::segment::InMemorySegmentStore::default();
+    JsonBodyMaterializer::materialize(&plan, &store, &Overrides::new())
 }
 
 /// Append one validated message-object wire as an array element.
@@ -325,6 +360,27 @@ mod tests {
 
         assert_eq!(from_wires, from_segments);
         assert_eq!(from_wires, legacy);
+    }
+
+    #[test]
+    fn merged_object_bridge_is_byte_identical_to_to_vec() {
+        // Covers messages-array splicing plus scalar, nested-object, string-array,
+        // and user extra keys — every top-level shape a formatter emits.
+        let object = serde_json::json!({
+            "messages": [
+                {"role": "system", "content": "S"},
+                {"role": "user", "content": "hi"}
+            ],
+            "model": "m",
+            "stream": true,
+            "max_completion_tokens": 8,
+            "stream_options": {"include_usage": true},
+            "input": ["a", "b"],
+            "user_extra_key": {"nested": [1, 2, 3]}
+        });
+        let map = object.as_object().unwrap();
+        let bridged = materialize_merged_object(map).unwrap();
+        assert_eq!(bridged, Bytes::from(serde_json::to_vec(&object).unwrap()));
     }
 
     #[test]
