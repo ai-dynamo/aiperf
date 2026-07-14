@@ -435,6 +435,24 @@ impl MetricsAccumulator {
         }
     }
 
+    /// Builds an accumulator that owns a pre-populated column store.
+    ///
+    /// The cellular controller uses this at export to wrap the merge of every
+    /// cell's [`ColumnStorePartition`](crate::cellular::shard::ColumnStorePartition)
+    /// into one accumulator for summarization, without replaying records. Run-level
+    /// scalars (network RTT, injected side-channel scalars) are applied afterward
+    /// via [`set_network_rtt_ns`](Self::set_network_rtt_ns) /
+    /// [`inject_scalar`](Self::inject_scalar).
+    pub fn from_column_store(config: MetricsConfig, store: ColumnStore) -> Self {
+        LazyLock::force(&DERIVED_TOPO_ORDER);
+        Self {
+            store,
+            config,
+            network_rtt_ns: None,
+            injected_scalars: FxHashMap::default(),
+        }
+    }
+
     /// Returns the underlying read-only column store for analyzers.
     pub fn column_store(&self) -> &ColumnStore {
         &self.store

@@ -13,12 +13,19 @@ use crate::metrics_core::ingest::{HttpTrace, InferenceDimensions, RecordIngest, 
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::{ExportContext, Phase};
 use rustc_hash::{FxHashMap, FxHasher};
+use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 /// A NaN-sparse numeric column aligned by absolute request index.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// Serialized with a binary serde format only: the NaN absence sentinels are not
+/// representable in JSON, so a wire-shipped [`ColumnStorePartition`] uses a format
+/// that round-trips raw `f64` bits (see `crate::cellular::shard`).
+///
+/// [`ColumnStorePartition`]: crate::cellular::shard::ColumnStorePartition
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NumericColumn {
     values: Vec<f64>,
 }
@@ -181,7 +188,7 @@ pub trait ListMetricBackend: Debug + Default {
 }
 
 /// Exact CSR-style list backend used for ICL distributions and sweep replay.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RaggedSeries {
     values: Vec<f64>,
     offsets: Vec<usize>,
@@ -435,6 +442,41 @@ where
     }
 }
 
+// The interner serializes as its dense first-appearance `values` alone; the
+// `codes_by_hash` index is a rebuildable acceleration structure, not primary
+// state. Re-interning the values in order reproduces byte-identical dense codes
+// (code = insertion position) and an equal index, so the wire form is lossless
+// while carrying no redundant hash table (roadmap S2: "codes_by_hash is
+// rebuildable on deserialize").
+impl<T> Serialize for CategoryInterner<T>
+where
+    T: Eq + Hash + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.values.serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for CategoryInterner<T>
+where
+    T: Clone + Eq + Hash + Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let values = Vec::<T>::deserialize(deserializer)?;
+        let mut interner = Self::default();
+        for value in values {
+            interner.intern(value);
+        }
+        Ok(interner)
+    }
+}
+
 fn category_hash<T: Hash + ?Sized>(value: &T) -> u64 {
     let mut hasher = FxHasher::default();
     value.hash(&mut hasher);
@@ -442,7 +484,16 @@ fn category_hash<T: Hash + ?Sized>(value: &T) -> u64 {
 }
 
 /// Absolute-request-index-aligned metric and metadata columns.
-#[derive(Debug)]
+///
+/// Derives `Clone`/serde so a worker's store can be exported as a serializable,
+/// mergeable [`ColumnStorePartition`] (roadmap S2): the store already *is* the
+/// partition. Serde bounds are conditional on the list backend `B`, so the trait
+/// [`ListMetricBackend`] stays serde-free and only stores whose `B` is
+/// serializable gain the wire form. Use a binary serde format — the NaN-sparse
+/// numeric columns are not JSON-representable.
+///
+/// [`ColumnStorePartition`]: crate::cellular::shard::ColumnStorePartition
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     occupied: Vec<bool>,
     occupied_count: usize,

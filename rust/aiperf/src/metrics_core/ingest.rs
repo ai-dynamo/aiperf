@@ -10,7 +10,7 @@
 use crate::metrics_core::catalog::MetricTag;
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::Phase;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Stable model and selected-endpoint dimensions for one inference request.
 ///
@@ -18,7 +18,7 @@ use serde::Serialize;
 /// dimensions. The native collector additionally retains the *selected* pair per
 /// request so a multi-model or multi-endpoint run can emit honest labeled series
 /// instead of folding every request into one unlabeled aggregate.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct InferenceDimensions {
     /// Fully resolved endpoint URL selected for the request.
     pub endpoint_url: Option<String>,
@@ -27,7 +27,7 @@ pub struct InferenceDimensions {
 }
 
 /// Token counts attached to a completed request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenCounts {
     /// Input tokens sent to the model.
     pub input: Option<u64>,
@@ -48,7 +48,7 @@ impl TokenCounts {
 }
 
 /// Usage fields reported by an endpoint.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageMetrics {
     /// Prompt tokens from endpoint usage.
     pub prompt_tokens: Option<u64>,
@@ -79,7 +79,7 @@ pub struct UsageMetrics {
 }
 
 /// HTTP timing trace attached to a request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HttpTrace {
     /// Time from dispatch start until the streaming response is established.
     pub stream_setup_ns: Option<i64>,
@@ -110,7 +110,13 @@ pub struct HttpTrace {
 }
 
 /// One completed request record ready for metric ingestion.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serializable so a cell can ship its captured records to the controller, which
+/// re-ingests them in global dispatch-ordinal order — the exact mechanism the
+/// single-process path uses for worker-count-independent byte parity. The
+/// `metric_overrides` `MetricValue`s round-trip through a self-describing format
+/// (the cellular wire is MessagePack).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordIngest {
     /// Absolute zero-based request slot assigned by the workload.
     pub request_index: Option<usize>,

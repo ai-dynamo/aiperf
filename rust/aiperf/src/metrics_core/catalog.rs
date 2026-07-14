@@ -13,13 +13,13 @@ use crate::metrics_core::{MetricValueType, Unit};
 use bitflags::bitflags;
 use petgraph::algo::toposort;
 use petgraph::graphmap::DiGraphMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::sync::LazyLock;
 
 /// Metric identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum MetricTag {
     RequestCount,
     ErrorRequestCount,

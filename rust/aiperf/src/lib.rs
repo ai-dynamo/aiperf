@@ -46,6 +46,7 @@ pub mod workload;
 pub mod accuracy_core;
 pub mod adaptive_core;
 pub mod body_plan;
+pub mod cellular;
 pub mod clock;
 pub mod content_server;
 pub mod dataset;

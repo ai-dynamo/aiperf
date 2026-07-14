@@ -5,10 +5,10 @@
 //!
 //! Authoritative phase selection and half-open timeslice construction live here.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Credit phase attached to a record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     /// Warmup traffic that should not count toward profiling-only summaries.

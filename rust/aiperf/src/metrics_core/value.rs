@@ -7,7 +7,9 @@
 //! only lets finite numbers, the error-adjusted `+inf` sentinel, or explicit
 //! absence cross a public/reporting boundary.
 
+use serde::de::{self, Deserialize, Deserializer, Visitor};
 use serde::ser::{Serialize, Serializer};
+use std::fmt;
 
 /// A metric value that is safe to pass across a serialization boundary.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,6 +58,64 @@ impl Serialize for MetricValue {
             Self::PosInf => serializer.serialize_str("+inf"),
             Self::Absent => serializer.serialize_none(),
         }
+    }
+}
+
+/// Deserializes the boundary encoding [`Serialize`] produces, exactly: a number
+/// (including `+inf`/`-inf`) is [`Finite`](MetricValue::Finite), the string
+/// `"+inf"` is [`PosInf`](MetricValue::PosInf), and null/unit is
+/// [`Absent`](MetricValue::Absent). Requires a self-describing format
+/// (`deserialize_any`); the cellular wire uses MessagePack for exactly this
+/// reason. The pairing keeps a wire-shipped record's injected overrides
+/// byte-faithful on re-ingestion.
+impl<'de> Deserialize<'de> for MetricValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MetricValueVisitor;
+
+        impl<'de> Visitor<'de> for MetricValueVisitor {
+            type Value = MetricValue;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a number, the string \"+inf\", or null")
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<MetricValue, E> {
+                Ok(MetricValue::Finite(value))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<MetricValue, E> {
+                Ok(MetricValue::Finite(value as f64))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<MetricValue, E> {
+                Ok(MetricValue::Finite(value as f64))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<MetricValue, E>
+            where
+                E: de::Error,
+            {
+                match value {
+                    "+inf" => Ok(MetricValue::PosInf),
+                    other => Err(E::custom(format!(
+                        "unexpected metric value string {other:?}"
+                    ))),
+                }
+            }
+
+            fn visit_none<E>(self) -> Result<MetricValue, E> {
+                Ok(MetricValue::Absent)
+            }
+
+            fn visit_unit<E>(self) -> Result<MetricValue, E> {
+                Ok(MetricValue::Absent)
+            }
+        }
+
+        deserializer.deserialize_any(MetricValueVisitor)
     }
 }
 
