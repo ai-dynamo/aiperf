@@ -4,7 +4,7 @@
 //! Native construction and execution of one resolved benchmark run.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -112,8 +112,8 @@ use crate::protocol::{
 };
 use crate::readiness::{PreparedOnlineReadiness, ReadinessTransportFactory};
 use crate::records::{
-    CapturedHttpExchange, CapturedModelOutput, CapturedRecord, group_record_errors,
-    write_outputs_json, write_raw_records_jsonl, write_records_jsonl,
+    CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
+    write_inputs_json, write_outputs_json, write_raw_records_jsonl, write_records_jsonl,
 };
 use crate::registry::ValidatedEndpointProfileV2;
 use crate::server_metrics::ServerMetricsRun;
@@ -1435,6 +1435,7 @@ async fn execute_native_inner(
         start_ns,
         metrics_config.clone(),
         request.artifacts.raw_path.is_some(),
+        request.artifacts.inputs_path.is_some(),
         live_sink.is_some(),
         wants_adaptive_record,
     ));
@@ -1606,6 +1607,10 @@ async fn execute_native_inner(
     if let Some(outputs_path) = &request.artifacts.outputs_path {
         let outputs_path = artifact_path(&request.artifact_dir, outputs_path, "outputs_path")?;
         write_outputs_json(&outputs_path, &captured, &metrics_config)?;
+    }
+    if let Some(inputs_path) = &request.artifacts.inputs_path {
+        let inputs_path = artifact_path(&request.artifact_dir, inputs_path, "inputs_path")?;
+        write_inputs_json(&inputs_path, &capture.take_input_sessions())?;
     }
     if let (Some(gpu_telemetry), Some(gpu_records_path)) = (gpu_telemetry, gpu_records_path) {
         gpu_telemetry.write_records_jsonl(gpu_records_path)?;
@@ -3111,6 +3116,17 @@ struct RunCapture {
     outputs: RefCell<HashMap<Uuid, CapturedModelOutput>>,
     raw_enabled: bool,
     raw_exchanges: RefCell<HashMap<Uuid, CapturedHttpExchange>>,
+    /// Whether `inputs.json` is requested; gates canonical-payload retention.
+    inputs_enabled: bool,
+    /// Per-conversation canonical request bodies keyed by turn index. Retained
+    /// only when `inputs_enabled`; deduplicated per `(conversation_id, turn)`
+    /// (first write wins) so dataset recycling under `--request-count` collapses
+    /// to one payload per dataset turn, matching legacy `inputs.json` semantics.
+    /// Sessions are emitted in conversation-id order — a stable ordering that is
+    /// independent of run-to-run worker dispatch races and, for the
+    /// deterministic synthetic session ids (`session_000000`, …), reproduces
+    /// dataset composition order.
+    input_sessions: RefCell<BTreeMap<String, BTreeMap<usize, Box<serde_json::value::RawValue>>>>,
     /// Non-consuming cloned records for the live-results sink, keyed by uuid;
     /// the authoritative record stays in the worker observer for the drain.
     live_records: RefCell<HashMap<Uuid, RecordIngest>>,
@@ -3133,6 +3149,7 @@ impl RunCapture {
         origin_ns: i64,
         config: MetricsConfig,
         raw_enabled: bool,
+        inputs_enabled: bool,
         wants_live_sink_record: bool,
         wants_adaptive_record: bool,
     ) -> Self {
@@ -3145,11 +3162,57 @@ impl RunCapture {
             outputs: RefCell::new(HashMap::new()),
             raw_enabled,
             raw_exchanges: RefCell::new(HashMap::new()),
+            inputs_enabled,
+            input_sessions: RefCell::new(BTreeMap::new()),
             live_records: RefCell::new(HashMap::new()),
             adaptive_records: RefCell::new(HashMap::new()),
             wants_live_sink_record,
             wants_adaptive_record,
         }
+    }
+
+    /// Retain one turn's canonical request body for `inputs.json`.
+    ///
+    /// Called on the coordinator thread for every dispatched turn (independent
+    /// of raw-artifact capture). Deduplicates per `(conversation_id, turn_index)`
+    /// so recycled dataset turns collapse to a single payload, and remembers
+    /// first-dispatch conversation order for deterministic session ordering.
+    fn record_input_payload(
+        &self,
+        conversation_id: &str,
+        turn_index: usize,
+        payload: &[u8],
+    ) -> Result<()> {
+        if !self.inputs_enabled {
+            return Ok(());
+        }
+        let mut sessions = self.input_sessions.borrow_mut();
+        let turns = sessions.entry(conversation_id.to_string()).or_default();
+        if let std::collections::btree_map::Entry::Vacant(slot) = turns.entry(turn_index) {
+            let parsed: Box<serde_json::value::RawValue> = serde_json::from_slice(payload)
+                .with_context(|| {
+                    format!(
+                        "validating canonical request payload for inputs.json \
+                         (conversation {conversation_id}, turn {turn_index})"
+                    )
+                })?;
+            slot.insert(parsed);
+        }
+        Ok(())
+    }
+
+    /// Consume the retained payloads into conversation-id-ordered
+    /// `inputs.json` sessions. The `BTreeMap` iteration yields sorted keys, so
+    /// ordering is identical across same-seed runs regardless of worker races.
+    fn take_input_sessions(&self) -> Vec<InputSession> {
+        self.input_sessions
+            .take()
+            .into_iter()
+            .map(|(session_id, turns)| InputSession {
+                session_id,
+                payloads: turns.into_values().collect(),
+            })
+            .collect()
     }
 
     /// Whether the worker should snapshot a non-consuming record for either the
@@ -3511,6 +3574,10 @@ impl TurnDispatcher for ConfiguredDispatcher {
         on_first_token: &dyn Fn(i64),
     ) -> Result<TurnDispatchOutcome> {
         let uuid = turn.uuid;
+        // Retain the conversation identity for `inputs.json` session grouping
+        // before `turn` is consumed by request preparation below.
+        let inputs_conversation_id = turn.conversation_id.clone();
+        let inputs_turn_index = turn.turn_index;
         // `begin` runs on the coordinator thread before backend dispatch, so its
         // push order is the worker-count-independent global dispatch ordinal.
         // It returns the measured context the worker registers locally; the
@@ -3529,6 +3596,11 @@ impl TurnDispatcher for ConfiguredDispatcher {
                 live_record,
             }) => {
                 let outcome = collected.outcome;
+                self.capture.record_input_payload(
+                    &inputs_conversation_id,
+                    inputs_turn_index,
+                    &collected.request_payload,
+                )?;
                 self.capture.record_http_exchange(
                     uuid,
                     collected.request_payload.to_vec(),
@@ -3969,6 +4041,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         let (a, b, c) = facts();
         // Dispatch order A, B, C.
@@ -4043,7 +4116,8 @@ mod tests {
         let build = |split: bool| -> (Vec<u8>, Option<f64>) {
             let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
             let config = MetricsConfig::default();
-            let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false, false);
+            let capture =
+                RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, false);
             let (a, b, c) = facts();
             register_identity(&capture, "corr-a", 0, ReplayTerminalStatus::Completed, &a);
             register_identity(&capture, "corr-b", 1, ReplayTerminalStatus::Completed, &b);
@@ -4123,6 +4197,7 @@ mod tests {
             clock.clone(),
             0,
             MetricsConfig::default(),
+            false,
             false,
             false,
             false,

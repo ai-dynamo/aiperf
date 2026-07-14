@@ -310,6 +310,11 @@ class ArtifactsConfig(BaseConfig):
         return self.dir / OutputDefaults.OUTPUTS_JSON_FILE
 
     @property
+    def inputs_json_file(self) -> Path:
+        """Path for the per-session formatted request payloads JSON export file."""
+        return self.dir / OutputDefaults.INPUTS_JSON_FILE
+
+    @property
     def profile_export_raw_jsonl_file(self) -> Path:
         """Path for the raw request/response JSONL export file."""
         base = self._base()

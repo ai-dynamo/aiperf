@@ -314,7 +314,7 @@ def _authored_model_dump(value: Any) -> dict[str, Any]:
 
 
 def _authored_metrics(cfg: Any) -> dict[str, Any]:
-    """Project authored metric policy shared with the v1 native path."""
+    """Project authored metric policy into the v2 native request."""
     result: dict[str, Any] = {"slos": dict(cfg.slos or {})}
     if cfg.artifacts.slice_duration is not None:
         result["slice_duration_seconds"] = cfg.artifacts.slice_duration
@@ -343,6 +343,11 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
         )
     if cfg.artifacts.export_outputs_json:
         result["outputs_path"] = str(cfg.artifacts.outputs_json_file.relative_to(root))
+    # The runner emits inputs.json (per-session formatted request payloads) on
+    # the native path, replacing the legacy DatasetManager writer. Always
+    # request it so introspection tooling and GenAI-Perf compatibility keep
+    # working, mirroring the legacy always-on behavior.
+    result["inputs_path"] = str(cfg.artifacts.inputs_json_file.relative_to(root))
     if cfg.artifacts.raw:
         result["raw_path"] = str(
             cfg.artifacts.profile_export_raw_jsonl_file.relative_to(root)
@@ -368,11 +373,10 @@ def _authored_artifacts(run: BenchmarkRun) -> dict[str, Any]:
 def _authored_sidecars(run: BenchmarkRun) -> dict[str, Any]:
     """Project direct native sidecar inputs without starting their resources.
 
-    Some telemetry values also have isolated protocol-v1 compatibility shapes;
-    the content server is protocol-v2-only. V2 never constructs a v1 run
-    request or enters the resolver chain. Runtime acquisition, reachability,
-    cadence, and worker startup remain owned by the selected Rust sidecar
-    adapters during pair preparation.
+    Every sidecar input is projected directly into the v2 run request; the
+    projection never enters a resolver chain. Runtime acquisition,
+    reachability, cadence, and worker startup remain owned by the selected
+    Rust sidecar adapters during pair preparation.
     """
     result: dict[str, Any] = {}
     content_server = _content_server()
@@ -909,7 +913,7 @@ def _phase(phase: Any) -> dict[str, Any]:
         _set_optional(result, "end_offset", phase.end_offset)
         return result
     raise RustWireError(
-        f"native runner protocol v1 does not accept phase type {phase.type!s}"
+        f"native runner protocol v2 does not accept phase type {phase.type!s}"
     )
 
 

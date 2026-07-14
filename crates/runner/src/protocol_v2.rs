@@ -777,6 +777,10 @@ pub struct ArtifactSpecV2 {
     /// Aggregated response-text output path relative to the artifact target.
     #[serde(default)]
     pub outputs_path: Option<PathBuf>,
+    /// Per-session formatted request payloads (`inputs.json`) path relative to
+    /// the artifact target.
+    #[serde(default)]
+    pub inputs_path: Option<PathBuf>,
     /// Include transport trace details in records.
     #[serde(default)]
     pub trace: bool,
@@ -792,6 +796,7 @@ impl ArtifactSpecV2 {
             ("artifacts.records_path", self.records_path.as_ref()),
             ("artifacts.raw_path", self.raw_path.as_ref()),
             ("artifacts.outputs_path", self.outputs_path.as_ref()),
+            ("artifacts.inputs_path", self.inputs_path.as_ref()),
         ] {
             if let Some(path) = path {
                 validate_relative_artifact_path(path, field)?;

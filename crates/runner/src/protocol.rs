@@ -254,6 +254,10 @@ pub struct ArtifactSpec {
     /// Aggregated profiling response text and selected metrics JSON path.
     #[serde(default)]
     pub outputs_path: Option<PathBuf>,
+    /// Per-session formatted request payloads (`inputs.json`) path, or absent
+    /// when the inputs export is disabled.
+    #[serde(default)]
+    pub inputs_path: Option<PathBuf>,
     /// Include transport timing details on JSONL records.
     #[serde(default)]
     pub trace: bool,

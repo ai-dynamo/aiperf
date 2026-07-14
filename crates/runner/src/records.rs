@@ -356,6 +356,68 @@ pub(crate) fn write_raw_records_jsonl(path: &Path, records: &[CapturedRecord]) -
         .with_context(|| format!("flushing raw record export {}", path.display()))
 }
 
+/// One dataset session and its per-turn formatted request payloads.
+///
+/// This is the native-path source for `inputs.json`. The legacy multiprocess
+/// `DatasetManager._generate_inputs_json_file` produced the same
+/// `{session_id, payloads[]}` shape by formatting every dataset turn through
+/// the endpoint; the native runner already builds the exact canonical request
+/// body per dispatched turn, so we retain those bytes (deduplicated per
+/// `(conversation_id, turn_index)`) and serialize them here without a
+/// decode-then-encode round-trip.
+pub(crate) struct InputSession {
+    /// Conversation/session identity — mirrors legacy `SessionPayloads.session_id`.
+    pub(crate) session_id: String,
+    /// One canonical request body per turn, ordered by turn index.
+    pub(crate) payloads: Vec<Box<RawValue>>,
+}
+
+#[derive(Serialize)]
+struct InputsDocument<'a> {
+    data: Vec<InputsSessionRow<'a>>,
+}
+
+#[derive(Serialize)]
+struct InputsSessionRow<'a> {
+    session_id: &'a str,
+    payloads: Vec<&'a RawValue>,
+}
+
+/// Write the per-session formatted request payloads as `inputs.json`.
+///
+/// The shape matches the Pydantic `InputsFile` model
+/// (`aiperf.common.models.dataset_models`): a top-level `data` array of
+/// `{session_id, payloads}` objects, where each payload is the exact JSON body
+/// the runner sent for that turn. Consumers (integration harness, GenAI-Perf
+/// compatibility) read multimodal presence directly from
+/// `payloads[].messages[].content[]`.
+pub(crate) fn write_inputs_json(path: &Path, sessions: &[InputSession]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating inputs export directory {}", parent.display()))?;
+    }
+    let document = InputsDocument {
+        data: sessions
+            .iter()
+            .map(|session| InputsSessionRow {
+                session_id: &session.session_id,
+                payloads: session.payloads.iter().map(Box::as_ref).collect(),
+            })
+            .collect(),
+    };
+    let file = File::create(path)
+        .with_context(|| format!("creating native inputs export {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, &document)
+        .with_context(|| format!("serializing inputs export {}", path.display()))?;
+    writer
+        .write_all(b"\n")
+        .with_context(|| format!("writing inputs export {}", path.display()))?;
+    writer
+        .flush()
+        .with_context(|| format!("flushing inputs export {}", path.display()))
+}
+
 /// Write profiling response and reasoning text with selected metric values.
 ///
 /// This collapses Python's per-processor fragment/aggregation implementation
