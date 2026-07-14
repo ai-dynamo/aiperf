@@ -9,6 +9,7 @@
 //! [`SegmentPool`]. [`Conversation`] and [`Turn`] contain only dense [`Handle`]s,
 //! so sharing a [`Dataset`] across worker threads shares the payload bytes too.
 
+pub mod body_plan;
 pub mod compose;
 pub mod dataset;
 pub mod error;

@@ -79,7 +79,9 @@ impl Overrides {
         &self.fields
     }
 
-    fn inner_bytes(&self) -> Result<Vec<u8>> {
+    /// Serialize the override fields as a spliceable tail with the enclosing
+    /// braces stripped, so callers can insert them into an existing object.
+    pub(crate) fn inner_bytes(&self) -> Result<Vec<u8>> {
         if self.fields.is_empty() {
             return Ok(Vec::new());
         }
@@ -171,7 +173,7 @@ pub(crate) fn build_body_from_handles<S: SegmentStore + ?Sized>(
     build_message_body_from_wires(&messages, overrides)
 }
 
-fn message_wire<S: SegmentStore + ?Sized>(store: &S, handle: Handle) -> Result<Bytes> {
+pub(crate) fn message_wire<S: SegmentStore + ?Sized>(store: &S, handle: Handle) -> Result<Bytes> {
     match store.get(handle)? {
         Payload::Message { wire, .. } => Ok(wire.clone()),
         payload => Err(DatasetError::PayloadKind {
@@ -216,7 +218,7 @@ pub fn build_message_body_from_wires(messages: &[Bytes], overrides: &Overrides) 
     Ok(body.freeze())
 }
 
-fn splice_raw_object(wire: &Bytes, overrides: &Overrides) -> Result<Bytes> {
+pub(crate) fn splice_raw_object(wire: &Bytes, overrides: &Overrides) -> Result<Bytes> {
     validate_object_slice(wire).map_err(DatasetError::InvalidWire)?;
     if overrides.is_empty() {
         return Ok(wire.clone());
@@ -243,7 +245,7 @@ fn splice_raw_object(wire: &Bytes, overrides: &Overrides) -> Result<Bytes> {
     Ok(body.freeze())
 }
 
-fn validate_object_slice(wire: &[u8]) -> std::result::Result<(), String> {
+pub(crate) fn validate_object_slice(wire: &[u8]) -> std::result::Result<(), String> {
     let Some(first) = wire.iter().find(|byte| !byte.is_ascii_whitespace()) else {
         return Err("empty byte slice".into());
     };
