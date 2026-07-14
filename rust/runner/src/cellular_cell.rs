@@ -17,17 +17,25 @@
 //! points the records shipper at the controller. They are set once, before any
 //! runtime exists, from the [`CellLaunchSpec`] the controller pipes in.
 
+use std::collections::{BTreeMap, HashMap};
+
 use aiperf::cellular::partition::CellPartition;
 use aiperf::cellular::{
     CellClient, CellMessage, CellularAutonomousIssuer, IssuanceAuthority, MetricsHeartbeat,
     ModuloCellPartition, RecordsShardPartition, TcpCellClient,
 };
+use aiperf::metrics_core::Phase;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Env var carrying the controller's `host:port` transport address (the cell id and
 /// count live in [`aiperf::cellular::partition`]'s env vars).
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
+
+/// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
+/// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
+/// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
+pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
 
 /// The launch descriptor the controller serializes to each cell child's stdin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,8 +46,36 @@ pub struct CellLaunchSpec {
     pub cell_count: u32,
     /// The controller's transport address the cell connects back to.
     pub controller_addr: String,
+    /// Each phase's global ordinal base (`phase name -> turns dispatched by prior
+    /// phases`), so the cell stamps single-cell-equivalent absolute slots.
+    pub phase_ordinal_bases: BTreeMap<String, u64>,
     /// The full protocol-v2 `execute` envelope for this cell's budget slice.
     pub envelope: serde_json::Value,
+}
+
+/// The per-phase global ordinal bases for this cell, keyed by metric phase — the
+/// turns the run's prior phases dispatched globally — or empty when the process is
+/// not a cell (the single-process path stamps the flat cumulative slot). A cell's
+/// sampler restarts each phase at 0, so the autonomous issuer adds a phase's base to
+/// a turn's phase-local slot to recover the absolute slot a single-cell run assigns.
+pub fn phase_ordinal_bases_from_env() -> HashMap<Phase, usize> {
+    let Ok(raw) = std::env::var(CELL_PHASE_ORDINAL_BASES_ENV) else {
+        return HashMap::new();
+    };
+    let by_name: BTreeMap<String, u64> = serde_json::from_str(&raw).unwrap_or_default();
+    by_name
+        .into_iter()
+        .filter_map(|(name, base)| phase_from_name(&name).map(|phase| (phase, base as usize)))
+        .collect()
+}
+
+/// Maps a v2 phase name to its metric phase (the two the scheduled runner supports).
+fn phase_from_name(name: &str) -> Option<Phase> {
+    match name {
+        "warmup" => Some(Phase::Warmup),
+        "profiling" => Some(Phase::Profiling),
+        _ => None,
+    }
 }
 
 /// The autonomous issuer for this cell, or [`DirectIssuanceAuthority`] when the

@@ -132,6 +132,12 @@ fn run_cell(input: Vec<u8>) -> ! {
             aiperf_runner::cellular_cell::CELL_CONTROLLER_ADDR_ENV,
             &spec.controller_addr,
         );
+        if let Ok(bases) = serde_json::to_string(&spec.phase_ordinal_bases) {
+            std::env::set_var(
+                aiperf_runner::cellular_cell::CELL_PHASE_ORDINAL_BASES_ENV,
+                bases,
+            );
+        }
     }
     let envelope_bytes = match serde_json::to_vec(&spec.envelope) {
         Ok(bytes) => bytes,

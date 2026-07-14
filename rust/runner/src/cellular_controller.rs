@@ -82,6 +82,10 @@ pub fn run_cellular(
         // Cleans the scratch tree on every exit path, including a bail; the
         // kill_on_drop cells stop before this runs when the runtime unwinds.
         let _scratch = ScratchTreeGuard(temp_root.clone());
+        // Each phase's global dispatch base (turns dispatched by prior phases): a
+        // cell's sampler restarts each phase, so the cell adds this to its phase-local
+        // slot to stamp the single-cell absolute slot. Same for every cell.
+        let phase_ordinal_bases = phase_ordinal_bases(envelope)?;
         let mut children = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
@@ -92,6 +96,7 @@ pub fn run_cellular(
                 cell_id,
                 cell_count,
                 controller_addr: controller_addr.clone(),
+                phase_ordinal_bases: phase_ordinal_bases.clone(),
                 envelope: cell_envelope,
             };
             children.push(spawn_cell(&spec).await?);
@@ -236,17 +241,16 @@ async fn spawn_cell(spec: &CellLaunchSpec) -> Result<tokio::process::Child> {
 /// dataset and seed are unchanged — the cell's `PartitionedSampler` selects its
 /// owned instances from the shared space.
 ///
-/// Each cell's j-th dispatched turn sits at global dispatch stream position
-/// `j*cell_count + cell_id` (the sampler yields owned positions `{k, k+C, …}` in
-/// order across *all* phases, and the issuer stamps that same value). The stream is
-/// the phases concatenated in execution order, so cell `k`'s slice of a phase
-/// covering `[base, base+total)` is the count of owned positions in that half-open
-/// window — `owned_positions(base+total) − owned_positions(base)` — NOT
-/// `owned_positions(total)`. Slicing each phase independently would make the
-/// per-cell counts over-count by the warmup phase's `base mod cell_count` remainder,
-/// pushing a profiling ordinal past `total` and failing the merge's permutation
-/// check. The running `base` keeps the per-cell phase counts telescoping to exactly
-/// `owned_positions(grand_total)`, so the global ordinals tile `0..grand_total`.
+/// The runner rebuilds each cell's sampler fresh at every phase boundary (the
+/// dataset RNG re-seeds per phase), so a cell draws its owned instances of *each
+/// phase* from position 0 and the per-cell issuer stamps a *phase-local* ordinal.
+/// Each phase is therefore partitioned independently: cell `k` takes
+/// `owned_positions(phase_requests, k, cell_count)` — its share of that phase's
+/// `{0, 1, …, phase_requests-1}` instance space — so the cells' per-phase shares sum
+/// to the phase budget and their phase-local ordinals tile `0..phase_requests`, and
+/// the union of each phase's instances equals the single-cell run's. (A cumulative
+/// base offset would draw the wrong instances, since the sampler is not continuous
+/// across phases.)
 fn build_cell_envelope(
     envelope: &serde_json::Value,
     cell_id: u32,
@@ -276,18 +280,13 @@ fn build_cell_envelope(
         .and_then(|cfg| cfg.get_mut("phases"))
         .and_then(serde_json::Value::as_array_mut)
         .context("run cfg has no phases array")?;
-    // Cumulative base of the current phase in the concatenated global dispatch
-    // stream (phases execute in array order: warmup, then profiling).
-    let mut base: u64 = 0;
     for phase in phases.iter_mut() {
         let Some(phase) = phase.as_object_mut() else {
             continue;
         };
         if let Some(requests) = phase.get("requests").and_then(serde_json::Value::as_u64) {
-            let owned = owned_positions(base + requests, cell_id, cell_count)
-                - owned_positions(base, cell_id, cell_count);
+            let owned = owned_positions(requests, cell_id, cell_count);
             phase.insert("requests".to_owned(), serde_json::Value::from(owned));
-            base += requests;
         }
         // Split the global concurrency cap by the same round-robin share as the
         // request budget so the cells' caps sum to the requested aggregate in-flight.
@@ -356,6 +355,34 @@ fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
         return 0;
     }
     (total - k).div_ceil(count)
+}
+
+/// Each phase's global ordinal base (`phase name -> turns dispatched by prior
+/// phases`) from the v2 envelope. Phases execute in array order, so a phase's base is
+/// the running sum of prior phases' `requests`. Assumes distinct phase names (the
+/// runner's `warmup`/`profiling` structure), since the cell keys the base by metric
+/// phase. `validate_cellular_phase_budgets` has already ensured every phase is
+/// request-bounded.
+fn phase_ordinal_bases(envelope: &serde_json::Value) -> Result<BTreeMap<String, u64>> {
+    let phases = envelope
+        .pointer("/run/cfg/phases")
+        .and_then(serde_json::Value::as_array)
+        .context("run cfg has no phases array")?;
+    let mut bases = BTreeMap::new();
+    let mut base: u64 = 0;
+    for phase in phases {
+        let name = phase
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .context("cellular phase has no name")?;
+        bases.insert(name.to_owned(), base);
+        let requests = phase
+            .get("requests")
+            .and_then(serde_json::Value::as_u64)
+            .context("cellular phase has no request budget")?;
+        base += requests;
+    }
+    Ok(bases)
 }
 
 /// The profiling phase's request budget from the v2 envelope.
@@ -486,44 +513,52 @@ mod tests {
     }
 
     #[test]
-    fn multi_phase_global_ordinals_tile_densely() {
-        // Regression for the multi-phase merge blocker: with warmup+profiling, each
-        // cell's dispatched turns must map under the issuer's `j*count + cell_id` to a
-        // dense permutation of `0..(warmup+profiling)`. Slicing each phase with an
-        // independent `owned_positions(len)` over-counts by warmup's `base%count`
-        // remainder and pushes a profiling ordinal past the total (the merge's
-        // `OrdinalOutOfRange`). (100,1000,3) is the exact case from the review.
+    fn each_phase_partitions_and_tiles_independently() {
+        // The per-cell sampler restarts each phase, so each phase is partitioned on
+        // its OWN instance space `0..phase_requests`: cell k's per-phase count is
+        // `owned_positions(phase_requests, k, count)` and the phase-local ordinals
+        // `within*count + cell_id` tile `0..phase_requests` densely — the invariant
+        // the phase-aware merge relies on, and what makes the merged per-phase
+        // instance set equal a 1-cell run's. A cumulative base offset (the earlier
+        // bug) would draw the wrong instances since the sampler is not continuous.
         let dir = Path::new("/tmp/aiperf-cellular-envelope-test");
-        for (warmup, profiling) in [(100u64, 1000u64), (3, 3), (1, 7), (50, 50), (7, 13)] {
+        for (warmup, profiling) in [(100u64, 1000u64), (3, 3), (1, 7), (10, 250), (7, 13)] {
             for count in 1..=5u32 {
-                let grand_total = (warmup + profiling) as usize;
-                let mut seen = vec![false; grand_total];
+                let mut warmup_seen = vec![false; warmup as usize];
+                let mut profiling_seen = vec![false; profiling as usize];
                 for cell_id in 0..count {
                     let envelope = serde_json::json!({"run": {"cfg": {"phases": [
                         {"name": "warmup", "requests": warmup},
                         {"name": "profiling", "requests": profiling},
                     ]}}});
                     let cell = build_cell_envelope(&envelope, cell_id, count, dir).unwrap();
-                    let local_count: u64 = cell
+                    let phases = cell
                         .pointer("/run/cfg/phases")
                         .and_then(serde_json::Value::as_array)
-                        .unwrap()
-                        .iter()
-                        .filter_map(|p| p.get("requests").and_then(serde_json::Value::as_u64))
-                        .sum();
-                    for j in 0..local_count {
-                        let ordinal = (j * count as u64 + cell_id as u64) as usize;
-                        assert!(
-                            ordinal < grand_total,
-                            "ordinal {ordinal} >= total {grand_total} (w{warmup} p{profiling} c{count} cell{cell_id})"
-                        );
-                        assert!(!seen[ordinal], "duplicate ordinal {ordinal}");
-                        seen[ordinal] = true;
+                        .unwrap();
+                    for (seen, phase) in [
+                        (&mut warmup_seen, &phases[0]),
+                        (&mut profiling_seen, &phases[1]),
+                    ] {
+                        let owned = phase
+                            .get("requests")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap();
+                        for within in 0..owned {
+                            let ordinal = (within * count as u64 + cell_id as u64) as usize;
+                            assert!(ordinal < seen.len(), "phase ordinal {ordinal} out of range");
+                            assert!(!seen[ordinal], "duplicate phase ordinal {ordinal}");
+                            seen[ordinal] = true;
+                        }
                     }
                 }
                 assert!(
-                    seen.iter().all(|&s| s),
-                    "ordinals did not cover 0..{grand_total} (w{warmup} p{profiling} c{count})"
+                    warmup_seen.iter().all(|&s| s),
+                    "warmup gap (w{warmup} c{count})"
+                );
+                assert!(
+                    profiling_seen.iter().all(|&s| s),
+                    "profiling gap (p{profiling} c{count})"
                 );
             }
         }

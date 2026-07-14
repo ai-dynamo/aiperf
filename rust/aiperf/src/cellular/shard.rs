@@ -90,16 +90,19 @@ impl RecordsShardPartition {
 
 /// Merges every cell's records into one accumulator for the final report.
 ///
-/// Records are re-ingested in ascending global dispatch-ordinal
-/// ([`request_index`](RecordIngest::request_index)) order, so both absolute-slot
-/// placement and ragged `append_order` match a single-cell run: the summary is
-/// byte-identical to the same records accumulated as one cell. Run-level scalars
-/// (network RTT, injected side-channel scalars) are applied by the caller.
+/// Each record carries the **global cumulative dispatch ordinal**
+/// ([`request_index`](RecordIngest::request_index)) the per-cell issuer stamped — the
+/// exact absolute slot a single-cell run assigns (warmup block `[0, W)`, then
+/// profiling `[W, W+P)`), because the cell adds its phase's global base to its
+/// phase-local index. Records are re-ingested in ascending ordinal order, so both
+/// absolute-slot placement and ragged `append_order` match a single-cell run: the
+/// summary is byte-identical to the same records accumulated as one cell. Run-level
+/// scalars (network RTT, injected side-channel scalars) are applied by the caller.
 ///
 /// The union of every cell's global ordinals must be a permutation of `0..total`.
-/// This is validated before any record is placed, so a misframed or overlapping
-/// wire partition (a duplicate, missing, or out-of-range ordinal — the input here
-/// arrives off [`RecordsShardPartition::from_bytes`]) returns a structured
+/// This is validated before any record is placed, so a misframed or overlapping wire
+/// partition (a duplicate, missing, or out-of-range ordinal — the input here arrives
+/// off [`RecordsShardPartition::from_bytes`]) returns a structured
 /// [`RecordsMergeError`] instead of an `insert_record_at` panic or an
 /// O(max-ordinal) allocation.
 pub fn merge_records_in_global_order(
@@ -478,6 +481,76 @@ mod tests {
             merged.summarize(),
             direct.summarize(),
             "merge of cell records must be byte-identical to the single-cell run"
+        );
+    }
+
+    #[test]
+    fn multi_phase_merge_is_byte_identical_to_a_single_cell_run() {
+        // A cell stamps the GLOBAL cumulative slot (its phase's global base plus its
+        // phase-local index), so warmup fills `[0, W)` and profiling `[W, W+P)` — the
+        // same absolute slots a single-cell run assigns. warmup=5 is NOT a multiple of
+        // the 2 cells — the regime where the earlier cumulative-count bug drew the
+        // wrong instances; here the global slot ties each record to its 1-cell slot.
+        let (warmup_n, profiling_n, cell_count) = (5usize, 7usize, 2usize);
+        // Distinct content per (phase, phase-relative position).
+        let content = |warmup: bool, pos: usize| {
+            if warmup {
+                pos as u64
+            } else {
+                1000 + pos as u64
+            }
+        };
+        // Global cumulative slot for a phase-relative position.
+        let slot = |warmup: bool, pos: usize| if warmup { pos } else { warmup_n + pos };
+
+        // Single-cell reference: every record at its global slot.
+        let mut reference = Vec::new();
+        for (warmup, count) in [(true, warmup_n), (false, profiling_n)] {
+            for pos in 0..count {
+                let mut r = record(content(warmup, pos));
+                r.phase = if warmup {
+                    Phase::Warmup
+                } else {
+                    Phase::Profiling
+                };
+                r.request_index = Some(slot(warmup, pos));
+                reference.push(r);
+            }
+        }
+        let direct = accumulator_over(&reference);
+
+        // Cells: each owns its round-robin share of each phase (cell k owns
+        // phase-relative pos where pos % C == k) and stamps that same global slot.
+        let mut cells: Vec<DirectRecordsShard> = (0..cell_count as u32)
+            .map(DirectRecordsShard::new)
+            .collect();
+        for (warmup, count) in [(true, warmup_n), (false, profiling_n)] {
+            for pos in 0..count {
+                let mut r = record(content(warmup, pos));
+                r.phase = if warmup {
+                    Phase::Warmup
+                } else {
+                    Phase::Profiling
+                };
+                r.request_index = Some(slot(warmup, pos));
+                cells[pos % cell_count].capture(r);
+            }
+        }
+        let partitions: Vec<_> = cells
+            .iter()
+            .map(|cell| {
+                let bytes = cell.export_partition().to_bytes().expect("encode");
+                RecordsShardPartition::from_bytes(&bytes).expect("decode")
+            })
+            .collect();
+
+        let merged = merge_records_in_global_order(MetricsConfig::default(), partitions)
+            .expect("global ordinals tile 0..W+P");
+        assert_eq!(merged.record_count(), warmup_n + profiling_n);
+        assert_eq!(
+            merged.summarize(),
+            direct.summarize(),
+            "multi-phase merge must be byte-identical to the single-cell run"
         );
     }
 

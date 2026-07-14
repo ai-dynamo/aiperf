@@ -3,12 +3,21 @@
 
 //! S1 — the issuance authority: the single central dispatch-ordinal assignment.
 //!
-//! Every issued turn receives a **dense global dispatch ordinal** — the absolute
-//! record slot the records-first re-ingest orders by, and the basis of the
-//! codebase's worker-count-independent byte parity (roadmap
+//! Every issued turn receives a **dense dispatch ordinal** — the record slot the
+//! records-first re-ingest orders by, and the basis of the codebase's
+//! worker-count-independent byte parity (roadmap
 //! `specs/2026-07-12-cellular-ready-seams-and-roadmap.md`, S1). An
-//! [`IssuanceAuthority`] maps a cell's monotonic local dispatch index (`0, 1, 2,
-//! …` in issue order) to that global ordinal.
+//! [`IssuanceAuthority`] maps a turn's dispatch indices to that ordinal.
+//!
+//! The runner rebuilds the per-cell sampler fresh at each phase boundary (the
+//! dataset RNG is re-seeded per phase), so a cell draws its owned instances of
+//! *each phase* from position 0. The cellular ordinal is therefore its phase's
+//! global base plus its phase-local slot — cell `k`'s `m`-th turn of a phase whose
+//! prior phases dispatched `base` turns is `base + m*count + k` — which equals the
+//! absolute slot a single-cell run assigns that instance, so the merged report is
+//! byte-identical. The single-process identity issuer keeps the cumulative flat slot
+//! (its non-cell record path is unchanged). All three indices are supplied; each
+//! issuer uses what it needs.
 //!
 //! This is a **single central assignment**, never a shared atomic: a shared-atomic
 //! self-issue interleaves nondeterministically and breaks run-to-run float
@@ -23,13 +32,25 @@ use crate::cellular::partition::{CellPartition, ModuloCellPartition};
 ///
 /// Object-safe so the runner holds `Rc<dyn IssuanceAuthority>`; the autonomous
 /// issuer drops in behind this trait without touching the dispatch path. The
-/// contract: over every cell, `global_ordinal` applied to each cell's local issue
-/// sequence must produce the dense `0..total` ordinal space with no gap or
-/// collision, so the merged report re-ingests cleanly in ordinal order.
+/// contract: over every cell, `global_ordinal` must produce the dense `0..total`
+/// absolute-slot space with no gap or collision, so the merged report re-ingests
+/// cleanly in ordinal order.
 pub trait IssuanceAuthority {
-    /// Map a cell-local dispatch index (`0, 1, 2, …` in issue order) to the dense
-    /// global dispatch ordinal used as the record's absolute slot.
-    fn global_ordinal(&self, local_dispatch_index: usize) -> usize;
+    /// Map a turn's dispatch indices to its record's dense absolute dispatch slot.
+    ///
+    /// `flat_local` is the cell's cumulative dispatch index across all phases (`0, 1,
+    /// 2, …` in issue order); `phase_ordinal_base` is the number of turns the run's
+    /// prior phases dispatched globally (0 for the first phase); `within_phase_local`
+    /// is the index within the current phase, reset at each phase boundary. The
+    /// identity issuer uses `flat_local`; the cellular issuer uses
+    /// `phase_ordinal_base + within_phase_local` because its sampler restarts each
+    /// phase (see the module docs).
+    fn global_ordinal(
+        &self,
+        flat_local: usize,
+        phase_ordinal_base: usize,
+        within_phase_local: usize,
+    ) -> usize;
 
     /// The cell partition this issuer serves (identity for the cell of one).
     fn partition(&self) -> &dyn CellPartition;
@@ -37,9 +58,9 @@ pub trait IssuanceAuthority {
 
 /// Tier-0 "Direct" issuer: identity ordinal for the single-process cell of one.
 ///
-/// `global_ordinal(local) == local`, reproducing today's sequential dispatch
-/// ordinal exactly — the shipping default, and the reason wiring it through the
-/// dispatch path changes no output.
+/// `global_ordinal == flat_local`, reproducing today's cumulative sequential
+/// dispatch ordinal exactly — the shipping default, and the reason wiring it
+/// through the dispatch path changes no output.
 #[derive(Debug, Clone, Default)]
 pub struct DirectIssuanceAuthority {
     partition: ModuloCellPartition,
@@ -55,8 +76,13 @@ impl DirectIssuanceAuthority {
 }
 
 impl IssuanceAuthority for DirectIssuanceAuthority {
-    fn global_ordinal(&self, local_dispatch_index: usize) -> usize {
-        local_dispatch_index
+    fn global_ordinal(
+        &self,
+        flat_local: usize,
+        _phase_ordinal_base: usize,
+        _within_phase_local: usize,
+    ) -> usize {
+        flat_local
     }
 
     fn partition(&self) -> &dyn CellPartition {
@@ -67,12 +93,15 @@ impl IssuanceAuthority for DirectIssuanceAuthority {
 /// Tier-2 "Cellular Autonomous" issuer: a cell assigns global ordinals from its
 /// round-robin partition with zero coordinator hop.
 ///
-/// A cell's `j`-th issued turn is global ordinal `j * cell_count + cell_id`. For a
-/// [`ModuloCellPartition`] — where cell `k` issues its owned instances in ascending
-/// order — this is exactly the trace instance index, so the union across cells is
-/// the dense `0..total` ordinal space. Under deterministic (sequential) sampling,
-/// where dispatch order equals instance order, a merged multi-cell report is
-/// byte-identical to the same run executed as one cell.
+/// A cell's `m`-th turn *of a phase* is the absolute slot `phase_base + m *
+/// cell_count + cell_id`, where `phase_base` is the turns dispatched by the run's
+/// prior phases. For a [`ModuloCellPartition`] — where cell `k` draws its owned
+/// instances of the phase in ascending order (the sampler restarts each phase) —
+/// `m*cell_count + cell_id` is exactly the phase-local instance index, so within each
+/// phase the union across cells is the dense `[phase_base, phase_base+phase_total)`
+/// slot range and the whole run tiles `0..total`. Under deterministic (sequential)
+/// sampling, where per-phase dispatch order equals per-phase instance order, a merged
+/// multi-cell report is byte-identical to the same run executed as one cell.
 #[derive(Debug, Clone)]
 pub struct CellularAutonomousIssuer {
     partition: ModuloCellPartition,
@@ -86,8 +115,14 @@ impl CellularAutonomousIssuer {
 }
 
 impl IssuanceAuthority for CellularAutonomousIssuer {
-    fn global_ordinal(&self, local_dispatch_index: usize) -> usize {
-        local_dispatch_index * self.partition.cell_count() as usize
+    fn global_ordinal(
+        &self,
+        _flat_local: usize,
+        phase_ordinal_base: usize,
+        within_phase_local: usize,
+    ) -> usize {
+        phase_ordinal_base
+            + within_phase_local * self.partition.cell_count() as usize
             + self.partition.cell_id() as usize
     }
 
@@ -101,46 +136,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn direct_issuer_is_identity_over_the_cell_of_one() {
+    fn direct_issuer_is_the_cumulative_slot_over_the_cell_of_one() {
         let issuer = DirectIssuanceAuthority::new();
         assert_eq!(issuer.partition().cell_id(), 0);
         assert_eq!(issuer.partition().cell_count(), 1);
-        for local in 0..1000 {
-            assert_eq!(issuer.global_ordinal(local), local);
+        // Direct uses the cumulative flat index and ignores the base + phase-local one.
+        for flat in 0..1000 {
+            assert_eq!(issuer.global_ordinal(flat, 7, 999 - flat), flat);
         }
     }
 
     #[test]
-    fn direct_matches_a_cellular_issuer_over_one_cell() {
+    fn direct_matches_a_cellular_issuer_over_one_cell_single_phase() {
+        // Over one cell and a single (base-0) phase, flat == within, so the identity
+        // issuer and the cellular issuer agree — the property that keeps the cell of
+        // one byte-unchanged.
         let direct = DirectIssuanceAuthority::new();
         let cellular = CellularAutonomousIssuer::new(ModuloCellPartition::direct());
-        for local in 0..500 {
-            assert_eq!(direct.global_ordinal(local), cellular.global_ordinal(local));
+        for i in 0..500 {
+            assert_eq!(
+                direct.global_ordinal(i, 0, i),
+                cellular.global_ordinal(i, 0, i)
+            );
         }
     }
 
     #[test]
-    fn cellular_issuers_tile_the_dense_global_ordinal_space() {
-        // For any cell_count, the union over cells of each cell's local dispatch
-        // sequence mapped through global_ordinal is exactly 0..total, with no gap
-        // and no collision — the invariant the records-first merge relies on.
+    fn cellular_issuers_tile_the_dense_ordinal_space_across_phase_bases() {
+        // Two phases stacked by their global bases (warmup [0, W), profiling [W,
+        // W+P)): within each phase the union over cells of the phase-local turns tiles
+        // [base, base+phase_total), so the whole run tiles 0..total with no gap or
+        // collision — the invariant the cumulative merge relies on. (flat is ignored.)
         for cell_count in 1..=8u32 {
             let issuers: Vec<_> = (0..cell_count)
                 .map(|id| {
                     CellularAutonomousIssuer::new(ModuloCellPartition::new(id, cell_count).unwrap())
                 })
                 .collect();
-            let locals_per_cell = 250usize;
-            let mut global: Vec<usize> = Vec::new();
+            let warmup_per_cell = 7usize;
+            let profiling_per_cell = 250usize;
+            let warmup_total = cell_count as usize * warmup_per_cell;
+            let mut ordinals: Vec<usize> = Vec::new();
             for issuer in &issuers {
-                for local in 0..locals_per_cell {
-                    global.push(issuer.global_ordinal(local));
+                for within in 0..warmup_per_cell {
+                    ordinals.push(issuer.global_ordinal(9999, 0, within));
+                }
+                for within in 0..profiling_per_cell {
+                    ordinals.push(issuer.global_ordinal(9999, warmup_total, within));
                 }
             }
-            global.sort_unstable();
-            let total = cell_count as usize * locals_per_cell;
-            assert_eq!(global.len(), total);
-            for (expected, actual) in global.iter().copied().enumerate() {
+            ordinals.sort_unstable();
+            let total = warmup_total + cell_count as usize * profiling_per_cell;
+            assert_eq!(ordinals.len(), total);
+            for (expected, actual) in ordinals.iter().copied().enumerate() {
                 assert_eq!(
                     actual, expected,
                     "cell_count {cell_count} left a gap/collision"
@@ -150,17 +198,21 @@ mod tests {
     }
 
     #[test]
-    fn cellular_global_ordinal_is_the_instance_index_for_round_robin() {
-        // Cell k's j-th owned instance (ascending) is j*count + k; the issuer's
-        // global ordinal for local index j must equal that instance index so a
-        // merged report lands each record at its single-cell slot.
+    fn cellular_ordinal_is_the_phase_base_plus_instance_index_for_round_robin() {
+        // Cell k's j-th owned instance of a phase (ascending) is j*count + k; the
+        // issuer's ordinal must equal base + that index so the merged report lands
+        // each record at its single-cell absolute slot.
         let cell_count = 4u32;
+        let base = 41usize;
         for cell_id in 0..cell_count {
             let partition = ModuloCellPartition::new(cell_id, cell_count).unwrap();
             let issuer = CellularAutonomousIssuer::new(partition);
             let owned: Vec<u64> = (0..10_000u64).filter(|&i| partition.owns(i)).collect();
-            for (local, &instance) in owned.iter().enumerate() {
-                assert_eq!(issuer.global_ordinal(local) as u64, instance);
+            for (within, &instance) in owned.iter().enumerate() {
+                assert_eq!(
+                    issuer.global_ordinal(0, base, within) as u64,
+                    base as u64 + instance
+                );
             }
         }
     }

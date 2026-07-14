@@ -3333,6 +3333,11 @@ struct RunCapture {
     /// controller injects a per-cell autonomous issuer that stamps global ordinals
     /// spanning every cell's partition.
     issuance: Rc<dyn IssuanceAuthority>,
+    /// Global cumulative dispatch count of the phases before each phase (0 for the
+    /// first). A cell's per-phase sampler restarts at 0, so the autonomous issuer
+    /// adds this base to a turn's phase-local slot to recover the single-cell
+    /// absolute slot. Empty (all-zero) for the single-process path.
+    phase_ordinal_bases: HashMap<MetricsPhase, usize>,
 }
 
 impl RunCapture {
@@ -3364,6 +3369,7 @@ impl RunCapture {
             // (`AIPERF_CELL_ID`/`_COUNT`); the single-process default is Direct
             // (identity), so non-cell output is byte-unchanged.
             issuance: crate::cellular_cell::issuance_authority_from_env(),
+            phase_ordinal_bases: crate::cellular_cell::phase_ordinal_bases_from_env(),
         }
     }
 
@@ -3645,8 +3651,12 @@ impl RunCapture {
             identities.len()
         );
 
-        // Emit rows in dispatch (identity) order; the enumerate index is the
-        // global dispatch ordinal (begin order — worker-count-independent).
+        // Emit rows in dispatch (identity) order. `ordinal` (begin order) is the
+        // cumulative flat dispatch index; `phase_counters` tracks the per-phase
+        // dispatch index because a cell's sampler restarts each phase, so the
+        // cellular issuer's ordinal must be phase-local (the identity issuer ignores
+        // it and keeps the flat slot, leaving the cell-of-one path unchanged).
+        let mut phase_counters: HashMap<_, usize> = HashMap::new();
         identities
             .iter()
             .enumerate()
@@ -3657,11 +3667,6 @@ impl RunCapture {
                         identity.uuid
                     )
                 })?;
-                // The enumerate index is this cell's local dispatch ordinal; the
-                // issuance authority maps it to the dense global ordinal (identity
-                // for the cell of one). This is the single central assignment point
-                // the records-first re-ingest orders by.
-                ingest.request_index = Some(self.issuance.global_ordinal(ordinal));
                 let has_credit_timestamp = labels
                     .get(&identity.uuid)
                     .map(|label| label.has_credit_timestamp)
@@ -3670,6 +3675,19 @@ impl RunCapture {
                     ingest.phase = label.phase;
                     ingest.session_num = label.session_num;
                 }
+                // The single central ordinal assignment the records-first re-ingest
+                // orders by. The cellular issuer maps (phase base, phase-local index)
+                // to the single-cell absolute slot; the identity issuer uses `ordinal`.
+                let within_phase = phase_counters.entry(ingest.phase).or_insert(0);
+                let within = *within_phase;
+                *within_phase += 1;
+                let phase_base = self
+                    .phase_ordinal_bases
+                    .get(&ingest.phase)
+                    .copied()
+                    .unwrap_or(0);
+                ingest.request_index =
+                    Some(self.issuance.global_ordinal(ordinal, phase_base, within));
                 ingest.admit_ns = if has_credit_timestamp {
                     Some(*issued_times.get(&identity.uuid).ok_or_else(|| {
                         anyhow!("captured request {} has no issuer timestamp", identity.uuid)
