@@ -662,51 +662,8 @@ impl RampHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clock::SimClock;
+    use crate::clock::{SimClock, drive_sim};
     use std::cell::RefCell;
-    use std::future::Future;
-    use std::pin::pin;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::task::{Context, Poll, Wake, Waker};
-    use tokio::task::LocalSet;
-
-    struct FlagWaker(Arc<AtomicBool>);
-
-    impl Wake for FlagWaker {
-        fn wake(self: Arc<Self>) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-
-        fn wake_by_ref(self: &Arc<Self>) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-    }
-
-    fn drive_sim<T>(clock: Rc<SimClock>, body: impl Future<Output = T>) -> T {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        let _guard = runtime.enter();
-        let local = LocalSet::new();
-        let future = local.run_until(body);
-        let mut future = pin!(future);
-        let flag = Arc::new(AtomicBool::new(true));
-        let waker = Waker::from(Arc::new(FlagWaker(flag.clone())));
-        let mut context = Context::from_waker(&waker);
-
-        loop {
-            flag.store(false, Ordering::SeqCst);
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(value) => return value,
-                Poll::Pending if flag.load(Ordering::SeqCst) => continue,
-                Poll::Pending => match clock.next_event_time() {
-                    Some(next) => clock.advance_to(next),
-                    None => panic!("deadlock: no simulated clock event"),
-                },
-            }
-        }
-    }
 
     fn cfg(start: f64, target: f64, duration_ns: u64) -> RamperConfig {
         RamperConfig::new(start, target, duration_ns).unwrap()
@@ -864,8 +821,6 @@ mod tests {
             Box::new(LinearRamp::new(cfg(1.0, 5.0, 400))),
             move |value| captured.borrow_mut().push((setter_clock.now_ns(), value)),
         );
-        let clock_trait: Rc<dyn Clock> = clock.clone();
-        let _ = clock_trait;
         drive_sim(clock.clone(), driver.run());
         assert_eq!(
             *values.borrow(),
