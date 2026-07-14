@@ -334,3 +334,43 @@ diverges the sampler's per-*draw* partition from the issuer's per-*turn* ordinal
 same silent-wrong-report class as the multi-phase fix above — continuations advance
 the turn count but not the draw position), so only `turns == 1` is sound. Each is
 rejected up front with a clear error rather than a silent divergence.
+
+## Addendum — 2026-07-14 — audit-closed divergences + cancellation policy
+
+A targeted controller-vs-single-cell audit (enumerating every config axis that a cell
+reads locally) surfaced four more silent-divergence classes past the multi-phase fix.
+Three are now rejected up front; the fourth (cancellation) is **allowed as a documented
+statistical approximation**, per the run owner's preference to keep the feature over
+enforcing byte-parity.
+
+- **Run seed now required** (`validate_cellular_run_shape`). Each cell is a separate OS
+  process; without `run.random_seed` every cell entropy-seeds an *independent* random
+  synthetic dataset (different prompts / ISL / OSL), so the cells no longer partition
+  one shared instance space — the core invariant the whole design rests on. A missing
+  seed is rejected, not silently divergent.
+- **Single endpoint URL required.** Multiple `endpoint.urls` round-robin in *cell-local*
+  order (each cell starts at index 0), so on a heterogeneous backend pool the per-request
+  URL assignment diverges from the 1-cell interleave. `urls.len() > 1` is rejected.
+- **Static caps must be ≥ `cell_count`.** `concurrency` / `prefill_concurrency` are sliced
+  round-robin with a `.max(1)` floor; a cap below `cell_count` floors to 1 per cell and
+  the aggregate in-flight over-subscribes to `cell_count` (e.g. `concurrency=2`, 4 cells →
+  aggregate 4, not 2). Every phase's `requests` must likewise be `≥ cell_count` (no cell
+  owns zero). Both are rejected below the floor.
+- **Cancellation — allowed, approximate.** This *supersedes* the "post-send cancellation
+  stays allowed (it marks turns cancelled after dispatch, not how many are sent)"
+  justification in the Phase-2 addendum's constraint paragraph: that framing was wrong —
+  a cancelled request truncates its own output, so cancellation *does* move
+  dataset-deterministic metrics (OSL, goodput), not just liveness. The accurate statement:
+  each cell applies the *same* per-request cancel probability to its slice, so the
+  **aggregate** cancellation rate matches the 1-cell run, but the exact cancelled *subset*
+  differs (cell-local RNG draw order is not the 1-cell global order). Byte-parity is
+  therefore exact only for a seeded phase **without** cancellation; `rate`-based arrival
+  pacing and cancellation are intentional statistical approximations — the feature is kept
+  rather than disabled. A run mixing them is *not* claimed byte-identical, only
+  distribution-equivalent in the aggregate.
+
+**Byte-parity scope, restated.** Exact, byte-for-byte 1-cell reproduction is claimed for:
+seeded `concurrency`-bounded phases, synthetic single-turn HTTP, single URL, no ramps, no
+cancellation. Everything the guards *allow past* that (Poisson/Gamma/constant arrival
+pacing via `rate/cell_count`, cancellation) is aggregate-equivalent, not byte-identical,
+and documented as such rather than rejected.
