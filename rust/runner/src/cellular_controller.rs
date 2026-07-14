@@ -311,11 +311,21 @@ fn build_cell_envelope(
         // Concurrency is a per-phase saturation cap, not a budget that tiles the
         // stream, so it needs no base offset. `.max(1)` keeps every cell able to make
         // progress when `concurrency < cell_count`, a bounded over-subscription.
-        if let Some(concurrency) = phase.get("concurrency").and_then(serde_json::Value::as_u64) {
-            let cell_concurrency = owned_positions(concurrency, cell_id, cell_count).max(1);
+        // `prefill_concurrency` is the same kind of cap and is split identically.
+        for cap in ["concurrency", "prefill_concurrency"] {
+            if let Some(value) = phase.get(cap).and_then(serde_json::Value::as_u64) {
+                let cell_cap = owned_positions(value, cell_id, cell_count).max(1);
+                phase.insert(cap.to_owned(), serde_json::Value::from(cell_cap));
+            }
+        }
+        // Split the arrival RATE (requests/sec) evenly: the cells run concurrently, so
+        // each cell paces at `rate / cell_count` and their aggregate offered rate — and
+        // thus the merged report's throughput and duration — matches the single-cell
+        // run. Without this every cell would fire at the full authored rate (N× load).
+        if let Some(rate) = phase.get("rate").and_then(serde_json::Value::as_f64) {
             phase.insert(
-                "concurrency".to_owned(),
-                serde_json::Value::from(cell_concurrency),
+                "rate".to_owned(),
+                serde_json::Value::from(rate / cell_count as f64),
             );
         }
     }
@@ -390,9 +400,15 @@ const CELLULAR_REQUEST_BOUNDED_PHASE_TYPES: [&str; 4] =
 /// - lacks a `requests` budget; or
 /// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early.
 ///
-/// Fail closed rather than silently corrupt. Pacing-only knobs (concurrency/rate
-/// ramps) and post-send cancellation stay allowed: they change *when* turns are sent
-/// or mark them cancelled after dispatch, not *how many* are dispatched.
+/// - carries a `duration`/`sessions`/`adaptive_scale` bound that can stop it early; or
+/// - drives a concurrency/prefill/rate **ramp**, which the controller cannot slice
+///   per cell (each cell would ramp to the full authored target, N×-ing the aggregate
+///   in-flight/rate over the ramp).
+///
+/// Fail closed rather than silently corrupt. Post-send cancellation stays allowed: it
+/// marks turns cancelled after dispatch, not *how many* are dispatched. The static
+/// `concurrency`/`prefill_concurrency`/`rate` caps ARE sliced per cell (see
+/// [`build_cell_envelope`]).
 fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
     let phases = envelope
         .pointer("/run/cfg/phases")
@@ -421,6 +437,12 @@ fn validate_cellular_phase_budgets(envelope: &serde_json::Value) -> Result<()> {
                 && phase.get("sessions").is_none()
                 && phase.get("adaptive_scale").is_none(),
             "cellular runs require a fixed per-phase request budget; phase {name:?} carries a `duration`/`sessions`/`adaptive_scale` bound whose actual dispatch count can diverge from `requests` and break the merge"
+        );
+        ensure!(
+            phase.get("concurrency_ramp").is_none()
+                && phase.get("prefill_ramp").is_none()
+                && phase.get("rate_ramp").is_none(),
+            "cellular runs do not support concurrency/prefill/rate ramps; the controller cannot slice a ramp target per cell, so every cell would ramp to the full value and N× the aggregate load; phase {name:?}"
         );
     }
     Ok(())
@@ -671,6 +693,12 @@ mod tests {
             serde_json::json!({"run": {"cfg": {"phases": [
                 {"type": "concurrency", "name": "profiling", "requests": 100, "adaptive_scale": {"controller": "ramp_until_fail"}},
             ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "concurrency", "name": "profiling", "requests": 100, "concurrency_ramp": {"start": 1, "end": 100}},
+            ]}}}),
+            serde_json::json!({"run": {"cfg": {"phases": [
+                {"type": "constant", "name": "profiling", "requests": 100, "rate_ramp": {"start": 1.0, "end": 50.0}},
+            ]}}}),
         ] {
             assert!(
                 validate_cellular_phase_budgets(&bad).is_err(),
@@ -739,6 +767,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn slices_rate_and_concurrency_caps_per_cell() {
+        // The arrival rate is divided evenly (the cells' rates sum to the authored
+        // aggregate), and the concurrency/prefill caps are per-cell round-robin shares.
+        let dir = Path::new("/tmp/aiperf-cellular-envelope-test");
+        let envelope = serde_json::json!({"run": {"cfg": {"phases": [
+            {"type": "constant", "name": "profiling", "requests": 100, "rate": 40.0,
+             "concurrency": 8, "prefill_concurrency": 4},
+        ]}}});
+        let cell_count = 4u32;
+        let mut rate_sum = 0.0;
+        for cell_id in 0..cell_count {
+            let cell = build_cell_envelope(&envelope, cell_id, cell_count, dir).unwrap();
+            let phase = &cell
+                .pointer("/run/cfg/phases")
+                .and_then(serde_json::Value::as_array)
+                .unwrap()[0];
+            rate_sum += phase
+                .get("rate")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap();
+            assert!(
+                phase
+                    .get("concurrency")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap()
+                    <= 8
+            );
+            assert!(
+                phase
+                    .get("prefill_concurrency")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap()
+                    <= 4
+            );
+        }
+        assert!(
+            (rate_sum - 40.0).abs() < 1e-9,
+            "per-cell rates must sum to the authored aggregate, got {rate_sum}"
+        );
     }
 
     #[test]
