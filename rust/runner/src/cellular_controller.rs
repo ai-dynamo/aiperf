@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use aiperf::cellular::{
     CellMessage, ControllerTransport, MetricsHeartbeat, RecordsShardPartition, TDigest,
-    TcpControllerTransport, merge_records_in_global_order,
+    TcpControllerTransport, merge_records_by_concatenation, merge_records_in_global_order,
 };
 use aiperf::metrics_core::report::NativeReport;
 use aiperf::metrics_core::{ExportContext, MetricsConfig, PERCENTILES};
@@ -47,6 +47,23 @@ impl Drop for ScratchTreeGuard {
     }
 }
 
+/// Whether the run targets a graph program (`dag_jsonl` / `weka_trace` / `dynamo_trace`),
+/// as opposed to a scheduled synthetic dataset. Graph programs partition cleanly by whole
+/// trace, so they take the concatenation merge and bypass the scheduled request-budget guards.
+fn is_graph_dataset(envelope: &serde_json::Value) -> bool {
+    envelope
+        .pointer("/run/cfg/datasets")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|datasets| {
+            datasets.iter().any(|dataset| {
+                matches!(
+                    dataset.get("format").and_then(serde_json::Value::as_str),
+                    Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
+                )
+            })
+        })
+}
+
 /// Runs one benchmark across `cell_count` cell subprocesses and writes the merged
 /// report to `report_path`. Blocks until every cell finishes.
 pub fn run_cellular(
@@ -56,15 +73,22 @@ pub fn run_cellular(
 ) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
-    validate_cellular_phase_budgets(envelope, cell_count)?;
+    let is_graph = is_graph_dataset(envelope);
+    if !is_graph {
+        validate_cellular_phase_budgets(envelope, cell_count)?;
+    }
     warn_dropped_sidecar_telemetry(envelope);
     warn_cellular_approximations(envelope);
     // One shared seed for every cell when the author gave none (else `None` and each
     // cell inherits the authored `run.random_seed` verbatim).
     let injected_seed = resolve_cellular_seed(envelope);
     // Ensure a profiling phase exists; every phase's `requests >= cell_count` (so no
-    // cell owns zero) is already checked by validate_cellular_phase_budgets.
-    profiling_request_budget(envelope)?;
+    // cell owns zero) is already checked by validate_cellular_phase_budgets. Graph
+    // phases carry sessions/duration, not a `requests` budget, so this scheduled-only
+    // check must not run for graph (PartitionedGraphTraceSource partitions by trace).
+    if !is_graph {
+        profiling_request_budget(envelope)?;
+    }
     // Derive the metrics policy from the envelope so the merge reproduces the
     // authored SLOs / timeslices, exactly as the single-process path does.
     let metrics_config = cellular_metrics_config(envelope)?;
@@ -96,7 +120,11 @@ pub fn run_cellular(
         // Each phase's global dispatch base (turns dispatched by prior phases): a
         // cell's sampler restarts each phase, so the cell adds this to its phase-local
         // slot to stamp the single-cell absolute slot. Same for every cell.
-        let phase_ordinal_bases = phase_ordinal_bases(envelope)?;
+        let phase_ordinal_bases = if is_graph {
+            std::collections::BTreeMap::new()
+        } else {
+            phase_ordinal_bases(envelope)?
+        };
         let mut children = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
@@ -171,8 +199,14 @@ pub fn run_cellular(
         }
 
         // Records-first merge in global dispatch-ordinal order → the single report.
-        let merged = merge_records_in_global_order(metrics_config, partitions)
-            .context("merging cell partitions")?;
+        let merged = if is_graph {
+            // Graph records carry LOCAL per-cell request_index (wall-clock start order);
+            // concatenate by cell_id and re-number densely — deterministic-per-topology.
+            merge_records_by_concatenation(metrics_config, partitions)
+        } else {
+            merge_records_in_global_order(metrics_config, partitions)
+                .context("merging cell partitions")?
+        };
         let record_count = merged.record_count();
         let summary = merged.export_results(&ExportContext::phase(
             aiperf::metrics_core::Phase::Profiling,
@@ -410,6 +444,15 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         .and_then(serde_json::Value::as_array)
         .context("run cfg has no datasets array")?;
     for dataset in datasets {
+        // Graph programs (dag_jsonl / weka_trace / dynamo_trace) partition by whole
+        // trace via PartitionedGraphTraceSource, so they bypass the scheduled
+        // synthetic/single-turn requirement.
+        if matches!(
+            dataset.get("format").and_then(serde_json::Value::as_str),
+            Some("dag_jsonl" | "weka_trace" | "dynamo_trace")
+        ) {
+            continue;
+        }
         let kind = dataset.get("type").and_then(serde_json::Value::as_str);
         ensure!(
             kind == Some("synthetic"),
@@ -814,7 +857,10 @@ mod tests {
         // Fail closed on each unsupported aspect (all else valid + seeded):
         for bad in [
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic"}], "transport": {"type": "grpc"}}}}),
-            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "dag_jsonl"}]}}}),
+            // A `file` dataset in a NON-graph trace format is still rejected; the graph
+            // formats (dag_jsonl/weka_trace/dynamo_trace) are admitted instead — see
+            // admits_graph_datasets_but_still_rejects_linear_non_synthetic.
+            serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "file", "format": "mooncake_trace"}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "public"}]}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {}}}),
             serde_json::json!({"run": {"random_seed": 42, "cfg": {"datasets": [{"type": "synthetic", "turns": {"value": 3}}]}}}),
@@ -825,6 +871,48 @@ mod tests {
                 "should reject {bad}"
             );
         }
+    }
+
+    #[test]
+    fn admits_graph_datasets_but_still_rejects_linear_non_synthetic() {
+        // Graph programs (dag_jsonl / weka_trace / dynamo_trace) partition by whole
+        // trace via PartitionedGraphTraceSource, so validate_cellular_run_shape admits
+        // them past the synthetic / single-turn guards even though they are `file`
+        // datasets. The http transport ensure is unchanged (graph dispatches HTTP too).
+        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
+            let graph = serde_json::json!({"run": {"cfg": {
+                "transport": {"type": "http"},
+                "datasets": [{"type": "file", "format": graph_format}],
+            }}});
+            assert!(
+                validate_cellular_run_shape(&graph).is_ok(),
+                "should admit graph dataset {graph_format}"
+            );
+            assert!(
+                is_graph_dataset(&graph),
+                "is_graph_dataset true for {graph_format}"
+            );
+        }
+        // A NON-graph linear trace format (mooncake_trace is not one of the three graph
+        // formats) is still a `file` non-synthetic dataset and must stay rejected — the
+        // graph bypass is scoped to exactly the three graph formats.
+        let linear = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "file", "format": "mooncake_trace"}],
+        }}});
+        assert!(
+            validate_cellular_run_shape(&linear).is_err(),
+            "should still reject non-graph linear trace"
+        );
+        assert!(
+            !is_graph_dataset(&linear),
+            "mooncake_trace is not a graph dataset"
+        );
+        // is_graph_dataset is false for a synthetic (scheduled) dataset.
+        let synthetic = serde_json::json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
+        assert!(
+            !is_graph_dataset(&synthetic),
+            "synthetic is not a graph dataset"
+        );
     }
 
     #[test]
