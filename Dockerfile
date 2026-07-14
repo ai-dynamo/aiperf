@@ -71,18 +71,31 @@ FROM base AS wheel-builder
 WORKDIR /workspace
 
 # The native runner is compiled from source with maturin (ai-dynamo's model),
-# so the wheel-builder needs a Rust toolchain, a C toolchain for linking, and
-# maturin[patchelf] for the manylinux auditwheel repair.
+# so the wheel-builder needs a Rust toolchain, a C toolchain for linking, git for
+# the sibling checkout, and maturin[patchelf] for the manylinux auditwheel repair.
 RUN apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         curl \
+        git \
     && rm -rf /var/lib/apt/lists/* \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN uv pip install --python "${VIRTUAL_ENV}/bin/python" "maturin[patchelf]"
+
+# The runner's default `dynosim` feature path-depends on the external
+# dynamo-aiperf-native repo. Clone it adjacent to the workspace at a pinned ref,
+# mirroring how ai-dynamo stages its external native deps (nixl/ucx/gdrcopy are
+# git-cloned at ARG-pinned refs in its wheel_builder). rust/aiperf/Cargo.toml
+# resolves `../../../../../dynamo-aiperf-native/lib/mocker`, which from
+# /workspace/rust/aiperf lands at /dynamo-aiperf-native — hence the clone target.
+# A private fork requires the build to supply git credentials (token/secret).
+ARG DYNAMO_AIPERF_NATIVE_REPO=https://github.com/ajcasagrande/dynamo.git
+ARG DYNAMO_AIPERF_NATIVE_REF=ajc/dynamo-aiperf-skeleton
+RUN git clone --depth 1 --branch "${DYNAMO_AIPERF_NATIVE_REF}" \
+        "${DYNAMO_AIPERF_NATIVE_REPO}" /dynamo-aiperf-native
 
 # Copy the frontend sources plus the Rust workspace the runner wheel compiles.
 # The runner wheel's pyproject.toml is co-located with its crate in rust/runner.
@@ -91,9 +104,9 @@ COPY Cargo.toml Cargo.lock /workspace/
 COPY rust /workspace/rust
 
 # Build the Python frontend wheel, then compile the native runner wheel with
-# maturin directly (ai-dynamo's model): the pyproject defaults to the online-only
-# feature set, and a direct `maturin build` runs its built-in auditwheel repair to
-# emit a manylinux-tagged, self-contained wheel. `uv build` is not used for the
+# maturin directly (ai-dynamo's model): a direct `maturin build` runs its built-in
+# auditwheel repair to emit a manylinux-tagged wheel with the default feature set
+# (includes dynosim → offline/online Dynamo replay). `uv build` is not used for the
 # runner because it forces `--auditwheel skip`, producing a bare linux_x86_64 tag.
 RUN uv build --wheel --out-dir /dist \
     && cd /workspace/rust/runner \
