@@ -20,6 +20,7 @@ use aiperf::adaptive_core::{
     SessionConcurrencyActuator, SharedWindowSampler, TumblingWindowSampler,
 };
 use aiperf::ancillary::RATE_RAMP_UPDATE_INTERVAL_NS;
+use aiperf::cellular::{CellPartition, ModuloCellPartition};
 use aiperf::clock::Clock;
 use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
@@ -29,7 +30,8 @@ use aiperf::graph::policy::{ContinueRunFailurePolicy, FailFastRunFailurePolicy, 
 use aiperf::graph::workload::{
     CyclingGraphTraceSource, GraphArrivalPolicy, GraphTraceInstanceSequence, GraphTraceRunResult,
     GraphTraceSource, GraphWorkload, GraphWorkloadObserver, GraphWorkloadReport,
-    ImmediateGraphArrival, IntervalGraphArrival, SlotPoolTraceAdmission, TraceAdmissionInfo,
+    ImmediateGraphArrival, IntervalGraphArrival, PartitionedGraphTraceSource,
+    SlotPoolTraceAdmission, TraceAdmissionInfo,
 };
 use aiperf::metrics_core::Phase as MetricsPhase;
 use aiperf::phase_runtime::{
@@ -1112,13 +1114,33 @@ fn prepare_graph_phase(
     } else {
         common.sessions
     };
-    let source: Rc<dyn GraphTraceSource> =
-        Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
+    // A multi-cell process owns only its interleaved slice of the global session
+    // ordinals, so it swaps the single-cell cycler for the partitioned source. The
+    // `common.requests.is_none()` guard keeps a configured static-node request budget
+    // on the cycler because `PartitionedGraphTraceSource` does not yet slice that
+    // budget across cells; a later controller step must own the split before a
+    // per-cell run can honor a static request_limit.
+    let source: Rc<dyn GraphTraceSource> = match ModuloCellPartition::from_env() {
+        Some(partition) if partition.cell_count() > 1 && common.requests.is_none() => {
+            tracing::debug!(
+                cell_id = partition.cell_id(),
+                cell_count = partition.cell_count(),
+                "graph phase using partitioned trace source for cell"
+            );
+            Rc::new(PartitionedGraphTraceSource::new(
+                input.plans.clone(),
+                session_limit,
+                partition.cell_id(),
+                partition.cell_count(),
+            )?)
+        }
+        _ => Rc::new(CyclingGraphTraceSource::with_budgets_and_sequence(
             input.plans.clone(),
             session_limit,
             common.requests,
             trace_instances,
-        )?);
+        )?),
+    };
     let seed = phase_rng.derive_seed_or_entropy(namespace::GRAPH_ARRIVAL);
     let intervals = Rc::new(RefCell::new(match phase.request_arrival() {
         Some((pattern, rate, smoothness)) => {
