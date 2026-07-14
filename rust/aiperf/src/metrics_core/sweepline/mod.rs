@@ -12,7 +12,7 @@ mod kv_cache;
 mod stats;
 
 use crate::metrics_core::{MetricConsoleGroup, MetricValue};
-use rayon::slice::ParallelSliceMut;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 
 pub use kv_cache::{
@@ -29,6 +29,7 @@ pub use stats::{
 pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 const PARALLEL_SWEEP_MIN_ROWS: usize = 4_096;
+#[allow(dead_code)] // Threshold for `radix_argsort_mt`, kept for its future callers and tests.
 const PARALLEL_EVENT_SORT_MIN_EVENTS: usize = 262_144;
 
 /// One timestamped change applied by the sweep-line cumulative sum.
@@ -293,32 +294,205 @@ pub(super) fn sweep_line_cumsum_repeated(mut events: Vec<RepeatedSweepEvent>) ->
     StepFn::new(timestamps_ns, values)
 }
 
+// Both sweep sorts key on `(timestamp asc, delta asc)`: the original comparator
+// broke ties by `(delta > 0)` and then `delta`, but `delta`-ascending already
+// orders every negative (end) delta before every positive (start) delta, so the
+// sign key is redundant and `(timestamp, delta)` reproduces it exactly. That
+// exact order is preserved here by a stable radix on the timestamp bit-key plus
+// a `delta` tie-break within each equal-timestamp run — replacing the
+// `total_cmp` comparison sort (two bit-twiddling compares per comparison) that
+// profiled as the export hot spot. See
+// `~/.claude/benchmark-findings/rust-sweepline-radix-vs-numpy-lexsort.md`.
+
 fn sort_sweep_events(events: &mut [SweepEvent]) {
-    let compare = |left: &SweepEvent, right: &SweepEvent| {
-        left.timestamp_ns
-            .total_cmp(&right.timestamp_ns)
-            .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
-            .then_with(|| left.delta.total_cmp(&right.delta))
-    };
-    if events.len() >= PARALLEL_EVENT_SORT_MIN_EVENTS && rayon::current_num_threads() > 1 {
-        events.par_sort_unstable_by(compare);
-    } else {
-        events.sort_unstable_by(compare);
-    }
+    sort_by_timestamp_then_delta(events, |event| event.timestamp_ns, |event| event.delta);
 }
 
 fn sort_repeated_sweep_events(events: &mut [RepeatedSweepEvent]) {
-    let compare = |left: &RepeatedSweepEvent, right: &RepeatedSweepEvent| {
-        left.timestamp_ns
-            .total_cmp(&right.timestamp_ns)
-            .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
-            .then_with(|| left.delta.total_cmp(&right.delta))
-    };
-    if events.len() >= PARALLEL_EVENT_SORT_MIN_EVENTS && rayon::current_num_threads() > 1 {
-        events.par_sort_unstable_by(compare);
-    } else {
-        events.sort_unstable_by(compare);
+    sort_by_timestamp_then_delta(events, |event| event.timestamp_ns, |event| event.delta);
+}
+
+/// Maps an `f64` to the `u64` whose unsigned order is IEEE total order — i.e.
+/// `radix_key(a) <= radix_key(b)` iff `a.total_cmp(&b) != Greater`.
+#[inline(always)]
+fn radix_key(x: f64) -> u64 {
+    let bits = x.to_bits();
+    bits ^ ((((bits as i64) >> 63) as u64) | (1u64 << 63))
+}
+
+/// Sorts `items` by `(timestamp, delta)` total order in place, byte-for-byte
+/// identical to the retired `sort_unstable_by(total_cmp)` comparator.
+///
+/// A stable LSD radix on `radix_key(timestamp)` orders by timestamp (ties keep
+/// input order); each equal-timestamp run is then sorted by `delta` so the
+/// cumulative sum accumulates in the same order — and therefore to the same
+/// `f64` bits — as the comparison sort. Parallel above the event threshold.
+fn sort_by_timestamp_then_delta<T, Ts, Delta>(items: &mut [T], timestamp: Ts, delta: Delta)
+where
+    T: Copy + Send,
+    Ts: Fn(&T) -> f64 + Sync,
+    Delta: Fn(&T) -> f64,
+{
+    let n = items.len();
+    if n < 2 {
+        return;
     }
+    let keys: Vec<u64> = items.iter().map(|item| radix_key(timestamp(item))).collect();
+    // Single-threaded: the seven curves are already fanned out across rayon in
+    // `SweepLineCurves::compute`, so an inner parallel sort only nests rayon
+    // regions and multiplies epoch/work-steal coordination (which profiles as
+    // the dominant export cost). `radix_argsort_mt` stays for callers that sort
+    // a single curve with no outer parallelism.
+    let permutation = radix_argsort_st(&keys);
+    let sorted: Vec<T> = permutation.iter().map(|&index| items[index as usize]).collect();
+    items.copy_from_slice(&sorted);
+
+    let mut run_start = 0usize;
+    while run_start < n {
+        let mut run_end = run_start + 1;
+        while run_end < n && same_timestamp(timestamp(&items[run_start]), timestamp(&items[run_end]))
+        {
+            run_end += 1;
+        }
+        if run_end - run_start > 1 {
+            items[run_start..run_end]
+                .sort_unstable_by(|left, right| delta(left).total_cmp(&delta(right)));
+        }
+        run_start = run_end;
+    }
+}
+
+/// Stable single-threaded LSD radix argsort of `keys` (ascending). Adaptive:
+/// constant key bytes are skipped, so integer-nanosecond timestamps (which sit
+/// in the low bytes) cost only the passes that vary.
+fn radix_argsort_st(keys: &[u64]) -> Vec<u32> {
+    let n = keys.len();
+    let mut indices: Vec<u32> = (0..n as u32).collect();
+    if n < 2 {
+        return indices;
+    }
+    let mut source = keys.to_vec();
+    let (mut or_all, mut and_all) = (0u64, !0u64);
+    for &key in &source {
+        or_all |= key;
+        and_all &= key;
+    }
+    let vary = or_all & !and_all;
+
+    let mut key_scratch = vec![0u64; n];
+    let mut index_scratch = vec![0u32; n];
+    for byte in 0..8 {
+        let shift = byte * 8;
+        if (vary >> shift) & 0xFF == 0 {
+            continue;
+        }
+        let mut counts = [0usize; 256];
+        for &key in &source {
+            counts[((key >> shift) & 0xFF) as usize] += 1;
+        }
+        let mut offset = 0usize;
+        for count in counts.iter_mut() {
+            let bucket = *count;
+            *count = offset;
+            offset += bucket;
+        }
+        for i in 0..n {
+            let bucket = ((source[i] >> shift) & 0xFF) as usize;
+            let position = counts[bucket];
+            counts[bucket] += 1;
+            key_scratch[position] = source[i];
+            index_scratch[position] = indices[i];
+        }
+        std::mem::swap(&mut source, &mut key_scratch);
+        std::mem::swap(&mut indices, &mut index_scratch);
+    }
+    indices
+}
+
+/// Stable parallel LSD radix argsort: per-chunk histograms, exclusive per-chunk
+/// bucket offsets, then a contention-free scatter into disjoint output ranges.
+///
+/// Retained for a future caller that sorts one large curve without outer
+/// parallelism; the sweep-curve bundle fans out across curves instead, so it
+/// uses the single-threaded path to avoid nested rayon regions.
+#[allow(dead_code)]
+fn radix_argsort_mt(keys: &[u64]) -> Vec<u32> {
+    let n = keys.len();
+    let mut source = keys.to_vec();
+    let mut indices: Vec<u32> = (0..n as u32).collect();
+    let (or_all, and_all) = source
+        .par_iter()
+        .fold(|| (0u64, !0u64), |(o, a), &k| (o | k, a & k))
+        .reduce(|| (0u64, !0u64), |(o1, a1), (o2, a2)| (o1 | o2, a1 & a2));
+    let vary = or_all & !and_all;
+
+    let mut key_scratch = vec![0u64; n];
+    let mut index_scratch = vec![0u32; n];
+    let threads = rayon::current_num_threads().max(1);
+    let chunk = n.div_ceil(threads);
+
+    for byte in 0..8 {
+        let shift = byte * 8;
+        if (vary >> shift) & 0xFF == 0 {
+            continue;
+        }
+        let histograms: Vec<[usize; 256]> = source
+            .par_chunks(chunk)
+            .map(|chunk_keys| {
+                let mut histogram = [0usize; 256];
+                for &key in chunk_keys {
+                    histogram[((key >> shift) & 0xFF) as usize] += 1;
+                }
+                histogram
+            })
+            .collect();
+        let chunk_count = histograms.len();
+
+        let mut bucket_total = [0usize; 256];
+        for histogram in &histograms {
+            for bucket in 0..256 {
+                bucket_total[bucket] += histogram[bucket];
+            }
+        }
+        let mut running = [0usize; 256];
+        let mut offset = 0usize;
+        for bucket in 0..256 {
+            running[bucket] = offset;
+            offset += bucket_total[bucket];
+        }
+        let mut starts = vec![[0usize; 256]; chunk_count];
+        for (c, start) in starts.iter_mut().enumerate() {
+            for bucket in 0..256 {
+                start[bucket] = running[bucket];
+                running[bucket] += histograms[c][bucket];
+            }
+        }
+
+        let key_ptr = key_scratch.as_mut_ptr() as usize;
+        let index_ptr = index_scratch.as_mut_ptr() as usize;
+        source
+            .par_chunks(chunk)
+            .zip(indices.par_chunks(chunk))
+            .enumerate()
+            .for_each(|(c, (chunk_keys, chunk_indices))| {
+                let mut offset = starts[c];
+                let key_out = key_ptr as *mut u64;
+                let index_out = index_ptr as *mut u32;
+                for i in 0..chunk_keys.len() {
+                    let bucket = ((chunk_keys[i] >> shift) & 0xFF) as usize;
+                    let position = offset[bucket];
+                    offset[bucket] += 1;
+                    // Disjoint output ranges per chunk+bucket: no aliasing.
+                    unsafe {
+                        *key_out.add(position) = chunk_keys[i];
+                        *index_out.add(position) = chunk_indices[i];
+                    }
+                }
+            });
+        std::mem::swap(&mut source, &mut key_scratch);
+        std::mem::swap(&mut indices, &mut index_scratch);
+    }
+    indices
 }
 
 fn snap_small_residuals(values: &mut [f64], threshold: f64) {
@@ -1057,6 +1231,37 @@ mod tests {
             sort_sweep_events(&mut events);
         });
 
+        assert_eq!(events, expected);
+    }
+
+    #[test]
+    fn multi_thread_large_event_sort_matches_sequential_reference() {
+        // Exercises the parallel radix scatter (unsafe disjoint writes) at the
+        // threshold with dense duplicate timestamps and mixed-sign deltas, and
+        // pins it byte-for-byte to the `(timestamp, delta)` comparator order.
+        let mut events = (0..PARALLEL_EVENT_SORT_MIN_EVENTS * 3)
+            .map(|index| {
+                let timestamp_ns = ((index * 31) % 2_048) as f64;
+                let magnitude = ((index / 3) % 9 + 1) as f64;
+                let delta = if index % 2 == 0 { -magnitude } else { magnitude };
+                SweepEvent::new(timestamp_ns, delta)
+            })
+            .collect::<Vec<_>>();
+        let mut expected = events.clone();
+        expected.sort_unstable_by(|left, right| {
+            left.timestamp_ns
+                .total_cmp(&right.timestamp_ns)
+                .then_with(|| (left.delta > 0.0).cmp(&(right.delta > 0.0)))
+                .then_with(|| left.delta.total_cmp(&right.delta))
+        });
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            assert!(rayon::current_num_threads() > 1);
+            sort_sweep_events(&mut events);
+        });
         assert_eq!(events, expected);
     }
 

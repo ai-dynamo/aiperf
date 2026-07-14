@@ -515,8 +515,14 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     dimensions: CategoryInterner<InferenceDimensions>,
     workers: CategoryInterner<String>,
     conversations: CategoryInterner<String>,
-    numeric: FxHashMap<MetricTag, NumericColumn>,
-    ragged: FxHashMap<MetricTag, B>,
+    // Dense columns indexed by `MetricTag::index()`. The tag set is a small
+    // fixed enum, so a direct array slot replaces the per-`set_metric_f64` hash
+    // probe that profiled as an export hot spot; the `*_present` lists preserve
+    // cheap iteration over only the populated tags.
+    numeric: Vec<Option<NumericColumn>>,
+    numeric_present: Vec<MetricTag>,
+    ragged: Vec<Option<B>>,
+    ragged_present: Vec<MetricTag>,
 }
 
 impl<B: ListMetricBackend> Default for ColumnStore<B> {
@@ -542,8 +548,10 @@ impl<B: ListMetricBackend> Default for ColumnStore<B> {
             dimensions: CategoryInterner::default(),
             workers: CategoryInterner::default(),
             conversations: CategoryInterner::default(),
-            numeric: FxHashMap::default(),
-            ragged: FxHashMap::default(),
+            numeric: (0..MetricTag::COUNT).map(|_| None).collect(),
+            numeric_present: Vec::new(),
+            ragged: (0..MetricTag::COUNT).map(|_| None).collect(),
+            ragged_present: Vec::new(),
         }
     }
 }
@@ -560,7 +568,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     /// removes per-record vector growth from known-size ingestion paths.
     pub fn prepare_request_slots(&mut self, rows: usize) {
         self.ensure_row_count(rows);
-        for backend in self.ragged.values_mut() {
+        for backend in self.ragged.iter_mut().flatten() {
             backend.prepare_rows(rows);
         }
     }
@@ -690,29 +698,65 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             self.canceled.push(other.canceled[row]);
         }
 
-        for column in self.numeric.values_mut() {
+        for column in self.numeric.iter_mut().flatten() {
             for _ in 0..other_rows {
                 column.push_absent();
             }
         }
-        for (tag, other_column) in &other.numeric {
-            let column = self
-                .numeric
-                .entry(*tag)
-                .or_insert_with(|| NumericColumn::with_absent_rows(row_offset + other_rows));
+        for &tag in &other.numeric_present {
+            let Some(other_column) = &other.numeric[tag.index()] else {
+                continue;
+            };
+            let column = self.numeric_column_or_insert(tag, row_offset + other_rows);
             for (row, value) in other_column.values().iter().copied().enumerate() {
                 if !value.is_nan() {
                     column.set_f64(row_offset + row, value);
                 }
             }
         }
-        for (tag, other_backend) in &other.ragged {
-            self.ragged.entry(*tag).or_default().append_shifted(
-                other_backend,
-                row_offset,
-                other_rows,
-            );
+        for &tag in &other.ragged_present {
+            let Some(other_backend) = &other.ragged[tag.index()] else {
+                continue;
+            };
+            self.ragged_backend_or_insert(tag)
+                .append_shifted(other_backend, row_offset, other_rows);
         }
+    }
+
+    /// Returns the numeric column for `tag`, allocating an absent-filled column
+    /// (and recording the tag as present) on first use.
+    fn numeric_column_or_insert(&mut self, tag: MetricTag, rows: usize) -> &mut NumericColumn {
+        let index = tag.index();
+        if self.numeric[index].is_none() {
+            self.numeric[index] = Some(NumericColumn::with_absent_rows(rows));
+            self.numeric_present.push(tag);
+        }
+        self.numeric[index].as_mut().unwrap()
+    }
+
+    /// Returns the ragged backend for `tag`, allocating a default (and recording
+    /// the tag as present) on first use.
+    fn ragged_backend_or_insert(&mut self, tag: MetricTag) -> &mut B {
+        let index = tag.index();
+        if self.ragged[index].is_none() {
+            self.ragged[index] = Some(B::default());
+            self.ragged_present.push(tag);
+        }
+        self.ragged[index].as_mut().unwrap()
+    }
+
+    /// Like [`Self::ragged_backend_or_insert`] but sizes a freshly created
+    /// backend to the current row span — the live-ingest set path, where a new
+    /// column must already cover the rows inserted before it first appeared.
+    fn ragged_backend_prepared(&mut self, tag: MetricTag, rows: usize) -> &mut B {
+        let index = tag.index();
+        if self.ragged[index].is_none() {
+            let mut backend = B::default();
+            backend.prepare_rows(rows);
+            self.ragged[index] = Some(backend);
+            self.ragged_present.push(tag);
+        }
+        self.ragged[index].as_mut().unwrap()
     }
 
     /// Returns the absolute slot span, including any not-yet-populated holes.
@@ -779,7 +823,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
 
     /// Returns a numeric metric column.
     pub fn numeric_column(&self, tag: MetricTag) -> Option<&NumericColumn> {
-        self.numeric.get(&tag)
+        self.numeric[tag.index()].as_ref()
     }
 
     /// Returns one present numeric value by row and tag.
@@ -789,17 +833,17 @@ impl<B: ListMetricBackend> ColumnStore<B> {
 
     /// Returns a mutable numeric metric column.
     pub fn numeric_column_mut(&mut self, tag: MetricTag) -> Option<&mut NumericColumn> {
-        self.numeric.get_mut(&tag)
+        self.numeric[tag.index()].as_mut()
     }
 
     /// Returns a list-valued metric backend.
     pub fn ragged_column(&self, tag: MetricTag) -> Option<&B> {
-        self.ragged.get(&tag)
+        self.ragged[tag.index()].as_ref()
     }
 
     /// Returns all numeric metric tags currently allocated.
     pub fn numeric_tags(&self) -> impl Iterator<Item = MetricTag> + '_ {
-        self.numeric.keys().copied()
+        self.numeric_present.iter().copied()
     }
 
     /// Returns the dense code for a phase when it has appeared.
@@ -842,10 +886,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     pub fn set_metric_f64(&mut self, row: usize, tag: MetricTag, value: f64) {
         assert!(row < self.row_count() && self.occupied[row]);
         let rows = self.row_count();
-        self.numeric
-            .entry(tag)
-            .or_insert_with(|| NumericColumn::with_absent_rows(rows))
-            .set_f64(row, value);
+        self.numeric_column_or_insert(tag, rows).set_f64(row, value);
     }
 
     /// Sets one boundary-safe metric value on an existing row.
@@ -864,13 +905,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     pub fn set_ragged_values(&mut self, row: usize, tag: MetricTag, values: &[f64]) {
         assert!(row < self.row_count() && self.occupied[row]);
         let rows = self.row_count();
-        self.ragged
-            .entry(tag)
-            .or_insert_with(|| {
-                let mut backend = B::default();
-                backend.prepare_rows(rows);
-                backend
-            })
+        self.ragged_backend_prepared(tag, rows)
             .add_for_record(row, values);
     }
 
@@ -884,13 +919,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         assert!(row < self.row_count() && self.occupied[row]);
         let rows = self.row_count();
         let mut values = values.into_iter();
-        self.ragged
-            .entry(tag)
-            .or_insert_with(|| {
-                let mut backend = B::default();
-                backend.prepare_rows(rows);
-                backend
-            })
+        self.ragged_backend_prepared(tag, rows)
             .add_for_record_iter(row, &mut values);
     }
 
@@ -1008,7 +1037,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.conversation_codes.resize(rows, None);
         self.errored.resize(rows, false);
         self.canceled.resize(rows, false);
-        for column in self.numeric.values_mut() {
+        for column in self.numeric.iter_mut().flatten() {
             column.resize_absent(rows);
         }
     }

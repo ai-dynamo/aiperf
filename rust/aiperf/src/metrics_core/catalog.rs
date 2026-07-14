@@ -143,6 +143,18 @@ pub enum MetricTag {
 }
 
 impl MetricTag {
+    /// Number of distinct tags. The variants are declared contiguously from
+    /// discriminant 0, so `ActiveTotalThroughput` (the last) plus one is the
+    /// dense column count. A reordering that makes it no longer last would only
+    /// oversize the backing array, never index out of bounds.
+    pub const COUNT: usize = MetricTag::ActiveTotalThroughput as usize + 1;
+
+    /// Dense array index for this tag — its zero-based declaration discriminant.
+    #[inline(always)]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
     /// Stable snake-case report spelling.
     pub fn as_str(self) -> &'static str {
         match self {

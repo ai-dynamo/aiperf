@@ -686,9 +686,15 @@ fn record_metrics(
     captured: &CapturedRecord,
     config: &MetricsConfig,
 ) -> BTreeMap<String, RecordMetric> {
-    let record = &captured.ingest;
+    // Process into a throwaway single-row store, not at the record's absolute
+    // `request_index`. Inserting at `request_index` made this store `request_index`
+    // rows wide, so the per-record `summarize()` scanned O(request_index) rows for
+    // every metric — O(N^2) across the run and the dominant export cost. Row 0
+    // yields byte-identical results (only the one occupied row is ever selected).
+    let mut ingest = captured.ingest.clone();
+    ingest.request_index = None;
     let mut accumulator = MetricsAccumulator::with_config(config.clone());
-    accumulator.process_record(record);
+    accumulator.process_record(&ingest);
     let summary = accumulator.summarize();
     let hidden =
         MetricFlags::NO_INDIVIDUAL_RECORDS | MetricFlags::INTERNAL | MetricFlags::EXPERIMENTAL;
