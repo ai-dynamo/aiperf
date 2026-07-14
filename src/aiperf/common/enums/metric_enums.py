@@ -787,6 +787,12 @@ class MetricFlags(Flag):
     Surfaces honest tail latency under non-trivial error rates — see
     https://github.com/ai-dynamo/aiperf/issues/688."""
 
+    FIXED_SCHEDULE_ONLY = 1 << 18
+    """Metrics that are only applicable when the profiling phase replays a fixed schedule of
+    absolute timestamps. Turn timestamps also reach records under other timing modes (e.g. a
+    timestamped trace run with --no-fixed-schedule), where schedule-fidelity metrics would be
+    meaningless."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

@@ -128,7 +128,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             path = Path(file_path)
 
             # If it's a directory, use path-based detection only
-            if path.is_dir():
+            if path.is_dir() or path.suffix.lower() == ".parquet":
                 return self._infer_type(data=None, filename=file_path)
 
             # For files, read first non-empty line and use both content and path detection
@@ -138,7 +138,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                         continue
                     try:
                         data = load_json_str(line)
-                    except orjson.JSONDecodeError:
+                    except (orjson.JSONDecodeError, UnicodeDecodeError):
                         # Non-JSON file (e.g. CSV) — fall back to filename-based detection
                         return self._infer_type(data=None, filename=file_path)
                     return self._infer_type(data=data, filename=file_path)

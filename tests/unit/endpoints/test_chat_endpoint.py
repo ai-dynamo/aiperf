@@ -159,6 +159,41 @@ class TestChatEndpoint:
         assert "max_completion_tokens" not in payload
         assert "max_tokens" not in payload
 
+    def test_format_payload_forwards_extra_body(self, endpoint, model_endpoint):
+        """Test per-turn extra_body fields are forwarded into chat payload."""
+        # Loader-shaped extra_body: trace request_body keys with prompt/messages
+        # already stripped. The merge is the only path a completions-style
+        # `prompt` key could reach a chat payload, so pin its absence here.
+        turn = Turn(
+            texts=[Text(contents=["Generate text"])],
+            model="test-model",
+            extra_body={"hash_ids": [1, 2], "block_size": 64},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["hash_ids"] == [1, 2]
+        assert payload["block_size"] == 64
+        assert "prompt" not in payload
+
+    def test_format_payload_extra_body_overrides_endpoint_extra(
+        self, endpoint, model_endpoint
+    ):
+        """Per-turn extra_body merges after endpoint extras and wins on conflict."""
+        model_endpoint.endpoint.extra = [("block_size", 128), ("temperature", 0.7)]
+        turn = Turn(
+            texts=[Text(contents=["Generate text"])],
+            model="test-model",
+            extra_body={"block_size": 64},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["block_size"] == 64
+        assert payload["temperature"] == 0.7
+
     def test_format_payload_legacy_max_tokens(self):
         """Test legacy max_tokens field is used when flag is enabled."""
         # Create model endpoint with use_legacy_max_tokens=True
