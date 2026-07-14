@@ -575,6 +575,15 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   `SlotPool`/`StopCondition`/`WorkerPool`/`Dispatcher`/`Observer`/`OnFailure`/`Clock`
   (`MonotonicClock`/`VirtualClock`). Deletes the executor tier and `Admission`
   outright. Destination the P1 renames walk toward; not an incremental plan.
+- `specs/2026-07-13-scheduled-graph-convergence-implementation.md` — **built**:
+  implements the convergence trio. The audit's one deferred decision (failure
+  behavior) ships as the greenfield `OnFailure { Continue, Abort }` enum shared by
+  scheduled and graph, wired through an optional `cfg.failure_policy` (absent →
+  each path's historical default, no regression); graph `Continue` uses the
+  dormant `Resilient`/`Continue` library policies, scheduled `Abort` latches a
+  `Failed`-terminal `bail!`. Carries the P1 rename pass and the incidental
+  cleanups (dead coordinator observer; removed `DurationGraphStop`/
+  `ScheduledGraphArrival`); documents why scheduled streaming dispatch stays off.
 - `specs/2026-07-13-segment-unification-design.md` — **segment unification**
   (design): collapse `Turn`'s five body fields (content/messages/raw_payload/
   raw_messages/raw_token_ids) into segment `Handle`s in the one `SegmentPool`;
