@@ -88,6 +88,11 @@ pub struct MlflowExportConfig {
     /// `_derive_default_run_name`, `mlflow_data_exporter.py:324`). Absent from
     /// the report, so it must be projected.
     pub benchmark_id: Option<String>,
+    /// AIPerf package version (`aiperf.__version__`) projected by the frontend
+    /// for the `aiperf.version` tag. The native report carries only the Rust
+    /// crate version, so the authoritative package version is projected here and
+    /// used in preference to `report.aiperf_version` when present.
+    pub aiperf_version: Option<String>,
     /// Pre-built param payload projected verbatim from the Python
     /// `_build_param_payload` (`mlflow_data_exporter.py:357`). These are pure
     /// frontend config (endpoint.type/models/urls, output.artifact_directory,
@@ -315,7 +320,11 @@ fn finite(value: ReportValue) -> Option<f64> {
 /// was_cancelled, benchmark_id, then user tags (which may override).
 fn build_tag_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMap<String, String> {
     let mut tags = BTreeMap::new();
-    tags.insert("aiperf.version".to_string(), report.aiperf_version.clone());
+    let aiperf_version = cfg
+        .aiperf_version
+        .clone()
+        .unwrap_or_else(|| report.aiperf_version.clone());
+    tags.insert("aiperf.version".to_string(), aiperf_version);
     tags.insert(
         "aiperf.was_cancelled".to_string(),
         report.summary.was_cancelled.to_string(),
