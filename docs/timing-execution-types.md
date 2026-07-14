@@ -217,16 +217,16 @@ Layers: [1 Clock](#1-clock) · [2 Measurement foundation](#2-measurement--dispat
 
 ## Addendum — recommended renames
 
-Grouped by priority. Renames are mechanical, no behavior change; sequence them so the suite stays green. The **High** set is worth doing standalone (correctness/clarity); the **Medium** set is the shared-substrate work already in `specs/2026-07-13-p1-generic-execution-substrate-names.md`; **Low** is polish.
+Grouped by priority. Renames are mechanical, no behavior change; sequence them so the suite stays green. The **High** set is worth doing standalone (correctness/clarity); the **Medium** set is the shared-substrate work already in `specs/2026-07-13-p1-generic-execution-substrate-names.md`; **Low** is polish. *(Revised 2026-07-13 after a two-reviewer naming pass: `Duration`→`DurationLimit` (was `DurationStop`), three-way `Phase` collapse, and the Medium picks avoid the already-taken `PreparedRequest`/`TraceExecutor` — now `PreparedTurn`/`TracePlacement`.)*
 
 ### High — hazards & misnomers (independent, do anytime)
 
 | Now | → | Why |
 |---|---|---|
-| `timing::stop::Duration` | `DurationStop` | A bare `Duration` in a timing module shadows the ubiquitous `std::time::Duration` — a genuine footgun at any call/`use` site. |
-| `timing::stop::{Lifecycle, RequestCount, SessionCount}` | `LifecycleStop`, `RequestCountStop`, `SessionCountStop` | Consistency with `DurationStop`; makes their role (stop conditions) legible without opening `stop.rs`. Do together with the row above. |
-| `graph::scheduler::Scheduler` | `GraphAdjacency` (or `EdgeTopology`) | Its own doc: *"a pure adjacency view over the parsed graph's static edges; holds no per-trace state."* It schedules nothing — the name implies far more than it does. |
-| `cancellation::Phase` **or** `phase::PhaseKind` | one shared `PhaseKind` | They are **byte-identical** `{Warmup, Profiling}` enums in two modules. Keep `phase::PhaseKind`, delete `cancellation::Phase`, re-export if needed. Removes a silent duplicate. |
+| `timing::stop::Duration` | `DurationLimit` | A bare `Duration` in a timing module shadows the ubiquitous `std::time::Duration` — a genuine footgun. (`*Limit`, not `*Stop`: parallels the sibling conditions and the greenfield `Limits` family; both reviewers preferred it.) |
+| `timing::stop::{RequestCount, SessionCount}` | `RequestLimit`, `SessionLimit` | Consistency with `DurationLimit`; makes their role legible without opening `stop.rs`. `Lifecycle` (the cancel/complete gate, not a count) stays as-is. |
+| `graph::scheduler::Scheduler` | `GraphAdjacency` | Its own doc: *"a pure adjacency view over the parsed graph's static edges; holds no per-trace state."* It schedules nothing. (Not `Topology` — that collides with `ReportDynamoTopology` / `OfflineTopology`.) |
+| `cancellation::Phase` + `phase::PhaseKind` + `metrics_core::window::Phase` | one shared `PhaseKind` | **Three** byte-identical `{Warmup, Profiling}` enums across modules. Keep `phase::PhaseKind`, delete the other two, re-export if needed. Removes two silent duplicates. |
 
 ### Medium — shared-substrate generic names (the P1 spec)
 
@@ -235,12 +235,12 @@ Covered in full by `specs/2026-07-13-p1-generic-execution-substrate-names.md`; s
 | Now | → |
 |---|---|
 | `HttpTurnExecutionBackend` | `RequestExecutor` (serves gRPC too; per-request placement) |
-| `GraphTraceExecutionBackend` | `TraceExecutor` (per-trace placement — parallel name) |
-| `PreparedHttpTurn` | `PreparedRequest` |
+| `GraphTraceExecutionBackend` | `TracePlacement` (per-trace placement — parallel name; not `TraceExecutor`, already the DAG driver) |
+| `PreparedHttpTurn` | `PreparedTurn` (not `PreparedRequest`, already an `endpoints` type) |
 | `MeasuredTurnContext` / `MeasuredTurnOutcome` | `MeasuredContext` / `MeasuredOutcome` |
 | `HttpTurnDispatchResult` | `DispatchResult` |
 | `TransportSink` dispatch methods (~6) | `dispatch_measured` + `dispatch_collect[_streaming]` (2 primitives) |
-| `ThreadPerCoreHttpExecutionBackend` / `…GraphTrace…` | `ThreadPerCoreRequestExecutor` / `ThreadPerCoreTraceExecutor` |
+| `ThreadPerCoreHttpExecutionBackend` / `…GraphTrace…` | `ThreadPerCoreRequestExecutor` / `ThreadPerCoreTracePlacement` |
 
 Plus one the P1 spec lists as deferred but I'd still recommend:
 
@@ -256,4 +256,4 @@ Plus one the P1 spec lists as deferred but I'd still recommend:
 | `graph::runtime::Handle` | `GraphTaskHandle` | `Handle` is maximally generic; the name says nothing about what it handles. |
 | `graph::transport_sink::TransportChatSink` | *(doc-clarify, or `LibraryChatSink`)* | It is a library/bench sink, **not** the product path (that is the runner's `RunnerGraphSink`). Its current doc "Live OpenAI-chat sink" invites exactly the mistake of treating it as the graph's real dispatch. |
 
-**Not recommended for rename** (intentional, leave alone): `GraphSink`/`GraphReply` (genuinely graph-specific per-node splice), `HttpRequest` (leaf transport DTO, wide blast radius), `NativeMetricsObserver`, `SlotPool`, `Clock`. And the two placement seams stay **two** traits — merging `RequestExecutor` + `TraceExecutor` is the deferred structural work, not a rename.
+**Not recommended for rename** (intentional, leave alone): `GraphSink`/`GraphReply` (genuinely graph-specific per-node splice), `HttpRequest` (leaf transport DTO, wide blast radius), `NativeMetricsObserver`, `SlotPool`, `Clock`. And the two placement seams stay **two** traits — merging `RequestExecutor` + `TracePlacement` is the deferred structural work, not a rename.

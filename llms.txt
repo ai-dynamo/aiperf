@@ -581,14 +581,15 @@ Full index + status (decided / sketch / superseded): [`specs/README.md`](specs/R
   (design): give the already-shared execution substrate one generic vocabulary
   and collapse `TransportSink`'s ~6 dispatch methods to two primitives.
   `PreparedHttpTurn`/`MeasuredTurn*`/`HttpTurnDispatchResult` →
-  `PreparedRequest`/`Measured*`/`DispatchResult`; placement seams →
-  `RequestExecutor` (per-request) / `TraceExecutor` (per-trace). Pure rename +
+  `PreparedTurn`/`Measured*`/`DispatchResult`; placement seams →
+  `RequestExecutor` (per-request) / `TracePlacement` (per-trace). Pure rename +
   de-dup, no behavior change; does not merge the seams (deferred).
 - `specs/2026-07-13-greenfield-execution-vocabulary.md` — **north-star vocabulary**
   (design): the unconstrained-ideal names for the v2 unified substrate. One model
-  (a flat request is a single-node `Trace`) collapses scheduled/graph duplication
-  into ~9 seams — `Request`/`Trace`/`Outcome` + `Backend`/`Recorder`/`Workload`/
-  `Pacer`/`Admission`/`Bounds`/`FailurePolicy`/`WorkerPool`/`TraceEngine`. The
+  (a flat request is a single-node `RequestGraph`) collapses scheduled/graph
+  duplication into ~9 seams — `Request`/`RequestGraph`/`Outcome` + `Dispatcher`/
+  `Observer`/`Workload`/`Pacer`/`Admission`/`Limits`/`FailurePolicy`/`WorkerPool`/
+  `GraphExecutor`. The
   destination the P1 renames walk toward; not an incremental plan.
 - `specs/2026-07-09-dynamo-aiperf-{shared-core,request-rate-tokenizer}-design.md`
   — historical precursors (built on dynamo's `lib/mocker`; superseded by the

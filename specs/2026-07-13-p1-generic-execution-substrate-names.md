@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # P1 — Generic shared names for the execution substrate
 
 **Date:** 2026-07-13
-**Status:** design (proposed, not built)
+**Status:** design (proposed, not built). **Revised 2026-07-13** after a naming review caught two collisions: `PreparedRequest` and `TraceExecutor` are already-taken names in crate `aiperf`, so the picks are now `PreparedTurn` and `TracePlacement` (see §3 note).
 **Scope:** A **naming + dispatch-method-consolidation** pass over the execution substrate the scheduled and graph online paths *already share*. Pure rename + de-duplication — **no behavior change, no structural merge**. Premised on the production audit `2026-07-13-scheduled-graph-production-convergence.md`.
 
 > This supersedes the withdrawn "unify the dispatch seam" P1 draft, which was built on the false premise that the graph path was metrics-lite. The graph path (`RunnerGraphSink`) is full-fidelity and already calls the same `TransportSink` with the same `PreparedHttpTurn` and `NativeMetricsObserver`. What's actually wrong is that the shared substrate is **named path-specifically** (`Http*` / `Turn*`) and reached through a **sprawl of ~6 near-duplicate `TransportSink` dispatch methods**, so the convergence is invisible in the code.
@@ -27,7 +27,7 @@ P1 gives all of this **one generic vocabulary** and trims the dispatch sprawl. I
 
 | Now | New | Note |
 |---|---|---|
-| `PreparedHttpTurn` | `PreparedRequest` | both paths build it (`from_turn` stays a scheduled-only helper) |
+| `PreparedHttpTurn` | `PreparedTurn` | both paths build it (`from_turn` stays a scheduled-only helper) |
 | `MeasuredTurnContext` | `MeasuredContext` | pairs with `execute_measured` |
 | `MeasuredTurnOutcome` | `MeasuredOutcome` | |
 | `HttpTurnDispatchResult` | `DispatchResult` | `{ outcome, request_payload, record }` unchanged |
@@ -41,11 +41,17 @@ P1 gives all of this **one generic vocabulary** and trims the dispatch sprawl. I
 |---|---|---|
 | `HttpTurnExecutionBackend` | `RequestExecutor` | per **request** |
 | `execute_turn_measured[_streaming]` (on it) | `execute_measured[_streaming]` | |
-| `inference_dimensions(&TurnToSend)` | `inference_dimensions(&PreparedRequest)` | decouple from the scheduler type (an `&HttpRequest` variant already exists) |
+| `inference_dimensions(&TurnToSend)` | `inference_dimensions(&PreparedTurn)` | decouple from the scheduler type (an `&HttpRequest` variant already exists) |
 | `HttpExecutionBackendFactory` / `NativeHttpExecutionBackendFactory` | `RequestExecutorFactory` / `NativeRequestExecutorFactory` | |
 | `ThreadPerCoreHttpExecutionBackend` | `ThreadPerCoreRequestExecutor` | |
-| `GraphTraceExecutionBackend` / `…Factory` | `TraceExecutor` / `TraceExecutorFactory` | per **trace** |
-| `ThreadPerCoreGraphTraceExecutionBackend` | `ThreadPerCoreTraceExecutor` | |
+| `GraphTraceExecutionBackend` / `…Factory` | `TracePlacement` / `TracePlacementFactory` | per **trace** |
+| `ThreadPerCoreGraphTraceExecutionBackend` | `ThreadPerCoreTracePlacement` | |
+
+> **Collision note (naming review).** `PreparedTurn` not `PreparedRequest` — a
+> `pub struct PreparedRequest<'a>` already exists at `endpoints/registry.rs:292`
+> (re-exported). `TracePlacement` not `TraceExecutor` — `TraceExecutor` is already
+> the DAG driver at `graph/executor.rs:58`; reusing it would collide *and*
+> contradict the greenfield spec, which keeps that name for the driver.
 
 Level convention this establishes: **`execute_*`** = placement-level (route to a worker); **`dispatch_*`** = transport-level (send bytes + measure). `RequestExecutor` vs the existing `RequestSink` (loadgen-core raw transport) are deliberately distinct levels; if that proximity reads as ambiguous, `MeasuredExecutor` is the fallback trait name.
 
@@ -58,14 +64,14 @@ Level convention this establishes: **`execute_*`** = placement-level (route to a
 
 ## 3. What stays as-is (explicitly)
 
-- Both placement seams remain **two** traits (`RequestExecutor` per-request, `TraceExecutor` per-trace). Merging them is the deferred structural unification, not P1.
+- Both placement seams remain **two** traits (`RequestExecutor` per-request, `TracePlacement` per-trace). Merging them is the deferred structural unification, not P1.
 - Failure-policy divergence (graph fail-fast vs scheduled resilient) is untouched — a separate decision (audit §"Genuinely different").
 - The graph keeps per-node observer wiring (`register_metadata`/`record_response`/`drain_terminal_record` in `RunnerGraphSink`); it just calls the generically-named `dispatch_collect`.
 
 ## 4. Rollout (staged; each stage keeps the suite green)
 
 1. **Rename Group A** (shared DTOs + `TransportSink` methods) and trim the dispatch-method sprawl to `dispatch_measured` + `dispatch_collect[_streaming]`. Update both callers (`turn_execution.rs`, `graph_execution.rs`, `http.rs`, `grpc.rs`).
-2. **Rename Group B** (placement seams + factories + thread-per-core impls) and decouple `inference_dimensions` to `&PreparedRequest`.
+2. **Rename Group B** (placement seams + factories + thread-per-core impls) and decouple `inference_dimensions` to `&PreparedTurn`.
 3. Update `execution_factories.rs`, `registry.rs`, docs (`module-organization.md` crate/module table if any symbol is referenced), and the four agent files only if a renamed symbol appears in them.
 
 Pure rename/consolidation: no control-flow or measurement change at any stage.
@@ -76,7 +82,7 @@ Rename + method-consolidation only, so **no metric or dispatch-event change**. T
 
 ## 6. Value
 
-Modest but real: the shared substrate becomes **visibly** shared (one vocabulary), the ~6 `TransportSink` dispatch methods collapse to 2 primitives, and `Http`/`Turn` stop lying about what the code serves (gRPC, graph). It also lays the vocabulary groundwork for the eventual structural merge of `RequestExecutor` + `TraceExecutor` without committing to it now.
+Modest but real: the shared substrate becomes **visibly** shared (one vocabulary), the ~6 `TransportSink` dispatch methods collapse to 2 primitives, and `Http`/`Turn` stop lying about what the code serves (gRPC, graph). It also lays the vocabulary groundwork for the eventual structural merge of `RequestExecutor` + `TracePlacement` without committing to it now.
 
 ## 7. Related
 
