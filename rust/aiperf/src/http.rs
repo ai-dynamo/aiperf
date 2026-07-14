@@ -1183,13 +1183,7 @@ impl RequestExecutor for TransportSink {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
         let result = self
-            .dispatch_measured(
-                &observer,
-                turn,
-                &context,
-                on_first_token,
-                Some(responses),
-            )
+            .dispatch_measured(&observer, turn, &context, on_first_token, Some(responses))
             .await?;
         let live_record = context
             .wants_live_record
@@ -1226,8 +1220,7 @@ impl TransportSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
         let turn = PreparedTurn::from_turn(turn, &self.model);
-        self.dispatch_collect(turn, observer, on_first_token)
-            .await
+        self.dispatch_collect(turn, observer, on_first_token).await
     }
 
     /// Dispatch one scheduled turn while publishing live endpoint-normalized
@@ -1240,13 +1233,8 @@ impl TransportSink {
         responses: &dyn TurnResponseObserver,
     ) -> Result<DispatchResult> {
         let turn = PreparedTurn::from_turn(turn, &self.model);
-        self.dispatch_collect_with_observer(
-            turn,
-            observer,
-            on_first_token,
-            Some(responses),
-        )
-        .await
+        self.dispatch_collect_with_observer(turn, observer, on_first_token, Some(responses))
+            .await
     }
 
     /// Execute an owned scheduler-free HTTP command and retain the exact wire
@@ -1258,13 +1246,8 @@ impl TransportSink {
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
-        self.dispatch_collect_with_observer(
-            turn,
-            observer,
-            on_first_token,
-            None,
-        )
-        .await
+        self.dispatch_collect_with_observer(turn, observer, on_first_token, None)
+            .await
     }
 
     /// Execute an owned scheduler-free command while publishing live,
@@ -1276,13 +1259,8 @@ impl TransportSink {
         on_first_token: &dyn Fn(i64),
         responses: &dyn TurnResponseObserver,
     ) -> Result<DispatchResult> {
-        self.dispatch_collect_with_observer(
-            turn,
-            observer,
-            on_first_token,
-            Some(responses),
-        )
-        .await
+        self.dispatch_collect_with_observer(turn, observer, on_first_token, Some(responses))
+            .await
     }
 
     /// Access the worker-local measurement observer, erroring if the measured
@@ -1323,12 +1301,7 @@ impl TransportSink {
             context.requested_output_length,
         );
         let result = self
-            .dispatch_collect_with_observer(
-                turn,
-                observer,
-                on_first_token,
-                responses,
-            )
+            .dispatch_collect_with_observer(turn, observer, on_first_token, responses)
             .await;
         match &result {
             Ok(collected) => {

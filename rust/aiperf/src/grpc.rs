@@ -38,8 +38,8 @@ use loadgen_core::sink::{
 use uuid::Uuid;
 
 use crate::http::{
-    HttpRequest, DispatchResult, RequestExecutor, MeasuredContext,
-    MeasuredOutcome, PreparedHttpEndpoint, PreparedTurn,
+    DispatchResult, HttpRequest, MeasuredContext, MeasuredOutcome, PreparedHttpEndpoint,
+    PreparedTurn, RequestExecutor,
 };
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata};
 use crate::multiturn::TurnToSend;
@@ -237,9 +237,7 @@ impl GrpcTransportSink {
             context.input_length,
             context.requested_output_length,
         );
-        let result = self
-            .dispatch_collect(turn, observer, on_first_token)
-            .await;
+        let result = self.dispatch_collect(turn, observer, on_first_token).await;
         match &result {
             Ok(collected) => {
                 let outcome = &collected.outcome;

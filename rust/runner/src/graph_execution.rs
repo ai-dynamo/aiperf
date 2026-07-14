@@ -22,11 +22,11 @@ use aiperf::endpoints::{
 };
 use aiperf::failure::OnFailure;
 use aiperf::graph::errors::TraceError;
-use aiperf::graph::execution::{TracePlacement, LocalGraphTraceExecutionBackend};
+use aiperf::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use aiperf::graph::materialize::SegmentItemsMaterializer;
 use aiperf::graph::model::{GraphTracePlan, LlmNode};
 use aiperf::graph::placement::{
-    GraphPlacementError, TracePlacementFactory, ThreadPerCoreTracePlacement,
+    GraphPlacementError, ThreadPerCoreTracePlacement, TracePlacementFactory,
 };
 use aiperf::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,

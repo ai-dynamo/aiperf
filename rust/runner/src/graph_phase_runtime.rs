@@ -897,11 +897,7 @@ struct GraphPrefillActuator {
 }
 
 impl GraphPrefillActuator {
-    fn new(
-        placement: Rc<dyn TracePlacement>,
-        minimum: usize,
-        maximum: usize,
-    ) -> Result<Self> {
+    fn new(placement: Rc<dyn TracePlacement>, minimum: usize, maximum: usize) -> Result<Self> {
         ensure!(
             minimum > 0,
             "adaptive graph prefill minimum must be positive"

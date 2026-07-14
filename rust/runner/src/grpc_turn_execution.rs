@@ -17,8 +17,7 @@ use std::thread::JoinHandle;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
 use aiperf::http::{
-    DispatchResult, RequestExecutor, MeasuredContext, MeasuredOutcome,
-    PreparedTurn,
+    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
@@ -34,7 +33,7 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use crate::turn_execution::{
-    HttpExecutionBackendConfig, RequestExecutorFactory, HttpPreparedEndpointTableFactory,
+    HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
 const WORKER_QUEUE_CAPACITY: usize = 256;
@@ -62,10 +61,7 @@ impl NativeGrpcExecutionBackendFactory {
 }
 
 impl RequestExecutorFactory for NativeGrpcExecutionBackendFactory {
-    fn build(
-        &self,
-        config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn RequestExecutor>> {
+    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
         ensure!(
             config.workers > 0,
             "gRPC execution workers must be positive"
@@ -230,10 +226,7 @@ impl RequestExecutor for ThreadPerCoreGrpcExecutionBackend {
     }
 
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
-        <GrpcTransportSink as RequestExecutor>::inference_dimensions(
-            &self.dimension_sink,
-            turn,
-        )
+        <GrpcTransportSink as RequestExecutor>::inference_dimensions(&self.dimension_sink, turn)
     }
 
     fn configure_measurement(&self, config: MetricsConfig, origin_ns: i64) -> Result<()> {

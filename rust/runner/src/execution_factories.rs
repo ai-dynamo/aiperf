@@ -21,7 +21,7 @@ use crate::readiness::{
     NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory,
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
 };
-use crate::turn_execution::{RequestExecutorFactory, NativeRequestExecutorFactory};
+use crate::turn_execution::{NativeRequestExecutorFactory, RequestExecutorFactory};
 
 /// Exact execution-factory universe retained from coordinator construction.
 #[derive(Clone)]

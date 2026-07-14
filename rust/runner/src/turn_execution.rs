@@ -21,8 +21,8 @@ use std::thread::JoinHandle;
 use aiperf::clock::{Clock, RealClock, RealClockAnchor};
 use aiperf::endpoints::{ParsedResponse, PreparedEndpointTable};
 use aiperf::http::{
-    DispatchResult, RequestExecutor, MeasuredContext, MeasuredOutcome,
-    PreparedTurn, TransportSink, TransportSinkConfig,
+    DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSink,
+    TransportSinkConfig,
 };
 use aiperf::metrics::NativeMetricsObserver;
 use aiperf::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
@@ -72,8 +72,7 @@ pub trait HttpPreparedEndpointTableFactory: Send + Sync {
 /// Composition seam for local, thread-per-core, or remote execution placement.
 pub trait RequestExecutorFactory: Send + Sync {
     /// Construct the backend used below the run's single logical dispatcher.
-    fn build(&self, config: HttpExecutionBackendConfig)
-    -> Result<Rc<dyn RequestExecutor>>;
+    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>>;
 }
 
 /// Native local execution factory.
@@ -85,10 +84,7 @@ pub trait RequestExecutorFactory: Send + Sync {
 pub struct NativeRequestExecutorFactory;
 
 impl RequestExecutorFactory for NativeRequestExecutorFactory {
-    fn build(
-        &self,
-        config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn RequestExecutor>> {
+    fn build(&self, config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
         ensure!(
             config.workers > 0,
             "HTTP execution workers must be positive"

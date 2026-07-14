@@ -47,8 +47,7 @@ use aiperf::fixed_schedule::{
 };
 use aiperf::graph::input::GraphInputBundle;
 use aiperf::http::{
-    RequestExecutor, MeasuredContext, MeasuredOutcome, PreparedTurn,
-    TransportSinkConfig,
+    MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor, TransportSinkConfig,
 };
 use aiperf::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use aiperf::metrics_core::{
@@ -124,7 +123,7 @@ use crate::sidecar_input::{
     PreparedSidecarInputs, SERVER_METRICS_SIDECAR_ID, ServerMetricsSpec,
 };
 use crate::turn_execution::{
-    HttpExecutionBackendConfig, RequestExecutorFactory, HttpPreparedEndpointTableFactory,
+    HttpExecutionBackendConfig, HttpPreparedEndpointTableFactory, RequestExecutorFactory,
 };
 
 type PhaseRuntimeParts = (

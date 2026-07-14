@@ -28,7 +28,7 @@ use crate::clock::{Clock, SimClock};
 use crate::dataset::{Handle, TextTokenizer, TiktokenTokenizer};
 use crate::endpoints::chat_request_body;
 use crate::graph::bench::{BenchConfig, build_workload};
-use crate::graph::execution::{TracePlacement, LocalGraphTraceExecutionBackend};
+use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
 use crate::graph::executor::{ExecutorFlags, TraceExecutor};
 use crate::graph::materialize::SegmentItemsMaterializer;
 use crate::graph::model::{GraphTracePlan, TraceRecord};
@@ -854,10 +854,7 @@ pub struct OfflineGraphBackendConfig {
 /// prefill actuator for every authored phase.
 pub trait OfflineGraphBackendFactory {
     /// Build one backend for an already validated phase.
-    fn create_backend(
-        &self,
-        config: OfflineGraphBackendConfig,
-    ) -> Result<Rc<dyn TracePlacement>>;
+    fn create_backend(&self, config: OfflineGraphBackendConfig) -> Result<Rc<dyn TracePlacement>>;
 }
 
 /// Backend-neutral result returned by an injected multi-phase graph driver.
@@ -3579,10 +3576,7 @@ struct DynosimGraphBackendFactory {
 }
 
 impl OfflineGraphBackendFactory for DynosimGraphBackendFactory {
-    fn create_backend(
-        &self,
-        config: OfflineGraphBackendConfig,
-    ) -> Result<Rc<dyn TracePlacement>> {
+    fn create_backend(&self, config: OfflineGraphBackendConfig) -> Result<Rc<dyn TracePlacement>> {
         let prefill_slots = config
             .prefill_concurrency
             .map(|limit| {

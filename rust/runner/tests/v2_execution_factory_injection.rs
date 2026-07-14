@@ -16,9 +16,7 @@ use aiperf::extensions::BuiltinAiperfRegistryFactory;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::TracePlacement;
 use aiperf::graph::placement::{GraphPlacementError, TracePlacementFactory};
-use aiperf::http::{
-    RequestExecutor, MeasuredContext, MeasuredOutcome, PreparedTurn,
-};
+use aiperf::http::{MeasuredContext, MeasuredOutcome, PreparedTurn, RequestExecutor};
 use aiperf::metrics_core::InferenceDimensions;
 use aiperf::multiturn::TurnToSend;
 use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
@@ -30,8 +28,8 @@ use aiperf_runner::readiness::{
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
 use aiperf_runner::{
-    HttpExecutionBackendConfig, RequestExecutorFactory, NativeRequestExecutorFactory,
-    NativeRunnerGraphPlacementFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
+    HttpExecutionBackendConfig, NativeRequestExecutorFactory, NativeRunnerGraphPlacementFactory,
+    RequestExecutorFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -74,10 +72,7 @@ struct FailingOriginFactory {
 }
 
 impl RequestExecutorFactory for FailingOriginFactory {
-    fn build(
-        &self,
-        _config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn RequestExecutor>> {
+    fn build(&self, _config: HttpExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
         assert!(!self.artifact_target.exists());
         Ok(Rc::new(FailingOriginBackend {
             shutdowns: self.shutdowns.clone(),

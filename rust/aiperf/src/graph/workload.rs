@@ -940,10 +940,9 @@ mod tests {
                 arrival_offset_ns: Some(123),
             }]));
         let received = Rc::new(RefCell::new(Vec::new()));
-        let backend: Rc<dyn crate::graph::execution::TracePlacement> =
-            Rc::new(RecordingBackend {
-                plans: received.clone(),
-            });
+        let backend: Rc<dyn crate::graph::execution::TracePlacement> = Rc::new(RecordingBackend {
+            plans: received.clone(),
+        });
         let workload = GraphWorkload::new(clock.clone(), source, backend);
         let report = Rc::new(RefCell::new(None));
         let report_slot = report.clone();
@@ -1003,11 +1002,10 @@ mod tests {
         ];
         let source: Rc<dyn GraphTraceSource> = Rc::new(VecGraphTraceSource::new(plans));
         let completed = Rc::new(RefCell::new(Vec::new()));
-        let backend: Rc<dyn crate::graph::execution::TracePlacement> =
-            Rc::new(SleepingBackend {
-                clock: clock.clone(),
-                completed: completed.clone(),
-            });
+        let backend: Rc<dyn crate::graph::execution::TracePlacement> = Rc::new(SleepingBackend {
+            clock: clock.clone(),
+            completed: completed.clone(),
+        });
         let workload = GraphWorkload::new(clock.clone(), source, backend)
             .with_arrival(Rc::new(ScheduledGraphArrival))
             .with_stop_policy(Rc::new(DurationGraphStop::new(10).unwrap()));
