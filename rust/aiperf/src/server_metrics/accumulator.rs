@@ -269,37 +269,45 @@ impl ServerMetricsAccumulator {
                 (name, SidecarMetric::new(unit, series))
             })
             .collect::<BTreeMap<_, _>>();
-        let atlas_view = PhaseMetricView {
-            phase,
-            records: &self.records,
-            boundary,
-        };
-        for (name, metric) in atlas.derive(&atlas_view) {
-            let Some(stats) = linear_distribution(&name, vec![metric.value], metric.value, 1)
-            else {
-                continue;
-            };
-            sidecar_metrics.insert(
-                name.clone(),
-                SidecarMetric::new(
-                    Some(metric.unit),
-                    vec![SidecarSeries {
-                        labels: None,
-                        endpoint_url: None,
-                        stats: SidecarStats::Gauge(stats),
-                        timeslices: Vec::new(),
-                    }],
-                ),
-            );
-            descriptions.insert(name.clone(), metric.description.to_string());
-            metric_types.insert(name, PrometheusMetricType::Gauge);
-        }
-        let endpoints_successful = boundary
+        let endpoints_successful: Vec<String> = boundary
             .start_records
             .keys()
             .filter(|endpoint| boundary.end_records.contains_key(*endpoint))
             .cloned()
             .collect();
+        // Derive the atlas metrics once per successful endpoint so every derived
+        // series inherits the credential-free `endpoint_url` of the scraped
+        // endpoint it was computed from. The Python native-report validator
+        // rejects any server-metric series without an endpoint present in the
+        // per-endpoint collection metadata, so a cross-endpoint aggregate with
+        // no owner is not representable; per-endpoint attribution also matches
+        // how backend-specific names (vLLM vs SGLang) live on distinct scrapes.
+        for endpoint in &endpoints_successful {
+            let atlas_view = PhaseMetricView {
+                phase,
+                records: &self.records,
+                boundary,
+                endpoint,
+            };
+            for (name, metric) in atlas.derive(&atlas_view) {
+                let Some(stats) = linear_distribution(&name, vec![metric.value], metric.value, 1)
+                else {
+                    continue;
+                };
+                let series = SidecarSeries {
+                    labels: None,
+                    endpoint_url: Some(endpoint.clone()),
+                    stats: SidecarStats::Gauge(stats),
+                    timeslices: Vec::new(),
+                };
+                sidecar_metrics
+                    .entry(name.clone())
+                    .and_modify(|existing| existing.series.push(series.clone()))
+                    .or_insert_with(|| SidecarMetric::new(Some(metric.unit), vec![series]));
+                descriptions.insert(name.clone(), metric.description.to_string());
+                metric_types.insert(name, PrometheusMetricType::Gauge);
+            }
+        }
         ServerMetricsSummary {
             sidecar_metrics,
             endpoints_successful,
@@ -463,22 +471,27 @@ struct PhaseMetricView<'a> {
     phase: Phase,
     records: &'a [ServerMetricsRecord],
     boundary: &'a ServerMetricsPhaseBoundary,
+    /// Credential-free endpoint this view is scoped to; derived metrics are
+    /// attributed to exactly one scraped endpoint so their series carry a
+    /// concrete `endpoint_url`.
+    endpoint: &'a str,
 }
 
 impl PhaseMetricView<'_> {
     fn latest_gauges_by_endpoint(&self, metric_name: &str) -> BTreeMap<String, f64> {
         let mut latest = LatestGaugeMap::new();
-        for record in self.boundary.start_records.values() {
+        if let Some(record) = self.boundary.start_records.get(self.endpoint) {
             retain_latest_gauges(record, metric_name, self.boundary.start_ns, &mut latest);
         }
         for record in self.records.iter().filter(|record| {
-            record.benchmark_phase == Some(self.phase)
+            record.endpoint_url == self.endpoint
+                && record.benchmark_phase == Some(self.phase)
                 && record.timestamp_ns >= self.boundary.start_ns
                 && record.timestamp_ns <= self.boundary.end_ns
         }) {
             retain_latest_gauges(record, metric_name, record.timestamp_ns, &mut latest);
         }
-        for record in self.boundary.end_records.values() {
+        if let Some(record) = self.boundary.end_records.get(self.endpoint) {
             retain_latest_gauges(record, metric_name, self.boundary.end_ns, &mut latest);
         }
 
@@ -495,22 +508,18 @@ impl PhaseMetricView<'_> {
 
 impl ServerMetricView for PhaseMetricView<'_> {
     fn counter_delta(&self, metric_name: &str) -> Option<f64> {
+        let start_record = self.boundary.start_records.get(self.endpoint)?;
+        let end_record = self.boundary.end_records.get(self.endpoint)?;
         let mut found = false;
         let mut total = 0.0;
-        for (endpoint, start_record) in &self.boundary.start_records {
-            let Some(end_record) = self.boundary.end_records.get(endpoint) else {
+        let start = typed_scalar_values(start_record, metric_name, PrometheusMetricType::Counter);
+        let end = typed_scalar_values(end_record, metric_name, PrometheusMetricType::Counter);
+        for (labels, start_value) in start {
+            let Some(end_value) = end.get(&labels) else {
                 continue;
             };
-            let start =
-                typed_scalar_values(start_record, metric_name, PrometheusMetricType::Counter);
-            let end = typed_scalar_values(end_record, metric_name, PrometheusMetricType::Counter);
-            for (labels, start_value) in start {
-                let Some(end_value) = end.get(&labels) else {
-                    continue;
-                };
-                total += (*end_value - start_value).max(0.0);
-                found = true;
-            }
+            total += (*end_value - start_value).max(0.0);
+            found = true;
         }
         found.then_some(total)
     }
@@ -1274,6 +1283,104 @@ mod tests {
             derived_value(&summary, "output_token_throughput_srv"),
             125.0
         );
+
+        // Every derived series must inherit the scraped endpoint's URL: the
+        // Python native-report validator rejects any server-metric series that
+        // omits `endpoint_url` or references an endpoint absent from the
+        // per-endpoint collection metadata.
+        for name in [
+            "prefix_cache_hit_rate",
+            "unique_input_tokens_srv",
+            "kv_cache_usage_pct",
+            "input_token_throughput_srv",
+            "output_token_throughput_srv",
+        ] {
+            let series = &summary.sidecar_metrics()[name].series;
+            assert_eq!(
+                series.len(),
+                1,
+                "{name} should have one per-endpoint series"
+            );
+            assert_eq!(
+                series[0].endpoint_url.as_deref(),
+                Some("http://server/metrics"),
+                "{name} series must carry its scraped endpoint_url"
+            );
+        }
+    }
+
+    #[test]
+    fn derived_metrics_are_attributed_per_endpoint() {
+        // Two distinct scraped endpoints, each with its own vLLM counters:
+        // every derived series must be tagged with the endpoint it came from.
+        let mut start_a = record(0, 100.0, 1.0, 10.0);
+        let mut end_a = record(2_000_000_000, 110.0, 1.0, 20.0);
+        start_a.endpoint_url = "http://a/metrics".to_string();
+        end_a.endpoint_url = "http://a/metrics".to_string();
+        let mut start_b = record(0, 100.0, 1.0, 10.0);
+        let mut end_b = record(2_000_000_000, 110.0, 1.0, 20.0);
+        start_b.endpoint_url = "http://b/metrics".to_string();
+        end_b.endpoint_url = "http://b/metrics".to_string();
+        insert_scalar(
+            &mut start_a,
+            "vllm:prompt_tokens",
+            PrometheusMetricType::Counter,
+            1_000.0,
+        );
+        insert_scalar(
+            &mut end_a,
+            "vllm:prompt_tokens",
+            PrometheusMetricType::Counter,
+            1_500.0,
+        );
+        insert_scalar(
+            &mut start_b,
+            "vllm:prompt_tokens",
+            PrometheusMetricType::Counter,
+            2_000.0,
+        );
+        insert_scalar(
+            &mut end_b,
+            "vllm:prompt_tokens",
+            PrometheusMetricType::Counter,
+            3_000.0,
+        );
+        let mut accumulator = ServerMetricsAccumulator::new();
+        for record in [&start_a, &end_a, &start_b, &end_b] {
+            accumulator.ingest_record(record.clone());
+        }
+        accumulator.set_phase_boundary(ServerMetricsPhaseBoundary {
+            phase: Phase::Profiling,
+            start_ns: 0,
+            end_ns: 2_000_000_000,
+            start_records: BTreeMap::from([
+                (start_a.endpoint_url.clone(), start_a),
+                (start_b.endpoint_url.clone(), start_b),
+            ]),
+            end_records: BTreeMap::from([
+                (end_a.endpoint_url.clone(), end_a),
+                (end_b.endpoint_url.clone(), end_b),
+            ]),
+        });
+
+        let summary = accumulator.summarize_phase(Phase::Profiling, None);
+        let series = &summary.sidecar_metrics()["input_token_throughput_srv"].series;
+        assert_eq!(series.len(), 2);
+        let by_endpoint = series
+            .iter()
+            .map(|series| {
+                let SidecarStats::Gauge(stats) = &series.stats else {
+                    panic!("derived gauge")
+                };
+                let MetricValue::Finite(value) = stats.avg else {
+                    panic!("finite")
+                };
+                (series.endpoint_url.clone().unwrap(), value)
+            })
+            .collect::<BTreeMap<_, _>>();
+        // 500 tokens / 2s and 1000 tokens / 2s, each tagged to its own endpoint.
+        assert_eq!(by_endpoint["http://a/metrics"], 250.0);
+        assert_eq!(by_endpoint["http://b/metrics"], 500.0);
     }
 
     #[test]
