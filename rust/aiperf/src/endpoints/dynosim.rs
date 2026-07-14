@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, RawEndpointConfig};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
@@ -97,7 +98,7 @@ impl PreparedEndpoint for PreparedDynosim {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         // Never dialed on the product path: the in-process engine consumes an
         // empty materialized body. This best-effort shape keeps the dialect
         // preparable and inspectable without pretending to be a real API.
@@ -106,7 +107,10 @@ impl PreparedEndpoint for PreparedDynosim {
             .first()
             .and_then(|turn| turn.model.clone())
             .unwrap_or_else(|| request.primary_model_name().to_string());
-        Ok(json!({ "model": model, "engine": "dynosim://offline" }))
+        let payload = json!({ "model": model, "engine": "dynosim://offline" });
+        Ok(BodyPlan::from_object(
+            payload.as_object().expect("dynosim payload is an object"),
+        )?)
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

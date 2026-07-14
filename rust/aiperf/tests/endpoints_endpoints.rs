@@ -7,7 +7,13 @@ use aiperf::endpoints::{
     RequestContentType, RequestInfo, RequestRecord, ResponseData, ResponsesEndpoint,
     ServerResponse, Turn, VideoGenerationEndpoint,
 };
-use serde_json::{Map, json};
+use serde_json::{Map, Value, json};
+
+/// Materialize a formatter's [`BodyPlan`] into a decoded JSON value so the
+/// structural assertions below keep inspecting fields as before stage B.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
 
 fn cfg(endpoint_type: EndpointType) -> EndpointConfig {
     EndpointConfig {
@@ -166,7 +172,7 @@ fn chat_formatting_merges_and_preserves_usage_override() {
         ),
     ]));
 
-    let body = ChatEndpoint.format_payload(&req).unwrap();
+    let body = plan_body(ChatEndpoint.format_payload(&req).unwrap());
     assert_eq!(
         body["messages"][0],
         json!({"role":"system","content":"sys"})
@@ -193,7 +199,7 @@ fn responses_formatting_rejects_video_and_filters_replay_unsafe() {
             ..Turn::default()
         }],
     );
-    let body = ResponsesEndpoint.format_payload(&req).unwrap();
+    let body = plan_body(ResponsesEndpoint.format_payload(&req).unwrap());
     assert_eq!(body["input"].as_array().unwrap().len(), 1);
     assert_eq!(body["input"][0]["type"], json!("message"));
 
@@ -214,15 +220,108 @@ fn completions_and_embeddings_formatting() {
     let mut req = request(EndpointType::Completions, vec![text_turn("p")]);
     req.credit_phase = CreditPhase::Warmup;
     req.turns[0].max_tokens = Some(4);
-    let body = CompletionsEndpoint.format_payload(&req).unwrap();
+    let body = plan_body(CompletionsEndpoint.format_payload(&req).unwrap());
     assert!(body["prompt"][0].as_str().unwrap().ends_with("\np"));
     assert_eq!(body["max_tokens"], json!(4));
 
     let mut req = request(EndpointType::Embeddings, vec![text_turn("embed")]);
     req.turns[0].max_tokens = Some(9);
-    let body = EmbeddingsEndpoint.format_payload(&req).unwrap();
+    let body = plan_body(EmbeddingsEndpoint.format_payload(&req).unwrap());
     assert_eq!(body["input"], json!(["embed"]));
     assert!(body.get("max_tokens").is_none());
+}
+
+/// Golden-byte gate (stage B): the materialized `BodyPlan` bytes must be
+/// byte-identical to `serde_json::to_vec` of the equivalent hand-built object,
+/// proving field order, the `stream_options`/`include_usage:false` merge, and
+/// the extra-body fold all survive the plan bridge unchanged.
+#[test]
+fn body_plan_materializes_byte_identical_to_hand_built_objects() {
+    // Chat: exercises message array + max_completion_tokens + extra merge that
+    // overwrites `stream_options` in place with include_usage:false preserved.
+    let mut req = request(
+        EndpointType::Chat,
+        vec![Turn {
+            max_tokens: Some(8),
+            texts: vec![Media::new(vec!["hi".to_string()])],
+            extra_body: Some(Map::from_iter([("temperature".to_string(), json!(0.1))])),
+            ..Turn::default()
+        }],
+    );
+    req.model_endpoint.endpoint.streaming = true;
+    req.model_endpoint.endpoint.use_server_token_count = true;
+    req.model_endpoint.endpoint.extra = Some(Map::from_iter([(
+        "stream_options".to_string(),
+        json!({"include_usage": false, "x": 1}),
+    )]));
+    let bytes = ChatEndpoint
+        .format_payload(&req)
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    let expected = json!({
+        "messages": [{"role": "user", "content": "hi"}],
+        "model": "model-a",
+        "stream": true,
+        "max_completion_tokens": 8,
+        "stream_options": {"include_usage": false, "x": 1},
+        "temperature": 0.1
+    });
+    assert_eq!(
+        &bytes[..],
+        serde_json::to_vec(&expected).unwrap().as_slice()
+    );
+
+    // Completions: string-array prompt stays a literal (not spliced as wires).
+    let mut req = request(EndpointType::Completions, vec![text_turn("p")]);
+    req.turns[0].max_tokens = Some(4);
+    let bytes = CompletionsEndpoint
+        .format_payload(&req)
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    let expected = json!({
+        "prompt": ["p"],
+        "model": "model-a",
+        "stream": false,
+        "max_tokens": 4
+    });
+    assert_eq!(
+        &bytes[..],
+        serde_json::to_vec(&expected).unwrap().as_slice()
+    );
+
+    // Embeddings: string-array input literal, model-first ordering.
+    let req = request(EndpointType::Embeddings, vec![text_turn("embed")]);
+    let bytes = EmbeddingsEndpoint
+        .format_payload(&req)
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    let expected = json!({"model": "model-a", "input": ["embed"]});
+    assert_eq!(
+        &bytes[..],
+        serde_json::to_vec(&expected).unwrap().as_slice()
+    );
+
+    // Responses: input array + instructions ordering.
+    let mut req = request(EndpointType::Responses, vec![text_turn("q")]);
+    req.system_message = Some("sys".to_string());
+    let bytes = ResponsesEndpoint
+        .format_payload(&req)
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    let expected = json!({
+        "input": [{"role": "user", "content": "q", "type": "message"}],
+        "model": "model-a",
+        "stream": false,
+        "instructions": "sys"
+    });
+    assert_eq!(
+        &bytes[..],
+        serde_json::to_vec(&expected).unwrap().as_slice()
+    );
 }
 
 #[test]

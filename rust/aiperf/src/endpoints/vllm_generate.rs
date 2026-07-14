@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, RawEndpointConfig};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
@@ -107,7 +108,7 @@ impl PreparedEndpoint for PreparedVllmGenerate {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         let [turn] = request.turns() else {
             return Err(EndpointError::InvalidRequest(
                 "vllm_generate requires exactly one token payload per dispatch".into(),
@@ -152,7 +153,7 @@ impl PreparedEndpoint for PreparedVllmGenerate {
         if let Some(request_id) = request.x_request_id() {
             payload.insert("request_id".into(), Value::String(request_id.to_string()));
         }
-        Ok(Value::Object(payload))
+        Ok(BodyPlan::from_object(&payload)?)
     }
 
     fn headers(&self) -> &BTreeMap<String, String> {

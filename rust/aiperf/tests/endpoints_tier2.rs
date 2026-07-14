@@ -10,6 +10,12 @@ use aiperf::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
+/// Materialize a formatter's [`BodyPlan`] into a decoded JSON value so the
+/// structural assertions below keep inspecting fields as before stage B.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
+
 fn config(endpoint_type: EndpointType) -> EndpointConfig {
     EndpointConfig {
         endpoint_type,
@@ -58,9 +64,11 @@ fn ranking_dialects_format_parse_and_account_vendor_shapes() {
         ..Turn::default()
     };
 
-    let nim = NimRankingsEndpoint
-        .format_payload(&request(EndpointType::NimRankings, vec![turn.clone()]))
-        .unwrap();
+    let nim = plan_body(
+        NimRankingsEndpoint
+            .format_payload(&request(EndpointType::NimRankings, vec![turn.clone()]))
+            .unwrap(),
+    );
     assert_eq!(nim["model"], "reranker");
     assert_eq!(nim["query"], json!({"text":"query"}));
     assert_eq!(nim["passages"][1], json!({"text":"second"}));
@@ -70,9 +78,11 @@ fn ranking_dialects_format_parse_and_account_vendor_shapes() {
         vec!["query", "first", "second"]
     );
 
-    let cohere = CohereRankingsEndpoint
-        .format_payload(&request(EndpointType::CohereRankings, vec![turn.clone()]))
-        .unwrap();
+    let cohere = plan_body(
+        CohereRankingsEndpoint
+            .format_payload(&request(EndpointType::CohereRankings, vec![turn.clone()]))
+            .unwrap(),
+    );
     assert_eq!(cohere["query"], "query");
     assert_eq!(cohere["documents"], json!(["first", "second"]));
     let parsed = CohereRankingsEndpoint
@@ -89,9 +99,11 @@ fn ranking_dialects_format_parse_and_account_vendor_shapes() {
         })
     );
 
-    let hf = HfTeiRankingsEndpoint
-        .format_payload(&request(EndpointType::HfTeiRankings, vec![turn]))
-        .unwrap();
+    let hf = plan_body(
+        HfTeiRankingsEndpoint
+            .format_payload(&request(EndpointType::HfTeiRankings, vec![turn]))
+            .unwrap(),
+    );
     assert_eq!(hf["texts"], json!(["first", "second"]));
     let parsed = HfTeiRankingsEndpoint
         .parse_response(&ServerResponse::from_json(
@@ -102,15 +114,17 @@ fn ranking_dialects_format_parse_and_account_vendor_shapes() {
         .unwrap();
     assert!(matches!(parsed.data, Some(ResponseData::Rankings { .. })));
 
-    let authored_empty = NimRankingsEndpoint
-        .format_payload(&request(
-            EndpointType::NimRankings,
-            vec![Turn {
-                texts: vec![named("query", &[""]), named("passages", &["", "kept"])],
-                ..Turn::default()
-            }],
-        ))
-        .unwrap();
+    let authored_empty = plan_body(
+        NimRankingsEndpoint
+            .format_payload(&request(
+                EndpointType::NimRankings,
+                vec![Turn {
+                    texts: vec![named("query", &[""]), named("passages", &["", "kept"])],
+                    ..Turn::default()
+                }],
+            ))
+            .unwrap(),
+    );
     assert_eq!(authored_empty["query"]["text"], "");
     assert_eq!(
         authored_empty["passages"],
@@ -134,7 +148,7 @@ fn nim_embeddings_pairs_multimodal_inputs_and_preserves_strict_parser() {
             ..Turn::default()
         }],
     );
-    let body = NimEmbeddingsEndpoint.format_payload(&req).unwrap();
+    let body = plan_body(NimEmbeddingsEndpoint.format_payload(&req).unwrap());
     assert_eq!(
         body["input"],
         json!([
@@ -180,7 +194,7 @@ fn huggingface_generate_uses_streaming_path_and_incremental_token_text() {
         }],
     );
     req.model_endpoint.endpoint.extra = Some(Map::from_iter([("temperature".into(), json!(0.2))]));
-    let body = HuggingFaceGenerateEndpoint.format_payload(&req).unwrap();
+    let body = plan_body(HuggingFaceGenerateEndpoint.format_payload(&req).unwrap());
     assert_eq!(body["inputs"], "hello world");
     assert_eq!(body["parameters"]["max_new_tokens"], 17);
     assert_eq!(body["parameters"]["temperature"], 0.2);
@@ -225,7 +239,7 @@ fn image_generation_and_edit_cover_streaming_full_and_multipart_descriptor_shape
         }],
     );
     generation.model_endpoint.endpoint.streaming = true;
-    let body = ImageGenerationEndpoint.format_payload(&generation).unwrap();
+    let body = plan_body(ImageGenerationEndpoint.format_payload(&generation).unwrap());
     assert_eq!(
         body,
         json!({"prompt":"draw a fox","model":"flux","response_format":"b64_json","n":1,"stream":true})
@@ -255,7 +269,7 @@ fn image_generation_and_edit_cover_streaming_full_and_multipart_descriptor_shape
         }],
     );
     edit.model_endpoint.endpoint.extra = Some(Map::from_iter([("size".into(), json!("512x512"))]));
-    let body = ImageEditEndpoint.format_payload(&edit).unwrap();
+    let body = plan_body(ImageEditEndpoint.format_payload(&edit).unwrap());
     assert_eq!(body["prompt"], "make it blue");
     assert_eq!(body["image"]["content_type"], "image/png");
     assert_eq!(body["image"]["filename"], "image.png");
@@ -277,16 +291,18 @@ fn image_generation_and_edit_cover_streaming_full_and_multipart_descriptor_shape
 
 #[test]
 fn video_image_retrieval_and_solido_preserve_non_text_response_data() {
-    let video = VideoGenerationEndpoint
-        .format_payload(&request(
-            EndpointType::VideoGeneration,
-            vec![Turn {
-                texts: vec![text("animate")],
-                extra_body: Some(Map::from_iter([("seconds".into(), json!(8))])),
-                ..Turn::default()
-            }],
-        ))
-        .unwrap();
+    let video = plan_body(
+        VideoGenerationEndpoint
+            .format_payload(&request(
+                EndpointType::VideoGeneration,
+                vec![Turn {
+                    texts: vec![text("animate")],
+                    extra_body: Some(Map::from_iter([("seconds".into(), json!(8))])),
+                    ..Turn::default()
+                }],
+            ))
+            .unwrap(),
+    );
     assert_eq!(video["seconds"], 8);
     assert!(VideoGenerationEndpoint.descriptor().requires_polling);
     let parsed = VideoGenerationEndpoint
@@ -302,18 +318,20 @@ fn video_image_retrieval_and_solido_preserve_non_text_response_data() {
     assert_eq!(video.video_id.as_deref(), Some("video-1"));
     assert_eq!(video.status.as_deref(), Some("completed"));
 
-    let retrieval_body = ImageRetrievalEndpoint
-        .format_payload(&request(
-            EndpointType::ImageRetrieval,
-            vec![Turn {
-                images: vec![Media::new(vec![
-                    "data:image/png;base64,a".into(),
-                    "data:image/png;base64,b".into(),
-                ])],
-                ..Turn::default()
-            }],
-        ))
-        .unwrap();
+    let retrieval_body = plan_body(
+        ImageRetrievalEndpoint
+            .format_payload(&request(
+                EndpointType::ImageRetrieval,
+                vec![Turn {
+                    images: vec![Media::new(vec![
+                        "data:image/png;base64,a".into(),
+                        "data:image/png;base64,b".into(),
+                    ])],
+                    ..Turn::default()
+                }],
+            ))
+            .unwrap(),
+    );
     assert_eq!(
         ImageRetrievalEndpoint
             .extract_payload_inputs(&retrieval_body)
@@ -333,15 +351,17 @@ fn video_image_retrieval_and_solido_preserve_non_text_response_data() {
         Some(ResponseData::ImageRetrieval { .. })
     ));
 
-    let solido = SolidoRagEndpoint
-        .format_payload(&request(
-            EndpointType::SolidoRag,
-            vec![Turn {
-                texts: vec![Media::new(vec!["one".into(), "two".into()])],
-                ..Turn::default()
-            }],
-        ))
-        .unwrap();
+    let solido = plan_body(
+        SolidoRagEndpoint
+            .format_payload(&request(
+                EndpointType::SolidoRag,
+                vec![Turn {
+                    texts: vec![Media::new(vec!["one".into(), "two".into()])],
+                    ..Turn::default()
+                }],
+            ))
+            .unwrap(),
+    );
     assert_eq!(solido["query"], json!(["one", "two"]));
     let parsed = SolidoRagEndpoint
         .parse_response(&ServerResponse::from_json(
@@ -364,7 +384,10 @@ fn raw_and_template_support_jmespath_autodetect_and_full_jinja_context() {
             ..Turn::default()
         }],
     );
-    assert_eq!(RawEndpoint.format_payload(&raw_req).unwrap(), raw_body);
+    assert_eq!(
+        plan_body(RawEndpoint.format_payload(&raw_req).unwrap()),
+        raw_body
+    );
 
     let mut raw_config = config(EndpointType::Raw);
     raw_config.response_field = Some("result.items".into());
@@ -403,7 +426,7 @@ fn raw_and_template_support_jmespath_autodetect_and_full_jinja_context() {
     );
     template_req.model_endpoint.endpoint.extra =
         Some(Map::from_iter([("temperature".into(), json!(0.4))]));
-    let rendered = TemplateEndpoint.format_payload(&template_req).unwrap();
+    let rendered = plan_body(TemplateEndpoint.format_payload(&template_req).unwrap());
     assert_eq!(rendered["query"], "what?");
     assert_eq!(rendered["passages"], json!(["a", "b"]));
     assert_eq!(rendered["model"], "templated-model");

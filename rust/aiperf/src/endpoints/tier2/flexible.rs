@@ -14,6 +14,7 @@ use std::sync::Arc;
 use minijinja::{AutoEscape, Environment};
 use serde_json::{Map, Value, json};
 
+use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
 use crate::endpoints::endpoints::{Endpoint, number_array, try_extract_embeddings};
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
@@ -97,7 +98,7 @@ impl Endpoint for RawEndpoint {
         &RAW_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -123,7 +124,7 @@ impl Endpoint for TemplateEndpoint {
         &TEMPLATE_DESCRIPTOR
     }
 
-    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<Value> {
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
 
@@ -146,8 +147,8 @@ impl PreparedEndpointBehavior for RawEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         _config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
-        request
+    ) -> EndpointResult<BodyPlan> {
+        let payload = request
             .turns()
             .last()
             .and_then(|turn| turn.raw_payload.clone())
@@ -155,7 +156,14 @@ impl PreparedEndpointBehavior for RawEndpoint {
                 EndpointError::InvalidRequest(
                     "raw endpoint requires raw_payload on the dispatching turn".into(),
                 )
-            })
+            })?;
+        // The raw body may be any authored JSON value; the plan model only splices
+        // named-field objects, so a non-object body is the hard error the legacy
+        // `structured_plan` bridge produced (moved here off the dispatch path).
+        let object = payload.as_object().ok_or_else(|| {
+            EndpointError::InvalidRequest("endpoint body must be a JSON object".into())
+        })?;
+        Ok(BodyPlan::from_object(object)?)
     }
 }
 
@@ -164,7 +172,7 @@ impl PreparedEndpointBehavior for TemplateEndpoint {
         &self,
         request: &PreparedRequest<'_>,
         config: &RawEndpointConfig,
-    ) -> EndpointResult<Value> {
+    ) -> EndpointResult<BodyPlan> {
         let (source, legacy_extra_config) = template_source(config)?;
         let mut environment = Environment::new();
         environment.set_auto_escape_callback(|_| AutoEscape::Html);
@@ -260,7 +268,7 @@ impl PreparedEndpoint for PreparedRawEndpoint {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         RawEndpoint.format_prepared_payload(request, self.config.as_raw())
     }
 
@@ -312,7 +320,7 @@ impl PreparedEndpoint for PreparedTemplateEndpoint {
         &self.config
     }
 
-    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<Value> {
+    fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         render_template_payload(
             &self.environment,
             request,
@@ -404,7 +412,7 @@ fn render_template_payload(
     request: &PreparedRequest<'_>,
     config: &RawEndpointConfig,
     legacy_extra_config: bool,
-) -> EndpointResult<Value> {
+) -> EndpointResult<BodyPlan> {
     let turn = request.turns().last().ok_or_else(|| {
         EndpointError::InvalidRequest("Template endpoint requires at least one turn".into())
     })?;
@@ -509,7 +517,7 @@ fn render_template_payload(
             payload.insert(key.clone(), value.clone());
         }
     }
-    Ok(Value::Object(payload))
+    Ok(BodyPlan::from_object(&payload)?)
 }
 
 fn prepared_request_value(request: &PreparedRequest<'_>, config: &RawEndpointConfig) -> Value {

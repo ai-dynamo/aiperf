@@ -11,6 +11,12 @@ use aiperf::endpoints::{
 };
 use serde_json::{Map, Value, json};
 
+/// Materialize a formatter's [`BodyPlan`] into a decoded JSON value so the
+/// structural assertions below keep inspecting fields as before stage B.
+fn plan_body(plan: aiperf::body_plan::BodyPlan) -> Value {
+    serde_json::from_slice(&plan.materialize_standalone().unwrap()).unwrap()
+}
+
 fn config(streaming: bool) -> EndpointConfig {
     EndpointConfig {
         endpoint_type: EndpointType::Messages,
@@ -55,10 +61,13 @@ fn simple_non_streaming_request_is_byte_exact_with_pr_731() {
     turn.model = Some("claude-sonnet-4-20250514".into());
     let body = MessagesEndpoint
         .format_payload(&request(vec![turn], false))
+        .unwrap()
+        .materialize_standalone()
         .unwrap();
     assert_eq!(
-        serde_json::to_vec(&body).unwrap(),
+        &body[..],
         br#"{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hello!"}],"max_tokens":1024}"#
+            as &[u8]
     );
 }
 
@@ -71,10 +80,13 @@ fn extra_numeric_values_use_orjson_equivalent_wire_spelling() {
     )]));
     let body = MessagesEndpoint
         .format_payload(&request(vec![turn], false))
+        .unwrap()
+        .materialize_standalone()
         .unwrap();
     assert_eq!(
-        serde_json::to_vec(&body).unwrap(),
+        &body[..],
         br#"{"model":"test-model","messages":[{"role":"user","content":"numbers"}],"max_tokens":1024,"values":[0.2,1e-7,1e+20,-0.0,1.2345678901234567]}"#
+            as &[u8]
     );
 }
 
@@ -84,9 +96,11 @@ fn authored_empty_raw_messages_renders_the_synthetic_turn() {
     turn.role = Some(String::new());
     turn.model = Some(String::new());
     turn.raw_messages = Some(Vec::new());
-    let body = MessagesEndpoint
-        .format_payload(&request(vec![turn], false))
-        .unwrap();
+    let body = plan_body(
+        MessagesEndpoint
+            .format_payload(&request(vec![turn], false))
+            .unwrap(),
+    );
     assert_eq!(body["model"], "test-model");
     assert_eq!(
         body["messages"],
@@ -121,13 +135,19 @@ fn full_request_merge_order_and_omitted_false_stream_are_byte_exact() {
         ("temperature".into(), json!(0.8)),
         ("top_p".into(), json!(0.9)),
     ]));
-    let body = MessagesEndpoint.format_payload(&request).unwrap();
+    let bytes = MessagesEndpoint
+        .format_payload(&request)
+        .unwrap()
+        .materialize_standalone()
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(body.get("stream").is_none());
     assert_eq!(body["temperature"], json!(0.2));
     assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
     assert_eq!(
-        serde_json::to_vec(&body).unwrap(),
+        &bytes[..],
         br#"{"model":"claude","messages":[{"role":"user","content":"ctx"},{"role":"user","content":"first"},{"role":"user","content":"second"}],"max_tokens":12,"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral"}}],"tools":[{"name":"lookup","description":"look up","input_schema":{"type":"object","properties":{"q":{"type":"string"}}}}],"temperature":0.2,"top_p":0.9,"top_k":7}"#
+            as &[u8]
     );
 }
 
@@ -150,7 +170,7 @@ fn streaming_and_headers_match_messages_wire_contract() {
     let serialized = serde_json::to_string(&request.model_endpoint.endpoint).unwrap();
     assert!(!serialized.contains("sk-ant-test"));
     assert!(!serialized.contains("anthropic-beta"));
-    let body = MessagesEndpoint.format_payload(&request).unwrap();
+    let body = plan_body(MessagesEndpoint.format_payload(&request).unwrap());
     assert_eq!(body["stream"], true);
 
     let mut empty_key = config(false);
@@ -173,9 +193,11 @@ fn image_shapes_and_unsupported_media_match_pr() {
         ])],
         ..Turn::default()
     };
-    let body = MessagesEndpoint
-        .format_payload(&request(vec![turn.clone()], false))
-        .unwrap();
+    let body = plan_body(
+        MessagesEndpoint
+            .format_payload(&request(vec![turn.clone()], false))
+            .unwrap(),
+    );
     assert_eq!(
         body["messages"][0]["content"][1],
         json!({"type":"image","source":{"type":"url","url":"https://example/cat.jpg"}})
