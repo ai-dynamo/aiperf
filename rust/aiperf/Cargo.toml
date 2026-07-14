@@ -112,6 +112,11 @@ hyper = { version = "1.10", features = ["server", "http1", "http2"] }
 tonic = { workspace = true, features = ["server", "router", "codegen"] }
 # grpc test servers wrap a TcpListener as a stream.
 tokio-stream = { version = "0.1", features = ["net"] }
+# Authoritative OTLP message decoder for the export::otel parity test. Test-only
+# so the shipped runner links no OpenTelemetry SDK (the sink hand-writes its own
+# minimal prost subset for encoding). `gen-tonic-messages` + `metrics` expose
+# `opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest`.
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic-messages", "metrics"] }
 
 # Explicit test targets for the transport-http integration suite, which lives in
 # a `tests/transport_http/` subdirectory so the shared `common.rs` helper is a
