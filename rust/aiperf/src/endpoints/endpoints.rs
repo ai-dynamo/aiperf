@@ -1764,4 +1764,51 @@ mod lowering_tests {
         assert!(ShapeLowerer::for_descriptor_id("embeddings").is_none());
         assert!(ShapeLowerer::for_descriptor_id("completions").is_none());
     }
+
+    /// Segment spec §5: both live-reply constructors used by
+    /// `multiturn::build_next_turn` — the text-only reply (`assistant_message ==
+    /// None`) and the preformatted `raw_messages` reply (`assistant_message ==
+    /// Some(..)`) — lower to the exact bytes the pre-change `RenderedMessage::Value`
+    /// dispatch path emitted, for every message-array shape. `lower_turn` is
+    /// compared against the live `rendered_turn_messages` → `serialize_rendered_messages`
+    /// pipeline (the code the reply spliced through before this change), so this is
+    /// the byte-parity oracle for capture-time lowering.
+    #[test]
+    fn reply_constructors_lower_to_value_dispatch_wire_all_shapes() {
+        let text_reply = Turn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec!["live answer".to_string()])],
+            ..Turn::default()
+        };
+        let raw_reply = Turn {
+            raw_messages: Some(vec![json!({
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "why", "signature": "sig"},
+                    {"type": "text", "text": "answer"},
+                    // A replay-unsafe Responses item, to exercise the shared filter.
+                    {"type": "reasoning", "id": "r-1"}
+                ]
+            })]),
+            ..Turn::default()
+        };
+        for (id, shape) in [
+            ("chat", PartShape::Chat),
+            ("responses", PartShape::Responses),
+            ("messages", PartShape::Messages),
+        ] {
+            let lowerer = ShapeLowerer::for_descriptor_id(id).unwrap();
+            for reply in [&text_reply, &raw_reply] {
+                // The reply carries no `lowered` wire, so `rendered_turn_messages`
+                // takes the Value render path — exactly the pre-change dispatch body.
+                assert!(reply.lowered.is_none());
+                let value_path = serialize_rendered_messages(
+                    rendered_turn_messages(std::slice::from_ref(reply), shape, false).unwrap(),
+                )
+                .unwrap();
+                let lowered = lowerer.lower_turn(reply).unwrap();
+                assert_eq!(lowered, value_path, "shape {id} reply wire diverged");
+            }
+        }
+    }
 }
