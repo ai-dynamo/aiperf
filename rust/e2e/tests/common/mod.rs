@@ -236,6 +236,7 @@ impl AIPerfHarness {
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("PYTHONUNBUFFERED", "1")
             .env("MALLOC_ARENA_MAX", "2")
+            .env("AIPERF_RUNNER_BIN", runner_binary())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -319,6 +320,36 @@ fn python_binary() -> String {
         }
     }
     "python3".to_string()
+}
+
+/// Resolve the `aiperf-runner` binary.
+///
+/// Priority:
+/// 1. `AIPERF_RUNNER_BIN` env var (already set by the user or outer harness)
+/// 2. `target/debug/aiperf-runner` relative to the Cargo workspace root
+///    (derived from this file's `CARGO_MANIFEST_DIR` at compile time)
+/// 3. `aiperf-runner` on PATH as last resort
+fn runner_binary() -> String {
+    if let Ok(v) = std::env::var("AIPERF_RUNNER_BIN") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    // CARGO_MANIFEST_DIR is rust/e2e; workspace root is two levels up.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent() // rust/
+        .and_then(|p| p.parent()) // workspace root
+        .unwrap_or(&manifest);
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let debug = workspace
+        .join("target")
+        .join("debug")
+        .join(format!("aiperf-runner{suffix}"));
+    if debug.exists() {
+        return debug.display().to_string();
+    }
+    format!("aiperf-runner{suffix}")
 }
 
 /// Result of one `aiperf` subprocess run.
