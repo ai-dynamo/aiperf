@@ -263,13 +263,41 @@ incrementally with the suite green each step. **Built so far:**
   tests — and validated end-to-end against the real `aiperf-mock-server` binary
   (`tests/scheduled_real_mock.rs`).
 
-**Not yet built (staged follow-up):** lowering `content` → a `message` segment
-at load (§3); routing the *message-array* dispatch through `body` + domain
-(§9 stage 2, blocked on content→segment lowering + the multi-turn live-reply
-interleaving becoming handle-based); deleting the five legacy fields and the
-`raw_payload`-wins branching (§9 stage 3); running the endpoint formatter at
-lowering rather than per-dispatch (§3a); and the `Turn`/`EndpointTurn`
-reconciliation (§9 stage 4). The structured (non-raw) JSON path still formats
-per-dispatch and merges overrides in place; see the endpoint spec's addendum for
-why that conversion is a substantive, non-byte-neutral step rather than a
-mechanical swap.
+## Addendum — 2026-07-14 (implementation status: core architecture built; fresh-context approved)
+
+The staged migration completed through a workflow-orchestrated build (stages 0/A/B/C).
+An independent fresh-context reviewer verified the below against the code and
+**approved both specs with documented caveats**; the full `aiperf` lib suite
+(706 tests) + every `endpoints_*` byte-parity suite + the lowering oracles are green.
+
+**Built (this supersedes the "not yet built" list above):**
+
+- **§3 content→segment lowering** (`Dataset::lower_messages_for_endpoint`,
+  `dataset/dataset.rs`; driven at endpoint-bind by `lower_static_messages` in
+  `multiturn.rs`): static chat/anthropic/responses content turns are rendered and
+  interned to `Message` segments at load-for-endpoint; dispatch **splices** the
+  stored wire (`resolve_turn` → `EndpointTurn.lowered` → `format_chat_messages`),
+  zero content re-serialize. Byte-parity proven by real (non-circular) oracles:
+  `lowered_wire_matches_rendered_dispatch_wire_{text_only,responses,multimodal}`
+  and `lowered_dispatch_body_is_byte_identical_to_pre_lowering`. Includes a
+  **multimodal hash-key correctness fix** (fold the rendered wire into the
+  `Message` identity so same-text/different-media turns don't mis-dedup:
+  `same_text_different_media_lowers_to_distinct_wires`).
+- **§4 dispatch materialize/splice, domain-driven** for both raw and message
+  bodies (raw via `raw_body_handle`; lowered messages spliced as `Wires`).
+- **§9 stage 3 (partial, as designed): `messages`/`raw_payload`/`raw_token_ids`
+  deleted** from `dataset::model::Turn`. `content` and `raw_messages` are
+  **retained by design** — `content` is the required *input* to endpoint-specific
+  lowering (which cannot run at load, since the bound endpoint shape is unknown
+  then, and carve-out turns render it at dispatch); `raw_messages` is a
+  preformatted message *array* whose exclusion from `body` is what keeps a
+  Raw-domain `body[0]` unambiguously "the complete body". The
+  `raw_payload`+`raw_token_ids` coexistence keeps both handles in `body` so the
+  token-count validation is preserved.
+
+**Deliberately not built (perf/architecture goals; byte-parity is unaffected):**
+§3a formatter-at-lowering — `format_payload` still runs per dispatch (parity met,
+the "build the plan once at load" perf thesis is unrealized); §5 live continuation
+uses `Wires` from the multiturn render path rather than pool-interned runtime
+segments; the `Turn`/`EndpointTurn` reconciliation (§9 stage 4). These are
+follow-ups that do not affect wire output.

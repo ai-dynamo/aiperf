@@ -232,7 +232,38 @@ A `BodyPlan` that declared those params as `Literal` fields and let
 would emit **duplicate keys** with last-wins semantics and different ordering.
 The correct stage-2 form (§4) folds the params into the plan's `Literal` fields
 and drops the tail, and moves effective-metadata computation off the serialized
-Value onto the plan/turn directly — per endpoint. **Not yet built:** the
-per-endpoint `format_payload → BodyPlan` conversions (§7 stage 2), the gRPC packed
-`raw_input_contents` fast path (§7 stage 3), and deletion of the
-`format_payload → Value → to_vec` path (§7 stage 4).
+Value onto the plan/turn directly — per endpoint.
+
+## Addendum — 2026-07-14 (implementation status: §7 stages 1-2 + 4 built; §7 stage 3 justified-deferred; fresh-context approved)
+
+The stage-2 conversion was completed the correct way. An independent fresh-context
+reviewer verified the below and **approved the spec with caveats**; the full
+`aiperf` lib suite (706) + every `endpoints_*` byte-parity suite + golden-byte
+gates are green.
+
+- **§7 stage 2 — every endpoint returns `EndpointResult<BodyPlan>`** (`endpoints/*.rs`).
+  The byte-neutral resolution to the "in-place-merge vs tail-append" problem above:
+  dispatch operates on the plan (`request.rs` `merge_overrides` folds overrides
+  into the plan's literal fields with the same `Map::insert` in-place/append
+  semantics; `effective_from_plan` reads metadata off the plan, not a serialized
+  Value; the stream-off downgrade is applied to the plan). Endpoints reach the
+  plan via the transitional `BodyPlan::from_object` bridge (build the `Map`, then
+  decompose — message arrays → `Wires`, scalars → `Literal`), guaranteed
+  byte-identical by the invariant `merged_object_bridge_is_byte_identical_to_to_vec`
+  and the golden-byte gates (chat/completions/embeddings/anthropic/responses/KServe/Riva).
+- **§7 stage 4 — the whole-`Value` `serde_json::to_vec` HTTP dispatch path is
+  deleted** (`structured_plan` removed); the shared `JsonBodyMaterializer` produces
+  every HTTP body. `FieldValue::Wires` was added for pre-serialized message arrays
+  (dynamic/live content) not interned in the frozen store.
+- **§7 stage 3 (gRPC packed `raw_input_contents`) — deliberately deferred, and the
+  deferral is technically correct.** Verified: every in-tree KServe endpoint is
+  `requires_raw_token_ids: false` and sends a **BYTES text tensor**
+  (`endpoints/kserve.rs`), not token IDs; no gRPC endpoint is token-native. Packing
+  token IDs into `raw_input_contents` therefore has **no valid activation target**
+  and would break BYTES-tensor wire parity. `codec.rs` retains the typed per-tensor
+  encode path (legacy byte-parity anchor). This lands only when a genuinely
+  token-native gRPC endpoint exists.
+
+**Caveat (perf, not parity):** endpoints still build a `Value` per dispatch via the
+`from_object` bridge for non-lowered/structured turns, so the "zero `Value` on the
+dispatch path" goal is partial; the byte-parity contract is fully met.
