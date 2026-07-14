@@ -132,6 +132,14 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
   AIPERF_CONTENT_SERVER_CONTENT_DIR=/tmp/aiperf-content \
   aiperf profile --config benchmark.yaml
 
+# Cellular (multi-process) mode: `--cells N` (or `runtime.cells: N`) makes the launched
+# runner a controller that spawns N `aiperf-runner --cell` children over a
+# (cell_id, cell_count) budget partition and merges their records into one report.
+# `--cells 1` (default) is the unchanged single-process path. Supported for seeded,
+# synthetic, single-turn HTTP runs with request-bounded phases and a single endpoint URL;
+# fails closed otherwise. E2e from the frontend: rust/e2e/tests/test_cellular.rs.
+aiperf profile --config benchmark.yaml --cells 4
+
 # Developer-only protocol inventory; normal children are launched by Python.
 cargo run --release -p aiperf-runner -- --capabilities
 

@@ -374,3 +374,35 @@ seeded `concurrency`-bounded phases, synthetic single-turn HTTP, single URL, no 
 cancellation. Everything the guards *allow past* that (Poisson/Gamma/constant arrival
 pacing via `rate/cell_count`, cancellation) is aggregate-equivalent, not byte-identical,
 and documented as such rather than rejected.
+
+## Addendum — 2026-07-14 — cellular is product-reachable from the Python frontend
+
+**Supersedes the "Not on the product path" caveat above** (the paragraph beginning
+"Python emits no `cells > 1`"). That is no longer true: cellular is now reachable and
+e2e-tested through the ordinary `aiperf profile` frontend.
+
+- **`runtime.cells`** — a new `RuntimeConfig.cells` field (int, `ge=1`, default 1;
+  `src/aiperf/config/runtime.py`) is dumped verbatim into the protocol-v2 execute
+  envelope by `dump_benchmark_run`, so `cfg.runtime.cells` reaches the runner. `cells=1`
+  (default) keeps the single-process path byte-for-byte unchanged.
+- **`--cells N`** — a CLI flag (`cli_config.py`) mapped to `runtime_dict["cells"]` in
+  `_converter_runtime.py`, mirroring `--workers-max`. `aiperf profile --cells N` drives
+  the controller/cell topology; Python still launches exactly one `aiperf-runner` (which
+  becomes the controller and spawns the cells) and reads the one merged `native-v2.json`,
+  so the orchestrator flow is unchanged.
+- **E2e from the frontend** — `rust/e2e/tests/test_cellular.rs`:
+  `test_cellular_run_from_python_frontend` (`--cells 3` runs end-to-end and reports the
+  full budget) and `test_cellular_matches_single_cell` (a 3-cell run reproduces the
+  1-cell run's input/output sequence-length distributions byte-for-byte through the full
+  presentation pipeline, varying ISL).
+
+**Not a bespoke HTTP layer.** The earlier "scheduled HTTP transport" wording overstated
+the boundary. A cell runs the *same* `execute.rs` path as any single-process run,
+differing only by an injected `IssuanceAuthority` (`Direct` vs `CellularAutonomousIssuer`)
+and an env-gated records sink (`CellRecordsShipper` ships over the transport instead of
+writing a report). The `transport == "http"` whitelist reflects **wiring coverage** — only
+the online-scheduled executor injects the cell issuer and ships partitions today; the
+gRPC/graph/offline executors are separate paths not yet threaded. The
+partition/issuance/transport seam is transport-neutral by design, so extending cellular to
+those executors is a wiring task, not new HTTP code. **Still out of scope:** cross-host
+transport (TCP loopback only) and the S5 executor change.
