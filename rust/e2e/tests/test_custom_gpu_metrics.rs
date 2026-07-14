@@ -90,8 +90,7 @@ fn has_gpu_telemetry(json: &Value) -> bool {
         .unwrap_or(false)
 }
 
-async fn run_with_csv(csv_path: &PathBuf) -> RunResult {
-    let h = AIPerfHarness::new().await;
+fn run_with_csv(h: &AIPerfHarness, csv_path: &PathBuf) -> RunResult {
     let dcgm = h.mock.dcgm_urls().join(" ");
     h.run(&format!(
         "--model nvidia/llama-3.1-nemotron-70b-instruct --url {} \
@@ -109,11 +108,12 @@ async fn test_custom_metrics_csv_loading_basic() {
     if skip_platform() {
         return;
     }
+    let h = AIPerfHarness::new().await;
     let dir = TempDir::new().unwrap();
     let csv_path = custom_gpu_metrics_csv(&dir);
-    let r = run_with_csv(&csv_path).await;
+    let r = run_with_csv(&h, &csv_path);
 
-    assert!(r.artifacts.request_count() > 0.0);
+    assert!(r.artifacts.request_count() > 0.0, "exit={}", r.exit_code);
     let json = r.artifacts.json();
     assert!(has_gpu_telemetry(&json));
 
@@ -195,9 +195,10 @@ async fn test_custom_metrics_deduplication() {
     if skip_platform() {
         return;
     }
+    let h = AIPerfHarness::new().await;
     let dir = TempDir::new().unwrap();
     let csv_path = custom_gpu_metrics_csv_with_defaults(&dir);
-    let r = run_with_csv(&csv_path).await;
+    let r = run_with_csv(&h, &csv_path);
 
     let json = r.artifacts.json();
     assert!(has_gpu_telemetry(&json));
@@ -236,9 +237,10 @@ async fn test_invalid_csv_fallback_to_defaults() {
     if skip_platform() {
         return;
     }
+    let h = AIPerfHarness::new().await;
     let dir = TempDir::new().unwrap();
     let csv_path = custom_gpu_metrics_csv_invalid(&dir);
-    let r = run_with_csv(&csv_path).await;
+    let r = run_with_csv(&h, &csv_path);
 
     assert!(r.artifacts.request_count() > 0.0);
     let json = r.artifacts.json();
