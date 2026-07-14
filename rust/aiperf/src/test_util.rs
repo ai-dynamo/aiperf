@@ -38,7 +38,9 @@ use crate::multiturn::ConversationSource;
 /// a dispatching [`crate::http::TransportSink`] via `with_prepared_endpoints` so
 /// prepared turns resolve their dense endpoint key.
 pub fn chat_dispatch_table() -> std::rc::Rc<crate::endpoints::PreparedEndpointTable> {
-    use crate::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
+    use crate::endpoints::{
+        EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
+    };
     let endpoint = EndpointRegistry::builtin()
         .unwrap()
         .prepare(
@@ -65,7 +67,9 @@ async fn build_prepared_source(
     use crate::dataset::{
         ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
     };
-    use crate::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
+    use crate::endpoints::{
+        EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
+    };
     use crate::multiturn::{NativeDatasetConversationSource, PreparedEndpointReference};
     use crate::rng::RngRoot;
     let dataset = LoaderRegistry::with_builtin_formats()

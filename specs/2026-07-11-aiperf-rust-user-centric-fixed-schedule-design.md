@@ -516,7 +516,7 @@ These were the subtle risks; the built code resolves each:
 exact nanosecond schedules, stable ordering, timestamp/delay/immediate continuation,
 response splicing, steady-state seeding, churn, concurrency caps, stop-and-drain,
 duration cancellation, and adaptive wake-up. `tests/scheduled_real_mock.rs` launches the
-real `aiperf-mock-rs` process and asserts zero early issues, bounded wall-clock lateness,
+real `aiperf-mock-server` process and asserts zero early issues, bounded wall-clock lateness,
 configured TTFT, per-user non-overlap and gaps, terminal-relative delays, counts, and
 detailed JSON. The same `ScheduledRuntime` runs deterministically under `SimClock` and,
 behind `dynosim`, over the in-process Dynamo `TurnDispatcher`.
@@ -536,7 +536,3 @@ identically online, mock, and (deterministically) offline; Python Config v2 auth
 and the registered scheduled pair injects either the online hyper transport or the
 feature-gated offline (`dynosim`) Dynamo `TurnDispatcher` without changing the workload
 policy.
-
-## Addendum — 2026-07-13
-
-Reference to `aiperf-mock-rs` at §fixed-schedule test plan is superseded by `aiperf-mock-server` (renamed 2026-07-13).

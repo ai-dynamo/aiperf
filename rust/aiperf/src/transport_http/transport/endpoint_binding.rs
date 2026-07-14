@@ -693,7 +693,10 @@ mod tests {
             .unwrap();
         assert_eq!(request.canonical_body, body);
         assert_eq!(request.wire_body, body);
-        assert_eq!(request.request_config.url, "http://host/v1/chat/completions");
+        assert_eq!(
+            request.request_config.url,
+            "http://host/v1/chat/completions"
+        );
 
         let image = prepared("image_edit");
         let binding =

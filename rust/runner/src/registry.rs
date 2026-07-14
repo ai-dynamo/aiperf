@@ -693,7 +693,6 @@ fn validate_descriptor_compatibility(
     Ok(())
 }
 
-
 fn validate_requirements(
     transport: &RunnerTransportDescriptor,
     requirements: &WorkloadRequirements,
@@ -1332,7 +1331,7 @@ fn seconds_to_ns(value: f64, field: &str) -> Result<i64> {
     );
     let nanoseconds = value * 1_000_000_000.0;
     ensure!(
-        nanoseconds <= i64::MAX as f64,
+        nanoseconds < i64::MAX as f64,
         "{field} exceeds the native Clock range"
     );
     let nanoseconds = nanoseconds.round() as i64;

@@ -2810,6 +2810,7 @@ fn canonicalize_offline_float(value: &mut f64) {
     if scaled.is_finite() {
         *value = scaled.round() / OFFLINE_REPORT_DECIMAL_SCALE;
     }
+    // Collapse -0.0 to +0.0 so byte-exact offline report output never carries a negative zero.
     if *value == 0.0 {
         *value = 0.0;
     }
@@ -6261,14 +6262,15 @@ mod tests {
             .unwrap();
         let mut table = PreparedEndpointTable::new();
         let key = table.push(endpoint).unwrap();
-        let source = crate::multiturn::NativeDatasetConversationSource::sequential_with_prepared_endpoint(
-            dataset,
-            "model",
-            3,
-            Rc::new(table),
-            crate::multiturn::PreparedEndpointReference { key, endpoint_id },
-        )
-        .unwrap();
+        let source =
+            crate::multiturn::NativeDatasetConversationSource::sequential_with_prepared_endpoint(
+                dataset,
+                "model",
+                3,
+                Rc::new(table),
+                crate::multiturn::PreparedEndpointReference { key, endpoint_id },
+            )
+            .unwrap();
         let report = run_single_turn_dataset_offline(
             OfflineEngineConfig {
                 topology: OfflineTopology::Aggregated,

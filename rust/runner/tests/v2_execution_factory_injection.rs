@@ -7,13 +7,11 @@
 //! phase, metrics, artifact, or report logic: one replaces turn placement with
 //! a remote-shaped backend, and one replaces whole-trace graph placement.
 
-use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf::clock::Clock;
 use aiperf::extensions::BuiltinAiperfRegistryFactory;
 use aiperf::graph::errors::TraceError;
 use aiperf::graph::execution::GraphTraceExecutionBackend;
@@ -27,8 +25,7 @@ use aiperf_runner::coordinator::{RunnerResponseV2, RunnerV2Coordinator};
 use aiperf_runner::dataset_input::BuiltinRunnerDatasetInputAdapterResolver;
 use aiperf_runner::graph_input::BuiltinRunnerGraphInputAdapterResolver;
 use aiperf_runner::readiness::{
-    NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory, ReadinessAttemptRequest,
-    ReadinessAttemptResponse, ReadinessTransport, ReadinessTransportFactory,
+    NativeHttpReadinessPlanFactory, NativeHttpReadinessTransportFactory, ReadinessTransportFactory,
 };
 use aiperf_runner::registry::BuiltinRunnerRegistryFactory;
 use aiperf_runner::sidecar_input::BuiltinRunnerSidecarInputAdapterResolver;
@@ -36,86 +33,12 @@ use aiperf_runner::{
     HttpExecutionBackendConfig, HttpExecutionBackendFactory, NativeHttpExecutionBackendFactory,
     NativeRunnerGraphPlacementFactory, RunnerExecutionFactories, RunnerGraphPlacementFactory,
 };
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
 const DISTRIBUTION_ID: &str =
     "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-struct FakeRemoteFactory {
-    calls: Arc<AtomicUsize>,
-    dimension_calls: Arc<AtomicUsize>,
-    shutdowns: Arc<AtomicUsize>,
-    artifact_target: PathBuf,
-}
-
-impl HttpExecutionBackendFactory for FakeRemoteFactory {
-    fn build(
-        &self,
-        config: HttpExecutionBackendConfig,
-    ) -> Result<Rc<dyn HttpTurnExecutionBackend>> {
-        ensure!(config.workers == 3, "resolved worker count reached factory");
-        ensure!(
-            !self.artifact_target.exists(),
-            "execution backend must be prepared before artifact creation"
-        );
-        Ok(Rc::new(FakeRemoteBackend {
-            calls: self.calls.clone(),
-            dimension_calls: self.dimension_calls.clone(),
-            shutdowns: self.shutdowns.clone(),
-            run_origin_ns: Cell::new(None),
-            model: config.model,
-        }))
-    }
-}
-
-struct FakeRemoteBackend {
-    calls: Arc<AtomicUsize>,
-    dimension_calls: Arc<AtomicUsize>,
-    shutdowns: Arc<AtomicUsize>,
-    run_origin_ns: Cell<Option<i64>>,
-    model: String,
-}
-
-#[async_trait(?Send)]
-impl HttpTurnExecutionBackend for FakeRemoteBackend {
-    fn set_run_origin(&self, start_ns: i64) -> Result<()> {
-        ensure!(self.run_origin_ns.replace(Some(start_ns)).is_none());
-        Ok(())
-    }
-
-    fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
-        self.dimension_calls.fetch_add(1, Ordering::SeqCst);
-        InferenceDimensions {
-            endpoint_url: Some("zmq://remote-worker".into()),
-            model: turn
-                .effective_model
-                .clone()
-                .or_else(|| Some(self.model.clone())),
-        }
-    }
-
-    async fn execute_turn_measured(
-        &self,
-        _turn: PreparedHttpTurn,
-        _context: MeasuredTurnContext,
-        _on_first_token: &dyn Fn(i64),
-    ) -> Result<MeasuredTurnOutcome> {
-        // Stub for the #[ignore]d remote-placement test; metrics accumulate in
-        // the worker-local NativeMetricsObserver via dispatch_prepared_turn_measured
-        // on a real backend, not here.
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Err(anyhow!(
-            "FakeRemoteBackend does not implement measured dispatch"
-        ))
-    }
-
-    fn shutdown(&self) -> Result<()> {
-        self.shutdowns.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
 
 struct RecordingGraphPlacement {
     builds: Arc<AtomicUsize>,
@@ -188,44 +111,6 @@ impl HttpTurnExecutionBackend for FailingOriginBackend {
     fn shutdown(&self) -> Result<()> {
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct RecordingReadinessTransportFactory {
-    artifact_target: PathBuf,
-    attempts: Arc<AtomicUsize>,
-}
-
-impl ReadinessTransportFactory for RecordingReadinessTransportFactory {
-    fn build(&self, _clock: Rc<dyn Clock>) -> Rc<dyn ReadinessTransport> {
-        Rc::new(RecordingReadinessTransport {
-            artifact_target: self.artifact_target.clone(),
-            attempts: self.attempts.clone(),
-        })
-    }
-}
-
-#[derive(Debug)]
-struct RecordingReadinessTransport {
-    artifact_target: PathBuf,
-    attempts: Arc<AtomicUsize>,
-}
-
-#[async_trait(?Send)]
-impl ReadinessTransport for RecordingReadinessTransport {
-    async fn execute(&self, request: ReadinessAttemptRequest) -> ReadinessAttemptResponse {
-        assert!(
-            !self.artifact_target.exists(),
-            "readiness must finish before the exclusive artifact target is created"
-        );
-        assert!(request.url().ends_with("/v1/models/remote-model"));
-        self.attempts.fetch_add(1, Ordering::SeqCst);
-        ReadinessAttemptResponse {
-            status: Some(200),
-            body: Some("{}".into()),
-            error: None,
-        }
     }
 }
 
@@ -309,90 +194,6 @@ fn assert_success(result: &aiperf_runner::coordinator::RunnerProcessResultV2) {
         }
         RunnerResponseV2::Validation(_) => panic!("execute returned a validation response"),
     }
-}
-
-#[test]
-#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
-fn v2_scheduled_run_uses_injected_remote_turn_placement() {
-    let root = tempfile::tempdir().unwrap();
-    let artifact_target = root.path().join("scheduled");
-    let calls = Arc::new(AtomicUsize::new(0));
-    let dimension_calls = Arc::new(AtomicUsize::new(0));
-    let shutdowns = Arc::new(AtomicUsize::new(0));
-    let readiness_attempts = Arc::new(AtomicUsize::new(0));
-    let coordinator = coordinator_with_readiness(
-        Arc::new(FakeRemoteFactory {
-            calls: calls.clone(),
-            dimension_calls: dimension_calls.clone(),
-            shutdowns: shutdowns.clone(),
-            artifact_target: artifact_target.clone(),
-        }),
-        Arc::new(NativeRunnerGraphPlacementFactory),
-        Arc::new(RecordingReadinessTransportFactory {
-            artifact_target: artifact_target.clone(),
-            attempts: readiness_attempts.clone(),
-        }),
-    );
-    let result = execute(
-        &coordinator,
-        json!({
-            "identity": {"benchmark_id": "v2-remote-turn-placement", "random_seed": 17},
-            "artifact_target": artifact_target,
-            "resources": {
-                "models": {"items": [{"name": "remote-model"}]},
-                "endpoints": {"profiles": [{
-                    "id": "default",
-                    "type": "kserve_v1_predict",
-                    "urls": ["http://must-not-be-contacted.invalid"],
-                    "streaming": false,
-                    "use_server_token_count": true,
-                    "wait_for_model_timeout": 1.0,
-                    "wait_for_model_interval": 0.01,
-                    "wait_for_model_mode": "models"
-                }]}
-            },
-            "transport": {"type": "http", "config": {}},
-            "workload": {"type": "scheduled", "config": {
-                "worker_count": 3,
-                "dataset": {
-                    "type": "synthetic",
-                    "entries": 3,
-                    "sampling": "sequential",
-                    "prompts": {
-                        "isl": {"value": 4.0},
-                        "osl": {"value": 1.0}
-                    }
-                },
-                "tokenizer": {
-                    "name": "cl100k_base",
-                    "revision": "main",
-                    "trust_remote_code": false,
-                    "apply_chat_template": false
-                },
-                "phases": [{
-                    "type": "concurrency",
-                    "name": "profiling",
-                    "exclude_from_results": false,
-                    "requests": 3,
-                    "concurrency": 2
-                }]
-            }}
-        }),
-    );
-
-    assert_success(&result);
-    assert_eq!(readiness_attempts.load(Ordering::SeqCst), 1);
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
-    assert_eq!(dimension_calls.load(Ordering::SeqCst), 3);
-    assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
-    let report: Value = serde_json::from_slice(
-        &std::fs::read(root.path().join("scheduled/native-v2.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        report["metrics"]["request_count"]["series"][0]["stats"]["total"],
-        3.0
-    );
 }
 
 #[test]

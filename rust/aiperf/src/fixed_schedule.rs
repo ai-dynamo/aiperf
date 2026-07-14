@@ -320,9 +320,11 @@ mod tests {
             start_offset_ms: None,
         })
         .unwrap();
-        let source =
-            timestamped_prepared_source(&[("late", 1200.0), ("first", 1000.0), ("tie", 1000.0)], "m")
-                .await;
+        let source = timestamped_prepared_source(
+            &[("late", 1200.0), ("first", 1000.0), ("tie", 1000.0)],
+            "m",
+        )
+        .await;
         let schedule = auto.build_schedule(source.as_ref()).unwrap();
         assert_eq!(schedule.schedule_zero_ms, 1000.0);
         assert_eq!(

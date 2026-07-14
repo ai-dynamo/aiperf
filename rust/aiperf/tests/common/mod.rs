@@ -22,7 +22,9 @@ use aiperf::dataset::{
     ComposeConfig, DatasetSource, LoadConfig, LoaderRegistry, TiktokenTokenizer,
 };
 use aiperf::endpoints::{EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig};
-use aiperf::fixed_schedule::{DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload};
+use aiperf::fixed_schedule::{
+    DatasetFixedScheduleSource, FixedScheduleConfig, FixedScheduleWorkload,
+};
 use aiperf::http::TransportSink;
 use aiperf::multiturn::{
     ConversationSource, NativeDatasetConversationSource, PreparedEndpointReference,

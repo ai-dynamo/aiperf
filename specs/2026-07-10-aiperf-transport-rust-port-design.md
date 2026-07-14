@@ -50,7 +50,7 @@ abstraction — never `Instant::now()`, `SystemTime::now()`, or raw
 - Idiomatic Rust data models (enums, duration accessors, typed errors, builders).
 - **Every timestamp and timer sourced from `Clock`**, enabling deterministic
   `SimClock` tests.
-- Validation against the workspace-owned standalone `aiperf-mock-rs` binary.
+- Validation against the workspace-owned standalone `aiperf-mock-server` binary.
 
 ### Non-Goals (YAGNI)
 - The `timing/` scheduling subsystem: interval generators (Poisson/Gamma/
@@ -113,7 +113,7 @@ pub trait Clock {
   transport runs on a **current-thread tokio runtime under a `LocalSet`**; the
   hyper `Connection` driver future is spawned with `tokio::task::spawn_local`.
   This mirrors `aiperf::graph::runtime::{drive_real, drive_sim}`.
-- **Execution modes:** live network I/O (against `aiperf-mock-rs`) runs on
+- **Execution modes:** live network I/O (against `aiperf-mock-server`) runs on
   `RealClock`. `SimClock` drives pure-logic tests where no real socket is
   involved (SSE parsing with clock-stamped arrivals, cancellation-timer logic,
   trace-duration math) — deterministic and wall-clock-free.
@@ -130,7 +130,7 @@ Built directly on **hyper 1.10.x core's low-level client** —
 **not** use `hyper_util::client::legacy::Client`: its generic pool doesn't model
 our sticky-per-session strategy, its opacity fights precise trace attribution,
 and owning the connection layer is core to this crate. Same newest-lineage stack
-as `aiperf-mock-rs` (server: `hyper-util` `auto::Builder`) and reqwest 0.12
+as `aiperf-mock-server` (server: `hyper-util` `auto::Builder`) and reqwest 0.12
 (which itself wraps this conn layer).
 
 - **Connection manager (ours):** a keyed store of live connections, each
@@ -162,7 +162,7 @@ as `aiperf-mock-rs` (server: `hyper-util` `auto::Builder`) and reqwest 0.12
   - `Http1Only` — always `http1::handshake`.
   - `Http2PriorKnowledge` — always `http2::handshake`, including cleartext (h2c
     preface), matching `curl --http2-prior-knowledge` /
-    reqwest `.http2_prior_knowledge()`. Proven against `aiperf-mock-rs` (accepts
+    reqwest `.http2_prior_knowledge()`. Proven against `aiperf-mock-server` (accepts
     h2c; 800k-request h2c soak).
 - Under h2, streams multiplex over one connection: connection-level trace fires
   once at creation; subsequent streams record `connection_reused_ns`. Reuse
@@ -296,9 +296,9 @@ net + io-util), `hyper` (features `client`, `http1`, `http2`), `hyper-util`
 `tokio-rustls`, `rustls`, `webpki-roots`, `bytes`, `futures`, `serde`,
 `serde_json`, `thiserror`, `tracing`, `url`, `socket2`.
 
-## 9. Validation — integrate against `aiperf-mock-rs`
+## 9. Validation — integrate against `aiperf-mock-server`
 
-`aiperf-mock-rs` (at `rust/aiperf-mock-rs`) is an
+`aiperf-mock-server` (at `rust/mock-server`) is an
 OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 `/v1/completions`, `/v1/models`, `/health`, with `--fast`, `--ttft`/`--itl`,
 `--error-rate`, `--host`/`--port`, and h1+h2 (h2c prior-knowledge) support.
@@ -334,7 +334,7 @@ OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 - Zero direct `Instant::now()` / `SystemTime::now()` / `tokio::time` in crate
   code (all time via `Clock`) — enforced by a grep check in CI/tests.
 - A populated `RequestRecord` (responses + trace + timings) produced against
-  `aiperf-mock-rs` on `RealClock`.
+  `aiperf-mock-server` on `RealClock`.
 - SSE parser passes the Python parser's edge cases under `SimClock`.
 - Reuse strategies observably distinct via captured trace (`local_port`).
 - h2c prior-knowledge streaming completes against the mock.
@@ -353,7 +353,3 @@ OpenAI-compatible mock server: `/v1/chat/completions` (streaming SSE),
 - **h2 request-sent signal for cancellation:** the "body fully sent" point
   differs on h2; the cancellation timer keys off the body-wrapper completion in
   both h1 and h2, so it stays well-defined.
-
-## Addendum — 2026-07-13
-
-All references to `aiperf-mock-rs` in this spec are superseded by `aiperf-mock-server` (crate renamed 2026-07-13; directory `rust/mock-rs` → `rust/mock-server`). Operational commands: replace `-p aiperf-mock-rs` with `-p aiperf-mock-server` and binary `aiperf-mock-rs` with `aiperf-mock-server`.

@@ -410,8 +410,7 @@ fn skipped_session_ticks_retry_the_cached_sampler_draw() {
             "model",
             1,
         ));
-    let workload =
-        Rc::new(RequestRateWorkload::new(rate_config(Some(1), None), source).unwrap());
+    let workload = Rc::new(RequestRateWorkload::new(rate_config(Some(1), None), source).unwrap());
     let clock = Rc::new(SimClock::new());
     let dispatcher = SimDispatcher::new(clock.clone(), Some(250_000_000), 0);
     let report = run_sim(

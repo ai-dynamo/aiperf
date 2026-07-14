@@ -23,8 +23,8 @@ use bytes::Bytes;
 use uuid::Uuid;
 
 use crate::clock::Clock;
-use crate::endpoints::chat_request_body;
 use crate::endpoints::PreparedEndpointTable;
+use crate::endpoints::chat_request_body;
 use crate::metrics_core::{HttpTrace, InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::transport_http::sse::ChatChunk;
 

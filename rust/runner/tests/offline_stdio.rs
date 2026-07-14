@@ -15,19 +15,6 @@ fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_aiperf-runner")
 }
 
-fn capabilities() -> Value {
-    let output = Command::new(binary())
-        .arg("--capabilities")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    one_line(&output)
-}
-
 fn request(operation: &str, artifact_dir: &Path) -> Value {
     json!({
         "protocol_version": 2,
@@ -152,31 +139,6 @@ fn target(name: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
-fn capabilities_advertise_both_executable_offline_pairs() {
-    let capabilities = capabilities();
-    assert!(
-        capabilities["transports"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|transport| transport["id"] == "dynosim_offline")
-    );
-    assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["dynosim_offline", "graph"]))
-    );
-    assert!(
-        capabilities["supported_pairs"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(["dynosim_offline", "scheduled"]))
-    );
-}
-
-#[test]
 fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() {
     let target = target("execute");
     let _ = std::fs::remove_dir_all(&target);
@@ -255,29 +217,4 @@ fn validate_is_side_effect_free_and_execute_commits_native_and_dynamo_reports() 
         6
     );
     std::fs::remove_dir_all(target).unwrap();
-}
-
-#[test]
-#[ignore = "product wire no longer projects this mode; modules remain linked for later deletion"]
-fn uncompiled_optional_feature_fails_before_artifacts_or_engine_execution() {
-    if cfg!(feature = "dynamo-kvbm-offload") {
-        return;
-    }
-    let target = target("missing-feature");
-    let _ = std::fs::remove_dir_all(&target);
-    let mut authored = request("execute", &target);
-    authored["run"]["cfg"]["transport"]["engine"] = json!({"num_g2_blocks": 8});
-    let output = run(&authored);
-    let terminal = one_line(&output);
-
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(terminal["success"], false);
-    assert_eq!(terminal["stage"], "validation");
-    assert!(
-        terminal["errors"][0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("dynamo-kvbm-offload")
-    );
-    assert!(!target.exists());
 }

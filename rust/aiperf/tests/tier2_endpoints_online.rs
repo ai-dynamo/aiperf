@@ -161,7 +161,10 @@ fn prepare(id: &EndpointId, config: RawEndpointConfig) -> Box<dyn PreparedEndpoi
 /// to the dispatching sink so dense keys resolve to identical endpoints.
 fn dialect_table(
     endpoint_config: EndpointConfig,
-) -> (Rc<PreparedEndpointTable>, Rc<dyn PreparedTurnEndpointResolver>) {
+) -> (
+    Rc<PreparedEndpointTable>,
+    Rc<dyn PreparedTurnEndpointResolver>,
+) {
     let default_id = EndpointId::new(endpoint_config.endpoint_type.canonical_id()).unwrap();
     // The base config carries per-run settings (polling, download, response
     // field, ...) that the removed resolver applied to whichever dialect each
@@ -188,7 +191,11 @@ fn dialect_table(
         let prepared = EndpointRegistry::builtin()
             .unwrap()
             .prepare(&id, base.clone())
-            .or_else(|_| EndpointRegistry::builtin().unwrap().prepare(&id, RawEndpointConfig::default()))
+            .or_else(|_| {
+                EndpointRegistry::builtin()
+                    .unwrap()
+                    .prepare(&id, RawEndpointConfig::default())
+            })
             .unwrap();
         let key = table.push(prepared).unwrap();
         by_name.insert(

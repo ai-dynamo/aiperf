@@ -30,8 +30,8 @@ This spec governs:
 
 The workspace currently holds four product/library packages plus a test-harness
 package. Package names carry the product prefix (`aiperf`, `aiperf-runner`,
-`aiperf-mock-rs`) while their directories drop it (`rust/aiperf`, `rust/runner`,
-`rust/mock-rs`). `loadgen-core` keeps its neutral name at `rust/loadgen-core`.
+`aiperf-mock-server`) while their directories drop it (`rust/aiperf`, `rust/runner`,
+`rust/mock-server`). `loadgen-core` keeps its neutral name at `rust/loadgen-core`.
 The historical per-capability library crates (`aiperf-clock`, `aiperf-metrics`,
 `aiperf-transport-http`, and the rest) no longer exist as separate packages:
 they are consolidated into modules of the single `aiperf` crate (see §4).
@@ -74,7 +74,7 @@ The words MUST, MUST NOT, SHOULD, and MAY are normative.
 2. The umbrella `aiperf` package SHOULD remain at `rust/aiperf` because it
    has no capability suffix to use as a shorter directory name.
 3. Directory names MUST be kebab-case and SHOULD equal the capability suffix
-   exactly (`aiperf-runner` -> `rust/runner`, `aiperf-mock-rs` -> `rust/mock-rs`).
+   exactly (`aiperf-runner` -> `rust/runner`, `aiperf-mock-server` -> `rust/mock-server`).
 4. Code, scripts, CI, and documentation MUST treat Cargo metadata as the
    authority for package identity. They MUST NOT infer a package name by
    prepending or stripping text from its directory basename.
@@ -152,8 +152,8 @@ The workspace members and their directories are:
 |---|---|---|
 | `rust/aiperf` | `aiperf` | `aiperf` |
 | `rust/runner` | `aiperf-runner` | `aiperf_runner` |
-| `rust/mock-rs` | `aiperf-mock-rs` | `aiperf_mock_rs` |
-| `rust/integration` | `aiperf-integration-tests` | `aiperf_integration_tests` |
+| `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
+| `rust/e2e` | `aiperf-e2e-tests` | `aiperf_e2e_tests` |
 | `rust/loadgen-core` | `loadgen-core` | `loadgen_core` |
 
 Every package name follows §2.1; every directory follows §2.2 (the `aiperf-`
@@ -314,12 +314,3 @@ Two designed elements remain unbuilt:
 Until those land, `loadgen-core`'s neutral identity is a forward-looking
 commitment realized in dependency direction and package naming, not yet in an
 external release contract.
-
-## Addendum — 2026-07-13
-
-Crate `aiperf-mock-rs` (directory `rust/mock-rs`) has been renamed to `aiperf-mock-server` (directory `rust/mock-server`) and crate `aiperf-integration-tests` (directory `rust/integration`) has been renamed to `aiperf-e2e-tests` (directory `rust/e2e`). The §8 layout table entry at line 155 is superseded by:
-
-| `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
-| `rust/e2e`         | `aiperf-e2e-tests`   | `aiperf_e2e_tests`   |
-
-Rationale: `mock-rs` was a Rust-suffix anti-pattern (all crates are Rust); `mock-server` names the role. `integration` is the wrong term for tests that drive a full CLI subprocess; `e2e` is accurate.

@@ -268,22 +268,23 @@ fn run_sim_with_policies(
 
 #[test]
 fn fixed_schedule_replays_absolute_relative_and_immediate_turns_exactly() {
-    let source: Box<dyn ConversationSource> = block_on_source(common::prepared_source_from_conversations(
-        serde_json::json!([
-            {"session_id":"a","turns":[
-              {"timestamp":1000,"text":"a0","input_length":1,"output_length":2},
-              {"timestamp":1120,"text":"a1","input_length":1,"output_length":2},
-              {"delay":40,"text":"a2","input_length":1,"output_length":2}
-            ]},
-            {"session_id":"b","turns":[
-              {"timestamp":1050,"text":"b0","input_length":1,"output_length":2},
-              {"delay":25,"text":"b1","input_length":1,"output_length":2},
-              {"text":"b2","input_length":1,"output_length":2}
-            ]}
-        ]),
-        "model",
-        2,
-    ));
+    let source: Box<dyn ConversationSource> =
+        block_on_source(common::prepared_source_from_conversations(
+            serde_json::json!([
+                {"session_id":"a","turns":[
+                  {"timestamp":1000,"text":"a0","input_length":1,"output_length":2},
+                  {"timestamp":1120,"text":"a1","input_length":1,"output_length":2},
+                  {"delay":40,"text":"a2","input_length":1,"output_length":2}
+                ]},
+                {"session_id":"b","turns":[
+                  {"timestamp":1050,"text":"b0","input_length":1,"output_length":2},
+                  {"delay":25,"text":"b1","input_length":1,"output_length":2},
+                  {"text":"b2","input_length":1,"output_length":2}
+                ]}
+            ]),
+            "model",
+            2,
+        ));
     let schedule_source = Rc::new(
         DatasetFixedScheduleSource::new(FixedScheduleConfig {
             auto_offset_timestamps: true,

@@ -18,8 +18,7 @@ use serde_json::Value;
 
 use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
-    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn,
-    UsageView,
+    RequestRecord as EndpointRequestRecord, ResponseData, ServerResponse, Turn, UsageView,
 };
 use crate::metrics_core::HttpTrace;
 use crate::transport_http::models::{ErrorDetails, ErrorKind, RequestRecord};

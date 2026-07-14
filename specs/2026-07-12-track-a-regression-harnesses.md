@@ -39,7 +39,7 @@ Today's infra has **strong cross-*engine* parity (offline AIPerf==Dynamo byte ga
 
 ### 1.3 Rust integration / product-path tests
 
-- **`rust/aiperf/tests/scheduled_real_mock.rs`** — real wall-clock against a spawned `aiperf-mock-rs` binary (`--random-seed`, `spawn()` at :25, `mock_binary()` at :81). Asserts `num_requests`/`completed_requests` exactly (`:175-177,224-225`), scheduled offsets exactly (`:183-191`), and TTFT via **tolerance** ranges (`assert_real_ttft_and_lateness` :116-138: "12ms mock TTFT should remain recognizable"). This is the template for the real-mock tier.
+- **`rust/aiperf/tests/scheduled_real_mock.rs`** — real wall-clock against a spawned `aiperf-mock-server` binary (`--random-seed`, `spawn()` at :25, `mock_binary()` at :81). Asserts `num_requests`/`completed_requests` exactly (`:175-177,224-225`), scheduled offsets exactly (`:183-191`), and TTFT via **tolerance** ranges (`assert_real_ttft_and_lateness` :116-138: "12ms mock TTFT should remain recognizable"). This is the template for the real-mock tier.
 - **`rust/aiperf/tests/scheduled_sim.rs`, `request_rate_sim.rs`, `phase_runtime_sim.rs`** — SimClock deterministic proofs with fixed-latency test dispatchers. Assert **exact** ns offsets and `mean_ttft_ms == 10.0`, `total_output_tokens == 12` (`scheduled_sim.rs:282-346`). **This is the deterministic substrate the value-parity golden must build on.**
 - **Runner stdio E2E** (`rust/aiperf-runner/tests/*_stdio.rs`) — JSONL-over-stdio subprocess driver (`offline_scheduled_stdio.rs:29-62` writes request, splits stdout on `\n`, reads terminal frame). Assert `terminal["success"]`, `provenance`, `native["schema_version"] == "2.0"`. `online_v2_stdio.rs` uses an in-process axum fixture server; `thread_per_core_product.rs:66-180` proves **round-robin placement across 3 workers** and counts one server request per turn — the closest thing to a multi-worker online product test, but it asserts placement, not metric values.
 - **Note:** `dag_stdio_e2e.rs` is referenced in `git status` but is **absent** from the tree today (renamed → `recorded_graph_stdio_e2e.rs`). Do not target the old name.
@@ -47,7 +47,7 @@ Today's infra has **strong cross-*engine* parity (offline AIPerf==Dynamo byte ga
 
 ### 1.4 Throughput harnesses
 
-- **`rust/aiperf-transport-http/examples/rps_bench.rs`** — thread-per-core RPS driver (`THREADS`/`CONNS`/`LANES`/`WARMUP_S`/`WINDOW_S`, h2c or `HTTP1=1`), prints achieved RPS against a running `aiperf-mock-rs --fast`. **Not** wired to `origin_key`/UDS today (uses `establish` directly).
+- **`rust/aiperf/examples/rps_bench.rs`** — thread-per-core RPS driver (`THREADS`/`CONNS`/`LANES`/`WARMUP_S`/`WINDOW_S`, h2c or `HTTP1=1`), prints achieved RPS against a running `aiperf-mock-server --fast`. **Not** wired to `origin_key`/UDS today (uses `establish` directly).
 - **`rust/aiperf-core/examples/fast_sse.rs`** — ultra-cheap fixed-SSE server; **already honors `UDS_PATH`** (`:28-40`) to listen on a Unix socket. This is the ready-made TCP-vs-UDS win driver once A3 lands a `unix:`-scheme client path.
 - **`rust/aiperf-graph/src/transport_bench.rs`** — the per-worker-merge graph bench (also the A1 reference impl).
 - **GAP:** no product-path (`aiperf profile`) throughput baseline with `records:false`, and no automated ratio/regression check — the benches print numbers, nothing asserts them.
@@ -65,7 +65,7 @@ Today's infra has **strong cross-*engine* parity (offline AIPerf==Dynamo byte ga
 
 ### 1.7 Mock determinism knobs (the substrate for reproducible real-mock runs)
 
-`rust/aiperf-mock-rs/src/config.rs`: `random_seed` (:339), closed-form **analytic** latency mode (:71 — deterministic given seed), `prefix_cache_*` (:217-273, disable via `disable_prefix_cache`), `dcgm_seed` (:357). With `--random-seed` + analytic latency + fixed token count, the mock's **token counts and body bytes are deterministic**; wall-clock arrival *timing* still jitters (RealClock), so latency distributions are tolerance-only against the real mock.
+`rust/mock-server/src/config.rs`: `random_seed` (:339), closed-form **analytic** latency mode (:71 — deterministic given seed), `prefix_cache_*` (:217-273, disable via `disable_prefix_cache`), `dcgm_seed` (:357). With `--random-seed` + analytic latency + fixed token count, the mock's **token counts and body bytes are deterministic**; wall-clock arrival *timing* still jitters (RealClock), so latency distributions are tolerance-only against the real mock.
 
 ### 1.8 The single biggest detection gap
 
@@ -79,7 +79,7 @@ Today's infra has **strong cross-*engine* parity (offline AIPerf==Dynamo byte ga
 |---|---|---|---|
 | SimClock + fixed-latency test dispatcher (`scheduled_sim.rs` shape) | virtual, integer-ns, `(at_ns,seq_no)` tie-break | **Runner product path: byte-exact vs HEAD for ALL fields** (records-first re-ingest in dispatch order, Finding 6). Library merge-summary path: byte-exact integer aggregates + equal-latency floats, tolerance for varied-latency floats (§4.5). | The value-parity **golden** (runner: everything byte-identical; library: latency distributions per the split) |
 | Offline dynosim scheduled (`offline_scheduled_stdio.rs`) | SimClock | **Byte-exact** (already gated 77 fields) | Cross-engine A2-offline guard (unchanged by A2) |
-| Real `aiperf-mock-rs` (`scheduled_real_mock.rs`) | RealClock | counts/tokens exact; **latency jitters** | Real-transport tier: byte-exact counts, tolerance-banded latency |
+| Real `aiperf-mock-server` (`scheduled_real_mock.rs`) | RealClock | counts/tokens exact; **latency jitters** | Real-transport tier: byte-exact counts, tolerance-banded latency |
 | A3 `DuplexConnector` in-process server | RealClock | counts/tokens exact; latency jitters | Hermetic connector-parity + fast CI transport tests |
 | `rps_bench`/`transport_bench` | RealClock | throughput ±noise | Ratio-based throughput checks only |
 
@@ -122,7 +122,7 @@ Each harness names the risk it guards, where it lives, CI vs manual, the run com
 - **What is tolerance-banded (real-mock tier only):** latency distribution fields (`ttft/ttst/tpot/itl/e2e/*_per_user` mean/percentiles) within a band (e.g. ±15% of golden or an absolute ns floor, matching `scheduled_real_mock.rs:124-126` style). Counts/tokens/throughput-from-counts stay **exact**.
 - **Compare mechanism:** reuse the existing `canonical_shared_metric_bytes` serialization surface (`dynosim.rs:655-666`) for the compat `TraceSimulationReport` half (this is the exact byte surface the offline gate already trusts), and add a native-v2 report canonical-bytes compare (serialize `Reporter` output to compact JSON, diff against golden). Build a tiny `assert_report_matches_golden(report, golden_path, tolerance_fields)` helper in the test crate; do **not** extend the AIPerf==Dynamo gate (that is a different, cross-engine comparison — see §1.1 scope limit).
 
-**CI/manual:** SimClock tier = **CI** (fast, deterministic, no external server). Real-mock tier = **CI** (spawns `aiperf-mock-rs` like `scheduled_real_mock.rs` already does) but latency assertions are tolerance-banded to stay green on a noisy box.
+**CI/manual:** SimClock tier = **CI** (fast, deterministic, no external server). Real-mock tier = **CI** (spawns `aiperf-mock-server` like `scheduled_real_mock.rs` already does) but latency assertions are tolerance-banded to stay green on a noisy box.
 
 **Run command:**
 ```bash
@@ -161,7 +161,7 @@ cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exac
 
 **Design (ratio-based, never absolute — stable on a shared box):**
 - **Drivers:**
-  1. `rust/aiperf-transport-http/examples/rps_bench.rs` against `aiperf-mock-rs --fast` (existing) — TCP baseline.
+  1. `rust/aiperf/examples/rps_bench.rs` against `aiperf-mock-server --fast` (existing) — TCP baseline.
   2. Same `rps_bench` against `fast_sse` over `UDS_PATH` (existing `fast_sse.rs:28`) once A3 wires a `unix:`-scheme client — the **TCP-vs-UDS win**. **This driver does not exist yet:** `rps_bench` calls `establish` directly and is not wired to a `unix:` client (§1.4). Rewiring it to select a `UdsConnector` (or point it at a `unix:` URL through `select_connector`) is **required PR3 work that the connector spec must budget** — without it there is no UDS-win measurement and the connector seam risks landing test-only.
   3. A **product-path** `aiperf profile` run with `records:false` (A4/A1 aggregate-only mode) — the real ceiling-lift proof, since the ceiling is coordinator-side accumulation, not transport.
   4. `transport_bench.rs` (graph, already per-worker-merged) as the A1 reference upper bound.
@@ -175,7 +175,7 @@ cargo test -p aiperf --test scheduled_real_mock          # real-mock counts-exac
 **Run command:**
 ```bash
 # TCP baseline vs UDS win (A3)
-cargo run --release -p aiperf-mock-rs -- --fast &          # or fast_sse for pure-transport
+cargo run --release -p aiperf-mock-server -- --fast &          # or fast_sse for pure-transport
 THREADS=8 CONNS=8 LANES=16 cargo run --release -p aiperf-transport-http --example rps_bench
 UDS_PATH=/tmp/fast.sock cargo run --release -p aiperf-core --example fast_sse &
 # (A3) point rps_bench at unix:/tmp/fast.sock, compare RPS
@@ -255,9 +255,3 @@ cargo test -p aiperf-runner --test offline_scheduled_stdio   # existing online�
 - **Biggest gap:** no full-report value-parity golden for the online scheduled product path — the exact surface A1/A2/A4 touch. Close with Harness A first.
 - **Determinism blocker:** online product path is RealClock → latency distributions jitter, so a full online report is not byte-goldenable. **Fix:** two-tier golden — SimClock fixed-latency tier for byte-exact *everything* (this is where A2's percentile/time-base fields are deterministically gated), real-mock/Duplex tier for byte-exact counts + tolerance-banded latency. Pin worker count for byte-exact float sums.
 - **Reuse, don't rebuild:** the 77-field `verify_parity` gate (`offline_execution.rs:2266`, `dynosim.rs:655-666`) already guards A2-offline; `per_worker_merge_matches_single_accumulator_ingest_order` (`accumulator.rs:1781`) + `worker_stores_merge…` (`store.rs:1437`) are the A1 unit substrate to *extend*, not replace; `~/tmp/a1-spec`, `~/tmp/a2-spec`, `~/tmp/connector-spec`, `~/tmp/a4-spec/proof` scratch proofs promote directly into Harnesses B/E/D.
-</content>
-</invoke>
-
-## Addendum — 2026-07-13
-
-All references to `aiperf-mock-rs` / `rust/aiperf-mock-rs` in this spec are superseded by `aiperf-mock-server` / `rust/mock-server` (renamed 2026-07-13). Cargo commands: replace `-p aiperf-mock-rs` with `-p aiperf-mock-server`.

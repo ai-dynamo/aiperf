@@ -903,29 +903,28 @@ impl NativeSessionBackend {
                 }
             },
         });
-        let input_tokens = if timing.trace_hash_ids.is_some()
-            || materialized.raw_token_ids.is_some()
-        {
-            u64::try_from(timing.input_length)
-                .map_err(|_| anyhow!("authored trace input count exceeds u64"))?
-        } else if let Some(cached) = static_count_key
-            .and_then(|key| self.static_input_count_cache.borrow().get(&key).copied())
-        {
-            cached
-        } else {
-            let (_, endpoint) = &prepared_endpoint;
-            let counted = self.input_token_counter.count_prepared_input_tokens(
-                *endpoint,
-                &materialized.body,
-                materialized.input_tokens,
-            )?;
-            if let Some(key) = static_count_key {
-                self.static_input_count_cache
-                    .borrow_mut()
-                    .insert(key, counted);
-            }
-            counted
-        };
+        let input_tokens =
+            if timing.trace_hash_ids.is_some() || materialized.raw_token_ids.is_some() {
+                u64::try_from(timing.input_length)
+                    .map_err(|_| anyhow!("authored trace input count exceeds u64"))?
+            } else if let Some(cached) = static_count_key
+                .and_then(|key| self.static_input_count_cache.borrow().get(&key).copied())
+            {
+                cached
+            } else {
+                let (_, endpoint) = &prepared_endpoint;
+                let counted = self.input_token_counter.count_prepared_input_tokens(
+                    *endpoint,
+                    &materialized.body,
+                    materialized.input_tokens,
+                )?;
+                if let Some(key) = static_count_key {
+                    self.static_input_count_cache
+                        .borrow_mut()
+                        .insert(key, counted);
+                }
+                counted
+            };
         let input_length = usize::try_from(input_tokens)
             .map_err(|_| anyhow!("materialized input token count exceeds usize"))?;
         let max_output_tokens = materialized
