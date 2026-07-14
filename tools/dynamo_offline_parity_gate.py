@@ -108,14 +108,17 @@ CASES: list[Case] = [
     Case("disagg-rr-p1d2", "disaggregated", "round_robin", prefill_workers=1, decode_workers=2),
     Case("disagg-rr-p2d1", "disaggregated", "round_robin", prefill_workers=2, decode_workers=1),
     Case("disagg-kv-p1d1", "disaggregated", "kv", prefill_workers=1, decode_workers=1),
+    # Disaggregated KV with a prefill fleet — byte-exact after fixing the
+    # steppable disagg deferred-drive to stay atomic under KV routing (mocker
+    # SteppableDisagg::new_with_router_config).
+    Case("disagg-kv-p2d1", "disaggregated", "kv", prefill_workers=2, decode_workers=1),
     # The most ridiculous byte-exact setup: aggregated, KV-routed across a fleet
     # of 4 workers, with every deterministic engine knob loaded.
     #
-    # NOTE: the true maximal setup — *disaggregated* KV with a prefill/decode
-    # worker fleet — is currently NOT byte-exact (aiperf's steppable disagg-KV
-    # routing diverges from dynamo.replay once either pool has >1 worker; the
-    # single-worker disagg-KV case above is exact). Tracked separately; kept out
-    # of the gate until fixed rather than baselined as a divergence.
+    # NOTE: disaggregated KV with a *decode* fleet (>1 decode worker) is still
+    # NOT byte-exact — the prefill->decode handoff ordering into the decode KV
+    # router differs from dynamo.replay. That is async-settlement/handoff timing
+    # (DEP #11018 territory); kept out of the gate rather than baselined.
     Case("kitchen-sink", "aggregated", "kv", workers=4, engine=RIDICULOUS_ENGINE),
 ]
 
