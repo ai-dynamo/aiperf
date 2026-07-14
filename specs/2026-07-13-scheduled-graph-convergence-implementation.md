@@ -52,6 +52,8 @@ The coordinator `ensure!(phased.workload.failed == 0, …)` at `rust/runner/src/
 
 Scheduled resilient/fail-fast is wired in `rust/aiperf/src/request_rate.rs`: `RequestRateWorkload` gains an `on_failure: OnFailure` field; the terminal completion hook (`request_rate.rs:442`) latches `state.fail(...)` when `outcome.terminal` is `Failed` (not `Cancelled`) and `on_failure == Abort`. `Continue` leaves the existing resilient path (`scheduled.rs:980-1004`) untouched.
 
+**Scope limit (scheduled):** fail-fast is wired only into `RequestRateWorkload` (the `Concurrency`/`Poisson`/`Gamma`/`Constant` arm). The specialized `user_centric` and `fixed_schedule` scheduled workloads do not yet honor `abort`; rather than silently staying resilient, the runner emits a `tracing::warn!` when `abort` is configured alongside those phase types (`execute.rs`). Extending fail-fast to them is a follow-up; the default (`Continue`) is unaffected.
+
 ### Config surface
 
 - Wire form on `BenchmarkConfigWireV2` (`rust/runner/src/protocol_v2.rs:178`): `#[serde(default)] pub failure_policy: Option<String>` beside the `slos`/`goodput` policy siblings. Lowered into the shared workload-config JSON in `BenchmarkRunWireV2::into_authored` (`protocol_v2.rs:275`) so **both** `ScheduledWorkloadConfigV2` and `GraphWorkloadConfigV2` (`registry.rs:838,862`) decode the same `failure_policy: Option<OnFailure>` field.
