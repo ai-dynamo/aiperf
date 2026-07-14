@@ -112,17 +112,30 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
         return record.timestamp_ns - int(intended_ms * NANOS_PER_MILLIS)
 
 
+_lag_cache: tuple[object, int, np.ndarray] | None = None
+
+
 def _anchored_lag_ms(metric_results: MetricResultsDict) -> np.ndarray:
     """Return per-request send lag in ms, anchored at the least-late request.
+
+    The p50/p90/p99 metrics derive back-to-back from the same offsets, so the
+    last computation is cached, keyed on array identity and length (offset
+    arrays are append-only).
 
     Raises:
         NoMetricValue: If no absolutely-scheduled request produced an offset.
     """
+    global _lag_cache
     values = metric_results.get_or_raise(ReplaySendScheduleOffsetMetric)
-    data = np.asarray(values.data, dtype=np.float64)
-    if len(data) == 0:
+    size = len(values.data)
+    if size == 0:
         raise NoMetricValue("No absolutely-scheduled requests were recorded.")
-    return (data - data.min()) / NANOS_PER_MILLIS
+    if _lag_cache is not None and _lag_cache[0] is values and _lag_cache[1] == size:
+        return _lag_cache[2]
+    data = np.asarray(values.data, dtype=np.float64)
+    anchored = (data - data.min()) / NANOS_PER_MILLIS
+    _lag_cache = (values, size, anchored)
+    return anchored
 
 
 class _ReplaySchedLagPercentileBase(BaseDerivedMetric[float]):

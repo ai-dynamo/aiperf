@@ -27,6 +27,7 @@ from aiperf.metrics.types.replay_sched_lag_metrics import (
     ReplaySchedLagP90Metric,
     ReplaySchedLagP99Metric,
     ReplaySendScheduleOffsetMetric,
+    _anchored_lag_ms,
 )
 from tests.unit.metrics.conftest import (
     create_metric_array,
@@ -112,6 +113,22 @@ class TestReplaySchedLagPercentiles:
         assert ReplaySchedLagP50Metric().derive_value(results) == pytest.approx(5.0)
         assert ReplaySchedLagP90Metric().derive_value(results) == pytest.approx(73.0)
         assert ReplaySchedLagP99Metric().derive_value(results) == pytest.approx(97.3)
+
+    def test_anchored_lag_cached_per_array_and_invalidated_on_append(self):
+        # p50/p90/p99 derive back-to-back from the same offsets: the second
+        # call returns the cached array; appending (a realtime tick) or a
+        # different offsets object recomputes.
+        results = _offset_results([5, 15])
+        first = _anchored_lag_ms(results)
+        assert _anchored_lag_ms(results) is first
+
+        results[ReplaySendScheduleOffsetMetric.tag].append(25 * NANOS_PER_MILLIS)
+        grown = _anchored_lag_ms(results)
+        assert grown is not first
+        assert list(grown) == [0.0, 10.0, 20.0]
+
+        other = _offset_results([5, 15])
+        assert _anchored_lag_ms(other) is not grown
 
     def test_derive_value_uniform_lag_reports_zero(self):
         # A constant delay on every request is invisible after anchoring --
